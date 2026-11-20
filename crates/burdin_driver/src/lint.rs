@@ -141,6 +141,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     if args.fix { fix(&args, &options) } else { check(&args, &options) }
 }

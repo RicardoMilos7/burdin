@@ -6,6 +6,10 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
+  each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
+  `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
+
 - Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
   `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
   impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and

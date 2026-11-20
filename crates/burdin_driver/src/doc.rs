@@ -177,6 +177,7 @@ fn document(target: &Path, args: &DocArgs) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(f) => f,

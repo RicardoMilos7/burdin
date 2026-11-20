@@ -180,6 +180,9 @@ pub(crate) struct DiagnosticOptions {
     pub(crate) width: Option<usize>,
     /// `None` prints every diagnostic; `Some(0)` also means every diagnostic.
     pub(crate) error_limit: Option<usize>,
+    /// `-q`/`--quiet`: print only the errors. Warnings and the notes that are not part of an error are left out,
+    /// in every format; the results a command asks for (a program's output, `--print-instances`) are unchanged.
+    pub(crate) quiet: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -278,6 +281,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
+            "-q" | "--quiet" => args.diagnostics.quiet = flag_without_value(a, inline)?,
             "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
             "--workspace" => args.workspace = flag_without_value(a, inline)?,
             "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
@@ -476,10 +480,18 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     let tests = args.command == "test";
     let benches = args.command == "bench";
+    if args.diagnostics.quiet && !matches!(args.command.as_str(), "build" | "run") {
+        return Err("`--quiet` is only valid for `burdin build`, `burdin run`, and `burdin check`".to_string());
+    }
+    if args.verbose && args.command == "fuzz" {
+        return Err("`--verbose` is only valid for `burdin build`, `burdin run`, `burdin check`, `burdin test`, and \
+             `burdin bench`"
+            .to_string());
+    }
+    if args.verbose && args.diagnostics.quiet {
+        return Err("`--quiet` and `--verbose` conflict: choose one".to_string());
+    }
     if !tests && !benches {
-        if args.verbose {
-            return Err("`--verbose` is only valid for `burdin test` and `burdin bench`".to_string());
-        }
         if !args.filters.is_empty() {
             return Err("`--filter` is only valid for `burdin test` and `burdin bench`".to_string());
         }
@@ -815,6 +827,7 @@ fn driver_main() -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
+        verbose: args.verbose && matches!(args.command.as_str(), "build" | "run"),
     };
     match args.command.as_str() {
         "build" => build(&args, &options),
@@ -875,7 +888,7 @@ fn build(args: &Args, options: &CompileOptions) -> ExitCode {
         } else if named.contains(&member.name) {
             eprintln!("error: `{}` has no src/main.bd to build, and `-p` names it", member.name);
             return ExitCode::from(1);
-        } else {
+        } else if !options.diagnostics.quiet {
             eprintln!("note: skipped {}: it has no src/main.bd", member.name);
         }
     }
@@ -1015,6 +1028,9 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) sanitize: burdin_codegen::Sanitizers,
     /// With [`EntryMode::Fuzz`], the fuzz target the binary is built for (`spec/fuzz.md`, FZ3).
     pub(crate) fuzz_target: Option<&'a str>,
+    /// `-v` on `burdin build` and `burdin run`: print each phase of the compilation and each codegen unit, with its
+    /// time, to standard error (`spec/build-tool.md`). Quiet output (`-q`) is in the diagnostic options.
+    pub(crate) verbose: bool,
 }
 
 /// What a successful compilation produced: the executable, its `test` blocks and `bench` blocks (empty for a
@@ -1058,6 +1074,33 @@ pub(crate) struct FrontEnd {
     pub(crate) rust_libs: Vec<String>,
 }
 
+/// `-v`: the wall time of each phase of one compilation, printed to standard error as the phase ends. Made at the
+/// start of a sequence of phases; each [`Phases::mark`] ends the phase that began at the previous mark.
+pub(crate) struct Phases {
+    enabled: bool,
+    last: std::time::Instant,
+}
+
+impl Phases {
+    pub(crate) fn start(enabled: bool) -> Phases {
+        Phases { enabled, last: std::time::Instant::now() }
+    }
+
+    /// Ends the phase `name`, and with `-v` prints how long it took.
+    pub(crate) fn mark(&mut self, name: &str) {
+        let now = std::time::Instant::now();
+        if self.enabled {
+            eprintln!("phase {name}: {}", format_ms(now - self.last));
+        }
+        self.last = now;
+    }
+}
+
+/// A duration as milliseconds with two decimals, for `-v`: `12.34 ms`.
+pub(crate) fn format_ms(duration: std::time::Duration) -> String {
+    format!("{:.2} ms", duration.as_secs_f64() * 1000.0)
+}
+
 /// Resolves the dependencies of a package directory and brings its `burdin.lock` up to date before the package is
 /// loaded (`spec/packages.md`, PKG8): git dependencies are fetched into the cache, and with `locked` a lockfile that
 /// would change is an error. A one-file target has no lockfile. Errors are printed; the exit status is 1.
@@ -1088,7 +1131,12 @@ pub(crate) fn front_end(
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
+    if options.verbose {
+        eprintln!("compiling {}", target.display());
+    }
+    let mut phases = Phases::start(options.verbose);
     sync_dependencies(target, options.locked, options.offline)?;
+    phases.mark("dependencies");
     let mut loaded = match package::load_selected(target, mode, &options.features) {
         Ok(loaded) => loaded,
         Err(message) => {
@@ -1096,6 +1144,7 @@ pub(crate) fn front_end(
             return Err(ExitCode::from(1));
         }
     };
+    phases.mark("load");
     // Build scripts run first: a generated module must exist before the modules are read (`spec/build-scripts.md`,
     // BS3-BS4). A script's own compilation sets this flag to false, so there is no recursion.
     let mut script_inputs: Vec<String> = Vec::new();
@@ -1112,6 +1161,7 @@ pub(crate) fn front_end(
             }
         }
     }
+    phases.mark("build scripts");
 
     // An override of a package's manifest is read for its edition: `burdin fix --migrate` checks the package under
     // the edition it is about to write before it writes anything (`spec/fix.md`, FX10).
@@ -1160,6 +1210,7 @@ pub(crate) fn front_end(
             return Err(ExitCode::from(1));
         }
     };
+    phases.mark("parse and check");
     let (sources, parsed) = db.into_parts();
     Ok(FrontEnd {
         loaded,
@@ -1273,6 +1324,9 @@ fn write_executable(
         return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
     if plan.is_fresh() {
+        if options.verbose {
+            eprintln!("phase cache: the executable is up to date, so codegen and link are skipped");
+        }
         return copy_executable(&plan.exe, output);
     }
     let Ok(staged) = plan.staging() else {
@@ -1385,7 +1439,16 @@ pub(crate) fn emit_program(
         sanitize: options.sanitize,
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
-    let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
+    let started = std::time::Instant::now();
+    let emitted = burdin_codegen::emit_object_timed(program, sources, stem, &object, &opts).map_err(fail)?;
+    let objects = emitted.objects;
+    if options.verbose {
+        eprintln!("phase codegen: {}", format_ms(started.elapsed()));
+        let units = emitted.unit_times.len();
+        for (index, time) in emitted.unit_times.iter().enumerate() {
+            eprintln!("  codegen unit {} of {units}: {}", index + 1, format_ms(*time));
+        }
+    }
     if emit.is_some_and(|e| e.wants(emit::EmitKind::Obj)) {
         for (index, object) in objects.iter().enumerate() {
             let target = emit::object_path(output, index);
@@ -1395,6 +1458,7 @@ pub(crate) fn emit_program(
     if emit.is_some_and(|e| e.skip_link) {
         return Ok(());
     }
+    let linking = std::time::Instant::now();
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
@@ -1413,6 +1477,9 @@ pub(crate) fn emit_program(
     };
     let libs: Vec<String> = options.link_libs.iter().chain(rust_libs).cloned().collect();
     link(&objects, output, &libs, &link_opts).map_err(fail)?;
+    if options.verbose {
+        eprintln!("phase link: {}", format_ms(linking.elapsed()));
+    }
     Ok(())
 }
 
@@ -1425,6 +1492,13 @@ pub(crate) fn report_errors(
     sources: &SourceMap,
     diagnostics: &DiagnosticOptions,
 ) {
+    let errors;
+    let diags = if diagnostics.quiet {
+        errors = errors_only(diags);
+        &errors
+    } else {
+        diags
+    };
     let options = render_options(diagnostics, std::io::stderr().is_terminal());
     let rendered = diags.render_with(sources, &options);
     eprint!("{}", rendered.text);
@@ -1462,9 +1536,25 @@ pub(crate) fn print_warnings(
 ) {
     let render = render_options(diagnostics, std::io::stderr().is_terminal());
     let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
+    if diagnostics.quiet {
+        // `-q` leaves the warnings out; a front end that found no errors has nothing else to print.
+        if clean_log {
+            eprint!("{}", errors_only(diags).render_with(sources, &render).text);
+        }
+        return;
+    }
     if diags.has_warnings() || clean_log {
         eprint!("{}", diags.render_with(sources, &render).text);
     }
+}
+
+/// The errors among `diags`, in their order: what `-q` prints. The warnings are left out.
+fn errors_only(diags: &Diagnostics) -> Diagnostics {
+    let mut only = Diagnostics::default();
+    for diagnostic in diags.iter().filter(|d| d.severity == burdin_diag::Severity::Error) {
+        only.push(diagnostic.clone());
+    }
+    only
 }
 
 /// Reports a build-script failure at the entry package's first source line. The failure is about the package, not
@@ -2441,10 +2531,25 @@ mod tests {
 
     #[test]
     fn test_options_are_rejected_for_other_commands() {
-        assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["fuzz", "app", "target", "--verbose"]).unwrap_err().contains("only valid for `burdin build`"));
         assert!(
             parse(&["fuzz", "app", "target", "--workspace"]).unwrap_err().contains("only valid for `burdin build`")
         );
+    }
+
+    #[test]
+    fn quiet_and_verbose_are_parsed_for_build_run_and_test() {
+        let args = parse(&["build", "app", "-q"]).unwrap();
+        assert!(args.diagnostics.quiet && !args.verbose);
+        let args = parse(&["run", "app", "--verbose"]).unwrap();
+        assert!(args.verbose && !args.diagnostics.quiet);
+        assert!(parse(&["build", "app", "--quiet"]).unwrap().diagnostics.quiet);
+        assert!(parse(&["build", "app", "-v", "-q"]).unwrap_err().contains("conflict"));
+        assert!(parse(&["build", "app", "--quiet=yes"]).unwrap_err().contains("takes no value"));
+        // `-v` is the test runner's own verbosity, and `-q` belongs to the commands that compile for output.
+        assert!(parse(&["test", "app", "-v"]).unwrap().verbose);
+        assert!(parse(&["test", "app", "-q"]).unwrap_err().contains("only valid for `burdin build`"));
+        assert!(parse(&["bench", "app", "-q"]).unwrap_err().contains("only valid for `burdin build`"));
     }
 
     #[test]

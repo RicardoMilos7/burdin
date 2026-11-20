@@ -246,6 +246,13 @@ pub fn resolve_jobs(jobs: usize) -> usize {
     if jobs > 0 { jobs } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) }
 }
 
+/// What [`emit_object_timed`] produced: the object files in link order, and how long each codegen unit took, in unit
+/// order. An unsplit program has one unit, which is the whole module (`burdin build -v` prints these).
+pub struct Emitted {
+    pub objects: Vec<PathBuf>,
+    pub unit_times: Vec<std::time::Duration>,
+}
+
 /// Compiles the program to native object files for the host: `object` itself, and for a program large enough to
 /// be split into codegen units (`split.rs`), `<stem>.1.<ext>`, `<stem>.2.<ext>`, ... next to it, compiled on up to
 /// `opts.jobs` threads. Returns every object written, in link order. `sources` gives panic messages their file and
@@ -257,6 +264,17 @@ pub fn emit_object(
     object: &Path,
     opts: &Options,
 ) -> Result<Vec<PathBuf>, String> {
+    emit_object_timed(program, sources, module_name, object, opts).map(|emitted| emitted.objects)
+}
+
+/// [`emit_object`], also reporting the time each codegen unit took.
+pub fn emit_object_timed(
+    program: &Program,
+    sources: &SourceMap,
+    module_name: &str,
+    object: &Path,
+    opts: &Options,
+) -> Result<Emitted, String> {
     // The dialect is read when the target machine builds its assembly printer, so it is set first.
     set_asm_syntax(opts.asm_syntax)?;
     let machine = target_machine(opts.opt_level)?;
@@ -322,23 +340,37 @@ pub fn emit_object(
         split::unit_count(instructions, functions, opts.units)
     };
     if units > 1 {
-        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.opt_level, object);
+        let (objects, unit_times) = split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.opt_level, object)?;
+        return Ok(Emitted { objects, unit_times });
     }
+    let started = std::time::Instant::now();
+    let objects = emit_single(&module, &machine, opts, object)?;
+    Ok(Emitted { objects, unit_times: vec![started.elapsed()] })
+}
+
+/// Optimizes the whole module of an unsplit program and writes its one object file (and the artifacts that ask for
+/// the optimized module).
+fn emit_single(
+    module: &Module<'_>,
+    machine: &TargetMachine,
+    opts: &Options,
+    object: &Path,
+) -> Result<Vec<PathBuf>, String> {
     // The attributes go on before the optimization pipeline, as clang's front end puts them: some transformations
     // are not done to a function that will be instrumented.
-    add_sanitizer_attributes(&module, opts.sanitize);
+    add_sanitizer_attributes(module, opts.sanitize);
     if opts.opt_level.optimized() {
         let pipeline = opts.opt_level.pipeline();
         module
-            .run_passes(&pipeline, &machine, inkwell::passes::PassBuilderOptions::create())
+            .run_passes(&pipeline, machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
-    instrument_sanitizers(&module, &machine, opts.sanitize)?;
+    instrument_sanitizers(module, machine, opts.sanitize)?;
     if opts.instrument {
         // `pgo-instr-gen` adds the IR-level counters and `instrprof` lowers them to the profile data structures;
         // the result is what `pgo-instr-use` reads.
         module
-            .run_passes("pgo-instr-gen,instrprof", &machine, inkwell::passes::PassBuilderOptions::create())
+            .run_passes("pgo-instr-gen,instrprof", machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
     if let Some(path) = &opts.emit_opt_ir {
@@ -350,7 +382,7 @@ pub fn emit_object(
         return Err(format!("cannot write LLVM bitcode to {}", path.display()));
     }
     if let Some(path) = &opts.emit_asm {
-        machine.write_to_file(&module, FileType::Assembly, path).map_err(|e| e.to_string_lossy().to_string())?;
+        machine.write_to_file(module, FileType::Assembly, path).map_err(|e| e.to_string_lossy().to_string())?;
     }
     if opts.bitcode {
         // Link-time optimization consumes bitcode; the driver links it with an LLVM compiler driver.
@@ -358,7 +390,7 @@ pub fn emit_object(
             return Err(format!("cannot write LLVM bitcode to {}", object.display()));
         }
     } else {
-        machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
+        machine.write_to_file(module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
     }
     Ok(vec![object.to_path_buf()])
 }

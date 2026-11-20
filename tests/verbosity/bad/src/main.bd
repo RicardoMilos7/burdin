@@ -1,0 +1,22 @@
+// The same shadowed extension as the warn package, and one unknown name: the errors are printed, and so is the
+// warning unless `-q` leaves it out.
+
+struct Gadget {
+    n: i32,
+}
+
+Gadget {
+    fn label(self): String {
+        String.from("method")
+    }
+}
+
+fn Gadget.label(self): String {
+    String.from("extension")
+}
+
+fn main() {
+    let g = Gadget { n: 1 }
+    println(g.label())
+    println(missing_name)
+}

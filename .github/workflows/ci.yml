@@ -333,6 +333,11 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_cli.py
 
+      # `-q` and `-v` on `build`, `run`, and `check` (spec/build-tool.md, BT8; issue #799).
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools'
+        run: python3 tests/check_verbosity.py
+
       - name: Check build profiles
         if: matrix.part == 'tools'
         run: python3 tests/check_profiles.py
@@ -781,6 +786,11 @@ jobs:
       - name: Check the command surface
         if: matrix.part == 'tools'
         run: python3 tests/check_cli.py
+
+      # `-q` and `-v` on `build`, `run`, and `check` (spec/build-tool.md, BT8; issue #799).
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools'
+        run: python3 tests/check_verbosity.py
 
       - name: Check build profiles
         if: matrix.part == 'tools'
@@ -1237,6 +1247,11 @@ jobs:
       - name: Check the command surface
         if: matrix.part == 'tools'
         run: python tests/check_cli.py
+
+      # `-q` and `-v` on `build`, `run`, and `check` (spec/build-tool.md, BT8; issue #799).
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools'
+        run: python tests/check_verbosity.py
 
       - name: Check build profiles
         if: matrix.part == 'tools'

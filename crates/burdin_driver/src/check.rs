@@ -48,6 +48,8 @@ struct CheckArgs {
     function: Option<String>,
     /// `--format`: `human`/`text` or `json`, for `--print-instances` and `--explain-ownership`.
     format: Option<OwnershipFormat>,
+    /// `-v`/`--verbose`: print each phase of the check with its time (`spec/build-tool.md`).
+    verbose: bool,
 }
 
 fn parse(argv: &[String]) -> Result<CheckArgs, String> {
@@ -79,6 +81,8 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
+            "-q" | "--quiet" => args.diagnostics.quiet = flag_without_value(a, inline)?,
+            "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--fn" => args.function = Some(option_value(&mut it, inline, a, "a function name")?),
             "--format" => {
@@ -108,6 +112,9 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
     }
     if args.function.is_some() && !args.explain_ownership {
         return Err("`--fn` needs `--explain-ownership`".to_string());
+    }
+    if args.verbose && args.diagnostics.quiet {
+        return Err("`--quiet` and `--verbose` conflict: choose one".to_string());
     }
     args.target = target.ok_or("missing target file")?;
     if args.release {
@@ -155,6 +162,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: args.verbose,
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
         Ok(front) => front,

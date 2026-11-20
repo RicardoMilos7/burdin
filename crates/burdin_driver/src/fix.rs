@@ -312,6 +312,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let migration = if args.migrate {
         match crate::migrate::plan(&args.target) {

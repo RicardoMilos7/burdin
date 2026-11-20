@@ -174,6 +174,7 @@ Environment:
   NO_COLOR              Disables color unless --color says otherwise";
 
 const DIAGNOSTICS: &str = "Diagnostic Options";
+const OUTPUT: &str = "Output Options";
 const COMPILATION: &str = "Compilation Options";
 const SELECTION: &str = "Selection Options";
 
@@ -237,6 +238,18 @@ fn flag(id: &'static str, help: &'static str) -> Arg {
 
 fn option(id: &'static str, value: &'static str, help: &'static str) -> Arg {
     Arg::new(id).long(id).value_name(value).help(help)
+}
+
+/// `-q` and `-v` of `build`, `run`, and `check`: what the command prints besides its results (`spec/build-tool.md`).
+fn verbosity() -> [Arg; 2] {
+    [
+        flag("quiet", "Print only errors: no warnings and no notes (the results are unchanged)")
+            .short('q')
+            .help_heading(OUTPUT),
+        flag("verbose", "Print each phase with its time, and each codegen unit of build and run, to standard error")
+            .short('v')
+            .help_heading(OUTPUT),
+    ]
 }
 
 /// The options of `build`, `run`, `test`, and `check` that rerun the command when a file changes.
@@ -389,6 +402,7 @@ fn build() -> Command {
                 .map(|arg| arg.help_heading("Output Options")),
             )
             .args(watch_options())
+            .args(verbosity())
             .after_help(ENVIRONMENT),
     )
 }
@@ -424,6 +438,7 @@ fn run() -> Command {
                 comptime_steps(),
             ])
             .args(watch_options())
+            .args(verbosity())
             .after_help(
                 "A single file that starts with a shebang or an inline manifest runs as a script, from a cache \
                  (spec/scripts.md). The exit status is the program's.\n\n"
@@ -679,6 +694,7 @@ fn check() -> Command {
                 .map(|arg| arg.help_heading("Ownership Options")),
             )
             .args(watch_options())
+            .args(verbosity())
             .after_help(
                 "Nothing is printed when the program has no errors and no warnings. The exit status is 0 without \
                  errors, 1 with errors, and 2 for a usage error. With --print-instances the report goes to standard \

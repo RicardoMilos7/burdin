@@ -594,6 +594,7 @@ fn build_one(
         jobs: per_compile,
         sanitize: options.sanitize,
         fuzz_target: None,
+        verbose: false,
     };
     let FrontEnd { files, sources, program: checked, diags, .. } =
         front_end(&dir, &doc_options, &SourceOverrides::new())?;

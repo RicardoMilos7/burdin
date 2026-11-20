@@ -224,6 +224,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let mut compiled = Vec::new();
     for &index in &selected {

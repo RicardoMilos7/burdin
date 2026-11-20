@@ -44,6 +44,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         jobs: crate::jobs_or_default(None),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(front) => front,
