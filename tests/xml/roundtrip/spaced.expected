@@ -1,0 +1,7 @@
+<Config><name>  padded  </name><servers><item><host>s.example</host><port>8080</port><tls>true</tls><ratio>3</ratio></item></servers><protocol><Both><item>1</item><item>2</item></Both></protocol><backup><None/></backup><weights/><note>s</note></Config>
+name="  padded  " servers=1 note='s'
+protocol=Both 1 2
+backup=none
+weights=0
+a=none
+first=s.example 8080 true 3

@@ -1,0 +1,4 @@
+row 1 (2 fields): [a|b]
+row 2 (2 fields): [1|2]
+error: line 3, column 4: unexpected quote in an unquoted field
+rows=2

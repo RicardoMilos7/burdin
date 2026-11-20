@@ -1,0 +1,206 @@
+//@ run
+//> <Config><name>edge &amp; co</name><servers><item><host>a.example</host><port>80</port><tls>false</tls></item><item><host>b.example</host><port>443</port><tls>true</tls></item></servers><protocol><Both><item>80</item><item>443</item></Both></protocol><backup><None/></backup><weights><entry><key>a</key><value>1</value></entry></weights><note>é</note></Config>
+//> edge & co 2 é
+//> both 80 443
+//> no backup
+//> <Server>
+//>   <host>a</host>
+//>   <port>1</port>
+//>   <tls>true</tls>
+//> </Server>
+//> missing field 'servers'
+//> line 1, column 23: expected an integer at port
+//> unknown variant 'Ftp' of Protocol
+//> line 2, column 10: the closing tag </hos> does not match <host>
+//> <Outer><Value><None/></Value></Outer>
+//> <Outer><Pair><item><Some>1</Some></item><item><One>2</One></item></Pair></Outer>
+//> pair 1 2
+//> ok <a>x
+//> y
+//> z</a>
+//> ok <a/>
+//> ok <a b="1 2 3"/>
+//> ok <a>&#13;</a>
+//> err line 1, column 1: a DOCTYPE is not supported: DTDs and external entities are rejected
+//> err line 1, column 1: a DOCTYPE is not supported: DTDs and external entities are rejected
+//> err line 1, column 4: undefined entity '&x;': only the five predefined entities exist
+//> <?xml version="1.0" encoding="UTF-8"?><feed xmlns="urn:feed" version="1" xml:lang="en"><!-- built --><entry id="a&amp;b">hello &lt;world&gt;</entry><dc:title xmlns:dc="urn:dc"><![CDATA[a ]] b]]></dc:title></feed>
+//> <?xml version="1.0" encoding="UTF-8"?>
+//> <feed xmlns="urn:feed" version="1" xml:lang="en">
+//>   <!-- built -->
+//>   <entry id="a&amp;b">hello &lt;world&gt;</entry>
+//>   <dc:title xmlns:dc="urn:dc"><![CDATA[a ]] b]]></dc:title>
+//> </feed>
+//> true
+//> a ]] b
+//> true
+//> en
+//> urn:feed
+//> invalid element name 'a b'
+//> the character U+0000 cannot be written in XML
+//> a comment cannot contain '--' or end with '-'
+//> deep line 1, column 769: elements are nested more than 256 deep
+
+// The `xml` official package (issue #259; spec/serialization.md). The data model is the framework's; this file pins
+// how XML writes and reads it (elements only, `item`, `entry/key/value`, variants as elements), the DOM's builder and
+// namespace-aware lookup, the line-end and byte order mark handling that a fixture file cannot hold (the repository
+// stores LF only), writer errors, the rejection of a DOCTYPE, and a deeply nested input that must be an error rather
+// than a crash.
+
+use xml
+
+struct Server: Serialize, Deserialize, Debug {
+    host: String,
+    port: u16,
+    tls: bool,
+}
+
+enum Protocol: Serialize, Deserialize, Debug {
+    Http,
+    Https(u16),
+    Both(u16, u16),
+}
+
+struct Config: Serialize, Deserialize, Debug {
+    name: String,
+    servers: List<Server>,
+    protocol: Protocol,
+    backup: Option<Server>,
+    weights: Map<String, i32>,
+    note: char,
+}
+
+enum Inner: Serialize, Deserialize, Debug {
+    Unit,
+    One(i32),
+}
+
+enum Outer: Serialize, Deserialize, Debug {
+    Value(Option<i32>),
+    Pair(Option<i32>, Inner),
+}
+
+fn show(text: str) {
+    match xml.parse(text) {
+        Ok(doc) => println("ok {}", doc.to_xml().unwrap()),
+        Err(e) => println("err {}", e.to_string()),
+    }
+}
+
+fn main() {
+    let mut servers = List<Server>.new()
+    servers.push(Server { host: "a.example".to_string(), port: 80, tls: false })
+    servers.push(Server { host: "b.example".to_string(), port: 443, tls: true })
+    let mut weights = Map<String, i32>.new()
+    weights.insert("a".to_string(), 1)
+    let value = Config {
+        name: "edge & co".to_string(),
+        servers,
+        protocol: Protocol.Both(80, 443),
+        backup: None,
+        weights,
+        note: 'é',
+    }
+    let text = xml.to_string(value).unwrap()
+    println(text)
+
+    let read: Result<Config, DeError> = xml.from_str(text.as_str())
+    let back = read.unwrap()
+    println("{} {} {}", back.name, back.servers.len(), back.note)
+    match back.protocol {
+        Protocol.Both(first, second) => println("both {first} {second}"),
+        Protocol.Http => println("http"),
+        Protocol.Https(_port) => println("https"),
+    }
+    match back.backup {
+        Some(server) => println("backup {}", server.port),
+        None => println("no backup"),
+    }
+
+    let small = Server { host: "a".to_string(), port: 1, tls: true }
+    print(xml.to_string_pretty(small).unwrap())
+
+    let missing: Result<Config, DeError> = xml.from_str("<Config><name>edge</name></Config>")
+    println(missing.unwrap_err().to_string())
+    let wrong: Result<Server, DeError> = xml.from_str("<Server><host>h</host><port>x</port><tls>true</tls></Server>")
+    println(wrong.unwrap_err().to_string())
+    let variant: Result<Protocol, DeError> = xml.from_str("<Protocol><Ftp/></Protocol>")
+    println(variant.unwrap_err().to_string())
+    let closing: Result<Server, DeError> = xml.from_str("<Server>\n  <host>a</hos>\n</Server>")
+    println(closing.unwrap_err().to_string())
+
+    let nested = xml.to_string(Outer.Value(None)).unwrap()
+    println(nested)
+    let both = xml.to_string(Outer.Pair(Some(1), Inner.One(2))).unwrap()
+    println(both)
+    let again: Result<Outer, DeError> = xml.from_str(both.as_str())
+    match again {
+        Ok(Outer.Pair(value, inner)) => match value {
+            Some(n) => match inner {
+                Inner.One(m) => println("pair {} {}", n, m),
+                Inner.Unit => println("pair unit"),
+            }
+            None => println("pair none"),
+        }
+        Ok(_) => println("unexpected variant"),
+        Err(e) => println(e.to_string()),
+    }
+
+    // Line ends are normalized to a line feed, and a byte order mark is skipped.
+    show("<a>x\r\ny\rz</a>")
+    let mut bom = List<u8>.new()
+    bom.push(239)
+    bom.push(187)
+    bom.push(191)
+    let mark = from_utf8(bom[0..bom.len()]).unwrap()
+    let mut marked = mark.clone()
+    marked.push_str("<a/>")
+    show(marked.as_str())
+    show("<a b=\"1\r\n2\t3\"/>")
+    show("<a>&#13;</a>")
+
+    // A DOCTYPE is refused, so no entity is ever expanded.
+    show("<!DOCTYPE a [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><a>&x;</a>")
+    show("<!DOCTYPE a><a/>")
+    show("<a>&x;</a>")
+
+    // The builder, the serializer, and the namespace-aware lookup.
+    let mut root = xml.Element.new("feed").with_namespace("urn:feed")
+    root.set_attr("version", "1")
+    root.set_attr_ns("xml:lang", "http://www.w3.org/XML/1998/namespace", "en")
+    root.push_comment(" built ")
+    let entry = xml.Element.new("entry").with_attr("id", "a&b").with_text("hello <world>")
+    root.push_child(entry)
+    let mut title = xml.Element.new("dc:title")
+    title.set_namespace("urn:dc")
+    title.push_cdata("a ]] b")
+    root.push_child(title)
+    let doc = xml.Document.new(root).with_declaration()
+    println(doc.to_xml().unwrap())
+    print(doc.to_xml_pretty().unwrap())
+    let parsed = xml.parse(doc.to_xml_pretty().unwrap().as_str()).unwrap()
+    println("{}", parsed.to_xml_pretty().unwrap() == doc.to_xml_pretty().unwrap())
+    println("{}", parsed.root.child_ns("urn:dc", "title").unwrap().text())
+    println("{}", parsed.root.child_ns("urn:feed", "title").is_none())
+    println("{}", parsed.root.attr_ns("http://www.w3.org/XML/1998/namespace", "lang").unwrap())
+    println("{}", parsed.root.lookup_namespace("").unwrap())
+
+    // The writer reports what XML cannot hold.
+    println("{}", xml.Element.new("a b").to_xml().unwrap_err().to_string())
+    println("{}", xml.Element.new("a").with_text("x\0y").to_xml().unwrap_err().to_string())
+    let mut dashes = xml.Element.new("a")
+    dashes.push_comment("a--b")
+    println("{}", dashes.to_xml().unwrap_err().to_string())
+
+    // A very deep document is an error and never overflows the stack.
+    let mut deep = String.new()
+    let mut i: usize = 0
+    while i < 100000 {
+        deep.push_str("<a>")
+        i = i + 1
+    }
+    match xml.parse(deep.as_str()) {
+        Ok(_) => println("deep parsed"),
+        Err(e) => println("deep {}", e.to_string()),
+    }
+}

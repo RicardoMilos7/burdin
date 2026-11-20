@@ -1,0 +1,10 @@
+name: "one two\nthree four"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="one two\nthree four" servers=0 note=z
+protocol=Http
+backup=none
+weights=0

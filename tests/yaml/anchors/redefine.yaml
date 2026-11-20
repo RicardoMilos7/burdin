@@ -1,0 +1,10 @@
+name: redefined anchors
+servers: []
+protocol: Http
+backup: null
+weights:
+  one: &v 1
+  two: *v
+  three: &v 3
+  four: *v
+note: z

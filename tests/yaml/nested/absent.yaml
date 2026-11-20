@@ -1,0 +1,14 @@
+# Every Option and every collection is empty or absent.
+grid: {rows: []}
+rows: []
+pair:
+  - -1
+  - ''
+flag:
+ratio: 1e-3
+big: 0
+small: 127
+raw: []
+unit:
+inf: -.inf
+nan: .nan

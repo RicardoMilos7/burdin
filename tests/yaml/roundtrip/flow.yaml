@@ -1,0 +1,4 @@
+{name: flow, servers: [{host: "a", port: 1, tls: true, ratio: 2.5e1},
+  {host: 'b', port: 0x1F, tls: false, ratio: .5}],   # a comment inside
+ protocol: {Https: 443}, backup: {host: c, port: 8, tls: false, ratio: -1},
+ weights: {x: 7, y: 8,}, note: "x"}

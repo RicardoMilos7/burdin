@@ -7,7 +7,8 @@ What it checks:
   * `burdin new app` creates exactly burdin.toml, src/main.bd, and .gitignore, with the documented contents, and
     prints one line naming the package;
   * the new package builds, runs, and prints its greeting (`burdin run`), and `burdin test` accepts it;
-  * the executable `burdin build .` leaves in the package directory is covered by its .gitignore;
+  * the executable `burdin build .` leaves in the package directory is covered by its .gitignore (the cached copy
+    under `target/` is ignored by `/target/`, `spec/target.md` TG1);
   * an existing directory (empty or not), an existing file, and an existing package are refused with exit status 2,
     and the refusal leaves what was there untouched;
   * a nested path creates its parent directories and names the package after the last component;
@@ -80,10 +81,15 @@ with harness.temporary_dir("burdin-new-") as work:
         check(harness.text(ran.stdout).strip() == "hello, world", f"`burdin run app` printed {harness.text(ran.stdout)!r}")
         tested = harness.run([burdin, "test", app], cwd=work)
         check(tested.returncode == 0, f"`burdin test app` failed: {harness.text(tested.stderr)[:400]}")
-        # `burdin build .` leaves the executable in the package directory, and the .gitignore names it.
+        # `burdin build .` leaves the executable in the package directory, and the .gitignore names it. The build also
+        # fills `target/` with the cached artifact (`spec/target.md`, TG1), which `/target/` ignores as a whole.
         built = harness.run([burdin, "build", ".", "--release"], cwd=app)
         check(built.returncode == 0, f"`burdin build .` failed: {harness.text(built.stderr)[:400]}")
-        left = [name for name in files_under(app) if name not in (".gitignore", "burdin.toml", "src/main.bd")]
+        left = [
+            name
+            for name in files_under(app)
+            if name not in (".gitignore", "burdin.toml", "src/main.bd") and not name.startswith("target/")
+        ]
         ignored = harness.read_text(app / ".gitignore").split("\n")
         check(len(left) == 1, f"`burdin build .` left {left}, expected one executable")
         check(

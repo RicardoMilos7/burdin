@@ -618,11 +618,13 @@ with harness.temporary_dir("burdin-runner-") as work:
     expect_status("failed (single file)", 2)
     expect_contains("failed (single file)", "needs a package directory", err)
 
-    # A green suite with no record leaves nothing behind.
+    # A green suite with no record leaves no record behind. The run does leave its cached test binary under `target/`
+    # (`spec/target.md`, TG1), so the record is what a green run must not write.
     clean = work / "clean"
     shutil.copytree(fixtures / "parallel", clean, ignore=shutil.ignore_patterns("target"))
     run_driver(burdin, "test", str(clean), "-j", "2")
-    expect_equal("failed (a green run writes nothing)", (clean / "target").exists(), False)
+    clean_record = clean / "target" / "burdin" / "debug" / "test-failed.txt"
+    expect_equal("failed (a green run writes nothing)", clean_record.exists(), False)
 
     # --- shards (issue #641) --------------------------------------------------------
 

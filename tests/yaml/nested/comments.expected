@@ -1,0 +1,26 @@
+grid:
+  rows:
+    - - 1
+      - 2
+    - - 3
+rows:
+  - id: 7
+    tags:
+      - "a # not a comment"
+      - b#c
+      - d#e
+pair:
+  - 0
+  - x
+flag: false
+ratio: 2
+big: 1
+small: 0
+raw:
+  - 1
+  - 2
+  - 3
+unit: null
+inf: .inf
+nan: .nan
+grid=2 rows=1 raw=3 pair=0 x
