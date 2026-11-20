@@ -1,0 +1,153 @@
+//@ run
+//> name = "edge"
+//> note = "é"
+//> 
+//> [[servers]]
+//> host = "a.example"
+//> port = 80
+//> tls = false
+//> 
+//> [[servers]]
+//> host = "b.example"
+//> port = 443
+//> tls = true
+//> 
+//> [protocol]
+//> Both = [80, 443]
+//> 
+//> [backup]
+//> host = "c.example"
+//> port = 8080
+//> tls = true
+//> 
+//> [weights]
+//> a = 1
+//> edge 2 é
+//> both 80 443
+//> backup 8080
+//> name = "none"
+//> protocol = "Http"
+//> note = "x"
+//> 
+//> [[servers]]
+//> host = "d"
+//> port = 9
+//> tls = false
+//> 
+//> [weights]
+//> missing field 'backup'
+//> line 1, column 8: expected a string, found an integer at name
+//> unknown variant 'Ftp' of Protocol at protocol
+//> line 3, column 12: expected a variant: a string or a table with one key at protocol
+//> line 2, column 8: expected one character at note
+//> when = 1979-05-27T07:32:00.5Z
+//> 
+//> [[list]]
+//> x = 1
+//> 
+//> [[list]]
+//> x = 2
+//> line 2, column 1: duplicate key 'a'
+
+// The `toml` official package (issue #256; spec/toml.md). The data model is the framework's; this file pins how TOML
+// writes it (the canonical form of TOML13: the scalars of a table first, then its tables as sections, and a non-empty
+// array of tables as `[[path]]`), how it reads it back, and the errors a reader reports with their line, column, and
+// path. A datetime and an array of tables round-trip through `parse` and `render`, because TOML's datetime has no
+// framework shape.
+
+use toml
+
+struct Server: Serialize, Deserialize, Debug {
+    host: String,
+    port: u16,
+    tls: bool,
+}
+
+enum Protocol: Serialize, Deserialize, Debug {
+    Http,
+    Https(u16),
+    Both(u16, u16),
+}
+
+struct Config: Serialize, Deserialize, Debug {
+    name: String,
+    servers: List<Server>,
+    protocol: Protocol,
+    backup: Option<Server>,
+    weights: Map<String, i32>,
+    note: char,
+}
+
+fn main() {
+    let mut servers = List<Server>.new()
+    servers.push(Server { host: "a.example".to_string(), port: 80, tls: false })
+    servers.push(Server { host: "b.example".to_string(), port: 443, tls: true })
+    let mut weights = Map<String, i32>.new()
+    weights.insert("a".to_string(), 1)
+    let backup = Some(Server { host: "c.example".to_string(), port: 8080, tls: true })
+    let value = Config {
+        name: "edge".to_string(),
+        servers,
+        protocol: Protocol.Both(80, 443),
+        backup,
+        weights,
+        note: 'é',
+    }
+    let text = toml.to_string(value).unwrap()
+    print(text)
+    let read: Result<Config, DeError> = toml.from_str(text.as_str())
+    let back = read.unwrap()
+    println("{} {} {}", back.name, back.servers.len(), back.note)
+    match back.protocol {
+        Protocol.Both(first, second) => println("both {first} {second}"),
+        Protocol.Http => println("http"),
+        Protocol.Https(_port) => println("https"),
+    }
+    match back.backup {
+        Some(server) => println("backup {}", server.port),
+        None => println("no backup"),
+    }
+
+    let mut no_servers = List<Server>.new()
+    no_servers.push(Server { host: "d".to_string(), port: 9, tls: false })
+    let no_weights = Map<String, i32>.new()
+    let without = Config {
+        name: "none".to_string(),
+        servers: no_servers,
+        protocol: Protocol.Http,
+        backup: None,
+        weights: no_weights,
+        note: 'x',
+    }
+    let text2 = toml.to_string(without).unwrap()
+    print(text2)
+    let missed: Result<Config, DeError> = toml.from_str(text2.as_str())
+    println(missed.unwrap_err().to_string())
+
+    let wrong: Result<Config, DeError> = toml.from_str(
+        "name = 1\nnote = 'x'\nprotocol = 'Http'\nservers = []\nweights = {{}}\nbackup = {{ host = 'b', port = 1, tls = true }}\n",
+    )
+    println(wrong.unwrap_err().to_string())
+    let variant: Result<Config, DeError> = toml.from_str(
+        "name = 'a'\nnote = 'x'\nprotocol = 'Ftp'\nservers = []\nweights = {{}}\nbackup = {{ host = 'b', port = 1, tls = true }}\n",
+    )
+    println(variant.unwrap_err().to_string())
+    let shape: Result<Config, DeError> = toml.from_str(
+        "name = 'a'\nnote = 'x'\nprotocol = {{ A = 1, B = 2 }}\nservers = []\nweights = {{}}\nbackup = {{ host = 'b', port = 1, tls = true }}\n",
+    )
+    println(shape.unwrap_err().to_string())
+    let longer: Result<Config, DeError> = toml.from_str(
+        "name = 'a'\nnote = 'xy'\nprotocol = 'Http'\nservers = []\nweights = {{}}\nbackup = {{ host = 'b', port = 1, tls = true }}\n",
+    )
+    println(longer.unwrap_err().to_string())
+
+    let document = "when = 1979-05-27T07:32:00.5Z\nlist = [ {{ x = 1 }}, {{ x = 2 }} ]\n"
+    match toml.parse(document) {
+        Ok(value) => print(toml.render(value).unwrap()),
+        Err(e) => println(e.to_string()),
+    }
+    match toml.parse("a = 1\na = 2\n") {
+        Ok(_value) => println("unexpected"),
+        Err(e) => println(e.to_string()),
+    }
+}

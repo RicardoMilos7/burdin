@@ -1,0 +1,17 @@
+[point]
+x = 1
+y = 2
+
+[empty]
+
+[nested]
+list = [1, 2]
+
+[nested.outer]
+inner = "deep"
+
+[dotted]
+
+[dotted.a]
+b = 1
+c = 2

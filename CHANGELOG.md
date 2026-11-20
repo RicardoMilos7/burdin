@@ -24,6 +24,18 @@ close-out checklist in `AGENTS.md`).
   through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
   from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
   compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
+- The `toml` official package (stage 3, issue #256; `spec/toml.md`, decisions TOML1-TOML16): TOML 1.0.0 reading and
+  writing on the serialization framework, as `packages/toml`. `parse` reads a document into a `Value` tree that keeps
+  the position of every key and value, and `render` writes the canonical form (a table's scalars first, then its
+  tables as sections, and a non-empty all-table array as `[[path]]`; sorted map keys; basic-string escaping; floats
+  and datetimes in the form TOML 1.0.0 reads back). `to_string`/`from_str` map a struct, map, or payload variant
+  through the framework: `Option.Some` is the value, a unit variant its name, a payload variant `{ Name = value }`
+  or `{ Name = [values] }`. The parser rejects everything TOML 1.0.0 rejects, with the message at the place the rule
+  is broken (duplicate and redefined tables, closed inline tables, arrays of tables versus static arrays, integer and
+  float ranges, datetime fields, escapes), and the reader reports a type mismatch at the value's line and column plus
+  the framework's path. `tests/check_toml.py` drives it through `tests/toml/` (round trips, spans, malformed input,
+  the framework's mapping, and writing) together with `burdin add toml` and its official pin,
+  `tests/s3_serialize/toml` is the conformance case, and every CI job runs it.
 
 ## 0.1.1 — 2026-11-20
 

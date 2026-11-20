@@ -46,8 +46,9 @@ tests/
   s3_bench/            stage 3: `bench` blocks, `black_box`, and `burdin bench` (spec/bench.md)
   s3_scripts/          stage 3: the shebang line of a single-file script and its inline dependency manifest
   s3_serialize/        stage 3: the serialization framework's data model, error paths, test format, and the
-                       `Serialize`/`Deserialize` derives (spec/serialization.md); `s3_serialize/json` is the
-                       conformance case of the `json` package, a package that depends on it with `json = true`
+                       `Serialize`/`Deserialize` derives (spec/serialization.md); `s3_serialize/json` and
+                       `s3_serialize/toml` are the conformance cases of the `json` and `toml` packages, packages that
+                       depend on them with `json = true` and `toml = true`
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by
