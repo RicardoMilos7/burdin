@@ -341,8 +341,20 @@ manifests. A third source is the official packages that ship with the compiler, 
 with the compiler, and `burdin.lock` pins the checksum of its files. The first one is `json`, the JSON format on the
 serialization framework (`packages/json/README.md`). The compiler finds them through `BURDIN_PACKAGES`, then
 `packages/` beside the directory of its executable (or one level up), and the release archive and the installers put the folder
-there. There is no package registry yet. [`spec/packages.md`](spec/packages.md) is the specification and
-`tests/check_packages.py` checks it.
+there. There is no package registry yet.
+
+The dependency tables select which packages a build loads. `[features]` declares named features (each a list of other
+features, `dep:x` to enable an optional dependency, or `x/feature` to forward to a dependency), with `default` enabled
+unless `--no-default-features`; `--features <list>` and `--all-features` add more, on `build`, `run`, `check`, `test`,
+`bench`, and `fuzz` (and `burdin watch` passes them to each run). A package with a `[features]` table or an optional
+dependency gets a generated `features` module of `const <name>: bool` constants, so code branches with `comptime if
+features.<name>`. Features unify across the graph: one package has one feature set, the union of every request.
+`[dev-dependencies]` are loaded only by `test`, `bench`, `fuzz`, and `check --tests`, and a test reaches one by its
+package name (`testkit.answer()`); a normal build does not read them. `[target.'cfg(...)'.dependencies]` applies only on
+the host platform (`unix`, `windows`, `target_os`, `target_arch`, `target_family`, `all`/`any`/`not`). `burdin.lock`
+pins the potential graph — optional, dev, and every target's dependencies — so features and the platform never rewrite
+it. [`spec/packages.md`](spec/packages.md) is the specification, `tests/check_packages.py` checks the sources and the
+lockfile, and `tests/check_features.py` checks the tables and features.
 
 `burdin lsp` is the language server: it speaks the Language Server Protocol over standard input and output (`--stdio` is
 accepted and changes nothing) and exits 0 after `shutdown` and `exit`, 1 otherwise. Editors start it themselves;

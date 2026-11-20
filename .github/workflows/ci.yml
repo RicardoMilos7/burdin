@@ -327,6 +327,13 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python3 tests/check_features.py
+
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
       - name: Check the json package
@@ -717,6 +724,13 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
+
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python3 tests/check_features.py
 
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
@@ -1115,6 +1129,13 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
+
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python tests/check_features.py
 
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.

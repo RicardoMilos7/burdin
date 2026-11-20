@@ -49,6 +49,9 @@ pub(crate) struct Args {
     pub(crate) release: bool,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// `--features`, `--no-default-features`, and `--all-features`: the features the entry package enables
+    /// (`spec/packages.md`, PKG23, PKG25).
+    pub(crate) features: burdin_query::package::FeatureRequest,
     /// Emit source-level debug information (DWARF in the object and the executable).
     pub(crate) debug: bool,
     /// Pass the linker's strip option (Unix `-s`; with MSVC, optimize for size).
@@ -208,6 +211,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--lto" => args.lto = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
+            "--features" => {
+                let list = option_value(&mut it, inline, a, "a list of features")?;
+                args.features.items.extend(burdin_query::features::split_request(&list));
+            }
+            "--no-default-features" => args.features.no_default_features = flag_without_value(a, inline)?,
+            "--all-features" => args.features.all_features = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
@@ -738,6 +747,7 @@ fn driver_main() -> ExitCode {
         report_clean: args.command == "build",
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         jobs: jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
@@ -863,6 +873,8 @@ pub(crate) struct CompileOptions<'a> {
     /// `--locked`: a `burdin.lock` that does not match the manifests is an error instead of being rewritten
     /// (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// The features the entry package enables (`spec/packages.md`, PKG23).
+    pub(crate) features: burdin_query::package::FeatureRequest,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
     pub(crate) jobs: usize,
     /// The sanitizers to instrument for and link (`--sanitize`, `spec/sanitizers.md`).
@@ -943,7 +955,7 @@ pub(crate) fn front_end(
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
     sync_dependencies(target, options.locked)?;
-    let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
+    let mut loaded = match package::load_selected(target, mode, &options.features) {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");

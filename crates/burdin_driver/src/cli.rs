@@ -240,6 +240,24 @@ fn locked() -> Arg {
     flag("locked", "Fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)")
 }
 
+/// `--features`: the features the package enables (`spec/packages.md`, PKG23). It may repeat.
+fn features_option() -> Arg {
+    option(
+        "features",
+        "list",
+        "Enable these features of the package, separated by commas or spaces; may repeat (spec/packages.md)",
+    )
+    .action(ArgAction::Append)
+}
+
+fn no_default_features() -> Arg {
+    flag("no-default-features", "Do not enable the package's default feature (spec/packages.md, PKG23)")
+}
+
+fn all_features() -> Arg {
+    flag("all-features", "Enable every feature and optional dependency of the package (spec/packages.md, PKG23)")
+}
+
 fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
 }
@@ -285,6 +303,9 @@ fn build() -> Command {
                 release("Build with optimizations"),
                 debug_info(),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 flag("strip", "Strip the executable (with MSVC, optimize for size)"),
                 flag("lto", "Emit bitcode and link with -flto (needs an LLVM compiler driver)"),
                 flag("pgo-generate", "Instrument the program for profile-guided optimization"),
@@ -335,6 +356,9 @@ fn run() -> Command {
                 release("Build with optimizations"),
                 debug_info(),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 link_lib(),
                 sanitize(),
                 compile_jobs(),
@@ -425,6 +449,9 @@ fn test() -> Command {
                     release("Build the tests with optimizations"),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
                     comptime_steps(),
@@ -461,6 +488,9 @@ fn fuzz() -> Command {
                     release("Build the target with optimizations"),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     compile_jobs(),
                     comptime_steps(),
                 ]
@@ -519,6 +549,9 @@ fn bench() -> Command {
                     release("Accepted for symmetry: benches always build with optimizations"),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     jobs("Compile on at most n threads; benches are measured one at a time"),
                     comptime_steps(),
                 ]
@@ -539,6 +572,9 @@ fn check() -> Command {
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 option(
                     "format",
                     "fmt",

@@ -10,7 +10,8 @@ What it checks:
   * the screen is cleared before each run unless `--no-clear`;
   * `burdin build --watch` rebuilds without being triggered by its own executable;
   * `burdin test --watch` reruns the tests of the changed module and its dependents before the whole suite;
-  * `burdin watch run` restarts the program after a change and prints its new output;
+  * `burdin watch run` restarts the program after a change and prints its new output, with the feature flags it was
+    given (`spec/packages.md`, PKG25);
   * the usage errors: `--no-clear` without `--watch`, a missing target, and an unknown directory.
 """
 
@@ -212,6 +213,25 @@ with harness.temporary_dir("burdin-watch-") as work:
         check(runner.wait_until(lambda t: "second" in t), f"the program was not restarted:\n{runner.output()}")
     finally:
         runner.stop()
+
+    # Feature flags reach each run `watch` starts (spec/packages.md, PKG25).
+    write(
+        work / "featured" / "burdin.toml",
+        '[package]\nname = "featured"\nversion = "0.1.0"\n\n[features]\ndefault = []\nextra = []\n',
+    )
+    write(
+        work / "featured" / "src" / "main.bd",
+        'use features.extra\n\nfn main() {\n    comptime if extra {\n        println("with extra")\n    } else '
+        '{\n        println("base")\n    }\n}\n',
+    )
+    featured = Watch(["watch", "run", str(work / "featured"), "--features", "extra", "--no-clear"], work)
+    try:
+        check(
+            featured.wait_until(lambda t: "with extra" in t and "the program exited with exit status 0" in t),
+            f"`watch run --features extra` did not pass the flag to its run:\n{featured.output()}",
+        )
+    finally:
+        featured.stop()
 
     # --- usage errors -----------------------------------------------------------------------------------------------
     flagless = harness.run([burdin, "check", str(pkg), "--no-clear"], cwd=work)

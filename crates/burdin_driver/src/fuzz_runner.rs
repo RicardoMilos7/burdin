@@ -38,7 +38,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked) {
         return code;
     }
-    let workspace = match crate::package::load_for_tests(&args.target) {
+    let workspace = match crate::package::load_selected(&args.target, EntryMode::Fuzz, &args.features) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -79,6 +79,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         jobs: crate::jobs_or_default(args.jobs),
         sanitize,
         fuzz_target: Some(name),

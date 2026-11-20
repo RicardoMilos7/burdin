@@ -179,11 +179,7 @@ pub struct Analysis {
 impl Db {
     /// Opens a package directory or a single `.bd` file from disk, with the embedded standard library.
     pub fn open(target: &Path, options: Options) -> Result<Db, String> {
-        let workspace = if options.mode == burdin_sema::EntryMode::Build {
-            package::load(target)?
-        } else {
-            package::load_for_tests(target)?
-        };
+        let workspace = package::load_selected(target, options.mode, &package::FeatureRequest::default())?;
         Db::from_workspace(&workspace, &HashMap::new(), options)
     }
 
@@ -227,7 +223,7 @@ impl Db {
         for package in &workspace.packages {
             let mut modules = Vec::new();
             for module in &package.modules {
-                let text = match (overrides.get(&module.file), module.text) {
+                let text = match (overrides.get(&module.file), &module.text) {
                     (Some(text), _) => text.clone(),
                     (None, Some(text)) => text.to_string(),
                     (None, None) => std::fs::read_to_string(&module.file)

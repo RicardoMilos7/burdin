@@ -171,8 +171,9 @@ impl Plan {
         let mut pending = vec![dir.clone()];
         while let Some(current) = pending.pop() {
             let Ok(manifest) = package::parse_manifest(&current.join("burdin.toml")) else { continue };
-            for (_, source) in manifest.deps {
-                if let package::DepSource::Path(path) = source {
+            // Every declared path dependency is watched, whatever the build selects: a feature may turn it on.
+            for dep in manifest.deps.into_iter().chain(manifest.dev_deps) {
+                if let package::DepSource::Path(path) = dep.source {
                     let dep = absolute(&current.join(path));
                     if dep.is_dir() && !roots.iter().any(|r| dep.starts_with(r) || r.starts_with(&dep)) {
                         roots.push(dep.clone());

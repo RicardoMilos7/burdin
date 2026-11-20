@@ -4,6 +4,22 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Dependency tables, features, and targets (issues #340 and #341, 2026-11-20).** A manifest now also reads
+`[features]`, `[target.'cfg(...)'.dependencies]` and `.dev-dependencies`, and `[dev-dependencies]`
+(`crates/burdin_query/src/package.rs`, `cfg.rs`, `features.rs`; `spec/packages.md`, PKG19-PKG27). The loader reads a
+dependency only when its table, its predicate, and its features select it, and settles one feature set per package as
+a fixed point over the active graph; `build`, `run`, `check`, `test`, `bench`, and `fuzz` take `--features`,
+`--no-default-features`, and `--all-features`, and `burdin watch` passes them to each run. Decided: code reads a
+feature as a constant of a generated `features` module (`const fast: bool = true`), so no compiler stage changed — the
+loader writes the module in memory and it is checked like a source module. A test reaches a dev-dependency by package
+name (`testkit.answer()`), because test items are stripped from a normal build while a module-level `use` would be read
+by every build. `burdin.lock` still pins the potential graph (the resolver walks every declared dependency plus the entry
+package's dev-dependencies), so one lockfile serves every platform and feature set. Not done: `burdin add
+--dev/--optional/--target`, weak features (`dep?/feature`), and a `use` of a dependency that is declared but inactive
+still reports "unknown module" with no hint. Tests: `tests/check_features.py` (black box),
+`tests/check_watch.py` (the pass-through), the loader's unit tests, and
+`crates/burdin_pkg/src/resolve.rs` (`the_lockfile_pins_the_potential_graph`).
+
 **Watch mode (issue #632, 2026-11-19).** `burdin watch [check|build|test|run] <target>` and `--watch`/`--no-clear` on
 `build`, `run`, `test`, and `check` (`crates/burdin_driver/src/watch.rs`, `spec/watch.md`, `tests/check_watch.py`). It polls
 modification times (no new dependency) and reruns the command as a child `burdin`; `run` builds to a temporary file and

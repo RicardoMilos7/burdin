@@ -4,7 +4,9 @@ A package's `burdin.toml` names its dependencies; a dependency comes from a dire
 repository (`git`), or from the official packages that ship with the compiler (`name = true`), and `burdin.lock`
 records the exact packages a build used, so the same checkout builds the same program tomorrow and on another
 machine. `burdin add` edits the manifest and the lockfile together (stage 3; issues
-#238 and #239). This file is the exact behavior, with a rule ID for each point and the tests that cover it.
+#238 and #239). Features, dev-dependencies, and platform-specific dependencies (issues #340 and #341) select which of
+those dependencies a build loads (PKG19-PKG27). This file is the exact behavior, with a rule ID for each point and the
+tests that cover it.
 
 The pieces live where the behavior belongs: the manifest parser and the lockfile format in the package loader
 (`crates/burdin_query/src/package.rs`, `crates/burdin_query/src/lockfile.rs`), which reads a git dependency from the
@@ -133,7 +135,7 @@ graph (there is nothing to pin) and fails for one with a git or an official pack
 **PKG9. The loader reads the lockfile.** The package loader finds a git dependency in the checkout of the commit the
 entry package's lockfile records for its repository and reference, everywhere in the graph. A git dependency the
 lockfile does not record, or whose checkout is missing, is a load error that says to run `burdin build`; the loader
-itself never runs git. Tests: `crates/burdin_pkg/tests/git.rs`.
+itself never runs git. Only an active dependency is loaded (PKG24), so only an active one needs its checkout. Tests: `crates/burdin_pkg/tests/git.rs`.
 
 **PKG10. A lockfile from elsewhere.** A malformed lockfile is an error naming its line; a lockfile with another
 format `version` is refused (`lockfile format version 2 is not supported`) and never overwritten. Keys the compiler
@@ -237,10 +239,113 @@ help line: `` `json` is an official package: add `json = true` to [dependencies]
 one-file target and a script have no manifest to add it to, so they get no such help. Tests:
 `tests/check_packages.py`, the checker's unit tests (`unknown_module_names_an_official_package`).
 
+## Dependency tables, features, and targets
+
+A build selects a part of the graph the manifests describe: the dependencies its features enable, the dev-dependencies
+of a test build, and the dependencies of its own platform. The lockfile does not change with that selection (PKG27).
+
+**PKG19. The dependency tables.** A manifest has three kinds of dependency table: `[dependencies]` (every build),
+`[dev-dependencies]` (the entry package's test, bench, and fuzz builds, PKG20), and `[target.'cfg(<predicate>)'.dependencies]`
+or `[target.'cfg(<predicate>)'.dev-dependencies]` (the builds on the platforms the predicate holds for, PKG21). An entry
+takes the source of PKG1-PKG2 and PKG15, and the optional keys `optional = true|false` (default `false`),
+`default-features = true|false` (default `true`), and `features = ["a", "b"]` (default none). Other keys are ignored.
+A name may be declared once per manifest, in any table: a second declaration is an error naming its line. `optional`
+on a dev-dependency is an error, because a feature cannot enable a dev-dependency. A `features` list or a
+`default-features` key is checked when the dependency is active (PKG24). Tests: the loader's unit tests
+(`dependency_tables_are_parsed`), `tests/check_features.py`.
+
+**PKG20. Dev-dependencies.** The entry package's dev-dependencies are loaded by the builds that compile its tests:
+`burdin test`, `burdin bench`, `burdin fuzz`, and `burdin check --tests`. In those builds they are visible to every module
+of the entry package, as its normal dependencies are: a test names one by its package name (`testkit.answer()`), because
+test items are stripped from a normal build while a module-level `use` would be read by every build. In every other
+build of the entry package (`build`, `run`, and `check` without `--tests`) their sources are not loaded: not read, not
+compiled, not checked, and not linked, so a dev-dependency whose source has a syntax error does not stop `burdin
+build`. Their manifests are still resolved for the lockfile (PKG27), so a missing path, an unreachable git repository,
+or a manifest that does not parse is an error in every build. A dependency's own dev-dependencies are never loaded, whatever the command: they are not part of the graph
+a dependency contributes. Tests: `tests/check_features.py`.
+
+**PKG21. Target-specific dependencies.** A `[target.'cfg(P)'...]` table applies on the host the compiler runs on, which is
+the target it builds for (`std/src/target.bd`). The predicate `P` is one of `unix` (Linux and macOS), `windows`,
+`target_os = "<os>"` (`linux`, `macos`, `windows`), `target_arch = "<arch>"` (`x86_64`, `aarch64`),
+`target_family = "unix"|"windows"`, `all(P, ...)`, `any(P, ...)`, or `not(P)`. A value that names no operating system or
+architecture the compiler knows is a valid predicate that is false. Other tables (a bare target triple, for example) are
+errors, and so is a predicate name that is none of these, or a malformed one; each is reported with its manifest line.
+A dependency whose predicate does not hold is not loaded, and its features and optional-ness do not matter (PKG24).
+Tests: the loader's unit tests (`cfg::tests::the_predicates_match_their_platforms`,
+`cfg::tests::combinators_compose`, `target_and_dev_dependencies_are_not_read_by_a_build`), `tests/check_features.py`.
+
+**PKG22. Declaring features.** The `[features]` table names the package's features: `name = ["item", ...]` lists what
+enabling the feature turns on. A feature name is an identifier that is not a keyword, because it names a constant of the
+`features` module (PKG26). An item is one of:
+
+- the name of a feature of this package;
+- `"dep:x"`, which enables the optional dependency `x`;
+- `"x/feature"`, which enables `feature` in the dependency `x`, and enables `x` as well when `x` is optional;
+- the name of an optional dependency, which enables it: every optional dependency is an implicit feature of its name.
+
+`default` is the feature enabled by default (PKG23); it is an ordinary feature in every other respect, and a package
+without it has no default features. A feature may enable features in a cycle. When the manifest is read, an item that is
+none of these is an error naming its line (`feature `fast` enables `ok`, which is not a feature or an optional
+dependency`); so is `dep:x` for a dependency that is not optional, `x/feature` for a name that is not a dependency, and
+a dev-dependency named by any item. A feature named like an optional dependency is an error, because the two share one
+constant. Tests: the loader's unit tests (`feature_tables_are_parsed_and_checked`), `tests/check_features.py`.
+
+**PKG23. Selecting features.** The features a build enables for the entry package are: `default`, when the package
+declares it and `--no-default-features` is not given; the features `--features` names; and, with `--all-features`,
+every declared feature and every optional dependency. `--features` takes a comma- or space-separated list and may repeat;
+each item is as in PKG22, and an item naming a feature the entry package does not declare is an error (`package `app` has
+no feature `x``). With `--all-features`, `--no-default-features` changes nothing. Tests: `tests/check_features.py`.
+
+**PKG24. Active dependencies and unification.** A dependency is active in a build when its table applies to the build
+(PKG20), its predicate holds (PKG21), and it is not optional or an enabled item names it (PKG22). An active dependency
+enables its `features` list, and `default` unless `default-features = false`. Features unify across the graph: a package
+has one feature set, the union of every request from the entry package and from every active dependent, and an enabled
+feature stays enabled. Enabling a feature can activate an optional dependency and request features of another, so the
+set is a fixed point: it is computed until no package gains a feature or a dependency. A request for a feature the
+dependency does not declare is an error, naming the dependency and the feature, when the dependency is active; a request
+for an inactive dependency is ignored. Dependency cycles in the active graph are errors (PKG1). Tests: the loader's unit
+tests (`features_unify_across_the_graph`; `target_and_dev_dependencies_are_not_read_by_a_build` for an inactive
+request), `tests/check_features.py`.
+
+**PKG25. The command line.** `build`, `run`, `check`, `test`, `bench`, and `fuzz` take `--features <list>`,
+`--no-default-features`, and `--all-features` (PKG23). A one-file target (a single `.bd` file or a script) has no features:
+these flags on one are an error with exit status 1. `burdin watch` passes them to each run it starts. Tests:
+`tests/check_features.py` (the flags and the refusal), `tests/check_watch.py` (the pass-through).
+
+**PKG26. The `features` module.** A package whose manifest has a `[features]` table, or an optional dependency, has a
+generated module `features`. It is written in memory and holds one constant per declared feature and per optional
+dependency, sorted by name, each true exactly when the build enables it:
+
+```text
+const default: bool = true
+const fast: bool = false
+const json: bool = true
+```
+
+A module's declarations are importable unless marked `priv`, and `pub` is written only before `use` (`spec/grammar.md`),
+so the constants carry no visibility word. Code reads one as `use features.fast` (or `use features` and then
+`features.fast`), and in `comptime if` (`spec/comptime.md`, CT5). The module is an ordinary module of its package: it is
+checked and documented with it. A source module named `features` in such a package is an error, because the name is
+taken: rename the module. A package with neither a `[features]` table nor an optional dependency has no such module,
+and `use features` in it is an unknown module. Tests: the loader's unit tests
+(`features::tests::the_module_lists_constants_sorted_and_once`), `tests/check_features.py`.
+
+**PKG27. The lockfile pins every package a build could use.** `burdin.lock` pins the potential graph, not the active one:
+every dependency of every package the graph reaches, optional ones and every target's included, plus the entry package's
+dev-dependencies and what they reach, but never a dependency's dev-dependencies (PKG20). Features, the platform, and the
+command never change the lockfile, so one lockfile serves every platform and every feature set. Every build resolves the
+potential graph, so a git dependency that is not active in a build is still fetched and checksummed (PKG8 applies to it)
+and needs the network the first time, but it is not loaded. A package's `dependencies` field lists the names the walk
+reaches from it: each of its normal, optional, and target dependencies, and, for the entry package only, its
+dev-dependencies. A dependency's own dev-dependencies appear nowhere in the lockfile. Tests: `tests/check_features.py`
+(the golden lockfile), `resolve.rs` (`the_lockfile_pins_the_potential_graph`).
+
 ## Not yet
 
 - Official packages in a script's inline manifest, a package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the
-  lockfile). Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
+  lockfile).
+- `burdin add --dev`, `--optional`, and `--target`: the manifest edit for the tables of PKG19 is by hand for now.
+- Weak features (`dep?/feature`), and a resolver that does not unify features across the graph. Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
   the lockfile (which re-resolves every git dependency).
 - A git dependency whose package is in a subdirectory of the repository, and `--offline`.
 - Doc tests build each example as its own package, so an example of a package with git dependencies resolves them

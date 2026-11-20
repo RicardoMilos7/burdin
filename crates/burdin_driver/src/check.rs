@@ -32,6 +32,8 @@ struct CheckArgs {
     tests: bool,
     /// `--locked`: refuse to update `burdin.lock`.
     locked: bool,
+    /// `--features`, `--no-default-features`, and `--all-features` (`spec/packages.md`, PKG25).
+    features: burdin_query::package::FeatureRequest,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
     comptime_steps: Option<u64>,
@@ -62,6 +64,12 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
+            "--features" => {
+                let list = option_value(&mut it, inline, a, "a list of features")?;
+                args.features.items.extend(burdin_query::features::split_request(&list));
+            }
+            "--no-default-features" => args.features.no_default_features = flag_without_value(a, inline)?,
+            "--all-features" => args.features.all_features = flag_without_value(a, inline)?,
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
@@ -122,6 +130,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         report_clean: true,
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
