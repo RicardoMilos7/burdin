@@ -5,6 +5,7 @@
 //! top of tests/run_tests.py.
 
 mod add;
+mod artifact;
 mod asm;
 mod bench_runner;
 mod bindgen;
@@ -1087,7 +1088,7 @@ pub(crate) fn compile(
             write_artifact(&emit.path(&output, emit::EmitKind::Tir), &text)?;
         }
     }
-    emit_program(&program, &sources, &loaded.stem, &output, options, &rust_libs)?;
+    write_executable(&program, &sources, &loaded, &files, &output, options, &rust_libs)?;
     let site = |span: burdin_diag::Span| {
         let file = sources.get(span.file);
         Site { file: file.path.clone(), line: file.line_col(span.lo).0 }
@@ -1104,6 +1105,57 @@ pub(crate) fn compile(
         fuzzes: program.fuzzes,
         fuzz_sites,
         build_inputs: program.build_inputs,
+    })
+}
+
+/// Writes the executable of the checked `program` to `output` (`spec/target.md`, TG4-TG6). A cacheable build copies
+/// the cached executable when its fingerprint matches; otherwise it links into a staging file and publishes that as
+/// the cache. Every other build links straight into `output`.
+fn write_executable(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    loaded: &package::Workspace,
+    files: &[(PathBuf, bool)],
+    output: &Path,
+    options: &CompileOptions,
+    rust_libs: &[String],
+) -> Result<(), ExitCode> {
+    let Some(plan) = artifact::Plan::for_build(loaded, files, sources, &program.build_inputs, rust_libs, options)
+    else {
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs);
+    };
+    if plan.is_fresh() {
+        return copy_executable(&plan.exe, output);
+    }
+    let Ok(staged) = plan.staging() else {
+        // A cache that cannot be created is not a failed build: link straight into the output, as an uncached
+        // build does.
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs);
+    };
+    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(code);
+    }
+    if plan.publish(&staged).is_ok() {
+        return copy_executable(&plan.exe, output);
+    }
+    // A cache that cannot be written is not a failed build: the staged program is the output.
+    let result = copy_executable(&staged, output);
+    let _ = std::fs::remove_file(&staged);
+    result
+}
+
+/// Copies a built executable to where the user asked for it, under the name the linker would have given it. The MSVC
+/// linker appends `.exe` to an output name with no extension, so `-o app` is `app.exe` on Windows. Copying a file onto
+/// itself is nothing to do.
+fn copy_executable(from: &Path, to: &Path) -> Result<(), ExitCode> {
+    let to = if cfg!(windows) && to.extension().is_none() { to.with_extension("exe") } else { to.to_path_buf() };
+    if from == to {
+        return Ok(());
+    }
+    std::fs::copy(from, &to).map(|_| ()).map_err(|e| {
+        eprintln!("error: cannot write {}: {e}", to.display());
+        ExitCode::from(2)
     })
 }
 

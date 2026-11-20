@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Target directory and artifact cache (issue #353, `spec/target.md`, TG1-TG10): `build`, `run`, and `test` of a package
+  directory keep the executable they link under `<package>/target/burdin/<profile>/bin/` (the test binary under `test/`),
+  next to a fingerprint file that lists every input (the compiler, the host, the flags, each manifest and source as
+  checked, the build inputs, and the Rust shim libraries) and the executable's SHA-256. A build whose fingerprint matches
+  copies the cached executable instead of linking again; the front end always runs, so diagnostics do not change. Debug
+  (`-g`), `--emit`, `--emit-ir`, and `--pgo-use` builds, bench and fuzz builds, and one-file targets are not cached. An
+  `-o` copy gets the `.exe` suffix the MSVC linker would have added. `tests/check_target.py` checks it with a broken
+  linker.
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
   the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
   package in it). `burdin add

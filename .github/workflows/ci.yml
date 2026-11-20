@@ -403,6 +403,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_watch.py
 
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python3 tests/check_target.py
+
       - name: Check host target
         if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
@@ -805,6 +811,12 @@ jobs:
       - name: Check watch mode
         if: matrix.part == 'tools'
         run: python3 tests/check_watch.py
+
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python3 tests/check_target.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -1215,6 +1227,12 @@ jobs:
       - name: Check watch mode
         if: matrix.part == 'tools'
         run: python tests/check_watch.py
+
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python tests/check_target.py
 
       - name: Check host target
         if: matrix.part == 'unit'
