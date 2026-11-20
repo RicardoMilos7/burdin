@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Package templates (issue #354): `burdin new <name> --lib` creates a library, `src/lib.bd` with one function and a
+  `test` that `burdin test` runs, and a `.gitignore` for `target/` only; `--bin` (the default) is the program with
+  `src/main.bd`. `burdin init [<dir>] [--lib | --bin]` writes the same package into an existing directory (the working
+  directory by default) and keeps its other files. `init` refuses, before writing anything, when `burdin.toml`, the root
+  module of its kind, or `.gitignore` already exists; `new` still refuses any existing path. The unit tests are in
+  `crates/burdin_driver/src/new.rs`, and `tests/check_new.py` checks both commands in every CI job.
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
   the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
   package in it). `burdin add
