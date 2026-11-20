@@ -67,13 +67,20 @@ def run(*args, cwd, timeout=300):
 
 def sanitizer_env():
     """The environment a sanitized program runs in. On macOS, AddressSanitizer symbolizes through `atos`, a
-    separate process that can hang on a runner where nothing is watching; the checks read the report's header, not
-    its frames, so it is asked not to symbolize."""
+    separate process that can hang on a runner where nothing is watching, so it is asked not to symbolize; it also
+    reports what it initialized, because a sanitizer that never initialized shows up as a silent crash or a hang and
+    its first lines on standard error are what says so."""
     env = dict(os.environ)
     if system == "Darwin":
-        env["ASAN_OPTIONS"] = "symbolize=0"
-        env["TSAN_OPTIONS"] = "symbolize=0"
+        env["ASAN_OPTIONS"] = "symbolize=0:verbosity=1"
+        env["TSAN_OPTIONS"] = "symbolize=0:verbosity=1"
     return env
+
+
+def brief(code, err):
+    """Exit status and the first lines of standard error, for a failure's detail."""
+    lines = [line for line in err.strip().split("\n") if line.strip()][:8]
+    return f"exit {code}: " + " | ".join(lines) if lines else f"exit {code} with no standard error"
 
 
 def expect(description: str, condition: bool, detail: str = "") -> None:
@@ -123,9 +130,9 @@ with harness.temporary_dir("burdin-sanitize-") as work:
         )
         expect(f"{what}: builds", code == 0, f"exit status {code}: {err[-1500:]}")
         if code == 0:
-            code, out, err = call([exe], work, timeout=120, env=sanitizer_env())
-            expect(f"{what}: reported", code != 0, f"exit status {code}")
-            expect(f"{what}: reported", report in err, err[-1500:])
+            code, out, err = call([exe], work, timeout=60, env=sanitizer_env())
+            expect(f"{what}: reported", code != 0, brief(code, err))
+            expect(f"{what}: reported", report in err, brief(code, err))
 
     # Safe code that borrows temporaries frees them: the program runs clean under every leak detector the host has.
     expected = "false true\n2 2\n1\n2\n1\n2\nk 1\n8\ntrue\ntrue\nfinished\n"
@@ -141,8 +148,12 @@ with harness.temporary_dir("burdin-sanitize-") as work:
         code, _, err = run(burdin, "build", str(fixtures / "heap_overflow.bd"), "--sanitize=address", "-o", str(exe), cwd=work)
         expect("build --sanitize=address", code == 0, err)
         if code == 0:
-            code, _, err = call([exe], work, timeout=120, env=sanitizer_env())
-            expect("build --sanitize=address: the program reports", code != 0 and "heap-buffer-overflow" in err, err[-800:])
+            code, _, err = call([exe], work, timeout=60, env=sanitizer_env())
+            expect(
+                "build --sanitize=address: the program reports",
+                code != 0 and "heap-buffer-overflow" in err,
+                brief(code, err),
+            )
         code, out, err = run(
             burdin, "test", str(fixtures / "tests.bd"), "--sanitize=address", cwd=work, timeout=300
         )
