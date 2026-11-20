@@ -343,6 +343,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python3 tests/check_features.py
       # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
       # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
       - name: Check clean, package, vendor, and --offline
@@ -781,6 +787,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python3 tests/check_features.py
       # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
       # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
       - name: Check clean, package, vendor, and --offline
@@ -1226,6 +1238,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
 
+      # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
+      # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
+      # module, and the lockfile that pins the potential graph.
+      - name: Check dependency tables, features, and targets
+        if: matrix.part == 'tools'
+        run: python tests/check_features.py
       # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
       # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
       - name: Check clean, package, vendor, and --offline

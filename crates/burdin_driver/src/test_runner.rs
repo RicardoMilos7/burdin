@@ -181,7 +181,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked, args.offline) {
         return code;
     }
-    let workspace = match package::load_for_tests(&args.target) {
+    let workspace = match package::load_selected(&args.target, EntryMode::Test, &args.features) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -231,6 +231,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         offline: args.offline,
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: args.sanitize,
@@ -437,7 +438,7 @@ fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
 /// the interpreter instead of compiling them. A test that needs C or the operating system is skipped, with the
 /// reason; a test that trips one of the strict checks fails at the source line that tripped it.
 fn run_interpreted(args: &Args) -> ExitCode {
-    let workspace = match package::load_for_tests(&args.target) {
+    let workspace = match package::load_selected(&args.target, EntryMode::Test, &args.features) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -465,6 +466,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         offline: args.offline,
         jobs: 1,
         sanitize: Default::default(),

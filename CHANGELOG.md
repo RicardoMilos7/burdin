@@ -6,6 +6,23 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG25-PKG33).
+  `[features]` declares named features whose items are other features, `dep:x` for an optional dependency, or
+  `x/feature` to forward to a dependency; every optional dependency is an implicit feature of its name, `default` is
+  enabled unless `--no-default-features`, and `--features <list>` and `--all-features` extend the selection on `build`,
+  `run`, `check`, `test`, `bench`, and `fuzz` (and `burdin watch` passes the flags to each run). A package with a
+  `[features]` table or an optional dependency gets a generated, in-memory `features` module of `const <name>: bool`
+  constants, so code branches with `comptime if features.<name>`. Features unify across the graph — one package has one
+  feature set, the union of the entry package's request and every active dependent's — and a request for a feature the
+  dependency does not declare is an error when the dependency is active. `[dev-dependencies]` are loaded only by
+  `test`, `bench`, `fuzz`, and `check --tests`, and a test reaches one by its package name, because test items are
+  stripped from a normal build. `[target.'cfg(...)'.dependencies]` and `[target.'cfg(...)'.dev-dependencies]` apply only
+  on the host platform (`unix`, `windows`, `target_os`, `target_arch`, `target_family`, `all`/`any`/`not`; an unknown
+  predicate and a bare target triple are errors). The loader reads a dependency only when it is active, and
+  `burdin.lock` pins the potential graph — optional, dev, and every target's dependencies, and what a dev-dependency
+  reaches, but never a dependency's own dev-dependencies — so features, the platform, and the command never rewrite it.
+  `tests/check_features.py` checks all of it in every CI job, `tests/check_watch.py` checks the pass-through, and the
+  loader's unit tests cover the `cfg` grammar, feature validation, unification, and the generated module.
 - The build tool's command surface (stage 3, issue #338; `spec/build-tool.md`). The page records every command the
   `burdin` tool has, the Cargo commands that are planned but not copied (and the issue that owns each), the Cargo
   behavior that is deliberately left out (plugins and external subcommands, proc-macros and the native

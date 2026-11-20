@@ -61,6 +61,9 @@ pub(crate) struct Args {
     pub(crate) profile: profile::Profile,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// `--features`, `--no-default-features`, and `--all-features`: the features the entry package enables
+    /// (`spec/packages.md`, PKG29, PKG31).
+    pub(crate) features: burdin_query::package::FeatureRequest,
     /// `--offline`: fetch no git package; read it from the cache or `vendor/` (`spec/packages.md`, PKG24).
     pub(crate) offline: bool,
     /// Emit source-level debug information (DWARF in the object and the executable).
@@ -223,6 +226,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--lto" => args.lto = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
+            "--features" => {
+                let list = option_value(&mut it, inline, a, "a list of features")?;
+                args.features.items.extend(burdin_query::features::split_request(&list));
+            }
+            "--no-default-features" => args.features.no_default_features = flag_without_value(a, inline)?,
+            "--all-features" => args.features.all_features = flag_without_value(a, inline)?,
             "--offline" => args.offline = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
@@ -779,6 +788,7 @@ fn driver_main() -> ExitCode {
         report_clean: args.command == "build",
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         offline: args.offline,
         jobs: jobs_or_default(args.jobs),
         sanitize: args.sanitize,
@@ -907,6 +917,8 @@ pub(crate) struct CompileOptions<'a> {
     /// `--locked`: a `burdin.lock` that does not match the manifests is an error instead of being rewritten
     /// (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// The features the entry package enables (`spec/packages.md`, PKG29).
+    pub(crate) features: burdin_query::package::FeatureRequest,
     /// `--offline`: a git package comes from the cache or `vendor/`, and nothing is fetched (PKG24).
     pub(crate) offline: bool,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
@@ -989,7 +1001,7 @@ pub(crate) fn front_end(
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
     sync_dependencies(target, options.locked, options.offline)?;
-    let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
+    let mut loaded = match package::load_selected(target, mode, &options.features) {
         Ok(loaded) => loaded,
         Err(message) => {
             eprintln!("error: {message}");

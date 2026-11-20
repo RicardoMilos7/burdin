@@ -171,8 +171,10 @@ fn fingerprint_body(
         }
     }
     for (id, file) in sources.iter() {
-        // The embedded standard library has no file on disk; the compiler's identity covers it.
-        if files.get(id.0 as usize).is_some_and(|(_, embedded)| *embedded) {
+        // The embedded standard library has no file on disk; the compiler's identity covers it. Every other
+        // in-memory module is hashed like a file it was read from: the generated `features` module changes with the
+        // features a build enables, and that must change the fingerprint (`spec/packages.md`, PKG32).
+        if files.get(id.0 as usize).is_some_and(|(path, embedded)| *embedded && path.starts_with("<std>")) {
             continue;
         }
         let hash = burdin_sha256::hex(file.text.as_bytes());
