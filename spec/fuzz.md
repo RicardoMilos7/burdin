@@ -24,7 +24,8 @@ AddressSanitizer reports (`spec/sanitizers.md`). The black-box check is
   does (the arguments, binary-safe output, the flush at exit, the stack guard). libFuzzer's own `main` drives them.
   The build carries `sanitize_address` on every function the compiler defines and the coverage instrumentation
   libFuzzer reads (edge counters, the PC table, comparison tracing), and it links `-fsanitize=fuzzer,address` through
-  clang (`spec/sanitizers.md`, SAN3).
+  clang (`spec/sanitizers.md`, SAN3) with the compiler driver's own linker, since the coverage starts up from a module
+  constructor in `.ctors` that lld would leave unrun.
 - **FZ4. The directories.** A target's corpus is `fuzz/corpus/<name>/` and its crashes are `fuzz/artifacts/<name>/`,
   next to the entry package's `burdin.toml`, or next to a single-file target. Both are created when missing and
   should be committed (the corpus makes the next run start where the last one stopped; a crash input is the bug's

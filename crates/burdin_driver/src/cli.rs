@@ -163,6 +163,8 @@ const ROOT_AFTER_HELP: &str = "See `burdin help <command>` for more information 
 const ENVIRONMENT: &str = "\
 Environment:
   BURDIN_CC             The C compiler driver used to link against libc (default: cc; cl on Windows)
+  BURDIN_LD             The linker: mold, lld, a path, or platform (default: mold/lld if installed on Linux;
+                        sanitizer builds keep the compiler's linker)
   BURDIN_JOBS           The default of -j (default: the machine's parallelism; 1 is sequential)
   BURDIN_HOME           Where tools keep state, including the git dependency cache under git/
   BURDIN_CODEGEN_UNITS  Split code generation into exactly this many units (default: by program size)

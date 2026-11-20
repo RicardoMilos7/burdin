@@ -15,7 +15,7 @@ links. When a platform, a check, or a gap changes, update this page in the same 
 
 | OS | Architecture | Target triple | Support | Evidence |
 | --- | --- | --- | --- | --- |
-| Linux | x86-64 | `x86_64-unknown-linux-gnu` | Tested | `linux` job on `ubuntu-24.04`: m01-m24 and s2_tasks, s2_channels, s2_shared, and s2_io in the debug and release profiles, every check script, LLVM 21 from apt.llvm.org, and `cc` (gcc and glibc) linking |
+| Linux | x86-64 | `x86_64-unknown-linux-gnu` | Tested | `linux` job on `ubuntu-24.04`: m01-m24 and s2_tasks, s2_channels, s2_shared, and s2_io in the debug and release profiles, every check script, LLVM 21 from apt.llvm.org, `cc` (gcc and glibc) linking, and lld as the automatically chosen linker |
 | macOS | arm64 | `aarch64-apple-darwin` | Tested | `macos` job on `macos-latest` (Apple Silicon): the same suite and scripts, Homebrew `llvm@21`, and Apple `cc` (clang and libSystem) linking |
 | Windows | x86-64 | `x86_64-pc-windows-msvc` | Tested | `windows` job on `windows-latest` (MSVC): the same suite and scripts, LLVM 21 from the official archive, MSVC `cl` linking, a `BURDIN_CC=cl` rerun of m01 and m11, and a hello world linked with `LIB` and `INCLUDE` cleared |
 | Linux | arm64 | `aarch64-unknown-linux-gnu` | Untested | The compiler uses the host triple and `tests/check_platform.py` recognizes the host, but no CI job runs the suite there |
@@ -43,6 +43,7 @@ no claim at all.
 | `-g` debug information | `tests/check_debug_info.py` | yes (DWARF; gdb when installed) | yes (DWARF in `.dSYM`; gdb when installed) | metadata only; no PDB |
 | `--strip` and the size budget | `tests/check_build_flags.py` | yes | yes | flags only; no size budget |
 | `--lto`, `--pgo-generate`, `--pgo-use` | `tests/check_build_flags.py` | yes, with an LLVM driver | yes, with an LLVM driver | `--lto`/`--pgo-generate` rejected by `cl`; `--pgo-use` untested |
+| Linker choice (`BURDIN_LD`, `mold`/`lld`) | `tests/check_linker.py` | yes (lld installed, mold simulated; sanitizer and fuzz builds keep the platform linker) | explicit `BURDIN_LD` only (ld64 stays the platform linker) | `link.exe` only; another `BURDIN_LD` is a usage error |
 | Diagnostics formats, color, width, and limits | `tests/check_diagnostics.py` | yes | yes | yes |
 | Error-code reference and `burdin explain` | `tests/check_error_docs.py` | yes | yes | yes |
 | C bridge (`extern "C"`, `CPtr`, `CString`) | `tests/m08_modules/extern_libc.bd`, `tests/m08_modules/cstr_roundtrip.bd` | yes | yes | yes |
