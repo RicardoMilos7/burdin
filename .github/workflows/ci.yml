@@ -316,8 +316,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
@@ -347,6 +348,13 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      # The `toml` official package (issue #256; spec/toml.md): the tests/toml fixtures (the canonical form,
+      # the spans, malformed input with its line, column, and message, reading through the framework, and
+      # writing), `burdin add toml`, and the official pin that `--locked` enforces.
+      - name: Check the toml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toml.py
 
       - name: Check the csv package
         if: matrix.part == 'tools'
@@ -740,8 +748,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
@@ -771,6 +780,13 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      # The `toml` official package (issue #256; spec/toml.md): the tests/toml fixtures (the canonical form,
+      # the spans, malformed input with its line, column, and message, reading through the framework, and
+      # writing), `burdin add toml`, and the official pin that `--locked` enforces.
+      - name: Check the toml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toml.py
 
       - name: Check the csv package
         if: matrix.part == 'tools'
@@ -1171,8 +1187,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python tests/check_new.py
 
@@ -1202,6 +1219,13 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python tests/check_json.py
+
+      # The `toml` official package (issue #256; spec/toml.md): the tests/toml fixtures (the canonical form,
+      # the spans, malformed input with its line, column, and message, reading through the framework, and
+      # writing), `burdin add toml`, and the official pin that `--locked` enforces.
+      - name: Check the toml package
+        if: matrix.part == 'tools'
+        run: python tests/check_toml.py
 
       - name: Check the csv package
         if: matrix.part == 'tools'

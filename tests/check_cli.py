@@ -46,6 +46,7 @@ COMMANDS = [
     "refactor",
     "doc",
     "new",
+    "init",
     "add",
     "clean",
     "package",
@@ -65,7 +66,6 @@ COMMANDS = [
 
 # BT2: Cargo commands that are planned but not implemented, and must be unknown today.
 OUT_OF_SCOPE = [
-    "init",
     "remove",
     "update",
     "tree",
@@ -99,6 +99,7 @@ Commands:
   refactor  Refactor code: extract, inline, change a signature, or move an item
   doc       Generate the documentation of a package
   new       Create a new package
+  init      Create a package in an existing directory
   add       Add a path, git, or official dependency to burdin.toml
   clean     Remove a package's build output, and with --cache its caches
   package   Write the package's reproducible archive to target/package
@@ -124,15 +125,17 @@ See `burdin help <command>` for more information on a specific command.
 
 NEW_HELP = """Create a new package
 
-Usage: burdin new <name>
+Usage: burdin new <name> [--lib | --bin]
 
 Arguments:
   <name>  The package directory to create
 
 Options:
+      --lib   Create a library: src/lib.bd, which `burdin test` runs and other packages `use`
+      --bin   Create a program: src/main.bd, which `burdin run` runs (the default)
   -h, --help  Print help
 
-Creates <name>/burdin.toml, <name>/src/main.bd, and <name>/.gitignore.
+Creates <name>/burdin.toml, <name>/src/main.bd (or <name>/src/lib.bd with --lib), and <name>/.gitignore. It refuses a path that already exists.
 """
 
 

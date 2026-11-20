@@ -24,7 +24,8 @@ The complete list:
 | `ssr` | structural search and replace | `spec/refactor.md` |
 | `refactor` | extract, inline, change a signature, or move an item | `spec/refactor.md` |
 | `doc` | generate documentation as a site, JSON, or a coverage report | `spec/doc.md` |
-| `new` | create a package directory | `tests/check_new.py` |
+| `new` | create a package directory (`--lib` or `--bin`) | `tests/check_new.py` |
+| `init` | write a package into an existing directory | `tests/check_new.py` |
 | `add` | add a path, git, or official dependency and update `burdin.lock` | `spec/packages.md` |
 | `clean` | remove a package's build output, and with `--cache` the caches | `spec/packages.md`, PKG19 |
 | `package` | write the package's reproducible archive to `target/package` | `spec/packages.md`, PKG20-PKG22 |
@@ -51,7 +52,6 @@ These Cargo commands are in the plan, each owned by its issue. Until that lands,
 
 | Cargo command | Burdin plan |
 | --- | --- |
-| `init` | issue #354 (`burdin new` already creates a package) |
 | `remove` | issue #360 |
 | `update`, `tree`, `metadata` | issue #346 |
 | `publish`, `yank`, `login`, `search` | issue #347, with the registry of #361 and #252 |
@@ -78,8 +78,8 @@ is still missing.
   hook.
 - **No registry client in the compiler.** Dependencies come from a path, a git repository, or the packages bundled
   with the compiler (`spec/packages.md`). The registry and its authentication are later issues (#252, #361).
-- **No arbitrary installation.** `burdin install`-style placement of third-party binaries is issue #348; `new`
-  creates a package and nothing else.
+- **No arbitrary installation.** `burdin install`-style placement of third-party binaries is issue #348; `new` and
+  `init` create a package and nothing else.
 - **No configuration layered from the environment beyond the documented variables.** The build tool reads
   `burdin.toml` and the environment listed in BT5; there is no `cargo config`-style file or `RUSTFLAGS`
   equivalent.

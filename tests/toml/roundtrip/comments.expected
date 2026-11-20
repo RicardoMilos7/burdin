@@ -1,0 +1,7 @@
+key = "value"
+spaced = 1
+tab = 2
+quoted_key = "x"
+
+[section]
+inner = [1, 2]

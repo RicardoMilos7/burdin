@@ -1,0 +1,48 @@
+name = "edge"
+note = "é"
+
+[[servers]]
+host = "a.example"
+port = 80
+tls = false
+ratio = 0.25
+
+[[servers]]
+host = "b.example"
+port = 443
+tls = true
+ratio = 1.0
+
+[protocol]
+Both = [80, 443]
+
+[backup]
+host = "c.example"
+port = 8080
+tls = true
+ratio = 2.5
+
+[weights]
+a = 1
+reread: name=edge servers=2 backup=c.example
+name = "edge"
+note = "é"
+
+[[servers]]
+host = "a.example"
+port = 80
+tls = false
+ratio = 0.25
+
+[[servers]]
+host = "b.example"
+port = 443
+tls = true
+ratio = 1.0
+
+[protocol]
+Both = [80, 443]
+
+[weights]
+a = 1
+reread: missing field 'backup'

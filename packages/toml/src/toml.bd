@@ -1,0 +1,2585 @@
+// The TOML format (stage 3, issue #256; spec/toml.md, TOML1-TOML16).
+//
+// A format package of the serialization framework (spec/serialization.md, SER15): it implements the format side only.
+// `Writer` implements `Serializer`, `Reader` implements `Deserializer`, and `parse` and `render` work on the `Value`
+// tree. The public surface is `parse`, `render`, `to_value`, `from_value`, `to_string`, and `from_str`.
+//
+// Every direction goes through an arena of `Node`s. The parser fills one while it applies the table rules (TOML4), the
+// writer fills one while the framework calls it, and the reader works on one flattened from a `Value`. A node names its
+// children by index, so no code holds a reference into a structure it is changing.
+
+// ----- the public tree ----------------------------------------------------------------------------------------------
+
+/// A position in the input: `line` and `column` are 1-based (a column counts Unicode scalar values), and `start` and
+/// `end` are byte offsets. A value the writer made has the zero span.
+struct Span: Copy {
+    line: usize,
+    column: usize,
+    start: usize,
+    end: usize,
+}
+
+/// A calendar date: a four-digit year, a month from 1 to 12, and a day that exists in its month.
+struct Date: Copy {
+    year: i32,
+    month: u8,
+    day: u8,
+}
+
+/// A time of day. `second` is 0 to 60 (60 is a leap second), and `nanosecond` is the fraction of the second.
+struct Time: Copy {
+    hour: u8,
+    minute: u8,
+    second: u8,
+    nanosecond: u32,
+}
+
+/// One of the four TOML datetime forms (TOML9). An offset is in minutes east of UTC, so `Z` and `+00:00` are both 0.
+enum Datetime: Copy {
+    OffsetDateTime(Date, Time, i32),
+    LocalDateTime(Date, Time),
+    LocalDate(Date),
+    LocalTime(Time),
+}
+
+/// A TOML value. A table keeps its entries in document order, and an array keeps its items in order.
+enum Value {
+    Str(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Datetime(Datetime),
+    Array(List<Item>),
+    Table(List<Entry>),
+}
+
+/// A value and the place it starts.
+struct Item {
+    value: Heap<Value>,
+    span: Span,
+}
+
+/// A key of a table, the place the key starts, and the item it names.
+struct Entry {
+    key: String,
+    key_span: Span,
+    item: Item,
+}
+
+// ----- the node arena -----------------------------------------------------------------------------------------------
+
+const KIND_TABLE: i32 = 0
+const KIND_ARRAY: i32 = 1
+const KIND_STRING: i32 = 2
+const KIND_INTEGER: i32 = 3
+const KIND_FLOAT: i32 = 4
+const KIND_BOOL: i32 = 5
+const KIND_DATETIME: i32 = 6
+
+// The magnitude of `i64::MAX` and of `i64::MIN`, the bounds a TOML integer must stay inside (TOML6).
+const INT_POSITIVE_LIMIT: u64 = 9223372036854775807
+const INT_NEGATIVE_LIMIT: u64 = 9223372036854775808
+
+// How a table or array came to be (TOML4). Only the parser's checks read it.
+const ORIGIN_IMPLICIT: i32 = 0 // a table that a header path implied, which a later header may still define
+const ORIGIN_HEADER: i32 = 1 // a table a [header] defined, or an element of an array of tables
+const ORIGIN_DOTTED: i32 = 2 // a table a dotted key created or extended
+const ORIGIN_INLINE: i32 = 3 // an inline table, which is closed
+const ORIGIN_STATIC: i32 = 4 // a static array, [ ... ]
+const ORIGIN_TABLES: i32 = 5 // an array of tables, [[ ... ]]
+
+/// One node of the arena: a table, an array, or a scalar. `kids` are the indices of a table's or an array's children in
+/// order. A child's `key` is its name in its table, and it is empty in an array. A map's table is `sorted`, so its
+/// entries are written by key (TOML13); a struct's entries keep the order of its fields.
+struct Node {
+    kind: i32,
+    origin: i32,
+    key: String,
+    key_span: Span,
+    span: Span,
+    sorted: bool,
+    text: String,
+    number: i64,
+    fraction: f64,
+    flag: bool,
+    when: Datetime,
+    kids: List<usize>,
+}
+
+/// A node of `kind` with the given origin and span, and every other field empty.
+fn new_node(kind: i32, origin: i32, span: Span): Node {
+    Node {
+        kind: kind,
+        origin: origin,
+        key: String.new(),
+        key_span: span,
+        span: span,
+        sorted: false,
+        text: String.new(),
+        number: 0,
+        fraction: 0.0,
+        flag: false,
+        when: Datetime.LocalDate(Date { year: 1970, month: 1, day: 1 }),
+        kids: List<usize>.new(),
+    }
+}
+
+/// The span of nothing: the position the writer gives every node.
+fn zero_span(): Span {
+    Span { line: 0, column: 0, start: 0, end: 0 }
+}
+
+/// The text of a kind, as `expected ..., found ...` names it.
+fn describe(kind: i32): str {
+    if kind == KIND_TABLE {
+        "a table"
+    } else if kind == KIND_ARRAY {
+        "an array"
+    } else if kind == KIND_STRING {
+        "a string"
+    } else if kind == KIND_INTEGER {
+        "an integer"
+    } else if kind == KIND_FLOAT {
+        "a float"
+    } else if kind == KIND_BOOL {
+        "a boolean"
+    } else {
+        "a datetime"
+    }
+}
+
+/// A syntax or type error at `span`: its message gets the `line L, column C: ` prefix (SER10).
+fn syntax_error(message: str, span: Span): DeError {
+    DeError.syntax(message, span.line as i32, span.column as i32)
+}
+
+/// Whether `a` sorts before `b` in byte order (the order TOML13 writes map keys in).
+fn byte_less(a: str, b: str): bool {
+    let x = a.as_bytes()
+    let y = b.as_bytes()
+    let mut i: usize = 0
+    while i < x.len() && i < y.len() {
+        if x[i] != y[i] {
+            return x[i] < y[i]
+        }
+        i = i + 1
+    }
+    x.len() < y.len()
+}
+
+/// The children of the table or array at `index`, in the order they are written: a sorted table's by key.
+fn ordered_kids(nodes: List<Node>, index: usize): List<usize> {
+    let mut order = List<usize>.new()
+    let mut i: usize = 0
+    while i < nodes[index].kids.len() {
+        order.push(nodes[index].kids[i])
+        i = i + 1
+    }
+    if nodes[index].sorted {
+        let mut j: usize = 1
+        while j < order.len() {
+            let mut k = j
+            while k > 0 && byte_less(nodes[order[k]].key.as_str(), nodes[order[k - 1]].key.as_str()) {
+                order.swap(k, k - 1)
+                k = k - 1
+            }
+            j = j + 1
+        }
+    }
+    order
+}
+
+/// The `Value` tree of the node at `index` (read-only: the arena is copied out, not moved).
+fn node_value(nodes: List<Node>, index: usize): Value {
+    let kind = nodes[index].kind
+    if kind == KIND_TABLE {
+        let order = ordered_kids(nodes, index)
+        let mut entries = List<Entry>.new()
+        let mut i: usize = 0
+        while i < order.len() {
+            let child = order[i]
+            let item = Item { value: Heap.new(node_value(nodes, child)), span: nodes[child].span }
+            entries.push(Entry { key: nodes[child].key.clone(), key_span: nodes[child].key_span, item: item })
+            i = i + 1
+        }
+        Value.Table(entries)
+    } else if kind == KIND_ARRAY {
+        let mut items = List<Item>.new()
+        let mut i: usize = 0
+        while i < nodes[index].kids.len() {
+            let child = nodes[index].kids[i]
+            items.push(Item { value: Heap.new(node_value(nodes, child)), span: nodes[child].span })
+            i = i + 1
+        }
+        Value.Array(items)
+    } else if kind == KIND_STRING {
+        Value.Str(nodes[index].text.clone())
+    } else if kind == KIND_INTEGER {
+        Value.Int(nodes[index].number)
+    } else if kind == KIND_FLOAT {
+        Value.Float(nodes[index].fraction)
+    } else if kind == KIND_BOOL {
+        Value.Bool(nodes[index].flag)
+    } else {
+        Value.Datetime(nodes[index].when)
+    }
+}
+
+// ----- character classes --------------------------------------------------------------------------------------------
+
+/// A byte of a bare key: `A-Z a-z 0-9 _ -` (TOML3).
+fn is_bare_byte(b: u8): bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95 || b == 45
+}
+
+/// An ASCII digit.
+fn is_digit(b: u8): bool {
+    b >= 48 && b <= 57
+}
+
+/// The value of a hexadecimal digit, or -1 when `b` is not one.
+fn digit_value(b: u8): i32 {
+    if b >= 48 && b <= 57 {
+        (b - 48) as i32
+    } else if b >= 97 && b <= 102 {
+        (b - 87) as i32
+    } else if b >= 65 && b <= 70 {
+        (b - 55) as i32
+    } else {
+        -1
+    }
+}
+
+/// A control character other than tab (TOML5). Line feeds and carriage returns are control characters too.
+fn is_control_byte(b: u8): bool {
+    (b < 32 && b != 9) || b == 127
+}
+
+/// Whether a year is a leap year.
+fn is_leap(year: i64): bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// How many days `month` of `year` has.
+fn days_in(year: i64, month: i64): i64 {
+    if month == 2 {
+        if is_leap(year) {
+            29
+        } else {
+            28
+        }
+    } else if month == 4 || month == 6 || month == 9 || month == 11 {
+        30
+    } else {
+        31
+    }
+}
+
+// ----- the parser ---------------------------------------------------------------------------------------------------
+
+/// One segment of a dotted key: its name and where it starts.
+struct Key {
+    name: String,
+    span: Span,
+}
+
+/// The parser: the input, the byte offset of the next unread byte, the start of each line (for positions), the node
+/// arena, and the table that the key/value lines being read go into (`current`). The document starts in the root table,
+/// which is node 0.
+struct Parser {
+    text: String,
+    pos: usize,
+    line_starts: List<usize>,
+    nodes: List<Node>,
+    current: usize,
+}
+
+Parser {
+    /// A parser over `text`. The text is copied once.
+    fn new(text: str): Parser {
+        let mut starts = List<usize>.new()
+        starts.push(0)
+        let bytes = text.as_bytes()
+        let mut i: usize = 0
+        while i < bytes.len() {
+            if bytes[i] == 10 {
+                starts.push(i + 1)
+            }
+            i = i + 1
+        }
+        let mut nodes = List<Node>.new()
+        nodes.push(new_node(KIND_TABLE, ORIGIN_HEADER, zero_span()))
+        Parser { text: text.to_string(), pos: 0, line_starts: starts, nodes: nodes, current: 0 }
+    }
+
+    /// Whether the input is exhausted.
+    priv fn at_end(self): bool {
+        self.pos >= self.text.len()
+    }
+
+    /// A copy of the input from byte `start` up to (not including) `end`.
+    priv fn slice_text(self, start: usize, end: usize): String {
+        self.text[start..end].to_string()
+    }
+
+    /// The byte at `index`, or 0 past the end (callers check the bounds they need).
+    priv fn byte_at(self, index: usize): u8 {
+        if index >= self.text.len() {
+            0
+        } else {
+            let bytes = self.text.as_bytes()
+            bytes[index]
+        }
+    }
+
+    /// Whether the input at the current position starts with `literal`, compared byte for byte.
+    priv fn starts_with_at(self, literal: str): bool {
+        let hay = self.text.as_bytes()
+        let needle = literal.as_bytes()
+        if self.pos + needle.len() > self.text.len() {
+            return false
+        }
+        let mut i: usize = 0
+        while i < needle.len() {
+            if hay[self.pos + i] != needle[i] {
+                return false
+            }
+            i = i + 1
+        }
+        true
+    }
+
+    /// The line and column of byte offset `at` (1-based; a column counts Unicode scalar values).
+    priv fn locate(self, at: usize): (usize, usize) {
+        let mut line_index: usize = 0
+        let mut i: usize = 0
+        while i < self.line_starts.len() {
+            if self.line_starts[i] <= at {
+                line_index = i
+            }
+            i = i + 1
+        }
+        let start = self.line_starts[line_index]
+        let bytes = self.text.as_bytes()
+        let mut column: usize = 1
+        let mut j = start
+        while j < at {
+            let b = bytes[j]
+            if !(b >= 128 && b < 192) {
+                column = column + 1
+            }
+            j = j + 1
+        }
+        (line_index + 1, column)
+    }
+
+    /// A syntax error at byte offset `at`.
+    priv fn fail(self, message: str, at: usize): DeError {
+        let (line, column) = self.locate(at)
+        DeError.syntax(message, line as i32, column as i32)
+    }
+
+    /// The span from byte offset `start` to `end`.
+    priv fn span_from(self, start: usize, end: usize): Span {
+        let (line, column) = self.locate(start)
+        Span { line: line, column: column, start: start, end: end }
+    }
+
+    /// Adds a node of `kind` and `origin` at `span` to the arena and returns its index.
+    priv fn create(mut self, kind: i32, origin: i32, span: Span): usize {
+        self.nodes.push(new_node(kind, origin, span))
+        self.nodes.len() - 1
+    }
+
+    /// Adds a scalar of `kind` that spans from `start` to the current position, and returns its index.
+    priv fn leaf(mut self, kind: i32, start: usize): usize {
+        let span = self.span_from(start, self.pos)
+        self.create(kind, ORIGIN_IMPLICIT, span)
+    }
+
+    /// Skips spaces and tabs.
+    priv fn skip_blank(mut self) {
+        while self.pos < self.text.len() {
+            let b = self.byte_at(self.pos)
+            if b == 32 || b == 9 {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+    }
+
+    /// The error for a carriage return at `at` that is not followed by a line feed (TOML2).
+    priv fn check_cr(self, at: usize): Result<(), DeError> {
+        if self.byte_at(at + 1) == 10 {
+            Ok(())
+        } else {
+            Err(self.fail("a carriage return must be followed by a line feed", at))
+        }
+    }
+
+    /// Skips a comment, which starts at `#` and runs to the end of its line. The line break itself is not consumed.
+    priv fn skip_comment(mut self): Result<(), DeError> {
+        self.pos = self.pos + 1
+        loop {
+            if self.at_end() {
+                return Ok(())
+            }
+            let b = self.byte_at(self.pos)
+            if b == 10 {
+                return Ok(())
+            }
+            if b == 13 {
+                return self.check_cr(self.pos)
+            }
+            if is_control_byte(b) {
+                return Err(self.fail("control character in a comment", self.pos))
+            }
+            self.pos = self.pos + 1
+        }
+    }
+
+    /// Skips the white space, line breaks, and comments between the elements of an array (TOML10).
+    priv fn skip_layout(mut self): Result<(), DeError> {
+        loop {
+            if self.at_end() {
+                return Ok(())
+            }
+            let b = self.byte_at(self.pos)
+            if b == 32 || b == 9 || b == 10 {
+                self.pos = self.pos + 1
+            } else if b == 13 {
+                self.check_cr(self.pos)?
+                self.pos = self.pos + 2
+            } else if b == 35 {
+                self.skip_comment()?
+            } else {
+                return Ok(())
+            }
+        }
+    }
+
+    /// Ends a line: optional blanks and a comment, then a line break or the end of the input (TOML2).
+    priv fn end_of_line(mut self): Result<(), DeError> {
+        self.skip_blank()
+        if self.at_end() {
+            return Ok(())
+        }
+        if self.byte_at(self.pos) == 35 {
+            self.skip_comment()?
+        }
+        if self.at_end() {
+            return Ok(())
+        }
+        let b = self.byte_at(self.pos)
+        if b == 10 {
+            self.pos = self.pos + 1
+            return Ok(())
+        }
+        if b == 13 {
+            self.check_cr(self.pos)?
+            self.pos = self.pos + 2
+            return Ok(())
+        }
+        Err(self.fail("expected end of line", self.pos))
+    }
+
+    /// Checks that a number or datetime ends at a delimiter: a blank, a line break, a comma, a closing bracket or brace,
+    /// a comment, or the end of the input. Anything else is `message` at `start`.
+    priv fn delimiter(self, start: usize, message: str): Result<(), DeError> {
+        if self.at_end() {
+            return Ok(())
+        }
+        let b = self.byte_at(self.pos)
+        if b == 32 || b == 9 || b == 10 || b == 13 || b == 44 || b == 93 || b == 125 || b == 35 {
+            Ok(())
+        } else {
+            Err(self.fail(message, start))
+        }
+    }
+
+    /// Reads the whole document (TOML2): key/value lines and table headers in any order.
+    priv fn document(mut self): Result<(), DeError> {
+        loop {
+            self.skip_blank()
+            if self.at_end() {
+                return Ok(())
+            }
+            let b = self.byte_at(self.pos)
+            if b == 10 {
+                self.pos = self.pos + 1
+            } else if b == 13 {
+                self.check_cr(self.pos)?
+                self.pos = self.pos + 2
+            } else if b == 35 {
+                self.skip_comment()?
+            } else if b == 91 {
+                self.header()?
+                self.end_of_line()?
+            } else {
+                let table = self.current
+                self.key_value(table)?
+                self.end_of_line()?
+            }
+        }
+    }
+
+    /// Reads a dotted key (TOML3): one or more segments, each a bare key or a quoted string, with optional blanks
+    /// around the dots.
+    priv fn dotted_key(mut self): Result<List<Key>, DeError> {
+        let mut keys = List<Key>.new()
+        loop {
+            self.skip_blank()
+            let start = self.pos
+            let b = self.byte_at(self.pos)
+            let mut name = String.new()
+            if b == 34 {
+                self.pos = self.pos + 1
+                name = self.line_string(34, start)?
+            } else if b == 39 {
+                self.pos = self.pos + 1
+                name = self.line_string(39, start)?
+            } else {
+                while self.pos < self.text.len() && is_bare_byte(self.byte_at(self.pos)) {
+                    self.pos = self.pos + 1
+                }
+                if self.pos == start {
+                    return Err(self.fail("expected a key", start))
+                }
+                name = self.slice_text(start, self.pos)
+            }
+            keys.push(Key { name: name, span: self.span_from(start, self.pos) })
+            self.skip_blank()
+            if self.pos < self.text.len() && self.byte_at(self.pos) == 46 {
+                self.pos = self.pos + 1
+            } else {
+                return Ok(keys)
+            }
+        }
+    }
+
+    /// Reads `key = value` into `table` (TOML3).
+    priv fn key_value(mut self, table: usize): Result<(), DeError> {
+        let keys = self.dotted_key()?
+        self.skip_blank()
+        if self.at_end() || self.byte_at(self.pos) != 61 {
+            return Err(self.fail("expected '='", self.pos))
+        }
+        self.pos = self.pos + 1
+        self.skip_blank()
+        let value = self.value()?
+        self.insert(table, keys, value)
+    }
+
+    /// Puts `value` under the dotted key `keys` in `table`: the tables the path names are created or entered, and the last
+    /// key must be new (TOML3, TOML4).
+    priv fn insert(mut self, table: usize, keys: List<Key>, value: usize): Result<(), DeError> {
+        let last = keys.len() - 1
+        let mut parent = table
+        let mut i: usize = 0
+        while i < last {
+            parent = self.dotted_table(parent, keys[i])?
+            i = i + 1
+        }
+        let name = keys[last].name.clone()
+        if self.find(parent, name.as_str()).is_some() {
+            return Err(syntax_error(format("duplicate key '{name}'").as_str(), keys[last].span))
+        }
+        self.nodes[value].key = keys[last].name.clone()
+        self.nodes[value].key_span = keys[last].span
+        self.nodes[parent].kids.push(value)
+        Ok(())
+    }
+
+    /// The child of `table` named `name`, if there is one.
+    priv fn find(self, table: usize, name: str): Option<usize> {
+        let mut i: usize = 0
+        while i < self.nodes[table].kids.len() {
+            let child = self.nodes[table].kids[i]
+            if self.nodes[child].key.as_str() == name {
+                return Some(child)
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// The table a dotted key's segment names inside `parent` (TOML4): an existing table is entered, and a missing one is
+    /// created. A table a header defined, and an inline table, cannot be extended.
+    priv fn dotted_table(mut self, parent: usize, key: Key): Result<usize, DeError> {
+        let name = key.name.clone()
+        let found = self.find(parent, name.as_str())
+        match found {
+            Some(child) => {
+                if self.nodes[child].kind != KIND_TABLE {
+                    return Err(syntax_error(format("'{name}' is not a table").as_str(), key.span))
+                }
+                let origin = self.nodes[child].origin
+                if origin == ORIGIN_INLINE {
+                    return Err(syntax_error(format("inline table '{name}' cannot be extended").as_str(), key.span))
+                }
+                if origin == ORIGIN_HEADER {
+                    return Err(syntax_error(format("table '{name}' is defined twice").as_str(), key.span))
+                }
+                if origin == ORIGIN_IMPLICIT {
+                    self.nodes[child].origin = ORIGIN_DOTTED
+                }
+                Ok(child)
+            }
+            None => {
+                let index = self.create(KIND_TABLE, ORIGIN_DOTTED, key.span)
+                self.nodes[index].key = key.name.clone()
+                self.nodes[parent].kids.push(index)
+                Ok(index)
+            }
+        }
+    }
+
+    /// Reads a table header (`[a.b]`) or an array-of-tables header (`[[a.b]]`), and makes its table the current one.
+    priv fn header(mut self): Result<(), DeError> {
+        let start = self.pos
+        if self.byte_at(self.pos + 1) == 91 {
+            self.pos = self.pos + 2
+            self.skip_blank()
+            let keys = self.dotted_key()?
+            self.skip_blank()
+            if self.byte_at(self.pos) != 93 || self.byte_at(self.pos + 1) != 93 {
+                return Err(self.fail("expected ']'", self.pos))
+            }
+            self.pos = self.pos + 2
+            self.current = self.array_element(keys, start)?
+        } else {
+            self.pos = self.pos + 1
+            self.skip_blank()
+            let keys = self.dotted_key()?
+            self.skip_blank()
+            if self.byte_at(self.pos) != 93 {
+                return Err(self.fail("expected ']'", self.pos))
+            }
+            self.pos = self.pos + 1
+            self.current = self.table_header(keys, start)?
+        }
+        Ok(())
+    }
+
+    /// The table a header's path segment `key` enters inside `parent`. Headers pass through tables, the last element of an
+    /// array of tables, and implied tables (a missing one is created as an implied table). A static array, a scalar, or an
+    /// inline table is an error at the segment.
+    priv fn header_table(mut self, parent: usize, key: Key): Result<usize, DeError> {
+        let name = key.name.clone()
+        let found = self.find(parent, name.as_str())
+        match found {
+            Some(child) => {
+                let kind = self.nodes[child].kind
+                if kind == KIND_ARRAY {
+                    if self.nodes[child].origin == ORIGIN_TABLES {
+                        let count = self.nodes[child].kids.len()
+                        return Ok(self.nodes[child].kids[count - 1])
+                    }
+                    return Err(syntax_error(format("'{name}' is a static array").as_str(), key.span))
+                }
+                if kind != KIND_TABLE {
+                    return Err(syntax_error(format("'{name}' is not a table").as_str(), key.span))
+                }
+                if self.nodes[child].origin == ORIGIN_INLINE {
+                    return Err(syntax_error(format("inline table '{name}' cannot be extended").as_str(), key.span))
+                }
+                Ok(child)
+            }
+            None => {
+                let index = self.create(KIND_TABLE, ORIGIN_IMPLICIT, key.span)
+                self.nodes[index].key = key.name.clone()
+                self.nodes[parent].kids.push(index)
+                Ok(index)
+            }
+        }
+    }
+
+    /// The table a `[header]` names (TOML4): a table an implied path created is now defined by the header. Anything else
+    /// that already has the name is an error.
+    priv fn table_header(mut self, keys: List<Key>, start: usize): Result<usize, DeError> {
+        let last = keys.len() - 1
+        let mut parent: usize = 0
+        let mut i: usize = 0
+        while i < last {
+            parent = self.header_table(parent, keys[i])?
+            i = i + 1
+        }
+        let name = keys[last].name.clone()
+        let found = self.find(parent, name.as_str())
+        match found {
+            Some(child) => {
+                let kind = self.nodes[child].kind
+                let origin = self.nodes[child].origin
+                if kind == KIND_ARRAY {
+                    if origin == ORIGIN_TABLES {
+                        return Err(
+                            syntax_error(
+                                format("'{name}' is an array of tables; use [[{name}]]").as_str(),
+                                keys[last].span,
+                            ),
+                        )
+                    }
+                    return Err(syntax_error(format("'{name}' is a static array").as_str(), keys[last].span))
+                }
+                if kind != KIND_TABLE {
+                    return Err(syntax_error(format("duplicate key '{name}'").as_str(), keys[last].span))
+                }
+                if origin == ORIGIN_INLINE {
+                    return Err(
+                        syntax_error(format("inline table '{name}' cannot be extended").as_str(), keys[last].span),
+                    )
+                }
+                if origin == ORIGIN_IMPLICIT {
+                    self.nodes[child].origin = ORIGIN_HEADER
+                    return Ok(child)
+                }
+                Err(syntax_error(format("table '{name}' is defined twice").as_str(), keys[last].span))
+            }
+            None => {
+                let header_span = self.span_from(start, start + 1)
+                let index = self.create(KIND_TABLE, ORIGIN_HEADER, header_span)
+                self.nodes[index].key = keys[last].name.clone()
+                self.nodes[index].key_span = keys[last].span
+                self.nodes[parent].kids.push(index)
+                Ok(index)
+            }
+        }
+    }
+
+    /// Appends an element to the array of tables a `[[header]]` names (TOML4), and returns the new element's table.
+    priv fn array_element(mut self, keys: List<Key>, start: usize): Result<usize, DeError> {
+        let last = keys.len() - 1
+        let mut parent: usize = 0
+        let mut i: usize = 0
+        while i < last {
+            parent = self.header_table(parent, keys[i])?
+            i = i + 1
+        }
+        let name = keys[last].name.clone()
+        let element_span = self.span_from(start, start + 2)
+        let found = self.find(parent, name.as_str())
+        match found {
+            Some(child) => {
+                let kind = self.nodes[child].kind
+                if kind == KIND_ARRAY {
+                    if self.nodes[child].origin != ORIGIN_TABLES {
+                        return Err(syntax_error(format("'{name}' is a static array").as_str(), keys[last].span))
+                    }
+                    let element = self.create(KIND_TABLE, ORIGIN_HEADER, element_span)
+                    self.nodes[child].kids.push(element)
+                    return Ok(element)
+                }
+                if kind == KIND_TABLE {
+                    return Err(
+                        syntax_error(format("'{name}' is a table, not an array of tables").as_str(), keys[last].span),
+                    )
+                }
+                Err(syntax_error(format("duplicate key '{name}'").as_str(), keys[last].span))
+            }
+            None => {
+                let array = self.create(KIND_ARRAY, ORIGIN_TABLES, element_span)
+                self.nodes[array].key = keys[last].name.clone()
+                self.nodes[array].key_span = keys[last].span
+                let element = self.create(KIND_TABLE, ORIGIN_HEADER, element_span)
+                self.nodes[array].kids.push(element)
+                self.nodes[parent].kids.push(array)
+                Ok(element)
+            }
+        }
+    }
+
+    // ----- values -----------------------------------------------------------------------------------------------
+
+    /// Reads a value (TOML5-TOML11) and returns the index of its node. The node has no key yet.
+    priv fn value(mut self): Result<usize, DeError> {
+        if self.at_end() {
+            return Err(self.fail("expected a value", self.pos))
+        }
+        let start = self.pos
+        let b = self.byte_at(self.pos)
+        if b == 34 || b == 39 {
+            let text = self.string_value(b, start)?
+            let index = self.leaf(KIND_STRING, start)
+            self.nodes[index].text = text
+            return Ok(index)
+        }
+        if b == 91 {
+            return self.array(start)
+        }
+        if b == 123 {
+            return self.inline_table(start)
+        }
+        if self.starts_with_at("true") {
+            self.pos = self.pos + 4
+            let index = self.leaf(KIND_BOOL, start)
+            self.nodes[index].flag = true
+            return Ok(index)
+        }
+        if self.starts_with_at("false") {
+            self.pos = self.pos + 5
+            let index = self.leaf(KIND_BOOL, start)
+            self.nodes[index].flag = false
+            return Ok(index)
+        }
+        if self.looks_like_date(self.pos) || self.looks_like_time(self.pos) {
+            return self.datetime(start)
+        }
+        if b == 43 || b == 45 || b == 105 || b == 110 || is_digit(b) {
+            return self.number(start)
+        }
+        Err(self.fail("expected a value", self.pos))
+    }
+
+    /// Reads a string value that starts at its opening quote `quote`, a basic (34) or a literal (39) one (TOML5).
+    priv fn string_value(mut self, quote: u8, start: usize): Result<String, DeError> {
+        let triple = if quote == 34 { "\"\"\"" } else { "'''" }
+        if self.starts_with_at(triple) {
+            self.pos = self.pos + 3
+            return self.multiline_string(quote, start)
+        }
+        self.pos = self.pos + 1
+        self.line_string(quote, start)
+    }
+
+    /// Reads a single-line string after its opening quote (TOML5). A line break ends it as unterminated.
+    priv fn line_string(mut self, quote: u8, start: usize): Result<String, DeError> {
+        let mut out = String.new()
+        let mut chunk = self.pos
+        loop {
+            if self.at_end() {
+                return Err(self.fail("unterminated string", start))
+            }
+            let b = self.byte_at(self.pos)
+            if b == quote {
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                self.pos = self.pos + 1
+                return Ok(out)
+            }
+            if b == 10 || b == 13 {
+                return Err(self.fail("unterminated string", start))
+            }
+            if b == 92 && quote == 34 {
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                let c = self.escape()?
+                out.push(c)
+                chunk = self.pos
+            } else if is_control_byte(b) {
+                return Err(self.fail("control character in a string", self.pos))
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+    }
+
+    /// Reads a multi-line string after its opening delimiter (TOML5). A break right after the delimiter is removed, a
+    /// carriage return and line feed read as a line feed, and in a basic string a backslash at a line's end removes the
+    /// break and the white space after it.
+    priv fn multiline_string(mut self, quote: u8, start: usize): Result<String, DeError> {
+        if self.byte_at(self.pos) == 10 {
+            self.pos = self.pos + 1
+        } else if self.byte_at(self.pos) == 13 && self.byte_at(self.pos + 1) == 10 {
+            self.pos = self.pos + 2
+        }
+        let mut out = String.new()
+        let mut chunk = self.pos
+        loop {
+            if self.at_end() {
+                return Err(self.fail("unterminated string", start))
+            }
+            let b = self.byte_at(self.pos)
+            if b == quote {
+                let run = self.run_length(quote)
+                if run >= 3 {
+                    let piece = self.slice_text(chunk, self.pos)
+                    out.push_str(piece.as_str())
+                    let mut extra: usize = 0
+                    while extra + 3 < run {
+                        out.push(quote as char)
+                        extra = extra + 1
+                    }
+                    self.pos = self.pos + run
+                    return Ok(out)
+                }
+                self.pos = self.pos + run
+            } else if b == 92 && quote == 34 {
+                let at = self.pos
+                if self.break_after_backslash(at) {
+                    let piece = self.slice_text(chunk, at)
+                    out.push_str(piece.as_str())
+                    self.pos = at + 1
+                    while self.pos < self.text.len() {
+                        let w = self.byte_at(self.pos)
+                        if w == 32 || w == 9 || w == 10 || w == 13 {
+                            self.pos = self.pos + 1
+                        } else {
+                            break
+                        }
+                    }
+                    chunk = self.pos
+                } else {
+                    let piece = self.slice_text(chunk, at)
+                    out.push_str(piece.as_str())
+                    let c = self.escape()?
+                    out.push(c)
+                    chunk = self.pos
+                }
+            } else if b == 10 {
+                self.pos = self.pos + 1
+            } else if b == 13 {
+                if self.byte_at(self.pos + 1) != 10 {
+                    return Err(self.fail("a carriage return must be followed by a line feed", self.pos))
+                }
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                out.push('\n')
+                self.pos = self.pos + 2
+                chunk = self.pos
+            } else if is_control_byte(b) {
+                return Err(self.fail("control character in a string", self.pos))
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+    }
+
+    /// How many times the byte `b` repeats from the current position.
+    priv fn run_length(self, b: u8): usize {
+        let mut n: usize = 0
+        while self.pos + n < self.text.len() && self.byte_at(self.pos + n) == b {
+            n = n + 1
+        }
+        n
+    }
+
+    /// Whether the backslash at `at` ends its line: only blanks come between it and a line break (TOML5).
+    priv fn break_after_backslash(self, at: usize): bool {
+        let mut i = at + 1
+        while self.byte_at(i) == 32 || self.byte_at(i) == 9 {
+            i = i + 1
+        }
+        if self.byte_at(i) == 10 {
+            return true
+        }
+        self.byte_at(i) == 13 && self.byte_at(i + 1) == 10
+    }
+
+    /// Reads an escape at the backslash at the current position and returns the character it stands for (TOML5).
+    priv fn escape(mut self): Result<char, DeError> {
+        let at = self.pos
+        self.pos = self.pos + 1
+        if self.at_end() {
+            return Err(self.fail("invalid escape", at))
+        }
+        let e = self.byte_at(self.pos)
+        self.pos = self.pos + 1
+        if e == 98 {
+            Ok((8 as u8) as char)
+        } else if e == 116 {
+            Ok('\t')
+        } else if e == 110 {
+            Ok('\n')
+        } else if e == 102 {
+            Ok((12 as u8) as char)
+        } else if e == 114 {
+            Ok('\r')
+        } else if e == 34 {
+            Ok('"')
+        } else if e == 92 {
+            Ok('\\')
+        } else if e == 117 {
+            self.unicode(at, 4)
+        } else if e == 85 {
+            self.unicode(at, 8)
+        } else {
+            Err(self.fail("invalid escape", at))
+        }
+    }
+
+    /// Reads `digits` hexadecimal digits of a `\u` or `\U` escape that began at `at`, which must name a scalar value.
+    priv fn unicode(mut self, at: usize, digits: usize): Result<char, DeError> {
+        let mut code: u32 = 0
+        let mut i: usize = 0
+        while i < digits {
+            let d = digit_value(self.byte_at(self.pos))
+            if d < 0 {
+                return Err(self.fail("invalid unicode escape", at))
+            }
+            code = code * 16 + (d as u32)
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        match code.to_char() {
+            Some(c) => Ok(c),
+            None => Err(self.fail("invalid unicode escape", at)),
+        }
+    }
+
+    /// Reads an array (TOML10). `start` is the opening bracket, where an unterminated array is reported.
+    priv fn array(mut self, start: usize): Result<usize, DeError> {
+        self.pos = self.pos + 1
+        let open_span = self.span_from(start, start + 1)
+        let index = self.create(KIND_ARRAY, ORIGIN_STATIC, open_span)
+        loop {
+            self.skip_layout()?
+            if self.at_end() {
+                return Err(self.fail("unterminated array", start))
+            }
+            if self.byte_at(self.pos) == 93 {
+                self.pos = self.pos + 1
+                return Ok(index)
+            }
+            let item = self.value()?
+            self.nodes[index].kids.push(item)
+            self.skip_layout()?
+            if self.at_end() {
+                return Err(self.fail("unterminated array", start))
+            }
+            let b = self.byte_at(self.pos)
+            if b == 44 {
+                self.pos = self.pos + 1
+            } else if b == 93 {
+                self.pos = self.pos + 1
+                return Ok(index)
+            } else {
+                return Err(self.fail("expected ',' or ']'", self.pos))
+            }
+        }
+    }
+
+    /// Reads an inline table (TOML11) on one line. It is closed: nothing may be added to it later.
+    priv fn inline_table(mut self, start: usize): Result<usize, DeError> {
+        self.pos = self.pos + 1
+        let open_span = self.span_from(start, start + 1)
+        let index = self.create(KIND_TABLE, ORIGIN_INLINE, open_span)
+        let mut after_comma = false
+        loop {
+            self.skip_blank()
+            if self.at_end() {
+                return Err(self.fail("unterminated inline table", start))
+            }
+            let b = self.byte_at(self.pos)
+            if b == 125 {
+                if after_comma {
+                    return Err(self.fail("a trailing comma is not allowed in an inline table", self.pos))
+                }
+                self.pos = self.pos + 1
+                return Ok(index)
+            }
+            if b == 10 || b == 13 {
+                return Err(self.fail("a line break is not allowed in an inline table", self.pos))
+            }
+            let keys = self.dotted_key()?
+            self.skip_blank()
+            if self.at_end() || self.byte_at(self.pos) != 61 {
+                return Err(self.fail("expected '='", self.pos))
+            }
+            self.pos = self.pos + 1
+            self.skip_blank()
+            let value = self.value()?
+            self.insert(index, keys, value)?
+            self.skip_blank()
+            if self.at_end() {
+                return Err(self.fail("unterminated inline table", start))
+            }
+            let c = self.byte_at(self.pos)
+            if c == 10 || c == 13 {
+                return Err(self.fail("a line break is not allowed in an inline table", self.pos))
+            }
+            if c == 44 {
+                self.pos = self.pos + 1
+                after_comma = true
+            } else if c == 125 {
+                self.pos = self.pos + 1
+                return Ok(index)
+            } else {
+                return Err(self.fail("expected ',' or '}}'", self.pos))
+            }
+        }
+    }
+
+    /// Reads a run of digits with single underscores between them, and returns how many digits it had.
+    priv fn digit_run(mut self, start: usize): Result<usize, DeError> {
+        let mut digits: usize = 0
+        let mut underscore = false
+        loop {
+            if self.at_end() {
+                break
+            }
+            let b = self.byte_at(self.pos)
+            if is_digit(b) {
+                digits = digits + 1
+                underscore = false
+            } else if b == 95 {
+                if digits == 0 || underscore {
+                    return Err(self.fail("invalid number", start))
+                }
+                underscore = true
+            } else {
+                break
+            }
+            self.pos = self.pos + 1
+        }
+        if underscore {
+            return Err(self.fail("invalid number", start))
+        }
+        Ok(digits)
+    }
+
+    /// Reads a number: an integer (decimal, or hexadecimal, octal, or binary) or a float (TOML6, TOML7). `start` is the
+    /// first byte: a sign, a digit, `i`, or `n`.
+    priv fn number(mut self, start: usize): Result<usize, DeError> {
+        let mut negative = false
+        let mut signed = false
+        let first = self.byte_at(self.pos)
+        if first == 43 || first == 45 {
+            signed = true
+            negative = first == 45
+            self.pos = self.pos + 1
+        }
+        if self.starts_with_at("inf") || self.starts_with_at("nan") {
+            let is_inf = self.starts_with_at("inf")
+            self.pos = self.pos + 3
+            self.delimiter(start, "invalid number")?
+            let mut value = 0.0 / 0.0
+            if is_inf {
+                value = 1.0 / 0.0
+                if negative {
+                    value = -value
+                }
+            }
+            let index = self.leaf(KIND_FLOAT, start)
+            self.nodes[index].fraction = value
+            return Ok(index)
+        }
+        if !signed && self.byte_at(self.pos) == 48 {
+            let marker = self.byte_at(self.pos + 1)
+            if marker == 120 {
+                self.pos = self.pos + 2
+                return self.radix(start, 16)
+            }
+            if marker == 111 {
+                self.pos = self.pos + 2
+                return self.radix(start, 8)
+            }
+            if marker == 98 {
+                self.pos = self.pos + 2
+                return self.radix(start, 2)
+            }
+        }
+        let int_begin = self.pos
+        let int_digits = self.digit_run(start)?
+        if int_digits == 0 {
+            return Err(self.fail("invalid number", start))
+        }
+        if int_digits > 1 && self.byte_at(int_begin) == 48 {
+            return Err(self.fail("invalid number", start))
+        }
+        let mut is_float = false
+        if self.byte_at(self.pos) == 46 && !self.at_end() {
+            self.pos = self.pos + 1
+            is_float = true
+            if self.digit_run(start)? == 0 {
+                return Err(self.fail("invalid number", start))
+            }
+        }
+        if self.byte_at(self.pos) == 101 || self.byte_at(self.pos) == 69 {
+            self.pos = self.pos + 1
+            is_float = true
+            if self.byte_at(self.pos) == 43 || self.byte_at(self.pos) == 45 {
+                self.pos = self.pos + 1
+            }
+            if self.digit_run(start)? == 0 {
+                return Err(self.fail("invalid number", start))
+            }
+        }
+        self.delimiter(start, "invalid number")?
+        if is_float {
+            let clean = self.clean_float(start)
+            let value = match f64.parse(clean.as_str()) {
+                Ok(v) => v,
+                Err(_) => return Err(self.fail("float out of range", start)),
+            }
+            if value.is_infinite() {
+                return Err(self.fail("float out of range", start))
+            }
+            let index = self.leaf(KIND_FLOAT, start)
+            self.nodes[index].fraction = value
+            return Ok(index)
+        }
+        let bytes = self.text.as_bytes()
+        let mut i = start
+        if signed {
+            i = i + 1
+        }
+        let mut magnitude: u64 = 0
+        while i < self.pos {
+            let b = bytes[i]
+            if b != 95 {
+                let d = (b - 48) as u64
+                if magnitude > (INT_NEGATIVE_LIMIT - d) / 10 {
+                    return Err(self.fail("integer out of range", start))
+                }
+                magnitude = magnitude * 10 + d
+            }
+            i = i + 1
+        }
+        let mut value: i64 = 0
+        if negative {
+            if magnitude == INT_NEGATIVE_LIMIT {
+                value = i64.MIN
+            } else {
+                value = -(magnitude as i64)
+            }
+        } else {
+            if magnitude > INT_POSITIVE_LIMIT {
+                return Err(self.fail("integer out of range", start))
+            }
+            value = magnitude as i64
+        }
+        let index = self.leaf(KIND_INTEGER, start)
+        self.nodes[index].number = value
+        Ok(index)
+    }
+
+    /// The text of the float that `start` begins, without its underscores and without a `+`, ready for `f64.parse`.
+    priv fn clean_float(self, start: usize): String {
+        let mut out = String.new()
+        let bytes = self.text.as_bytes()
+        let mut i = start
+        while i < self.pos {
+            let b = bytes[i]
+            if b != 95 && !(b == 43 && i == start) {
+                out.push(b as char)
+            }
+            i = i + 1
+        }
+        out
+    }
+
+    /// Reads a hexadecimal, octal, or binary integer after its `0x`, `0o`, or `0b` prefix (TOML6).
+    priv fn radix(mut self, start: usize, base: u64): Result<usize, DeError> {
+        let mut value: u64 = 0
+        let mut digits: usize = 0
+        let mut underscore = false
+        loop {
+            if self.at_end() {
+                break
+            }
+            let b = self.byte_at(self.pos)
+            if b == 95 {
+                if digits == 0 || underscore {
+                    return Err(self.fail("invalid number", start))
+                }
+                underscore = true
+                self.pos = self.pos + 1
+                continue
+            }
+            let d = digit_value(b)
+            if d < 0 || (d as u64) >= base {
+                break
+            }
+            let digit = d as u64
+            if value > (i64.MAX as u64 - digit) / base {
+                return Err(self.fail("integer out of range", start))
+            }
+            value = value * base + digit
+            digits = digits + 1
+            underscore = false
+            self.pos = self.pos + 1
+        }
+        if digits == 0 || underscore {
+            return Err(self.fail("invalid number", start))
+        }
+        self.delimiter(start, "invalid number")?
+        let index = self.leaf(KIND_INTEGER, start)
+        self.nodes[index].number = value as i64
+        Ok(index)
+    }
+
+    /// Whether `at` starts a date: `YYYY-MM-DD`.
+    priv fn looks_like_date(self, at: usize): bool {
+        is_digit(self.byte_at(at))
+            && is_digit(self.byte_at(at + 1))
+            && is_digit(self.byte_at(at + 2))
+            && is_digit(self.byte_at(at + 3))
+            && self.byte_at(at + 4) == 45
+            && is_digit(self.byte_at(at + 5))
+            && is_digit(self.byte_at(at + 6))
+            && self.byte_at(at + 7) == 45
+            && is_digit(self.byte_at(at + 8))
+            && is_digit(self.byte_at(at + 9))
+    }
+
+    /// Whether `at` starts a time of day: `HH:`.
+    priv fn looks_like_time(self, at: usize): bool {
+        is_digit(self.byte_at(at)) && is_digit(self.byte_at(at + 1)) && self.byte_at(at + 2) == 58
+    }
+
+    /// Reads exactly `count` digits and returns their value, or the invalid-date error at `start`.
+    priv fn digits_exact(mut self, count: usize, start: usize): Result<i64, DeError> {
+        let mut value: i64 = 0
+        let mut i: usize = 0
+        while i < count {
+            let b = self.byte_at(self.pos)
+            if !is_digit(b) {
+                return Err(self.fail("invalid date or time", start))
+            }
+            value = value * 10 + (b - 48) as i64
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        Ok(value)
+    }
+
+    /// Consumes `b`, or reports an invalid date or time at `start`.
+    priv fn expect_byte(mut self, b: u8, start: usize): Result<(), DeError> {
+        if self.byte_at(self.pos) != b {
+            return Err(self.fail("invalid date or time", start))
+        }
+        self.pos = self.pos + 1
+        Ok(())
+    }
+
+    /// Reads a date (TOML9), which must exist.
+    priv fn date_part(mut self, start: usize): Result<Date, DeError> {
+        let year = self.digits_exact(4, start)?
+        self.expect_byte(45, start)?
+        let month = self.digits_exact(2, start)?
+        self.expect_byte(45, start)?
+        let day = self.digits_exact(2, start)?
+        if month < 1 || month > 12 || day < 1 || day > days_in(year, month) {
+            return Err(self.fail("invalid date or time", start))
+        }
+        Ok(Date { year: year as i32, month: month as u8, day: day as u8 })
+    }
+
+    /// Reads a time of day (TOML9): `HH:MM:SS` with an optional fraction of up to nine digits.
+    priv fn time_part(mut self, start: usize): Result<Time, DeError> {
+        let hour = self.digits_exact(2, start)?
+        self.expect_byte(58, start)?
+        let minute = self.digits_exact(2, start)?
+        self.expect_byte(58, start)?
+        let second = self.digits_exact(2, start)?
+        let mut nanos: i64 = 0
+        if self.byte_at(self.pos) == 46 {
+            self.pos = self.pos + 1
+            let mut count: usize = 0
+            while is_digit(self.byte_at(self.pos)) {
+                if count == 9 {
+                    return Err(self.fail("invalid date or time", start))
+                }
+                nanos = nanos * 10 + (self.byte_at(self.pos) - 48) as i64
+                count = count + 1
+                self.pos = self.pos + 1
+            }
+            if count == 0 {
+                return Err(self.fail("invalid date or time", start))
+            }
+            let mut scale = count
+            while scale < 9 {
+                nanos = nanos * 10
+                scale = scale + 1
+            }
+        }
+        if hour > 23 || minute > 59 || second > 60 {
+            return Err(self.fail("invalid date or time", start))
+        }
+        Ok(Time { hour: hour as u8, minute: minute as u8, second: second as u8, nanosecond: nanos as u32 })
+    }
+
+    /// Reads an optional offset: `Z`, or a sign and `HH:MM`. Returns its minutes east of UTC, or nothing when there is none.
+    priv fn offset_part(mut self, start: usize): Result<Option<i32>, DeError> {
+        let b = self.byte_at(self.pos)
+        if b == 90 || b == 122 {
+            self.pos = self.pos + 1
+            return Ok(Some(0))
+        }
+        if b == 43 || b == 45 {
+            self.pos = self.pos + 1
+            let hours = self.digits_exact(2, start)?
+            self.expect_byte(58, start)?
+            let minutes = self.digits_exact(2, start)?
+            if hours > 23 || minutes > 59 {
+                return Err(self.fail("invalid date or time", start))
+            }
+            let total = hours * 60 + minutes
+            if b == 45 {
+                return Ok(Some((0 - total) as i32))
+            }
+            return Ok(Some(total as i32))
+        }
+        Ok(None)
+    }
+
+    /// Reads a date, a time, or a date-time (TOML9) and returns its node. `start` is the first digit.
+    priv fn datetime(mut self, start: usize): Result<usize, DeError> {
+        let value = if self.looks_like_date(self.pos) {
+            let date = self.date_part(start)?
+            let b = self.byte_at(self.pos)
+            let joined = (b == 84 || b == 116 || b == 32) && is_digit(self.byte_at(self.pos + 1))
+            if joined {
+                self.pos = self.pos + 1
+                let time = self.time_part(start)?
+                match self.offset_part(start)? {
+                    Some(minutes) => Datetime.OffsetDateTime(date, time, minutes),
+                    None => Datetime.LocalDateTime(date, time),
+                }
+            } else {
+                Datetime.LocalDate(date)
+            }
+        } else {
+            Datetime.LocalTime(self.time_part(start)?)
+        }
+        self.delimiter(start, "invalid date or time")?
+        let index = self.leaf(KIND_DATETIME, start)
+        self.nodes[index].when = value
+        Ok(index)
+    }
+}
+
+/// Reads a TOML document into a `Value` tree (TOML2-TOML11). The root is a table.
+fn parse(text: str): Result<Value, DeError> {
+    let mut parser = Parser.new(text)
+    parser.document()?
+    Ok(node_value(parser.nodes, 0))
+}
+
+// ----- the canonical text -------------------------------------------------------------------------------------------
+
+/// Writes `value` in the canonical form (TOML13): the scalars of each table first, then its tables as sections. The
+/// value must be a table.
+fn render(value: Value): Result<String, DeError> {
+    match value {
+        Value.Table(entries) => {
+            let mut out = String.new()
+            write_table(mut out, entries, "")
+            Ok(out)
+        }
+        _ => Err(DeError.new("a TOML document must be a table")),
+    }
+}
+
+/// Whether a value is written as a section: a table, or a non-empty array of tables (TOML13).
+fn is_section(value: Value): bool {
+    match value {
+        Value.Table(_) => true,
+        Value.Array(items) => is_table_array(items),
+        _ => false,
+    }
+}
+
+/// Whether `items` is a non-empty array whose items are all tables.
+fn is_table_array(items: List<Item>): bool {
+    if items.len() == 0 {
+        return false
+    }
+    for item in items {
+        match *item.value {
+            Value.Table(_) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// The key as the canonical text writes it: bare when every byte is a bare-key byte, and a basic string otherwise.
+fn key_text(key: str): String {
+    let mut bare = key.len() > 0
+    let bytes = key.as_bytes()
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if !is_bare_byte(bytes[i]) {
+            bare = false
+        }
+        i = i + 1
+    }
+    if bare {
+        key.to_string()
+    } else {
+        let mut out = String.new()
+        write_basic(mut out, key)
+        out
+    }
+}
+
+/// A header path: `path` and `key`, joined with a dot.
+fn join_path(path: str, key: str): String {
+    let name = key_text(key)
+    if path.len() == 0 {
+        name
+    } else {
+        format("{path}.{name}")
+    }
+}
+
+/// Writes the body of one table: its scalars and inline arrays in order, then each sub-table and each array of tables as
+/// a section in order. `path` is the table's header path.
+fn write_table(mut out: String, entries: List<Entry>, path: str) {
+    for entry in entries {
+        if !is_section(*entry.item.value) {
+            out.push_str(key_text(entry.key.as_str()).as_str())
+            out.push_str(" = ")
+            write_inline(mut out, *entry.item.value)
+            out.push('\n')
+        }
+    }
+    for entry in entries {
+        let name = join_path(path, entry.key.as_str())
+        match *entry.item.value {
+            Value.Table(sub) => {
+                write_header(mut out, name.as_str(), false)
+                write_table(mut out, sub, name.as_str())
+            }
+            Value.Array(items) => {
+                if is_table_array(items) {
+                    for item in items {
+                        write_header(mut out, name.as_str(), true)
+                        match *item.value {
+                            Value.Table(sub) => write_table(mut out, sub, name.as_str()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Writes a section header: a blank line first, unless the header starts the document (TOML13).
+fn write_header(mut out: String, name: str, array: bool) {
+    if out.len() > 0 {
+        out.push('\n')
+    }
+    if array {
+        out.push_str("[[")
+        out.push_str(name)
+        out.push_str("]]\n")
+    } else {
+        out.push('[')
+        out.push_str(name)
+        out.push_str("]\n")
+    }
+}
+
+/// Writes a value inline: a scalar, an array `[1, 2]`, or an inline table `{ a = 1 }` (TOML13).
+fn write_inline(mut out: String, value: Value) {
+    match value {
+        Value.Str(text) => write_basic(mut out, text.as_str()),
+        Value.Int(n) => out.push_str(n.to_string().as_str()),
+        Value.Float(f) => out.push_str(float_text(f).as_str()),
+        Value.Bool(b) => {
+            if b {
+                out.push_str("true")
+            } else {
+                out.push_str("false")
+            }
+        }
+        Value.Datetime(d) => out.push_str(datetime_text(d).as_str()),
+        Value.Array(items) => {
+            out.push('[')
+            let mut first = true
+            for item in items {
+                if !first {
+                    out.push_str(", ")
+                }
+                first = false
+                write_inline(mut out, *item.value)
+            }
+            out.push(']')
+        }
+        Value.Table(entries) => {
+            if entries.len() == 0 {
+                out.push_str("{{}}")
+            } else {
+                out.push_str("{{ ")
+                let mut first = true
+                for entry in entries {
+                    if !first {
+                        out.push_str(", ")
+                    }
+                    first = false
+                    out.push_str(key_text(entry.key.as_str()).as_str())
+                    out.push_str(" = ")
+                    write_inline(mut out, *entry.item.value)
+                }
+                out.push_str(" }}")
+            }
+        }
+    }
+}
+
+/// Writes `text` as a basic string: `"` and `\` are escaped, the common control characters have their short escapes, and
+/// every other control character and DEL is `\uXXXX` in lowercase hex (TOML13).
+fn write_basic(mut out: String, text: str) {
+    out.push('"')
+    for c in text.chars() {
+        let code = c as u32
+        if c == '"' {
+            out.push_str("\\\"")
+        } else if c == '\\' {
+            out.push_str("\\\\")
+        } else if code == 8 {
+            out.push_str("\\b")
+        } else if code == 9 {
+            out.push_str("\\t")
+        } else if code == 10 {
+            out.push_str("\\n")
+        } else if code == 12 {
+            out.push_str("\\f")
+        } else if code == 13 {
+            out.push_str("\\r")
+        } else if code < 32 || code == 127 {
+            out.push_str("\\u")
+            write_hex4(mut out, code)
+        } else {
+            out.push(c)
+        }
+    }
+    out.push('"')
+}
+
+/// Writes a code point as four lowercase hex digits.
+fn write_hex4(mut out: String, code: u32) {
+    let mut place: u32 = 4096
+    while place > 0 {
+        let digit = (code / place) % 16
+        if digit < 10 {
+            out.push((48 + digit) as u8 as char)
+        } else {
+            out.push((87 + digit) as u8 as char)
+        }
+        place = place / 16
+    }
+}
+
+/// The float's canonical text (TOML7): `nan`, `inf`, `-inf`, a negative zero as `-0.0`, and a point or exponent in every
+/// finite form.
+fn float_text(f: f64): String {
+    if f.is_nan() {
+        return "nan".to_string()
+    }
+    if f.is_infinite() {
+        if f > 0.0 {
+            return "inf".to_string()
+        }
+        return "-inf".to_string()
+    }
+    if f == 0.0 {
+        if 1.0 / f < 0.0 {
+            return "-0.0".to_string()
+        }
+        return "0.0".to_string()
+    }
+    let mut text = f.to_string()
+    let bytes = text.as_bytes()
+    let mut has_point = false
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if bytes[i] == 46 || bytes[i] == 101 || bytes[i] == 69 {
+            has_point = true
+        }
+        i = i + 1
+    }
+    if !has_point {
+        text.push_str(".0")
+    }
+    text
+}
+
+/// A number padded with zeros on the left to `width` digits.
+fn pad(n: i64, width: usize): String {
+    let digits = n.to_string()
+    let mut out = String.new()
+    let mut i = digits.len()
+    while i < width {
+        out.push('0')
+        i = i + 1
+    }
+    out.push_str(digits.as_str())
+    out
+}
+
+/// A date's text: `YYYY-MM-DD`.
+fn date_text(date: Date): String {
+    let mut out = pad(date.year as i64, 4)
+    out.push('-')
+    out.push_str(pad(date.month as i64, 2).as_str())
+    out.push('-')
+    out.push_str(pad(date.day as i64, 2).as_str())
+    out
+}
+
+/// A time's text: `HH:MM:SS`, and a fraction without trailing zeros when the nanosecond is not zero.
+fn time_text(time: Time): String {
+    let mut out = pad(time.hour as i64, 2)
+    out.push(':')
+    out.push_str(pad(time.minute as i64, 2).as_str())
+    out.push(':')
+    out.push_str(pad(time.second as i64, 2).as_str())
+    if time.nanosecond > 0 {
+        let mut n = time.nanosecond as i64
+        let mut digits: usize = 9
+        while n % 10 == 0 {
+            n = n / 10
+            digits = digits - 1
+        }
+        out.push('.')
+        out.push_str(pad(n, digits).as_str())
+    }
+    out
+}
+
+/// An offset's text: `Z` for zero, otherwise a sign and `HH:MM`.
+fn offset_text(minutes: i32): String {
+    if minutes == 0 {
+        return "Z".to_string()
+    }
+    let mut out = String.new()
+    let mut magnitude = minutes as i64
+    if magnitude < 0 {
+        out.push('-')
+        magnitude = 0 - magnitude
+    } else {
+        out.push('+')
+    }
+    out.push_str(pad(magnitude / 60, 2).as_str())
+    out.push(':')
+    out.push_str(pad(magnitude % 60, 2).as_str())
+    out
+}
+
+/// A datetime's canonical text (TOML9, TOML13).
+fn datetime_text(d: Datetime): String {
+    match d {
+        Datetime.OffsetDateTime(date, time, minutes) => {
+            let mut out = date_text(date)
+            out.push('T')
+            out.push_str(time_text(time).as_str())
+            out.push_str(offset_text(minutes).as_str())
+            out
+        }
+        Datetime.LocalDateTime(date, time) => {
+            let mut out = date_text(date)
+            out.push('T')
+            out.push_str(time_text(time).as_str())
+            out
+        }
+        Datetime.LocalDate(date) => date_text(date),
+        Datetime.LocalTime(time) => time_text(time),
+    }
+}
+
+// ----- the writer: the format side of `Serializer` ------------------------------------------------------------------
+
+/// One open container in the writer. `node` receives the next value: an element of an array, or an entry under `key` in a
+/// table. A payload frame belongs to an enum variant, and a transparent frame is the payload of an `Option.Some`, which
+/// adds nothing of its own; it copies its parent's destination, so its value lands where the parent's would.
+struct WFrame {
+    node: usize,
+    array: bool,
+    key: String,
+    payload: bool,
+    transparent: bool,
+}
+
+/// The TOML writer. The framework calls it in document order, and it builds the arena that `to_value` reads.
+struct Writer {
+    nodes: List<Node>,
+    frames: List<WFrame>,
+}
+
+Writer {
+    /// A writer with an empty root table.
+    fn new(): Writer {
+        let mut nodes = List<Node>.new()
+        nodes.push(new_node(KIND_TABLE, ORIGIN_HEADER, zero_span()))
+        Writer { nodes: nodes, frames: List<WFrame>.new() }
+    }
+
+    /// Adds a node of `kind` and `origin`, with the zero span the writer gives everything, and returns its index.
+    priv fn create(mut self, kind: i32, origin: i32): usize {
+        self.nodes.push(new_node(kind, origin, zero_span()))
+        self.nodes.len() - 1
+    }
+
+    /// Puts the node `child` where the innermost frame says the next value goes. A top-level value must be a table.
+    priv fn attach(mut self, child: usize): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a TOML document must be a table"))
+        }
+        let i = self.frames.len() - 1
+        let parent = self.frames[i].node
+        let array = self.frames[i].array
+        let key = if array { String.new() } else { self.frames[i].key.clone() }
+        self.nodes[child].key = key
+        self.nodes[parent].kids.push(child)
+        Ok(())
+    }
+
+    /// A new scalar of `kind`, attached where the next value goes.
+    priv fn leaf(mut self, kind: i32): Result<usize, DeError> {
+        let index = self.create(kind, ORIGIN_IMPLICIT)
+        self.attach(index)?
+        Ok(index)
+    }
+
+    /// Opens a table for a struct or a map, attached where the next value goes; a top-level table is the root.
+    priv fn open_table(mut self, sorted: bool): Result<(), DeError> {
+        if self.frames.is_empty() {
+            self.nodes[0].sorted = sorted
+            self.frames.push(WFrame { node: 0, array: false, key: String.new(), payload: false, transparent: false })
+            return Ok(())
+        }
+        let table = self.create(KIND_TABLE, ORIGIN_IMPLICIT)
+        self.nodes[table].sorted = sorted
+        self.attach(table)?
+        self.frames.push(WFrame { node: table, array: false, key: String.new(), payload: false, transparent: false })
+        Ok(())
+    }
+
+    /// Removes the innermost frame.
+    priv fn close(mut self) {
+        self.frames.pop()
+        return
+    }
+
+    /// The value written, as a `Value` tree.
+    fn document(self): Value {
+        node_value(self.nodes, 0)
+    }
+}
+
+Writer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        Err(DeError.new("TOML has no unit value"))
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        let index = self.leaf(KIND_BOOL)?
+        self.nodes[index].flag = value
+        Ok(())
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value
+        Ok(())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        if value > i64.MAX as u64 {
+            return Err(DeError.new("an unsigned integer that does not fit in a TOML integer"))
+        }
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        if value as u64 > i64.MAX as u64 {
+            return Err(DeError.new("an unsigned integer that does not fit in a TOML integer"))
+        }
+        let index = self.leaf(KIND_INTEGER)?
+        self.nodes[index].number = value as i64
+        Ok(())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        let index = self.leaf(KIND_FLOAT)?
+        if value.is_nan() {
+            self.nodes[index].fraction = 0.0 / 0.0
+        } else if value.is_infinite() {
+            self.nodes[index].fraction = if value > 0.0 { 1.0 / 0.0 } else { -1.0 / 0.0 }
+        } else {
+            // The shortest text of the f32 is the value the file should hold, so it is read back as the f64 it names.
+            let text = value.to_string()
+            self.nodes[index].fraction = match f64.parse(text.as_str()) {
+                Ok(v) => v,
+                Err(_) => value as f64,
+            }
+        }
+        Ok(())
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        let index = self.leaf(KIND_FLOAT)?
+        self.nodes[index].fraction = value
+        Ok(())
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        let index = self.leaf(KIND_STRING)?
+        let mut text = String.new()
+        text.push(value)
+        self.nodes[index].text = text
+        Ok(())
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        let index = self.leaf(KIND_STRING)?
+        self.nodes[index].text = value.to_string()
+        Ok(())
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        self.begin_seq(value.len())?
+        let mut i: usize = 0
+        while i < value.len() {
+            self.serialize_u8(value[i])?
+            i = i + 1
+        }
+        self.end_seq()
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        let array = self.create(KIND_ARRAY, ORIGIN_STATIC)
+        self.attach(array)?
+        self.frames.push(WFrame { node: array, array: true, key: String.new(), payload: false, transparent: false })
+        Ok(())
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.open_table(true)
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a map key outside a map"))
+        }
+        let i = self.frames.len() - 1
+        self.frames[i].key = key.to_string()
+        Ok(())
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.open_table(false)
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a struct field outside a struct"))
+        }
+        let i = self.frames.len() - 1
+        self.frames[i].key = name.to_string()
+        Ok(())
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        if type_name == "Option" {
+            if self.frames.is_empty() {
+                return Err(DeError.new("a TOML document must be a table"))
+            }
+            let i = self.frames.len() - 1
+            if variant == "Some" {
+                let parent = self.frames[i].node
+                let array = self.frames[i].array
+                let key = self.frames[i].key.clone()
+                let payload = self.frames[i].payload
+                self.frames.push(WFrame { node: parent, array: array, key: key, payload: payload, transparent: true })
+                return Ok(())
+            }
+            // `None` writes nothing: a struct field or a map entry is left out. Elsewhere it has no form.
+            if self.frames[i].array || self.frames[i].payload {
+                return Err(DeError.new("an Option.None has no TOML form here"))
+            }
+            return Ok(())
+        }
+        if arity == 0 {
+            let leaf = self.leaf(KIND_STRING)?
+            self.nodes[leaf].text = variant.to_string()
+            return Ok(())
+        }
+        // A payload variant is a table with one entry, named by the variant: `{ Circle = 1.5 }`. Several values are an array
+        // under that name: `{ Rect = [1.5, 2.5] }`.
+        let mut table: usize = 0
+        if !self.frames.is_empty() {
+            table = self.create(KIND_TABLE, ORIGIN_IMPLICIT)
+            self.attach(table)?
+        }
+        self.frames.push(
+            WFrame { node: table, array: false, key: variant.to_string(), payload: true, transparent: false },
+        )
+        if arity > 1 {
+            let array = self.create(KIND_ARRAY, ORIGIN_STATIC)
+            self.attach(array)?
+            self.frames.push(WFrame { node: array, array: true, key: String.new(), payload: true, transparent: false })
+        }
+        Ok(())
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        if arity > 1 {
+            self.close()
+        }
+        if arity > 0 {
+            self.close()
+        }
+        Ok(())
+    }
+}
+
+/// Writes `value` as a `Value` tree: the framework's writes, arranged as TOML (TOML14).
+fn to_value<T: Serialize>(value: T): Result<Value, DeError> {
+    let mut writer = Writer.new()
+    value.serialize(mut writer)?
+    Ok(writer.document())
+}
+
+/// Writes `value` as canonical TOML text (TOML13). The value must be a table: a struct, a map, or a variant with a payload.
+fn to_string<T: Serialize>(value: T): Result<String, DeError> {
+    let document = to_value(value)?
+    render(document)
+}
+
+// ----- the reader: the format side of `Deserializer` ----------------------------------------------------------------
+
+/// Flattens a `Value` into an arena of nodes, the form the reader works on. The root is node 0.
+struct Flatten {
+    nodes: List<Node>,
+}
+
+Flatten {
+    /// Adds `value`, with its key and spans, and returns its node.
+    priv fn value(mut self, value: Value, key: String, key_span: Span, span: Span): usize {
+        match value {
+            Value.Table(entries) => {
+                let mut table = new_node(KIND_TABLE, ORIGIN_IMPLICIT, span)
+                table.key = key.clone()
+                table.key_span = key_span
+                let index = self.nodes.len()
+                self.nodes.push(table)
+                for entry in entries {
+                    let child = self.value(*entry.item.value, entry.key, entry.key_span, entry.item.span)
+                    self.nodes[index].kids.push(child)
+                }
+                index
+            }
+            Value.Array(items) => {
+                let mut array = new_node(KIND_ARRAY, ORIGIN_STATIC, span)
+                array.key = key.clone()
+                array.key_span = key_span
+                let index = self.nodes.len()
+                self.nodes.push(array)
+                for item in items {
+                    let child = self.value(*item.value, String.new(), item.span, item.span)
+                    self.nodes[index].kids.push(child)
+                }
+                index
+            }
+            Value.Str(text) => self.leaf_with(
+                KIND_STRING,
+                key,
+                key_span,
+                span,
+                text,
+                0,
+                0.0,
+                false,
+                Datetime.LocalDate(Date { year: 1970, month: 1, day: 1 }),
+            ),
+            Value.Int(n) => self.leaf_with(
+                KIND_INTEGER,
+                key,
+                key_span,
+                span,
+                String.new(),
+                n,
+                0.0,
+                false,
+                Datetime.LocalDate(Date { year: 1970, month: 1, day: 1 }),
+            ),
+            Value.Float(f) => self.leaf_with(
+                KIND_FLOAT,
+                key,
+                key_span,
+                span,
+                String.new(),
+                0,
+                f,
+                false,
+                Datetime.LocalDate(Date { year: 1970, month: 1, day: 1 }),
+            ),
+            Value.Bool(b) => self.leaf_with(
+                KIND_BOOL,
+                key,
+                key_span,
+                span,
+                String.new(),
+                0,
+                0.0,
+                b,
+                Datetime.LocalDate(Date { year: 1970, month: 1, day: 1 }),
+            ),
+            Value.Datetime(d) => self.leaf_with(KIND_DATETIME, key, key_span, span, String.new(), 0, 0.0, false, d),
+        }
+    }
+
+    /// Adds a scalar node with the given fields.
+    priv fn leaf_with(
+        mut self,
+        kind: i32,
+        key: String,
+        key_span: Span,
+        span: Span,
+        text: String,
+        number: i64,
+        fraction: f64,
+        flag: bool,
+        when: Datetime,
+    ): usize {
+        let mut scalar = new_node(kind, ORIGIN_IMPLICIT, span)
+        scalar.key = key.clone()
+        scalar.key_span = key_span
+        scalar.text = text.clone()
+        scalar.number = number
+        scalar.fraction = fraction
+        scalar.flag = flag
+        scalar.when = when
+        let index = self.nodes.len()
+        self.nodes.push(scalar)
+        index
+    }
+}
+
+/// A frame of the reader: an open table or array, and the index of its next child to read.
+struct RFrame {
+    node: usize,
+    next: usize,
+}
+
+/// An open enum: `option` for `Option`, and `object` for a variant written as a table with one entry.
+struct EFrame {
+    option: bool,
+    object: bool,
+}
+
+/// The TOML reader. A value is read from the innermost open container's next child, or from the root when none is open.
+/// Reading a value consumes it (the container moves on); opening a container and closing it consumes it at the close.
+struct Reader {
+    nodes: List<Node>,
+    frames: List<RFrame>,
+    enums: List<EFrame>,
+}
+
+Reader {
+    /// The node the next read takes.
+    priv fn current(self): Result<usize, DeError> {
+        if self.frames.is_empty() {
+            return Ok(0)
+        }
+        let i = self.frames.len() - 1
+        let node = self.frames[i].node
+        let next = self.frames[i].next
+        if next >= self.nodes[node].kids.len() {
+            return Err(DeError.new("a value is missing"))
+        }
+        Ok(self.nodes[node].kids[next])
+    }
+
+    /// Consumes the value the last read took: the innermost container moves on to its next child.
+    priv fn advance(mut self) {
+        if !self.frames.is_empty() {
+            let i = self.frames.len() - 1
+            self.frames[i].next = self.frames[i].next + 1
+        }
+    }
+
+    /// Whether the innermost container has another child.
+    priv fn more(self): bool {
+        if self.frames.is_empty() {
+            return false
+        }
+        let i = self.frames.len() - 1
+        self.frames[i].next < self.nodes[self.frames[i].node].kids.len()
+    }
+
+    /// Closes the innermost container, which the value it was read from consumes.
+    priv fn close(mut self) {
+        self.frames.pop()
+        self.advance()
+    }
+
+    /// Reads the current value as a scalar of `kind`, which `expected` names when the value has another kind.
+    priv fn leaf(mut self, kind: i32, expected: str): Result<usize, DeError> {
+        let i = self.current()?
+        if self.nodes[i].kind != kind {
+            return Err(self.mismatch(i, expected))
+        }
+        self.advance()
+        Ok(i)
+    }
+
+    /// The error for node `i` having the wrong kind: `expected ..., found ...` at its place.
+    priv fn mismatch(self, i: usize, expected: str): DeError {
+        let found = describe(self.nodes[i].kind)
+        let message = format("expected {expected}, found {found}")
+        syntax_error(message.as_str(), self.nodes[i].span)
+    }
+
+    /// The error for an integer that does not fit the width `width` at node `i`.
+    priv fn range_error(self, i: usize, width: str): DeError {
+        let message = format("a number that does not fit in {width}")
+        syntax_error(message.as_str(), self.nodes[i].span)
+    }
+
+    /// Reads an integer in `low..=high`, reporting `width` when it is out of range.
+    priv fn integer(mut self, low: i64, high: i64, width: str): Result<i64, DeError> {
+        let i = self.leaf(KIND_INTEGER, "an integer")?
+        let value = self.nodes[i].number
+        if value < low || value > high {
+            return Err(self.range_error(i, width))
+        }
+        Ok(value)
+    }
+
+    /// Reads an enum that is written as a table, which `begin_enum` has opened: the variant's name is its one key.
+    priv fn enum_table(self): usize {
+        let i = self.frames.len() - 1
+        self.frames[i].node
+    }
+}
+
+Reader: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        Err(DeError.new("TOML has no unit value"))
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        let i = self.leaf(KIND_BOOL, "a boolean")?
+        Ok(self.nodes[i].flag)
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let value = self.integer(-128, 127, "i8")?
+        Ok(value as i8)
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let value = self.integer(-32768, 32767, "i16")?
+        Ok(value as i16)
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let value = self.integer(-2147483648, 2147483647, "i32")?
+        Ok(value as i32)
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        self.integer(i64.MIN, i64.MAX, "i64")
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let value = self.integer(i64.MIN, i64.MAX, "isize")?
+        Ok(value as isize)
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let value = self.integer(0, 255, "u8")?
+        Ok(value as u8)
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let value = self.integer(0, 65535, "u16")?
+        Ok(value as u16)
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let value = self.integer(0, 4294967295, "u32")?
+        Ok(value as u32)
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        let value = self.integer(0, i64.MAX, "u64")?
+        Ok(value as u64)
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let value = self.integer(0, i64.MAX, "usize")?
+        Ok(value as usize)
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let i = self.leaf(KIND_FLOAT, "a float")?
+        Ok(self.nodes[i].fraction as f32)
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let i = self.leaf(KIND_FLOAT, "a float")?
+        Ok(self.nodes[i].fraction)
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let i = self.leaf(KIND_STRING, "a string")?
+        let text = self.nodes[i].text.clone()
+        let mut count: usize = 0
+        let mut only: char = ' '
+        for c in text.chars() {
+            if count == 0 {
+                only = c
+            }
+            count = count + 1
+        }
+        if count != 1 {
+            return Err(syntax_error("expected one character", self.nodes[i].span))
+        }
+        Ok(only)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        let i = self.leaf(KIND_STRING, "a string")?
+        Ok(self.nodes[i].text.clone())
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        let i = self.leaf(KIND_ARRAY, "an array")?
+        let mut out = List<u8>.new()
+        let mut k: usize = 0
+        while k < self.nodes[i].kids.len() {
+            let item = self.nodes[i].kids[k]
+            if self.nodes[item].kind != KIND_INTEGER {
+                return Err(self.mismatch(item, "an integer"))
+            }
+            let n = self.nodes[item].number
+            if n < 0 || n > 255 {
+                return Err(self.range_error(item, "u8"))
+            }
+            out.push(n as u8)
+            k = k + 1
+        }
+        Ok(out)
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        let i = self.current()?
+        if self.nodes[i].kind != KIND_ARRAY {
+            return Err(self.mismatch(i, "an array"))
+        }
+        self.frames.push(RFrame { node: i, next: 0 })
+        Ok(())
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        Ok(self.more())
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        let i = self.current()?
+        if self.nodes[i].kind != KIND_TABLE {
+            return Err(self.mismatch(i, "a table"))
+        }
+        self.frames.push(RFrame { node: i, next: 0 })
+        Ok(())
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        Ok(self.more())
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        let i = self.current()?
+        Ok(self.nodes[i].key.clone())
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        let i = self.current()?
+        if self.nodes[i].kind != KIND_TABLE {
+            return Err(self.mismatch(i, "a table"))
+        }
+        self.frames.push(RFrame { node: i, next: 0 })
+        Ok(())
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        Ok(self.more())
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        let i = self.current()?
+        Ok(self.nodes[i].key.clone())
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close()
+        Ok(())
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        if name == "Option" {
+            self.enums.push(EFrame { option: true, object: false })
+            return Ok(())
+        }
+        let i = self.current()?
+        if self.nodes[i].kind == KIND_STRING {
+            self.enums.push(EFrame { option: false, object: false })
+            return Ok(())
+        }
+        if self.nodes[i].kind == KIND_TABLE && self.nodes[i].kids.len() == 1 {
+            self.frames.push(RFrame { node: i, next: 0 })
+            self.enums.push(EFrame { option: false, object: true })
+            return Ok(())
+        }
+        Err(syntax_error("expected a variant: a string or a table with one key", self.nodes[i].span))
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant name outside an enum"))
+        }
+        let n = self.enums.len() - 1
+        if self.enums[n].option {
+            return Ok("Some".to_string())
+        }
+        if self.enums[n].object {
+            let table = self.enum_table()
+            let entry = self.nodes[table].kids[0]
+            return Ok(self.nodes[entry].key.clone())
+        }
+        let i = self.current()?
+        let name = self.nodes[i].text.clone()
+        self.advance()
+        Ok(name)
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let n = self.enums.len() - 1
+        if self.enums[n].option {
+            if arity != 1 {
+                return Err(DeError.new("Option.Some has one payload value"))
+            }
+            return Ok(())
+        }
+        if !self.enums[n].object {
+            if arity != 0 {
+                return Err(DeError.new("expected a payload for a unit variant"))
+            }
+            return Ok(())
+        }
+        if arity == 0 {
+            return Err(DeError.new("a unit variant has no payload"))
+        }
+        if arity > 1 {
+            let i = self.current()?
+            if self.nodes[i].kind != KIND_ARRAY {
+                return Err(self.mismatch(i, "an array"))
+            }
+            self.frames.push(RFrame { node: i, next: 0 })
+        }
+        Ok(())
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        Ok(())
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let n = self.enums.len() - 1
+        let option = self.enums[n].option
+        let object = self.enums[n].object
+        self.enums.pop()
+        if option || !object {
+            return Ok(())
+        }
+        if arity > 1 {
+            self.close()
+        }
+        self.close()
+        Ok(())
+    }
+}
+
+/// Reads a `Value` tree as a `T` (the framework's reads, arranged as TOML; TOML15).
+fn from_value<T: Deserialize>(value: Value): Result<T, DeError> {
+    let mut flat = Flatten { nodes: List<Node>.new() }
+    flat.value(value, String.new(), zero_span(), zero_span())
+    let mut reader = Reader { nodes: flat.nodes, frames: List<RFrame>.new(), enums: List<EFrame>.new() }
+    T.deserialize(mut reader)
+}
+
+/// Reads a `T` from TOML text (TOML2-TOML15). The text must parse as a table.
+fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
+    let document = parse(text)?
+    from_value(document)
+}
