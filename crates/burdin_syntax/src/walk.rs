@@ -1,8 +1,8 @@
-//! A read-only walk over the syntax tree. [`Visit`] overrides only the nodes a lint cares about; every default
-//! method walks into the node's children, in source order.
+//! A read-only walk over the syntax tree. [`Visit`] overrides only the nodes a tool cares about; every default
+//! method walks into the node's children, in source order. The linter and the refactoring engine walk with it.
 
+use crate::ast::*;
 use burdin_diag::Span;
-use burdin_syntax::ast::*;
 
 pub trait Visit {
     fn expr(&mut self, e: &Expr) {
@@ -105,6 +105,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Float(_)
         | K::Char(_)
         | K::Str(_)
+        | K::InlineSnapshot(_)
         | K::Bool(_)
         | K::Unit
         | K::SelfValue

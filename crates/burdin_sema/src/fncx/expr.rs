@@ -37,6 +37,15 @@ impl FnCx<'_> {
             K::Float(text) => self.float_literal(text, false, expect, span),
             K::Char(c) => mk(tir::ExprKind::Char(*c), Ty::Char, span),
             K::Str(s) => mk(tir::ExprKind::Str(s.clone()), Ty::Str, span),
+            // An inline snapshot is only an argument of `assert_snapshot`, which reads it from the call itself.
+            K::InlineSnapshot(_) => {
+                self.diags.error(
+                    Code::INVALID_SNAPSHOT,
+                    span,
+                    "an inline snapshot `@\"...\"` is only allowed as the second argument of `assert_snapshot`",
+                );
+                error_expr(span)
+            }
             K::Interp(parts) => self.interp_expr(parts, span),
             K::Bool(b) => mk(tir::ExprKind::Bool(*b), Ty::Bool, span),
             K::Unit => mk(tir::ExprKind::Unit, Ty::Unit, span),

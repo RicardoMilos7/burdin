@@ -12,9 +12,9 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md`, `spec/toolchain.md`, `spec/watch.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
-   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, the language server, and dependencies with `burdin.lock` and `burdin add`.
+   operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, the language server, dependencies with `burdin.lock` and `burdin add`, and the toolchain manager.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
    `spec/test-runner.md`, and `spec/bench.md` describe the iteration protocol, `any`/`impl`, `burdin test`, and
    `burdin bench`.
@@ -57,12 +57,14 @@ python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
+python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
 python3 tests/check_bench.py             check `burdin bench`: measurement, statistics, formats, selection, baselines, and `--profile-time`
 python3 tests/check_lsp.py               check `burdin lsp`: the driver's server, a test run through a lens, and the editor files
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
+python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
@@ -175,7 +177,9 @@ crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_lint (the linter), burdin_doc (the documentation generator),
                           burdin_query (the query-based compiler library),
                           burdin_pkg (the package resolver: git dependencies, `burdin.lock`, `burdin add`),
+                          burdin_toolchain (`burdin toolchain` and the `burdin` proxy), burdin_sha256 (SHA-256),
                           burdin_lsp (the language server behind `burdin lsp`),
+                          burdin_refactor (the refactoring engine: `burdin ssr` and `burdin refactor`, spec/refactor.md),
                           burdin_json (the JSON value and framing both protocol servers share),
                           burdin_dap (the debug adapter behind `burdin dap`),
                           burdin_repl (the REPL behind `burdin repl`),

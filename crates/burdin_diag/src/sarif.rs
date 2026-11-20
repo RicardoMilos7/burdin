@@ -150,15 +150,34 @@ fn result(d: &Diagnostic, sources: &SourceMap, rules: &[Rule]) -> Json {
             .suggestions
             .iter()
             .map(|suggestion| {
-                let replacement = Json::obj([
-                    ("deletedRegion", region(sources, suggestion.span)),
-                    ("insertedContent", Json::obj([("text", Json::str(suggestion.replacement.as_str()))])),
-                ]);
-                let change = Json::obj([
-                    ("artifactLocation", artifact_location(&sources.get(suggestion.span.file).path)),
-                    ("replacements", Json::Arr(vec![replacement])),
-                ]);
-                Json::obj([("description", message(&suggestion.message)), ("artifactChanges", Json::Arr(vec![change]))])
+                // One artifact change per file the edits touch, in the order the files first appear.
+                let mut files: Vec<crate::FileId> = Vec::new();
+                for edit in &suggestion.edits {
+                    if !files.contains(&edit.span.file) {
+                        files.push(edit.span.file);
+                    }
+                }
+                let changes = files
+                    .iter()
+                    .map(|file| {
+                        let replacements = suggestion
+                            .edits
+                            .iter()
+                            .filter(|edit| edit.span.file == *file)
+                            .map(|edit| {
+                                Json::obj([
+                                    ("deletedRegion", region(sources, edit.span)),
+                                    ("insertedContent", Json::obj([("text", Json::str(edit.replacement.as_str()))])),
+                                ])
+                            })
+                            .collect();
+                        Json::obj([
+                            ("artifactLocation", artifact_location(&sources.get(*file).path)),
+                            ("replacements", Json::Arr(replacements)),
+                        ])
+                    })
+                    .collect();
+                Json::obj([("description", message(&suggestion.message)), ("artifactChanges", Json::Arr(changes))])
             })
             .collect();
         out.set("fixes", Json::Arr(fixes));
@@ -175,8 +194,8 @@ fn result(d: &Diagnostic, sources: &SourceMap, rules: &[Rule]) -> Json {
     if !d.help.is_empty() {
         properties.set("help", Json::Arr(d.help.iter().map(|text| Json::str(text.as_str())).collect()));
     }
-    if d.suggestions.iter().any(|s| s.machine_applicable) {
-        let flags = d.suggestions.iter().map(|s| Json::Bool(s.machine_applicable)).collect();
+    if d.suggestions.iter().any(|s| s.is_machine_applicable()) {
+        let flags = d.suggestions.iter().map(|s| Json::Bool(s.is_machine_applicable())).collect();
         properties.set("fixIsMachineApplicable", Json::Arr(flags));
     }
     if let Json::Obj(fields) = &properties

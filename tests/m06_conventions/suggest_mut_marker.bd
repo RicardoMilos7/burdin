@@ -1,0 +1,14 @@
+//@ compile-fail
+//@ suggest: E0114 machine-applicable: add `mut` before this argument
+
+// A `mut` parameter passed without the call-site marker (`spec/fix.md`, FX13).
+
+fn bump(mut n: i32) {
+    n = n + 1
+}
+
+fn main() {
+    let mut n = 1
+    bump(n) //~ E0114
+    println(n.to_string())
+}

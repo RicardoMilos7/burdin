@@ -60,10 +60,48 @@ pub struct Module<'a> {
     pub ast: &'a ast::File,
 }
 
+/// A language edition (`docs/releasing.md`, "Editions and migrations"; `spec/fix.md`, FX10): the meaning of the
+/// language a package is written against. Each package names its own in `burdin.toml`; packages of different
+/// editions link together, and every rule an edition changes is checked with the edition of the package whose
+/// source is being checked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Edition {
+    /// The first edition, and the default of a package whose manifest names none (and of a one-file target).
+    #[default]
+    E2024,
+    /// Removes the forms edition 2024 deprecates (`spec/fix.md`, FX11).
+    E2026,
+}
+
+impl Edition {
+    /// Every edition this compiler knows, oldest first.
+    pub const ALL: [Edition; 2] = [Edition::E2024, Edition::E2026];
+    /// The newest edition: what `burdin fix --migrate` moves a package to.
+    pub const LATEST: Edition = Edition::E2026;
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Edition::E2024 => "2024",
+            Edition::E2026 => "2026",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Edition> {
+        Edition::ALL.into_iter().find(|e| e.as_str() == text)
+    }
+
+    /// The edition after this one, if there is one.
+    pub fn next(self) -> Option<Edition> {
+        Edition::ALL.into_iter().find(|e| *e > self)
+    }
+}
+
 /// One package of the compilation. The package being built is marked `is_root`; its dependencies are the rest.
 pub struct Package<'a> {
     pub name: String,
     pub is_root: bool,
+    /// The edition the package's source is written against.
+    pub edition: Edition,
     /// The packages this one may import from, by the name its `use` items write.
     pub deps: Vec<(String, usize)>,
     /// The module other packages reach as `use <package>` (an index into `modules`).
@@ -86,6 +124,8 @@ pub enum EntryMode {
     Test,
     /// The `bench` items of the entry package (`burdin bench`).
     Bench,
+    /// The `fuzz` targets of the entry package (`burdin fuzz`, `spec/fuzz.md`).
+    Fuzz,
 }
 
 impl EntryMode {

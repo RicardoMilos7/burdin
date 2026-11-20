@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/burdin/llvm-21
-          key: ${{ runner.os }}-llvm-21-v3
+          key: ${{ runner.os }}-llvm-21-v4
 
       - name: Install LLVM 21
         run: |
@@ -82,7 +82,7 @@ jobs:
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             bash .github/scripts/retry.sh sudo ./llvm.sh 21
-            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
+            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libclang-rt-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
             mkdir -p "$cache/root"
             sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
             # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
@@ -238,6 +238,24 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_test_runner.py
 
+      # `--sanitize` (issue #620, spec/sanitizers.md): one program per bug class under tests/sanitize/, each
+      # reported by its sanitizer where the host has it and rejected with a usage error where it does not.
+      - name: Check sanitizers
+        if: matrix.part == 'tools'
+        run: python3 tests/check_sanitizers.py
+
+      # `burdin test --interpret` (issue #622, spec/test-runner.md): one fixture per strict-check class, plus std
+      # code run in the interpreter.
+      - name: Check the interpreter
+        if: matrix.part == 'tools'
+        run: python3 tests/check_interpret.py
+
+      # `burdin fuzz` (issue #618, spec/fuzz.md): a target with a planted bug, fuzzed for at most 60 seconds, and
+      # the saved crash replayed through `burdin test --fuzz-replay`.
+      - name: Check fuzzing
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fuzz.py
+
       # The black-box checks of `burdin bench`: measurement, statistics, the report formats, selection, baselines,
       # and the profiler hook (issues #251, #653-#655).
       - name: Check the bench runner
@@ -255,6 +273,23 @@ jobs:
       - name: Check the linter
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
+
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
 
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
@@ -297,6 +332,14 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -342,6 +385,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
 
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
+
       - name: Check host target
         if: matrix.part == 'unit'
         run: python3 tests/check_platform.py
@@ -360,6 +409,13 @@ jobs:
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
+      # The stage 0 and stage 1 suite under AddressSanitizer (issue #620): a memory error or a leak in the code the
+      # compiler generates fails a test. It doubles the debug part's time, so it runs on the weekly schedule or by
+      # hand, like the fuzz job.
+      - name: Conformance tests under AddressSanitizer (scheduled)
+        if: matrix.part == 'debug' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: python3 tests/run_tests.py --sanitize address m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24
+
       - name: Conformance tests (release profile)
         if: matrix.part == 'release'
         run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
@@ -573,6 +629,24 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_test_runner.py
 
+      # `--sanitize` (issue #620, spec/sanitizers.md): one program per bug class under tests/sanitize/, each
+      # reported by its sanitizer where the host has it and rejected with a usage error where it does not.
+      - name: Check sanitizers
+        if: matrix.part == 'tools'
+        run: python3 tests/check_sanitizers.py
+
+      # `burdin test --interpret` (issue #622, spec/test-runner.md): one fixture per strict-check class, plus std
+      # code run in the interpreter.
+      - name: Check the interpreter
+        if: matrix.part == 'tools'
+        run: python3 tests/check_interpret.py
+
+      # `burdin fuzz` (issue #618, spec/fuzz.md): a target with a planted bug, fuzzed for at most 60 seconds, and
+      # the saved crash replayed through `burdin test --fuzz-replay`.
+      - name: Check fuzzing
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fuzz.py
+
       # The black-box checks of `burdin bench`: measurement, statistics, the report formats, selection, baselines,
       # and the profiler hook (issues #251, #653-#655).
       - name: Check the bench runner
@@ -590,6 +664,23 @@ jobs:
       - name: Check the linter
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
+
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
 
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
@@ -632,6 +723,14 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python3 tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -676,6 +775,12 @@ jobs:
       - name: Check scripts
         if: matrix.part == 'tools'
         run: python3 tests/check_scripts.py
+
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python3 tests/check_watch.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -930,6 +1035,18 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_test_runner.py
 
+      # `--sanitize` (issue #620, spec/sanitizers.md): one program per bug class under tests/sanitize/, each
+      # reported by its sanitizer where the host has it and rejected with a usage error where it does not.
+      - name: Check sanitizers
+        if: matrix.part == 'tools'
+        run: python tests/check_sanitizers.py
+
+      # `burdin test --interpret` (issue #622, spec/test-runner.md): one fixture per strict-check class, plus std
+      # code run in the interpreter.
+      - name: Check the interpreter
+        if: matrix.part == 'tools'
+        run: python tests/check_interpret.py
+
       # The black-box checks of `burdin bench`: measurement, statistics, the report formats, selection, baselines,
       # and the profiler hook (issues #251, #653-#655).
       - name: Check the bench runner
@@ -947,6 +1064,23 @@ jobs:
       - name: Check the linter
         if: matrix.part == 'tools'
         run: python tests/check_lint.py
+
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
 
       - name: Check burdin doc
         if: matrix.part == 'tools'
@@ -987,6 +1121,14 @@ jobs:
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python tests/check_json.py
+
+      # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
+      # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
+      # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
+      # self show/update/uninstall.
+      - name: Check the toolchain manager
+        if: matrix.part == 'tools'
+        run: python tests/check_toolchain.py
 
       # `burdin check`: the fixtures under tests/check and the whole conformance suite, which `check` must accept or
       # reject exactly as a build does, without code generation or a linker (issue #237).
@@ -1031,6 +1173,12 @@ jobs:
       - name: Check scripts
         if: matrix.part == 'tools'
         run: python tests/check_scripts.py
+
+      # `burdin watch` (spec/watch.md): reruns on edits, ignored files, `run` restarts, and the changed-modules-first
+      # `test` run (issue #632).
+      - name: Check watch mode
+        if: matrix.part == 'tools'
+        run: python tests/check_watch.py
 
       - name: Check host target
         if: matrix.part == 'unit'

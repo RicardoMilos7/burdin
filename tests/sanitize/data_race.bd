@@ -1,0 +1,32 @@
+// Two operating-system threads write one C cell with no lock (spec/sanitizers.md). The address travels as a
+// `usize`, which is `Send`; the race is in the `unsafe` code, and `--sanitize=thread` reports it.
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn bump(address: usize) {
+    let mut i = 0
+    while i < 1000 {
+        unsafe {
+            let p = address as CPtr<i64>
+            *p = *p + 1
+        }
+        i = i + 1
+    }
+}
+
+fn main() {
+    let address = unsafe { malloc(8) as usize }
+    unsafe {
+        *(address as CPtr<i64>) = 0
+    }
+    let first = thread.spawn(|| bump(address))
+    let second = thread.spawn(|| bump(address))
+    first.join()
+    second.join()
+    unsafe {
+        free(address as CPtr<CVoid>)
+    }
+    println("finished")
+}

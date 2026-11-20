@@ -1,0 +1,2 @@
+pkg/src/main.bd:3:13: x + 1
+pkg/src/main.bd:4:13: x + 2

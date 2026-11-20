@@ -314,9 +314,26 @@ pub fn std_dir() -> PathBuf {
     std::env::temp_dir().join(format!("burdin-lsp-std-{}", env!("CARGO_PKG_VERSION")))
 }
 
-/// The file on disk that shows `<std>/name.bd`, written when it is missing or out of date.
+/// The installed standard-library sources of the toolchain this server runs from: `<toolchain>/lib/std/src`, which
+/// the `std-src` component installs. The toolchain proxy names the toolchain in `BURDIN_TOOLCHAIN_DIR`
+/// (`spec/toolchain.md` TC10).
+pub fn toolchain_std_dir() -> Option<PathBuf> {
+    toolchain_std_dir_in(std::env::var_os("BURDIN_TOOLCHAIN_DIR").map(PathBuf::from).as_deref())
+}
+
+fn toolchain_std_dir_in(toolchain: Option<&Path>) -> Option<PathBuf> {
+    toolchain.map(|dir| dir.join("lib").join("std").join("src")).filter(|dir| dir.is_dir())
+}
+
+/// The file on disk that shows `<std>/name.bd`: the toolchain's installed source when it has exactly this text,
+/// otherwise a file under [`std_dir`], written when it is missing or out of date.
 pub fn std_file(path: &str, text: &str) -> Option<PathBuf> {
     let name = path.strip_prefix("<std>/")?;
+    if let Some(installed) = toolchain_std_dir().map(|dir| dir.join(name))
+        && std::fs::read_to_string(&installed).ok().as_deref() == Some(text)
+    {
+        return Some(installed);
+    }
     let dir = std_dir();
     let file = dir.join(name);
     if std::fs::read_to_string(&file).ok().as_deref() != Some(text) {
@@ -328,14 +345,38 @@ pub fn std_file(path: &str, text: &str) -> Option<PathBuf> {
     Some(file)
 }
 
-/// The `<std>/name.bd` path a file written by [`std_file`] stands for.
+/// The `<std>/name.bd` path a file returned by [`std_file`] stands for.
 pub fn std_path_of(path: &Path) -> Option<String> {
-    let dir = std_dir();
-    let dir = dir.canonicalize().unwrap_or(dir);
+    std_path_in(path, &[Some(std_dir()), toolchain_std_dir()])
+}
+
+fn std_path_in(path: &Path, dirs: &[Option<PathBuf>]) -> Option<String> {
     let parent = path.parent()?;
     let parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
-    if parent != dir {
+    let known = dirs.iter().flatten().any(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == parent);
+    if !known {
         return None;
     }
     Some(format!("<std>/{}", path.file_name()?.to_str()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_toolchain_with_std_src_supplies_the_std_files() {
+        let toolchain = std::env::temp_dir().join(format!("burdin-lsp-toolchain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&toolchain);
+        assert_eq!(toolchain_std_dir_in(Some(&toolchain)), None);
+        assert_eq!(toolchain_std_dir_in(None), None);
+        let src = toolchain.join("lib").join("std").join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("std.bd"), "// std\n").unwrap();
+        assert_eq!(toolchain_std_dir_in(Some(&toolchain)), Some(src.clone()));
+        let dirs = [Some(std_dir()), Some(src.clone())];
+        assert_eq!(std_path_in(&src.join("std.bd"), &dirs).as_deref(), Some("<std>/std.bd"));
+        assert_eq!(std_path_in(&toolchain.join("std.bd"), &dirs), None);
+        std::fs::remove_dir_all(&toolchain).unwrap();
+    }
 }

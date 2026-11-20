@@ -1,0 +1,30 @@
+//@ test-compile-fail
+
+// A fuzz target takes one read-only `[u8]` parameter and returns nothing, and a package names each target once;
+// every other shape is E0173 (spec/fuzz.md, FZ1-FZ2).
+fuzz two_params(data: [u8], extra: i32) { //~ E0173
+}
+
+fuzz no_params() { //~ E0173
+}
+
+fuzz wrong_type(text: String) { //~ E0173
+}
+
+fuzz takes_owned(own data: [u8]) { //~ E0173
+}
+
+fuzz returns(data: [u8]): i32 { //~ E0173
+    0
+}
+
+fuzz generic<T>(data: [u8]) { //~ E0173
+}
+
+fuzz twice(data: [u8]) {
+}
+
+fuzz twice(data: [u8]) { //~ E0173
+}
+
+fn main() {}

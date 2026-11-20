@@ -2095,6 +2095,7 @@ fn panic(msg: str): !
 fn assert(cond: bool)
 fn assert_eq<T: Eq>(a: T, b: T)
 fn assert_ne<T: Eq>(a: T, b: T)
+fn assert_snapshot<T: Debug>(value: T)          // also (value, @"inline"), and display: true for Display
 fn unreachable(): !
 fn todo(): !
 fn unimplemented(): !
@@ -2114,6 +2115,11 @@ with `assertion failed`; `assert_eq` panics with `assertion failed: the two valu
 `assert_ne(a, b, "text {x}")`): the arguments after the condition (or the two values) are formatted exactly as
 `println`'s are (`format.md`, FM1-FM5), and a failing assertion panics with that text instead of the fixed one. The
 message is evaluated only when the assertion fails. A message whose format string is not a literal is E0194.
+
+**`assert_snapshot`** records the value's `Debug` text (its `Display` text with `display: true`) for `burdin test`,
+which compares it with a snapshot kept in a file or, with a second argument `@"..."`, in the call itself; it never
+panics and returns `()`. Outside `burdin test` it only formats the value. The rules are
+[`test-runner.md`](test-runner.md), SN1-SN9.
 
 **`debug_assert`, `debug_assert_eq`, and `debug_assert_ne`** behave like the assertions above in a debug build
 (`burdin build`/`run`/`test` without `--release`). A release build drops the call entirely: neither the condition nor

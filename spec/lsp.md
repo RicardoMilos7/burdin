@@ -219,6 +219,8 @@ plain keyword of the same label. At the start of a line at the top level (item p
 | `impl` | `${1:Type} {` / `$0` / `}` |
 | `impl interface` | `${1:Type}: ${2:Interface} {` / `$0` / `}` |
 | `test`, `bench` | `test "${1:name}" {` / `$0` / `}` (and the same for `bench`) |
+| `fuzz` | `fuzz ${1:name}(${2:data}: [u8]) {` / `$0` / `}` |
+| `fuzz` | `fuzz ${1:name}(${2:data}: [u8]) {` / `$0` / `}` |
 
 At the start of a line inside an impl block, an interface, or a `derive`, `fn` is a method:
 `fn ${1:name}(${2:self}): ${3:Type} {` / `$0` / `}`. At the start of a line inside a body (statement position): `if`

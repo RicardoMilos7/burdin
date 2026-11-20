@@ -1,0 +1,6 @@
+---
+test: a changed value
+source: main.bd:42
+expression: assert_snapshot(Point { x: 10, y: 20 })
+---
+Point { x: 1, y: 2 }

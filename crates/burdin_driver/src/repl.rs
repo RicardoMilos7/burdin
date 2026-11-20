@@ -73,6 +73,8 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         run_build_scripts: false,
         locked: false,
         jobs,
+        sanitize: Default::default(),
+        fuzz_target: None,
     }
 }
 

@@ -402,8 +402,61 @@ impl<'t> Sema<'t> {
         }
         match self.mode {
             crate::EntryMode::Build => {}
-            crate::EntryMode::Test => self.declare_tests(diags),
+            crate::EntryMode::Test => {
+                self.declare_tests(diags);
+                self.declare_fuzzes(diags);
+            }
             crate::EntryMode::Bench => self.declare_benches(diags),
+            crate::EntryMode::Fuzz => self.declare_fuzzes(diags),
+        }
+    }
+
+    /// Declares the `fuzz` targets of the entry package as ordinary functions, `__burdin_fuzz_<name>`, after
+    /// checking the signature: one read-only `[u8]` parameter, no result, no type parameters, and a name no other
+    /// target of the package has (`spec/fuzz.md`, FZ1-FZ2). `burdin fuzz` builds one of them; `burdin test`
+    /// checks them all and, with `--fuzz-replay`, runs them on saved inputs. Every other build ignores them.
+    fn declare_fuzzes(&mut self, diags: &mut Diagnostics) {
+        let root = self.globals.modules[self.entry].package;
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for module in 0..self.module_asts.len() {
+            if self.globals.modules[module].package != root {
+                continue;
+            }
+            let ast = self.module_asts[module];
+            for fuzz in &ast.fuzzes {
+                if let Some(problem) = fuzz_signature_problem(&fuzz.func) {
+                    let at = match problem.1 {
+                        Some(span) => span,
+                        None => fuzz.name_span,
+                    };
+                    diags.error(Code::INVALID_FUZZ, at, problem.0);
+                    continue;
+                }
+                if !seen.insert(fuzz.name.clone()) {
+                    diags.error(
+                        Code::INVALID_FUZZ,
+                        fuzz.name_span,
+                        format!("the fuzz target `{}` is defined more than once in this package", fuzz.name),
+                    );
+                    continue;
+                }
+                let name = fuzz.func.name.name.clone();
+                if self.globals.modules[module].values.contains_key(&name) || builtin(&name).is_some() {
+                    diags.error(Code::DUPLICATE_NAME, fuzz.name_span, format!("`{name}` is defined more than once"));
+                    continue;
+                }
+                let full = self.globals.qualified(module, &name);
+                let id = self.push_fn(FnItem::plain(&fuzz.func, full, module, None));
+                self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
+                self.globals.modules[module].value_priv.insert(name, true);
+                let module_path = test_module_path(&self.globals.modules[module].path);
+                self.fuzzes.push(tir::FuzzEntry {
+                    name: fuzz.name.clone(),
+                    module: module_path,
+                    span: fuzz.name_span,
+                    func: id,
+                });
+            }
         }
     }
 
@@ -677,6 +730,39 @@ fn test_module_path(path: &[String]) -> String {
         [only] if only == "main" || only == "lib" => String::new(),
         _ => path.join("."),
     }
+}
+
+/// What is wrong with a fuzz target's signature, and where, if anything (`spec/fuzz.md`, FZ1). The only accepted
+/// shape is `fuzz name(data: [u8]) { ... }`: one read-only byte-slice parameter of any name, no result, no type
+/// parameters. The input is libFuzzer's buffer, which the target only reads.
+fn fuzz_signature_problem(func: &ast::FnDecl) -> Option<(String, Option<burdin_diag::Span>)> {
+    const SHAPE: &str = "a fuzz target takes one parameter, `data: [u8]`";
+    if let Some(generic) = func.generics.first() {
+        return Some(("a fuzz target cannot have type parameters".to_string(), Some(generic.name.span)));
+    }
+    if func.is_vararg {
+        return Some((SHAPE.to_string(), None));
+    }
+    let [param] = func.params.as_slice() else {
+        let at = func.params.get(1).map(|p| p.span);
+        return Some((format!("{SHAPE}, found {}", func.params.len()), at));
+    };
+    let ast::ParamKind::Named { ty, .. } = &param.kind else {
+        return Some((SHAPE.to_string(), Some(param.span)));
+    };
+    let is_bytes = matches!(&ty.kind, ast::TypeKind::Slice(elem)
+        if matches!(&elem.kind, ast::TypeKind::Path(segments)
+            if matches!(segments.as_slice(), [only] if only.name.name == "u8" && only.args.is_empty())));
+    if !is_bytes {
+        return Some((format!("{SHAPE}; this parameter is not a `[u8]`"), Some(ty.span)));
+    }
+    if param.convention != ast::Convention::Read || param.default.is_some() || param.comptime.is_some() {
+        return Some((format!("{SHAPE}, read-only and without a default"), Some(param.span)));
+    }
+    if let Some(ret) = &func.ret {
+        return Some(("a fuzz target returns nothing".to_string(), Some(ret.span)));
+    }
+    None
 }
 
 fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestAttrs {

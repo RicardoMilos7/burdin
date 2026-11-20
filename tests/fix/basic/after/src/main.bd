@@ -1,0 +1,10 @@
+use util.{triple}
+use util.format_label
+
+fn main() {
+    let mut total = 1
+    total = 2
+    let count = triple(total)
+    println(count.to_string())
+    println(format_label())
+}

@@ -2,6 +2,7 @@
 //! and it follows the tree's own ownership facts: a place read in a move context is moved out of, a parameter
 //! passed by address aliases the caller's place, and owned locals are dropped at the end of their scope.
 
+use crate::memory::Memory;
 use crate::value::{Place, Root, Step, Value};
 use burdin_diag::Span;
 use burdin_tir::{
@@ -38,6 +39,29 @@ pub(crate) enum Unwind {
 impl From<Fault> for Unwind {
     fn from(f: Fault) -> Unwind {
         Unwind::Fault(f)
+    }
+}
+
+impl Fault {
+    /// The message a `burdin test --interpret` report shows, and where it happened.
+    pub fn message(&self) -> &str {
+        match self {
+            Fault::Panic(m, _) | Fault::Impure(m, _) | Fault::Budget(m, _) | Fault::Assert(m, _) => m,
+            Fault::Internal(m, _) => m,
+            Fault::Cycle(..) | Fault::Reported => "compile-time evaluation reached itself",
+        }
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Fault::Panic(_, s)
+            | Fault::Impure(_, s)
+            | Fault::Budget(_, s)
+            | Fault::Assert(_, s)
+            | Fault::Internal(_, s)
+            | Fault::Cycle(_, s) => Some(*s),
+            Fault::Reported => None,
+        }
     }
 }
 
@@ -79,8 +103,13 @@ pub(crate) const MAX_DEPTH: usize = 512;
 /// output and error of the process (a REPL session, `spec/repl.md` RP3).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Output {
+    /// Nowhere: printing is the impure fault a compile-time evaluation reports (CT9).
     Silent,
+    /// The real standard output and error of the process (a REPL session, `spec/repl.md` RP3).
     Live,
+    /// Nowhere, but printing is allowed: `burdin test --interpret` captures a test's output the way a compiled run
+    /// does, so the test's own prints are dropped rather than refused (`spec/test-runner.md`, IN6).
+    Swallow,
 }
 
 pub(crate) struct Interp<'p, 'c> {
@@ -92,6 +121,10 @@ pub(crate) struct Interp<'p, 'c> {
     pub(crate) release: bool,
     pub(crate) out: Output,
     drop_cache: HashMap<Ty, bool>,
+    /// The C heap the run models: `burdin test --interpret` (`spec/test-runner.md`, IN1). Elsewhere the allocation
+    /// builtins stay impure, because comptime is pure (CT9).
+    pub(crate) mem: Memory,
+    pub(crate) raw_memory: bool,
 }
 
 impl<'p, 'c> Interp<'p, 'c> {
@@ -106,7 +139,18 @@ impl<'p, 'c> Interp<'p, 'c> {
         release: bool,
         out: Output,
     ) -> Self {
-        Interp { p, consts, frames: Vec::new(), steps: 0, budget, release, out, drop_cache: HashMap::new() }
+        Interp {
+            p,
+            consts,
+            frames: Vec::new(),
+            steps: 0,
+            budget,
+            release,
+            out,
+            drop_cache: HashMap::new(),
+            mem: Memory::default(),
+            raw_memory: false,
+        }
     }
 
     fn defs(&self) -> TypeDefs<'p> {
@@ -214,6 +258,38 @@ impl<'p, 'c> Interp<'p, 'c> {
         Ok(cur)
     }
 
+    /// `*p`: the value a `CPtr<T>` points at, with the strict checks of `spec/test-runner.md` (IN2-IN4).
+    pub(crate) fn ptr_deref(&mut self, ptr: &'p Expr, pointee: &Ty, span: Span) -> R<Value> {
+        let Some(scalar) = crate::memory::scalar(pointee) else {
+            return Err(impure(&format!("dereferencing a `CPtr<{pointee}>`"), span));
+        };
+        let addr = self.eval(ptr, Mode::Use)?.int();
+        let n = self.mem.read(addr, scalar, span).map_err(Unwind::Fault)?;
+        Ok(match pointee {
+            Ty::Bool => Value::Bool(n != 0),
+            Ty::Char => Value::Char(char::from_u32(n as u32).unwrap_or('\u{fffd}')),
+            Ty::Float(tir::FloatTy::F32) => Value::Float(f64::from(f32::from_bits(n as u32))),
+            Ty::Float(_) => Value::Float(f64::from_bits(n as u64)),
+            _ => Value::Int(n),
+        })
+    }
+
+    /// `*p = v`: stores `v`'s bytes through the pointer, with the same checks.
+    fn ptr_write(&mut self, addr: i128, pointee: &Ty, v: Value, span: Span) -> R<()> {
+        let Some(scalar) = crate::memory::scalar(pointee) else {
+            return Err(impure(&format!("storing through a `CPtr<{pointee}>`"), span));
+        };
+        let n = match pointee {
+            Ty::Float(_) => crate::memory::float_bits(pointee, v.float()),
+            Ty::CPtr(_) => {
+                self.drop_value(v.clone(), pointee, span)?;
+                v.int()
+            }
+            _ => v.int(),
+        };
+        self.mem.write(addr, scalar, n, span).map_err(Unwind::Fault)
+    }
+
     fn read_place(&mut self, p: &Place, take: bool, span: Span) -> R<Value> {
         let v = self.place_mut(p, span)?;
         if take { Ok(std::mem::replace(v, Value::Moved)) } else { Ok(v.clone()) }
@@ -250,7 +326,12 @@ impl<'p, 'c> Interp<'p, 'c> {
                 Value::Borrow(v) => Ok(self.temp(*v, &e.ty)),
                 v => Ok(self.temp(v, &e.ty)),
             },
-            K::PtrDeref(_) => Err(impure("dereferencing a C pointer", e.span)),
+            // A store through `*p` is handled by the assignment itself; a field or an index of it reads the
+            // pointee into a temporary, so `(*p).field` works (`spec/test-runner.md`, IN2).
+            K::PtrDeref(_) => {
+                let v = self.eval(e, Mode::Use)?;
+                Ok(self.temp(v, &e.ty))
+            }
             _ => {
                 let v = self.eval(e, Mode::Move)?;
                 Ok(self.temp(v, &e.ty))
@@ -435,6 +516,12 @@ impl<'p, 'c> Interp<'p, 'c> {
                 return Err(Unwind::Return(v));
             }
             K::Assign(lhs, rhs) => {
+                if let K::PtrDeref(ptr) = &lhs.kind {
+                    let v = self.eval(rhs, Mode::Move)?;
+                    let addr = self.eval(ptr, Mode::Use)?.int();
+                    self.ptr_write(addr, &lhs.ty, v, span)?;
+                    return Ok(Value::Unit);
+                }
                 let v = self.eval(rhs, Mode::Move)?;
                 let p = self.eval_place(lhs)?;
                 let old = std::mem::replace(self.place_mut(&p, span)?, v);
@@ -459,7 +546,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                 let hi = self.eval(hi, Mode::Use)?;
                 Value::Tuple(vec![lo, hi])
             }
-            K::PtrDeref(_) => return Err(impure("dereferencing a C pointer", span)),
+            K::PtrDeref(ptr) => self.ptr_deref(ptr, &e.ty, span)?,
             K::Ref { place, mutable } => {
                 if *mutable {
                     Value::Ref(self.eval_place(place)?)

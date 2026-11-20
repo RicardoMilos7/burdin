@@ -255,6 +255,7 @@ const ITEM_SNIPPETS: &[(&str, &str, &str)] = &[
     ("impl interface", "${1:Type}: ${2:Interface} {\n    $0\n}", "an interface implementation"),
     ("test", "test \"${1:name}\" {\n    $0\n}", "a test"),
     ("bench", "bench \"${1:name}\" {\n    $0\n}", "a benchmark"),
+    ("fuzz", "fuzz ${1:name}(${2:data}: [u8]) {\n    $0\n}", "a fuzz target"),
 ];
 
 /// The snippet inside an impl block or an interface.

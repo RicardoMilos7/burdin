@@ -57,6 +57,9 @@ impl FnCx<'_> {
             {
                 match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
+                        if let Some(rejected) = self.edition_gate(f, id, args, span) {
+                            return rejected;
+                        }
                         // In a test build the prelude's `assert` is the typed one (`spec/errors.md`, ERR9).
                         if self.globals.test_assert == Some(f) {
                             return self.test_assert_call(f, args, span);
@@ -79,6 +82,9 @@ impl FnCx<'_> {
                         }
                         if self.globals.test_assert_ne == Some(g) {
                             return self.test_assert_ne_call(g, id, args, span, expect);
+                        }
+                        if self.globals.snapshot_gen == Some(g) {
+                            return self.snapshot_call(id, args, span, expect);
                         }
                         if self.globals.debug_assert_eq_gen == Some(g) {
                             return self.debug_compare_call(args, span, AssertKind::DebugAssertEq);
@@ -143,7 +149,13 @@ impl FnCx<'_> {
                         None if id.name == "Ok" => return self.result_ctor(true, args, expect, span),
                         None if id.name == "Err" => return self.result_ctor(false, args, expect, span),
                         None => {
-                            self.diags.error(Code::UNKNOWN_NAME, id.span, format!("unknown function `{}`", id.name));
+                            let fix = self.unknown_name_fix(&id.name, true);
+                            let d = self.diags.error(
+                                Code::UNKNOWN_NAME,
+                                id.span,
+                                format!("unknown function `{}`", id.name),
+                            );
+                            Self::attach_name_fix(fix, id.span, d);
                             return self.args_then_error(args, span);
                         }
                     },
@@ -380,6 +392,90 @@ impl FnCx<'_> {
         ];
         let checked = vec![a, b, message, condition_value, location_value];
         self.generic_call_checked(g, id, &augmented, checked, span, expect)
+    }
+
+    /// `assert_snapshot(value[, @"inline"][, display: bool])` (`spec/test-runner.md`, "Snapshot tests"). The call
+    /// becomes `__snapshot_debug(value, location, inline)` or `__snapshot_display(...)`: the location is how the
+    /// runner finds the test, the snapshot file, and an inline snapshot's literal, which it reads from the source
+    /// rather than from the program. Anything else in the argument list is E0172.
+    fn snapshot_call(&mut self, id: &ast::Ident, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
+        let mut positional: Vec<&ast::Arg> = Vec::new();
+        let mut display = false;
+        let mut valid = true;
+        for arg in args {
+            match &arg.name {
+                Some(name) if name.name == "display" => match arg.expr.kind {
+                    ast::ExprKind::Bool(value) => display = value,
+                    _ => {
+                        self.diags.error(
+                            Code::INVALID_SNAPSHOT,
+                            arg.expr.span,
+                            "`display:` takes `true` or `false` written out, so the snapshot's format is known \
+                             when the test is compiled",
+                        );
+                        valid = false;
+                    }
+                },
+                Some(name) => {
+                    self.diags.error(
+                        Code::INVALID_SNAPSHOT,
+                        name.span,
+                        format!("`assert_snapshot` has no argument named `{}`; it takes `display:`", name.name),
+                    );
+                    valid = false;
+                }
+                None => positional.push(arg),
+            }
+        }
+        let inline = match positional.as_slice() {
+            [_] => false,
+            [_, second] if matches!(second.expr.kind, ast::ExprKind::InlineSnapshot(_)) => true,
+            [_, second] => {
+                self.diags.error(
+                    Code::INVALID_SNAPSHOT,
+                    second.expr.span,
+                    "the second argument of `assert_snapshot` is an inline snapshot, `@\"...\"`",
+                );
+                self.expr(&second.expr, None);
+                valid = false;
+                true
+            }
+            [] => {
+                self.diags.error(Code::INVALID_SNAPSHOT, span, "`assert_snapshot` takes the value to snapshot");
+                return error_expr(span);
+            }
+            [_, _, extra, ..] => {
+                self.diags.error(
+                    Code::INVALID_SNAPSHOT,
+                    extra.expr.span,
+                    "`assert_snapshot` takes a value and at most one inline snapshot",
+                );
+                for arg in &positional[2..] {
+                    if !matches!(arg.expr.kind, ast::ExprKind::InlineSnapshot(_)) {
+                        self.expr(&arg.expr, None);
+                    }
+                }
+                valid = false;
+                true
+            }
+        };
+        let value = self.expr(&positional[0].expr, None);
+        let value = self.auto_deref(value);
+        let helper = if display { self.globals.snapshot_display_gen } else { self.globals.snapshot_debug_gen };
+        let Some(helper) = helper.filter(|_| valid) else {
+            return error_expr(span);
+        };
+        let (_, location) = self.assertion_texts(span);
+        let location_value = mk(tir::ExprKind::Str(location.clone()), Ty::Str, span);
+        let inline_value = mk(tir::ExprKind::Bool(inline), Ty::Bool, span);
+        let bool_arg = ast::Arg {
+            name: None,
+            mut_marker: false,
+            mut_span: None,
+            expr: ast::Expr { kind: ast::ExprKind::Bool(inline), span },
+        };
+        let augmented = vec![checked_arg(positional[0], span), string_arg(location, span), bool_arg];
+        self.generic_call_checked(helper, id, &augmented, vec![value, location_value, inline_value], span, expect)
     }
 
     /// The message value of a typed assertion: the arguments from `first` on formatted, or an empty `str` when
@@ -764,11 +860,13 @@ impl FnCx<'_> {
                         "the argument of a `mut` parameter must be a place",
                     );
                 } else if !self.place_mutable(&arg) {
-                    self.diags.error(
+                    let fix = self.mut_binding_fix(&arg);
+                    let d = self.diags.error(
                         Code::MUT_OF_IMMUTABLE,
                         arg.span,
                         "cannot pass this place as `mut`: it is not mutable",
                     );
+                    Self::attach_mut_fix(fix, d);
                 }
             }
             checked.push(arg);
@@ -1149,11 +1247,13 @@ impl FnCx<'_> {
             if receiver.by_ref && receiver.exclusive && is_place_expr(&recv) && !self.place_mutable(&recv) {
                 let local = place_root(&recv).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
-                self.diags.error(
+                let fix = self.mut_binding_fix(&recv);
+                let d = self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
                 );
+                Self::attach_mut_fix(fix, d);
             }
             let receiver_place = Some((&recv, receiver.exclusive));
             let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
@@ -1230,11 +1330,13 @@ impl FnCx<'_> {
             } else if !self.place_mutable(checked) {
                 let local = place_root(checked).map(|root| self.locals[root.0].name.clone());
                 let whose = local.unwrap_or_else(|| "this receiver".to_string());
-                self.diags.error(
+                let fix = self.mut_binding_fix(checked);
+                let d = self.diags.error(
                     Code::MUT_OF_IMMUTABLE,
                     recv.span,
                     format!("`{}` changes its receiver, but `{whose}` is not mutable", name.name),
                 );
+                Self::attach_mut_fix(fix, d);
             }
         }
         match (&m, &recv.ty) {

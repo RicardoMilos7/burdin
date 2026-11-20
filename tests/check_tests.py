@@ -25,6 +25,9 @@ KIND_WORDS = (
 EXCEPTIONS_HEADING = "### Codes without a compile-fail test"
 BURDIN_TEST_REGEX = re.compile(r"^burdin-test passed=[0-9]+ failed=[0-9]+( ignored=[0-9]+)?$")
 MARKER_REGEX = re.compile(rb"//~ (E[0-9]{4})")
+SUGGESTIONS_HEADING = "### Codes with suggestions"
+SUGGEST_REGEX = re.compile(r"^suggest: (E[0-9]{4}) (machine-applicable|maybe-incorrect|has-placeholders|unspecified): .+$")
+FIXED_ERROR_REGEX = re.compile(r"^fixed-error: E[0-9]{4}$")
 
 
 def read(path: Path) -> str:
@@ -60,7 +63,7 @@ def main() -> int:
     registry = section(readme, "## Error codes", EXCEPTIONS_HEADING) or []
     known = codes_in(registry)
 
-    exceptions = section(readme, EXCEPTIONS_HEADING, "## ")
+    exceptions = section(readme, EXCEPTIONS_HEADING, "#")
     if exceptions is None:
         exceptions = []
     documented = []
@@ -69,6 +72,13 @@ def main() -> int:
         if match:
             documented.append((match.group(1), match.group(2).strip()))
     documented_codes = {code for code, _ in documented}
+
+    # The codes that carry suggestions, and the tests that witness them (`spec/fix.md`, FX12).
+    suggestion_rows = section(readme, SUGGESTIONS_HEADING, "## ") or []
+    suggestion_codes = {
+        match.group(1) for line in suggestion_rows for match in [re.match(r"^\| (E[0-9]{4}) \|", line)] if match
+    }
+    suggested = set()
 
     problems = []
     counts = {kind: 0 for kind in KIND_WORDS}
@@ -128,6 +138,24 @@ def main() -> int:
             ):
                 problems.append(f"{rel}: burdin-test needs passed=N failed=M [ignored=N]")
 
+        suggests = [d.decode("utf-8", "replace") for d in directives if d.startswith(b"suggest:")]
+        fixed = [d.decode("utf-8", "replace") for d in directives if d.startswith(b"fixed-error:")]
+        for directive in suggests:
+            match = SUGGEST_REGEX.match(directive)
+            if not match:
+                problems.append(f"{rel}: invalid directive `//@ {directive}` (suggest: CODE APPLICABILITY: message)")
+                continue
+            suggested.add(match.group(1))
+            if match.group(1) not in suggestion_codes:
+                problems.append(f"{rel}: {match.group(1)} has a suggestion but is not in README.md's codes with suggestions")
+        for directive in fixed:
+            if not FIXED_ERROR_REGEX.match(directive):
+                problems.append(f"{rel}: invalid directive `//@ {directive}` (fixed-error: CODE)")
+        if fixed and not suggests:
+            problems.append(f"{rel}: fixed-error without a suggest directive")
+        if suggests and primary not in ("run", "run-abort", "compile-fail", "test-compile-fail"):
+            problems.append(f"{rel}: suggest directives need a run, run-abort, compile-fail, or test-compile-fail test")
+
         for number, code in markers:
             used.add(code)
             if code not in known:
@@ -161,6 +189,14 @@ def main() -> int:
     for code in sorted(known):
         if code not in used and code not in documented_codes:
             problems.append(f"error code {code} has no compile-fail test; add one or document why it cannot have one")
+
+    if not suggestion_rows:
+        problems.append(f'README.md: missing the "{SUGGESTIONS_HEADING}" section')
+    for code in sorted(suggestion_codes):
+        if code not in known:
+            problems.append(f"README.md: {code} is listed with suggestions but is not in the registry")
+        elif code not in suggested:
+            problems.append(f"README.md: {code} is listed with suggestions but no test has a `//@ suggest: {code}` line")
 
     # std/src/int.bd is generated; it must match its generator (issue #704).
     sys.path.insert(0, str(tests_dir))

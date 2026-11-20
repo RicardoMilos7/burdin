@@ -1,0 +1,48 @@
+// The strict checks never fire on correct code: `burdin test --interpret` passes these, and the standard library's
+// `String`, `List`, `Map`, and iterator code runs and frees everything it allocates (spec/test-runner.md, IN1-IN5).
+
+struct Pair: Copy, Eq, Debug {
+    a: i32,
+    b: i32,
+}
+
+fn describe(xs: List<i32>): String {
+    let mut out = String.new()
+    for (i, x) in xs.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ")
+        }
+        out.push_str(x.to_string())
+    }
+    out
+}
+
+test "std containers and iterators" {
+    let mut xs = List<i32>.new()
+    for i in 0..4 {
+        xs.push(i * i)
+    }
+    let doubled: List<i32> = xs.iter().map(|x| x * 2).collect()
+    assert_eq(describe(xs.clone()).as_str(), "0, 1, 4, 9")?
+    assert_eq(doubled.len(), 4)?
+    let mut seen = Map<String, i32>.new()
+    seen.insert(String.from("a"), 1)
+    assert_eq(seen.contains_key(String.from("a")), true)?
+    assert_eq(seen.len(), 1)?
+}
+
+test "raw memory read and written in bounds" {
+    unsafe {
+        let p = __alloc(8, 8) as CPtr<i32>
+        *p = 7
+        *(p + 1) = 9
+        assert_eq(*p + *(p + 1), 16)?
+        __dealloc(p as CPtr<u8>, 8, 8)
+    }
+}
+
+test "a closure and a struct" {
+    let add = |x: i32| x + 1
+    let p = Pair { a: add(1), b: add(2) }
+    assert_eq(p, Pair { a: 2, b: 3 })?
+}

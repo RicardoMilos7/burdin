@@ -1,0 +1,6 @@
+---
+test: matches a file snapshot
+source: main.bd:28
+expression: assert_snapshot(Point { x: 1, y: 2 })
+---
+Point { x: 1, y: 2 }

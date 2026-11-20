@@ -18,6 +18,8 @@ pub struct File {
     /// `bench` items, kept apart for the same reason: only `burdin bench` declares and checks them
     /// (`spec/bench.md`, BN1).
     pub benches: Vec<BenchDecl>,
+    /// `fuzz` items (`spec/fuzz.md`, FZ1): declared by `burdin fuzz` and `burdin test` only.
+    pub fuzzes: Vec<FuzzDecl>,
     /// The block of every function, method, and `test` body the file wrote, in source order. Code the compiler
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
@@ -58,6 +60,18 @@ pub struct BenchDecl {
     pub name: String,
     pub name_span: Span,
     /// The function the benchmark is compiled as: `__burdin_bench_N`.
+    pub func: FnDecl,
+    pub span: Span,
+}
+
+/// `fuzz name(data: [u8]) { ... }`: one fuzz target, compiled as the function `__burdin_fuzz_<name>` with the
+/// parameters and body as written (`spec/fuzz.md`, FZ1).
+#[derive(Debug, Clone)]
+pub struct FuzzDecl {
+    /// The target's name, as `burdin fuzz` selects it.
+    pub name: String,
+    pub name_span: Span,
+    /// The function the target is compiled as.
     pub func: FnDecl,
     pub span: Span,
 }
@@ -551,6 +565,9 @@ pub enum ExprKind {
     Comptime(Box<Expr>),
     /// `comptime assert(condition)` or `comptime assert(condition, "message")` (CT8).
     ComptimeAssert(Box<Expr>, Option<Box<Expr>>),
+    /// `@"text"` or `@r#"text"#`: the inline snapshot of an `assert_snapshot` call, a string literal without
+    /// placeholders that `burdin test --bless` rewrites in place (`spec/test-runner.md`, "Snapshot tests").
+    InlineSnapshot(String),
 }
 
 /// One piece of an interpolated string literal.

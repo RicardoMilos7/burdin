@@ -14,6 +14,7 @@ fn codes(source: &str) -> Vec<String> {
     let packages = [Package {
         name: "test".to_string(),
         is_root: true,
+        edition: Default::default(),
         deps: Vec::new(),
         root_module: None,
         official: Vec::new(),
@@ -35,6 +36,7 @@ fn errors_with_official(source: &str, official: &[&str]) -> Vec<(String, Vec<Str
     let packages = [Package {
         name: "test".to_string(),
         is_root: true,
+        edition: Default::default(),
         deps: Vec::new(),
         root_module: None,
         official: official.iter().map(|name| name.to_string()).collect(),

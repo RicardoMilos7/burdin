@@ -1,0 +1,52 @@
+// One test per class of memory error the strict checks find, each at the line `tests/check_interpret.py` expects
+// (spec/test-runner.md, IN2-IN5). A compiled run needs a sanitizer for most of these; the interpreter finds them
+// with no runtime and points at the line that did it.
+
+test "out of bounds" {
+    unsafe {
+        let p = __alloc(8, 8) as CPtr<i32>
+        *(p + 2) = 7 //~ interpret-error: out-of-bounds access
+        __dealloc(p as CPtr<u8>, 8, 8)
+    }
+}
+
+test "use after free" {
+    unsafe {
+        let p = __alloc(8, 8) as CPtr<i64>
+        __dealloc(p as CPtr<u8>, 8, 8)
+        *p = 1 //~ interpret-error: use after free
+    }
+}
+
+test "double free" {
+    unsafe {
+        let p = __alloc(8, 8)
+        __dealloc(p, 8, 8)
+        __dealloc(p, 8, 8) //~ interpret-error: double free
+    }
+}
+
+test "uninitialized read" {
+    unsafe {
+        let p = __alloc(4, 4) as CPtr<i32>
+        let x = *p //~ interpret-error: read of uninitialized memory
+        __dealloc(p as CPtr<u8>, 4, 4)
+        assert_eq(x, 0)
+    }
+}
+
+test "misaligned" {
+    unsafe {
+        let base = __alloc(16, 8)
+        let p = (base + 1) as CPtr<i64>
+        *p = 1 //~ interpret-error: misaligned access
+        __dealloc(base, 16, 8)
+    }
+}
+
+test "leak" {
+    unsafe {
+        let p = __alloc(16, 8) //~ interpret-error: leaked
+        assert_eq(p != CPtr.null(), true)
+    }
+}

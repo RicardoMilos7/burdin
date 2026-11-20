@@ -38,7 +38,7 @@ fn quick_fixes_for_the_errors_of_a_file() {
         [
             "add the missing method `id`",
             "make `count` mutable",
-            "import `triple` from `helpers`",
+            "import `helpers.triple`",
             "add `mut` before this argument"
         ]
     );
@@ -158,5 +158,45 @@ fn the_test_command_reports_a_missing_compiler_and_rejects_other_commands() {
         Json::obj().with("command", "burdin.runTest").with("arguments", Json::Arr(vec![argument])),
     );
     assert_eq!(other.at(&["error", "code"]).as_i64(), Some(burdin_lsp::rpc::code::INVALID_PARAMS));
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
+fn structural_search_replace_and_refactoring_actions_use_the_refactoring_engine() {
+    let root = fixture("geometry");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+
+    // The command returns a workspace edit for the one file the replacement touches.
+    let argument = Json::obj()
+        .with("pattern", "add($a, $b)")
+        .with("replacement", "$b + $a")
+        .with("root", burdin_query::package::source_path_text(&root));
+    let response = client.request(
+        "workspace/executeCommand",
+        Json::obj().with("command", "burdin.structuralSearchReplace").with("arguments", Json::Arr(vec![argument])),
+    );
+    let changes = response.at(&["result", "changes"]).as_object();
+    assert_eq!(changes.len(), 1, "{}", response.to_text());
+    let edits = changes[0].1.as_array();
+    assert!(!edits.is_empty());
+    let replaced = apply(&text, edits, client.encoding);
+    assert!(replaced.contains("b + a") && replaced.contains("1 + sum"), "{replaced}");
+
+    // Extracting the selection into a local is a `refactor.extract` action.
+    let line = text.lines().position(|l| l.contains("add(a, b)")).unwrap() as u32;
+    let start = text.lines().nth(line as usize).unwrap().find("add(a, b)").unwrap() as u32;
+    let actions = actions(
+        &mut client,
+        &uri,
+        burdin_lsp::text::range_json(line, start, line, start + "add(a, b)".len() as u32),
+        Some("refactor.extract"),
+    );
+    let titles: Vec<&str> = actions.iter().map(|a| a.get("title").as_str().unwrap()).collect();
+    assert!(titles.contains(&"extract the selection into a local"), "{titles:?}");
+    let extract =
+        actions.iter().find(|a| a.get("title").as_str() == Some("extract the selection into a local")).unwrap();
+    let edited = after(&client, &text, extract);
+    assert!(edited.contains("let value = add(a, b)"), "{edited}");
     assert_eq!(client.shutdown(), 0);
 }

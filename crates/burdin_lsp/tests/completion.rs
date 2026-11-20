@@ -202,7 +202,7 @@ fn snippets_follow_the_position_and_the_client() {
     assert_eq!(item(&items, "fn").get("insertText").as_str(), Some("fn ${1:name}(${2}): ${3:Type} {\n    $0\n}"));
     assert_eq!(item(&items, "struct").get("insertText").as_str(), Some("struct ${1:Name} {\n    $0\n}"));
     assert_eq!(item(&items, "interface").get("insertText").as_str(), Some("interface ${1:Name} {\n    $0\n}"));
-    for label in ["enum", "error enum", "impl", "impl interface", "test", "bench"] {
+    for label in ["enum", "error enum", "impl", "impl interface", "test", "bench", "fuzz"] {
         assert_eq!(item(&items, label).get("kind").as_i64(), Some(15), "{label}");
     }
     assert_eq!(

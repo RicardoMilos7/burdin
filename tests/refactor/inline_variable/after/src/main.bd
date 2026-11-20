@@ -1,0 +1,10 @@
+fn main() {
+    let total = 5 * 2
+    println("{total}")
+}
+
+fn twice() {
+    let half = 2
+    let total = half * half
+    println("{total}")
+}

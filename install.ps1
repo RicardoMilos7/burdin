@@ -17,6 +17,11 @@
 # (spec/packages.md) in packages\ beside it. It warns when the installed compiler
 # cannot start anyway (docs/releasing.md). Unless told not to, it appends the install directory to the user's PATH
 # (HKCU\Environment), so new terminals find burdin; the current session is updated too.
+#
+# A release that carries the toolchain manager (burdin-toolchain.exe, spec/toolchain.md) is installed through it:
+# the release becomes a toolchain under the Burdin home (named after the version when one is given, else the channel)
+# and the default, and the install directory gets the burdin.exe and burdin-lsp.exe proxies. `burdin toolchain self
+# uninstall` later removes exactly what this script and the manager created, including the PATH entry.
 param(
     [string]$Version = $env:BURDIN_VERSION,
     [string]$Channel = $(if ($env:BURDIN_CHANNEL) { $env:BURDIN_CHANNEL } else { 'stable' }),
@@ -164,11 +169,23 @@ try {
         }
     }
     $destination = Join-Path $InstallDir 'burdin.exe'
-    Copy-Item -LiteralPath $source -Destination $destination -Force
-    # The runtime library travels with the compiler: Windows finds a DLL next to the executable first.
-    $dll = Join-Path (Split-Path -Parent $source) 'LLVM-C.dll'
-    if (Test-Path $dll) {
-        Copy-Item -LiteralPath $dll -Destination (Join-Path $InstallDir 'LLVM-C.dll') -Force
+    $releaseRoot = Join-Path $unpacked "burdin-$Version-$Target"
+    $manager = Join-Path $releaseRoot 'burdin-toolchain.exe'
+    $managed = Test-Path $manager
+    if ($managed) {
+        # The toolchain manager installs the release as a toolchain under the Burdin home (with its LLVM-C.dll) and
+        # puts the burdin and burdin-lsp proxies in the install directory (spec/toolchain.md TC13).
+        $name = if ($env:BURDIN_VERSION -or $PSBoundParameters.ContainsKey('Version')) { $Version } else { $Channel }
+        & $manager toolchain self install --from $releaseRoot --name $name --bin-dir $InstallDir --default
+        if ($LASTEXITCODE -ne 0) { Fail "the toolchain manager could not install burdin $Version" }
+    } else {
+        # A release without the manager: install the compiler alone.
+        Copy-Item -LiteralPath $source -Destination $destination -Force
+        # The runtime library travels with the compiler: Windows finds a DLL next to the executable first.
+        $dll = Join-Path (Split-Path -Parent $source) 'LLVM-C.dll'
+        if (Test-Path $dll) {
+            Copy-Item -LiteralPath $dll -Destination (Join-Path $InstallDir 'LLVM-C.dll') -Force
+        }
     }
 
     if ($hasPackages) {
@@ -203,6 +220,11 @@ try {
     if ($modifyPath) {
         if (Add-ToUserPath $InstallDir) {
             Say "added $InstallDir to your user PATH; open a new terminal to run burdin from anywhere"
+            # Recorded so `burdin toolchain self uninstall` removes exactly the entry added here.
+            if ($managed) {
+                & $destination toolchain self record --user-path $InstallDir
+                if ($LASTEXITCODE -ne 0) { Warn 'could not record the PATH entry for burdin toolchain self uninstall' }
+            }
         } else {
             Say "$InstallDir is already on your user PATH"
         }

@@ -590,6 +590,8 @@ fn build_one(
         run_build_scripts: true,
         locked: false,
         jobs: per_compile,
+        sanitize: options.sanitize,
+        fuzz_target: None,
     };
     let FrontEnd { files, sources, program: checked, diags, .. } =
         front_end(&dir, &doc_options, &SourceOverrides::new())?;
@@ -779,9 +781,9 @@ fn map_diagnostic(
             label.span = map_span(program, example, label.span);
         }
     }
-    for suggestion in &mut diagnostic.suggestions {
-        if suggestion.span.file == generated {
-            suggestion.span = map_span(program, example, suggestion.span);
+    for edit in diagnostic.suggestions.iter_mut().flat_map(|s| s.edits.iter_mut()) {
+        if edit.span.file == generated {
+            edit.span = map_span(program, example, edit.span);
         }
     }
     diagnostic.children = std::mem::take(&mut diagnostic.children)

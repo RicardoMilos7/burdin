@@ -7,7 +7,8 @@ close-out checklist in `AGENTS.md`).
 ## Unreleased
 
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
-  the compiler, from the new top-level `packages/` folder (empty for now; `packages/README.md` explains it). `burdin add
+  the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
+  package in it). `burdin add
   <name>` writes the line when `<name>` is an official package; `name = false` and an unknown official name are errors that
   say what to do. The lockfile records such a package with `source = "official"` and the checksum of its files, a build
   writes it when there is none, and `--locked` fails when an official package is not the one the lockfile pinned. A `use`
@@ -15,6 +16,25 @@ close-out checklist in `AGENTS.md`).
   through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
   from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
   compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
+- The toolchain manager (stage 3, issue #624: #626, #628, #630, #631; `spec/toolchain.md`). The new
+  `crates/burdin_toolchain` builds `burdin-toolchain`, which the release archive carries and the installers copy into
+  the install directory as the `burdin` and `burdin-lsp` proxies. `burdin toolchain install|update|list|default|remove`
+  manages `stable`, `nightly`, and exact versions under the Burdin home, with downloads that resume and are verified
+  against `SHA256SUMS` before they replace anything. `burdin +<toolchain> ...`, `BURDIN_TOOLCHAIN`, the nearest
+  `burdin-toolchain.toml` (installed on first use), and the default select a toolchain, in that order, and
+  `burdin toolchain show` says which applied and why. The `debuggers`, `docs`, `lsp`, and `std-src` components are
+  separate verified archives in each release, installed on demand; a target other than the host is refused until
+  cross-compilation exists (issue #282). `burdin toolchain self show|update|uninstall` prints where everything lives,
+  replaces the proxies with a newer release's manager, and removes exactly what the installers and the manager
+  created, including the startup-file line or user `PATH` entry. `tests/check_toolchain.py` checks it in every CI job.
+  SHA-256 moved into the new `crates/burdin_sha256`, shared with the package resolver.
+
+
+- `burdin watch [check|build|test|run] <target>`, and `--watch` on those commands (issue #632, `spec/watch.md`): rerun
+  the command whenever a source, `burdin.toml`, a path dependency, or a build input changes, with a debounce, clearing the
+  screen first unless `--no-clear`. `target/`, version-control metadata, `burdin.lock`, and the command's own output are
+  ignored. `run` restarts the program; `test` runs the changed modules' and their dependents' tests first. The files are
+  polled, so it needs no new dependency. `tests/check_watch.py` runs in every CI job.
 - The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
   `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
   `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets
@@ -61,6 +81,26 @@ close-out checklist in `AGENTS.md`).
 - `tests/json/` holds the fixtures (`roundtrip`, `pretty`, and one malformed document per file under `bad`) with
   their `.expected` goldens; `tests/check_json.py` runs them and checks `burdin add json`, the official pin in
   `burdin.lock`, and `--locked` against a changed package. `tests/s3_serialize/json` is the conformance case.
+
+### Advanced testing tools (issue #615, sub-issues #616, #618, #620, #622)
+
+- `assert_snapshot(value)` (and `assert_snapshot(value, @"text", display: true)`) compares a value's `Debug` or
+  `Display` output with `snapshots/<module>__<test>.snap`. A missing or changed snapshot fails with a diff and writes
+  `.snap.new`; `burdin test --bless` accepts every change, `--review` asks per snapshot, and a snapshot no test checks
+  any more is reported as stale (`spec/test-runner.md`, SN1-SN9).
+- `fuzz name(data: [u8]) { ... }` declares a fuzz target (E0173 for any other signature). `burdin fuzz <target>
+  <name>` builds it with libFuzzer's coverage and AddressSanitizer and keeps `fuzz/corpus/<name>/` and
+  `fuzz/artifacts/<name>/` next to the package; `burdin test --fuzz-replay` replays saved crashes as test cases
+  (`spec/fuzz.md`, FZ1-FZ7).
+- `--sanitize=address,thread,leak,undefined` for `burdin build`, `run`, and `test` (`spec/sanitizers.md`,
+  SAN1-SAN6), with the supported combinations listed in `docs/platform-support.md`. A scheduled CI step runs the
+  stage 0 and stage 1 suite under `--sanitize=address`. The first such run found and fixed two code-generation bugs:
+  the sanitizer's zero-sized loads and stores of empty aggregates, and six places where a statement temporary
+  (a comparison operand, a `List` borrowed by `len`/`as_slice`/`for`/`hash`, a closure called where it was made) was
+  never freed.
+- `burdin test --interpret` runs the tests in the interpreter over a modeled C heap with strict checks: bounds,
+  alignment, uninitialized reads, use after free, double free, and leaks, each reported at the source line. A test
+  that calls C or the operating system is skipped with the reason (`spec/test-runner.md`, IN1-IN6).
 
 ### Derived interfaces after the type's name (issue #825)
 
@@ -110,6 +150,33 @@ loader in `burdin_query`.
 - **`burdin add [<name>] (--path <dir> | --git <url> [--branch | --tag | --rev])`** edits `[dependencies]` as text
   (one line added or replaced, everything else kept), resolves the whole graph, then writes `burdin.toml` and
   `burdin.lock`; any failure leaves both unchanged.
+
+### Fixes, editions, and the refactoring engine (issues #604, #606, #607, #609, #611, #613)
+
+`spec/fix.md` and `spec/refactor.md` are the specifications; `tests/check_fix.py`, `tests/check_ssr.py`, and
+`tests/check_refactor.py` check them, and the conformance runner applies the suggestions the tests expect.
+
+- **One edit model.** A diagnostic's suggestion is a message, a list of edits, and an applicability
+  (`machine`, `maybe-incorrect`, `has-placeholders`, `manual`). The human renderer shows the diff inline and the JSON
+  and SARIF carry the edits. The applier, the conflict check, and the diff live in `burdin_diag::edit`, and the linter
+  and the language server use them.
+- **Compiler suggestions.** A misspelled name with one near miss (or the one module that declares it), a missing
+  `mut`, a `mut` marker to remove, and `.clone()` after a move (maybe-incorrect), with codes registered in
+  `tests/README.md`, and two directives (`suggest:`, `fixed-error:`) the runner checks.
+- **`burdin fix`** applies every machine-applicable suggestion of the compiler and the linter, round after round, and
+  formats what it touched. `--dry-run` prints the diff; a dirty tree needs `--allow-dirty`; edits that clash are
+  skipped and reported; a round that adds errors is undone.
+- **Editions.** `[package] edition` with 2024 (default) and 2026. A removed form is deprecated one edition earlier
+  (`E0301`) and `burdin fix --migrate` writes the fix and moves the manifest. `unimplemented` is the first form on
+  this path. `docs/releasing.md` records the policy.
+- **`burdin ssr`** replaces whole expressions matched by a pattern written as Burdin code, with `$name` placeholders
+  that may carry a type (`where $a: Option<_>`), names matched by resolution rather than spelling, and every result
+  checked before it is written; the language server's `burdin.structuralSearchReplace` command runs the same engine.
+- **`burdin refactor`** extracts a variable or a function (parameters follow the memory rules: moved is `own`, written
+  is `mut`, read is the default), inlines a local or a function, changes a signature (reorder, add with a default,
+  remove, rename, with every call updated), and moves an item to another module. Each refuses with the reason when the
+  result would not compile or would change what the program does, and the language server offers the extract and
+  inline actions.
 
 ## 0.1.0 — 2026-11-19
 

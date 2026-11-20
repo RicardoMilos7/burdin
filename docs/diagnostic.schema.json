@@ -151,7 +151,7 @@
       "required": ["message", "applicability", "edits"],
       "properties": {
         "message": { "type": "string" },
-        "applicability": { "enum": ["machine", "manual"] },
+        "applicability": { "enum": ["machine", "maybe-incorrect", "has-placeholders", "manual"] },
         "edits": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/edit" } }
       }
     },

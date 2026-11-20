@@ -92,7 +92,10 @@ def profile_conformance(block: str, profile: str) -> str:
     steps = [
         line
         for line in block.split("\n")
-        if "tests/run_tests.py" in line and "BURDIN_CC" not in line and "--repeat" not in line
+        if "tests/run_tests.py" in line
+        and "BURDIN_CC" not in line
+        and "--repeat" not in line
+        and "--sanitize" not in line
     ]
     if profile == "release":
         matching = [line for line in steps if "--release" in line]
@@ -324,14 +327,20 @@ required_steps = [
     "tests/check_diagnostics.py",
     "tests/check_error_docs.py",
     "tests/check_test_runner.py",
+    "tests/check_sanitizers.py",
+    "tests/check_interpret.py",
     "tests/check_fmt.py",
     "tests/check_lint.py",
+    "tests/check_fix.py",
+    "tests/check_ssr.py",
+    "tests/check_refactor.py",
     "tests/check_doc.py",
     "tests/check_check.py",
     "tests/check_inspect.py",
     "tests/check_lsp.py",
     "tests/check_platform_support.py",
     "tests/check_release.py",
+    "tests/check_toolchain.py",
     "tests/bench_regression.py",
     "rustup toolchain install",
     "rustc --version",
@@ -353,6 +362,29 @@ for job in ("linux", "macos", "windows"):
     check_deps_audit(job, block)
 
 check_fuzz(fuzz)
+
+# `burdin fuzz` (issue #618, spec/fuzz.md): libFuzzer's runtimes come with clang, so the linux and macos jobs check
+# it and the windows job does not.
+for job in ("linux", "macos"):
+    require_command(job, jobs[job], "tests/check_fuzz.py")
+if "tests/check_fuzz.py" in jobs["windows"]:
+    add_problem("ci.yml: windows job: runs tests/check_fuzz.py, which needs libFuzzer's runtime")
+
+# The stage 0 and stage 1 suite under AddressSanitizer (issue #620, spec/sanitizers.md): a scheduled step of the
+# linux job's debug part, which needs the compiler-rt runtimes from the LLVM install.
+linux = jobs["linux"]
+asan_steps = [line for line in linux.split("\n") if "tests/run_tests.py" in line and "--sanitize address" in line]
+if not asan_steps:
+    add_problem("ci.yml: linux job: no conformance step under `--sanitize address`")
+else:
+    for directory in sorted(harness.TESTS.glob("m[0-9]*_*")):
+        name = directory.name.split("_", 1)[0]
+        if directory.is_dir() and not re.search(rf"(^| ){re.escape(name)}( |$)", asan_steps[0]):
+            add_problem(f"ci.yml: linux job: the `--sanitize address` step omits {name}")
+if not re.search(r"if: matrix\.part == 'debug' && \(github\.event_name == 'schedule'", linux):
+    add_problem("ci.yml: linux job: the `--sanitize address` step is not limited to the schedule")
+if "libclang-rt-21-dev" not in linux:
+    add_problem("ci.yml: linux job: does not install libclang-rt-21-dev (the sanitizer runtimes)")
 
 # The fuzz corpus is committed and replayed by `cargo test --workspace`, which is the check that fails
 # when a panic is reintroduced (issue #447). Losing the corpus or the replay test would silently disable it.
@@ -433,6 +465,30 @@ check_script(
     "tests/check_build_flags.py", "burdin --version", "--strip", "--lto", "--pgo-use", "147456"
 )
 check_script("tests/check_parallel.py", "BURDIN_JOBS", "unified_diff")
+check_script(
+    "tests/check_interpret.py",
+    "bugs.bd",
+    "interpret-error",
+    "calls_c.bd",
+    "--interpret",
+    "SKIP",
+)
+check_script(
+    "tests/check_fuzz.py",
+    "planted crash",
+    "fuzz header: crash-planted",
+    "--fuzz-replay",
+    "index out of bounds",
+)
+check_script(
+    "tests/check_sanitizers.py",
+    "heap-buffer-overflow",
+    "heap-use-after-free",
+    "LeakSanitizer",
+    "ThreadSanitizer: data race",
+    "null pointer dereference",
+    "temporaries.bd",
+)
 check_script("tests/check_fmt.py", "--check", "--stdin", "--range", "idempotent", "TRICKY", "E0001")
 check_script(
     "tests/check_doc.py", "--output-format", "--private", "--coverage", "--deny-warnings", "D0001", "D0002", "missing_docs"
@@ -569,6 +625,8 @@ scripts = [
     "tests/check_diagnostics.py",
     "tests/check_error_docs.py",
     "tests/check_test_runner.py",
+    "tests/check_sanitizers.py",
+    "tests/check_fuzz.py",
     "tests/check_fmt.py",
     "tests/check_lint.py",
     "tests/check_doc.py",
@@ -584,6 +642,7 @@ scripts = [
     "tests/check_bindgen.py",
     "tests/check_rust_interop.py",
     "tests/check_release.py",
+    "tests/check_toolchain.py",
     "tests/build_release.py",
     "tests/release_notes.py",
     "tests/bench_regression.py",

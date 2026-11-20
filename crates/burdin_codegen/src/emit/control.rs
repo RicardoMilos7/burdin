@@ -1,6 +1,7 @@
 //! Control flow: loops, `if`, and `match`.
 
 use super::pattern::{collect_bindings, pattern_moves};
+use super::place::is_place;
 use super::{Codegen, GenResult, LoopTargets, Mode, llvm_err};
 use burdin_tir::{self as tir, Pat, Ty};
 use inkwell::basic_block::BasicBlock;
@@ -348,6 +349,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         };
         let elem = (**elem).clone();
         let v = self.expr_mode(list, Mode::Use)?;
+        // `for` borrows the list (IT1): a list that is not a place is a temporary of the statement, dropped with
+        // its elements after the loop (DR5).
+        if !is_place(list) {
+            self.add_temp_value(v, &list.ty)?;
+        }
         let s = self.need(v, &list.ty).into_struct_value();
         let base = self.builder.build_extract_value(s, 0, "list.ptr").map_err(llvm_err)?.into_pointer_value();
         let len = self.builder.build_extract_value(s, 1, "list.len").map_err(llvm_err)?.into_int_value();
@@ -396,6 +402,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let entry = Self::map_entry_ty(key, value);
         let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
         let v = self.expr_mode(map, Mode::Use)?;
+        // Borrowed like a list: a map that is not a place is a temporary of the statement.
+        if !is_place(map) {
+            self.add_temp_value(v, &map.ty)?;
+        }
         let s = self.need(v, &map.ty).into_struct_value();
         let base = self.builder.build_extract_value(s, 0, "map.ptr").map_err(llvm_err)?.into_pointer_value();
         let cap = self.builder.build_extract_value(s, 2, "map.cap").map_err(llvm_err)?.into_int_value();

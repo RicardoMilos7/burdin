@@ -1,0 +1,55 @@
+// Temporaries that a statement borrows and nobody owns must be freed at the end of the statement (DR5). Each line
+// below leaked its temporary until `--sanitize=address` found it (issue #620); tests/check_sanitizers.py runs this
+// program under `address` and `leak` and expects no report.
+
+struct Holder: Clone, Hash {
+    items: List<i32>
+}
+
+fn numbers(): List<i32> {
+    let mut l = List<i32>.new()
+    l.push(1)
+    l.push(2)
+    l
+}
+
+fn words(): List<String> {
+    let mut l = List<String>.new()
+    l.push(String.from("a"))
+    l.push(String.from("bc"))
+    l
+}
+
+fn table(): Map<String, i32> {
+    let mut m = Map<String, i32>.new()
+    m.insert(String.from("k"), 1)
+    m
+}
+
+fn make(own n: i32): Fn(i32): i32 {
+    |x| x + n
+}
+
+fn main() {
+    // A comparison reads both operands.
+    println("{} {}", String.from("a") == String.from("b"), String.from("a") < String.from("b"))
+    // A borrowing method on a returned list.
+    println("{} {}", numbers().len(), numbers().as_slice().len())
+    // `for` borrows a returned list or map.
+    for w in words() {
+        println("{}", w.len())
+    }
+    for x in numbers() {
+        println("{x}")
+    }
+    for (k, v) in table() {
+        println("{k} {v}")
+    }
+    // A closure called where it was made.
+    println("{}", make(4)(4))
+    // `hash` of a temporary.
+    let held = Holder { items: numbers() }
+    println("{}", held.clone().hash() == held.hash())
+    println("{}", String.from("text").hash() == "text".hash())
+    println("finished")
+}

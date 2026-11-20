@@ -13,6 +13,7 @@ burdin_diag.workspace = true
 burdin_syntax.workspace = true
 burdin_fmt.workspace = true
 burdin_tir.workspace = true
+burdin_comptime.workspace = true
 burdin_codegen.workspace = true
 burdin_lint.workspace = true
 burdin_bindgen.workspace = true
@@ -24,6 +25,7 @@ burdin_lsp.workspace = true
 burdin_dap.workspace = true
 burdin_repl.workspace = true
 burdin_inspect.workspace = true
+burdin_refactor.workspace = true
 clap.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,11 @@
+fn triple(n: i32): i32 {
+    n * 3
+}
+
+fn format_label(): String {
+    String.from("label")
+}
+
+fn later(): i32 {
+    panic("not implemented")
+}

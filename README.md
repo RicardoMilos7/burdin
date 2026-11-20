@@ -24,6 +24,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, the doc tests of doc comments, parallelism, output capture, isolation, and discovery. |
 | [`spec/bench.md`](spec/bench.md) | The behavior of `burdin bench`: bench items, warmup and calibration, statistics, baselines, and the profiler hook. |
+| [`spec/fuzz.md`](spec/fuzz.md) | The behavior of `burdin fuzz`: fuzz items, the libFuzzer build, the corpus and the artifacts, minimizing a crash, and `burdin test --fuzz-replay`. |
+| [`spec/sanitizers.md`](spec/sanitizers.md) | The behavior of `--sanitize`: AddressSanitizer, ThreadSanitizer, LeakSanitizer, the undefined checks, the platforms, and how a run reports. |
 | [`spec/fmt.md`](spec/fmt.md) | The behavior of `burdin fmt`: the one style (4-space indentation, 120 columns), comments, blank lines, the magic trailing comma, `use` sorting and grouping, doc-comment code blocks, range formatting, and the command line. |
 | [`spec/build-scripts.md`](spec/build-scripts.md) | The behavior of `build.bd`: trust and grants, generated modules, caching, and the `bindgen` a script may invoke. |
 | [`spec/bindgen.md`](spec/bindgen.md) | `burdin bindgen`: C headers to Burdin declarations through libclang, the layout check, wrappers for `static inline` functions, and `--export` for a C header of what a package exports. |
@@ -31,9 +33,12 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/tasks.md`](spec/tasks.md) | Tasks, the work-stealing scheduler, `yield`, scoped tasks that borrow, panics in tasks, and OS threads (stage 2.1). |
 | [`spec/channels.md`](spec/channels.md) | `Channel<T>` (bounded and unbounded, closing, ownership of sent values) and the `select` expression, with its priority, `default`, and guard rules (stage 2.2). |
 | [`spec/allocators.md`](spec/allocators.md) | Allocator parameters, default type parameters, `Arena`, `Shared<T>`, and the checking allocator used by `burdin test`. |
+| [`spec/fix.md`](spec/fix.md) | The one edit model: suggestions and their applicability, the applier, `burdin fix` with its rounds and conflicts, editions, and `burdin fix --migrate` (stage 3). |
+| [`spec/refactor.md`](spec/refactor.md) | `burdin ssr` and `burdin refactor`: structural search and replace, extract variable and function, inline variable and function, change signature, and move item, each checked before it is written (stage 3). |
 | [`spec/lint.md`](spec/lint.md) | `burdin lint`: the lints, levels and configuration, suppression comments, `--fix`, and the rules the tests cover (stage 3). |
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
+| [`spec/watch.md`](spec/watch.md) | `burdin watch` and `--watch`: what is watched and ignored, the debounce, restarting `run`, and the changed-modules-first `test` run (stage 3). |
 | [`spec/inspect.md`](spec/inspect.md) | Inspecting what the compiler generated: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and `burdin check --print-instances` (stage 3). |
 | [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
@@ -42,6 +47,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`CHANGELOG.md`](CHANGELOG.md) | Shipped milestones. |
 | [`crates/burdin_fuzz/`](crates/burdin_fuzz/) | The lexer/parser fuzzer and its committed corpus. |
 | [`crates/burdin_fmt/`](crates/burdin_fmt/) | The formatter behind `burdin fmt`, with its unit, corpus, and fuzz tests. |
+| [`crates/burdin_refactor/`](crates/burdin_refactor/) | The refactoring engine behind `burdin ssr` and `burdin refactor`, over the query library. |
 | [`crates/burdin_doc/`](crates/burdin_doc/) | The documentation generator behind `burdin doc`, with the fixtures it is checked against. |
 | [`std/README.md`](std/README.md) | The stage 0 standard library. |
 | [`Burdin Language Design.md`](Burdin%20Language%20Design.md) | The full language design, including features after stage 0. |
@@ -117,6 +123,12 @@ step. A prebuilt compiler needs
 the LLVM 21 shared library at run time (`libLLVM-21.so`, `libLLVM.dylib`, or `LLVM-C.dll`); it is not bundled. The
 artifact names, checksums, reproducibility rules, and release steps are in [`docs/releasing.md`](docs/releasing.md).
 
+A release that carries the toolchain manager installs through it: the installed `burdin` is a proxy that runs the
+selected toolchain, and `burdin toolchain` installs several toolchains side by side (`stable`, `nightly`, `0.4.1`),
+updates them, pins one per project with `burdin-toolchain.toml`, selects one per command with `burdin +nightly ...`,
+adds components (`lsp`, `std-src`, `docs`, `debuggers`), and updates or uninstalls itself. See
+[`spec/toolchain.md`](spec/toolchain.md).
+
 ## Hello, world
 
 Write `hello.bd`:
@@ -155,20 +167,25 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]
+               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
-             [--comptime-steps <n>] [diagnostics] [-- <program arguments>...]
+             [--comptime-steps <n>] [--sanitize <list>] [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
-              [--format <human|json>] [--junit <file>] [--comptime-steps <n>] [diagnostics]
+              [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
+              [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
   burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
                [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
+  burdin fuzz <file.bd | package directory> <name> [--max-time <seconds>] [--minimize <file>] [--release] [-g] [-j <n>]
+              [--comptime-steps <n>] [diagnostics] [-- <libFuzzer options>...]
   burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
+  burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
+  burdin <build|run|test|check> <target> --watch [--no-clear] ...
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
@@ -277,6 +294,10 @@ and `--verbose` are options of `burdin test` and `burdin bench` (and so are the 
 `--ignored`/`--include-ignored`, `--failed`, `--shard`, `--slow-threshold`, and `--junit` are options of `burdin test`
 only, and `--save-baseline`, `--baseline`, `--fail-on-regression`, `--profile-time`, `--warmup`, `--sample-count`,
 and `--sample-time` are options of `burdin bench` only; any other command rejects them.
+
+`burdin watch` (or `--watch` on `build`, `run`, `test`, and `check`) reruns the command whenever a source, `burdin.toml`, or a
+build input changes, ignoring `target/` and version-control metadata, and clears the screen first unless `--no-clear`; `run` restarts the
+program and `test` runs the changed modules' tests first. `spec/watch.md` is the exact behavior.
 
 A target is either a single `.bd` file, compiled as a one-module package, or a directory containing a `burdin.toml`.
 

@@ -851,6 +851,41 @@ counts as borrowed even when its bits are copied into the record, so convert it 
 `String.from(s)`) before capturing it. A closure passed through a generic `F` with an `Fn` bound keeps its borrow
 and needs no change.
 
+## E0172: Invalid snapshot assertion
+
+`assert_snapshot(value)` compares the `Debug` text of `value` with a snapshot `burdin test` keeps, and
+`assert_snapshot(value, @"...")` keeps the snapshot in the source instead. The inline snapshot `@"..."` is only
+meaningful there: anywhere else it is this error. So are an `assert_snapshot` call without a value, with more than
+the value and one inline snapshot, with a named argument other than `display`, or with a `display:` that is not
+`true` or `false` written out.
+
+<!-- error-example: E0172 mode=test -->
+```burdin
+test "stray" {
+    let text = @"hello" //~ E0172
+}
+```
+<!-- /error-example -->
+
+**How to fix:** pass the inline snapshot as the second argument of `assert_snapshot`, and give `display:` a literal:
+`assert_snapshot(value, @"hello", display: true)`.
+
+## E0173: Invalid fuzz block
+
+A `fuzz name(data: [u8]) { ... }` block takes exactly one parameter, a `[u8]` view of the input `burdin fuzz` feeds
+it, and returns nothing: a crash (a panic, or a failed assertion that panics) is how it reports a bug. Another
+parameter list, a result type, or a second fuzz block of the same name in one package is this error.
+
+<!-- error-example: E0173 mode=test -->
+```burdin
+fuzz parse(data: [u8], extra: i32) { //~ E0173
+}
+```
+<!-- /error-example -->
+
+**How to fix:** take one `[u8]` parameter and decode what the block needs from it, and give each fuzz block of a
+package its own name.
+
 ## E0180: Type arguments on a non-generic type
 
 A type path supplies type arguments to a type that declares no type parameters, such as a plain struct or a
@@ -1880,3 +1915,27 @@ fn main() {}
 
 **How to fix:** move the `#!` line to the very top of the file, or delete it. Burdin has no other use for `#`, so
 the line is never a comment: a shebang below the first line is almost always a paste that landed one line too low.
+
+## E0301: Deprecated form
+
+A warning. The package's edition still accepts the form, but the next edition removes it (`spec/fix.md`, FX11). A
+package names its edition in `burdin.toml` (`[package] edition = "2024"`; a package that names none, and a one-file
+target, is edition 2024). The warning carries a machine-applicable fix that writes the form every edition accepts,
+with the same behavior. Edition 2024 deprecates `unimplemented()`; edition 2026 removes it, and a call there is
+E0002 with the same fix.
+
+<!-- warning-example: E0301 -->
+```burdin
+fn later(): i32 {
+    unimplemented() //~ E0301
+}
+
+fn main() {
+    println("not called")
+}
+```
+<!-- /warning-example -->
+
+**How to fix:** `burdin fix` applies the fix (`unimplemented()` becomes `panic("not implemented")`), and
+`burdin fix --migrate` applies it and moves the package to the next edition, after checking that the package compiles
+there. Write `todo()` instead when the function is still to be written.

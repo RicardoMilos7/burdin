@@ -1,0 +1,10 @@
+fn encode(flag: bool): i32 {
+    if flag {
+        return 1
+    }
+    unimplemented()
+}
+
+fn main() {
+    println(encode(true).to_string())
+}

@@ -27,6 +27,12 @@ pub struct Program {
     /// The program's `bench` blocks, in declaration order. Only `burdin bench` fills this in; every other build
     /// has none, because bench items are stripped before checking (`spec/bench.md`, BN1).
     pub benches: Vec<BenchEntry>,
+    /// The program's `fuzz` targets, in declaration order. `burdin fuzz` and `burdin test` fill this in; every
+    /// other build strips them (`spec/fuzz.md`, FZ1).
+    pub fuzzes: Vec<FuzzEntry>,
+    /// The fuzz target a `burdin fuzz` build is for, an index into [`Program::fuzzes`]. Code generation gives it
+    /// libFuzzer's entry point, `LLVMFuzzerTestOneInput`, instead of a `main` (FZ3).
+    pub fuzz_target: Option<usize>,
     /// The interface instances an `any` type names, indexed by [`AnyRef::id`].
     pub any_ifaces: Vec<AnyIface>,
     /// One vtable per (concrete type, interface instance) the program boxes, indexed by `ExprKind::BoxAny`.
@@ -125,6 +131,18 @@ pub struct BenchEntry {
     /// Where the bench is declared: the span of its name, for `burdin bench --list` and the reports.
     pub span: Span,
     /// The function the harness calls: the bench body, with no parameters and no result.
+    pub func: FuncId,
+}
+
+/// One `fuzz` target (`spec/fuzz.md`).
+#[derive(Debug)]
+pub struct FuzzEntry {
+    pub name: String,
+    /// The dotted path of the module the target is declared in, relative to its package, like a test's.
+    pub module: String,
+    /// The span of the target's name.
+    pub span: Span,
+    /// The function `__burdin_fuzz_<name>(data: [u8])`.
     pub func: FuncId,
 }
 

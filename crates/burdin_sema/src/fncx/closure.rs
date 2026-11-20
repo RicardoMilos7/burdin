@@ -822,7 +822,15 @@ impl FreeNames {
                 self.expr(name);
             }
             K::SelfValue => self.use_name("self", e.span),
-            K::Unit | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bool(_) | K::Break | K::Continue => {}
+            K::Unit
+            | K::Int(_)
+            | K::Float(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::InlineSnapshot(_)
+            | K::Bool(_)
+            | K::Break
+            | K::Continue => {}
             K::Interp(parts) => {
                 for part in parts {
                     if let ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) = part {
@@ -978,6 +986,7 @@ fn contains_return(e: &ast::Expr) -> bool {
         | K::Float(_)
         | K::Char(_)
         | K::Str(_)
+        | K::InlineSnapshot(_)
         | K::Bool(_)
         | K::Name { .. }
         | K::SelfValue

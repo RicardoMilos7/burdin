@@ -1,0 +1,47 @@
+//@ burdin-test passed=5 failed=0
+
+// The standard library in `test` blocks, so the same code runs compiled in the conformance suite and interpreted by
+// `burdin test --interpret` in `tests/check_interpret.py` (spec/test-runner.md, IN1).
+
+test "strings" {
+    let mut s = String.from("Hello")
+    s.push_str(", world")
+    assert_eq(s.as_str(), "Hello, world")?
+    assert_eq(s.len(), 12)?
+    let upper = s.to_uppercase()
+    assert_eq(upper.as_str(), "HELLO, WORLD")?
+    assert_eq(s.contains("world"), true)?
+}
+
+test "lists and sorts" {
+    let mut xs = List<i32>.new()
+    for i in 0..5 {
+        xs.push(4 - i)
+    }
+    xs.sort()
+    assert_eq(*xs.first().unwrap(), 0)?
+    let evens: List<i32> = xs.iter().filter(|x| *x % 2 == 0).collect()
+    assert_eq(evens.len(), 3)?
+}
+
+test "maps" {
+    let mut counts = Map<String, i32>.new()
+    counts.insert(String.from("a"), 1)
+    counts.insert(String.from("b"), 2)
+    assert_eq(*counts.get(String.from("a")).unwrap(), 1)?
+    assert_eq(counts.contains_key(String.from("z")), false)?
+    assert_eq(counts.len(), 2)?
+}
+
+test "formatting" {
+    let x = 6
+    let text = format("{x} squared is {x * x}")
+    assert_eq(text.as_str(), "6 squared is 36")?
+}
+
+test "options and results" {
+    let found = i32.parse("12").unwrap_or(0)
+    assert_eq(found, 12)?
+    let missing = i32.parse("nope")
+    assert_eq(missing.unwrap_or(7), 7)?
+}

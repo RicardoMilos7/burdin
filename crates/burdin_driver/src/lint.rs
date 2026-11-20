@@ -9,16 +9,13 @@ use crate::{
 };
 use burdin_diag::{DiagnosticFormat, Diagnostics, FileId, Severity};
 use burdin_lint::{Config, Input, Level, Lint, Source};
-use std::collections::{BTreeMap, HashMap, HashSet};
+
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// The lint reference, embedded so `burdin lint --explain` cannot disagree with the page `tests/check_lint.py` checks.
 const LINT_DOCS: &str = include_str!("../../../docs/lints.md");
-
-/// How many times `--fix` runs the front end: a fix can reveal another, so it repeats until nothing is left to fix.
-const MAX_FIX_ROUNDS: usize = 6;
 
 struct LintArgs {
     target: PathBuf,
@@ -140,6 +137,8 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         run_build_scripts: true,
         locked: false,
         jobs: jobs_or_default(args.jobs),
+        sanitize: Default::default(),
+        fuzz_target: None,
     };
     if args.fix { fix(&args, &options) } else { check(&args, &options) }
 }
@@ -185,17 +184,17 @@ fn explain(name: &str) -> ExitCode {
 }
 
 /// One run of the front end and the lints.
-struct Outcome {
-    front: FrontEnd,
+pub(crate) struct Outcome {
+    pub(crate) front: FrontEnd,
     /// The modules of the entry package that the lints read: `(file, module path)`.
-    entry: Vec<(FileId, Vec<String>)>,
+    pub(crate) entry: Vec<(FileId, Vec<String>)>,
     /// What the lints found. Empty when the front end reported errors.
-    lints: Diagnostics,
+    pub(crate) lints: Diagnostics,
 }
 
 impl Outcome {
     /// The compiler's diagnostics and the lints' together, for printing and for fixes.
-    fn all(&self) -> Diagnostics {
+    pub(crate) fn all(&self) -> Diagnostics {
         let mut all = Diagnostics::default();
         for d in self.front.diags.iter().chain(self.lints.iter()) {
             all.push(d.clone());
@@ -204,7 +203,7 @@ impl Outcome {
     }
 }
 
-fn lint_once(
+pub(crate) fn lint_once(
     target: &Path,
     options: &CompileOptions,
     overrides: &SourceOverrides,
@@ -303,8 +302,15 @@ fn report(outcome: &Outcome, args: &LintArgs) -> bool {
     errors > 0
 }
 
-fn plural(n: usize, word: &str) -> String {
-    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+pub(crate) fn plural(n: usize, word: &str) -> String {
+    let suffix = if n == 1 {
+        ""
+    } else if word.ends_with('x') {
+        "es"
+    } else {
+        "s"
+    };
+    format!("{n} {word}{suffix}")
 }
 
 fn check(args: &LintArgs, options: &CompileOptions) -> ExitCode {
@@ -322,60 +328,21 @@ fn check(args: &LintArgs, options: &CompileOptions) -> ExitCode {
 
 // ----- --fix ----------------------------------------------------------------------------------------------------
 
-/// The edits of the safe suggestions in `outcome`, by file, for the files of the entry package.
-fn edits_by_file(outcome: &Outcome) -> BTreeMap<PathBuf, Vec<(u32, u32, String)>> {
-    let in_package: HashSet<FileId> = outcome.entry.iter().map(|(f, _)| *f).collect();
-    let mut by_file: BTreeMap<PathBuf, Vec<(u32, u32, String)>> = BTreeMap::new();
-    for (span, replacement) in burdin_lint::applicable_edits(&outcome.all()) {
-        if in_package.contains(&span.file) {
-            let path = outcome.front.files[span.file.0 as usize].0.clone();
-            by_file.entry(path).or_default().push((span.lo, span.hi, replacement));
-        }
-    }
-    by_file
-}
-
 fn fix(args: &LintArgs, options: &CompileOptions) -> ExitCode {
-    let mut overrides = SourceOverrides::new();
-    let mut originals: HashMap<PathBuf, String> = HashMap::new();
-    let mut edit_count = 0usize;
-    let mut rounds = 0usize;
-    let outcome = loop {
-        let outcome = match lint_once(&args.target, options, &overrides, &args.levels) {
-            Ok(o) => o,
-            Err(code) => return code,
-        };
-        let mut changed = false;
-        for (path, edits) in edits_by_file(&outcome) {
-            let id = outcome.entry.iter().map(|(f, _)| *f).find(|f| outcome.front.files[f.0 as usize].0 == path);
-            let Some(id) = id else { continue };
-            let text = outcome.front.sources.get(id).text.clone();
-            let (new_text, conflicts) = burdin_lint::apply_edits(&text, &edits);
-            if new_text != text {
-                edit_count += edits.len().saturating_sub(conflicts.len());
-                originals.entry(path.clone()).or_insert(text);
-                overrides.insert(path, new_text);
-                changed = true;
-            }
-        }
-        rounds += 1;
-        if !changed || rounds >= MAX_FIX_ROUNDS {
-            break outcome;
-        }
+    let result = match crate::fix::fix_loop(&args.target, options, &args.levels, SourceOverrides::new()) {
+        Ok(r) => r,
+        Err(code) => return code,
     };
+    let outcome = &result.last;
     // The package the fixes produce must compile: a fix that would break it is not applied at all.
     if outcome.front.diags.has_errors() {
-        report(&outcome, args);
-        if !overrides.is_empty() {
+        report(outcome, args);
+        if !result.overrides.is_empty() {
             eprintln!("error: the fixes would leave the package with errors; no files were changed");
         }
         return ExitCode::from(1);
     }
-    let mut changes: Vec<(PathBuf, String, String)> = Vec::new();
-    for (path, new_text) in &overrides {
-        changes.push((path.clone(), originals[path].clone(), new_text.clone()));
-    }
-    changes.sort();
+    let changes = crate::fix::changes(&result);
     for (path, old, new) in &changes {
         print!("{}", burdin_lint::unified_diff(&diff_path(path), old, new));
     }
@@ -386,11 +353,11 @@ fn fix(args: &LintArgs, options: &CompileOptions) -> ExitCode {
         eprintln!("error: {message}; no files were changed");
         return ExitCode::from(2);
     }
-    let failed = report(&outcome, args);
+    let failed = report(outcome, args);
     if changes.is_empty() {
         eprintln!("fix: nothing to fix");
     } else {
-        let (edits, files) = (plural(edit_count, "edit"), plural(changes.len(), "file"));
+        let (edits, files) = (plural(result.applied.len(), "edit"), plural(changes.len(), "file"));
         let verb = if args.dry_run { "would apply" } else { "applied" };
         eprintln!("fix: {verb} {edits} to {files}");
     }
@@ -399,7 +366,7 @@ fn fix(args: &LintArgs, options: &CompileOptions) -> ExitCode {
 
 /// The path in a diff header: relative to the current directory when the file is under it, with `/` separators, and
 /// never absolute, so `a/<path>` and `b/<path>` read like a `git diff`.
-fn diff_path(path: &Path) -> String {
+pub(crate) fn diff_path(path: &Path) -> String {
     // Both sides canonical: on Windows the working directory can be spelled with a short name (`RUNNER~1`) while the
     // source path is the canonical long one.
     let cwd = std::env::current_dir().ok().and_then(|cwd| cwd.canonicalize().ok());
@@ -410,7 +377,7 @@ fn diff_path(path: &Path) -> String {
 
 /// Writes every file or none: each is written beside its target and renamed over it, and when one step fails the
 /// files already replaced get their old text back.
-fn write_all_or_nothing(changes: &[(PathBuf, String, String)]) -> Result<(), String> {
+pub(crate) fn write_all_or_nothing(changes: &[(PathBuf, String, String)]) -> Result<(), String> {
     let mut done: Vec<usize> = Vec::new();
     for (i, (path, _, new)) in changes.iter().enumerate() {
         let mut temporary = path.clone().into_os_string();

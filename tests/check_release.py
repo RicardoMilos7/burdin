@@ -310,6 +310,59 @@ with harness.temporary_dir("burdin-release-") as work:
                     f"{sorted(archived_packages ^ repository_packages)}"
                 )
 
+            # With the toolchain manager and the components (spec/toolchain.md TC10, TC13): the manager goes into the
+            # compiler archive, each component is its own archive, and SHA256SUMS.<target> lists all five.
+            fake_manager = work / "fake-manager"
+            harness.write_text(fake_manager, "#!/bin/sh\nexit 0\n")
+            fake_lsp = work / "fake-lsp"
+            harness.write_text(fake_lsp, "#!/bin/sh\nexit 0\n")
+            dist_c = work / "dist-components"
+            check()
+            packaged_components = run_release(
+                "--binary", str(fake), "--target", target, "--version", "9.9.9", "--channel", "stable",
+                "--manager", str(fake_manager), "--lsp", str(fake_lsp), "--components", "--out", str(dist_c),
+            )
+            if packaged_components.returncode != 0:
+                add_problem(
+                    "build_release.py --components: "
+                    f"{harness.text(packaged_components.stdout).rstrip(chr(10))}"
+                )
+            else:
+                with tarfile.open(dist_c / archive_name) as archive:
+                    names = {name.rstrip("/") for name in archive.getnames()}
+                expect_contains(
+                    "archive layout", f"burdin-9.9.9-{target}/burdin-toolchain", "\n".join(sorted(names))
+                )
+                layouts = {
+                    "lsp": "burdin-lsp",
+                    "std-src": "lib/std/src/std.bd",
+                    "docs": "share/doc/spec/toolchain.md",
+                    "debuggers": "debuggers/gdb/burdin_printers.py",
+                }
+                listed = harness.read_text(dist_c / f"SHA256SUMS.{target}").split("\n")
+                for component, entry in layouts.items():
+                    component_archive = f"burdin-{component}-9.9.9-{target}.tar.gz"
+                    check()
+                    if f"{sha256_of(dist_c / component_archive)}  {component_archive}" not in listed:
+                        add_problem(f"SHA256SUMS.{target} does not list {component_archive}")
+                        continue
+                    with tarfile.open(dist_c / component_archive) as archive:
+                        names = {name.rstrip("/") for name in archive.getnames()}
+                    expect_contains(
+                        f"{component} component layout",
+                        f"burdin-{component}-9.9.9-{target}/{entry}",
+                        "\n".join(sorted(names)),
+                    )
+                check()
+                if len([line for line in listed if line]) != 5:
+                    add_problem(f"SHA256SUMS.{target} lists {len(listed)} lines, expected the archive and 4 components")
+            check()
+            if run_release(
+                "--target", target, "--version", "9.9.9", "--channel", "stable", "--components",
+                "--out", str(work / "dist-bad"),
+            ).returncode == 0:
+                add_problem("build_release.py accepted --components without --binary")
+
             # Packaging is deterministic: the same binary, version, and epoch make the same bytes. The second run
             # starts a whole second later so a timestamp read from the clock instead of SOURCE_DATE_EPOCH cannot
             # pass by landing in the same second; bsdtar (macOS) packs the staging files' times, so that leak

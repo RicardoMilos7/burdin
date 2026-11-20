@@ -89,6 +89,21 @@ fn is_command(name: &str) -> bool {
     name != "help" && command().get_subcommands().any(|c| c.get_name() == name)
 }
 
+/// Whether `flag` (`--name` or `-n`) of command `name` takes a value; unknown flags take none.
+pub(crate) fn option_takes_value(name: &str, flag: &str) -> bool {
+    let command = subcommand(name);
+    let arg = if let Some(long) = flag.strip_prefix("--") {
+        command.get_arguments().find(|a| a.get_long() == Some(long))
+    } else {
+        let mut chars = flag.chars().skip(1);
+        match (chars.next(), chars.next()) {
+            (Some(short), None) => command.get_arguments().find(|a| a.get_short() == Some(short)),
+            _ => None,
+        }
+    };
+    arg.is_some_and(|a| a.get_action().takes_values())
+}
+
 /// The built subcommand `name` of the tree: its usage and help name it `burdin <name>`.
 fn subcommand(name: &str) -> Command {
     let mut root = command();
@@ -150,13 +165,18 @@ pub(crate) fn command() -> Command {
             run(),
             test(),
             bench(),
+            fuzz(),
             check(),
             fmt(),
             lint(),
+            fix(),
+            ssr(),
+            refactor(),
             doc(),
             new(),
             add(),
             repl(),
+            watch(),
             debug(),
             expand(),
             asm(),
@@ -181,6 +201,15 @@ fn flag(id: &'static str, help: &'static str) -> Arg {
 
 fn option(id: &'static str, value: &'static str, help: &'static str) -> Arg {
     Arg::new(id).long(id).value_name(value).help(help)
+}
+
+/// The options of `build`, `run`, `test`, and `check` that rerun the command when a file changes.
+fn watch_options() -> [Arg; 2] {
+    [
+        flag("watch", "Rerun the command whenever a source, the manifest, or a build input changes (spec/watch.md)")
+            .help_heading("Watch Options"),
+        flag("no-clear", "With --watch: do not clear the screen before each run").help_heading("Watch Options"),
+    ]
 }
 
 fn jobs(help: &'static str) -> Arg {
@@ -213,6 +242,14 @@ fn locked() -> Arg {
 
 fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
+}
+
+fn sanitize() -> Arg {
+    option(
+        "sanitize",
+        "list",
+        "Build with sanitizers: address, undefined, thread, leak, comma-separated (spec/sanitizers.md)",
+    )
 }
 
 /// The diagnostics options every compiling command takes, under their own heading.
@@ -257,6 +294,7 @@ fn build() -> Command {
                     "Compile the package's `test` blocks and their dispatcher instead of `main`, without running them",
                 ),
                 link_lib(),
+                sanitize(),
                 compile_jobs(),
                 comptime_steps(),
             ])
@@ -275,6 +313,7 @@ fn build() -> Command {
                 ]
                 .map(|arg| arg.help_heading("Output Options")),
             )
+            .args(watch_options())
             .after_help(ENVIRONMENT),
     )
 }
@@ -297,9 +336,11 @@ fn run() -> Command {
                 debug_info(),
                 locked(),
                 link_lib(),
+                sanitize(),
                 compile_jobs(),
                 comptime_steps(),
             ])
+            .args(watch_options())
             .after_help(
                 "A single file that starts with a shebang or an inline manifest runs as a script, from a cache \
                  (spec/scripts.md). The exit status is the program's.\n\n"
@@ -352,6 +393,11 @@ fn test() -> Command {
                     flag("failed", "Run only the tests that failed in the previous run"),
                     option("shard", "i/n", "Run the i-th of n deterministic slices of the selected tests"),
                     flag("doc", "Run only the doc tests: the Burdin code blocks of doc comments"),
+                    flag("fuzz-replay", "Also run each fuzz target on every input saved under fuzz/artifacts/<name>/"),
+                    flag(
+                        "interpret",
+                        "Run the tests in the interpreter, with strict memory checks, instead of compiling them",
+                    ),
                 ]
                 .map(|arg| arg.help_heading(SELECTION)),
             )
@@ -369,15 +415,64 @@ fn test() -> Command {
             ])
             .args(
                 [
+                    flag("bless", "Accept every new or changed snapshot, rewriting files and inline snapshots"),
+                    flag("review", "Show each new or changed snapshot and ask whether to accept it"),
+                ]
+                .map(|arg| arg.help_heading("Snapshot Options")),
+            )
+            .args(
+                [
                     release("Build the tests with optimizations"),
                     debug_info(),
                     locked(),
+                    sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
                     comptime_steps(),
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
+            .args(watch_options())
             .after_help("The behavior is spec/test-runner.md.\n\n".to_string() + ENVIRONMENT),
+    )
+}
+
+fn fuzz() -> Command {
+    with_diagnostics(
+        Command::new("fuzz")
+            .about("Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it")
+            .override_usage("burdin fuzz <file.bd | package directory> <name> [OPTIONS] [-- <libFuzzer options>...]")
+            .arg(target().required(true))
+            .arg(Arg::new("name").value_name("name").required(true).help("The fuzz target to run"))
+            .args([
+                option("max-time", "seconds", "Stop after this many seconds without a crash (default: no limit)"),
+                option(
+                    "minimize",
+                    "file",
+                    "Shrink this crashing input instead of fuzzing; the result is saved beside the crashes",
+                ),
+                Arg::new("libfuzzer-args")
+                    .value_name("libFuzzer options")
+                    .num_args(0..)
+                    .last(true)
+                    .help("Options passed to libFuzzer, such as -jobs=4 or -dict=file"),
+            ])
+            .args(
+                [
+                    release("Build the target with optimizations"),
+                    debug_info(),
+                    locked(),
+                    compile_jobs(),
+                    comptime_steps(),
+                ]
+                .map(|arg| arg.help_heading(COMPILATION)),
+            )
+            .after_help(
+                "The corpus is fuzz/corpus/<name>/ and crashes are saved to fuzz/artifacts/<name>/, next to the \
+                 package's burdin.toml (or the file). `burdin test --fuzz-replay` runs the saved crashes. Linux and \
+                 macOS only. The behavior is spec/fuzz.md.\n\n"
+                    .to_string()
+                    + ENVIRONMENT,
+            ),
     )
 }
 
@@ -464,6 +559,7 @@ fn check() -> Command {
                 ]
                 .map(|arg| arg.help_heading("Ownership Options")),
             )
+            .args(watch_options())
             .after_help(
                 "Nothing is printed when the program has no errors and no warnings. The exit status is 0 without \
                  errors, 1 with errors, and 2 for a usage error. With --print-instances the report goes to standard \
@@ -547,6 +643,93 @@ fn lint() -> Command {
                 "Levels also come from the [lint] table of burdin.toml (name = \"allow\" | \"warn\" | \"deny\"); \
                  the command line wins. A comment `// lint: allow(name)` suppresses a lint at one item, statement, \
                  or line. The lint reference is docs/lints.md.",
+            ),
+    )
+}
+
+fn fix() -> Command {
+    with_diagnostics(
+        Command::new("fix")
+            .about("Apply the machine-applicable fixes of the compiler and the linter across a package")
+            .override_usage("burdin fix <file.bd | package directory> [OPTIONS]")
+            .arg(target().required(true))
+            .args([
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                flag("migrate", "Also move the package to the next edition, after checking it compiles there"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+                comptime_steps(),
+            ])
+            .after_help(
+                "Fixes apply round after round until nothing changes, conflicting fixes are skipped and reported,                  and a round that would add errors is undone. The touched files are formatted. The behavior is                  spec/fix.md.",
+            ),
+    )
+}
+
+fn ssr() -> Command {
+    with_diagnostics(
+        Command::new("ssr")
+            .about("Structural search and replace: match a pattern written as Burdin code across a package")
+            .override_usage("burdin ssr '<pattern> [==>> <replacement>]' <file.bd | package directory> [OPTIONS]")
+            .arg(Arg::new("pattern").value_name("pattern").required(true).help(
+                "The pattern, and after `==>>` what to put in its place. `$name` is any expression; a type may be \
+                 constrained after `where`: `$a.unwrap_or($b) where $a: Option<_>`. Without a replacement the matches \
+                 are listed",
+            ))
+            .arg(target().required(true))
+            .args([
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+            ])
+            .after_help(
+                "A match is a whole expression, so nothing inside a string or a comment changes. Names match by what \
+                 they resolve to, so an import or an alias does not hide a match. The result is checked before it is \
+                 written: a replacement that would not compile is skipped and reported. The behavior is \
+                 spec/refactor.md.",
+            ),
+    )
+}
+
+fn refactor() -> Command {
+    with_diagnostics(
+        Command::new("refactor")
+            .about("Refactor code: extract, inline, change a signature, or move an item")
+            .override_usage(
+                "burdin refactor <refactoring> <file>:<line>:<col>[-<line>:<col>] [OPTIONS]
+       \
+                 burdin refactor extract-variable <range> --name <name>
+       \
+                 burdin refactor extract-function <range> --name <name>
+       \
+                 burdin refactor inline-variable <file>:<line>:<col>
+       \
+                 burdin refactor inline-function <file>:<line>:<col>
+       \
+                 burdin refactor change-signature <file>:<line>:<col> [--reorder ...] [--add ...] [--remove ...] \
+                 [--rename ...]
+       \
+                 burdin refactor move-item <file>:<line>:<col> --to <module>",
+            )
+            .arg(Arg::new("refactoring").value_name("refactoring").required(true).help(
+                "extract-variable, extract-function, inline-variable, inline-function, change-signature, or move-item",
+            ))
+            .arg(target().required(true))
+            .args([
+                option("name", "name", "The name of the local or function an extraction creates"),
+                option("to", "module", "The module a moved item goes to (`move-item`)"),
+                option("reorder", "a,b", "The parameters of a changed signature, in their new order"),
+                option("add", "name: type = default", "A parameter to add, with a default value"),
+                option("remove", "name", "A parameter to remove"),
+                option("rename", "old=new", "A parameter to rename"),
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+            ])
+            .after_help(
+                "Every refactoring checks its result before it is written: the package must still compile, with no \
+                 new error, and every local must still be moved exactly as often. When the result would change what \
+                 the program does, the refactoring refuses and says why. The behavior is spec/refactor.md.",
             ),
     )
 }
@@ -785,6 +968,26 @@ fn bindgen() -> Command {
     )
 }
 
+fn watch() -> Command {
+    Command::new("watch")
+        .about("Rerun check, build, test, or run whenever the sources change")
+        .override_usage("burdin watch [check|build|test|run] <file.bd | package directory> [OPTIONS]")
+        .arg(
+            Arg::new("args")
+                .value_name("command and options")
+                .num_args(0..)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true)
+                .help("The command (default: check), its target, and its options, as for the command itself"),
+        )
+        .arg(flag("no-clear", "Do not clear the screen before each run"))
+        .after_help(
+            "Watches the package's sources, burdin.toml, path dependencies, and the files build scripts read, \
+             ignoring the target directory and version-control metadata. `run` restarts the program; `test` runs \
+             the tests of changed modules and their dependents first. The behavior is spec/watch.md.",
+        )
+}
+
 fn lsp() -> Command {
     Command::new("lsp")
         .about("Run the language server on standard input and output")
@@ -824,7 +1027,9 @@ mod tests {
     #[test]
     fn the_command_list_names_every_command() {
         let help = command().render_help().to_string();
-        for name in ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "lsp"] {
+        for name in
+            ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "watch", "lsp"]
+        {
             assert!(help.contains(&format!("  {name} ")), "`{name}` is missing from:\n{help}");
         }
         // The list stays short: the options of a command are only in its own help.

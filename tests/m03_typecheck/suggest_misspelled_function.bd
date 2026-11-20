@@ -1,0 +1,12 @@
+//@ compile-fail
+//@ suggest: E0002 machine-applicable: use `triple_value`, the name in scope with a similar spelling
+
+// A misspelled function with exactly one function in scope close to it (`spec/fix.md`, FX13).
+
+fn triple_value(n: i32): i32 {
+    n * 3
+}
+
+fn main() {
+    println(tripple_value(2).to_string()) //~ E0002
+}

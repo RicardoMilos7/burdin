@@ -134,6 +134,7 @@ struct LayoutPackage {
     root_module: Option<usize>,
     /// The official packages the package does not declare, for the help on an unresolved `use` (PKG18).
     official: Vec<String>,
+    edition: burdin_sema::Edition,
     modules: Vec<LayoutModule>,
 }
 
@@ -248,6 +249,7 @@ impl Db {
                         .collect(),
                     None => Vec::new(),
                 },
+                edition: package.edition,
                 modules,
             });
         }
@@ -540,6 +542,7 @@ impl Db {
             .map(|(id, package)| burdin_sema::Package {
                 name: package.name.clone(),
                 is_root: id == self.layout.entry_package,
+                edition: package.edition,
                 deps: package.deps.clone(),
                 root_module: package.root_module,
                 official: package.official.clone(),

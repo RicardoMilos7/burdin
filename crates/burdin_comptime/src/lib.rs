@@ -6,6 +6,7 @@
 //! sees programs they accepted, and it depends only on `burdin_tir` and `burdin_diag`.
 
 mod interp;
+mod memory;
 mod prims;
 mod reify;
 mod session;
@@ -22,6 +23,52 @@ pub use session::{Bindings, Fault as SessionFault};
 pub use session::{drop_bindings, eval_stmts, session_function};
 use std::collections::HashMap;
 pub use value::{Place, Root, Step, Value};
+
+/// How one `burdin test --interpret` case ended (`spec/test-runner.md`, "Interpreting a test").
+pub enum Interpreted {
+    /// The body ran to the end and freed everything it allocated.
+    Passed,
+    /// The test failed: an assertion, a panic, or one of the strict memory checks, with its message and location.
+    Failed(String, Span),
+    /// The test needs something the interpreter does not model (a C function, a thread, a file), so it was not
+    /// checked. The reason names what it needed.
+    Skipped(String),
+}
+
+/// Runs one `test` block in the interpreter, with the modeled C heap and its strict checks (`spec/test-runner.md`,
+/// IN1-IN5). A test that calls C, starts a thread, or touches the file system cannot run here, so it is skipped with
+/// the reason instead of failing.
+pub fn interpret_test(program: &Program, func: FuncId, opts: Options) -> Interpreted {
+    let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
+    let mut it = Interp::with_output(program, &mut consts, opts.steps, opts.release, interp::Output::Swallow);
+    it.raw_memory = true;
+    let span = program.functions[func.0].span;
+    match it.call(func, None, &[], span) {
+        // The wrapper returns `Result<(), AssertError>`; `Err` is a failed assertion.
+        Ok(Value::Res(Err(_))) => return Interpreted::Failed("the test returned an error".to_string(), span),
+        Ok(_) => {}
+        Err(interp::Unwind::Fault(f)) => {
+            let message = f.message().to_string();
+            return match f {
+                // A skipped test's reason reads as what it needed ("calling the C function `getpid`"), without the
+                // comptime rule that does not apply to an interpreted run.
+                Fault::Impure(..) => {
+                    Interpreted::Skipped(match message.split(" is not allowed at compile time").next() {
+                        Some(what) => what.to_string(),
+                        None => message,
+                    })
+                }
+                _ => Interpreted::Failed(message, f.span().unwrap_or(span)),
+            };
+        }
+        Err(_) => return Interpreted::Failed("control flow left the function".to_string(), span),
+    }
+    // Every allocation the test made must have been freed (IN5). The report points at the allocation.
+    match it.mem.leaks().first() {
+        Some((allocated, size)) => Interpreted::Failed(format!("leaked {size} byte(s) allocated here"), *allocated),
+        None => Interpreted::Passed,
+    }
+}
 
 /// The default step budget of one evaluation (CT11).
 pub const DEFAULT_STEPS: u64 = 10_000_000;
