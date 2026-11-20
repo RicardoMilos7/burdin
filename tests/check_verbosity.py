@@ -68,7 +68,10 @@ def fresh_fixture(work: Path, name: str, label: str) -> str:
 
 def normalize(text: str, work: Path) -> str:
     """The output with the temporary directory replaced by `<work>`, the way the golden files spell it."""
-    for spelling in {str(work), str(work.resolve()), str(work.resolve()).replace("\\", "/")}:
+    # The longest spelling first: on macOS the temporary directory is `/var/...`, which resolves to `/private/var/...`,
+    # and replacing the short form first would leave `/private<work>`.
+    spellings = {str(work), str(work.resolve()), str(work.resolve()).replace("\\", "/")}
+    for spelling in sorted(spellings, key=len, reverse=True):
         text = text.replace(spelling, "<work>")
     return text.replace("\\", "/")
 
