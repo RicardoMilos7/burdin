@@ -220,6 +220,17 @@ impl<'a> Resolver<'a> {
         self.find(from, name, |i| i.owner.as_deref() == Some(owner.as_str()) && i.kind != Kind::Impl)
     }
 
+    /// A member of a value of type `ty`: a member of the type, or, when `ty` is a generic parameter of the function
+    /// around `at`, a method one of its bounds declares (`s.serialize_unit` with `S: Serializer`).
+    fn member_of(&mut self, from: &str, ix: &FileIndex, at: u32, ty: &str, name: &str) -> Option<Symbol> {
+        if let Some(bounds) = ix.bounds_of(at, &base_type(ty)) {
+            return self.find(from, name, |i| {
+                i.kind == Kind::InterfaceMethod && i.owner.as_ref().is_some_and(|owner| bounds.contains(owner))
+            });
+        }
+        self.member(from, ty, name)
+    }
+
     /// The declaration item an analysis definition (a whole function or constant declaration) stands for.
     fn item_at_definition(&mut self, def: &Loc) -> Option<Symbol> {
         let ix = self.p.index(&def.path)?;
@@ -313,27 +324,31 @@ impl<'a> Resolver<'a> {
                         return Some(m);
                     }
                 }
-                Tk::SelfType => {
-                    if let Some(owner) = ix
-                        .items
-                        .iter()
-                        .filter(|i| i.kind == Kind::Impl && i.span.0 <= tok.lo && tok.hi <= i.span.1)
-                        .find_map(|i| i.owner.clone())
+                // `self` and `Self` name the type of the method (or impl block) around them, while the body may not parse.
+                Tk::SelfValue | Tk::SelfType => {
+                    if let Some(owner) = ix.self_owner(receiver.lo)
+                        && let Some(m) = self.member(path, &owner, &name)
                     {
-                        return self.member(path, &owner, &name);
+                        return Some(m);
                     }
                 }
                 _ => {}
             }
             if let Some(ty) = self.local_type(path, &receiver) {
-                return self.member(path, &ty, &name);
+                return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
             if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
                 // The innermost expression at the receiver's start may be longer than the receiver (`a.b` at `a` is
                 // `a`); only one that ends at the dot is the receiver.
                 if ty.at.hi == receiver.hi || ty.at.hi == ix.tokens[ti - 1].lo {
-                    return self.member(path, &ty.ty, &name);
+                    return self.member_of(path, &ix, receiver.lo, &ty.ty, &name);
                 }
+            }
+            // A parameter of the function, read from its signature when no analysis answers (`s: S` in `fn f(mut s: S)`).
+            if let Tk::Ident(r) = &receiver.kind
+                && let Some(ty) = ix.parameter_type(receiver.lo, r)
+            {
+                return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
             return None;
         }

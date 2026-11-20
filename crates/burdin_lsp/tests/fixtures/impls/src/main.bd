@@ -1,0 +1,15 @@
+struct Data: Deserialize {
+    name: String,
+}
+
+Data: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        self.
+        // s.
+    }
+}
+
+fn main() {
+    let d = Data { name: String.from("x") }
+    println("{d.name}")
+}
