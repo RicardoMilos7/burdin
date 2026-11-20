@@ -1,0 +1,35 @@
+//@ run
+//> 1 2
+//> 3 4
+//> 2
+//> 1
+//> 1
+
+// A generic type's arguments may be left out when the call or the context supplies them (issue #850): `Pair.make`
+// takes them from its arguments or from the annotation, and `List.from` and `Map.from` from their elements. Only a
+// name with no arguments and nothing to infer them from is an error (missing_type_args.bd).
+
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+Pair<A, B> {
+    fn make(own a: A, own b: B): Pair<A, B> {
+        Pair { a, b }
+    }
+}
+
+fn main() {
+    let p = Pair.make(1, 2)
+    println("{p.a} {p.b}")
+    let q: Pair<i32, i32> = Pair.make(3, 4)
+    println("{q.a} {q.b}")
+    let v = List.from([5, 6])
+    println("{v.len()}")
+    let mut s: Set<i32> = Set.new()
+    s.insert(7)
+    println("{s.len()}")
+    let m: Map<i32, i32> = Map.from([(8, 9)])
+    println("{m.len()}")
+}

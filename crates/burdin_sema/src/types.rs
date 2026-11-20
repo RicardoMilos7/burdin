@@ -6,6 +6,38 @@ use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 use burdin_tir::{Ty, TypeDefs};
 
+/// The type parameters a built-in generic type must be written with, in order (`K` and `V` for `Map`). The
+/// allocator a container takes after them may be left out, so it is not listed. `None` for any other name.
+pub(crate) fn builtin_generic_params(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "Option" | "Result" | "Heap" | "Shared" | "List" | "CPtr" | "Range" | "RangeInclusive" => &["T"],
+        "Map" => &["K", "V"],
+        _ => return None,
+    })
+}
+
+/// The error for a generic type named without the type arguments it needs (E0003). `missing` are the parameters
+/// the written type still lacks, and `required` are the ones it is written with, so the message names what is
+/// missing and shows the form to write (`Map<K, V>`).
+pub(crate) fn generic_args_missing<S: AsRef<str>>(
+    name: &str,
+    missing: &[S],
+    required: &[S],
+    span: Span,
+    diags: &mut Diagnostics,
+) {
+    let join = |names: &[S]| names.iter().map(AsRef::as_ref).collect::<Vec<&str>>().join(", ");
+    diags.error(
+        Code::TYPE_MISMATCH,
+        span,
+        format!(
+            "`{name}` is generic and needs type arguments for `{}`; write them, as in `{name}<{}>`",
+            join(missing),
+            join(required)
+        ),
+    );
+}
+
 impl Globals {
     /// The type a user-declared type name stands for, as seen from `module`.
     pub(crate) fn named_type(&self, module: usize, name: &str) -> Option<Ty> {
@@ -142,6 +174,14 @@ impl Globals {
         {
             return ty;
         }
+        // A built-in generic type written with too few arguments (`Map`, or `Map<i32>`) names what it still needs.
+        if self.type_name(module, name).is_none()
+            && let Some(required) = builtin_generic_params(name)
+            && seg.args.len() < required.len()
+        {
+            generic_args_missing(name, &required[seg.args.len()..], required, span, diags);
+            return Ty::Error;
+        }
         if let Some(TypeName::GenericAdt(g)) = self.type_name(module, name) {
             return self.generic_adt_type(g, span, &seg.args, self_ty, subst, module, diags);
         }
@@ -207,7 +247,22 @@ impl Globals {
         let info = &self.generic_adts[g];
         let missing_defaulted = args.len() <= info.params.len()
             && info.defaults[args.len().min(info.defaults.len())..].iter().all(Option::is_some);
-        if args.len() > info.params.len() || (args.len() < info.params.len() && !missing_defaulted) {
+        if args.len() < info.params.len() && !missing_defaulted {
+            let has_default = |i: usize| info.defaults.get(i).is_some_and(Option::is_some);
+            let missing: Vec<&String> = info
+                .params
+                .iter()
+                .enumerate()
+                .skip(args.len())
+                .filter(|(i, _)| !has_default(*i))
+                .map(|(_, p)| p)
+                .collect();
+            let required: Vec<&String> =
+                info.params.iter().enumerate().filter(|(i, _)| !has_default(*i)).map(|(_, p)| p).collect();
+            generic_args_missing(&info.name, &missing, &required, span, diags);
+            return Ty::Error;
+        }
+        if args.len() > info.params.len() {
             diags.error(
                 Code::TYPE_MISMATCH,
                 span,
@@ -275,6 +330,12 @@ impl Globals {
         }
         if self.type_name(module, n).is_some() {
             diags.error(Code::NOT_A_GENERIC_TYPE, name.span, format!("`{n}` is not a generic type"));
+            return Ty::Error;
+        }
+        if let Some(required) = builtin_generic_params(n)
+            && args.len() < required.len()
+        {
+            generic_args_missing(n, &required[args.len()..], required, name.span, diags);
             return Ty::Error;
         }
         self.builtin_generic_type(n, args, self_ty, subst, module, diags).unwrap_or_else(|| {
