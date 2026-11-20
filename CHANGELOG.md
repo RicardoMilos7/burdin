@@ -6,6 +6,17 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The `crypto` official package (stage 3, issue #266; `spec/crypto.md`, CR1-CR14). Pure Burdin, no C library: the
+  hashes SHA-224/256/384/512, SHA3-224/256/384/512, SHAKE128/256, SHA-1, and MD5 (the last two documented as broken),
+  each one-shot and incremental; HMAC, HKDF, and PBKDF2 over any of them; ChaCha20, XChaCha20, Poly1305, and the
+  ChaCha20-Poly1305 and XChaCha20-Poly1305 AEADs; AES-128/192/256 with CTR, CBC (PKCS#7), and GCM; X25519; Ed25519
+  signing and verification; and `constant_time_eq` and `random_bytes` (from the OS entropy source). Failures are
+  `CryptoError` values or `false`, never panics, and the package and its docs say plainly that it is an experiment, not
+  a security claim (AES uses a secret-indexed S-box and is not cache-timing safe). `tests/crypto/` holds about 500
+  known-answer vectors (published RFC/FIPS/NIST vectors, asserted by `tests/crypto/regenerate.py`, plus vectors from
+  OpenSSL) and the error messages; `tests/check_crypto.py` runs them through `tests/crypto/runner` and checks
+  `burdin add crypto` and the official pin; `tests/s3_crypto/usage` is the conformance case, and CI runs the check.
+
 - Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
   object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
   optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing

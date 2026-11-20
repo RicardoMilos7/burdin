@@ -1,0 +1,12 @@
+// The error every fallible function in this package reports.
+
+error enum CryptoError: Eq, Debug {
+    InvalidKeyLength { expected: usize, got: usize } "invalid key length: expected {expected} bytes, got {got}",
+    InvalidNonceLength { expected: usize, got: usize } "invalid nonce length: expected {expected} bytes, got {got}",
+    InvalidLength { what: String } "invalid length: {what}",
+    InvalidPadding "invalid padding",
+    InvalidInput { what: String } "invalid input: {what}",
+    AuthenticationFailed "authentication failed: the tag does not match",
+    InvalidSignature "invalid signature",
+    InvalidPoint "invalid curve point",
+}
