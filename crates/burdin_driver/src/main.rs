@@ -1280,7 +1280,10 @@ fn write_executable(
         // build does.
         return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
-    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags) {
+    let objects = burdin_codegen::ObjectCache { dir: plan.objects.clone(), identity: build::compiler_fingerprint() };
+    if let Err(code) =
+        emit_program_cached(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags, Some(objects))
+    {
         let _ = std::fs::remove_file(&staged);
         return Err(code);
     }
@@ -1349,6 +1352,21 @@ pub(crate) fn emit_program(
     rust_libs: &[String],
     package_flags: &[burdin_codegen::PackageFlags],
 ) -> Result<(), ExitCode> {
+    emit_program_cached(program, sources, stem, output, options, rust_libs, package_flags, None)
+}
+
+/// [`emit_program`] with the object cache of a cacheable build (`spec/target.md`, TG11).
+#[allow(clippy::too_many_arguments)]
+fn emit_program_cached(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    stem: &str,
+    output: &Path,
+    options: &CompileOptions,
+    rust_libs: &[String],
+    package_flags: &[burdin_codegen::PackageFlags],
+    object_cache: Option<burdin_codegen::ObjectCache>,
+) -> Result<(), ExitCode> {
     let fail = |msg: String| {
         eprintln!("error: {msg}");
         ExitCode::from(2)
@@ -1383,6 +1401,7 @@ pub(crate) fn emit_program(
         emit_asm: artifact(emit::EmitKind::Asm),
         asm_syntax: emit.map_or(Default::default(), |e| e.asm_syntax),
         sanitize: options.sanitize,
+        object_cache,
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
     let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
