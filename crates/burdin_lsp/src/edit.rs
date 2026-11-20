@@ -239,6 +239,8 @@ const BUILTIN_DERIVES: &[(&str, &str)] = &[
     ("Hash", "hashing, field by field"),
     ("Default", "`Type.default()`, every field's default"),
     ("Debug", "the `{x:?}` format"),
+    ("Serialize", "the standard serialization representation"),
+    ("Deserialize", "the standard deserialization representation"),
 ];
 
 /// The snippets at item position: label, body, and what it declares (`spec/lsp.md`, LS12).

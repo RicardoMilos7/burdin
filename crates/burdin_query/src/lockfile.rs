@@ -3,7 +3,7 @@
 //! The lockfile sits beside the entry package's `burdin.toml`. It lists every package of the dependency graph, the
 //! entry package included, sorted by name. A path package records its name, version, and dependencies; a git
 //! package also records its repository, the reference the manifest asked for, the exact commit it resolved to, and
-//! the SHA-256 checksum of its files. The format is a small TOML subset that this module both writes and reads, so a
+//! the SHA-256 checksum of its files; an official package records `source = "official"` and the checksum. The format is a small TOML subset that this module both writes and reads, so a
 //! lockfile is always rendered the same way and comparing two of them is comparing text.
 //!
 //! The package loader reads the lockfile to find where a git dependency is checked out; resolving and fetching is
@@ -65,7 +65,9 @@ pub struct LockedPackage {
     pub version: Option<String>,
     /// `None` for a path package (the entry package included).
     pub git: Option<GitSource>,
-    /// `sha256:<hex>` of a git package's files; `None` for a path package.
+    /// An official package, bundled with the compiler (`spec/packages.md`, PKG15, PKG17).
+    pub official: bool,
+    /// `sha256:<hex>` of a git or an official package's files; `None` for a path package.
     pub checksum: Option<String>,
     /// The package names (not the `use` names) of its direct dependencies, sorted.
     pub dependencies: Vec<String>,
@@ -98,6 +100,9 @@ impl Lockfile {
             out.push_str(&format!("name = {}\n", quote(&package.name)));
             if let Some(version) = &package.version {
                 out.push_str(&format!("version = {}\n", quote(version)));
+            }
+            if package.official {
+                out.push_str("source = \"official\"\n");
             }
             if let Some(git) = &package.git {
                 out.push_str(&format!("git = {}\n", quote(&git.url)));
@@ -194,6 +199,7 @@ fn package_from(fields: Vec<(String, String, usize)>) -> Result<LockedPackage, S
     let mut url = None;
     let mut reference = GitRef::DefaultBranch;
     let mut commit = None;
+    let mut official = false;
     let mut checksum = None;
     let mut dependencies = Vec::new();
     let mut first_line = usize::MAX;
@@ -208,6 +214,10 @@ fn package_from(fields: Vec<(String, String, usize)>) -> Result<LockedPackage, S
             "tag" => reference = GitRef::Tag(string()?),
             "rev" => reference = GitRef::Rev(string()?),
             "commit" => commit = Some(string()?),
+            "source" => match string()?.as_str() {
+                "official" => official = true,
+                other => return Err(format!("{line}: package source `{other}` is not supported by this burdin")),
+            },
             "checksum" => checksum = Some(string()?),
             "dependencies" => {
                 dependencies = crate::package::parse_string_array(&value).map_err(|e| format!("{line}: {e}"))?;
@@ -225,7 +235,10 @@ fn package_from(fields: Vec<(String, String, usize)>) -> Result<LockedPackage, S
         (None, None) => None,
         _ => return Err(format!("package `{name}`: a git package needs both `git` and `commit`")),
     };
-    Ok(LockedPackage { name, version, git, checksum, dependencies })
+    if official && git.is_some() {
+        return Err(format!("package `{name}`: a package is official or from git, not both"));
+    }
+    Ok(LockedPackage { name, version, git, official, checksum, dependencies })
 }
 
 /// A TOML basic string with the escapes `parse_string` reads.
@@ -283,8 +296,9 @@ mod tests {
                     name: "app".into(),
                     version: Some("0.1.0".into()),
                     git: None,
+                    official: false,
                     checksum: None,
-                    dependencies: vec!["json".into(), "util".into()],
+                    dependencies: vec!["json".into(), "util".into(), "yaml".into()],
                 },
                 LockedPackage {
                     name: "json".into(),
@@ -294,10 +308,26 @@ mod tests {
                         reference: GitRef::Tag("v1.2.0".into()),
                         commit: "0123456789abcdef0123456789abcdef01234567".into(),
                     }),
+                    official: false,
                     checksum: Some("sha256:00ff".into()),
                     dependencies: vec![],
                 },
-                LockedPackage { name: "util".into(), version: None, git: None, checksum: None, dependencies: vec![] },
+                LockedPackage {
+                    name: "util".into(),
+                    version: None,
+                    git: None,
+                    official: false,
+                    checksum: None,
+                    dependencies: vec![],
+                },
+                LockedPackage {
+                    name: "yaml".into(),
+                    version: Some("0.1.0".into()),
+                    git: None,
+                    official: true,
+                    checksum: Some("sha256:ab12".into()),
+                    dependencies: vec![],
+                },
             ],
         }
     }
@@ -311,7 +341,7 @@ version = 1
 [[package]]
 name = \"app\"
 version = \"0.1.0\"
-dependencies = [\"json\", \"util\"]
+dependencies = [\"json\", \"util\", \"yaml\"]
 
 [[package]]
 name = \"json\"
@@ -324,6 +354,13 @@ dependencies = []
 
 [[package]]
 name = \"util\"
+dependencies = []
+
+[[package]]
+name = \"yaml\"
+version = \"0.1.0\"
+source = \"official\"
+checksum = \"sha256:ab12\"
 dependencies = []
 ";
         assert_eq!(sample().render(), expected);
@@ -354,6 +391,10 @@ dependencies = []
         let twice = "version = 1\n[[package]]\nname = \"a\"\n[[package]]\nname = \"a\"\n";
         assert!(parse(twice).unwrap_err().contains("listed twice"));
         assert!(parse("version = 1\n[[package]]\nname = a\n").unwrap_err().starts_with("3:"));
+        let registry = "version = 1\n[[package]]\nname = \"a\"\nsource = \"registry\"\n";
+        assert!(parse(registry).unwrap_err().starts_with("4: package source `registry`"));
+        let both = "version = 1\n[[package]]\nname = \"a\"\nsource = \"official\"\ngit = \"x\"\ncommit = \"c\"\n";
+        assert!(parse(both).unwrap_err().contains("not both"));
     }
 
     #[test]

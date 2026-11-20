@@ -766,15 +766,19 @@ fn new() -> Command {
 
 fn add() -> Command {
     Command::new("add")
-        .about("Add a path or git dependency to burdin.toml")
+        .about("Add a path, git, or official dependency to burdin.toml")
         .override_usage(
             "burdin add [<name>] --path <dir> [--manifest-path <path>]\n       \
-             burdin add [<name>] --git <url> [--branch <branch> | --tag <tag> | --rev <commit>] [--manifest-path <path>]",
+             burdin add [<name>] --git <url> [--branch <branch> | --tag <tag> | --rev <commit>] [--manifest-path <path>]\n       \
+             burdin add <name> [--manifest-path <path>]",
         )
         .arg(
             Arg::new("name")
                 .value_name("name")
-                .help("The name `use` reaches the dependency by (default: the dependency's package name)"),
+                .help(
+                    "The name `use` reaches the dependency by (default: the dependency's package name); alone, the \
+                     name of an official package",
+                ),
         )
         .args([
             option("path", "dir", "A package directory, relative to the working directory"),
@@ -790,8 +794,8 @@ fn add() -> Command {
         ])
         .after_help(
             "The dependency and the whole graph are resolved and burdin.lock is written; a git dependency is pinned to \
-             the commit its branch, tag, or rev names now. On failure neither file changes. The behavior is \
-             spec/packages.md.",
+             the commit its branch, tag, or rev names now. An official package (one bundled with the compiler) \
+             is added as `<name> = true`. On failure neither file changes. The behavior is spec/packages.md.",
         )
 }
 

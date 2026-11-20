@@ -111,6 +111,7 @@ burdin-<version>-<target>/
   CHANGELOG.md
   docs/error-codes.md
   docs/lints.md
+  packages/         (the official packages, spec/packages.md; the compiler finds them beside itself)
 ```
 
 Each target also gets the optional components of `spec/toolchain.md` (TC10) as separate archives,
@@ -183,6 +184,9 @@ Both installers:
 - verify `SHA256SUMS` before unpacking;
 - install to `$HOME/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\burdin\bin` (Windows); `BURDIN_INSTALL_DIR`
   overrides it;
+- install the archive's `packages/` folder (the official packages) in the install directory, beside the compiler, where
+  `burdin` looks for it; an upgrade replaces the folder, and a `packages/` folder that is not Burdin's (its `README.md`
+  lacks the `# Official packages` heading) is refused before anything is installed;
 - run `burdin --version` and warn, with the platform's fix, when the LLVM 21 runtime is missing;
 - put the install directory on `PATH` once: `install.ps1` appends it to the user's `PATH` (`HKCU\Environment`), and
   `install.sh` appends a PATH line to the startup file of zsh (`~/.zshrc`), bash (`~/.bashrc` on Linux,

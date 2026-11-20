@@ -106,6 +106,9 @@ pub struct Package<'a> {
     pub deps: Vec<(String, usize)>,
     /// The module other packages reach as `use <package>` (an index into `modules`).
     pub root_module: Option<usize>,
+    /// The official packages this package could declare but does not. A `use` of one of them that finds nothing
+    /// says how to add it (`spec/packages.md`, PKG18); empty for a package that has no manifest to add it to.
+    pub official: Vec<String>,
     pub modules: Vec<Module<'a>>,
 }
 

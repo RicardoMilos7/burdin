@@ -15,6 +15,10 @@ pub struct Derives {
     pub default: bool,
     /// `Debug`: the compiler generates the impl block, and this records that the fields must support it.
     pub debug: bool,
+    /// `Serialize` and `Deserialize`: the compiler generates the impl blocks (spec/serialization.md, SER12). Their
+    /// fields' requirements are not checked yet; the generated body calls the per-shape helpers directly.
+    pub serialize: bool,
+    pub deserialize: bool,
     /// Where the derive names were written, for diagnostics at the derive clause.
     pub copy_span: Option<Span>,
     pub clone_span: Option<Span>,

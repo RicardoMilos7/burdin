@@ -15,8 +15,8 @@ struct Config: Default {}
 `: Iface` on a declaration means "implement this interface with its derived or default implementation". Each name
 is one of:
 
-- a built-in derive: the compiler knows exactly seven, `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug`,
-  described below;
+- a built-in derive: the compiler knows exactly nine, `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`,
+  `Serialize`, and `Deserialize`, described below;
 - a `derive` declaration in scope, which generates the impl block (`reflection.md`, RFL8-RFL9);
 - an interface in scope (by name or by a module path) whose methods all have default bodies. The declaration
   implements it exactly as the empty impl block `Type: Iface {}` would, so the usual impl rules apply (`Send` and
@@ -146,6 +146,15 @@ with the same parser as a hand-written block, so a derived `Debug` and a written
 
 `Display` is not derived; write `Type: Display { fn fmt(self, mut f: Formatter) { ... } }`.
 
+## `Serialize` and `Deserialize`
+
+`: Serialize, Deserialize` generates the two serialization impl blocks in the standard representation: a struct
+writes its fields by name, and an enum writes an externally tagged variant with a positional payload. The generated
+impls call the per-shape helpers, write the built-in container shapes out themselves, and name their format parameter
+`__S`/`__D`. The exact generated code, the container handling, and the field requirement still to come are in
+[`serialization.md`](serialization.md), SER12. The derive is separate from the representation: a type can implement
+either interface by hand instead (SER3).
+
 ## Tests
 
 | Derive | Tests |
@@ -157,6 +166,7 @@ with the same parser as a hand-written block, so a derived `Debug` and a written
 | Requirement failures | `m07_generics/derive_field_not_eq` (E0130), `m05_ownership/copy_with_drop` (E0130) |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | `Debug` | `m14_format/debug_derive`, `debug_manual` |
+| `Serialize`, `Deserialize` | `s3_serialize/derive_struct`, `derive_enum`, `derive_generic`, `derive_errors` |
 | `Drop` not derivable | `m05_ownership/drop_derive` (E0234) |
 | Interfaces with default methods | `m07_generics/derive_default_interface`, `derive_default_bound` (E0141) |
 | Not derivable, unknown name | `m07_generics/derive_not_derivable` (E0234, E0002) |

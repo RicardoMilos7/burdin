@@ -290,8 +290,25 @@ with harness.temporary_dir("burdin-release-") as work:
                 f"burdin-9.9.9-{target}/CHANGELOG.md",
                 f"burdin-9.9.9-{target}/docs/error-codes.md",
                 f"burdin-9.9.9-{target}/docs/lints.md",
+                # The official packages sit beside the compiler, where it looks for them (spec/packages.md, PKG16).
+                f"burdin-9.9.9-{target}/packages",
+                f"burdin-9.9.9-{target}/packages/README.md",
             ):
                 expect_contains("archive layout", entry, "\n".join(sorted(names)))
+            # Every file of the repository's packages/ folder is in the archive, and nothing else is under packages/.
+            packages_root = harness.ROOT / "packages"
+            repository_packages = {
+                f"burdin-9.9.9-{target}/packages/{path.relative_to(packages_root).as_posix()}"
+                for path in packages_root.rglob("*")
+                if path.relative_to(packages_root).parts[0] not in ("target", ".git")
+            }
+            archived_packages = {name for name in names if name.startswith(f"burdin-9.9.9-{target}/packages/")}
+            check()
+            if archived_packages != repository_packages:
+                add_problem(
+                    "archive layout: packages/ differs from the repository's: "
+                    f"{sorted(archived_packages ^ repository_packages)}"
+                )
 
             # With the toolchain manager and the components (spec/toolchain.md TC10, TC13): the manager goes into the
             # compiler archive, each component is its own archive, and SHA256SUMS.<target> lists all five.
@@ -430,6 +447,8 @@ with harness.temporary_dir("burdin-release-") as work:
             "LLVM",
             "BURDIN_NO_MODIFY_PATH",
             "export PATH",
+            "packages",
+            "# Official packages",
         ):
             check()
             if needle not in install_text:
@@ -444,6 +463,8 @@ with harness.temporary_dir("burdin-release-") as work:
             "BURDIN_RELEASE_DIR",
             "BURDIN_NO_MODIFY_PATH",
             "LLVM-C.dll",
+            "packages",
+            "# Official packages",
         ):
             check()
             if needle not in ps_text:
@@ -490,6 +511,8 @@ with harness.temporary_dir("burdin-release-") as work:
             )
         else:
             expect_file("install.sh installs the compiler", work / "install" / "burdin")
+            # The official packages go beside the compiler (PKG16).
+            expect_file("install.sh installs the official packages", work / "install" / "packages" / "README.md")
             check()
             version = run_binary(work / "install" / "burdin", "--version")
             first_line = harness.text(version.stdout).split("\n")[0]
@@ -510,6 +533,35 @@ with harness.temporary_dir("burdin-release-") as work:
             if not modify:
                 env["BURDIN_NO_MODIFY_PATH"] = "1"
             return harness.run(["sh", str(INSTALL_SH)], merge=True, env=env)
+
+        # The official packages: an upgrade replaces the folder, and a folder that is not Burdin's is refused before
+        # anything is installed (PKG16).
+        upgrade_dir = work / "install-upgrade"
+        packages_home = work / "packages-home"
+        packages_home.mkdir()
+        check()
+        first_install = run_installer(packages_home, upgrade_dir, "/bin/bash", modify=False)
+        if first_install.returncode != 0:
+            add_problem(f"install.sh packages (first install): {harness.text(first_install.stdout).rstrip(chr(10))}")
+        else:
+            (upgrade_dir / "packages" / "stale.txt").write_text("from an older release")
+            check()
+            upgraded = run_installer(packages_home, upgrade_dir, "/bin/bash", modify=False)
+            if upgraded.returncode != 0 or (upgrade_dir / "packages" / "stale.txt").exists():
+                add_problem("install.sh did not replace the official packages folder on an upgrade")
+            expect_file("install.sh keeps the official packages after an upgrade", upgrade_dir / "packages" / "README.md")
+        foreign_dir = work / "install-foreign"
+        (foreign_dir / "packages").mkdir(parents=True)
+        (foreign_dir / "packages" / "mine.txt").write_text("not Burdin's")
+        check()
+        refused = run_installer(packages_home, foreign_dir, "/bin/bash", modify=False)
+        if (
+            refused.returncode == 0
+            or "is not Burdin's official packages folder" not in harness.text(refused.stdout)
+            or (foreign_dir / "burdin").exists()
+            or not (foreign_dir / "packages" / "mine.txt").exists()
+        ):
+            add_problem("install.sh overwrote or ignored a packages folder that is not Burdin's")
 
         def profile_lines(path):
             return path.read_text().split("\n") if path.is_file() else []

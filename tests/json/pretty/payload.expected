@@ -1,0 +1,31 @@
+{
+  "name": "q",
+  "servers": [
+    {
+      "host": "h",
+      "port": 2,
+      "tls": false,
+      "ratio": 1.5
+    }
+  ],
+  "protocol": {
+    "Both": [
+      1,
+      2
+    ]
+  },
+  "backup": {
+    "host": "b",
+    "port": 3,
+    "tls": true,
+    "ratio": -0.0
+  },
+  "weights": {},
+  "note": "z"
+}
+name=q servers=1 note=z
+protocol=Both 1 2
+backup=b 3
+weights=0
+a=none
+first=h 2 false 1.5

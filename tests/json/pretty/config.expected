@@ -1,0 +1,23 @@
+{
+  "name": "p",
+  "servers": [
+    {
+      "host": "a",
+      "port": 1,
+      "tls": true,
+      "ratio": 0.5
+    }
+  ],
+  "protocol": "Http",
+  "backup": null,
+  "weights": {
+    "a": 2
+  },
+  "note": "x"
+}
+name=p servers=1 note=x
+protocol=Http
+backup=none
+weights=1
+a=2
+first=a 1 true 0.5

@@ -1,0 +1,1254 @@
+// The JSON format (spec/serialization.md; issue #255).
+//
+// A format package: it implements only the format side of the framework. `Writer` implements `Serializer` and
+// `Parser` implements `Deserializer`; the public surface is `to_string`, `to_string_pretty`, and `from_str`.
+//
+// The mapping is the one `spec/serialization.md` settles (SER1-SER8), narrowed to what JSON can represent:
+//   unit -> null; bool -> true/false; every integer width -> a JSON number; f32/f64 -> a JSON number;
+//   char -> a one-character string; str -> a string; bytes -> an array of numbers;
+//   sequence -> array; map -> object with string keys; struct -> object (its name is ignored);
+//   enum variant -> externally tagged (`"Name"`, `{"Name": value}`, or `{"Name": [values]}`), with `Option`
+//   written as the payload itself (`Some`) or `null` (`None`).
+// A float that is not finite has no JSON number and is an error.
+
+// ----- the writer ----------------------------------------------------------------------------------------------
+
+/// One open container in the writer.
+struct Frame {
+    // 0 = array, 1 = object, 2 = transparent (an `Option` payload or a unit variant).
+    kind: i32,
+    count: usize,
+    pending: bool,
+}
+
+/// The JSON writer. `pretty` selects two-space indentation; `out` is the text being built.
+struct Writer {
+    out: String,
+    pretty: bool,
+    frames: List<Frame>,
+}
+
+Writer {
+    /// A compact writer.
+    fn new(): Writer {
+        Writer { out: String.new(), pretty: false, frames: List<Frame>.new() }
+    }
+
+    /// A writer with two-space indentation.
+    fn new_pretty(): Writer {
+        Writer { out: String.new(), pretty: true, frames: List<Frame>.new() }
+    }
+
+    /// The text written so far, ending the writer.
+    fn finish(own self): String {
+        self.out
+    }
+
+    /// The indentation level: the open containers that really nest. A transparent frame (the payload of an `Option`
+    /// or a unit variant) writes nothing of its own, so it adds no level.
+    priv fn depth(self): usize {
+        let mut count: usize = 0
+        let mut i: usize = 0
+        while i < self.frames.len() {
+            if self.frames[i].kind != 2 {
+                count = count + 1
+            }
+            i = i + 1
+        }
+        count
+    }
+
+    /// Writes the indentation of the innermost open container.
+    priv fn indent(mut self) {
+        let count = self.depth() * 2
+        let mut i: usize = 0
+        while i < count {
+            self.out.push(' ')
+            i = i + 1
+        }
+    }
+
+    /// Places the separator a value needs in the innermost open container.
+    priv fn value_start(mut self): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Ok(())
+        }
+        let i = self.frames.len() - 1
+        let kind = self.frames[i].kind
+        if kind == 0 {
+            if self.frames[i].count > 0 {
+                self.out.push(',')
+            }
+            if self.pretty {
+                self.out.push('\n')
+                self.indent()
+            }
+            self.frames[i].count = self.frames[i].count + 1
+        } else if kind == 1 {
+            if self.frames[i].pending {
+                self.frames[i].pending = false
+            } else {
+                return Err(DeError.new("a JSON object value without a member name"))
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the name of the next object member and its `:`.
+    priv fn write_member(mut self, name: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a JSON object member outside an object"))
+        }
+        let i = self.frames.len() - 1
+        if self.frames[i].kind != 1 {
+            return Err(DeError.new("a JSON object member outside an object"))
+        }
+        if self.frames[i].pending {
+            return Err(DeError.new("two JSON member names in a row"))
+        }
+        if self.frames[i].count > 0 {
+            self.out.push(',')
+        }
+        if self.pretty {
+            self.out.push('\n')
+            self.indent()
+        }
+        __write_quoted(mut self.out, name)
+        self.out.push(':')
+        if self.pretty {
+            self.out.push(' ')
+        }
+        self.frames[i].count = self.frames[i].count + 1
+        self.frames[i].pending = true
+        Ok(())
+    }
+
+    /// Removes the innermost container, checking that it is of `kind`.
+    priv fn pop(mut self, kind: i32): Result<Frame, DeError> {
+        match self.frames.pop() {
+            Some(frame) => {
+                if frame.kind == kind {
+                    Ok(frame)
+                } else {
+                    Err(DeError.new("unbalanced JSON container"))
+                }
+            }
+            None => Err(DeError.new("unbalanced JSON container")),
+        }
+    }
+}
+
+Writer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str("null")
+        Ok(())
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        self.value_start()?
+        if value {
+            self.out.push_str("true")
+        } else {
+            self.out.push_str("false")
+        }
+        Ok(())
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        if !value.is_finite() {
+            return Err(DeError.new("a float that is not finite cannot be written to JSON"))
+        }
+        self.value_start()?
+        let text = value.to_string()
+        __write_number(mut self.out, text.as_str())
+        Ok(())
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        if !value.is_finite() {
+            return Err(DeError.new("a float that is not finite cannot be written to JSON"))
+        }
+        self.value_start()?
+        let text = value.to_string()
+        __write_number(mut self.out, text.as_str())
+        Ok(())
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('"')
+        __write_escaped(mut self.out, value)
+        self.out.push('"')
+        Ok(())
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        self.value_start()?
+        __write_quoted(mut self.out, value)
+        Ok(())
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        self.begin_seq(value.len())?
+        let mut i: usize = 0
+        while i < value.len() {
+            self.serialize_u8(value[i])?
+            i = i + 1
+        }
+        self.end_seq()
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('[')
+        self.frames.push(Frame { kind: 0, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        let frame = self.pop(0)?
+        if self.pretty && frame.count > 0 {
+            self.out.push('\n')
+            self.indent()
+        }
+        self.out.push(']')
+        Ok(())
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('{')
+        self.frames.push(Frame { kind: 1, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        self.write_member(key)
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        let frame = self.pop(1)?
+        if self.pretty && frame.count > 0 {
+            self.out.push('\n')
+            self.indent()
+        }
+        self.out.push('}')
+        Ok(())
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('{')
+        self.frames.push(Frame { kind: 1, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        self.write_member(name)
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        let frame = self.pop(1)?
+        if self.pretty && frame.count > 0 {
+            self.out.push('\n')
+            self.indent()
+        }
+        self.out.push('}')
+        Ok(())
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        // `Option` is the one enum with a special JSON form: `Some` is its payload, `None` is `null`.
+        if type_name == "Option" {
+            self.value_start()?
+            if variant == "None" {
+                self.out.push_str("null")
+            }
+            self.frames.push(Frame { kind: 2, count: 0, pending: false })
+            return Ok(())
+        }
+        self.value_start()?
+        if arity == 0 {
+            __write_quoted(mut self.out, variant)
+            self.frames.push(Frame { kind: 2, count: 0, pending: false })
+            return Ok(())
+        }
+        self.out.push('{')
+        self.frames.push(Frame { kind: 1, count: 0, pending: false })
+        self.write_member(variant)?
+        if arity > 1 {
+            let i = self.frames.len() - 1
+            self.frames[i].pending = false
+            self.out.push('[')
+            self.frames.push(Frame { kind: 0, count: 0, pending: false })
+        }
+        Ok(())
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        if !self.frames.is_empty() {
+            let i = self.frames.len() - 1
+            if self.frames[i].kind == 2 {
+                self.frames.pop()
+                return Ok(())
+            }
+        }
+        if arity > 1 {
+            let items = self.pop(0)?
+            if self.pretty && items.count > 0 {
+                self.out.push('\n')
+                self.indent()
+            }
+            self.out.push(']')
+        }
+        let object = self.pop(1)?
+        if self.pretty && object.count > 0 {
+            self.out.push('\n')
+            self.indent()
+        }
+        self.out.push('}')
+        Ok(())
+    }
+}
+
+// ----- the reader ----------------------------------------------------------------------------------------------
+
+/// One open array or object in the reader.
+struct ReaderFrame {
+    // 0 = array, 1 = object.
+    kind: i32,
+    close: u8,
+    first: bool,
+    names: List<String>,
+}
+
+/// One open enum in the reader. They nest (a variant's payload may hold another enum), so they are a stack.
+struct EnumFrame {
+    // Whether this enum is `Option`, and whether the input was `null` there.
+    option: bool,
+    none: bool,
+    // For another enum: false for a bare string (a unit variant), true for an object member.
+    object: bool,
+    // The arity `begin_variant_payload` was given, so the field separator is known.
+    arity: usize,
+}
+
+/// The JSON reader: a copy of the input and the byte offset of the next unread byte. The line and column of an
+/// error are computed from the offset when it is reported (SER10).
+struct Parser {
+    text: String,
+    pos: usize,
+    enums: List<EnumFrame>,
+    frames: List<ReaderFrame>,
+}
+
+Parser {
+    /// A reader over `text`. The text is copied once.
+    fn new(text: str): Parser {
+        Parser {
+            text: text.to_string(),
+            pos: 0,
+            enums: List<EnumFrame>.new(),
+            frames: List<ReaderFrame>.new(),
+        }
+    }
+
+    /// Checks that no non-whitespace text is left.
+    fn end(mut self): Result<(), DeError> {
+        self.skip_ws()
+        if self.pos < self.text.len() {
+            Err(self.fail("trailing characters"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether the input is exhausted.
+    priv fn at_end(self): bool {
+        self.pos >= self.text.len()
+    }
+
+    /// The byte at the current position, or 0 at the end (callers check `at_end` first).
+    priv fn peek(self): u8 {
+        if self.pos >= self.text.len() {
+            0
+        } else {
+            let bytes = self.text.as_bytes()
+            bytes[self.pos]
+        }
+    }
+
+    /// A copy of the input bytes `start` up to (not including) `end`.
+    priv fn slice_text(self, start: usize, end: usize): String {
+        self.text[start..end].to_string()
+    }
+
+    /// Whether the input at the current position starts with `literal`. The comparison is over bytes: a slice at a
+    /// position that is not a character boundary would invalidate the text, and bad input must never do that.
+    priv fn starts_with_at(self, literal: str): bool {
+        let hay = self.text.as_bytes()
+        let needle = literal.as_bytes()
+        if self.pos + needle.len() > self.text.len() {
+            return false
+        }
+        let mut i: usize = 0
+        while i < needle.len() {
+            if hay[self.pos + i] != needle[i] {
+                return false
+            }
+            i = i + 1
+        }
+        true
+    }
+
+    /// An error at the current position, with its line and column.
+    priv fn fail(self, message: str): DeError {
+        self.fail_at(message, self.pos)
+    }
+
+    /// An error at `position`, with its line and column. A column counts Unicode scalar values (SER10).
+    priv fn fail_at(self, message: str, position: usize): DeError {
+        let bytes = self.text.as_bytes()
+        let mut line: i32 = 1
+        let mut col: i32 = 1
+        let mut i: usize = 0
+        while i < position {
+            let b = bytes[i]
+            if b == 10 {
+                line = line + 1
+                col = 1
+            } else if b >= 128 && b < 192 {
+                // A UTF-8 continuation byte: still the same character.
+            } else {
+                col = col + 1
+            }
+            i = i + 1
+        }
+        DeError.syntax(message, line, col)
+    }
+
+    /// Skips spaces, tabs, line feeds, and carriage returns.
+    priv fn skip_ws(mut self) {
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 32 || b == 9 || b == 10 || b == 13 {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+    }
+
+    /// Consumes `b` after whitespace, or reports `message`.
+    priv fn expect_byte(mut self, b: u8, message: str): Result<(), DeError> {
+        self.skip_ws()
+        if self.pos < self.text.len() && self.peek() == b {
+            self.pos = self.pos + 1
+            Ok(())
+        } else {
+            Err(self.fail(message))
+        }
+    }
+
+    /// Consumes `literal` after whitespace, or reports `message`.
+    priv fn read_literal(mut self, literal: str, message: str): Result<(), DeError> {
+        self.skip_ws()
+        if self.starts_with_at(literal) {
+            self.pos = self.pos + literal.len()
+            Ok(())
+        } else {
+            Err(self.fail(message))
+        }
+    }
+
+    /// Reads a JSON number's text. The grammar is `-? (0 | [1-9][0-9]*)` with an optional fraction and exponent.
+    priv fn read_number_text(mut self): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        let start = self.pos
+        if self.peek() == 45 {
+            self.pos = self.pos + 1
+        }
+        if self.pos >= self.text.len() {
+            return Err(self.fail("expected a number"))
+        }
+        let first = self.peek()
+        if first == 48 {
+            self.pos = self.pos + 1
+            if self.pos < self.text.len() && __is_digit(self.peek()) {
+                return Err(self.fail("leading zeros are not allowed"))
+            }
+        } else if first >= 49 && first <= 57 {
+            self.pos = self.pos + 1
+            while self.pos < self.text.len() && __is_digit(self.peek()) {
+                self.pos = self.pos + 1
+            }
+        } else {
+            return Err(self.fail("expected a number"))
+        }
+        if self.pos < self.text.len() && self.peek() == 46 {
+            self.pos = self.pos + 1
+            if self.pos >= self.text.len() || !__is_digit(self.peek()) {
+                return Err(self.fail("expected a digit after the decimal point"))
+            }
+            while self.pos < self.text.len() && __is_digit(self.peek()) {
+                self.pos = self.pos + 1
+            }
+        }
+        if self.pos < self.text.len() {
+            let marker = self.peek()
+            if marker == 101 || marker == 69 {
+                self.pos = self.pos + 1
+                if self.pos < self.text.len() {
+                    let sign = self.peek()
+                    if sign == 43 || sign == 45 {
+                        self.pos = self.pos + 1
+                    }
+                }
+                if self.pos >= self.text.len() || !__is_digit(self.peek()) {
+                    return Err(self.fail("expected a digit in the exponent"))
+                }
+                while self.pos < self.text.len() && __is_digit(self.peek()) {
+                    self.pos = self.pos + 1
+                }
+            }
+        }
+        Ok(self.text[start..self.pos].to_string())
+    }
+
+    /// Reads a signed integer of the range `low..=high`, reporting `width` on overflow. A fraction or exponent
+    /// is accepted only when it does not change the value (`1.0` and `1e2` are integers; `1.5` is not).
+    priv fn read_signed(mut self, low: i64, high: i64, width: str): Result<i64, DeError> {
+        let text = self.read_number_text()?
+        let start = self.pos - text.len()
+        if __has_fraction_or_exponent(text.as_str()) {
+            let value = match f64.parse(text.as_str()) {
+                Ok(value) => value,
+                Err(_) => return Err(self.fail_at("expected a number", start)),
+            }
+            if !value.is_finite() {
+                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+            }
+            if value.fract() != 0.0 {
+                return Err(self.fail_at("expected an integer", start))
+            }
+            let low_f = low as f64
+            let high_f = (high as f64) + 1.0
+            if value < low_f || value >= high_f {
+                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+            }
+            Ok(value as i64)
+        } else {
+            match i64.parse(text.as_str()) {
+                Ok(value) => {
+                    if value < low || value > high {
+                        Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                    } else {
+                        Ok(value)
+                    }
+                }
+                Err(_) => Err(self.fail_at(format("a number that does not fit in {width}"), start)),
+            }
+        }
+    }
+
+    /// Reads an unsigned integer no larger than `high`, reporting `width` on overflow.
+    priv fn read_unsigned(mut self, high: u64, width: str): Result<u64, DeError> {
+        let text = self.read_number_text()?
+        let start = self.pos - text.len()
+        if __has_fraction_or_exponent(text.as_str()) {
+            let value = match f64.parse(text.as_str()) {
+                Ok(value) => value,
+                Err(_) => return Err(self.fail_at("expected a number", start)),
+            }
+            if !value.is_finite() {
+                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+            }
+            if value.fract() != 0.0 {
+                return Err(self.fail_at("expected an integer", start))
+            }
+            let high_f = (high as f64) + 1.0
+            if value < 0.0 || value >= high_f {
+                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+            }
+            Ok(value as u64)
+        } else {
+            match u64.parse(text.as_str()) {
+                Ok(value) => {
+                    if value > high {
+                        Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                    } else {
+                        Ok(value)
+                    }
+                }
+                Err(_) => Err(self.fail_at(format("a number that does not fit in {width}"), start)),
+            }
+        }
+    }
+
+    /// Reads a JSON string, decoding its escapes.
+    priv fn read_string(mut self): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        if self.peek() != 34 {
+            return Err(self.fail("expected a string"))
+        }
+        self.pos = self.pos + 1
+        let mut out = String.new()
+        let mut chunk = self.pos
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 34 {
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                self.pos = self.pos + 1
+                return Ok(out)
+            }
+            if b < 32 {
+                return Err(self.fail("control character in a string"))
+            }
+            if b == 92 {
+                let escape_at = self.pos
+                let piece = self.slice_text(chunk, self.pos)
+                out.push_str(piece.as_str())
+                self.pos = self.pos + 1
+                if self.pos >= self.text.len() {
+                    return Err(self.fail("unexpected end of input"))
+                }
+                let e = self.peek()
+                self.pos = self.pos + 1
+                if e == 34 {
+                    out.push('"')
+                } else if e == 92 {
+                    out.push('\\')
+                } else if e == 47 {
+                    out.push('/')
+                } else if e == 98 {
+                    out.push((8 as u8) as char)
+                } else if e == 102 {
+                    out.push((12 as u8) as char)
+                } else if e == 110 {
+                    out.push('\n')
+                } else if e == 114 {
+                    out.push('\r')
+                } else if e == 116 {
+                    out.push('\t')
+                } else if e == 117 {
+                    let code = self.read_unicode_escape()?
+                    let decoded = match code.to_char() {
+                        Some(c) => c,
+                        None => return Err(self.fail("invalid unicode escape")),
+                    }
+                    out.push(decoded)
+                } else {
+                    return Err(self.fail_at("invalid escape", escape_at))
+                }
+                chunk = self.pos
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+        Err(self.fail("unterminated string"))
+    }
+
+    /// Reads a `\u` escape, combining a surrogate pair into one scalar value.
+    priv fn read_unicode_escape(mut self): Result<u32, DeError> {
+        let high = self.read_hex4()?
+        if high >= 55296 && high <= 56319 {
+            // A high surrogate: an escaped low surrogate must follow.
+            if !self.starts_with_at("\\u") {
+                return Err(self.fail("invalid unicode escape"))
+            }
+            self.pos = self.pos + 2
+            let low = self.read_hex4()?
+            if low < 56320 || low > 57343 {
+                return Err(self.fail("invalid unicode escape"))
+            }
+            return Ok(65536 + ((high - 55296) << 10) + (low - 56320))
+        }
+        if high >= 56320 && high <= 57343 {
+            return Err(self.fail("invalid unicode escape"))
+        }
+        Ok(high)
+    }
+
+    /// Reads four hexadecimal digits of a `\u` escape.
+    priv fn read_hex4(mut self): Result<u32, DeError> {
+        let mut value: u32 = 0
+        let mut i: usize = 0
+        while i < 4 {
+            if self.pos >= self.text.len() {
+                return Err(self.fail("unexpected end of input"))
+            }
+            let digit = __hex_value(self.peek())
+            if digit < 0 {
+                return Err(self.fail("invalid unicode escape"))
+            }
+            value = value * 16 + (digit as u32)
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        Ok(value)
+    }
+
+    /// Whether another entry follows in the innermost container, consuming the separator.
+    priv fn next_entry(mut self): Result<bool, DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a JSON value outside a container"))
+        }
+        let i = self.frames.len() - 1
+        let close = self.frames[i].close
+        let first = self.frames[i].first
+        self.skip_ws()
+        if self.at_end() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        let b = self.peek()
+        if b == close {
+            return Ok(false)
+        }
+        if first {
+            self.frames[i].first = false
+            return Ok(true)
+        }
+        if b == 44 {
+            self.pos = self.pos + 1
+            self.skip_ws()
+            if self.at_end() {
+                return Err(self.fail("unexpected end of input"))
+            }
+            if self.peek() == close {
+                return Err(self.fail("trailing comma"))
+            }
+            return Ok(true)
+        }
+        if close == 125 {
+            Err(self.fail("expected ',' or '}}'"))
+        } else {
+            Err(self.fail("expected ',' or ']'"))
+        }
+    }
+
+    /// Reads an object member's name and its `:`, rejecting a name that this object already used. `kind` names the
+    /// member in the message (`key` for a map, `field` for a struct).
+    priv fn read_member(mut self, kind: str): Result<String, DeError> {
+        self.skip_ws()
+        let start = self.pos
+        let name = self.read_string()?
+        self.expect_byte(58, "expected ':'")?
+        if self.frames.is_empty() {
+            return Err(DeError.new("an object member outside an object"))
+        }
+        let mut frame = match self.frames.pop() {
+            Some(frame) => frame,
+            None => return Err(DeError.new("an object member outside an object")),
+        }
+        if __has_name(frame.names, name.as_str()) {
+            return Err(self.fail_at(format("duplicate {kind} '{name}'"), start))
+        }
+        frame.names.push(name.clone())
+        self.frames.push(frame)
+        Ok(name)
+    }
+
+    /// Removes the innermost container, checking that it is of `kind`.
+    priv fn pop_frame(mut self, kind: i32): Result<(), DeError> {
+        match self.frames.pop() {
+            Some(frame) => {
+                if frame.kind == kind {
+                    Ok(())
+                } else {
+                    Err(DeError.new("unbalanced JSON container"))
+                }
+            }
+            None => Err(DeError.new("unbalanced JSON container")),
+        }
+    }
+}
+
+Parser: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        self.read_literal("null", "expected null")
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        self.skip_ws()
+        if self.starts_with_at("true") {
+            self.pos = self.pos + 4
+            Ok(true)
+        } else if self.starts_with_at("false") {
+            self.pos = self.pos + 5
+            Ok(false)
+        } else {
+            Err(self.fail("expected a boolean"))
+        }
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let value = self.read_signed(-128, 127, "i8")?
+        Ok(value as i8)
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let value = self.read_signed(-32768, 32767, "i16")?
+        Ok(value as i16)
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
+        Ok(value as i32)
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        self.read_signed(i64.MIN, i64.MAX, "i64")
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
+        Ok(value as isize)
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let value = self.read_unsigned(255, "u8")?
+        Ok(value as u8)
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let value = self.read_unsigned(65535, "u16")?
+        Ok(value as u16)
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let value = self.read_unsigned(4294967295, "u32")?
+        Ok(value as u32)
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        self.read_unsigned(u64.MAX, "u64")
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let value = self.read_unsigned(usize.MAX as u64, "usize")?
+        Ok(value as usize)
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let text = self.read_number_text()?
+        let start = self.pos - text.len()
+        match f32.parse(text.as_str()) {
+            Ok(value) => {
+                if value.is_finite() {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at("a number that does not fit in f32", start))
+                }
+            }
+            Err(_) => Err(self.fail_at("expected a number", start)),
+        }
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let text = self.read_number_text()?
+        let start = self.pos - text.len()
+        match f64.parse(text.as_str()) {
+            Ok(value) => {
+                if value.is_finite() {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at("a number that does not fit in f64", start))
+                }
+            }
+            Err(_) => Err(self.fail_at("expected a number", start)),
+        }
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let text = self.read_string()?
+        let mut count: usize = 0
+        let mut first: char = '\0'
+        for c in text.chars() {
+            count = count + 1
+            first = c
+        }
+        if count != 1 {
+            return Err(self.fail("expected one character"))
+        }
+        Ok(first)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        self.read_string()
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        self.begin_seq()?
+        let mut out = List<u8>.new()
+        loop {
+            let more = self.has_next_seq_element()?
+            if !more {
+                break
+            }
+            let value = self.read_unsigned(255, "u8")?
+            out.push(value as u8)
+        }
+        self.end_seq()?
+        Ok(out)
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        self.expect_byte(91, "expected an array")?
+        self.frames.push(ReaderFrame { kind: 0, close: 93, first: true, names: List<String>.new() })
+        Ok(())
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        self.next_entry()
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.expect_byte(93, "expected ']'")?
+        self.pop_frame(0)
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        self.expect_byte(123, "expected an object")?
+        self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
+        Ok(())
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        self.next_entry()
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        self.read_member("key")
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.expect_byte(125, "expected '}}'")?
+        self.pop_frame(1)
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        self.expect_byte(123, "expected an object")?
+        self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
+        Ok(())
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        self.next_entry()
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        self.read_member("field")
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.expect_byte(125, "expected '}}'")?
+        self.pop_frame(1)
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        let option = name == "Option"
+        self.enums.push(EnumFrame { option, none: false, object: false, arity: 0 })
+        if option {
+            self.skip_ws()
+            if self.starts_with_at("null") {
+                self.pos = self.pos + 4
+                let i = self.enums.len() - 1
+                self.enums[i].none = true
+            }
+        }
+        Ok(())
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        if self.enums[i].option {
+            if self.enums[i].none {
+                return Ok("None".to_string())
+            }
+            return Ok("Some".to_string())
+        }
+        self.skip_ws()
+        if self.at_end() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        if self.peek() == 34 {
+            self.enums[i].object = false
+            return self.read_string()
+        }
+        if self.peek() != 123 {
+            return Err(self.fail("expected a variant name"))
+        }
+        self.pos = self.pos + 1
+        self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
+        self.enums[i].object = true
+        let name = self.read_string()?
+        self.expect_byte(58, "expected ':'")?
+        Ok(name)
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        self.enums[i].arity = arity
+        if self.enums[i].option {
+            if self.enums[i].none {
+                if arity != 0 {
+                    return Err(DeError.new("Option.None has no payload"))
+                }
+            } else if arity != 1 {
+                return Err(DeError.new("Option.Some has one payload value"))
+            }
+            return Ok(())
+        }
+        if !self.enums[i].object {
+            if arity != 0 {
+                return Err(DeError.new("expected a payload for a unit variant"))
+            }
+            return Ok(())
+        }
+        if arity == 0 {
+            return Err(DeError.new("a unit variant has no payload"))
+        }
+        if arity > 1 {
+            self.expect_byte(91, "expected an array")?
+            self.frames.push(ReaderFrame { kind: 0, close: 93, first: true, names: List<String>.new() })
+        }
+        Ok(())
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Ok(())
+        }
+        let i = self.enums.len() - 1
+        if self.enums[i].option || !self.enums[i].object {
+            return Ok(())
+        }
+        if self.enums[i].arity > 1 && index > 0 {
+            self.expect_byte(44, "expected ','")?
+        }
+        Ok(())
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        let option = self.enums[i].option
+        let object = self.enums[i].object
+        if option || !object {
+            self.enums.pop()
+            return Ok(())
+        }
+        if arity > 1 {
+            self.skip_ws()
+            if !self.at_end() && self.peek() == 44 {
+                return Err(self.fail("too many payload values"))
+            }
+            self.expect_byte(93, "expected ']'")?
+            self.pop_frame(0)?
+        }
+        self.expect_byte(125, "expected '}}'")?
+        self.pop_frame(1)?
+        self.enums.pop()
+        Ok(())
+    }
+}
+
+// ----- the public surface ---------------------------------------------------------------------------------------
+
+/// Writes `value` as compact JSON.
+fn to_string<T: Serialize>(value: T): Result<String, DeError> {
+    let mut writer = Writer.new()
+    value.serialize(mut writer)?
+    Ok(writer.finish())
+}
+
+/// Writes `value` as JSON with two-space indentation and a final newline.
+fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
+    let mut writer = Writer.new_pretty()
+    value.serialize(mut writer)?
+    let mut text = writer.finish()
+    text.push('\n')
+    Ok(text)
+}
+
+/// Reads a value of type `T` from `text`. The whole text must be consumed.
+fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
+    let mut parser = Parser.new(text)
+    let value = T.deserialize(mut parser)?
+    parser.end()?
+    Ok(value)
+}
+
+// ----- helpers -------------------------------------------------------------------------------------------------
+
+/// Writes a floating-point value's text as a JSON number. `Display` writes a negative zero as `-.0`, and JSON
+/// requires a digit before the point, so the leading `-` gets its `0`.
+priv fn __write_number(mut out: String, text: str) {
+    if text.starts_with("-.") {
+        out.push_str("-0")
+        out.push_str(text[1..text.len()])
+    } else {
+        out.push_str(text)
+    }
+}
+
+/// Writes `text` as a JSON string, with `"` and `\` escaped and control characters written as `\u00XX`.
+priv fn __write_quoted(mut out: String, text: str) {
+    out.push('"')
+    for c in text.chars() {
+        __write_escaped(mut out, c)
+    }
+    out.push('"')
+}
+
+/// Writes one character, escaped for a JSON string.
+priv fn __write_escaped(mut out: String, c: char) {
+    let code = c as u32
+    if c == '"' {
+        out.push_str("\\\"")
+    } else if c == '\\' {
+        out.push_str("\\\\")
+    } else if code == 10 {
+        out.push_str("\\n")
+    } else if code == 13 {
+        out.push_str("\\r")
+    } else if code == 9 {
+        out.push_str("\\t")
+    } else if code == 8 {
+        out.push_str("\\b")
+    } else if code == 12 {
+        out.push_str("\\f")
+    } else if code < 32 {
+        out.push_str("\\u00")
+        out.push(__hex_digit(code / 16))
+        out.push(__hex_digit(code & 15))
+    } else {
+        out.push(c)
+    }
+}
+
+/// The lowercase hexadecimal digit for `n` (0 to 15).
+priv fn __hex_digit(n: u32): char {
+    if n < 10 {
+        (48 + n) as char
+    } else {
+        (97 + n - 10) as char
+    }
+}
+
+/// The value of a hexadecimal digit, or -1 when `b` is not one.
+priv fn __hex_value(b: u8): i32 {
+    if b >= 48 && b <= 57 {
+        (b - 48) as i32
+    } else if b >= 97 && b <= 102 {
+        (b - 87) as i32
+    } else if b >= 65 && b <= 70 {
+        (b - 55) as i32
+    } else {
+        -1
+    }
+}
+
+/// Whether a Decimal digit.
+priv fn __is_digit(b: u8): bool {
+    b >= 48 && b <= 57
+}
+
+/// Whether the number text has a fraction or an exponent.
+priv fn __has_fraction_or_exponent(text: str): bool {
+    text.find_str(".").is_some() || text.find_str("e").is_some() || text.find_str("E").is_some()
+}
+
+/// Whether `names` already holds `name`.
+priv fn __has_name(names: List<String>, name: str): bool {
+    let mut i: usize = 0
+    while i < names.len() {
+        if names[i].as_str() == name {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}

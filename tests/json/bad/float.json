@@ -1,0 +1,1 @@
+{"name":"a","servers":[{"host":"h","port":1,"tls":true,"ratio":1e999}],"protocol":"Http","backup":null,"weights":{},"note":"x"}

@@ -1,0 +1,7 @@
+{"name":"a\nb\tc\u0001","servers":[],"protocol":"Http","backup":null,"weights":{},"note":"\t"}
+name=a
+b	c servers=0 note=	
+protocol=Http
+backup=none
+weights=0
+a=none

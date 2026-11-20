@@ -1,0 +1,112 @@
+//@ run
+
+// The framework's scalar shapes round-trip through the test format (spec/serialization.md, SER1-SER6, SER13, SER14).
+// The impls are written by hand: the built-in impls and the derives are the next phase.
+
+struct Scalars: Debug {
+    b: bool
+    i: i32
+    j: i64
+    u: u64
+    f: f64
+    c: char
+    t: String
+}
+
+Scalars: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        s.begin_struct("Scalars", 7)?
+        s.struct_field("b")?
+        serialize_bool(mut s, self.b)?
+        s.struct_field("i")?
+        serialize_i32(mut s, self.i)?
+        s.struct_field("j")?
+        serialize_i64(mut s, self.j)?
+        s.struct_field("u")?
+        serialize_u64(mut s, self.u)?
+        s.struct_field("f")?
+        serialize_f64(mut s, self.f)?
+        s.struct_field("c")?
+        serialize_char(mut s, self.c)?
+        s.struct_field("t")?
+        serialize_str(mut s, self.t.as_str())?
+        s.end_struct()
+    }
+}
+
+Scalars: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Scalars, DeError> {
+        d.begin_struct("Scalars")?
+        let mut b: bool = false
+        let mut i: i32 = 0
+        let mut j: i64 = 0
+        let mut u: u64 = 0
+        let mut f: f64 = 0.0
+        let mut c: char = '\0'
+        let mut t = String.new()
+        loop {
+            let more = d.has_next_field()?
+            if !more {
+                break
+            }
+            let name = d.field_name()?
+            if name.as_str() == "b" {
+                b = deserialize_bool(mut d)?
+            } else if name.as_str() == "i" {
+                i = deserialize_i32(mut d)?
+            } else if name.as_str() == "j" {
+                j = deserialize_i64(mut d)?
+            } else if name.as_str() == "u" {
+                u = deserialize_u64(mut d)?
+            } else if name.as_str() == "f" {
+                f = deserialize_f64(mut d)?
+            } else if name.as_str() == "c" {
+                c = deserialize_char(mut d)?
+            } else if name.as_str() == "t" {
+                t = deserialize_str(mut d)?
+            } else {
+                let failure = unknown_field(name.as_str())
+                return Err(failure.field(name.as_str()))
+            }
+        }
+        d.end_struct()?
+        Ok(Scalars { b, i, j, u, f, c, t })
+    }
+}
+
+fn main() {
+    let value = Scalars { b: true, i: -7, j: 1234567890123, u: 42, f: 1.5, c: 'x', t: "hi\n!".to_string() }
+    let text = to_text(value).unwrap()
+    println(text)
+    let read: Result<Scalars, DeError> = from_text(text)
+    let back = read.unwrap()
+    println("{:?}", back)
+
+    // The non-finite floats are written as their words and read back (spec/serialization.md, SER13).
+    let infinite = Scalars { b: false, i: 0, j: 0, u: 0, f: 1.0 / 0.0, c: 'y', t: "n".to_string() }
+    let infinite_text = to_text(infinite).unwrap()
+    println(infinite_text)
+    let infinite_read: Result<Scalars, DeError> = from_text(infinite_text)
+    println("{:?}", infinite_read.unwrap())
+
+    let negative = Scalars { b: false, i: 0, j: 0, u: 0, f: -1.0 / 0.0, c: 'y', t: "n".to_string() }
+    let negative_text = to_text(negative).unwrap()
+    println(negative_text)
+    let negative_read: Result<Scalars, DeError> = from_text(negative_text)
+    println("{:?}", negative_read.unwrap())
+
+    let not_a_number = Scalars { b: false, i: 0, j: 0, u: 0, f: 0.0 / 0.0, c: 'y', t: "n".to_string() }
+    let nan_text = to_text(not_a_number).unwrap()
+    println(nan_text)
+    let nan_read: Result<Scalars, DeError> = from_text(nan_text)
+    println("{:?}", nan_read.unwrap())
+}
+
+//> Scalars { b: true, i: -7, j: 1234567890123, u: 42, f: 1.5, c: 'x', t: "hi\n!" }
+//> Scalars { b: true, i: -7, j: 1234567890123, u: 42, f: 1.5, c: 'x', t: "hi\n!" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: inf, c: 'y', t: "n" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: inf, c: 'y', t: "n" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: -inf, c: 'y', t: "n" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: -inf, c: 'y', t: "n" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: NaN, c: 'y', t: "n" }
+//> Scalars { b: false, i: 0, j: 0, u: 0, f: NaN, c: 'y', t: "n" }
