@@ -50,7 +50,9 @@ suite with `--sanitize=address`.
 - **SAN6. Reports.** The sanitizers report on standard error in their own format and end the program with their
   own exit status (1 for AddressSanitizer and LeakSanitizer by default, 66 for ThreadSanitizer); `burdin run`
   passes that status through. In `burdin test`, a sanitizer report in a test process fails the test like any abort
-  (`test-runner.md`, "Execution"), and the report is the captured standard error. The runtimes read their usual
+  (`test-runner.md`, "Execution"), and the report is the captured standard error. A sanitized program does not
+  install the runtime's stack-overflow guard: that guard is a `SIGSEGV` handler on an alternate stack, the same
+  resource the sanitizer uses for its own reporting, so the sanitizer's handler is the one left in place. The runtimes read their usual
   options from the environment of `burdin run` (`ASAN_OPTIONS`, `TSAN_OPTIONS`, ...); a test process has a clean
   environment, so the defaults apply there.
 

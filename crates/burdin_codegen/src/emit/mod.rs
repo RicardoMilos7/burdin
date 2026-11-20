@@ -112,6 +112,9 @@ pub(crate) struct Codegen<'ctx, 'a> {
     /// `--sanitize=undefined`: integer overflow panics in every profile, and every `CPtr` dereference checks that
     /// the pointer is not null and is aligned for its pointee (`spec/sanitizers.md`, SAN4).
     pub(crate) undefined_checks: bool,
+    /// A sanitizer runtime is linked (AddressSanitizer or ThreadSanitizer): it owns signal handling and crash
+    /// reporting, so the runtime does not install its own stack guard (`spec/sanitizers.md`, SAN6).
+    pub(crate) sanitized: bool,
     builder: Builder<'ctx>,
     /// Positioned at the end of the current function's `entry` block, for stack slots.
     entry_builder: Builder<'ctx>,
@@ -220,6 +223,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             sources,
             release,
             undefined_checks: false,
+            sanitized: false,
             builder: cx.create_builder(),
             entry_builder: cx.create_builder(),
             usize_ty,

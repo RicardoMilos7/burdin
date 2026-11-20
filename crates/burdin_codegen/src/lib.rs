@@ -187,6 +187,7 @@ pub fn emit_object(
     });
     let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release, debug)?;
     cg.undefined_checks = opts.sanitize.undefined;
+    cg.sanitized = opts.sanitize.needs_runtime();
     cg.program()?;
     cg.finish_debug();
     // Panic backtraces unwind through the generated frames: every definition needs an unwind table, in both

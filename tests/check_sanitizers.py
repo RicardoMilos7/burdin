@@ -20,7 +20,9 @@ sanitizers, `thread` together with `address` or `leak`, `--sanitize` with `--lto
 On a platform without a sanitizer the driver says so (checked on every host for the sanitizers it lacks).
 """
 
+import os
 import platform
+import subprocess
 import sys
 
 import harness
@@ -43,9 +45,35 @@ supported = {
 }.get(system, {"undefined"})
 
 
-def run(*args, cwd):
-    result = harness.run(args, cwd=cwd, timeout=300)
-    return result.returncode, harness.text(harness.normalize(result.stdout)), harness.text(harness.normalize(result.stderr))
+def call(args, cwd, timeout, env=None):
+    """Runs a command, reporting a timeout as exit status 124 so one hung case does not take the whole job down
+    with a traceback (the sanitizer runtimes can wait a long time on a runner)."""
+    try:
+        result = harness.run(args, cwd=cwd, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as expired:
+        return 124, harness.text(harness.normalize(expired.stdout or b"")), harness.text(
+            harness.normalize(expired.stderr or b"")
+        )
+    return (
+        result.returncode,
+        harness.text(harness.normalize(result.stdout)),
+        harness.text(harness.normalize(result.stderr)),
+    )
+
+
+def run(*args, cwd, timeout=300):
+    return call(args, cwd, timeout)
+
+
+def sanitizer_env():
+    """The environment a sanitized program runs in. On macOS, AddressSanitizer symbolizes through `atos`, a
+    separate process that can hang on a runner where nothing is watching; the checks read the report's header, not
+    its frames, so it is asked not to symbolize."""
+    env = dict(os.environ)
+    if system == "Darwin":
+        env["ASAN_OPTIONS"] = "symbolize=0"
+        env["TSAN_OPTIONS"] = "symbolize=0"
+    return env
 
 
 def expect(description: str, condition: bool, detail: str = "") -> None:
@@ -88,14 +116,23 @@ with harness.temporary_dir("burdin-sanitize-") as work:
             expect(
                 f"{what}: runs without the sanitizer", code == 0 and "finished" in out, f"exit {code}: {err[-800:]}"
             )
-        code, out, err = run(burdin, "run", program, *profile, f"--sanitize={sanitizer}", cwd=work)
-        expect(f"{what}: reported", code != 0, f"exit status {code}")
-        expect(f"{what}: reported", report in err, err[-1500:])
+        # Built first, then run: a sanitizer that hangs on this host says which half hung.
+        exe = work / f"{name}-{sanitizer}.out"
+        code, _, err = run(
+            burdin, "build", program, *profile, f"--sanitize={sanitizer}", "-o", str(exe), cwd=work, timeout=300
+        )
+        expect(f"{what}: builds", code == 0, f"exit status {code}: {err[-1500:]}")
+        if code == 0:
+            code, out, err = call([exe], work, timeout=120, env=sanitizer_env())
+            expect(f"{what}: reported", code != 0, f"exit status {code}")
+            expect(f"{what}: reported", report in err, err[-1500:])
 
     # Safe code that borrows temporaries frees them: the program runs clean under every leak detector the host has.
     expected = "false true\n2 2\n1\n2\n1\n2\nk 1\n8\ntrue\ntrue\nfinished\n"
     for sanitizer in sorted({"address", "leak"} & supported):
-        code, out, err = run(burdin, "run", str(fixtures / "temporaries.bd"), f"--sanitize={sanitizer}", cwd=work)
+        code, out, err = run(
+            burdin, "run", str(fixtures / "temporaries.bd"), f"--sanitize={sanitizer}", cwd=work, timeout=180
+        )
         expect(f"temporaries ({sanitizer}): no report", code == 0 and out == expected, f"exit {code}: {out}{err[-1500:]}")
 
     # `burdin build --sanitize` writes the instrumented program, and `burdin test --sanitize` runs instrumented tests.
@@ -104,9 +141,11 @@ with harness.temporary_dir("burdin-sanitize-") as work:
         code, _, err = run(burdin, "build", str(fixtures / "heap_overflow.bd"), "--sanitize=address", "-o", str(exe), cwd=work)
         expect("build --sanitize=address", code == 0, err)
         if code == 0:
-            result = harness.run([exe], cwd=work, timeout=60)
-            expect("build --sanitize=address: the program reports", b"heap-buffer-overflow" in result.stderr)
-        code, out, err = run(burdin, "test", str(fixtures / "tests.bd"), "--sanitize=address", cwd=work)
+            code, _, err = call([exe], work, timeout=120, env=sanitizer_env())
+            expect("build --sanitize=address: the program reports", code != 0 and "heap-buffer-overflow" in err, err[-800:])
+        code, out, err = run(
+            burdin, "test", str(fixtures / "tests.bd"), "--sanitize=address", cwd=work, timeout=300
+        )
         expect("test --sanitize=address", code == 1, f"exit status {code}")
         expect("test --sanitize=address", "test result: 1 passed, 1 failed" in out, out)
         expect("test --sanitize=address", "FAIL writes past the end" in out, out)

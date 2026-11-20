@@ -97,7 +97,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
 
         match program.main {
-            Some(main) => crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows)?,
+            Some(main) => {
+                crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows, self.sanitized)?
+            }
             // A `burdin fuzz` build: libFuzzer supplies `main` and calls the target once per input
             // (`spec/fuzz.md`, FZ3).
             None if program.fuzz_target.is_some() => {
@@ -108,13 +110,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.functions[target.func.0],
                     self.usize_ty,
                     self.windows,
+                    self.sanitized,
                 )?
             }
             // A bench build: the entry point selects one bench by its index and runs the measurement harness
             // (`spec/bench.md`, BN4).
             None if !program.benches.is_empty() => {
                 let benches: Vec<_> = program.benches.iter().map(|b| self.functions[b.func.0]).collect();
-                crate::runtime::define_bench_main(self.cx, self.module, &benches, &self.rt, self.windows)?
+                crate::runtime::define_bench_main(
+                    self.cx,
+                    self.module,
+                    &benches,
+                    &self.rt,
+                    self.windows,
+                    self.sanitized,
+                )?
             }
             // A test build: the entry point dispatches to one `test` block by its index on the command line.
             None => {
@@ -128,6 +138,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.usize_ty,
                     self.rt.leak_check,
                     self.windows,
+                    self.sanitized,
                 )?
             }
         }

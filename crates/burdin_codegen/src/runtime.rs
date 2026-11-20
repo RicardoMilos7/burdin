@@ -423,13 +423,14 @@ pub(crate) fn define_main<'ctx>(
     module: &Module<'ctx>,
     program_main: FunctionValue<'ctx>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let i32_ty = cx.i32_type();
     let ptr_ty = cx.ptr_type(AddressSpace::default());
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows)?;
+    prepare_main(&b, module, f, windows, sanitized)?;
     b.build_call(program_main, &[], "").map_err(llvm_err)?;
     b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
     Ok(())
@@ -446,6 +447,7 @@ pub(crate) fn define_fuzz_entry<'ctx>(
     target: FunctionValue<'ctx>,
     usize_ty: IntType<'ctx>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let i32_ty = cx.i32_type();
     let ptr_ty = cx.ptr_type(AddressSpace::default());
@@ -457,7 +459,7 @@ pub(crate) fn define_fuzz_entry<'ctx>(
     let argv_ptr = init.get_nth_param(1).expect("argv").into_pointer_value();
     let argc = b.build_load(i32_ty, argc_ptr, "argc").map_err(llvm_err)?.into_int_value();
     let argv = b.build_load(ptr_ty, argv_ptr, "argv").map_err(llvm_err)?.into_pointer_value();
-    prepare_process(&b, module, argc, argv, windows)?;
+    prepare_process(&b, module, argc, argv, windows, sanitized)?;
     b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
 
     let one =
@@ -570,6 +572,7 @@ fn read_input_file<'ctx>(
 /// unknown index returns 2 or 3, which the driver reports as an error of its own. The indices after the tests are
 /// the fuzz targets, replayed on the file named by the second argument (`spec/fuzz.md`, FZ6): the target runs on
 /// the file's bytes and 0 is returned when it finishes; an unreadable file returns 4.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn define_test_main<'ctx>(
     cx: &'ctx Context,
     module: &Module<'ctx>,
@@ -578,13 +581,14 @@ pub(crate) fn define_test_main<'ctx>(
     usize_ty: IntType<'ctx>,
     leak_check: Option<FunctionValue<'ctx>>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let i32_ty = cx.i32_type();
     let ptr_ty = cx.ptr_type(AddressSpace::default());
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows)?;
+    prepare_main(&b, module, f, windows, sanitized)?;
 
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
@@ -717,6 +721,7 @@ pub(crate) fn define_bench_main<'ctx>(
     benches: &[FunctionValue<'ctx>],
     rt: &Runtime<'ctx>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let (i32_ty, i64_ty, ptr_ty, void_ty) =
         (cx.i32_type(), cx.i64_type(), cx.ptr_type(AddressSpace::default()), cx.void_type());
@@ -725,7 +730,7 @@ pub(crate) fn define_bench_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows)?;
+    prepare_main(&b, module, f, windows, sanitized)?;
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
     let has_mode =
@@ -1077,10 +1082,11 @@ fn prepare_main<'ctx>(
     module: &Module<'ctx>,
     f: FunctionValue<'ctx>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
-    prepare_process(b, module, argc, argv, windows)
+    prepare_process(b, module, argc, argv, windows, sanitized)
 }
 
 /// What every entry point does before Burdin code runs: records the arguments, makes output binary-safe on
@@ -1091,6 +1097,7 @@ fn prepare_process<'ctx>(
     argc: IntValue<'ctx>,
     argv: PointerValue<'ctx>,
     windows: bool,
+    sanitized: bool,
 ) -> GenResult<()> {
     let cx = b.get_insert_block().expect("positioned").get_context();
     let i32_ty = cx.i32_type();
@@ -1133,7 +1140,10 @@ fn prepare_process<'ctx>(
         let atexit = libc(module, "atexit", i32_ty.fn_type(&[ptr_ty.into()], false));
         b.build_call(atexit, &[flush.as_global_value().as_pointer_value().into()], "").map_err(llvm_err)?;
     }
-    if let Some(guard) = module.get_function("burdin_rt_install_stack_guard") {
+    // The stack guard installs a `SIGSEGV` handler on an alternate stack. A sanitizer runtime does the same for its
+    // own reporting, so a sanitized program keeps the sanitizer's handler: replacing it can turn a sanitizer report
+    // into a second fault on a stack it does not own (`spec/sanitizers.md`, SAN6).
+    if !sanitized && let Some(guard) = module.get_function("burdin_rt_install_stack_guard") {
         b.build_call(guard, &[], "").map_err(llvm_err)?;
     }
     Ok(())

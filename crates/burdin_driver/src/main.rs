@@ -372,6 +372,11 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         if args.lto || args.pgo_generate || args.pgo_use.is_some() {
             return Err("`--sanitize` cannot be combined with `--lto` or profile-guided optimization".to_string());
         }
+        // A combination error is reported first: it does not depend on the host, so the same command line fails the
+        // same way everywhere (`--interpret` runs no compiled code).
+        if args.interpret {
+            return Err("`--interpret` runs no compiled code, so `--sanitize` does not apply".to_string());
+        }
         sanitize::check_platform(&args.sanitize, std::env::consts::OS, std::env::consts::ARCH)?;
     }
     if !args.emit.is_empty() && args.command != "build" {
@@ -414,9 +419,6 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if args.interpret && args.snapshots != test_runner::snapshots::SnapshotMode::Check {
         return Err("`--bless` and `--review` need a compiled run; `--interpret` cannot write snapshots".to_string());
-    }
-    if args.interpret && args.sanitize != burdin_codegen::Sanitizers::default() {
-        return Err("`--interpret` runs no compiled code, so `--sanitize` does not apply".to_string());
     }
     if args.interpret
         && (args.junit.is_some()
