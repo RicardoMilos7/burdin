@@ -1,4 +1,3 @@
-<work>/bad/src/main.bd:21:13: error[E0002]: unknown name
-    `missing_name`
+<work>/bad/src/main.bd:21:13: error[E0002]: unknown name `missing_name`
 error: could not compile bad (1 error)
 note: for an explanation of an error code, run `burdin explain <code>`

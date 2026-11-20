@@ -110,8 +110,9 @@ with harness.temporary_dir("burdin-verbosity-") as work:
 
     # --- -q on failure: the errors, exactly as the golden files say ---------------------------------
     bad = fresh_fixture(work, "bad", "bad")
+    # `--width 0` keeps each message on one line: the wrap point would depend on the temporary directory's length.
     failed = harness.run(
-        [burdin, "build", bad, "-o", work / "bad-out", "-q", "--color", "never", "--width", "80"],
+        [burdin, "build", bad, "-o", work / "bad-out", "-q", "--color", "never", "--width", "0"],
         cwd=work,
         env=clean_env(),
     )
@@ -121,7 +122,7 @@ with harness.temporary_dir("burdin-verbosity-") as work:
     check("warning" not in stderr, "`build -q` printed a warning next to the errors")
 
     failed_check = harness.run(
-        [burdin, "check", bad, "-q", "--color", "never", "--width", "80"], cwd=work, env=clean_env()
+        [burdin, "check", bad, "-q", "--color", "never", "--width", "0"], cwd=work, env=clean_env()
     )
     stderr = normalize(harness.text(failed_check.stderr), work)
     check(failed_check.returncode == 1, f"`check -q` of the failing package exited {failed_check.returncode}")
