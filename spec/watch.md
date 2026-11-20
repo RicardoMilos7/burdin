@@ -27,10 +27,12 @@ Tests: `tests/check_watch.py` (the usage errors; every run).
 
 **WT2. What is watched.** For a package: every file under its directory, and the same for every path dependency
 (transitively), so the sources, `burdin.toml`, `build.bd`, headers, and `embed`ded files are all inputs. For a one-file
-target: that file. For `build` and `run`, the files a build read besides the sources (`--emit-deps`, the files
-`embed` and a build script declared) are watched too, wherever they are. A change is a file that was added, removed, or
+target: that file. For `build` and `run`, the files and directories a build read besides the sources (`--emit-deps`,
+the files `embed` and a build script declared) are watched too, wherever they are; a declared directory input stands
+for every file under it, recursively (`spec/build-scripts.md` BS5). A change is a file that was added, removed, or
 whose modification time or length changed.
-Tests: `tests/check_watch.py` (an edit, a new source file); `watch.rs` (the snapshot).
+Tests: `tests/check_watch.py` (an edit, a new source file, a file inside a build script's declared directory input
+outside the package); `watch.rs` (the snapshot).
 
 **WT3. What is not.** The `target` directory at the top of a watched directory, every entry whose name starts with a dot
 (`.git` and other version-control metadata), `burdin.lock` (the commands rewrite it), and the files the command itself

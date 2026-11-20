@@ -194,7 +194,14 @@ impl Plan {
             }
         }
         for path in extra {
-            if !self.ignore.contains(path) {
+            if self.ignore.contains(path) {
+                continue;
+            }
+            // A build script may declare a directory input (`spec/build-scripts.md`, BS5); every file under it is
+            // watched, like a file input.
+            if path.is_dir() {
+                walk(path, false, &self.ignore, &mut files);
+            } else {
                 stamp(path, &mut files);
             }
         }
@@ -350,7 +357,7 @@ impl Plan {
                 (Some(dir), true) if dir.join(path).exists() => dir.join(path),
                 _ => absolute(path),
             };
-            if resolved.is_file() {
+            if resolved.is_file() || resolved.is_dir() {
                 extra.push(resolved);
             }
         }

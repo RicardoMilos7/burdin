@@ -4,6 +4,19 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
+end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
+or a directory; a directory is hashed recursively over every file under it, so a file added, removed, renamed, or
+changed inside reruns the script and a touched one does not, and `burdin watch` follows a directory input as well
+(`spec/build-scripts.md` BS5). The new suite `crates/burdin_driver/tests/build_scripts.rs` runs in `cargo test
+--workspace` in every CI job and drives the binary over fixture packages: the success path, the stdout/stderr split,
+the documented arguments and environment, every rerun rule (declared inputs including a directory, `embed` inputs,
+generated outputs, the script, the manifest, and the profile), the dependency grant (including `burdin test -p`, where
+the selected package is the entry and its own script is trusted), nested and stale generated modules, and every
+failure path with its code (E0260, E0261, E0262) and exit status. `tests/m22_build/` still covers each diagnostic, and
+`tests/check_build_scripts.py` covers the Python-side cache checks. Not changed: a build script is still native code
+with no operating-system sandbox (BS8); the grant is the trust boundary.
+
 **Package templates (issue #354, 2026-11-20).** `burdin new <name> [--lib | --bin]` and
 `burdin init [<dir>] [--lib | --bin]` (`crates/burdin_driver/src/new.rs`, `tests/check_new.py`). A library has
 `src/lib.bd` (a function and a `test`) and a `.gitignore` for `target/` only. A library has no `main`, so `build` and
@@ -31,7 +44,6 @@ shape, so it is read and written through `parse`/`render`, not `from_str`/`to_st
 up: a type that recurses through `List<Self>` (`struct Node { kind: i32, children: List<Node> }`) builds fine and
 overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
 instead. The defect belongs to the compiler, not to the package.
-
 **Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
 package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
 Rust-shim, and failed-test entries) and the artifact cache. A build of a package directory publishes its linked

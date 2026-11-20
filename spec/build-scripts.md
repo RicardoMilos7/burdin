@@ -98,7 +98,9 @@ package and profile. The key contains the hashes of:
 - the compiler binary (its version, commit, LLVM version, length, and modification time), so rebuilding the compiler
   reruns the script;
 - every input the script declared in `<out>/inputs` (one path per line, relative to the package directory or
-  absolute; `#` starts a comment);
+  absolute; `#` starts a comment). An input is a file or a directory; a directory stands for every file under it,
+  recursively, the way a `rerun-if-changed` on a directory works in other build tools, so adding, removing, renaming,
+  or changing a file inside it reruns the script;
 - every file the script's own `embed` calls read (the same list `--emit-deps` uses for the script);
 - every generated file under `<out>/src/`.
 
@@ -173,7 +175,11 @@ interrupted run is never treated as fresh.
 | `bindgen` | run | a script invokes `burdin bindgen`; the generated constants, struct size, enum, and libc `strlen` all work |
 
 The cache logic the conformance suite cannot observe in one run (content keys, a changed or deleted input or output,
-the profile, a missing declared input, the merge and its conflict) is covered by unit tests in
-`crates/burdin_driver/src/build.rs` and black-box by `tests/check_build_scripts.py` (rerun and reuse, touching,
-`--emit-deps`, and the `bindgen` command line). The generator itself is covered by `tests/check_bindgen.py`
-(`spec/bindgen.md`).
+the profile, a missing declared input, the merge and its conflict, and a directory input's recursive hash) is covered
+by unit tests in `crates/burdin_driver/src/build.rs` and black-box by `tests/check_build_scripts.py` (rerun and reuse,
+touching, a directory input, `--emit-deps`, and the `bindgen` command line). The driver/CLI suite
+`crates/burdin_driver/tests/build_scripts.rs` drives the `burdin` binary over fixture packages and covers the success
+path and every failure path with its code and exit status, the stdout/stderr split, the documented arguments and
+environment, every rerun rule, and the dependency grant (including `burdin test -p`, where the selected package is the
+entry and its own script is trusted); `cargo test --workspace` runs it. The generator itself is covered by
+`tests/check_bindgen.py` (`spec/bindgen.md`).
