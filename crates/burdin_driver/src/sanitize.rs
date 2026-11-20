@@ -42,12 +42,13 @@ pub(crate) fn parse(value: &str) -> Result<Sanitizers, String> {
 /// never finishes on the macOS runners, so every instrumented program hangs before `main` (SAN2, and the known
 /// limitations in `docs/platform-support.md`). `os` and `arch` are `std::env::consts`'s spellings.
 pub(crate) fn check_platform(sanitizers: &Sanitizers, os: &str, arch: &str) -> Result<(), String> {
+    // The fuzzer is reported first: it is the command the user ran, and its message names it.
     let wanted = [
+        ("fuzzer", sanitizers.fuzzer),
         ("address", sanitizers.address),
         ("thread", sanitizers.thread),
         ("leak", sanitizers.leak),
         ("undefined", sanitizers.undefined),
-        ("fuzzer", sanitizers.fuzzer),
     ];
     let supported_arch = matches!(arch, "x86_64" | "aarch64");
     for (name, on) in wanted {

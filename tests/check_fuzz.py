@@ -12,6 +12,7 @@ unknown target name and the options that do not apply are usage errors, and a ho
 error that names it.
 """
 
+import platform
 import shutil
 import sys
 import tempfile
@@ -30,6 +31,10 @@ def add_problem(message: str) -> None:
 burdin = harness.require_burdin()
 fixture = harness.TESTS / "fuzz" / "planted"
 crash = fixture / "fuzz" / "artifacts" / "header" / "crash-planted"
+
+
+# libFuzzer needs AddressSanitizer's runtime, and the runtime starts on Linux only (`spec/sanitizers.md`, SAN2).
+fuzzing_supported = platform.system() == "Linux"
 
 
 def run(*args, cwd, timeout=300):
@@ -99,15 +104,20 @@ try:
         corpus = package / "fuzz" / "corpus" / "header"
         expect("burdin fuzz keeps a corpus", corpus.is_dir() and any(corpus.iterdir()), str(corpus))
 
-    # Usage errors.
-    for args, message in [
-        (("fuzz", str(package), "missing"), "has no fuzz target `missing`"),
+    # Usage errors. A host without libFuzzer's runtime rejects every fuzz build before it reads the target's name
+    # or its options, so those three cases are checked where fuzzing itself is (spec/sanitizers.md, SAN2).
+    cases = [
         (("fuzz", str(package)), "missing the fuzz target's name"),
-        (("fuzz", str(package), "header", "--sanitize=address"), "do not apply"),
-        (("fuzz", str(package), "header", "--lto"), "do not apply"),
         (("test", str(package), "--max-time", "5"), "only valid for `burdin fuzz`"),
         (("build", str(package), "--fuzz-replay"), "only valid for `burdin test`"),
-    ]:
+    ]
+    if fuzzing_supported:
+        cases += [
+            (("fuzz", str(package), "missing"), "has no fuzz target `missing`"),
+            (("fuzz", str(package), "header", "--sanitize=address"), "do not apply"),
+            (("fuzz", str(package), "header", "--lto"), "do not apply"),
+        ]
+    for args, message in cases:
         code, _, err = run(burdin, *args, cwd=work)
         expect(f"usage error for `{' '.join(args)}`", code == 2, f"exit status {code}: {err}")
         expect(f"usage error for `{' '.join(args)}`", message in err, err)
