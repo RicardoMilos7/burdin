@@ -1677,6 +1677,15 @@ fn unix_link_args(objects: &[PathBuf], output: &Path, libs: &[String], opts: &Li
     }
     if opts.sanitize.needs_runtime() {
         args.push(format!("-fsanitize={}", opts.sanitize.link_list()).into());
+        if cfg!(target_os = "macos") {
+            // Darwin's dynamic sanitizer runtime picks its shadow range at startup (`FindDynamicShadowStart`), a
+            // search that does not finish on the arm64 runners; the static runtime maps the shadow at a fixed
+            // offset instead (`spec/sanitizers.md`, SAN3).
+            args.push("-static-libsan".into());
+            if opts.sanitize.fuzzer {
+                args.push("-static-libfuzzer".into());
+            }
+        }
     }
     if opts.strip {
         args.push("-s".into());
