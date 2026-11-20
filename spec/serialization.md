@@ -59,15 +59,17 @@ in the `enum` declaration, from 0; it is metadata a format such as a binary enco
 | `Result<T, E>` | enum variant: type `Result`, `Ok` (index 0) with one payload value, `Err` (index 1) with one |
 | a tuple `(A, B)`, `(A, B, C)`, `(A, B, C, D)` | sequence of its parts, in order |
 | an array `[T; N]` | sequence of its elements, in order |
-| a reference or view (`&T`, `&mut T`, `str`, `[T]`) | not serializable (E0120 at a derive; a hand-written impl cannot name it in a field) |
+| a reference or slice (`&T`, `&mut T`, `[T]`) | not serializable (E0120 at a derive; a hand-written impl cannot name it in a field) |
 | `any I`, a closure, `Heap<T>` | not serializable in v1 (SER16) |
 | `Map<K, V>` where `K` is not `String` | rejected when the impl is written (SER7) |
 
 The mapping is a property of the type's implementation, not of the shape vocabulary: a type that is not in this table
-participates by implementing `Serialize`/`Deserialize` by hand (SER12). The compiler-provided impls that make the
-table's mappings automatic are the next phase (SER12). Until they land, an impl block selects the shape by calling the
-matching helper (SER14), and a derived impl calls the scalar helpers directly and writes the container shapes out
-itself (SER12). A format may narrow the mapping: JSON has no
+participates by implementing `Serialize`/`Deserialize` by hand (SER12). Every type in the table above, except a
+reference, a slice, an array, `Heap<T>`, and an `any` type, implements both interfaces without an impl block, when its
+parts do (SER14), with two exceptions: `str` implements `Serialize` only, because a reader returns an owned `String`, and an
+array is not yet a built-in shape (SER16). A struct or enum does not: it has an impl block or a derive. An impl block selects the shape by
+calling the matching helper (SER14), and a derived impl calls the scalar helpers directly and writes the container
+shapes out itself (SER12). A format may narrow the mapping: JSON has no
 integer width (every integer is one JSON number) and no char (a char is a one-character JSON string); TOML has no unit
 and no top-level scalar; CSV has only flat records of scalars. Those choices belong to the format package and are
 reported as a `DeError` when a value cannot be written.
@@ -91,8 +93,7 @@ writes exactly one value and returns `Ok(())`. `Deserialize::deserialize` is an 
 `T` returns `Result<T, DeError>`, and a call is written `T.deserialize(mut d)`. Both methods are generic over the
 format type, so dispatch is static and a format is monomorphized like any other generic argument. The interfaces are
 ordinary `std` interfaces; a user or a package writes an impl block by hand, and the compiler generates one for a
-type that derives the interface (SER12). The compiler-provided impls for the built-in types are the next phase
-(SER14).
+type that derives the interface (SER12). The built-in types implement the interfaces without a block (SER14).
 
 A generic type adds one bound per type parameter, as every derive does:
 
@@ -444,11 +445,11 @@ The generated impls are:
   format places between values.
 
 The fields' requirement is not checked yet: `check_derives` does not add `Serialize`/`Deserialize` to its requirement
-list, because a concrete `i32` field does not implement the interface until the compiler-provided impls of SER14 land.
-The generated body is correct for such a field today because it calls that field's helper directly. That check, the
-compiler-provided impls, and switching the container paths back to the SER14 helpers are the next phase. The
-requirement will then be the same as `Debug`: a non-generic type's field must implement the interface (E0130 at the
-field), and a generic type gets one `where P: Serialize` / `P: Deserialize` per type parameter.
+list. The built-in types implement the interfaces now (SER14), so the check can be added without a blocker; the
+generated body is correct for every field today because it calls that field's helper directly. That check and the
+switch of the container paths back to the SER14 helpers are the next phase. The requirement will then be the same as
+`Debug`: a non-generic type's field must implement the interface (E0130 at the field), and a generic type gets one
+`where P: Serialize` / `P: Deserialize` per type parameter.
 
 A hand-written impl may do anything the interfaces allow: a different field order, a renamed field, a different
 number representation, a map with another key type (when a future interface supports it), or a completely different
@@ -576,6 +577,53 @@ let items = match read { Ok(value) => value, Err(e) => return Err(e.field("items
 A hand-written impl that wraps the error itself does not need `?` at that step; the generated impls write the
 container shapes out, so they do not depend on this (SER16).
 
+### Built-in types (issue #853)
+
+A built-in type implements `Serialize` and `Deserialize` without an impl block, so a manual impl delegates to it
+instead of calling a helper by hand. The rule is the table of SER2, read with the exceptions it names: a type
+implements an interface when each of its parts does, so `List<Leaf>` implements `Serialize` when `Leaf` does, and
+`Map<String, V>` when `V` does. The types are the unit, `bool`, the integers and floats, `char`, `String`, `List`,
+`Map<String, V>` (with the global allocator), `Option`, `Result`, and tuples of two to four parts. `str` implements
+`Serialize` only.
+
+Two forms are written by a program:
+
+- `value.serialize(mut s)` writes a value of a built-in type. The checker lowers it to the standard library's helper
+  for the type's shape, `__serialize_<shape>` (a receiver-first form of the helper of SER14, as `value.debug(mut f)`
+  reaches `__debug_*`), so the representation is the one that helper writes.
+- `T.deserialize(mut d)` reads a value of a built-in type. The checker lowers it to the `deserialize_<shape>` helper
+  with the expected type `Result<T, DeError>`, so the helper's type arguments come from `T`, and `List<Leaf>.deserialize(mut d)?`
+  needs no annotation on the call. A string is read by `deserialize_str`.
+
+A generic function whose bounds are `Serialize` or `Deserialize` accepts a built-in type, and inside it the call
+`value.serialize(mut s)` or `T.deserialize(mut d)` reaches the same helpers once the type is known. A built-in type
+that does not meet the rule is refused like any other type that does not implement an interface (E0141 at a generic
+call, E0114 for a `mut` parameter left unmarked). The rule in a `Map` is the one of SER7: a key that is not `String` is
+not serialized.
+
+```
+struct Color { red: u8, green: u8, blue: u8 }
+
+Color: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError> {
+        let s = String.deserialize(mut d)?
+        match Color.from_hex(s.as_str()) {
+            Some(color) => Ok(color),
+            None => Err(DeError.new(format("Invalid hex color: {s}"))),
+        }
+    }
+}
+
+Color: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        self.to_hex().serialize(mut s)
+    }
+}
+```
+
+The derive does not use these forms for a container field yet: it writes the container shapes out (SER12). Its scalar
+and string fields call the helpers as before.
+
 The error helpers are public too: `unknown_field(name)`, `duplicate_field(name)`, `missing_field(name)`, and
 `unknown_variant(type_name, variant)`. `DeError` itself provides `new`, `syntax`, `field`, `index`, `key`, and
 `variant`.
@@ -602,9 +650,8 @@ here.
 
 These are deferred and are not to be implemented early:
 
-- The compiler-provided impls for primitives and built-in containers, and the derive's field requirement
-  (SER12). Until they land, the derive writes the built-in container shapes out itself and the scalars call their
-  helpers. A hand-written impl calls the helper functions of SER14.
+- The derive's field requirement, and the derive's switch back to the helpers for its container fields (SER12). Until
+  they land, the derive writes the built-in container shapes out itself and the scalars call their helpers.
 - Arrays as deserialization targets (SER14), arrays in a derived type, and arrays of `List`-like views.
 - Named payload fields for struct variants (SER1, SER8).
 - Map keys other than `String` (SER7), including integer and enum keys.
@@ -635,6 +682,10 @@ These are deferred and are not to be implemented early:
 | `derive_enum` | SER8, SER12: derived unit, tuple, and struct variants round-trip |
 | `derive_generic` | SER12, SER14: a generic derived type, nested derived user types, and every container shape |
 | `derive_errors` | SER6, SER8, SER12: the derived unknown/missing/duplicate field messages and an unknown variant |
+| `builtin_impls` | SER3, SER7, SER14: a manual impl delegates to `String` (the newtype of issue #853), the built-in types satisfy the bounds of `to_text`/`from_text`, and `List<i32>.deserialize(mut d)` reads a list |
+| `builtin_methods` | SER2, SER14: `value.serialize(mut s)` and `T.deserialize(mut d)` on the scalars, `Map<String, V>`, a tuple, and `List<u8>` |
+| `builtin_map_key` | SER7, SER14 (compile-fail, E0141): a `Map` with non-`String` keys does not implement `Serialize` |
+| `builtin_serialize_mut` | SER3, SER14 (compile-fail, E0114): `value.serialize(s)` without `mut` |
 | `tuple_hand` | SER7, SER14: `serialize_tuple2`/`deserialize_tuple2` in a hand-written impl, and the short-sequence error |
 | `json/` | SER1-SER10 in JSON (`packages/json`): a round trip, the pretty form, and the error message of malformed input |
 | `toml/` | SER1-SER10 in TOML (`packages/toml`, spec/toml.md): the canonical form, a datetime, and the reader's errors |

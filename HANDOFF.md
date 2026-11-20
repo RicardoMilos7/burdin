@@ -1450,12 +1450,18 @@ calls its own impl, and the built-in containers are written out recursively beca
 type to implement the interface; the fields' requirement is not checked yet. The generated format parameter is
 `__S`/`__D`, avoiding the method-shadows-impl-parameter scoping bug.
 
-What is left of the framework, in order: the compiler-provided impls for the primitives and the built-in containers
-(`List`, `Map`, `Option`, `Result`, tuples, arrays), specified in SER14, the derive's field requirement, and the
-switch of the derived container paths back to the SER14 helpers (SER12). An impl
-block cannot be written for a built-in type (so the compiler must provide those impls, in the place `Display`/`Debug`
-are provided), and a method's generic parameter currently shadows an impl parameter of the same name (so a hand-written
-generic impl must not name its format parameter `D`; fixing the scoping is a separate compiler change).
+The built-in types implement `Serialize` and `Deserialize` without an impl block (issue #853, SER14): the scalars,
+`String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts, when their parts do. The checker answers
+for them (`crates/burdin_sema/src/serial.rs`, `satisfies` through `implements`), and it lowers `value.serialize(mut s)`
+and `T.deserialize(mut d)` on them to receiver-first `__serialize_<shape>` and to `deserialize_<shape>` in
+`std/src/serialize.bd` (`crates/burdin_sema/src/fncx/serial.rs`). A manual impl can now delegate to `String` (the
+motivating newtype). Tests: `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`,
+`builtin_serialize_mut`. What is left of the framework, in order: arrays (SER16), the derive's field requirement, and
+the switch of the derived container paths back to the SER14 helpers (SER12). A method's generic parameter currently
+shadows an impl parameter of the same name (so a hand-written generic impl must not name its format parameter `D`;
+fixing the scoping is a separate compiler change). A closure that formats a `String` it captures while that string is
+borrowed reports E0101/E0111 (`ok_or_else(|| format("{s}"))` after `s.as_str()`), which is why the motivating example
+is written with `match` in the test; that is a closure-capture limitation, not a serialization one.
 v1 produces owned values: a struct field cannot be a view, so `deserialize_str` returns `String`.
 
 The first format package is done: `packages/json` (issue #255, `packages/json/README.md`) implements `Serializer` and

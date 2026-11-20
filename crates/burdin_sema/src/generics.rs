@@ -751,6 +751,12 @@ impl Globals {
         {
             return answer;
         }
+        // The built-in types implement the serialization interfaces without a block (SER14).
+        if (Some(iface) == self.serialize_iface || Some(iface) == self.deserialize_iface)
+            && let Some(answer) = self.builtin_serial(ty, iface, Some(iface) == self.deserialize_iface, env)
+        {
+            return answer;
+        }
         if Some(iface) == self.from_iterator_iface
             && let Some(answer) = self.builtin_from_iterator(ty, args, env)
         {

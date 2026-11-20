@@ -168,7 +168,8 @@ interface Deserializer {
 
 /// A type that a format can write. `serialize` writes exactly one value. A hand-written impl block implements this
 /// for any type, and `struct T: Serialize` makes the compiler generate one (spec/serialization.md, SER12). The
-/// compiler-provided impls for the primitive types and the built-in containers are the next phase (SER3, SER14).
+/// primitive types, `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2 to 4 implement it without
+/// a block, when their parts do (SER3, SER14).
 interface Serialize {
     /// Writes the value with `s`.
     fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError>
@@ -176,8 +177,8 @@ interface Serialize {
 
 /// A type that a format can read. `deserialize` reads exactly one value and returns it. It is an associated
 /// function, so an impl block for `T` returns `Result<T, DeError>` and a call is written `T.deserialize(mut d)`.
-/// A hand-written impl block or `struct T: Deserialize` implements it; the compiler-provided impls for the
-/// primitive types and the built-in containers are the next phase (spec/serialization.md, SER12, SER14).
+/// A hand-written impl block or `struct T: Deserialize` implements it. The built-in types of the `Serialize` note
+/// implement it too, without a block (spec/serialization.md, SER12, SER14).
 interface Deserialize {
     /// Reads the value with `d`.
     fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError>
@@ -695,6 +696,122 @@ fn deserialize_tuple4<A: Deserialize, B: Deserialize, C: Deserialize, E: Deseria
     let e_part = E.deserialize(mut d)?
     d.end_seq()?
     Ok((a, b, c, e_part))
+}
+
+// ----- built-in receivers -------------------------------------------------------------------------------------------
+
+// A built-in type implements `Serialize` and `Deserialize` without an impl block (spec/serialization.md, SER14). The
+// checker writes `value.serialize(mut s)` on such a type by calling one of the helpers below, with the receiver first
+// (the way `value.debug(mut f)` reaches `__debug_*`). Each one forwards to the helper of the same shape, so the
+// representation is the one that helper writes. `T.deserialize(mut d)` calls the `deserialize_*` helpers directly.
+
+priv fn __serialize_unit<S: Serializer>(value: (), mut s: S): Result<(), DeError> {
+    serialize_unit(mut s)
+}
+
+priv fn __serialize_bool<S: Serializer>(value: bool, mut s: S): Result<(), DeError> {
+    serialize_bool(mut s, value)
+}
+
+priv fn __serialize_char<S: Serializer>(value: char, mut s: S): Result<(), DeError> {
+    serialize_char(mut s, value)
+}
+
+priv fn __serialize_i8<S: Serializer>(value: i8, mut s: S): Result<(), DeError> {
+    serialize_i8(mut s, value)
+}
+
+priv fn __serialize_i16<S: Serializer>(value: i16, mut s: S): Result<(), DeError> {
+    serialize_i16(mut s, value)
+}
+
+priv fn __serialize_i32<S: Serializer>(value: i32, mut s: S): Result<(), DeError> {
+    serialize_i32(mut s, value)
+}
+
+priv fn __serialize_i64<S: Serializer>(value: i64, mut s: S): Result<(), DeError> {
+    serialize_i64(mut s, value)
+}
+
+priv fn __serialize_isize<S: Serializer>(value: isize, mut s: S): Result<(), DeError> {
+    serialize_isize(mut s, value)
+}
+
+priv fn __serialize_u8<S: Serializer>(value: u8, mut s: S): Result<(), DeError> {
+    serialize_u8(mut s, value)
+}
+
+priv fn __serialize_u16<S: Serializer>(value: u16, mut s: S): Result<(), DeError> {
+    serialize_u16(mut s, value)
+}
+
+priv fn __serialize_u32<S: Serializer>(value: u32, mut s: S): Result<(), DeError> {
+    serialize_u32(mut s, value)
+}
+
+priv fn __serialize_u64<S: Serializer>(value: u64, mut s: S): Result<(), DeError> {
+    serialize_u64(mut s, value)
+}
+
+priv fn __serialize_usize<S: Serializer>(value: usize, mut s: S): Result<(), DeError> {
+    serialize_usize(mut s, value)
+}
+
+priv fn __serialize_f32<S: Serializer>(value: f32, mut s: S): Result<(), DeError> {
+    serialize_f32(mut s, value)
+}
+
+priv fn __serialize_f64<S: Serializer>(value: f64, mut s: S): Result<(), DeError> {
+    serialize_f64(mut s, value)
+}
+
+priv fn __serialize_str<S: Serializer>(value: str, mut s: S): Result<(), DeError> {
+    serialize_str(mut s, value)
+}
+
+priv fn __serialize_string<S: Serializer>(value: String, mut s: S): Result<(), DeError> {
+    serialize_str(mut s, value.as_str())
+}
+
+priv fn __serialize_bytes<S: Serializer>(value: List<u8>, mut s: S): Result<(), DeError> {
+    serialize_bytes(mut s, value.as_slice())
+}
+
+priv fn __serialize_list<T: Serialize, S: Serializer>(value: List<T>, mut s: S): Result<(), DeError> {
+    serialize_list(mut s, value)
+}
+
+priv fn __serialize_map<V: Serialize, S: Serializer>(value: Map<String, V>, mut s: S): Result<(), DeError> {
+    serialize_map(mut s, value)
+}
+
+priv fn __serialize_option<T: Serialize, S: Serializer>(value: Option<T>, mut s: S): Result<(), DeError> {
+    serialize_option(mut s, value)
+}
+
+priv fn __serialize_result<T: Serialize, E: Serialize, S: Serializer>(
+    value: Result<T, E>,
+    mut s: S,
+): Result<(), DeError> {
+    serialize_result(mut s, value)
+}
+
+priv fn __serialize_tuple2<A: Serialize, B: Serialize, S: Serializer>(value: (A, B), mut s: S): Result<(), DeError> {
+    serialize_tuple2(mut s, value)
+}
+
+priv fn __serialize_tuple3<A: Serialize, B: Serialize, C: Serialize, S: Serializer>(
+    value: (A, B, C),
+    mut s: S,
+): Result<(), DeError> {
+    serialize_tuple3(mut s, value)
+}
+
+priv fn __serialize_tuple4<A: Serialize, B: Serialize, C: Serialize, D: Serialize, S: Serializer>(
+    value: (A, B, C, D),
+    mut s: S,
+): Result<(), DeError> {
+    serialize_tuple4(mut s, value)
 }
 
 // ----- the test format ----------------------------------------------------------------------------------------

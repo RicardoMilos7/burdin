@@ -19,6 +19,7 @@ mod literals;
 mod operators;
 mod pattern;
 mod reflect;
+mod serial;
 mod stmt;
 mod suggest;
 

@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
+  `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
+  impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and
+  `value.serialize(mut s)` writes one. The checker lowers both forms to the standard library's helpers
+  (`std/src/serialize.bd`). `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`, and
+  `builtin_serialize_mut` cover it.
+
 - Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG25-PKG33).
   `[features]` declares named features whose items are other features, `dep:x` for an optional dependency, or
   `x/feature` to forward to a dependency; every optional dependency is an implicit feature of its name, `default` is
