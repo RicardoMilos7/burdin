@@ -1,0 +1,1 @@
+<Config><name>x &amp; y</name><servers/><protocol><Https>443</Https></protocol><backup><Some><host>h</host><port>2</port><tls>false</tls><ratio>0.5</ratio></Some></backup><weights/><note>p</note></Config>

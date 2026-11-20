@@ -1,0 +1,17 @@
+<Config>
+  <name/>
+  <servers/>
+  <protocol>
+    <Http/>
+  </protocol>
+  <backup>
+    <None/>
+  </backup>
+  <weights/>
+  <note>e</note>
+</Config>
+name="" servers=0 note='e'
+protocol=Http
+backup=none
+weights=0
+a=none

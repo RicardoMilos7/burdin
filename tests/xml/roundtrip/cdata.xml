@@ -1,0 +1,10 @@
+<Config version="2" xmlns:x="urn:x" x:flag="on">
+  <!-- comments and instructions between fields are skipped -->
+  <name><![CDATA[<b>bold</b> & more ]]></name>
+  <?audit seen?>
+  <servers/>
+  <protocol><Http/></protocol>
+  <backup><None/></backup>
+  <weights/>
+  <note>c</note>
+</Config>

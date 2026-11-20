@@ -1,0 +1,15 @@
+name: seq at the key's own indentation
+servers:
+  - host: h
+    port: 9
+    tls: true
+    ratio: 3
+protocol: Http
+backup: null
+weights: {}
+note: "n"
+name="seq at the key's own indentation" servers=1 note=n
+protocol=Http
+backup=none
+weights=0
+first=h 9 true 3

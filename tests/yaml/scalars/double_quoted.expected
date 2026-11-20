@@ -1,0 +1,10 @@
+name: "tab\there, quote \" backslash \\ nl\n unicode é 😀 hex A slash / nbsp  done"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: é
+name="tab\there, quote \" backslash \\ nl\n unicode é 😀 hex A slash / nbsp  done" servers=0 note=é
+protocol=Http
+backup=none
+weights=0

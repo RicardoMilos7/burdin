@@ -1,0 +1,32 @@
+name: aliases
+servers:
+  - host: a
+    port: 1
+    tls: true
+    ratio: 1.5
+  - host: a
+    port: 1
+    tls: true
+    ratio: 1.5
+  - host: a
+    port: 1
+    tls: true
+    ratio: 1.5
+protocol:
+  Both:
+    - 1
+    - 2
+backup:
+  host: a
+  port: 1
+  tls: true
+  ratio: 1.5
+weights:
+  a: 1
+  b: 2
+note: z
+name="aliases" servers=3 note=z
+protocol=Both 1 2
+backup=a 1
+weights=2
+first=a 1 true 1.5

@@ -1,0 +1,44 @@
+<r xmlns="urn:d" xmlns:p="urn:p" xml:lang="en" p:id="7" plain="x">
+  <p:item>one</p:item>
+  <item>two</item>
+  <x xmlns=""><y/></x>
+  <p:item p:id="8"/>
+  <z xmlns:p="urn:other"><p:item/></z>
+</r>
+<r xmlns="urn:d" xmlns:p="urn:p" xml:lang="en" p:id="7" plain="x">
+  <p:item>one</p:item>
+  <item>two</item>
+  <x xmlns="">
+    <y/>
+  </x>
+  <p:item p:id="8"/>
+  <z xmlns:p="urn:other">
+    <p:item/>
+  </z>
+</r>
+declaration none
+before=0 after=0
+r ns=[urn:d] at 1:1
+  @xmlns="urn:d" ns=[]
+  @xmlns:p="urn:p" ns=[]
+  @xml:lang="en" ns=[http://www.w3.org/XML/1998/namespace]
+  @p:id="7" ns=[urn:p]
+  @plain="x" ns=[]
+  text "\n  "
+  p:item ns=[urn:p] at 2:3
+    text "one"
+  text "\n  "
+  item ns=[urn:d] at 3:3
+    text "two"
+  text "\n  "
+  x ns=[] at 4:3
+    @xmlns="" ns=[]
+    y ns=[] at 4:15
+  text "\n  "
+  p:item ns=[urn:p] at 5:3
+    @p:id="8" ns=[urn:p]
+  text "\n  "
+  z ns=[urn:d] at 6:3
+    @xmlns:p="urn:other" ns=[]
+    p:item ns=[urn:other] at 6:26
+  text "\n"

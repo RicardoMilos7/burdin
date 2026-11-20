@@ -1,0 +1,15 @@
+name: variants
+servers: []
+protocol:
+  Https: 8443
+backup:
+  host: back
+  port: 1
+  tls: true
+  ratio: 0.1
+weights:
+  "quoted key": 1
+  'it''s': 2
+  "yes": 3
+  null: 4
+note: 'q'

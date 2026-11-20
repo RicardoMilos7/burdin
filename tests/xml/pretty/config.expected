@@ -1,0 +1,33 @@
+<Config>
+  <name>edge</name>
+  <servers>
+    <item>
+      <host>a.example</host>
+      <port>80</port>
+      <tls>false</tls>
+      <ratio>0.25</ratio>
+    </item>
+  </servers>
+  <protocol>
+    <Both>
+      <item>80</item>
+      <item>443</item>
+    </Both>
+  </protocol>
+  <backup>
+    <None/>
+  </backup>
+  <weights>
+    <entry>
+      <key>a</key>
+      <value>1</value>
+    </entry>
+  </weights>
+  <note>é</note>
+</Config>
+name="edge" servers=1 note='é'
+protocol=Both 80 443
+backup=none
+weights=1
+a=1
+first=a.example 80 false 0.25
