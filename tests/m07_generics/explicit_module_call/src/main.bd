@@ -1,0 +1,14 @@
+//@ run
+//> 4
+//> two
+
+// A module-qualified generic function takes explicit type arguments (`spec/arguments.md`, TA1): `util.convert<i32>(4)`
+// is the call form of `json.from_str<Data>(text)` in issue #847.
+
+use util
+
+fn main() {
+    let n = util.convert<i32>(4)
+    println("{n}")
+    println(util.pick<String>("two".to_string()))
+}

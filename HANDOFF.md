@@ -4,6 +4,38 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Explicit type arguments at calls (issue #847, 2026-11-20).** `f<T>(x)`, `m.f<T>(x)`, `x.m<T>(a)`, `Type.f<T>(a)`, and
+`Type<A>.f<T>(a)` now give a generic function, method, or associated function with type parameters of its own its type
+arguments, so `json.from_str<Data>(text)` works (`spec/arguments.md`, TA1-TA6). The decisions: the list names every type
+parameter, in order, and a partial list is refused (TA2); a callee with an `impl` parameter takes none (TA4); a list on
+anything else that takes none (a plain function, `println`, `env.args`, a variant, a built-in method) is E0003 (TA5);
+a lowercase bare name takes a list only when a `(` follows its `>` (grammar rule 8.2). The explicit types seed the
+inference (`generic_call_impl`, `generic_method_call`, `generic_assoc_method_call`, through `explicit_bindings` in
+`fncx/generic.rs`), so an argument of another type is the ordinary E0003 and a bound is still E0141. The parser's
+look-ahead (`type_list_end` in `crates/burdin_syntax/src/lookahead.rs`) now reads a list only when every token in it is
+type syntax; that fixed a bug where `if s.len < n && s.cap > (k)` was rejected (E0001) as a member's type arguments.
+The call dispatch is `call`, `method_call`, `method_call_on_with`, `module_call`, and `assoc_call` in
+`fncx/call.rs`; `reject_type_args` and `user_generic_method` are the refusals. `GenericParam.hidden` marks an `impl`
+parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it to sema. Tests:
+`tests/m07_generics/explicit_type_args.bd` (runs), `explicit_type_args_errors.bd` (codes and lines),
+`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. Not done: explicit
+arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
+`it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
+its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
+**Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
+`self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`
+completes and `self.area(` navigates while the body does not parse. A parameter of a generic type (`s: S`, `S:
+Serializer`) completes and resolves the methods of its bounds (`FileIndex::generic_params`, `bounds_of`,
+`parameter_type`). Completion after `:` in a type position (`let`, `const`, a parameter, a return, a field) offers types
+and the generic parameters of the function, and in a bound position (`<T: `, `where`, `+`, `any `, `requires `, a
+top-level `Type: `) offers interfaces only (`Context::Type` and `Context::Bound` in `crates/burdin_lsp/src/edit.rs`).
+The rules are LS8 and LS12 in `spec/lsp.md`, and the tests are `definition_resolves_the_callee_of_an_incomplete_call`,
+`self_and_bounded_parameters_complete_in_an_interface_impl`, and `completion_offers_only_what_the_position_takes`. Gaps: a
+generic parameter of a signature still being typed (no body yet) is not offered; a call on a local (`a.append(`) in a file
+that has never analyzed successfully still resolves nothing, because the local's type comes from the analysis (a
+syntactic guess from `let a = List<i32>.new()` was left out); `tests/check_lsp.py` needs a built driver (LLVM) and was
+not run on this machine.
+
 **Generic types named without their type arguments (issue #850, 2026-11-20).** `Map.new()`, `List.new()`, `Set.new()`,
 and `Pair.new()` for a user generic, and a bare `Map` or `Map<i32>` in a type position, are E0003 at the name. The
 message names the missing parameters and the form to write (`` `Map` is generic and needs type arguments for `K, V`;
@@ -419,8 +451,10 @@ and share their record and baselines under the root's `target/`, doc writes a si
 selected members' directories. Outside a workspace the flags behave as before. `tests/check_workspace.py` proves the
 behavior black-box (46 checks) and every CI job runs it; the parser, membership, selection, and workspace-lockfile rules
 have unit tests. The decisions are `spec/workspaces.md` WS1-WS18. Not done: `--offline`, multi-line arrays in a
-manifest, `**` in a member pattern, moving an inherited edition with `burdin fix --migrate`, and one workspace target
-directory (outputs stay under each package's `target/`).
+manifest, `**` in a member pattern, and moving an inherited edition with `burdin fix --migrate`. The forty-eighth session
+closed issue #240 with the one missing piece, a shared target directory (WS19): members build into the root's `target/`,
+and a member's build-script and Rust-shim state sits in `target/burdin/<profile>/packages/<name>/`. `burdin doc` still
+writes per-member `target/doc`.
 
 The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
 pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load

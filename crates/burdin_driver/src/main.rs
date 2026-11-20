@@ -894,7 +894,7 @@ fn build(args: &Args, options: &CompileOptions) -> ExitCode {
     // (`spec/profiles.md`, `spec/workspaces.md`).
     let profile = &options.profile.dir;
     for member in entries {
-        let out_dir = member.dir.join("target").join("burdin").join(profile).join("bin");
+        let out_dir = burdin_query::workspace::target_dir(&member.dir).join("burdin").join(profile).join("bin");
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
             eprintln!("error: cannot create {}: {e}", package::source_path_text(&out_dir));
             return ExitCode::from(1);

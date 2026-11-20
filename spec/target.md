@@ -19,7 +19,7 @@ is `debug` or `release`. Its entries are:
 - `rust/<crate>/`: the Rust crates' shims (`spec/rust-interop.md`, RI8);
 - `test-failed.txt`: the record of failed tests that `--failed` reads (`spec/test-runner.md`).
 
-The benchmark baselines are the one exception: `target/burdin/bench/` is not per profile (`spec/bench.md`). Each kind of
+Inside a workspace the members share the root's `target/` (`spec/workspaces.md`, WS19). The benchmark baselines are the one exception: `target/burdin/bench/` is not per profile (`spec/bench.md`). Each kind of
 artifact has its own directory, so the program and the test binary of one package never overwrite each other. There is
 no `--target` option, so the directories are the only per-target split. Other entries under `target/` are not a
 contract. A new package's `.gitignore` lists `/target/` (`burdin new`).

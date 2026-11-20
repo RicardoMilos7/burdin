@@ -80,7 +80,8 @@ impl Plan {
             package_dir.is_some(),
         )?;
         let package_dir = package_dir?.canonicalize().ok()?;
-        let dir = package_dir.join("target").join("burdin").join(&options.profile.dir).join(kind);
+        let dir =
+            burdin_query::workspace::target_dir(&package_dir).join("burdin").join(&options.profile.dir).join(kind);
         let body = fingerprint_body(loaded, files, sources, build_inputs, rust_libs, options, &package_dir, kind);
         Some(Plan::new(dir, &loaded.stem, body))
     }
