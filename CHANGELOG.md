@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Type checking continues past a syntax error (issue #786; `spec/check.md`, CK4). A file with a syntax error is not
+  type checked, but every other module is, against the declarations the broken file did read. The follow-on errors of
+  a declaration that did not parse (a use of a function, type, or method the broken file failed to declare) are left
+  out, and a diagnostic in the broken file other than its syntax errors is not reported. `burdin check`, `build`, and
+  the language server share the rule (`crates/burdin_query/src/follow_on.rs`). `tests/check/err_syntax_declared.bd`,
+  `tests/check/packages/syntax_neighbors`, and `tests/check/packages/syntax_no_main` cover it.
+
 - Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
   `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
   impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and

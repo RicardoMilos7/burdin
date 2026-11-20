@@ -65,6 +65,14 @@ PACKAGES = {
         ([], 1, True, None),
         (["--tests"], 1, True, None),
     ],
+    # A module with syntax errors: the modules that parse are checked, against the declarations the broken module
+    # read, and the follow-on errors of its missing declarations are not reported (spec/check.md, CK4).
+    "syntax_neighbors": [
+        ([], 1, True, None),
+    ],
+    "syntax_no_main": [
+        ([], 1, True, None),
+    ],
 }
 
 

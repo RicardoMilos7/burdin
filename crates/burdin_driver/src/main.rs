@@ -1050,7 +1050,7 @@ pub(crate) struct FrontEnd {
     /// The parsed files, in `FileId` order.
     pub(crate) parsed: Vec<(burdin_diag::FileId, burdin_syntax::ast::File)>,
     pub(crate) sources: SourceMap,
-    /// `None` when parsing failed: checking a tree with syntax errors would mostly report follow-on errors.
+    /// `None` when a file has syntax errors: the other modules are still checked and reported, but the tree is partial.
     pub(crate) program: Option<burdin_tir::Program>,
     pub(crate) diags: Diagnostics,
     pub(crate) script_inputs: Vec<String>,

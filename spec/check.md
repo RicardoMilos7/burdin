@@ -48,11 +48,23 @@ output is never used.
 Tests: the goldens, `ok_program.bd` (silent), `ok_warning.bd`, the JSON, `--error-limit`, the human-format and SARIF
 checks.
 
-**CK4. Every error is reported.** Like a build, a check reports every error of the front end, not the first. Parsing
-errors stop the later stages (a tree with syntax errors would mostly produce follow-on errors); every later stage runs
-even when an earlier one failed, as in a build, except compile-time evaluation, which runs only on a program every other
-check accepted (`spec/comptime.md`, CT1).
-Tests: `err_types.bd` (four errors in one file), `two_errors` (two files), `err_syntax.bd`, `err_comptime.bd`.
+**CK4. Every error is reported.** Like a build, a check reports every error of the front end, not the first. A file
+with a syntax error is not type checked: its own checks are not reported, but every other module is, and the other
+modules are checked against the declarations the broken file did read (its `ast::File` keeps every item it parsed). A
+declaration the parser could not read (`ast::File::unparsed`, the source of each item the parser recovered from) is
+missing from that tree, so a diagnostic in another module is a follow-on of it, and is not reported, when its span or
+a backticked name in its message mentions a name the unreadable declaration declares: an item's name, the method
+names of a `fn`, the interface and type of an `impl` header, the variants of an `enum`, and the leaf names of a
+`use`. Parameter names, fields, payload types, and module paths are not declared names. A name that only parsed
+declarations declare is never a follow-on, so an error that names it is reported. When in doubt the follow-on is dropped: a diagnostic in a
+file with a syntax error never survives, and a missing `main` is not reported when the unreadable declarations declare
+`main`. The syntax errors themselves are always reported. With syntax errors the program is not returned (the
+language server keeps its last good one), and compile-time evaluation never runs (`spec/comptime.md`, CT1).
+The rule lives in `crates/burdin_query/src/follow_on.rs`, so a build, a check, and a language server report the same.
+Tests: `err_syntax_declared.bd` (a broken function is not reported, and neither is a mismatch in the broken file),
+`packages/syntax_neighbors` (a broken module's neighbors are checked against what it parsed), `packages/syntax_no_main`
+(a `main` that did not parse), `err_types.bd` and `err_syntax.bd` (one file, unchanged), and the unit tests of
+`follow_on.rs`.
 
 **CK5. `test` blocks: `--tests`.** A plain check does not declare or check `test` blocks, and neither does a build. With
 `--tests` the package is loaded the way `burdin test` loads it: the `test` blocks and their attributes are checked, and a

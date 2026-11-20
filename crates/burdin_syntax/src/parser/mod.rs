@@ -223,6 +223,15 @@ impl Parser<'_> {
         matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv | Comptime)
     }
 
+    /// Recovers from an item that did not parse, which began at token `start`: skips to the next item, and records
+    /// the whole stretch (from the item's first token to the last one skipped) in `unparsed`.
+    fn recover_unparsed_item(&mut self, start: usize, unparsed: &mut Vec<Span>) {
+        self.recover_item();
+        let first = self.toks[start].span;
+        let span = if self.pos > start { first.to(self.toks[self.pos - 1].span) } else { first };
+        unparsed.push(span);
+    }
+
     /// Skips to the start of the next item: an item keyword at the start of a line.
     fn recover_item(&mut self) {
         let mut depth = 0i32;
@@ -442,6 +451,31 @@ mod tests {
         let (file, out) = render("fn broken( { }\nfn good() {}\n");
         assert_eq!(out, "t.bd:1:12: error[E0001]: expected a parameter name, found `{`\n");
         assert_eq!(fn_names(&file), ["good"]);
+    }
+
+    #[test]
+    fn an_unreadable_item_is_recorded_from_its_first_token() {
+        // The unreadable `fn broken` is one region from its `fn` to the token recovery stopped at; the good items
+        // parse and record nothing.
+        let src = "fn broken( { }
+fn good() {}
+struct Bad { x i32 }
+";
+        let (file, _) = render(src);
+        let texts: Vec<&str> = file.unparsed.iter().map(|span| &src[span.lo as usize..span.hi as usize]).collect();
+        assert_eq!(texts, ["fn broken( { }", "struct Bad { x i32 }"]);
+        assert_eq!(fn_names(&file), ["good"]);
+    }
+
+    #[test]
+    fn a_readable_file_records_no_unreadable_item() {
+        let (file, out) = render(
+            "fn main() {}
+struct Point { x: i32 }
+",
+        );
+        assert_eq!(out, "");
+        assert!(file.unparsed.is_empty());
     }
 
     #[test]

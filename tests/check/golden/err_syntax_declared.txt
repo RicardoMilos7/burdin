@@ -1,0 +1,2 @@
+err_syntax_declared.bd:6:18: error[E0001]: expected `)`, found `{`
+error: could not check err_syntax_declared.bd (1 error)

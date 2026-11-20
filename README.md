@@ -745,8 +745,9 @@ After the diagnostics the driver prints a summary line and exits with status 1:
 error: could not compile bad.bd (1 error)
 ```
 
-The count is pluralized (`1 error`, `2 errors`). Semantic checks run only when there were no syntax errors, so a file
-with a syntax error may report fewer later diagnostics. Errors before or outside source checking (a malformed
+The count is pluralized (`1 error`, `2 errors`). A file with a syntax error is not type checked, and the other modules
+are checked against the declarations the broken file did read; the follow-on errors of a declaration that did not parse
+are left out, so a file with a syntax error may report fewer later diagnostics (`spec/check.md`, CK4). Errors before or outside source checking (a malformed
 manifest, a missing dependency, a dependency cycle, a missing target) are printed as `error: <message>` without an
 error code.
 

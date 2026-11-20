@@ -310,6 +310,13 @@ impl CheckCache {
         cache
     }
 
+    /// Turns storing and reuse on or off for the runs that follow. The query library turns it off for a program it
+    /// does not return (one with syntax errors), so that such a run leaves the answers of the last checked program in
+    /// place for the next edit to reuse.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
     /// The flag a run polls between bodies; setting it makes [`crate::check_cached`] return `None`.
     pub fn set_cancel(&mut self, cancel: Option<Arc<AtomicBool>>) {
         self.cancel = cancel;
@@ -525,10 +532,15 @@ pub(crate) struct Pass {
 }
 
 impl CheckCache {
-    /// Starts a run: forgets the entries a different set of declarations made, and resets the counters.
+    /// Starts a run: forgets the entries a different set of declarations made, and resets the counters. A run with
+    /// the cache switched off stores and reads nothing, so it keeps the entries of the last run: they are valid again
+    /// when the declarations of that run come back (a partial program's declarations differ only while it is partial).
     pub(crate) fn begin(&mut self, declarations: Fp) {
         self.generation += 1;
         self.stats = CheckStats::default();
+        if !self.enabled {
+            return;
+        }
         if self.declarations != Some(declarations) {
             self.entries.clear();
             self.declarations = Some(declarations);
