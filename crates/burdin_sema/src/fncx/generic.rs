@@ -17,10 +17,11 @@ impl FnCx<'_> {
         g: usize,
         id: &ast::Ident,
         args: &[ast::Arg],
+        explicit: &[ast::Type],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
-        self.generic_call_impl(g, id, args, None, span, expect)
+        self.generic_call_impl(g, id, args, None, explicit, span, expect)
     }
 
     /// A call to a generic function whose arguments are already checked, one expression per `args` entry (the
@@ -35,15 +36,17 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
-        self.generic_call_impl(g, id, args, Some(checked), span, expect)
+        self.generic_call_impl(g, id, args, Some(checked), &[], span, expect)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn generic_call_impl(
         &mut self,
         g: usize,
         id: &ast::Ident,
         args: &[ast::Arg],
         pre: Option<Vec<tir::Expr>>,
+        explicit: &[ast::Type],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
@@ -71,7 +74,11 @@ impl FnCx<'_> {
         // `T = i32`) specializes the hint for the later ones, which is what lets a closure see `Fn(&i32): U`
         // instead of `Fn(&T): U`.
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
-        let mut bindings = Vec::new();
+        // Explicit type arguments are bindings from the start, so inference keeps them (TA3).
+        let mut bindings = match self.explicit_bindings(&id.name, &info.params, &info.bounds, info.hidden, explicit) {
+            Some(bindings) => bindings,
+            None => return self.args_then_error(args, span),
+        };
         for (i, p) in pattern.params.iter().enumerate() {
             let Some(ai) = slots[i] else { continue };
             let hint = generic_hint(globals, &p.ty, &info.params, &info.bounds, &bindings);
@@ -161,6 +168,53 @@ impl FnCx<'_> {
             return error_expr(span);
         };
         mk(tir::ExprKind::Call(callee, checked), ret, span)
+    }
+
+    /// The bindings an explicit type-argument list gives a call (`f<T>(...)`, `spec/arguments.md`, TA1-TA4): one per
+    /// type parameter, in declaration order, so inference has nothing left to decide. A callee with an `impl`
+    /// parameter takes none (TA4). A list of the wrong length, or a type that does not resolve, is reported here and
+    /// gives `None`.
+    pub(super) fn explicit_bindings(
+        &mut self,
+        what: &str,
+        params: &[String],
+        bounds: &[Vec<Bound>],
+        hidden: bool,
+        explicit: &[ast::Type],
+    ) -> Option<Vec<(String, Ty)>> {
+        let (Some(first), Some(last)) = (explicit.first(), explicit.last()) else { return Some(Vec::new()) };
+        let list = first.span.to(last.span);
+        if hidden {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                list,
+                format!("`{what}` has an `impl` parameter, whose type is inferred, so it takes no type arguments"),
+            );
+            return None;
+        }
+        if explicit.len() != params.len() {
+            let plural = if params.len() == 1 { "" } else { "s" };
+            let given = if explicit.len() == 1 { "was" } else { "were" };
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                list,
+                format!("`{what}` takes {} type argument{plural}, but {} {given} given", params.len(), explicit.len()),
+            );
+            return None;
+        }
+        let mut out = Vec::new();
+        for ((name, bs), arg) in params.iter().zip(bounds).zip(explicit) {
+            // A const parameter takes a value (CG2), not a type.
+            let ty = match crate::globals::Globals::const_param_ty(bs) {
+                Some(declared) => self.globals.eval_const_arg(arg, declared, &self.subst, self.module, self.diags),
+                None => self.resolve(arg),
+            };
+            if ty == Ty::Error {
+                return None;
+            }
+            out.push((name.clone(), ty));
+        }
+        Some(out)
     }
 
     /// A method call on a value whose type is a type parameter: only what its bounds provide.
@@ -360,6 +414,7 @@ impl FnCx<'_> {
         &mut self,
         g: usize,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         expect: Option<&Ty>,
         span: Span,
@@ -367,6 +422,10 @@ impl FnCx<'_> {
         let globals = self.globals;
         let (is_enum, id) = globals.generic_adts[g].identity;
         if is_enum && let Some(vi) = globals.enums[id].variants.iter().position(|v| v.name == name.name) {
+            // A variant takes no type arguments (TA5).
+            if !explicit.is_empty() {
+                return self.reject_type_args(&name.name, explicit, args, span);
+            }
             let v = &globals.enums[id].variants[vi];
             if v.shape != tir::VariantShape::Tuple {
                 self.diags.error(
@@ -416,6 +475,10 @@ impl FnCx<'_> {
         let identity = if is_enum { globals.enum_refs[id].clone() } else { globals.struct_refs[id].clone() };
         let key = (is_enum, id);
         let method = globals.methods.get(&(key, name.name.clone())).copied();
+        // Only a method with type parameters of its own takes type arguments (TA5).
+        if !explicit.is_empty() && !method.is_some_and(|f| globals.method_templates.contains_key(&f)) {
+            return self.reject_type_args(&name.name, explicit, args, span);
+        }
         let Some(f) = method else {
             let Some(ty) = self.template_instance(g, Vec::new(), expect, span) else {
                 return self.args_then_error(args, span);
@@ -423,7 +486,7 @@ impl FnCx<'_> {
             if ty == Ty::Error {
                 return self.args_then_error(args, span);
             }
-            return self.assoc_call(&ty, name, args, span, expect);
+            return self.assoc_call(&ty, name, explicit, args, span, expect);
         };
         let pattern = globals.sigs[f.0].clone();
         if pattern.has_self {
@@ -466,7 +529,7 @@ impl FnCx<'_> {
         let Some(actual) = crate::globals::adt_key(&ty) else { return error_expr(span) };
         let Some(&func) = globals.methods.get(&(actual, name.name.clone())) else { return error_expr(span) };
         if let Some(info) = globals.method_templates.get(&func).cloned() {
-            return self.generic_assoc_method_call(info, &name.name, args, Some(checked), span, expect);
+            return self.generic_assoc_method_call(info, &name.name, explicit, args, Some(checked), span, expect);
         }
         let sig = globals.sigs[func.0].clone();
         let Some(checked) = self.args_pre(&name.name, &sig.params, args, None, span, Some(checked)) else {
@@ -594,11 +657,13 @@ impl FnCx<'_> {
 
     /// A call to a generic method (`it.map(|x| ...)`): infer its type arguments, check its bounds, and call the
     /// instance for them. `info` is the registered template; `recv` is the already-checked receiver.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn generic_method_call(
         &mut self,
         info: GenericMethod,
         recv: tir::Expr,
         name: &str,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
@@ -633,7 +698,11 @@ impl FnCx<'_> {
                 format!("`{name}` changes its receiver, but `{whose}` is not mutable"),
             );
         }
-        let mut bindings = Vec::new();
+        // Explicit type arguments are bindings from the start, so inference keeps them (TA3).
+        let mut bindings = match self.explicit_bindings(name, &params, &bounds, info.hidden, explicit) {
+            Some(bindings) => bindings,
+            None => return self.args_then_error(args, span),
+        };
         globals.unify(&receiver.ty, &recv.ty, &mut bindings);
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
         for (i, p) in pattern.params[1..].iter().enumerate() {
@@ -716,10 +785,12 @@ impl FnCx<'_> {
     /// `Set<i32>.from_iter(it)`): the arguments are checked first, the type arguments come from them and then from the
     /// expected type, and the call goes to the instance for those arguments. `pre` holds arguments that are already
     /// checked, one per written argument.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn generic_assoc_method_call(
         &mut self,
         info: GenericMethod,
         name: &str,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         pre: Option<Vec<tir::Expr>>,
         span: Span,
@@ -735,7 +806,12 @@ impl FnCx<'_> {
             }
             return error_expr(span);
         };
-        let mut bindings = Vec::new();
+        // Explicit type arguments are bindings from the start (TA3). When `pre` is set the arguments were checked.
+        let mut bindings = match self.explicit_bindings(name, &params, &bounds, info.hidden, explicit) {
+            Some(bindings) => bindings,
+            None if pre.is_some() => return error_expr(span),
+            None => return self.args_then_error(args, span),
+        };
         let mut checked: Vec<Option<tir::Expr>> = (0..args.len()).map(|_| None).collect();
         for (i, p) in pattern.params.iter().enumerate() {
             let Some(ai) = slots[i] else { continue };

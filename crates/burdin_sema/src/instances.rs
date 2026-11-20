@@ -221,6 +221,7 @@ impl<'t> Sema<'t> {
                 identity,
                 params: self.tpl.methods[index].params.clone(),
                 bounds: self.tpl.methods[index].bounds.clone(),
+                hidden: decl.generics.iter().any(|g| g.hidden),
             },
         );
     }

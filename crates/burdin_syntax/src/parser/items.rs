@@ -874,7 +874,7 @@ impl Parser<'_> {
             };
             let name = Ident { name, span };
             ty.kind = TypeKind::Path(vec![PathSegment { name: name.clone(), args: Vec::new() }]);
-            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None, default: None });
+            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None, default: None, hidden: true });
         }
         generics
     }
@@ -895,13 +895,13 @@ impl Parser<'_> {
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.ty()?;
                 let default = if self.eat(&TokenKind::Eq) { Some(self.generic_arg()?) } else { None };
-                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty), default });
+                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty), default, hidden: false });
             } else {
                 let name = self.ident("a generic parameter name")?;
                 let bounds = if self.eat(&TokenKind::Colon) { self.bounds()? } else { Vec::new() };
                 // `A: Allocator = Global`: a default for an omitted type argument (`spec/allocators.md`, AL5).
                 let default = if self.eat(&TokenKind::Eq) { Some(self.ty()?) } else { None };
-                params.push(GenericParam { name, bounds, const_ty: None, default });
+                params.push(GenericParam { name, bounds, const_ty: None, default, hidden: false });
             }
             if !self.eat(&TokenKind::Comma) {
                 if !self.eat_closing_angle() {

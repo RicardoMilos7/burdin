@@ -1,0 +1,7 @@
+fn convert<T>(own x: T): T {
+    x
+}
+
+fn pick<T>(own x: T): T {
+    x
+}

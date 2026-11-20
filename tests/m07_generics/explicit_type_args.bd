@@ -1,0 +1,72 @@
+//@ run
+//> 5
+//> 6
+//> two
+//> wrapped
+//> 7
+//> 3
+//> 9
+//> 16
+//> 3
+
+// Explicit type arguments at a call (`spec/arguments.md`, TA1-TA3, issue #847): a generic function under a lowercase
+// and an uppercase name, two type parameters, a method and an associated function with type parameters of their own,
+// an associated function of a generic type, a generic body that forwards its own parameter, and a const parameter. A
+// call without the list still infers its arguments.
+
+struct Holder {
+    n: i32,
+}
+
+Holder {
+    fn wrap<U>(self, own u: U): U {
+        u
+    }
+
+    fn make<U>(own u: U): U {
+        u
+    }
+}
+
+struct Box<A> {
+    value: A,
+}
+
+Box<A> {
+    fn tag<U>(own u: U): U {
+        u
+    }
+}
+
+fn id<T>(own x: T): T {
+    x
+}
+
+fn Pick<T>(own x: T): T {
+    x
+}
+
+fn pair<A, B>(own a: A, own b: B): B {
+    b
+}
+
+fn forward<T>(own x: T): T {
+    id<T>(x)
+}
+
+fn len_of<const N: usize>(a: [i32; N]): usize {
+    N
+}
+
+fn main() {
+    println("{id<i32>(5)}")
+    println("{id(6)}")
+    println(pair<i32, String>(1, "two".to_string()))
+    let h = Holder { n: 1 }
+    println(h.wrap<str>("wrapped"))
+    println("{Holder.make<i32>(7)}")
+    println("{Box<i32>.tag<i32>(3)}")
+    println("{forward<i32>(9)}")
+    println("{Pick<i32>(16)}")
+    println("{len_of<3>([1, 2, 3])}")
+}
