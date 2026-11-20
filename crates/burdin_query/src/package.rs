@@ -603,6 +603,11 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// `[package] include`: the file patterns `burdin package` selects, when the manifest gives any
+    /// (`spec/packages.md`, PKG21).
+    pub include: Option<Vec<String>>,
+    /// `[package] exclude`: the file patterns `burdin package` leaves out (PKG21).
+    pub exclude: Vec<String>,
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
@@ -622,6 +627,8 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
+    let mut include: Option<Vec<String>> = None;
+    let mut exclude: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -651,6 +658,19 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                         let known: Vec<&str> = burdin_sema::Edition::ALL.iter().map(|e| e.as_str()).collect();
                         format!("{}: unknown edition `{text}` (this compiler knows {})", where_(), known.join(" and "))
                     })?;
+                } else if key == "include" || key == "exclude" {
+                    let patterns = parse_string_array(value).map_err(|e| format!("{}: `{key}`: {e}", where_()))?;
+                    if let Some(bad) = patterns.iter().find(|p| p.is_empty() || p.starts_with('/')) {
+                        return Err(format!(
+                            "{}: `{key}` pattern `{bad}` must be a path relative to the package",
+                            where_()
+                        ));
+                    }
+                    if key == "include" {
+                        include = Some(patterns);
+                    } else {
+                        exclude = patterns;
+                    }
                 }
             }
             "dependencies" => {
@@ -709,7 +729,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    Ok(Manifest { name, version, deps, build_allow, lint, rust, edition })
+    Ok(Manifest { name, version, deps, build_allow, lint, rust, edition, include, exclude })
 }
 
 /// A `["a", "b"]` array of quoted strings, also accepting a single `"a"`.

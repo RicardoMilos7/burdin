@@ -327,6 +327,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python3 tests/check_package_tools.py
+
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
       - name: Check the json package
@@ -735,6 +741,12 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
+
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python3 tests/check_package_tools.py
 
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
@@ -1151,6 +1163,12 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
+
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python tests/check_package_tools.py
 
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
