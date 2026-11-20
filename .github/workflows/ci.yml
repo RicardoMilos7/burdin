@@ -343,6 +343,11 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
+      # dependencies, and one lockfile at the root (spec/workspaces.md).
+      - name: Check workspaces
+        if: matrix.part == 'tools'
+        run: python3 tests/check_workspace.py
       # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
       # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
       # module, and the lockfile that pins the potential graph.
@@ -787,6 +792,11 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
+      # dependencies, and one lockfile at the root (spec/workspaces.md).
+      - name: Check workspaces
+        if: matrix.part == 'tools'
+        run: python3 tests/check_workspace.py
       # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
       # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
       # module, and the lockfile that pins the potential graph.
@@ -1238,6 +1248,11 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
 
+      # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
+      # dependencies, and one lockfile at the root (spec/workspaces.md).
+      - name: Check workspaces
+        if: matrix.part == 'tools'
+        run: python tests/check_workspace.py
       # Dependency tables, features, and targets (issues #340, #341): feature selection, forwarding, and unification
       # across the graph, optional and dev-dependencies, target-specific dependencies, the generated `features`
       # module, and the lockfile that pins the potential graph.

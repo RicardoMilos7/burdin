@@ -9,6 +9,7 @@ use crate::git;
 use crate::resolve;
 use burdin_query::lockfile::{self, GitRef, quote};
 use burdin_query::package::{self, is_ident, source_path_text};
+use burdin_query::workspace;
 use std::path::{Component, Path, PathBuf};
 
 /// Where the new dependency comes from, as the command line gave it.
@@ -94,7 +95,9 @@ pub fn add(request: &Request) -> Result<Added, String> {
     // Resolve the whole graph against the new manifest before writing either file. Every commit the lockfile pins
     // stays, except the added dependency's: it builds the commit just resolved, so adding a branch again moves it
     // to the branch's head (PKG13).
-    let mut existing = lockfile::read(&manifest_dir)?;
+    // A member's lockfile is the workspace's, beside the workspace root's manifest (WS14).
+    let lock_dir = workspace::lock_dir(&manifest_dir)?;
+    let mut existing = lockfile::read(&lock_dir)?;
     if let (Source::Git { url, reference }, Some(lock), Some(commit)) =
         (&request.source, existing.as_mut(), &fresh_commit)
     {
@@ -108,7 +111,7 @@ pub fn add(request: &Request) -> Result<Added, String> {
     let resolution = resolve::resolve(&manifest_dir, Some(&new_text), existing.as_ref(), false)?;
     std::fs::write(&manifest_path, &new_text)
         .map_err(|e| format!("cannot write {}: {e}", source_path_text(&manifest_path)))?;
-    resolve::write(&manifest_dir, &resolution.lock)?;
+    resolve::write(&lock_dir, &resolution.lock)?;
     Ok(Added { name, replaced, source: shown })
 }
 

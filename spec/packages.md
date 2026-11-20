@@ -65,7 +65,9 @@ the repository does not have is an error: `<url> has no tag nope`. Tests: `tests
 
 ## `burdin.lock`
 
-**PKG5. The format.** The lockfile sits beside the entry package's `burdin.toml`. It is a TOML file that burdin
+**PKG5. The format.** The lockfile sits beside the entry package's `burdin.toml`, or, for a member of a
+manifest-level workspace, beside the *workspace root's* manifest: one lockfile records the whole workspace graph
+(`spec/workspaces.md`, WS14). It is a TOML file that burdin
 writes and reads itself: a header comment, `version = 1`, and one `[[package]]` table per package of the graph, the
 entry package included, sorted by name:
 
@@ -411,7 +413,7 @@ dev-dependencies. A dependency's own dev-dependencies appear nowhere in the lock
 - Weak features (`dep?/feature`), and a resolver that does not unify features across the graph. Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
   the lockfile (which re-resolves every git dependency).
 - A git dependency whose package is in a subdirectory of the repository.
-- Publishing a package (`burdin publish`, a registry), workspaces, compressed archives, and `--offline` for `burdin add`.
+- Publishing a package (`burdin publish`, a registry), compressed archives, and `--offline` for `burdin add`.
   Vendoring copies no path packages.
 - Doc tests build each example as its own package, so an example of a package with git dependencies resolves them
   for that example instead of reading the documented package's lockfile.

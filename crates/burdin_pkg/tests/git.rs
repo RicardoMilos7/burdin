@@ -9,6 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The tests set `BURDIN_HOME`, which is process-wide, so they take turns.
+static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(["-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
@@ -39,10 +42,11 @@ fn a_git_dependency_is_added_pinned_checked_and_loaded() {
         eprintln!("skipped: no git on PATH");
         return;
     }
+    let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let work: PathBuf = std::env::temp_dir().join(format!("burdin-pkg-git-{}", std::process::id()));
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).unwrap();
-    // SAFETY: this test binary has one test, so no other thread reads the environment.
+    // SAFETY: the tests take `ENV` in turn, so no other thread reads the variable while it is set.
     unsafe { std::env::set_var("BURDIN_HOME", work.join("home")) };
 
     let repo = work.join("colors");
@@ -96,6 +100,58 @@ fn a_git_dependency_is_added_pinned_checked_and_loaded() {
     assert!(error.contains("do not match the checksum"), "{error}");
     fs::remove_dir_all(&checkout).unwrap();
     assert_eq!(sync(&app, true).unwrap(), Synced::UpToDate, "deleting the checkout fetches it again");
+
+    let _ = fs::remove_dir_all(&work);
+}
+
+#[test]
+fn a_workspace_locks_every_member() {
+    if Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipped: no git on PATH");
+        return;
+    }
+    let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let work: PathBuf = std::env::temp_dir().join(format!("burdin-pkg-workspace-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work).unwrap();
+    // SAFETY: the tests take `ENV` in turn, so no other thread reads the variable while it is set.
+    unsafe { std::env::set_var("BURDIN_HOME", work.join("home")) };
+
+    let repo = work.join("colors");
+    package(&repo, "colors", "fn shade(): i32 {\n    1\n}\n");
+    git(&repo, &["init", "--quiet"]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "--quiet", "-m", "one"]);
+    let url = file_url(&repo);
+
+    // A virtual root with two members: `app` reaches the git dependency, `lib` depends on `app`.
+    let root = work.join("ws");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("burdin.toml"), "[workspace]\nmembers = [\"app\", \"lib\"]\n").unwrap();
+    let app = root.join("app");
+    package(&app, "app", "fn main() {}\n");
+    fs::write(
+        app.join("burdin.toml"),
+        format!("[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies]\ncolors = {{ git = \"{url}\" }}\n"),
+    )
+    .unwrap();
+    let lib = root.join("lib");
+    package(&lib, "lib", "fn plus(): i32 {\n    1\n}\n");
+    fs::write(
+        lib.join("burdin.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n\n[dependencies]\napp = { path = \"../app\" }\n",
+    )
+    .unwrap();
+
+    // A command in a member's directory writes one lockfile, at the workspace root, with every member in it.
+    sync(&lib, false).unwrap();
+    assert!(root.join("burdin.lock").is_file(), "no lockfile at the workspace root");
+    assert!(!lib.join("burdin.lock").exists(), "a member wrote its own lockfile");
+    let lock = lockfile::read(&root).unwrap().expect("a lockfile");
+    for name in ["app", "colors", "lib"] {
+        assert!(lock.package(name).is_some(), "burdin.lock has no `{name}`");
+    }
+    assert_eq!(sync(&root, true).unwrap(), Synced::UpToDate);
 
     let _ = fs::remove_dir_all(&work);
 }

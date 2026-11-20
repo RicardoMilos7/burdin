@@ -38,6 +38,7 @@ mod scripts;
 mod test_runner;
 mod vendor;
 mod watch;
+mod workspace;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
 pub(crate) use burdin_query::EntryMode;
@@ -97,8 +98,14 @@ pub(crate) struct Args {
     pub(crate) jobs: Option<usize>,
     // `burdin test` only.
     pub(crate) verbose: bool,
+    /// `-p <name>` and `--package <name>`: the packages to build, run, test, or bench (`spec/workspaces.md`, WS6).
     pub(crate) packages: Vec<String>,
+    /// `--workspace`: every member of the workspace the target belongs to.
     pub(crate) workspace: bool,
+    /// `--exclude <name>`: a member `--workspace` leaves out.
+    pub(crate) exclude: Vec<String>,
+    /// What the command runs on, decided from the selection flags and the target after parsing (`workspace.rs`).
+    pub(crate) scope: workspace::Scope,
     pub(crate) ignored_only: bool,
     pub(crate) include_ignored: bool,
     /// The positional filters and every `--filter`: a test runs when its full path matches any of them.
@@ -271,8 +278,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
-            "-p" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
             "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
             "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
             "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
             "--filter" => args.filters.push(option_value(&mut it, inline, a, "a text")?),
@@ -472,9 +480,6 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         if args.verbose {
             return Err("`--verbose` is only valid for `burdin test` and `burdin bench`".to_string());
         }
-        if !args.packages.is_empty() || args.workspace {
-            return Err("`-p` and `--workspace` are only valid for `burdin test` and `burdin bench`".to_string());
-        }
         if !args.filters.is_empty() {
             return Err("`--filter` is only valid for `burdin test` and `burdin bench`".to_string());
         }
@@ -543,6 +548,11 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if args.ignored_only && args.include_ignored {
         return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
+    }
+    if args.command == "fuzz" && (!args.packages.is_empty() || args.workspace || !args.exclude.is_empty()) {
+        return Err("`-p`, `--workspace`, and `--exclude` are only valid for `burdin build`, `burdin run`, \
+             `burdin test`, and `burdin bench`"
+            .to_string());
     }
     if args.workspace && !args.packages.is_empty() {
         return Err("`-p` and `--workspace` cannot be used together".to_string());
@@ -750,10 +760,23 @@ fn driver_main() -> ExitCode {
         "build" | "run" | "test" | "check" if watch::asks_for_watch(rest) => return watch::run_flagged(&command, rest),
         _ => {}
     }
-    let args = match parse_args(&argv) {
+    let mut args = match parse_args(&argv) {
         Ok(a) => a,
         Err(msg) => return cli::usage_error(&command, &msg),
     };
+    // The profile is read before the scope: a member build reuses the target's profile.
+    if matches!(args.command.as_str(), "build" | "run" | "test" | "bench") {
+        let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
+        let graph = matches!(args.command.as_str(), "test" | "bench");
+        match workspace::choose(&args.target, flags, graph) {
+            Ok(scope) => args.scope = scope,
+            Err(workspace::Failure::Usage(message)) => return cli::usage_error(&args.command, &message),
+            Err(workspace::Failure::Error(message)) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(1);
+            }
+        }
+    }
     let default_profile = match command.as_str() {
         "test" => "test",
         "bench" => "bench",
@@ -764,7 +787,6 @@ fn driver_main() -> ExitCode {
             Ok(profile) => profile,
             Err(code) => return code,
         };
-    let mut args = args;
     args.profile = profile;
     let emit = (!args.emit.is_empty()).then(|| emit::Emit {
         kinds: args.emit.clone(),
@@ -795,10 +817,7 @@ fn driver_main() -> ExitCode {
         fuzz_target: None,
     };
     match args.command.as_str() {
-        "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(code) => code,
-        },
+        "build" => build(&args, &options),
         "run" => run(&args, &options),
         "bench" => bench_runner::run(&args),
         "fuzz" => fuzz_runner::run(&args),
@@ -839,7 +858,76 @@ fn code_list() -> String {
     burdin_diag::code_list()
 }
 
+/// `burdin build`: one executable per selected package that has a `src/main.bd` (`spec/workspaces.md`, WS9). A
+/// package outside a workspace is built as before, into the working directory. A member's executable goes under its
+/// own `target/burdin/<profile>/`. The first build that fails stops the command.
+fn build(args: &Args, options: &CompileOptions) -> ExitCode {
+    let workspace::Scope::Members { members, named, .. } = &args.scope else {
+        return match compile(&args.target, Path::new("."), args.output.as_deref(), options) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(code) => code,
+        };
+    };
+    let mut entries = Vec::new();
+    for member in members {
+        if member.dir.join("src").join("main.bd").is_file() {
+            entries.push(member);
+        } else if named.contains(&member.name) {
+            eprintln!("error: `{}` has no src/main.bd to build, and `-p` names it", member.name);
+            return ExitCode::from(1);
+        } else {
+            eprintln!("note: skipped {}: it has no src/main.bd", member.name);
+        }
+    }
+    if entries.is_empty() {
+        eprintln!("error: no selected package has a src/main.bd to build");
+        return ExitCode::from(1);
+    }
+    let one_file = args.output.is_some() || args.emit_ir.is_some() || args.emit_deps.is_some();
+    if one_file && entries.len() > 1 {
+        return cli::usage_error(
+            "build",
+            "`-o`, `--emit-ir`, and `--emit-deps` name one file: select one package with `-p` (this build selects several)",
+        );
+    }
+    // The profile is the one resolved from the target: a workspace root defines the profiles its members build with
+    // (`spec/profiles.md`, `spec/workspaces.md`).
+    let profile = &options.profile.dir;
+    for member in entries {
+        let out_dir = member.dir.join("target").join("burdin").join(profile).join("bin");
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("error: cannot create {}: {e}", package::source_path_text(&out_dir));
+            return ExitCode::from(1);
+        }
+        if let Err(code) = compile(&member.dir, &out_dir, args.output.as_deref(), options) {
+            return code;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 fn run(args: &Args, options: &CompileOptions) -> ExitCode {
+    // `burdin run` runs one program, so the selection must name exactly one member (WS10).
+    if let workspace::Scope::Members { members, .. } = &args.scope {
+        let [member] = members.as_slice() else {
+            let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
+            return cli::usage_error(
+                "run",
+                &format!(
+                    "`burdin run` runs one program: select one package with `-p` (this selects {})",
+                    names.join(", ")
+                ),
+            );
+        };
+        if !member.dir.join("src").join("main.bd").is_file() {
+            eprintln!("error: `{}` has no src/main.bd to run", member.name);
+            return ExitCode::from(1);
+        }
+        let mut single = args.clone();
+        single.target = member.dir.clone();
+        single.scope = workspace::Scope::Standalone;
+        return run(&single, options);
+    }
     // A one-file target that makes itself a script runs from a content-addressed cache (`spec/scripts.md`, SC5).
     if let Some(code) = scripts::run_script(args, options) {
         return code;
@@ -2354,7 +2442,20 @@ mod tests {
     #[test]
     fn test_options_are_rejected_for_other_commands() {
         assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
-        assert!(parse(&["build", "app", "--workspace"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(
+            parse(&["fuzz", "app", "target", "--workspace"]).unwrap_err().contains("only valid for `burdin build`")
+        );
+    }
+
+    #[test]
+    fn selection_flags_are_parsed_for_building_commands() {
+        let args = parse(&["build", "root", "--package", "app", "--exclude=lib"]).unwrap();
+        assert_eq!(args.packages, ["app"]);
+        assert_eq!(args.exclude, ["lib"]);
+        assert!(!args.workspace);
+        let args = parse(&["run", "root", "-p", "app"]).unwrap();
+        assert_eq!(args.packages, ["app"]);
+        assert!(parse(&["build", "root", "--workspace", "-p", "app"]).unwrap_err().contains("cannot be used together"));
     }
 
     #[test]

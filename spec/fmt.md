@@ -182,9 +182,13 @@ space between items, are unchanged, so formatting a range inside an already form
 
 ```
 burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
+burdin fmt -p <member>... | --workspace [--exclude <member>]... [--check] [-j <n>] [diagnostics]
 burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
 ```
 
+- In a manifest-level workspace (`spec/workspaces.md`, WS13), `-p`, `--workspace`, and `--exclude` select the
+  members whose directories are formatted, found from the working directory; they cannot be combined with paths or
+  `--stdin`. Two members and the directories between them may hold the same file, and a file is formatted once.
 - With paths, `burdin fmt` formats each `.bd` file in place. A directory means every `.bd` file under it, in sorted
   order, skipping directories that start with `.` and `target`; with no path it means the current directory. A file
   that is already formatted is not written (its modification time is unchanged). The path of every file the command

@@ -3,6 +3,7 @@
 //! the files, tells the formatter how to group `use` declarations, and reports.
 
 use crate::package;
+use crate::workspace;
 use crate::{
     ColorChoice, DiagnosticOptions, flag_without_value, jobs_or_default, option_value, parse_color, parse_format,
     parse_jobs, parse_number,
@@ -26,6 +27,17 @@ struct FmtArgs {
     /// `-j`: the most files formatted at once.
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
+    /// `-p`, `--workspace`, and `--exclude`: the members whose directories to format (`spec/workspaces.md`, WS13).
+    packages: Vec<String>,
+    workspace: bool,
+    exclude: Vec<String>,
+}
+
+impl FmtArgs {
+    /// Whether a selection flag was given, so the paths come from the workspace instead of the command line.
+    fn selects(&self) -> bool {
+        !self.packages.is_empty() || self.workspace || !self.exclude.is_empty()
+    }
 }
 
 fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
@@ -42,6 +54,9 @@ fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
             "--check" => args.check = flag_without_value(a, inline)?,
             "--stdin" => args.stdin = flag_without_value(a, inline)?,
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
+            "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
             "--stdin-filepath" => args.stdin_filepath = Some(option_value(&mut it, inline, a, "a path")?.into()),
             "--range" => {
                 let value = option_value(&mut it, inline, a, "a byte range such as 10:200")?;
@@ -74,6 +89,13 @@ fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
             _ => args.paths.push(PathBuf::from(a)),
         }
     }
+    if args.selects() && (args.stdin || !args.paths.is_empty()) {
+        return Err(
+            "`-p`, `--workspace`, and `--exclude` select the packages to format; they cannot be combined with paths \
+             or `--stdin`"
+                .to_string(),
+        );
+    }
     if args.stdin {
         if !args.paths.is_empty() {
             return Err("`--stdin` formats standard input; it does not take files".to_string());
@@ -85,7 +107,7 @@ fn parse_fmt_args(argv: &[String]) -> Result<FmtArgs, String> {
         if args.range.is_some() {
             return Err("`--range` is only valid with `--stdin`".to_string());
         }
-        if args.paths.is_empty() {
+        if args.paths.is_empty() && !args.selects() {
             args.paths.push(PathBuf::from("."));
         }
     }
@@ -104,10 +126,23 @@ fn parse_range(value: &str) -> Result<(usize, usize), String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
-    let args = match parse_fmt_args(argv) {
+    let mut args = match parse_fmt_args(argv) {
         Ok(args) => args,
         Err(message) => return crate::cli::usage_error("fmt", &message),
     };
+    if args.selects() {
+        // The selection is found from the working directory: the workspace it belongs to (WS13).
+        let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
+        args.paths = match workspace::choose(Path::new("."), flags, false) {
+            Ok(workspace::Scope::Members { members, .. }) => members.into_iter().map(|member| member.dir).collect(),
+            Ok(workspace::Scope::Standalone) => vec![PathBuf::from(".")],
+            Err(workspace::Failure::Usage(message)) => return crate::cli::usage_error("fmt", &message),
+            Err(workspace::Failure::Error(message)) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(1);
+            }
+        };
+    }
     if args.stdin { run_stdin(&args) } else { run_files(&args) }
 }
 
