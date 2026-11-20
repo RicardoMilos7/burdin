@@ -440,8 +440,10 @@ and share their record and baselines under the root's `target/`, doc writes a si
 selected members' directories. Outside a workspace the flags behave as before. `tests/check_workspace.py` proves the
 behavior black-box (46 checks) and every CI job runs it; the parser, membership, selection, and workspace-lockfile rules
 have unit tests. The decisions are `spec/workspaces.md` WS1-WS18. Not done: `--offline`, multi-line arrays in a
-manifest, `**` in a member pattern, moving an inherited edition with `burdin fix --migrate`, and one workspace target
-directory (outputs stay under each package's `target/`).
+manifest, `**` in a member pattern, and moving an inherited edition with `burdin fix --migrate`. The forty-eighth session
+closed issue #240 with the one missing piece, a shared target directory (WS19): members build into the root's `target/`,
+and a member's build-script and Rust-shim state sits in `target/burdin/<profile>/packages/<name>/`. `burdin doc` still
+writes per-member `target/doc`.
 
 The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
 pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load

@@ -11,7 +11,7 @@ What it checks:
     directory selects that member, and `exclude` keeps a package out of the workspace (WS2, WS5, WS9, WS10);
   * the selection flags for build, run, test, doc, and fmt, and each usage error (exit status 2): an unknown name,
     `-p` with `--workspace`, `--exclude` without `--workspace`, `-o` for several packages, `fmt` with paths, and `run`
-    of several packages (WS6, WS8-WS13);
+    of several packages (WS6, WS8-WS13, WS19);
   * `build -p` of a package without `src/main.bd` fails, and the same package named by `--workspace` is skipped with
     its note (WS9);
   * `test` runs the selected members in one report, and `doc` writes one site per member under its own `target/doc`
@@ -61,7 +61,7 @@ def err(result) -> str:
 
 
 def built(package_dir: Path, stem: str, profile: str = "debug") -> bool:
-    """Whether `burdin build` wrote the executable `stem` under the package's own target directory."""
+    """Whether `burdin build` wrote the executable `stem` under the workspace root's shared target directory."""
     folder = package_dir / "target" / "burdin" / profile / "bin"
     return any((folder / (stem + suffix)).is_file() for suffix in EXE_SUFFIXES)
 
@@ -134,8 +134,8 @@ with harness.temporary_dir("burdin-workspace-") as work:
     ws = fixture("default")
     built_default = burdin_in(ws, "build", ".")
     check(built_default.returncode == 0, f"`build` of the virtual root failed: {err(built_default)[:400]}")
-    check(built(ws / "apps" / "cli", "cli"), "the default build did not write cli under its target directory")
-    check(not built(ws / "apps" / "tool", "tool"), "the default build built a package outside the default members")
+    check(built(ws, "cli"), "the default build did not write cli under the root's shared target directory")
+    check(not built(ws, "tool"), "the default build built a package outside the default members")
     check(not (ws / "apps" / "old" / "target").exists(), "an excluded package was built")
     ran = burdin_in(ws, "run", ".")
     check(ran.returncode == 0 and out(ran) == "42\n", f"`run` of the virtual root: {out(ran)!r} {err(ran)[:300]}")
@@ -143,16 +143,17 @@ with harness.temporary_dir("burdin-workspace-") as work:
     ws = fixture("member-dir")
     tool = burdin_in(ws / "apps" / "tool", "build", ".")
     check(tool.returncode == 0, f"`build` in a member's directory failed: {err(tool)[:400]}")
-    check(built(ws / "apps" / "tool", "tool"), "a build in a member's directory did not build that member")
-    check(not (ws / "apps" / "cli" / "target").exists(), "a build in a member's directory built the default members too")
+    check(built(ws, "tool"), "a build in a member's directory did not build that member")
+    check(not built(ws, "cli"), "a build in a member's directory built the default members too")
+    check(not (ws / "apps" / "tool" / "target").exists(), "a member kept a target directory of its own")
 
     # --- Selection flags for build (WS6, WS8, WS9) ---
     ws = fixture("build-flags")
     everything = burdin_in(ws, "build", ".", "--workspace")
     check(everything.returncode == 0, f"`build --workspace` failed: {err(everything)[:400]}")
     check("note: skipped kit: it has no src/main.bd" in err(everything), f"no skip note for kit: {err(everything)!r}")
-    check(built(ws / "apps" / "cli", "cli") and built(ws / "apps" / "tool", "tool"), "`--workspace` did not build every entry")
-    check(not built(ws / "libs" / "kit", "kit"), "a library was built as an executable")
+    check(built(ws, "cli") and built(ws, "tool"), "`--workspace` did not build every entry")
+    check(not built(ws, "kit"), "a library was built as an executable")
 
     missing_entry = burdin_in(ws, "build", ".", "-p", "kit")
     check(missing_entry.returncode == 1 and "`kit` has no src/main.bd to build" in err(missing_entry),
@@ -175,7 +176,7 @@ with harness.temporary_dir("burdin-workspace-") as work:
     # A profile declared on the workspace root applies to the members (spec/profiles.md, spec/workspaces.md).
     write(ws / "burdin.toml", harness.read_text(ws / "burdin.toml") + '\n[profile.fast]\ninherits = "dev"\nopt-level = 1\n')
     fast = burdin_in(ws, "build", ".", "-p", "cli", "--profile", "fast")
-    check(fast.returncode == 0 and built(ws / "apps" / "cli", "cli", "fast"),
+    check(fast.returncode == 0 and built(ws, "cli", "fast"),
           f"`build --profile fast` of a member: {err(fast)[:300]!r}")
     one = burdin_in(ws, "build", ".", "-p", "cli", "-p", "cli", "-o", "one")
     # The linker adds the executable suffix where the platform has one.
