@@ -316,8 +316,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
@@ -744,8 +745,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
@@ -1179,8 +1181,9 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_rust_interop.py
 
-      # `burdin new`: the generated package, refusing to overwrite, invalid names, and the command line (issue #228).
-      - name: Check burdin new
+      # `burdin new` and `burdin init`: the generated packages (programs and `--lib` libraries), refusing to overwrite,
+      # invalid names, and the command line (issues #228, #354).
+      - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python tests/check_new.py
 

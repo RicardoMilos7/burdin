@@ -720,6 +720,7 @@ fn driver_main() -> ExitCode {
         "doc" => return doc::run(rest),
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),
+        "init" => return new::run_init(rest),
         "add" => return add::run(rest),
         "clean" => return clean::run(rest),
         "package" => return pack::run(rest),

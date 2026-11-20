@@ -8,7 +8,8 @@ What it checks:
     when it is fixed, printing the error and the success of each run;
   * a file written under `target/` or `.git/`, `.git/`, and `burdin.lock` do not start a run;
   * the screen is cleared before each run unless `--no-clear`;
-  * `burdin build --watch` rebuilds without being triggered by its own executable;
+  * `burdin build --watch` rebuilds without being triggered by its own executable, and a changed file inside a build
+    script's declared directory input rebuilds too;
   * `burdin test --watch` reruns the tests of the changed module and its dependents before the whole suite;
   * `burdin watch run` restarts the program after a change and prints its new output, with the feature flags it was
     given (`spec/packages.md`, PKG25);
@@ -173,6 +174,30 @@ with harness.temporary_dir("burdin-watch-") as work:
         check(harness.text(ran.stdout).strip() == "two", f"the rebuilt program printed {harness.text(ran.stdout)!r}")
     finally:
         builder.stop()
+
+    # --- build: a build script's declared directory input is watched --------------------------------------------------
+    scripted = make_package(work, "scripted", {"main.bd": GOOD})
+    # The directory is outside the package, so only the script's declared input can make it watched.
+    shared = work / "shared-include"
+    write(shared / "value.h", "first\n")
+    write(
+        scripted / "build.bd",
+        'fn main() {\n    println("the script ran")\n    let args = env.args()\n    let out = args[2]\n'
+        '    match write_file("{out}/inputs", "../shared-include\\n") {\n        Ok(_) => {}\n'
+        '        Err(_) => panic("cannot write the input list"),\n    }\n}\n',
+    )
+    script_watcher = Watch(["build", ".", "--watch", "--no-clear"], scripted)
+    try:
+        check(script_watcher.wait_runs(1), "`burdin build --watch` with a build script did not finish the first build")
+        check("the script ran" in script_watcher.output(), "the first build did not run the build script")
+        runs = script_watcher.waiting()
+        write(shared / "value.h", "changed\n")
+        check(
+            script_watcher.wait_runs(runs + 1),
+            "a changed file inside a build script's declared directory input did not rebuild",
+        )
+    finally:
+        script_watcher.stop()
 
     # --- test: the changed module and its dependents run first -------------------------------------------------------
     testing = make_package(

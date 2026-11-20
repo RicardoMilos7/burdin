@@ -204,6 +204,7 @@ pub(crate) fn command() -> Command {
             refactor(),
             doc(),
             new(),
+            init(),
             add(),
             clean(),
             package(),
@@ -838,9 +839,37 @@ fn doc() -> Command {
 fn new() -> Command {
     Command::new("new")
         .about("Create a new package")
-        .override_usage("burdin new <name>")
+        .override_usage("burdin new <name> [--lib | --bin]")
         .arg(Arg::new("name").value_name("name").required(true).help("The package directory to create"))
-        .after_help("Creates <name>/burdin.toml, <name>/src/main.bd, and <name>/.gitignore.")
+        .args(kind_flags())
+        .after_help(
+            "Creates <name>/burdin.toml, <name>/src/main.bd (or <name>/src/lib.bd with --lib), and <name>/.gitignore. \
+             It refuses a path that already exists.",
+        )
+}
+
+fn init() -> Command {
+    Command::new("init")
+        .about("Create a package in an existing directory")
+        .override_usage("burdin init [<dir>] [--lib | --bin]")
+        .arg(
+            Arg::new("dir")
+                .value_name("dir")
+                .help("The existing directory to write the package into (default: the working directory)"),
+        )
+        .args(kind_flags())
+        .after_help(
+            "Writes burdin.toml, src/main.bd (or src/lib.bd with --lib), and .gitignore into <dir>, and leaves its \
+             other files alone. It refuses, before writing anything, when one of those files already exists.",
+        )
+}
+
+/// `--lib` and `--bin`, the two package shapes. A package is a program unless `--lib` is given.
+fn kind_flags() -> [Arg; 2] {
+    [
+        flag("lib", "Create a library: src/lib.bd, which `burdin test` runs and other packages `use`"),
+        flag("bin", "Create a program: src/main.bd, which `burdin run` runs (the default)"),
+    ]
 }
 
 fn add() -> Command {
@@ -1147,8 +1176,8 @@ mod tests {
     fn the_command_list_names_every_command() {
         let help = command().render_help().to_string();
         for name in [
-            "build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "clean", "package", "vendor",
-            "explain", "watch", "lsp",
+            "build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "init", "add", "clean", "package",
+            "vendor", "explain", "watch", "lsp",
         ] {
             assert!(help.contains(&format!("  {name} ")), "`{name}` is missing from:\n{help}");
         }

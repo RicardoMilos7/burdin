@@ -23,6 +23,21 @@ close-out checklist in `AGENTS.md`).
   reaches, but never a dependency's own dev-dependencies — so features, the platform, and the command never rewrite it.
   `tests/check_features.py` checks all of it in every CI job, `tests/check_watch.py` checks the pass-through, and the
   loader's unit tests cover the `cfg` grammar, feature validation, unification, and the generated module.
+- Build scripts are covered end to end through the command line (stage 3, issue #362; `spec/build-scripts.md`). A
+  declared input in `<out>/inputs` (the `rerun-if-changed` equivalent) may now be a directory: it is hashed
+  recursively over every file under it, so adding, removing, renaming, or changing a file inside reruns the script
+  while touching one does not, and `burdin watch` follows a directory input too. The new black-box suite
+  `crates/burdin_driver/tests/build_scripts.rs` runs with `cargo test --workspace` and drives the `burdin` binary over
+  fixture packages: the success path, the stdout/stderr split, the documented arguments and environment, every rerun
+  rule (declared inputs including a directory, `embed` inputs, generated outputs, the script, the manifest, and the
+  profile), the dependency grant (including `burdin test -p`, where the selected package is the entry), stale
+  generated modules, nested module paths, and every failure path with its code (E0260, E0261, E0262) and exit status.
+- Package templates (issue #354): `burdin new <name> --lib` creates a library, `src/lib.bd` with one function and a
+  `test` that `burdin test` runs, and a `.gitignore` for `target/` only; `--bin` (the default) is the program with
+  `src/main.bd`. `burdin init [<dir>] [--lib | --bin]` writes the same package into an existing directory (the working
+  directory by default) and keeps its other files. `init` refuses, before writing anything, when `burdin.toml`, the root
+  module of its kind, or `.gitignore` already exists; `new` still refuses any existing path. The unit tests are in
+  `crates/burdin_driver/src/new.rs`, and `tests/check_new.py` checks both commands in every CI job.
 - Target directory and artifact cache (issue #353, `spec/target.md`, TG1-TG10): `build`, `run`, and `test` of a package
   directory keep the executable they link under `<package>/target/burdin/<profile>/bin/` (the test binary under `test/`),
   next to a fingerprint file that lists every input (the compiler, the host, the flags, each manifest and source as
