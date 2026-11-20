@@ -203,7 +203,8 @@ usage:
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
   burdin bindgen --export <target> --out <header.h> [--guard <NAME>] [diagnostics]
   burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]
-  burdin new <name>
+  burdin new <name> [--lib | --bin]
+  burdin init [<dir>] [--lib | --bin]
   burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
   burdin lsp [--stdio]
   burdin dap [--stdio]
@@ -336,7 +337,13 @@ bloat <target>` reports the size of each function, module, package, and generic 
 `burdin new <name>` creates the package directory `<name>` (a path; its last component is the package name, which must be
 an identifier that is not a reserved word or `std`) with a `burdin.toml`, a `src/main.bd` that prints a greeting, and a
 `.gitignore` for `target/` and the executable `burdin build .` leaves in the package directory. It refuses, with exit
-status 2, to touch a path that already exists. `tests/check_new.py` checks it.
+status 2, to touch a path that already exists. `--lib` creates a library instead: `src/lib.bd` (one function and a `test`
+for it, which `burdin test` runs; other packages reach the library as `use <name>`), and a `.gitignore` for
+`target/` only, since a library builds no program. `burdin init [<dir>]` writes the same package into an existing
+directory (the working directory by default; the package takes the directory's real name) and leaves its other files
+alone. It refuses, with exit status 2 and before writing anything, when `burdin.toml`, the root module of its kind, or
+`.gitignore` already exists, when the directory does not exist or is a file, and when the name is not valid.
+`tests/check_new.py` checks both.
 
 A dependency in `burdin.toml` is a directory (`lib = { path = "../lib" }`) or a git repository (`json = { git = "<url>",
 tag = "v1" }`, or `branch`, or `rev`). `burdin add [<name>] --path <dir>` and `burdin add [<name>] --git <url> [--tag <t> |

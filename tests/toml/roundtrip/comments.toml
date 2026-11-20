@@ -1,0 +1,10 @@
+# A comment at the top
+key = "value" # trailing comment
+   spaced   =   1   
+tab	=	2
+quoted_key = "x"  
+[section] # header comment
+inner = [ # comment after bracket
+  1, # one
+  2  # two
+] 

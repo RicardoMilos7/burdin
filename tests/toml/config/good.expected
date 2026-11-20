@@ -1,0 +1,6 @@
+name=edge servers=2 note=é
+protocol=Both 80 443
+backup=c.example 8080
+weights=1
+a=1
+first=a.example 80 false 0.25

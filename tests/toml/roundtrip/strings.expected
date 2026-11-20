@@ -1,0 +1,5 @@
+basic = "tab\there \"quoted\" back\\slash é 😀"
+literal = "C:\\path \"raw\""
+multi_basic = "first line\nsecond joined"
+multi_literal = "raw \\ text\n"
+empty = ""
