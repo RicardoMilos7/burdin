@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The link can be done by a fast linker (stage 3, issue #335; README "Choosing the linker"). On Linux the driver
+  passes `-fuse-ld=mold` when `ld.mold` is on `PATH`, then `-fuse-ld=lld` when `ld.lld` is, and otherwise leaves the
+  choice to the C compiler driver (ld64 on macOS, `link.exe` with `cl`). `BURDIN_LD` overrides it with a linker name,
+  a path (clang), or `platform`/`default`; `--lto` keeps the driver's linker and refuses mold; an MSVC-style driver
+  rejects any other value, since it has only `link.exe`. A failed link says whether `BURDIN_LD` or the automatic
+  choice supplied the linker and how to go back to the default. `tests/check_linker.py` checks it in every CI job,
+  and the Linux job installs `lld`, so the whole suite links through the automatic choice.
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
   the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
   package in it). `burdin add
