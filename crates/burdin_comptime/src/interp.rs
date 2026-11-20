@@ -118,7 +118,10 @@ pub(crate) struct Interp<'p, 'c> {
     frames: Vec<Frame<'p>>,
     pub(crate) steps: u64,
     pub(crate) budget: u64,
-    pub(crate) release: bool,
+    /// Panic on integer overflow (`spec/profiles.md`).
+    pub(crate) overflow_checks: bool,
+    /// Keep `debug_assert*` (`spec/profiles.md`).
+    pub(crate) debug_assertions: bool,
     pub(crate) out: Output,
     drop_cache: HashMap<Ty, bool>,
     /// The C heap the run models: `burdin test --interpret` (`spec/test-runner.md`, IN1). Elsewhere the allocation
@@ -128,15 +131,22 @@ pub(crate) struct Interp<'p, 'c> {
 }
 
 impl<'p, 'c> Interp<'p, 'c> {
-    pub(crate) fn new(p: &'p Program, consts: &'c mut Vec<ConstState>, budget: u64, release: bool) -> Self {
-        Self::with_output(p, consts, budget, release, Output::Silent)
+    pub(crate) fn new(
+        p: &'p Program,
+        consts: &'c mut Vec<ConstState>,
+        budget: u64,
+        overflow_checks: bool,
+        debug_assertions: bool,
+    ) -> Self {
+        Self::with_output(p, consts, budget, overflow_checks, debug_assertions, Output::Silent)
     }
 
     pub(crate) fn with_output(
         p: &'p Program,
         consts: &'c mut Vec<ConstState>,
         budget: u64,
-        release: bool,
+        overflow_checks: bool,
+        debug_assertions: bool,
         out: Output,
     ) -> Self {
         Interp {
@@ -145,7 +155,8 @@ impl<'p, 'c> Interp<'p, 'c> {
             frames: Vec::new(),
             steps: 0,
             budget,
-            release,
+            overflow_checks,
+            debug_assertions,
             out,
             drop_cache: HashMap::new(),
             mem: Memory::default(),

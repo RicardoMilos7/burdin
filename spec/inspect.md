@@ -146,7 +146,7 @@ Tests: `check_emit`.
 
 ## INS9. `burdin asm`
 
-`burdin asm <target> [<function>]` builds the program as `burdin build --release` does (`--debug` builds the debug profile)
+`burdin asm <target> [<function>]` builds the program as `burdin build --release` does (`--debug` builds the `dev` profile)
 with debug information, writes the assembly to a temporary directory, and prints the one function's part, from its label
 to the end of the function. The function is named as the program names it: `main`, `module.name`, `Type.method`, an
 extension as `Receiver.method`, or an instance with its type arguments such as `largest<i32>`; `::` is accepted for `.`.
@@ -218,7 +218,7 @@ Tests: `check_print_instances`.
 
 ## INS16. `burdin bloat`
 
-`burdin bloat <target>` builds the program as `burdin build --release` does (`--debug` for the debug profile) as one object
+`burdin bloat <target>` builds the program as `burdin build --release` does (`--debug` for the `dev` profile) as one object
 file, reads the size of each symbol in it, and reports where the size comes from. It measures the object, not the linked
 executable, whose total is printed as a reference: linking adds the C library's startup code, which is not the program's.
 A program with errors reports the diagnostics (status 1).

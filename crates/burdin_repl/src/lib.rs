@@ -150,6 +150,8 @@ impl<'a, 'n> Repl<'a, 'n> {
         let options = burdin_query::Options {
             mode: burdin_query::EntryMode::Test,
             release: config.release,
+            overflow_checks: !config.release,
+            debug_assertions: !config.release,
             comptime_steps: config.steps,
             no_cache: false,
             jobs: config.jobs,
@@ -169,7 +171,8 @@ impl<'a, 'n> Repl<'a, 'n> {
 
     fn comptime_options(&self) -> burdin_comptime::Options {
         burdin_comptime::Options {
-            release: self.config.release,
+            overflow_checks: !self.config.release,
+            debug_assertions: !self.config.release,
             steps: self.config.steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
         }
     }

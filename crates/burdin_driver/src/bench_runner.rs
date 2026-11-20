@@ -1,7 +1,7 @@
 //! `burdin bench`: compile the selected packages in bench mode and measure each `bench` block in its own process.
 //!
-//! The observable contract is `spec/bench.md`. A bench build compiles in the release profile (the one that
-//! measures what ships), warms each bench up, picks an iteration count so one sample takes about
+//! The observable contract is `spec/bench.md`. A bench build compiles in the `bench` profile (it inherits
+//! `release`, the one that measures what ships), warms each bench up, picks an iteration count so one sample takes about
 //! `--sample-time` milliseconds, takes `--sample-count` samples, and reports the median, the mean, a 95%
 //! confidence interval on the mean, the median absolute deviation, and the samples beyond it. The measured
 //! process prints one machine-readable line (`runtime::define_bench_main`); every number the report shows is
@@ -200,10 +200,10 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // Benchmarks measure the release profile: that is the default, and `--release` only spells it out
-    // (`spec/bench.md`, BN3).
+    // Benchmarks measure the `bench` profile, which inherits `release` (`spec/bench.md`, BN3); `--release` is
+    // `--profile release` and `--profile` measures another one.
     let options = CompileOptions {
-        release: true,
+        profile: args.profile.clone(),
         debug: args.debug,
         strip: args.strip,
         lto: args.lto,

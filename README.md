@@ -22,6 +22,8 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/memory-rules.md`](spec/memory-rules.md) | The exact semantics of moves, conventions, exclusivity, references, and drops. |
 | [`spec/stage0-subset.md`](spec/stage0-subset.md) | What stage 0 must support, what it must not, and its milestones. Complete. |
 | [`spec/stage1-subset.md`](spec/stage1-subset.md) | The stage 1 plan and the roadmaps for later stages. |
+| [`spec/build-tool.md`](spec/build-tool.md) | The build tool's command surface: every command, the Cargo commands it does not copy and their issues, the command line and environment rules, and the exit statuses. |
+| [`spec/profiles.md`](spec/profiles.md) | Named build profiles (`dev`, `release`, `test`, `bench`, and custom), inheritance, `opt-level`, debug information, assertions, overflow checks, the panic strategy, and per-package overrides. |
 | [`spec/test-runner.md`](spec/test-runner.md) | The behavior of `burdin test`: test attributes, the doc tests of doc comments, parallelism, output capture, isolation, and discovery. |
 | [`spec/bench.md`](spec/bench.md) | The behavior of `burdin bench`: bench items, warmup and calibration, statistics, baselines, and the profiler hook. |
 | [`spec/fuzz.md`](spec/fuzz.md) | The behavior of `burdin fuzz`: fuzz items, the libFuzzer build, the corpus and the artifacts, minimizing a crash, and `burdin test --fuzz-replay`. |
@@ -166,27 +168,28 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
+  burdin build <file.bd | package directory> [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [-p <member>]... [--workspace [--exclude <member>]...] [--link-lib <name>]...
                [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
-  burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
+  burdin run <file.bd | package directory> [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
              [-p <member>]... [--workspace [--exclude <member>]...] [--comptime-steps <n>] [--sanitize <list>]
              [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+  burdin test <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]...
               [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
               [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
-  burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
+  burdin bench <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
                [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
-  burdin fuzz <file.bd | package directory> <name> [--max-time <seconds>] [--minimize <file>] [--release] [-g] [-j <n>]
+  burdin fuzz <file.bd | package directory> <name> [--max-time <seconds>] [--minimize <file>]
+              [--release | --profile <name>] [-g] [-j <n>]
               [--comptime-steps <n>] [diagnostics] [-- <libFuzzer options>...]
-  burdin check <file.bd | package directory> [--release] [--tests] [-j <n>] [--comptime-steps <n>]
+  burdin check <file.bd | package directory> [--release | --profile <name>] [--tests] [-j <n>] [--comptime-steps <n>]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
   burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
   burdin <build|run|test|check> <target> --watch [--no-clear] ...
@@ -197,7 +200,7 @@ usage:
              [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
   burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
   burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
-               [--break-on-panic] [--release] [-j <n>] [diagnostics] [-- <program arguments>...]
+               [--break-on-panic] [--release | --profile <name>] [-j <n>] [diagnostics] [-- <program arguments>...]
   burdin explain [<error code>]
   burdin bindgen <header> --out <file> [-I <dir>]... [-D <name[=value]>]... [--clang-arg <arg>]...
                  [--wrappers <file.c>] [--wrapper-include <text>] [diagnostics]
@@ -213,6 +216,10 @@ usage:
 compile options:
   -j, --jobs <n>       run at most n threads: parsing, code generation, and formatting (default: BURDIN_JOBS,
                        then the number of CPUs); `burdin test` also runs at most n tests at once
+  --profile <name>     build with a named profile: `dev` (the default of build, run, check, fuzz, and debug),
+                       `release`, `test` (the default of test), `bench` (the default of bench), or one that
+                       burdin.toml defines in [profile.<name>]; `--release` is `--profile release`
+                       (the behavior is spec/profiles.md)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,

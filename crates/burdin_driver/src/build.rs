@@ -51,9 +51,12 @@ pub(crate) struct Outcome {
 
 /// Binds the Rust crates of the loaded packages (`spec/rust-interop.md`), runs their build scripts, then adds each
 /// package's generated modules.
-pub(crate) fn run(workspace: &mut Workspace, release: bool, options: &CompileOptions) -> Result<Outcome, Failure> {
+pub(crate) fn run(
+    workspace: &mut Workspace,
+    profile: crate::profile::Profile,
+    options: &CompileOptions,
+) -> Result<Outcome, Failure> {
     check_grants(workspace)?;
-    let profile = if release { "release" } else { "debug" };
     let fingerprint = compiler_fingerprint();
     let mut outcome = Outcome::default();
     // Dependencies first, like a package manager building a graph: a package's generated modules are ready before
@@ -61,7 +64,7 @@ pub(crate) fn run(workspace: &mut Workspace, release: bool, options: &CompileOpt
     for index in (0..workspace.packages.len()).rev() {
         let package = &mut workspace.packages[index];
         if crate::rust_build::has_crates(package) {
-            let bound = crate::rust_build::run_package(package, profile, &fingerprint)?;
+            let bound = crate::rust_build::run_package(package, &profile.dir, &fingerprint)?;
             for input in bound.inputs {
                 if !outcome.inputs.contains(&input) {
                     outcome.inputs.push(input);
@@ -76,7 +79,7 @@ pub(crate) fn run(workspace: &mut Workspace, release: bool, options: &CompileOpt
         if !has_script(package) {
             continue;
         }
-        let declared = run_package(package, profile, &fingerprint, options)?;
+        let declared = run_package(package, &profile, &fingerprint, options)?;
         for input in declared {
             if !outcome.inputs.contains(&input) {
                 outcome.inputs.push(input);
@@ -136,19 +139,21 @@ fn check_grants(workspace: &Workspace) -> Result<(), Failure> {
 /// Runs (or reuses) one package's script and merges its generated modules.
 fn run_package(
     package: &mut PackageFiles,
-    profile: &str,
+    profile: &crate::profile::Profile,
     fingerprint: &str,
     options: &CompileOptions,
 ) -> Result<Vec<String>, Failure> {
     let dir = package.dir.clone().expect("a build script belongs to a package with a directory");
     let script = dir.join(BUILD_SCRIPT);
-    let out = dir.join("target").join("burdin").join(profile);
+    let out = dir.join("target").join("burdin").join(&profile.dir);
     let out_src = out.join("src");
     let key_path = out.join("build.key");
     let script_bytes = std::fs::read(&script)
         .map_err(|e| Failure::new(Code::BUILD_SCRIPT, format!("cannot read {}: {e}", script.display())))?;
     let manifest_bytes = std::fs::read(dir.join("burdin.toml")).unwrap_or_default();
-    let header = key_header(fingerprint, profile, &script_bytes, &manifest_bytes);
+    // The key names the settings, not the profile: `dev` and `test` share their output when they share settings
+    // (`spec/profiles.md`, BP6).
+    let header = key_header(fingerprint, &profile.key(), &script_bytes, &manifest_bytes);
     let inputs = match cached_inputs(&key_path, &header, &dir, &out_src) {
         Some(inputs) => inputs,
         None => run_script(package, &dir, &out, &out_src, &script, profile, options, &header)?,
@@ -207,7 +212,7 @@ fn run_script(
     out: &Path,
     out_src: &Path,
     script: &Path,
-    profile: &str,
+    profile: &crate::profile::Profile,
     options: &CompileOptions,
     header: &[String],
 ) -> Result<Vec<String>, Failure> {
@@ -223,7 +228,7 @@ fn run_script(
 
     let exe = out.join("build-script").with_extension(std::env::consts::EXE_EXTENSION);
     let nested = CompileOptions {
-        release: options.release,
+        profile: profile.clone(),
         debug: false,
         strip: false,
         lto: false,
@@ -248,7 +253,7 @@ fn run_script(
         Failure::new(Code::BUILD_SCRIPT, format!("the build script of package `{}` did not compile", package.name))
     })?;
 
-    let status = run_program(&exe, dir, out, profile).map_err(|e| {
+    let status = run_program(&exe, dir, out, &profile.dir).map_err(|e| {
         Failure::new(Code::BUILD_SCRIPT, format!("cannot run the build script of `{}`: {e}", package.name))
             .with_note(format!("the script is {}", script.display()))
     })?;

@@ -635,10 +635,26 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// The `[profile...]` entries, in file order (`spec/profiles.md`). The parser records them without checking
+    /// them: only the entry package's tables are read, and the driver validates the selected profile, so a
+    /// dependency's table (which is ignored) cannot fail a build.
+    pub profiles: Vec<ProfileEntry>,
     /// `[package] include`: the file patterns `burdin package` selects, when the manifest gives any (PKG21).
     pub include: Option<Vec<String>>,
     /// `[package] exclude`: the file patterns `burdin package` leaves out (PKG21).
     pub exclude: Vec<String>,
+}
+
+/// One `key = value` line of a `[profile...]` table (`spec/profiles.md`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileEntry {
+    /// The section as written, without the brackets: `profile.dev` or `profile.fast.package.low`.
+    pub section: String,
+    pub key: String,
+    /// The raw right-hand side, still quoted when it is a string.
+    pub value: String,
+    /// The line number, counted from 1.
+    pub line: usize,
 }
 
 /// A `[package]` value that a manifest sets itself, or inherits from its workspace (`spec/workspaces.md`, WS15). Each
@@ -698,6 +714,8 @@ pub(crate) struct Document {
     build_allow: Vec<String>,
     lint: Vec<(String, String, usize)>,
     rust: RustConfig,
+    /// `[profile...]` entries, kept verbatim (`spec/profiles.md`).
+    profiles: Vec<ProfileEntry>,
 }
 
 /// Whether a `[package]` value is inherited from the workspace.
@@ -721,6 +739,13 @@ impl Document {
 pub fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     parse_manifest_text(&text, path)
+}
+
+/// The `[profile...]` entries of the manifest at `path`, without reading it as a package: a workspace root may
+/// declare profiles and have no `[package]` of its own (`spec/profiles.md`, `spec/workspaces.md`).
+pub fn manifest_profiles(path: &Path) -> Result<Vec<ProfileEntry>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok(parse_document(&text, path)?.profiles)
 }
 
 /// Parses a package's manifest. A value or dependency it inherits (`key.workspace = true`) is taken from the workspace
@@ -801,6 +826,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         lint: doc.lint.clone(),
         rust: doc.rust.clone(),
         edition,
+        profiles: doc.profiles.clone(),
         include: doc.fields.include.clone(),
         exclude: doc.fields.exclude.clone(),
     })
@@ -1006,6 +1032,14 @@ pub(crate) fn parse_document(text: &str, path: &Path) -> Result<Document, String
                 };
                 doc.rust.crates.push((key.to_string(), crate_path));
             }
+            // `[profile.<name>]` and `[profile.<name>.package.<package>]` (`spec/profiles.md`). The entries are
+            // collected verbatim; the driver validates only the selected profile of the entry package.
+            section if section.starts_with("profile.") => doc.profiles.push(ProfileEntry {
+                section: section.to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+                line: line_number,
+            }),
             "build" if key == "allow" => {
                 let names = parse_string_array(value).map_err(|e| format!("{at}: {e}"))?;
                 for allowed in names {

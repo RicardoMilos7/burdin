@@ -264,6 +264,14 @@ fn release(help: &'static str) -> Arg {
     flag("release", help)
 }
 
+fn profile_option() -> Arg {
+    option(
+        "profile",
+        "name",
+        "Build with this profile: dev, release, test, bench, or one burdin.toml defines (spec/profiles.md)",
+    )
+}
+
 fn debug_info() -> Arg {
     Arg::new("debug-info")
         .short('g')
@@ -327,6 +335,7 @@ fn build() -> Command {
             .args(member_selection())
             .args([
                 release("Build with optimizations"),
+                profile_option(),
                 debug_info(),
                 locked(),
                 offline(),
@@ -381,6 +390,7 @@ fn run() -> Command {
             )
             .args([
                 release("Build with optimizations"),
+                profile_option(),
                 debug_info(),
                 locked(),
                 offline(),
@@ -488,6 +498,7 @@ fn test() -> Command {
             .args(
                 [
                     release("Build the tests with optimizations"),
+                    profile_option(),
                     debug_info(),
                     locked(),
                     offline(),
@@ -525,6 +536,7 @@ fn fuzz() -> Command {
             .args(
                 [
                     release("Build the target with optimizations"),
+                    profile_option(),
                     debug_info(),
                     locked(),
                     offline(),
@@ -583,7 +595,8 @@ fn bench() -> Command {
             )
             .args(
                 [
-                    release("Accepted for symmetry: benches always build with optimizations"),
+                    release("Build with optimizations (the same as --profile release)"),
+                    profile_option(),
                     debug_info(),
                     locked(),
                     offline(),
@@ -604,6 +617,7 @@ fn check() -> Command {
             .arg(target().required(true))
             .args([
                 release("Check the way `burdin build --release` does"),
+                profile_option(),
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
@@ -976,6 +990,7 @@ fn debug() -> Command {
                 option("test", "name | index", "Debug one `test` block, resolved like `burdin test`'s filters"),
                 flag("break-on-panic", "Start with a breakpoint on the panic hook, before the panic prints"),
                 release("Debug an optimized build"),
+                profile_option(),
                 compile_jobs(),
             ])
             .after_help(

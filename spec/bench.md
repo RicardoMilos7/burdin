@@ -32,8 +32,9 @@ required, only that package's benches are declared, and the entry point is the b
 user's `main`. `-p <name>` and `--workspace` select packages with the test runner's rules, including that the
 embedded standard library cannot be selected.
 
-**BN3. The release profile.** `burdin bench` compiles in the release profile, because that is the profile whose
-speed is worth measuring; `--release` is accepted and changes nothing, and there is deliberately no way to bench a
+**BN3. The release profile.** `burdin bench` compiles in the `bench` profile, which inherits `release`, because that
+is the profile whose speed is worth measuring. `--profile <name>` measures another profile (`spec/profiles.md`),
+`--release` is `--profile release`, and there is deliberately no way to bench a
 debug build in this stage. A bench build uses the plain C heap, not the checking allocator: allocation bookkeeping
 is not part of what a benchmark should measure (`spec/allocators.md`, AL9).
 

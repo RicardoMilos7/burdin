@@ -172,6 +172,11 @@ with harness.temporary_dir("burdin-workspace-") as work:
     several_one_file = burdin_in(ws, "build", ".", "--workspace", "-o", "one")
     check(several_one_file.returncode == 2 and "name one file" in err(several_one_file),
           f"`-o` with several packages: exit {several_one_file.returncode}, {err(several_one_file)[:300]!r}")
+    # A profile declared on the workspace root applies to the members (spec/profiles.md, spec/workspaces.md).
+    write(ws / "burdin.toml", harness.read_text(ws / "burdin.toml") + '\n[profile.fast]\ninherits = "dev"\nopt-level = 1\n')
+    fast = burdin_in(ws, "build", ".", "-p", "cli", "--profile", "fast")
+    check(fast.returncode == 0 and built(ws / "apps" / "cli", "cli", "fast"),
+          f"`build --profile fast` of a member: {err(fast)[:300]!r}")
     one = burdin_in(ws, "build", ".", "-p", "cli", "-p", "cli", "-o", "one")
     # The linker adds the executable suffix where the platform has one.
     written_one = any((ws / ("one" + suffix)).is_file() for suffix in EXE_SUFFIXES)

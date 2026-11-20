@@ -45,9 +45,69 @@ use std::path::{Path, PathBuf};
 
 pub use split::{MAX_UNITS, UNIT_INSTRUCTIONS};
 
-#[derive(Default)]
+/// The optimization level a build asks for (`spec/profiles.md`): LLVM's four. There is no `s` or `z` yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OptLevel {
+    /// No optimization pipeline.
+    #[default]
+    None,
+    O1,
+    O2,
+    O3,
+}
+
+impl OptLevel {
+    /// The level a profile's `opt-level` names, or `None` for anything else.
+    pub fn from_number(number: i64) -> Option<OptLevel> {
+        match number {
+            0 => Some(OptLevel::None),
+            1 => Some(OptLevel::O1),
+            2 => Some(OptLevel::O2),
+            3 => Some(OptLevel::O3),
+            _ => None,
+        }
+    }
+
+    /// The level as a number, the way the profile cache key spells it.
+    pub fn number(self) -> u8 {
+        match self {
+            OptLevel::None => 0,
+            OptLevel::O1 => 1,
+            OptLevel::O2 => 2,
+            OptLevel::O3 => 3,
+        }
+    }
+
+    /// The LLVM pass pipeline for the level. Level 0 is named too, because the always-on cleanup runs there as
+    /// well, so the IR the backend sees is the same shape in every profile.
+    pub fn pipeline(self) -> String {
+        format!("default<O{}>", self.number())
+    }
+
+    /// Whether anything optimizes.
+    pub fn optimized(self) -> bool {
+        self != OptLevel::None
+    }
+}
+
+/// A package's own overflow and debug-assertion settings (`[profile.<name>.package.<package>]`). The first entry
+/// whose directory is a prefix of a function's source file applies; a file no entry matches uses the profile's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageFlags {
+    pub dir: PathBuf,
+    pub overflow_checks: bool,
+    pub debug_assertions: bool,
+}
+
 pub struct Options {
-    pub release: bool,
+    /// The optimization level (`spec/profiles.md`).
+    pub opt_level: OptLevel,
+    /// Keep `debug_assert*` (`spec/stdlib.md`).
+    pub debug_assertions: bool,
+    /// Panic on integer overflow (`spec/memory-rules.md`).
+    pub overflow_checks: bool,
+    /// Per-package overrides of the two flags above (`--profile`, `spec/profiles.md`, BP7).
+    pub package_flags: Vec<PackageFlags>,
     /// Also write the LLVM IR as text to this path.
     pub emit_ir: Option<std::path::PathBuf>,
     /// Write the unoptimized IR to this path for the driver's `--pgo-use` pipeline.
@@ -76,6 +136,30 @@ pub struct Options {
     /// The sanitizers to instrument for (`--sanitize`, `spec/sanitizers.md`) and libFuzzer's coverage
     /// (`burdin fuzz`, `spec/fuzz.md`). An instrumented program is always one codegen unit.
     pub sanitize: Sanitizers,
+}
+
+impl Default for Options {
+    /// The `dev` profile: no optimization, debug assertions and overflow checks on, nothing else.
+    fn default() -> Options {
+        Options {
+            opt_level: OptLevel::None,
+            debug_assertions: true,
+            overflow_checks: true,
+            package_flags: Vec::new(),
+            emit_ir: None,
+            pgo_ir: None,
+            debug: false,
+            bitcode: false,
+            instrument: false,
+            jobs: 0,
+            units: None,
+            emit_opt_ir: None,
+            emit_bitcode: None,
+            emit_asm: None,
+            asm_syntax: AsmSyntax::Default,
+            sanitize: Sanitizers::default(),
+        }
+    }
 }
 
 /// What `--sanitize` and `burdin fuzz` instrument. `leak` adds no instrumentation (the runtime finds leaks from the
@@ -142,11 +226,16 @@ pub fn llvm_version() -> String {
 /// The host target machine at the optimization level of the profile. PIC on every platform, including COFF: a
 /// static relocation model makes LLVM address string constants with 32-bit absolute relocations
 /// (`IMAGE_REL_AMD64_ADDR32`), which the MSVC linker rejects without `/LARGEADDRESSAWARE:NO`.
-fn target_machine(release: bool) -> Result<TargetMachine, String> {
+fn target_machine(level: OptLevel) -> Result<TargetMachine, String> {
     Target::initialize_native(&InitializationConfig::default())?;
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
-    let level = if release { OptimizationLevel::Default } else { OptimizationLevel::None };
+    let level = match level {
+        OptLevel::None => OptimizationLevel::None,
+        OptLevel::O1 => OptimizationLevel::Less,
+        OptLevel::O2 => OptimizationLevel::Default,
+        OptLevel::O3 => OptimizationLevel::Aggressive,
+    };
     target
         .create_target_machine(&triple, "generic", "", level, RelocMode::PIC, CodeModel::Default)
         .ok_or_else(|| format!("LLVM cannot create a target machine for {}", triple.as_str().to_string_lossy()))
@@ -170,7 +259,7 @@ pub fn emit_object(
 ) -> Result<Vec<PathBuf>, String> {
     // The dialect is read when the target machine builds its assembly printer, so it is set first.
     set_asm_syntax(opts.asm_syntax)?;
-    let machine = target_machine(opts.release)?;
+    let machine = target_machine(opts.opt_level)?;
     let triple = TargetMachine::get_default_triple();
 
     let context = Context::create();
@@ -183,9 +272,22 @@ pub fn emit_object(
             Some(i) => (source.path[i + 1..].to_string(), source.path[..i].to_string()),
             None => (source.path.clone(), ".".to_string()),
         });
-        emit::DebugInfo::new(&module, opts.release, first)
+        emit::DebugInfo::new(&module, opts.opt_level.optimized(), first)
     });
-    let mut cg = Codegen::new(&context, &module, &machine, program, sources, opts.release, debug)?;
+    let mut cg = Codegen::new(
+        &context,
+        &module,
+        &machine,
+        program,
+        sources,
+        emit::ProfileFlags {
+            debug_assertions: opts.debug_assertions,
+            optimized: opts.opt_level.optimized(),
+            overflow_checks: opts.overflow_checks,
+            packages: opts.package_flags.clone(),
+        },
+        debug,
+    )?;
     cg.undefined_checks = opts.sanitize.undefined;
     cg.sanitized = opts.sanitize.needs_runtime();
     cg.program()?;
@@ -220,14 +322,15 @@ pub fn emit_object(
         split::unit_count(instructions, functions, opts.units)
     };
     if units > 1 {
-        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.release, object);
+        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.opt_level, object);
     }
     // The attributes go on before the optimization pipeline, as clang's front end puts them: some transformations
     // are not done to a function that will be instrumented.
     add_sanitizer_attributes(&module, opts.sanitize);
-    if opts.release {
+    if opts.opt_level.optimized() {
+        let pipeline = opts.opt_level.pipeline();
         module
-            .run_passes("default<O2>", &machine, inkwell::passes::PassBuilderOptions::create())
+            .run_passes(&pipeline, &machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
     instrument_sanitizers(&module, &machine, opts.sanitize)?;

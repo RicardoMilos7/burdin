@@ -77,7 +77,8 @@ one is skipped with `note: skipped <name>: it has no src/main.bd` when the defau
 error (exit 1) when `-p` named it. If nothing selected has an entry point, the command fails (exit 1) and says so. The
 output options that name one file (`-o`, `--emit-ir`, `--emit-deps`) need exactly one package to build, and are a usage
 error otherwise. Each executable is written under its own package's `target/burdin/<profile>/bin/`
-(`spec/target.md`, TG1).
+(`spec/target.md`, TG1). The profile is resolved from the target's manifest (`spec/profiles.md`): a workspace root
+declares the profiles its members build with, including `[profile.<name>.package.<member>]` overrides.
 Tests: `tests/check_workspace.py` (the skip note, the usage errors, the executables' places).
 
 **WS10. `burdin run`.** Runs one program: the selection must name exactly one package, which must have a `src/main.bd`

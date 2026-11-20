@@ -155,7 +155,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
 /// Documents the package in `target`: checks it, then writes its site, its JSON, or its coverage report.
 fn document(target: &Path, args: &DocArgs) -> ExitCode {
     let options = CompileOptions {
-        release: false,
+        profile: crate::profile::Profile::dev(),
         debug: false,
         strip: false,
         lto: false,

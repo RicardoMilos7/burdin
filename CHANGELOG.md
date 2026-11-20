@@ -24,6 +24,22 @@ close-out checklist in `AGENTS.md`).
   relative to the root. The language server no longer treats a virtual root as a package. `tests/check_workspace.py`
   checks all of it in every CI job.
 
+- The build tool's command surface (stage 3, issue #338; `spec/build-tool.md`). The page records every command the
+  `burdin` tool has, the Cargo commands that are planned but not copied (and the issue that owns each), the Cargo
+  behavior that is deliberately left out (plugins and external subcommands, proc-macros and the native
+  `links`/`-sys` build protocol, a registry client, arbitrary installation, layered configuration, formatter
+  options, and `--manifest-path` on build commands), the command-line and environment rules, and the exit statuses.
+  `tests/check_cli.py` checks the golden command list, every command's help, unknown and out-of-scope commands, the
+  version, and one fixture package through `build`, `run`, `check`, and `test`.
+- Named build profiles (stage 3, issue #339; `spec/profiles.md`). `dev`, `release`, `test`, and `bench` are built in,
+  and a package defines or customizes one in `[profile.<name>]` with `inherits`, `opt-level`, `debug`,
+  `debug-assertions`, `overflow-checks`, and `panic` (`abort` only). `--profile <name>` selects one on `build`,
+  `run`, `test`, `bench`, `check`, `fuzz`, and `debug`, and `--release` is `--profile release`. `dev` and `test`
+  share `target/burdin/debug`, `release` and `bench` share `release`, and a build script's cache key holds the
+  settings rather than the name. `[profile.<name>.package.<package>]` overrides `overflow-checks` and
+  `debug-assertions` for one package's functions. The generator's options now carry an optimization level and the
+  two flags instead of one `release` bit. `tests/check_profiles.py` checks overflow, debug assertions, per-package
+  overrides, the IR, and every failure path; `crates/burdin_driver/src/profile.rs` has the unit tests.
 - The link can be done by a fast linker (stage 3, issue #335; README "Choosing the linker"). On Linux the driver
   passes `-fuse-ld=mold` when `ld.mold` is on `PATH`, then `-fuse-ld=lld` when `ld.lld` is, and otherwise leaves the
   choice to the C compiler driver (ld64 on macOS, `link.exe` with `cl`). `BURDIN_LD` overrides it with a linker name,
