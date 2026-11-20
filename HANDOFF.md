@@ -4,6 +4,15 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Package templates (issue #354, 2026-11-20).** `burdin new <name> [--lib | --bin]` and
+`burdin init [<dir>] [--lib | --bin]` (`crates/burdin_driver/src/new.rs`, `tests/check_new.py`). A library has
+`src/lib.bd` (a function and a `test`) and a `.gitignore` for `target/` only. A library has no `main`, so `build` and
+`check` of one fail with the unchanged "has no entry point" error; a hint naming `burdin test` would change a golden
+(`tests/check/golden/lib_tests.txt`) and was left out. `new` still refuses any existing path. `init` writes into an
+existing directory and refuses only when `burdin.toml`, its root module, or `.gitignore` already exists, before writing
+anything; other files are left alone. Not done: a `--name` override (a directory whose name is not an identifier cannot
+be initialized), `git init`, and a template choice beyond `--lib`/`--bin`.
+
 **The TOML package (issue #256, 2026-11-20).** `packages/toml` reads and writes TOML 1.0.0 on the serialization
 framework, under the decisions of `spec/toml.md` (TOML1-TOML16): `parse`/`render` (the `Value` tree and the canonical
 form), `to_value`/`from_value`, and `to_string`/`from_str`. Both directions go through an arena of nodes: the parser
@@ -53,7 +62,7 @@ method is the new E0234, and the old clause is a plain syntax error. Parser, sem
 `burdin doc`, `std/`, the tests, and the specs moved together (decision 31 in `tests/README.md`). The LSP
 completion of the list is issue #824.
 
-Updated at the end of the fifty-sixth session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-seventh session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -399,7 +408,8 @@ package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the packag
 (an identifier, not a reserved word, not `std`), and refuses an existing path with exit status 2 before writing
 anything. The `.gitignore` lists `/target/` and the executable `burdin build .` leaves in the package directory,
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
-CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
+CI job) cover it. There was no `--lib` or template choice, no `git init`, and no `--name` override; issue #354 added
+`--lib` and `burdin init` (see the State entry).
 
 The forty-eighth session implemented stage 3's C bindgen (issue #244, sub-issues #245-#248, #475, #476, #663). The
 import side is a new crate, `crates/burdin_bindgen`, which knows nothing about the compiler: `clang.rs` finds and loads
