@@ -393,7 +393,8 @@ fn every_script_failure_is_reported_with_its_code() {
     let text = fail(&failed);
     assert!(stdout(&failed).is_empty(), "a failing build leaves stdout empty:\n{}", stdout(&failed));
     contains(&text, "the script is running", "the failing script's output reaches stderr");
-    contains(&text, "src/main.bd:1:1: error[E0261]", "E0261 is at the entry package's first source line");
+    // The separator before `main.bd` is the platform's, so the assertion starts at the file name.
+    contains(&text, "main.bd:1:1: error[E0261]", "E0261 is at the entry package's first source line");
     contains(&text, "exit code 3", "E0261 names the script's status");
 
     // A script that does not compile: its diagnostics come first, for `build.bd`, then E0261 for the package.
