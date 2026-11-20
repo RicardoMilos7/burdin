@@ -28,6 +28,7 @@ mod rust_interop;
 mod sanitize;
 mod scripts;
 mod test_runner;
+mod watch;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
 pub(crate) use burdin_query::EntryMode;
@@ -676,7 +677,7 @@ fn driver_main() -> ExitCode {
     let rest = &argv[1..];
     match command.as_str() {
         "fmt" => return fmt::run(rest),
-        "check" => return check::run(rest),
+        "check" if !watch::asks_for_watch(rest) => return check::run(rest),
         "asm" => return asm::run(rest),
         "bloat" => return bloat::run(rest),
         "expand" => return expand::run(rest),
@@ -690,6 +691,8 @@ fn driver_main() -> ExitCode {
         "lsp" => return lsp(rest),
         "dap" => return dap(rest),
         "repl" => return repl::run(rest),
+        "watch" => return watch::run_watch(rest),
+        "build" | "run" | "test" | "check" if watch::asks_for_watch(rest) => return watch::run_flagged(&command, rest),
         _ => {}
     }
     let args = match parse_args(&argv) {

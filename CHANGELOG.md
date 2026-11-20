@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `burdin watch [check|build|test|run] <target>`, and `--watch` on those commands (issue #632, `spec/watch.md`): rerun
+  the command whenever a source, `burdin.toml`, a path dependency, or a build input changes, with a debounce, clearing the
+  screen first unless `--no-clear`. `target/`, version-control metadata, `burdin.lock`, and the command's own output are
+  ignored. `run` restarts the program; `test` runs the changed modules' and their dependents' tests first. The files are
+  polled, so it needs no new dependency. `tests/check_watch.py` runs in every CI job.
 - The `burdin` help is now cargo-style and built with clap (`crates/burdin_driver/src/cli.rs`): `burdin` or
   `burdin --help` lists the commands with a one-line summary each, and `burdin <command> --help` or
   `burdin help <command>` prints that command's usage, arguments, grouped options, and notes. A mistyped command gets
