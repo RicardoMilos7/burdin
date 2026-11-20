@@ -39,6 +39,7 @@ mod iterators;
 mod markers;
 mod prelude;
 mod resolve;
+mod serial;
 mod session;
 mod types;
 mod user_derives;

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A `Map` whose keys are not `String` has no serialized shape (spec/serialization.md, SER7), so it does not implement
+// `Serialize` and the generic `to_text` refuses it, even though the built-in types implement the interface (SER14).
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 2)
+    let text = to_text(m) //~ E0141
+    println("{}", text.is_ok())
+}

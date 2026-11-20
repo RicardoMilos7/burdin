@@ -1,0 +1,135 @@
+//@ run
+//> 42
+//> "text"
+//> [1, 2]
+//> Option.Some(3)
+//> [1, "a"]
+//> 12 ok
+//> Theme { accent: "#ff8800", background: "#00ff7f" }
+//> #ff8800 #00ff7f
+//> Invalid hex color: #zz0000 at accent
+//> [4, 5]
+
+// The built-in types implement `Serialize` and `Deserialize` without an impl block (issue #853, spec/serialization.md,
+// SER14), so a manual impl delegates to them. `String.deserialize(mut d)?` reads a string and then validates it, and
+// `self.to_hex().serialize(mut s)` writes a transformed value through the `String` impl. A generic function bounded
+// by the two interfaces accepts the built-in types, and `T.deserialize(mut d)` reaches them too.
+
+struct Color {
+    red: u8
+    green: u8
+    blue: u8
+}
+
+fn hex_digit(c: char): Option<u8> {
+    match c {
+        '0' => Some(0),
+        '1' => Some(1),
+        '2' => Some(2),
+        '3' => Some(3),
+        '4' => Some(4),
+        '5' => Some(5),
+        '6' => Some(6),
+        '7' => Some(7),
+        '8' => Some(8),
+        '9' => Some(9),
+        'a' => Some(10),
+        'b' => Some(11),
+        'c' => Some(12),
+        'd' => Some(13),
+        'e' => Some(14),
+        'f' => Some(15),
+        _ => None,
+    }
+}
+
+fn hex_byte(digits: List<char>, at: usize): Option<u8> {
+    let high = hex_digit(digits[at])?
+    let low = hex_digit(digits[at + 1])?
+    Some(high * 16 + low)
+}
+
+Color {
+    fn to_hex(self): String {
+        format("#{:02x}{:02x}{:02x}", self.red, self.green, self.blue)
+    }
+
+    fn from_hex(text: str): Option<Color> {
+        let digits: List<char> = text.chars().collect()
+        if digits.len() != 7 || digits[0] != '#' {
+            return None
+        }
+        Some(Color { red: hex_byte(digits, 1)?, green: hex_byte(digits, 3)?, blue: hex_byte(digits, 5)? })
+    }
+}
+
+Color: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError> {
+        let s = String.deserialize(mut d)?
+        match Color.from_hex(s.as_str()) {
+            Some(color) => Ok(color),
+            None => Err(DeError.new(format("Invalid hex color: {s}"))),
+        }
+    }
+}
+
+Color: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        self.to_hex().serialize(mut s)
+    }
+}
+
+struct Theme: Serialize, Deserialize {
+    accent: Color
+    background: Color
+}
+
+// A hand-written impl that reads a list of the built-in type through the path form.
+struct Batch {
+    values: List<i32>
+}
+
+Batch: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Batch, DeError> {
+        let values = List<i32>.deserialize(mut d)?
+        Ok(Batch { values })
+    }
+}
+
+// Writes a value and reads it back with the same bounds a generic caller would use.
+fn echo<T: Serialize + Deserialize>(value: T): Result<T, DeError> {
+    let text = to_text(value)?
+    from_text(text)
+}
+
+fn main() {
+    println(to_text(42).unwrap())
+    println(to_text("text".to_string()).unwrap())
+
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    println(to_text(xs).unwrap())
+    println(to_text(Some(3)).unwrap())
+    println(to_text((1, "a".to_string())).unwrap())
+
+    let n: Result<i32, DeError> = from_text("12")
+    let ok = echo("ok".to_string()).unwrap()
+    println("{} {}", n.unwrap(), ok)
+
+    let theme = Theme {
+        accent: Color { red: 255, green: 136, blue: 0 },
+        background: Color { red: 0, green: 255, blue: 127 },
+    }
+    let text = to_text(theme).unwrap()
+    println(text)
+    let back: Result<Theme, DeError> = from_text(text)
+    let back = back.unwrap()
+    println("{} {}", back.accent.to_hex(), back.background.to_hex())
+
+    let bad: Result<Theme, DeError> = from_text("Theme {{ accent: \"#zz0000\", background: \"#000000\" }}")
+    println(bad.unwrap_err().to_string())
+
+    let batch: Result<Batch, DeError> = from_text("[4, 5]")
+    println(to_text(batch.unwrap().values).unwrap())
+}

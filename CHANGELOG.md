@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
+  `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
+  impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and
+  `value.serialize(mut s)` writes one. The checker lowers both forms to the standard library's helpers
+  (`std/src/serialize.bd`). `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`, and
+  `builtin_serialize_mut` cover it.
+
 - Workspaces (stage 3, issues #342 and #343; `spec/workspaces.md`). A `burdin.toml` with a `[workspace]` section makes
   its directory a workspace root: `members` lists the packages that build together (a path, or a `*` pattern within one
   component), `exclude` removes some, and `default-members` picks what a command in the root selects. A root with a

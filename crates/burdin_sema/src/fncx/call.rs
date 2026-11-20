@@ -1282,6 +1282,10 @@ impl FnCx<'_> {
             let field = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
             return self.closure_call(field, args, span);
         }
+        // `value.serialize(mut s)` on a built-in type: the serialization helpers of `std` write it (SER14).
+        if let Some(e) = self.builtin_serialize_method(recv.clone(), name, args, span) {
+            return e;
+        }
         // `fmt` and `debug` of the built-in types, which the formatting helpers of `std` implement.
         if let Some(e) = self.builtin_format_method(recv.clone(), name, args, span) {
             return e;
@@ -1873,6 +1877,10 @@ impl FnCx<'_> {
         }
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span, expect);
+        }
+        // `String.deserialize(mut d)`, `List<T>.deserialize(mut d)`, and the other built-in types (SER14).
+        if let Some(call) = self.builtin_deserialize_call(ty, name, args, span) {
+            return call;
         }
         // `from_iter` of the built-in collections and `from` of a `List` or `Map` (`spec/iterators.md`, IT18).
         if let Some(call) = self.builtin_collection_call(ty, name, args, span) {

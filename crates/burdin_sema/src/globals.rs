@@ -226,6 +226,11 @@ pub(crate) struct Globals {
     /// The `std.Display` and `std.Debug` interfaces: what `{}` and `{:?}` need (spec/format.md).
     pub(crate) display_iface: Option<usize>,
     pub(crate) debug_iface: Option<usize>,
+    /// The `std.Serialize` and `std.Deserialize` interfaces, which the built-in types implement without a block
+    /// (spec/serialization.md, SER14), and the standard library's `DeError` that they return.
+    pub(crate) serialize_iface: Option<usize>,
+    pub(crate) deserialize_iface: Option<usize>,
+    pub(crate) de_error_ty: Option<Ty>,
     /// The `std.Send` and `std.Sync` marker interfaces (`spec/shared.md`, SH4).
     pub(crate) send_iface: Option<usize>,
     pub(crate) sync_iface: Option<usize>,

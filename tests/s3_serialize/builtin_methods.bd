@@ -1,0 +1,40 @@
+//@ run
+//> 42
+//> { "k": 1.5 }
+//> [7]
+//> [true, 2, Option.Some("x")]
+//> true
+//> false
+
+// The built-in types have the methods of the interfaces: `value.serialize(mut s)` writes any of them, and
+// `T.deserialize(mut d)` reads one (issue #853, spec/serialization.md, SER14). A `List<u8>` is written as the bytes
+// shape, and a float with no fraction as its shortest text. A tuple is a sequence of its parts.
+
+fn main() {
+    let mut s = TextSerializer.new()
+    42.serialize(mut s).unwrap()
+    println(s.finish())
+
+    let mut m = Map<String, f64>.new()
+    m.insert("k".to_string(), 1.5)
+    let mut s2 = TextSerializer.new()
+    m.serialize(mut s2).unwrap()
+    println(s2.finish())
+
+    let mut blob = List<u8>.new()
+    blob.push(7)
+    let mut s3 = TextSerializer.new()
+    blob.serialize(mut s3).unwrap()
+    println(s3.finish())
+
+    let mut s4 = TextSerializer.new()
+    (true, 2.0, Some("x".to_string())).serialize(mut s4).unwrap()
+    println(s4.finish())
+
+    let back: Result<bool, DeError> = from_text("true")
+    println("{:?}", back.unwrap())
+
+    let mut d = TextDeserializer.new("false")
+    let flag = bool.deserialize(mut d).unwrap()
+    println("{:?}", flag)
+}

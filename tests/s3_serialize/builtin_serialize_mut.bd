@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `value.serialize(s)` on a built-in type writes through the serializer, which is borrowed exclusively, so the argument
+// is written `mut s` like any call of a `mut` parameter (spec/serialization.md, SER3, SER14).
+
+fn main() {
+    let mut s = TextSerializer.new()
+    let price = 3.5
+    price.serialize(s).unwrap() //~ E0114
+    println(s.finish())
+}
