@@ -1,0 +1,8 @@
+//@ compile-fail
+//@ suggest: E0002 machine-applicable: import `geometry.rectangle_area`
+
+// A function another module of the package declares: the fix adds the `use` (`spec/fix.md`, FX13).
+
+fn main() {
+    println(rectangle_area(3, 4).to_string()) //~ E0002
+}

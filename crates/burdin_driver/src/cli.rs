@@ -168,6 +168,9 @@ pub(crate) fn command() -> Command {
             check(),
             fmt(),
             lint(),
+            fix(),
+            ssr(),
+            refactor(),
             doc(),
             new(),
             add(),
@@ -576,6 +579,93 @@ fn lint() -> Command {
                 "Levels also come from the [lint] table of burdin.toml (name = \"allow\" | \"warn\" | \"deny\"); \
                  the command line wins. A comment `// lint: allow(name)` suppresses a lint at one item, statement, \
                  or line. The lint reference is docs/lints.md.",
+            ),
+    )
+}
+
+fn fix() -> Command {
+    with_diagnostics(
+        Command::new("fix")
+            .about("Apply the machine-applicable fixes of the compiler and the linter across a package")
+            .override_usage("burdin fix <file.bd | package directory> [OPTIONS]")
+            .arg(target().required(true))
+            .args([
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                flag("migrate", "Also move the package to the next edition, after checking it compiles there"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+                comptime_steps(),
+            ])
+            .after_help(
+                "Fixes apply round after round until nothing changes, conflicting fixes are skipped and reported,                  and a round that would add errors is undone. The touched files are formatted. The behavior is                  spec/fix.md.",
+            ),
+    )
+}
+
+fn ssr() -> Command {
+    with_diagnostics(
+        Command::new("ssr")
+            .about("Structural search and replace: match a pattern written as Burdin code across a package")
+            .override_usage("burdin ssr '<pattern> [==>> <replacement>]' <file.bd | package directory> [OPTIONS]")
+            .arg(Arg::new("pattern").value_name("pattern").required(true).help(
+                "The pattern, and after `==>>` what to put in its place. `$name` is any expression; a type may be \
+                 constrained after `where`: `$a.unwrap_or($b) where $a: Option<_>`. Without a replacement the matches \
+                 are listed",
+            ))
+            .arg(target().required(true))
+            .args([
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+            ])
+            .after_help(
+                "A match is a whole expression, so nothing inside a string or a comment changes. Names match by what \
+                 they resolve to, so an import or an alias does not hide a match. The result is checked before it is \
+                 written: a replacement that would not compile is skipped and reported. The behavior is \
+                 spec/refactor.md.",
+            ),
+    )
+}
+
+fn refactor() -> Command {
+    with_diagnostics(
+        Command::new("refactor")
+            .about("Refactor code: extract, inline, change a signature, or move an item")
+            .override_usage(
+                "burdin refactor <refactoring> <file>:<line>:<col>[-<line>:<col>] [OPTIONS]
+       \
+                 burdin refactor extract-variable <range> --name <name>
+       \
+                 burdin refactor extract-function <range> --name <name>
+       \
+                 burdin refactor inline-variable <file>:<line>:<col>
+       \
+                 burdin refactor inline-function <file>:<line>:<col>
+       \
+                 burdin refactor change-signature <file>:<line>:<col> [--reorder ...] [--add ...] [--remove ...] \
+                 [--rename ...]
+       \
+                 burdin refactor move-item <file>:<line>:<col> --to <module>",
+            )
+            .arg(Arg::new("refactoring").value_name("refactoring").required(true).help(
+                "extract-variable, extract-function, inline-variable, inline-function, change-signature, or move-item",
+            ))
+            .arg(target().required(true))
+            .args([
+                option("name", "name", "The name of the local or function an extraction creates"),
+                option("to", "module", "The module a moved item goes to (`move-item`)"),
+                option("reorder", "a,b", "The parameters of a changed signature, in their new order"),
+                option("add", "name: type = default", "A parameter to add, with a default value"),
+                option("remove", "name", "A parameter to remove"),
+                option("rename", "old=new", "A parameter to rename"),
+                flag("dry-run", "Print the changes as a unified diff and write nothing"),
+                flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
+                jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
+            ])
+            .after_help(
+                "Every refactoring checks its result before it is written: the package must still compile, with no \
+                 new error, and every local must still be moved exactly as often. When the result would change what \
+                 the program does, the refactoring refuses and says why. The behavior is spec/refactor.md.",
             ),
     )
 }

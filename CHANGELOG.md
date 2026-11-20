@@ -88,6 +88,33 @@ loader in `burdin_query`.
   (one line added or replaced, everything else kept), resolves the whole graph, then writes `burdin.toml` and
   `burdin.lock`; any failure leaves both unchanged.
 
+### Fixes, editions, and the refactoring engine (issues #604, #606, #607, #609, #611, #613)
+
+`spec/fix.md` and `spec/refactor.md` are the specifications; `tests/check_fix.py`, `tests/check_ssr.py`, and
+`tests/check_refactor.py` check them, and the conformance runner applies the suggestions the tests expect.
+
+- **One edit model.** A diagnostic's suggestion is a message, a list of edits, and an applicability
+  (`machine`, `maybe-incorrect`, `has-placeholders`, `manual`). The human renderer shows the diff inline and the JSON
+  and SARIF carry the edits. The applier, the conflict check, and the diff live in `burdin_diag::edit`, and the linter
+  and the language server use them.
+- **Compiler suggestions.** A misspelled name with one near miss (or the one module that declares it), a missing
+  `mut`, a `mut` marker to remove, and `.clone()` after a move (maybe-incorrect), with codes registered in
+  `tests/README.md`, and two directives (`suggest:`, `fixed-error:`) the runner checks.
+- **`burdin fix`** applies every machine-applicable suggestion of the compiler and the linter, round after round, and
+  formats what it touched. `--dry-run` prints the diff; a dirty tree needs `--allow-dirty`; edits that clash are
+  skipped and reported; a round that adds errors is undone.
+- **Editions.** `[package] edition` with 2024 (default) and 2026. A removed form is deprecated one edition earlier
+  (`E0301`) and `burdin fix --migrate` writes the fix and moves the manifest. `unimplemented` is the first form on
+  this path. `docs/releasing.md` records the policy.
+- **`burdin ssr`** replaces whole expressions matched by a pattern written as Burdin code, with `$name` placeholders
+  that may carry a type (`where $a: Option<_>`), names matched by resolution rather than spelling, and every result
+  checked before it is written; the language server's `burdin.structuralSearchReplace` command runs the same engine.
+- **`burdin refactor`** extracts a variable or a function (parameters follow the memory rules: moved is `own`, written
+  is `mut`, read is the default), inlines a local or a function, changes a signature (reorder, add with a default,
+  remove, rename, with every call updated), and moves an item to another module. Each refuses with the reason when the
+  result would not compile or would change what the program does, and the language server offers the extract and
+  inline actions.
+
 ## 0.1.0 — 2026-11-19
 
 The first published release of the Burdin compiler, for Linux, macOS, and Windows on x86-64 and arm64. Burdin is a

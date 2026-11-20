@@ -1,4 +1,132 @@
-//! Applying fixes (`spec/lint.md`, LN28-LN31): edits to one file's text, and the unified diff the driver previews.
+//! The one applier (`spec/fix.md`, FX2): edits to one file's text, suggestions that apply all or none, the inline
+//! diff the human diagnostics show, and the unified diff `burdin fix`, `burdin lint --fix`, `burdin ssr`, and
+//! `burdin refactor` preview.
+
+use crate::{Edit, SourceMap, Span};
+
+/// One file's edits as byte ranges: `(lo, hi, replacement)`.
+pub type TextEdit = (u32, u32, String);
+
+/// Whether two edits of one file cannot both apply: their ranges overlap, or both insert at one offset with
+/// different text (the order of the two insertions would be a guess). Equal edits are the same edit.
+fn clash(a: &TextEdit, b: &TextEdit) -> bool {
+    if a == b {
+        return false;
+    }
+    if a.0 == a.1 && b.0 == b.1 {
+        return a.0 == b.0;
+    }
+    // An insertion at the boundary of a replacement does not overlap it; one strictly inside does.
+    a.0 < b.1 && b.0 < a.1
+}
+
+/// What [`apply_groups`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GroupsApplied {
+    pub text: String,
+    /// The indices of the groups that applied, in the order they were given.
+    pub applied: Vec<usize>,
+    /// The indices of the groups left out because an edit of theirs clashes with an edit of a group that applied
+    /// first, or is out of range.
+    pub conflicts: Vec<usize>,
+}
+
+/// Applies groups of edits to `text`, each group all or none (a suggestion's edits are one group). Groups are
+/// taken in the order given; a group with an edit that clashes with an edit already taken, or that is out of range
+/// or splits a character, is left out whole and reported. An edit equal to one already taken is the same edit, so
+/// two diagnostics that offer one fix apply it once.
+pub fn apply_groups(text: &str, groups: &[Vec<TextEdit>]) -> GroupsApplied {
+    let mut taken: Vec<TextEdit> = Vec::new();
+    let mut applied = Vec::new();
+    let mut conflicts = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let valid = group.iter().all(|(lo, hi, _)| {
+            let (l, h) = (*lo as usize, *hi as usize);
+            l <= h && h <= text.len() && text.is_char_boundary(l) && text.is_char_boundary(h)
+        });
+        let inner = group.iter().enumerate().any(|(i, a)| group[i + 1..].iter().any(|b| clash(a, b)));
+        if !valid || inner || group.iter().any(|e| taken.iter().any(|t| clash(e, t))) {
+            conflicts.push(index);
+            continue;
+        }
+        for edit in group {
+            if !taken.contains(edit) {
+                taken.push(edit.clone());
+            }
+        }
+        applied.push(index);
+    }
+    let (out, rest) = apply_edits(text, &taken);
+    debug_assert!(rest.is_empty(), "the edits taken never clash");
+    GroupsApplied { text: out, applied, conflicts }
+}
+
+/// The lines of the inline diff a human diagnostic shows under a suggestion: `('-', line)` for each source line the
+/// edits touch and `('+', line)` for what those lines become. Lines equal on both sides at the start and the end are
+/// left out, so an inserted line shows as one `+`. The lines are trimmed of the indentation they share. Empty when
+/// the edits are in more than one file or cannot apply.
+pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
+    let Some(first) = edits.first() else { return Vec::new() };
+    if edits.iter().any(|e| e.span.file != first.span.file) || first.span.file.0 as usize >= sources.len() {
+        return Vec::new();
+    }
+    let text = &sources.get(first.span.file).text;
+    let lo = edits.iter().map(|e| e.span.lo as usize).min().unwrap_or(0);
+    let hi = edits.iter().map(|e| e.span.hi as usize).max().unwrap_or(0);
+    if hi > text.len() || !text.is_char_boundary(lo) || !text.is_char_boundary(hi) {
+        return Vec::new();
+    }
+    let start = text[..lo].rfind('\n').map_or(0, |n| n + 1);
+    let end = text[hi..].find('\n').map_or(text.len(), |n| hi + n);
+    let old = &text[start..end];
+    let shifted: Vec<TextEdit> =
+        edits.iter().map(|e| (e.span.lo - start as u32, e.span.hi - start as u32, e.replacement.clone())).collect();
+    let (new, conflicts) = apply_edits(old, &shifted);
+    if !conflicts.is_empty() {
+        return Vec::new();
+    }
+    let mut a: Vec<&str> = old.split('\n').map(|l| l.trim_end_matches('\r')).collect();
+    let mut b: Vec<&str> = new.split('\n').map(|l| l.trim_end_matches('\r')).collect();
+    while a.len() > 1 && b.len() > 1 && a[0] == b[0] {
+        a.remove(0);
+        b.remove(0);
+    }
+    while a.len() > 1 && b.len() > 1 && a.last() == b.last() {
+        a.pop();
+        b.pop();
+    }
+    // An insertion of whole lines leaves one equal line on one side; drop it so only the new lines show.
+    if a.len() == 1 && b.len() > 1 {
+        if b.last() == Some(&a[0]) {
+            b.pop();
+            a.clear();
+        } else if b.first() == Some(&a[0]) {
+            b.remove(0);
+            a.clear();
+        }
+    }
+    let indent = a
+        .iter()
+        .chain(b.iter())
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let cut = |l: &str| l.get(indent..).unwrap_or(l.trim_start()).to_string();
+    let mut out: Vec<(char, String)> = a.iter().map(|l| ('-', cut(l))).collect();
+    out.extend(b.iter().map(|l| ('+', cut(l))));
+    out
+}
+
+/// The `(lo, hi, replacement)` edits of `edits` that fall in `span`'s file.
+pub fn text_edits(edits: &[Edit], file: crate::FileId) -> Vec<TextEdit> {
+    edits.iter().filter(|e| e.span.file == file).map(|e| (e.span.lo, e.span.hi, e.replacement.clone())).collect()
+}
+
+/// An edit of a span.
+pub fn edit(span: Span, replacement: impl Into<String>) -> Edit {
+    Edit { span, replacement: replacement.into() }
+}
 
 /// Why an edit was not applied.
 #[derive(Debug, PartialEq, Eq)]

@@ -26,6 +26,16 @@ overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const gen
 1070 pass in debug (three are skipped) and 1061 in release (the release run skips the debug-only and platform-specific
 tests). Stage 3's bench blocks (issue #251) are done: `bench` items, `black_box`, and `burdin bench` with statistics,
 baselines, filters, `--list`, and `--profile-time`.
+**The fifty-fifth session implemented issue #604 and its sub-issues (#606, #607, #609, #611, #613)**: the one edit
+model (`Applicability`, multi-edit suggestions, `burdin_diag::edit`), the compiler's suggestions (near-miss names,
+the import, `mut`, `.clone()` after a move), `burdin fix` with rounds, conflicts, the dirty-tree check, `--dry-run`
+and the formatting of touched files, editions (`[package] edition`, 2024 and 2026) with the deprecation of
+`unimplemented` and `burdin fix --migrate`, the refactoring crate `burdin_refactor` (structural search and replace,
+extract, inline, change signature, move item; every result checked against new errors and changed moves), `burdin ssr`
+and `burdin refactor`, and the language server's `burdin.structuralSearchReplace` command and extract/inline actions.
+`spec/fix.md` and `spec/refactor.md` are new, `docs/releasing.md` records the edition policy, and
+`tests/check_fix.py`, `tests/check_ssr.py`, and `tests/check_refactor.py` check the behavior.
+
 `burdin test` runs `test` blocks concurrently with attributes, captured output, and isolation
 (issues #16, #17, #18); the twelfth deleted the stale
 `Burdin Stage 0 Subset.md` root export (issue #43) and documented the driver contract in a root `README.md`, checked

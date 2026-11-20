@@ -1,0 +1,2 @@
+fixed pkg/src/main.bd:5: [E0301] replace the call with `panic("not implemented")`
+migrated the package to edition 2026

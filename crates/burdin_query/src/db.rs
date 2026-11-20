@@ -132,6 +132,7 @@ struct LayoutPackage {
     dir: Option<PathBuf>,
     deps: Vec<(String, usize)>,
     root_module: Option<usize>,
+    edition: burdin_sema::Edition,
     modules: Vec<LayoutModule>,
 }
 
@@ -232,6 +233,7 @@ impl Db {
                 dir: package.dir.clone(),
                 deps: package.deps.clone(),
                 root_module: package.root_module,
+                edition: package.edition,
                 modules,
             });
         }
@@ -524,6 +526,7 @@ impl Db {
             .map(|(id, package)| burdin_sema::Package {
                 name: package.name.clone(),
                 is_root: id == self.layout.entry_package,
+                edition: package.edition,
                 deps: package.deps.clone(),
                 root_module: package.root_module,
                 modules: package

@@ -1,0 +1,6 @@
+fn main() {
+    let x = 1
+    let a = x + 1
+    let b = x + 2
+    println("{a} {b}")
+}

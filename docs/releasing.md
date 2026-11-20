@@ -45,6 +45,22 @@ outside a git checkout still reports where it came from.
 - `install.sh` and `install.ps1` default to the stable channel and accept `BURDIN_CHANNEL=nightly` with an explicit
   `BURDIN_VERSION` (a nightly is never the "latest release").
 
+## Editions and migration
+
+`[package] edition` in `burdin.toml` names the language edition new code is written in; a manifest without the line,
+and a one-file target, is the 2024 edition. The compiler knows 2024 and 2026.
+
+A breaking change to the language does not reach every package at once:
+
+1. In the edition before the change, the old form is deprecated: a warning with a machine-applicable fix that writes
+   the new form.
+2. `burdin fix --migrate` applies those fixes and moves the manifest to the next edition, after checking the package
+   under it; a migration that would not compile writes nothing.
+3. In the new edition the old form is an error, with the same fix.
+
+So every deprecation ships at least one release before the edition that removes it, and the release notes say which
+edition removes it. `spec/fix.md` (FX10, FX11) is the exact behavior.
+
 ## Breaking changes and packages
 
 A change is **breaking** when it changes the meaning or validity of a program, the observable behavior of the

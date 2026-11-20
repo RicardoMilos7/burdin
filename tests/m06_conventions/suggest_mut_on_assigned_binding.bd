@@ -1,0 +1,10 @@
+//@ compile-fail
+//@ suggest: E0005 machine-applicable: make `total` mutable
+
+// An assignment to an immutable `let` binding: the fix declares the binding `mut` (`spec/fix.md`, FX13).
+
+fn main() {
+    let total = 1
+    total = 2 //~ E0005
+    println(total.to_string())
+}

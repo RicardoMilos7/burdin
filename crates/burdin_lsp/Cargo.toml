@@ -17,3 +17,4 @@ burdin_syntax.workspace = true
 burdin_query.workspace = true
 burdin_fmt.workspace = true
 burdin_lint.workspace = true
+burdin_refactor.workspace = true

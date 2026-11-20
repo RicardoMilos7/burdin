@@ -354,12 +354,29 @@ impl<'a> Checker<'a> {
                 let name = name.clone();
                 let moved_at = self.states[root.0].moved_span(path);
                 let declared = self.locals[root.0].span;
+                // `.clone()` at the move keeps the value, when the whole local moved where its name is written and
+                // its type is `Clone` (`spec/fix.md`, FX13). It copies the value, which changes what the program
+                // does when the move was meant, so a person decides.
+                let clone_at = moved_at.filter(|m| {
+                    path.is_empty()
+                        && (m.hi - m.lo) as usize == name.len()
+                        && !self.env.defs.is_copy(&self.locals[root.0].ty)
+                        && self.env.defs.is_clone(&self.locals[root.0].ty)
+                });
                 let error = self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
                 if declared.lo < declared.hi && declared != span {
                     error.note(declared, format!("`{name}` is declared here"));
                 }
                 if let Some(moved_at) = moved_at {
                     error.note(moved_at, "value moved here");
+                }
+                if let Some(at) = clone_at {
+                    error.suggest_with(
+                        Span::new(at.file, at.hi, at.hi),
+                        format!("clone `{name}` where it is moved, so this use has its own value"),
+                        ".clone()",
+                        burdin_diag::Applicability::MaybeIncorrect,
+                    );
                 }
                 error.help(TRACE_HELP);
             }

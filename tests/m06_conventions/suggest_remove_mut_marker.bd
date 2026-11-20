@@ -1,0 +1,13 @@
+//@ compile-fail
+//@ suggest: E0115 machine-applicable: remove the `mut` marker
+
+// A `mut` marker on an argument whose parameter is read-only (`spec/fix.md`, FX13).
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+fn main() {
+    let n = 1
+    show(mut n) //~ E0115
+}

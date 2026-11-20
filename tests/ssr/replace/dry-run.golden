@@ -1,0 +1,9 @@
+--- a/pkg/src/main.bd
++++ b/pkg/src/main.bd
+@@ -1,5 +1,5 @@
+ fn main() {
+-    let n = 1 + 2
++    let n = 2 + 1
+     let m = n * 2
+     println("{m}")
+ }

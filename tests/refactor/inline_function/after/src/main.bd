@@ -1,0 +1,9 @@
+fn fail(n: i32): i32 {
+    n
+}
+
+fn main() {
+    let x = { 3 * 2 }
+    let y = fail(1) + fail(2)
+    println("{x} {y}")
+}

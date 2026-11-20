@@ -256,6 +256,23 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
 
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
+
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
       - name: Check burdin doc
@@ -598,6 +615,23 @@ jobs:
       - name: Check the linter
         if: matrix.part == 'tools'
         run: python3 tests/check_lint.py
+
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
 
       # `burdin doc` (issues #234, #467-#469, #656-#658): the site and its golden pages, intra-doc links and their
       # diagnostics, private items, the JSON schema, the coverage report, and the output directory.
@@ -963,6 +997,23 @@ jobs:
       - name: Check the linter
         if: matrix.part == 'tools'
         run: python tests/check_lint.py
+
+      # `burdin fix` and the editions (issues #604, #606, #607, #609): the suggestion model, the fix loop, the dirty
+      # tree, `--dry-run`, and `--migrate`.
+      - name: Check burdin fix
+        if: matrix.part == 'tools'
+        run: python3 tests/check_fix.py
+
+      # `burdin ssr` (issue #611): structural search and replace, with placeholders, type constraints, and names that
+      # match by resolution.
+      - name: Check burdin ssr
+        if: matrix.part == 'tools'
+        run: python3 tests/check_ssr.py
+
+      # `burdin refactor` (issue #613): extract, inline, change a signature, and move an item, each with its refusal.
+      - name: Check burdin refactor
+        if: matrix.part == 'tools'
+        run: python3 tests/check_refactor.py
 
       - name: Check burdin doc
         if: matrix.part == 'tools'

@@ -40,7 +40,9 @@ not updated and may disagree with the repository.
    resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
    import rules, layout checks, wrappers, and `--export`; `spec/rust-interop.md` is Rust interop: rustdoc JSON, the C-ABI
-   shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/lint.md` is `burdin lint` (the `[lint]` table,
+   shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/fix.md` is the suggestion model, `burdin fix`, and editions;
+   `spec/refactor.md` is `burdin ssr` and the refactorings (`burdin refactor`, the language server's structural search
+   and extract/inline actions); `spec/lint.md` is `burdin lint` (the `[lint]` table,
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
    intra-doc links and their diagnostics, the site and its search, the JSON schema, and the coverage report;
    `spec/check.md` is `burdin check`, the type-check-only command (what it shares with a build, and `--tests`);
@@ -102,6 +104,9 @@ python3 tests/check_diagnostics.py       check color, width, formats, error limi
 python3 tests/check_error_docs.py        check the error-code reference and `burdin explain` (needs a built driver)
 python3 tests/check_test_runner.py       check `burdin test` attributes, parallelism, output, isolation, and discovery
 python3 tests/check_lint.py              check `burdin lint`: the documented lints, the fixtures in tests/lint, `--fix`, levels, and the manifest
+python3 tests/check_fix.py               check `burdin fix`: suggestions, rounds, conflicts, the dirty tree, and `--migrate`
+python3 tests/check_ssr.py               check `burdin ssr`: patterns, type constraints, resolution, search, and skipped matches
+python3 tests/check_refactor.py          check `burdin refactor`: every refactoring and its refusal
 python3 tests/check_doc.py               check `burdin doc`: the site and its golden pages, links, JSON, coverage, and the output rules
 python3 tests/check_fmt.py               check `burdin fmt`: golden outputs, idempotence, --check, --stdin, --range, grouping
 python3 tests/check_build_scripts.py     check build-script caching, declared inputs, `--emit-deps`, and `bindgen`
@@ -192,6 +197,9 @@ crates/
   burdin_dap/               the debug adapter behind `burdin dap` (spec/debug.md, DBG11): the lldb-dap child
                             (`backend.rs`), the `target` build and formatter import (`launch.rs`), and the four
                             augmentations (`adapter.rs`); its `burdin-dap` binary is the same server without LLVM
+  burdin_refactor/          the refactoring engine behind `burdin ssr` and `burdin refactor` (spec/refactor.md):
+                            structural search and replace, extract, inline, change signature, and move item, over
+                            burdin_query; every result is checked before it is returned
   burdin_lsp/               the language server behind `burdin lsp` (spec/lsp.md): positions and URIs
                             (`text.rs`), one query database per package (`project.rs`),
                             the loop, lifecycle, cancellation, and progress (`server.rs`), and the features (`diagnostics.rs`,

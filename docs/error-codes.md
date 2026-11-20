@@ -1880,3 +1880,27 @@ fn main() {}
 
 **How to fix:** move the `#!` line to the very top of the file, or delete it. Burdin has no other use for `#`, so
 the line is never a comment: a shebang below the first line is almost always a paste that landed one line too low.
+
+## E0301: Deprecated form
+
+A warning. The package's edition still accepts the form, but the next edition removes it (`spec/fix.md`, FX11). A
+package names its edition in `burdin.toml` (`[package] edition = "2024"`; a package that names none, and a one-file
+target, is edition 2024). The warning carries a machine-applicable fix that writes the form every edition accepts,
+with the same behavior. Edition 2024 deprecates `unimplemented()`; edition 2026 removes it, and a call there is
+E0002 with the same fix.
+
+<!-- warning-example: E0301 -->
+```burdin
+fn later(): i32 {
+    unimplemented() //~ E0301
+}
+
+fn main() {
+    println("not called")
+}
+```
+<!-- /warning-example -->
+
+**How to fix:** `burdin fix` applies the fix (`unimplemented()` becomes `panic("not implemented")`), and
+`burdin fix --migrate` applies it and moves the package to the next edition, after checking that the package compiles
+there. Write `todo()` instead when the function is still to be written.

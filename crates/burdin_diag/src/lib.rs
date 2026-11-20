@@ -1,7 +1,7 @@
 //! Source files, spans, and diagnostics.
 //!
 //! Every diagnostic carries an error code from the registry in `tests/README.md`, a severity, and a primary span.
-//! It may also carry related notes (with their own spans) and suggestions (a replacement edit for one span), which
+//! It may also carry related notes (with their own spans) and suggestions (edits with an applicability, `spec/fix.md`), which
 //! the JSON format exposes for an editor's code actions (issue #435).
 //!
 //! Four formats are rendered from the same data (issues #434, #642, #643):
@@ -23,6 +23,7 @@
 
 use std::fmt::Write as _;
 
+pub mod edit;
 mod json;
 mod sarif;
 
@@ -340,6 +341,8 @@ impl Code {
     pub const INVALID_BLOCKING: Code = Code("E0290");
     /// A `#!` shebang line anywhere but the first line of a file (`spec/scripts.md`, SC2).
     pub const SHEBANG_PLACEMENT: Code = Code("E0300");
+    /// A warning: a form the package's edition deprecates and the next edition removes (`spec/fix.md`, FX11).
+    pub const DEPRECATED: Code = Code("E0301");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");
@@ -471,16 +474,73 @@ pub struct Label {
     pub message: String,
 }
 
-/// A fix for one span. `span.lo == span.hi` inserts `replacement`; an empty replacement deletes the span. This is
-/// the shape an editor needs for a quick-fix code action.
+/// How safe a suggestion is to apply without a person reading it (`spec/fix.md`, FX1). `burdin fix` and
+/// `burdin lint --fix` apply only [`Applicability::MachineApplicable`]; an editor offers every level as a quick fix
+/// and prefers the machine-applicable one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Applicability {
+    /// The edit is what the program means: applying it cannot change what a correct program does.
+    MachineApplicable,
+    /// The edit is probably what was meant, but it can change what the program does (a `.clone()` that copies a
+    /// value, for example), so a person decides.
+    MaybeIncorrect,
+    /// The edit contains text a person has to fill in (`todo()` in a stub body, for example).
+    HasPlaceholders,
+    /// Nothing is known about the edit.
+    Unspecified,
+}
+
+impl Applicability {
+    /// The name in the documentation and in the `//@ suggest:` test directive.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Applicability::MachineApplicable => "machine-applicable",
+            Applicability::MaybeIncorrect => "maybe-incorrect",
+            Applicability::HasPlaceholders => "has-placeholders",
+            Applicability::Unspecified => "unspecified",
+        }
+    }
+
+    /// The value of a suggestion's `applicability` field in the version 1 JSON format. Version 1 shipped with
+    /// `"machine"` and `"manual"`, so those two keep their spelling; `"manual"` is [`Applicability::Unspecified`].
+    pub fn json_name(self) -> &'static str {
+        match self {
+            Applicability::MachineApplicable => "machine",
+            Applicability::MaybeIncorrect => "maybe-incorrect",
+            Applicability::HasPlaceholders => "has-placeholders",
+            Applicability::Unspecified => "manual",
+        }
+    }
+}
+
+/// One text edit: replace `span` with `replacement`. `span.lo == span.hi` inserts; an empty replacement deletes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub span: Span,
+    pub replacement: String,
+}
+
+/// A fix: a message, the edits that make it (they apply together, all or none), and how safe it is. This is the
+/// one edit model the compiler, the linter, `burdin fix`, the refactorings, and the language server's quick fixes
+/// share (`spec/fix.md`, FX1).
 #[derive(Clone, Debug)]
 pub struct Suggestion {
     pub message: String,
-    pub span: Span,
-    pub replacement: String,
-    /// The edit is safe to apply without review (`burdin lint --fix`, `spec/lint.md`, LN12): it cannot change what
-    /// the program means, and the driver checks that the edited program still compiles before writing it.
-    pub machine_applicable: bool,
+    /// At least one edit. The edits of one suggestion never overlap.
+    pub edits: Vec<Edit>,
+    pub applicability: Applicability,
+}
+
+impl Suggestion {
+    /// A suggestion that `burdin fix` and `burdin lint --fix` apply on their own.
+    pub fn is_machine_applicable(&self) -> bool {
+        self.applicability == Applicability::MachineApplicable
+    }
+
+    /// The first edit's span: where an editor anchors the fix.
+    pub fn span(&self) -> Span {
+        self.edits.first().map_or(Span::new(FileId(0), 0, 0), |e| e.span)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -544,35 +604,46 @@ impl Diagnostic {
         self
     }
 
-    /// Attaches a suggested edit: replace `span` with `replacement`.
+    /// Attaches a suggested edit whose safety is not known: replace `span` with `replacement`.
     pub fn suggest(
         &mut self,
         span: Span,
         message: impl Into<String>,
         replacement: impl Into<String>,
     ) -> &mut Diagnostic {
-        self.suggestions.push(Suggestion {
-            message: message.into(),
-            span,
-            replacement: replacement.into(),
-            machine_applicable: false,
-        });
-        self
+        self.suggest_with(span, message, replacement, Applicability::Unspecified)
     }
 
-    /// Like [`Diagnostic::suggest`], for an edit `burdin lint --fix` may apply on its own.
+    /// Like [`Diagnostic::suggest`], for an edit `burdin fix` and `burdin lint --fix` may apply on their own.
     pub fn suggest_safe(
         &mut self,
         span: Span,
         message: impl Into<String>,
         replacement: impl Into<String>,
     ) -> &mut Diagnostic {
-        self.suggestions.push(Suggestion {
-            message: message.into(),
-            span,
-            replacement: replacement.into(),
-            machine_applicable: true,
-        });
+        self.suggest_with(span, message, replacement, Applicability::MachineApplicable)
+    }
+
+    /// A one-edit suggestion with an explicit applicability.
+    pub fn suggest_with(
+        &mut self,
+        span: Span,
+        message: impl Into<String>,
+        replacement: impl Into<String>,
+        applicability: Applicability,
+    ) -> &mut Diagnostic {
+        let edit = Edit { span, replacement: replacement.into() };
+        self.suggest_edits(message, vec![edit], applicability)
+    }
+
+    /// A suggestion made of several edits that apply together.
+    pub fn suggest_edits(
+        &mut self,
+        message: impl Into<String>,
+        edits: Vec<Edit>,
+        applicability: Applicability,
+    ) -> &mut Diagnostic {
+        self.suggestions.push(Suggestion { message: message.into(), edits, applicability });
         self
     }
 }
@@ -799,11 +870,22 @@ fn render_human(out: &mut String, d: &Diagnostic, sources: &SourceMap, options: 
         }
         push_wrapped(out, &prefix, plain.chars().count(), &note.message, options.width, DETAIL_INDENT);
     }
-    let help = d.help.iter().chain(d.suggestions.iter().map(|suggestion| &suggestion.message));
-    for message in help {
-        let plain = String::from("  = help: ");
-        let prefix = if options.color { format!("  = {HELP}help{RESET}: ") } else { plain.clone() };
+    let plain = String::from("  = help: ");
+    let prefix = if options.color { format!("  = {HELP}help{RESET}: ") } else { plain.clone() };
+    for message in &d.help {
         push_wrapped(out, &prefix, plain.chars().count(), message, options.width, DETAIL_INDENT);
+    }
+    for suggestion in &d.suggestions {
+        push_wrapped(out, &prefix, plain.chars().count(), &suggestion.message, options.width, DETAIL_INDENT);
+        // The inline diff: the lines the edits touch, before (`-`) and after (`+`). Source lines are never wrapped.
+        for (sign, line) in edit::inline_diff(sources, &suggestion.edits) {
+            let styled = match (options.color, sign) {
+                (true, '-') => format!("{DETAIL_INDENT}{SEVERITY}-{RESET} {line}"),
+                (true, _) => format!("{DETAIL_INDENT}{HELP}+{RESET} {line}"),
+                (false, _) => format!("{DETAIL_INDENT}{sign} {line}"),
+            };
+            let _ = writeln!(out, "{}", styled.trim_end());
+        }
     }
     for child in &d.children {
         let file = sources.get(child.span.file);
@@ -1040,7 +1122,9 @@ mod tests {
             rendered.text,
             "a.bd:1:1: error[E0114]: pass the argument as `mut ...`\n\
              \x20 = note: a.bd:1:1: declared here\n\
-             \x20 = help: add `mut` before this argument\n"
+             \x20 = help: add `mut` before this argument\n\
+             \x20         - mut x\n\
+             \x20         + mut mut x\n"
         );
     }
 

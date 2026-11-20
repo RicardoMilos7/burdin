@@ -17,10 +17,13 @@ mod doc;
 mod emit;
 mod expand;
 mod export;
+mod fix;
 mod fmt;
 mod lint;
+mod migrate;
 mod msvc;
 mod new;
+mod refactor;
 mod repl;
 mod rust_build;
 mod rust_interop;
@@ -584,6 +587,9 @@ fn driver_main() -> ExitCode {
         "explain" => return explain(rest),
         "bindgen" => return bindgen::run(rest),
         "lint" => return lint::run(rest),
+        "fix" => return fix::run(rest),
+        "ssr" => return refactor::run_ssr(rest),
+        "refactor" => return refactor::run_refactor(rest),
         "doc" => return doc::run(rest),
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),
@@ -839,6 +845,21 @@ pub(crate) fn front_end(
         }
     }
 
+    // An override of a package's manifest is read for its edition: `burdin fix --migrate` checks the package under
+    // the edition it is about to write before it writes anything (`spec/fix.md`, FX10).
+    for package in &mut loaded.packages {
+        let Some(dir) = &package.dir else { continue };
+        let manifest = dir.join("burdin.toml");
+        if let Some(text) = overrides.get(&manifest) {
+            match package::parse_manifest_text(text, &manifest) {
+                Ok(parsed) => package.edition = parsed.edition,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return Err(ExitCode::from(1));
+                }
+            }
+        }
+    }
     // One file per module, in module order: the ids the source map hands out are the ids `files` indexes.
     let mut file_info: Vec<(PathBuf, bool)> = Vec::new();
     for package in &loaded.packages {

@@ -14,6 +14,7 @@ fn codes(source: &str) -> Vec<String> {
     let packages = [Package {
         name: "test".to_string(),
         is_root: true,
+        edition: Default::default(),
         deps: Vec::new(),
         root_module: None,
         modules: vec![Module { file, path: Vec::new(), ast: &ast }],

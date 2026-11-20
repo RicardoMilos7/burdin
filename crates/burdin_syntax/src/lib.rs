@@ -9,6 +9,7 @@ pub mod lookahead;
 pub mod parser;
 pub mod spans;
 pub mod token;
+pub mod walk;
 
 use burdin_diag::{Diagnostics, FileId};
 

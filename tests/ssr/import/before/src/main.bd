@@ -1,0 +1,6 @@
+use geometry.rectangle_area
+
+fn main() {
+    let a = rectangle_area(2, 3)
+    println("{a}")
+}

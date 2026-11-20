@@ -18,6 +18,7 @@ burdin_check = { path = "crates/burdin_check" }
 burdin_comptime = { path = "crates/burdin_comptime" }
 burdin_lint = { path = "crates/burdin_lint" }
 burdin_query = { path = "crates/burdin_query" }
+burdin_refactor = { path = "crates/burdin_refactor" }
 burdin_pkg = { path = "crates/burdin_pkg" }
 burdin_lsp = { path = "crates/burdin_lsp" }
 burdin_json = { path = "crates/burdin_json" }

@@ -184,13 +184,21 @@ fn body(d: &Diagnostic, sources: &SourceMap, out: &mut Json) {
                 .map(|suggestion| {
                     Json::obj([
                         ("message", Json::str(suggestion.message.as_str())),
-                        ("applicability", Json::str(if suggestion.machine_applicable { "machine" } else { "manual" })),
+                        ("applicability", Json::str(suggestion.applicability.json_name())),
                         (
                             "edits",
-                            Json::Arr(vec![Json::obj([
-                                ("span", location(sources, suggestion.span)),
-                                ("replacement", Json::str(suggestion.replacement.as_str())),
-                            ])]),
+                            Json::Arr(
+                                suggestion
+                                    .edits
+                                    .iter()
+                                    .map(|edit| {
+                                        Json::obj([
+                                            ("span", location(sources, edit.span)),
+                                            ("replacement", Json::str(edit.replacement.as_str())),
+                                        ])
+                                    })
+                                    .collect(),
+                            ),
                         ),
                     ])
                 })
