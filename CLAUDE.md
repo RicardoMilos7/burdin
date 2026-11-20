@@ -56,8 +56,10 @@ not updated and may disagree with the repository.
    budget, the tool API, and the parity between the library and the command line; and `spec/lsp.md` is `burdin lsp`,
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
    `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
-   single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path and git
-   dependencies, `burdin.lock`, `--locked`, and `burdin add`, `spec/toolchain.md` is the toolchain manager: `burdin
+   single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path, git, and
+   official dependencies (`name = true`), `burdin.lock`, `--locked`, and `burdin add`, `spec/serialization.md` is the
+   serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
+   path-aware errors, the derives, and the test format, `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
@@ -123,6 +125,7 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
+python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
@@ -233,6 +236,9 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
+packages/                 the official packages, each an ordinary Burdin package declared with `name = true`; they ship
+                          with the compiler (spec/packages.md, PKG15-PKG18); `tests/packages/official` has the fixtures
+                          the tests use instead
 editors/                  the VS Code extension (vscode/) and the Neovim and Helix setup for `burdin lsp`
 debuggers/                the printers and visualizers (spec/debug.md, DBG6-DBG8): gdb (embedded in a `-g` binary),
                           lldb (written beside the session), and the Windows Natvis file

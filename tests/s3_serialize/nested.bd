@@ -1,0 +1,121 @@
+//@ run
+
+// Nested sequences and a map with String keys (spec/serialization.md, SER5, SER7, SER13).
+
+struct Nested: Debug {
+    rows: List<List<i32>>
+    counts: Map<String, i32>
+}
+
+Nested: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        s.begin_struct("Nested", 2)?
+        s.struct_field("rows")?
+        s.begin_seq(self.rows.len())?
+        for row in self.rows {
+            s.begin_seq(row.len())?
+            for cell in row {
+                serialize_i32(mut s, cell)?
+            }
+            s.end_seq()?
+        }
+        s.end_seq()?
+        s.struct_field("counts")?
+        s.begin_map(self.counts.len())?
+        for (key, value) in self.counts {
+            s.map_key(key.as_str())?
+            serialize_i32(mut s, value)?
+        }
+        s.end_map()?
+        s.end_struct()
+    }
+}
+
+Nested: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Nested, DeError> {
+        d.begin_struct("Nested")?
+
+        if !d.has_next_field()? {
+            return Err(missing_field("rows"))
+        }
+        let first = d.field_name()?
+        if first.as_str() != "rows" {
+            let failure = unknown_field(first.as_str())
+            return Err(failure.field(first.as_str()))
+        }
+        d.begin_seq()?
+        let mut rows = List<List<i32>>.new()
+        loop {
+            let more = d.has_next_seq_element()?
+            if !more {
+                break
+            }
+            d.begin_seq()?
+            let mut row = List<i32>.new()
+            loop {
+                let more_cell = d.has_next_seq_element()?
+                if !more_cell {
+                    break
+                }
+                row.push(deserialize_i32(mut d)?)
+            }
+            d.end_seq()?
+            rows.push(row)
+        }
+        d.end_seq()?
+
+        if !d.has_next_field()? {
+            return Err(missing_field("counts"))
+        }
+        let second = d.field_name()?
+        if second.as_str() != "counts" {
+            let failure = unknown_field(second.as_str())
+            return Err(failure.field(second.as_str()))
+        }
+        d.begin_map()?
+        let mut counts = Map<String, i32>.new()
+        loop {
+            let more = d.has_next_map_entry()?
+            if !more {
+                break
+            }
+            let key = d.map_key()?
+            let value = deserialize_i32(mut d)?
+            counts.insert(key, value)
+        }
+        d.end_map()?
+
+        d.end_struct()?
+        Ok(Nested { rows, counts })
+    }
+}
+
+fn main() {
+    let mut row_one = List<i32>.new()
+    row_one.push(1)
+    row_one.push(2)
+    let mut row_two = List<i32>.new()
+    row_two.push(3)
+    let mut rows = List<List<i32>>.new()
+    rows.push(row_one)
+    rows.push(row_two)
+    let mut counts = Map<String, i32>.new()
+    counts.insert("only".to_string(), 7)
+
+    let text = to_text(Nested { rows, counts }).unwrap()
+    println(text)
+    let read: Result<Nested, DeError> = from_text(text)
+    let back = read.unwrap()
+    println("{}", back.rows.len())
+    println("{}", back.rows[0].len())
+    println("{}", back.rows[0][1])
+    println("{}", back.rows[1][0])
+    println("{}", *back.counts.get("only").unwrap())
+}
+
+//> Nested { rows: [[1, 2], [3]], counts: { "only": 7 } }
+//> 2
+//> 2
+//> 2
+//> 3
+//> 7

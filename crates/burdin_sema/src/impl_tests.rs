@@ -17,10 +17,56 @@ fn codes(source: &str) -> Vec<String> {
         edition: Default::default(),
         deps: Vec::new(),
         root_module: None,
+        official: Vec::new(),
         modules: vec![Module { file, path: Vec::new(), ast: &ast }],
     }];
     check(&packages, 0, 0, crate::EntryMode::Build, false, &sources, &mut diags);
     diags.iter().filter(|d| d.severity == burdin_diag::Severity::Error).map(|d| d.code.0.to_string()).collect()
+}
+
+/// The errors of a one-file package whose manifest could declare the official packages `official`: each message and
+/// its help lines.
+fn errors_with_official(source: &str, official: &[&str]) -> Vec<(String, Vec<String>)> {
+    let source = format!("{source}\nfn main() {{}}\n");
+    let source = source.as_str();
+    let mut sources = SourceMap::default();
+    let file = sources.add("test.bd".to_string(), source.to_string());
+    let mut diags = Diagnostics::default();
+    let ast = burdin_syntax::parse(file, source, &mut diags);
+    let packages = [Package {
+        name: "test".to_string(),
+        is_root: true,
+        edition: Default::default(),
+        deps: Vec::new(),
+        root_module: None,
+        official: official.iter().map(|name| name.to_string()).collect(),
+        modules: vec![Module { file, path: Vec::new(), ast: &ast }],
+    }];
+    check(&packages, 0, 0, crate::EntryMode::Build, false, &sources, &mut diags);
+    diags
+        .iter()
+        .filter(|d| d.severity == burdin_diag::Severity::Error)
+        .map(|d| {
+            assert_eq!(d.code.0, "E0002");
+            (d.message.clone(), d.help.clone())
+        })
+        .collect()
+}
+
+// `spec/packages.md`, PKG18: an unresolved `use` of an official package that is not declared says how to declare it,
+// whichever way the `use` is written; any other unresolved `use` gets no help.
+#[test]
+fn unknown_module_names_an_official_package() {
+    let help = "`json` is an official package: add `json = true` to [dependencies] or run `burdin add json`";
+    for source in ["use json", "use json.parse", "use json.{parse, Value}"] {
+        let errors = errors_with_official(source, &["json", "toml"]);
+        assert_eq!(errors.len(), 1, "{source}: {errors:?}");
+        assert!(errors[0].0.starts_with("unknown module `json"), "{source}: {}", errors[0].0);
+        assert_eq!(errors[0].1, [help], "{source}");
+    }
+    // Not official, or the package has no manifest to declare it in: the error alone.
+    assert_eq!(errors_with_official("use yaml", &["json"]), [("unknown module `yaml`".to_string(), vec![])]);
+    assert_eq!(errors_with_official("use json", &[]), [("unknown module `json`".to_string(), vec![])]);
 }
 
 const PRELUDE: &str = "

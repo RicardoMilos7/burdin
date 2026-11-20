@@ -114,7 +114,8 @@ On Windows PowerShell:
 ```
 
 The installers verify the release's `SHA256SUMS` before unpacking, install into `$HOME/.local/bin`
-(`%LOCALAPPDATA%\Programs\burdin\bin` on Windows), and accept `BURDIN_VERSION` to pin a version,
+(`%LOCALAPPDATA%\Programs\burdin\bin` on Windows) together with the official packages in a `packages/` folder beside the
+compiler, and accept `BURDIN_VERSION` to pin a version,
 `BURDIN_CHANNEL=nightly` for a nightly, and `BURDIN_INSTALL_DIR` to change the destination. `install.ps1` adds that
 directory to your user `PATH`. `install.sh` adds a PATH line to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS), or
 `~/.config/fish/config.fish`; other shells get a hint. Set `BURDIN_NO_MODIFY_PATH` (or pass `-NoModifyPath` to `install.ps1`) to skip the PATH
@@ -335,7 +336,12 @@ tag = "v1" }`, or `branch`, or `rev`). `burdin add [<name>] --path <dir>` and `b
 every git dependency to an exact commit and the SHA-256 checksum of its files; a failed `add` changes neither file. Every
 build keeps `burdin.lock` current (git checkouts are cached under `BURDIN_HOME`), and `--locked` on `build`, `run`,
 `test`, `bench`, and `check` fails with exit status 1, naming each difference, when the lockfile does not match the
-manifests. There is no package registry yet. [`spec/packages.md`](spec/packages.md) is the specification and
+manifests. A third source is the official packages that ship with the compiler, which live in
+[`packages/`](packages/README.md): `json = true` in `[dependencies]` (or `burdin add json`) declares one, it is versioned
+with the compiler, and `burdin.lock` pins the checksum of its files. The first one is `json`, the JSON format on the
+serialization framework (`packages/json/README.md`). The compiler finds them through `BURDIN_PACKAGES`, then
+`packages/` beside the directory of its executable (or one level up), and the release archive and the installers put the folder
+there. There is no package registry yet. [`spec/packages.md`](spec/packages.md) is the specification and
 `tests/check_packages.py` checks it.
 
 `burdin lsp` is the language server: it speaks the Language Server Protocol over standard input and output (`--stdio` is

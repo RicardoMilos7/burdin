@@ -1,9 +1,9 @@
-//! Packages: `burdin.toml`, every `.bd` file under `src/` as a module, and path and git dependencies.
+//! Packages: `burdin.toml`, every `.bd` file under `src/` as a module, and path, git, and official dependencies.
 //!
 //! A single `.bd` file is a package with one module (its path is empty). A directory is a package described by
 //! its `burdin.toml`; its entry point is `src/main.bd`, and `[dependencies]` are loaded recursively from their
-//! `path`, or from the checkout of the commit `burdin.lock` pins for a `git` dependency (`spec/packages.md`). The
-//! loader never fetches: `burdin_pkg` resolves and checks out git dependencies before a build. Module paths are
+//! `path`, from the checkout of the commit `burdin.lock` pins for a `git` dependency, or from the compiler's own
+//! `packages/` folder for an official one (`name = true`; `spec/packages.md`). The loader never fetches: `burdin_pkg` resolves and checks out git dependencies before a build. Module paths are
 //! relative to `src/` (`geometry/shapes.bd` is module `geometry.shapes`).
 
 use crate::lockfile::{self, GitRef, Lockfile};
@@ -204,6 +204,12 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
                      dependency"
                 ));
             }
+            DepSource::Official => {
+                return Err(format!(
+                    "{line_number}: a script's dependency must be a `path`; a script has no lockfile to pin an \
+                     official package"
+                ));
+            }
         };
         deps.push((key.to_string(), dep_path));
     }
@@ -282,7 +288,7 @@ fn load_impl(target: &Path, require_entry: bool) -> Result<Workspace, String> {
 /// The standard library, embedded in the driver so that every program has it without a manifest entry.
 /// A project that declares its own `std` package keeps it instead.
 fn std_package() -> PackageFiles {
-    let sources: [(&str, &'static str); 40] = [
+    let sources: [(&str, &'static str); 41] = [
         ("std", include_str!("../../../std/src/std.bd")),
         ("alloc", include_str!("../../../std/src/alloc.bd")),
         ("io", include_str!("../../../std/src/io.bd")),
@@ -323,6 +329,7 @@ fn std_package() -> PackageFiles {
         ("time", include_str!("../../../std/src/time.bd")),
         ("random", include_str!("../../../std/src/random.bd")),
         ("slice", include_str!("../../../std/src/slice.bd")),
+        ("serialize", include_str!("../../../std/src/serialize.bd")),
     ];
     let modules: Vec<ModuleFile> = sources
         .iter()
@@ -381,6 +388,81 @@ fn attach_std(packages: &mut Vec<PackageFiles>) {
     packages.push(std_package());
 }
 
+/// The environment variable that names the directory of the official packages (`spec/packages.md`, PKG16).
+pub const PACKAGES_ENV: &str = "BURDIN_PACKAGES";
+
+/// The places the official packages may be, in the order they are tried (PKG16). With `BURDIN_PACKAGES` set that is
+/// the only one.
+pub fn official_roots() -> Vec<PathBuf> {
+    if let Some(dir) = std::env::var_os(PACKAGES_ENV).filter(|dir| !dir.is_empty()) {
+        return vec![PathBuf::from(dir)];
+    }
+    let mut roots = Vec::new();
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        roots.push(exe_dir.join("..").join("packages"));
+        roots.push(exe_dir.join("packages"));
+    }
+    // A debug build finds the checkout it was built from. A release build embeds no build path, so it is
+    // reproducible: it finds the packages beside its executable.
+    #[cfg(debug_assertions)]
+    roots.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages")));
+    roots
+}
+
+/// The first of [`official_roots`] that is a directory.
+pub fn official_root() -> Option<PathBuf> {
+    official_roots().into_iter().find(|root| root.is_dir())
+}
+
+/// The names of the official packages in `root`, sorted: its subdirectories that hold a `burdin.toml`.
+fn official_names_in(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("burdin.toml").is_file())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| is_ident(name))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The names of the official packages this compiler has, sorted; empty when it has none.
+pub fn official_names() -> Vec<String> {
+    official_root().map(|root| official_names_in(&root)).unwrap_or_default()
+}
+
+/// The directory of the official package `name`, or the error that explains why there is none (`name = true` for a
+/// name that is not official, or no packages directory at all).
+pub fn official_dir(name: &str) -> Result<PathBuf, String> {
+    let Some(root) = official_root() else {
+        let looked: Vec<String> = official_roots().iter().map(|root| source_path_text(root)).collect();
+        return Err(format!(
+            "it is not an official package: this burdin found no packages directory (looked in {}; set \
+             {PACKAGES_ENV} to the directory that holds the official packages); for any other package give \
+             `{{ path = \"...\" }}` or `{{ git = \"...\" }}`",
+            looked.join(", ")
+        ));
+    };
+    official_dir_in(&root, name)
+}
+
+fn official_dir_in(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let names = official_names_in(root);
+    if names.iter().any(|official| official == name) {
+        return Ok(root.join(name));
+    }
+    let known = if names.is_empty() {
+        "this burdin has no official packages".to_string()
+    } else {
+        format!("the official packages are: {}", names.join(", "))
+    };
+    Err(format!(
+        "it is not an official package; {known}; for any other package give `{{ path = \"...\" }}` or \
+         `{{ git = \"...\" }}`"
+    ))
+}
+
 struct Loader {
     packages: Vec<PackageFiles>,
     /// Canonical directory of each loaded package, for a diamond dependency to reuse its package.
@@ -412,6 +494,9 @@ impl Loader {
                 .join(relative)
                 .canonicalize()
                 .map_err(|e| format!("`{}`: dependency `{name}`: {e}", manifest_path.display())),
+            DepSource::Official => official_dir(name)
+                .and_then(|dir| dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display())))
+                .map_err(|e| format!("`{}`: dependency `{name} = true`: {e}", manifest_path.display())),
             DepSource::Git { url, reference } => {
                 let locked = self.lock.as_ref().and_then(|lock| lock.git_package(url, reference));
                 let Some(git) = locked.and_then(|p| p.git.as_ref()) else {
@@ -493,13 +578,15 @@ impl Loader {
     }
 }
 
-/// Where a dependency comes from (`spec/packages.md`, PKG1-PKG2).
+/// Where a dependency comes from (`spec/packages.md`, PKG1-PKG2, PKG15).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DepSource {
     /// A directory, relative to the manifest that names it.
     Path(String),
     /// A git repository and the reference to build; `burdin.lock` pins it to a commit.
     Git { url: String, reference: GitRef },
+    /// The official package of the dependency's own name, bundled with the compiler (`name = true`).
+    Official,
 }
 
 #[derive(Debug)]
@@ -519,7 +606,7 @@ pub struct Manifest {
 }
 
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
-/// with a `path` or a `git` repository, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
+/// with a `path`, a `git` repository, or `true`, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
 /// not break an older compiler.
 pub fn parse_manifest(path: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -570,8 +657,15 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                 if !is_ident(key) {
                     return Err(format!("{}: `{key}` is not a valid dependency name", where_()));
                 }
-                let dep_path = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
-                deps.push((key.to_string(), dep_path));
+                if value == "false" {
+                    return Err(format!(
+                        "{}: `{key} = false` means nothing: remove the line (a dependency you do not use needs no \
+                         entry)",
+                        where_()
+                    ));
+                }
+                let source = parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))?;
+                deps.push((key.to_string(), source));
             }
             "lint" => {
                 let level = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
@@ -586,7 +680,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                 }
                 let path = match parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))? {
                     DepSource::Path(path) => path,
-                    DepSource::Git { .. } => {
+                    DepSource::Git { .. } | DepSource::Official => {
                         return Err(format!("{}: a Rust crate must be a `path`", where_()));
                     }
                 };
@@ -659,14 +753,20 @@ pub(crate) fn parse_string(value: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), or `{ git = "<url>" }` with at most one of
-/// `branch`, `tag`, and `rev` (`spec/packages.md`, PKG1-PKG2). Other keys are ignored, so a newer manifest loads.
+/// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), `{ git = "<url>" }` with at most one of `branch`,
+/// `tag`, and `rev`, or `true` for the official package of that name (`spec/packages.md`, PKG1-PKG2, PKG15). Other
+/// keys are ignored, so a newer manifest loads.
 fn parse_dependency(value: &str) -> Result<DepSource, String> {
     if value.starts_with('"') {
         return parse_string(value).map(DepSource::Path);
     }
+    if value == "true" {
+        return Ok(DepSource::Official);
+    }
     if !(value.starts_with('{') && value.ends_with('}')) {
-        return Err("a dependency must be `{ path = \"...\" }` or `{ git = \"...\" }`".to_string());
+        return Err("a dependency must be `{ path = \"...\" }`, `{ git = \"...\" }`, or `true` for an official \
+                    package"
+            .to_string());
     }
     let inner = &value[1..value.len() - 1];
     let mut path = None;
@@ -923,6 +1023,61 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
                 ("d".to_string(), git("https://example.com/d.git", GitRef::Rev("1a2b3c".into()))),
             ]
         );
+    }
+
+    #[test]
+    fn official_dependency_forms() {
+        let m = manifest("[package]\nname = \"app\"\n[dependencies]\njson = true\nlib = \"../lib\"\n").unwrap();
+        assert_eq!(
+            m.deps,
+            vec![("json".to_string(), DepSource::Official), ("lib".to_string(), DepSource::Path("../lib".to_string()))]
+        );
+        let error = manifest("[package]\nname = \"app\"\n[dependencies]\njson = false\n").unwrap_err();
+        assert!(error.contains("`json = false` means nothing"), "{error}");
+        assert!(error.starts_with("burdin.toml:4:"), "{error}");
+        // Only a dependency of a package takes `true`: a script and a Rust crate take paths.
+        let script = "//! [dependencies]\n//! json = true\nfn main() {}\n";
+        assert!(script_manifest(script).unwrap_err().contains("must be a `path`"));
+        assert!(manifest("[package]\nname = \"app\"\n[rust.crates]\ngeo = true\n").unwrap_err().contains("`path`"));
+        // Not a boolean spelling the manifest knows.
+        assert!(manifest("[package]\nname = \"app\"\n[dependencies]\njson = yes\n").is_err());
+    }
+
+    #[test]
+    fn official_roots_are_searched_in_order() {
+        let temp = TempDir::new("official");
+        let root = temp.0.join("packages");
+        for name in ["toml", "json"] {
+            fs::create_dir_all(root.join(name).join("src")).unwrap();
+            fs::write(root.join(name).join("burdin.toml"), format!("[package]\nname = \"{name}\"\n")).unwrap();
+        }
+        // A directory without a manifest and a file are not packages.
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::write(root.join("README.md"), "official packages\n").unwrap();
+        assert_eq!(official_names_in(&root), ["json", "toml"]);
+        assert_eq!(official_dir_in(&root, "json").unwrap(), root.join("json"));
+        let error = official_dir_in(&root, "yaml").unwrap_err();
+        assert!(error.contains("the official packages are: json, toml"), "{error}");
+        assert!(error.contains("`{ path = \"...\" }`"), "{error}");
+        let empty = temp.0.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(official_dir_in(&empty, "json").unwrap_err().contains("has no official packages"));
+
+        // The environment variable is the only place searched when it is set. Nothing else in this crate's tests
+        // reads it, so setting it here cannot disturb them.
+        // SAFETY: no other thread of these tests reads or writes the environment.
+        unsafe { std::env::set_var(PACKAGES_ENV, &root) };
+        assert_eq!(official_roots(), std::slice::from_ref(&root));
+        assert_eq!(official_names(), ["json", "toml"]);
+        assert_eq!(official_dir("toml").unwrap(), root.join("toml"));
+        unsafe { std::env::set_var(PACKAGES_ENV, temp.0.join("missing")) };
+        assert_eq!(official_names(), Vec::<String>::new());
+        assert!(official_dir("json").unwrap_err().contains("found no packages directory"));
+        unsafe { std::env::remove_var(PACKAGES_ENV) };
+        let roots = official_roots();
+        assert!(roots[0].ends_with("../packages") && roots[1].ends_with("packages"), "{roots:?}");
+        #[cfg(debug_assertions)]
+        assert!(roots.last().unwrap().ends_with("../../packages"), "{roots:?}");
     }
 
     #[test]

@@ -1,0 +1,1557 @@
+// Serialization (spec/serialization.md, SER1-SER16).
+//
+// The framework core: the data model (`Serializer`/`Deserializer`), the two user-facing interfaces (`Serialize` and
+// `Deserialize`), the error type with its path, the helper functions an impl block or the compiler-generated derive
+// calls, and a tiny human-readable test format. The format packages (json, toml, csv, yaml, xml) implement only the
+// format side.
+//
+// The shape vocabulary is: unit, bool, the sized integers, float, char, string, bytes, sequence, map with `String`
+// keys, struct, and externally tagged enum variant. A format may reject a shape it cannot represent.
+
+use alloc.Allocator
+use fmt.{Display, Formatter}
+use std.Error
+
+/// The format side of writing: a writer implements this interface. Each method borrows the writer exclusively for
+/// the call, so a struct or sequence is written with a `begin` call, one call per value, and an `end` call.
+interface Serializer {
+    /// Writes the unit value.
+    fn serialize_unit(mut self): Result<(), DeError>
+
+    /// Writes a `bool`.
+    fn serialize_bool(mut self, value: bool): Result<(), DeError>
+
+    /// Writes an `i8`.
+    fn serialize_i8(mut self, value: i8): Result<(), DeError>
+    /// Writes an `i16`.
+    fn serialize_i16(mut self, value: i16): Result<(), DeError>
+    /// Writes an `i32`.
+    fn serialize_i32(mut self, value: i32): Result<(), DeError>
+    /// Writes an `i64`.
+    fn serialize_i64(mut self, value: i64): Result<(), DeError>
+    /// Writes an `isize`.
+    fn serialize_isize(mut self, value: isize): Result<(), DeError>
+
+    /// Writes a `u8`.
+    fn serialize_u8(mut self, value: u8): Result<(), DeError>
+    /// Writes a `u16`.
+    fn serialize_u16(mut self, value: u16): Result<(), DeError>
+    /// Writes a `u32`.
+    fn serialize_u32(mut self, value: u32): Result<(), DeError>
+    /// Writes a `u64`.
+    fn serialize_u64(mut self, value: u64): Result<(), DeError>
+    /// Writes a `usize`.
+    fn serialize_usize(mut self, value: usize): Result<(), DeError>
+
+    /// Writes an `f32`.
+    fn serialize_f32(mut self, value: f32): Result<(), DeError>
+    /// Writes an `f64`.
+    fn serialize_f64(mut self, value: f64): Result<(), DeError>
+
+    /// Writes a `char`.
+    fn serialize_char(mut self, value: char): Result<(), DeError>
+    /// Writes a `str` (or a `String`, through the one implicit conversion).
+    fn serialize_str(mut self, value: str): Result<(), DeError>
+    /// Writes a run of bytes.
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError>
+
+    /// Starts a sequence of exactly `len` values.
+    fn begin_seq(mut self, len: usize): Result<(), DeError>
+    /// Ends the sequence.
+    fn end_seq(mut self): Result<(), DeError>
+
+    /// Starts a map of exactly `len` entries with `String` keys.
+    fn begin_map(mut self, len: usize): Result<(), DeError>
+    /// Writes the key of the next map entry. The entry's value is the next value written.
+    fn map_key(mut self, key: str): Result<(), DeError>
+    /// Ends the map.
+    fn end_map(mut self): Result<(), DeError>
+
+    /// Starts a struct named `name` with exactly `len` fields.
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError>
+    /// Writes the name of the next field. The field's value is the next value written.
+    fn struct_field(mut self, name: str): Result<(), DeError>
+    /// Ends the struct.
+    fn end_struct(mut self): Result<(), DeError>
+
+    /// Starts an enum variant: the enum's name, the variant's name, its declaration index, and its payload arity.
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError>
+    /// Ends the variant's `arity` payload values.
+    fn end_variant(mut self, arity: usize): Result<(), DeError>
+}
+
+/// The format side of reading: a reader implements this interface. The data type drives the parse, asking for the
+/// next value or the next structural token.
+interface Deserializer {
+    /// Reads the unit value.
+    fn deserialize_unit(mut self): Result<(), DeError>
+
+    /// Reads a `bool`.
+    fn deserialize_bool(mut self): Result<bool, DeError>
+
+    /// Reads an `i8`.
+    fn deserialize_i8(mut self): Result<i8, DeError>
+    /// Reads an `i16`.
+    fn deserialize_i16(mut self): Result<i16, DeError>
+    /// Reads an `i32`.
+    fn deserialize_i32(mut self): Result<i32, DeError>
+    /// Reads an `i64`.
+    fn deserialize_i64(mut self): Result<i64, DeError>
+    /// Reads an `isize`.
+    fn deserialize_isize(mut self): Result<isize, DeError>
+
+    /// Reads a `u8`.
+    fn deserialize_u8(mut self): Result<u8, DeError>
+    /// Reads a `u16`.
+    fn deserialize_u16(mut self): Result<u16, DeError>
+    /// Reads a `u32`.
+    fn deserialize_u32(mut self): Result<u32, DeError>
+    /// Reads a `u64`.
+    fn deserialize_u64(mut self): Result<u64, DeError>
+    /// Reads a `usize`.
+    fn deserialize_usize(mut self): Result<usize, DeError>
+
+    /// Reads an `f32`.
+    fn deserialize_f32(mut self): Result<f32, DeError>
+    /// Reads an `f64`.
+    fn deserialize_f64(mut self): Result<f64, DeError>
+
+    /// Reads a `char`.
+    fn deserialize_char(mut self): Result<char, DeError>
+    /// Reads a string into a new `String`.
+    fn deserialize_str(mut self): Result<String, DeError>
+    /// Reads a run of bytes into a new `List<u8>`.
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError>
+
+    /// Consumes the opening of a sequence.
+    fn begin_seq(mut self): Result<(), DeError>
+    /// Whether another sequence element follows; consumes the separator between elements.
+    fn has_next_seq_element(mut self): Result<bool, DeError>
+    /// Consumes the closing of the sequence.
+    fn end_seq(mut self): Result<(), DeError>
+
+    /// Consumes the opening of a map.
+    fn begin_map(mut self): Result<(), DeError>
+    /// Whether another map entry follows; consumes the separator between entries.
+    fn has_next_map_entry(mut self): Result<bool, DeError>
+    /// Reads the next map entry's key.
+    fn map_key(mut self): Result<String, DeError>
+    /// Consumes the closing of the map.
+    fn end_map(mut self): Result<(), DeError>
+
+    /// Consumes the opening of the struct named `name`.
+    fn begin_struct(mut self, name: str): Result<(), DeError>
+    /// Whether another field follows; consumes the separator between fields.
+    fn has_next_field(mut self): Result<bool, DeError>
+    /// Reads the next field's name.
+    fn field_name(mut self): Result<String, DeError>
+    /// Consumes the closing of the struct.
+    fn end_struct(mut self): Result<(), DeError>
+
+    /// Consumes the opening of the enum named `name` and its `.`.
+    fn begin_enum(mut self, name: str): Result<(), DeError>
+    /// Reads the variant's name.
+    fn variant_name(mut self): Result<String, DeError>
+    /// Consumes the opening of the variant's `arity` payload values.
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError>
+    /// Consumes what separates payload value `index` from the one before it (for index 0, nothing).
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError>
+    /// Consumes the closing of the variant's payload.
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError>
+}
+
+/// A type that a format can write. `serialize` writes exactly one value. A hand-written impl block implements this
+/// for any type, and `struct T: Serialize` makes the compiler generate one (spec/serialization.md, SER12). The
+/// compiler-provided impls for the primitive types and the built-in containers are the next phase (SER3, SER14).
+interface Serialize {
+    /// Writes the value with `s`.
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError>
+}
+
+/// A type that a format can read. `deserialize` reads exactly one value and returns it. It is an associated
+/// function, so an impl block for `T` returns `Result<T, DeError>` and a call is written `T.deserialize(mut d)`.
+/// A hand-written impl block or `struct T: Deserialize` implements it; the compiler-provided impls for the
+/// primitive types and the built-in containers are the next phase (spec/serialization.md, SER12, SER14).
+interface Deserialize {
+    /// Reads the value with `d`.
+    fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError>
+}
+
+/// What a format or a reader reports when a value cannot be written or read (spec/serialization.md, SER9 and SER10).
+/// `message` is the format's or the data model's text; `path` is the location of the offending value inside the
+/// value being handled (`config.servers[2].port`), empty when the error is at the value itself. The `field`,
+/// `index`, `key`, and `variant` methods prepend a segment to the path, so a reader attaches the path as the error
+/// unwinds.
+struct DeError {
+    /// The description, including a `line L, column C: ` prefix for a syntax error.
+    message: String
+    /// The path to the offending value, outermost segment first; empty at the value itself.
+    path: String
+}
+
+DeError: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str(self.message.as_str())
+        if self.path.len() > 0 {
+            f.write_str(" at ")
+            f.write_str(self.path.as_str())
+        }
+    }
+}
+
+DeError: Error { }
+
+DeError {
+    /// An error at the value itself, with no path.
+    fn new(message: str): DeError {
+        DeError { message: message.to_string(), path: String.new() }
+    }
+
+    /// A syntax error of the input at `line` and `column` (both 1-based; a column counts Unicode scalar values).
+    /// The message becomes `line L, column C: <message>`.
+    fn syntax(message: str, line: i32, col: i32): DeError {
+        DeError { message: format("line {line}, column {col}: {message}"), path: String.new() }
+    }
+
+    /// Prepends the field `name` to the path (spec/serialization.md, SER9).
+    fn field(own self, name: str): DeError {
+        let path = __prepend(name, self.path.as_str())
+        DeError { message: self.message, path }
+    }
+
+    /// Prepends the sequence index `index` to the path.
+    fn index(own self, index: usize): DeError {
+        let segment = format("[{index}]")
+        let path = __prepend(segment.as_str(), self.path.as_str())
+        DeError { message: self.message, path }
+    }
+
+    /// Prepends the map key `key` to the path.
+    fn key(own self, key: str): DeError {
+        let segment = __key_segment(key)
+        let path = __prepend(segment.as_str(), self.path.as_str())
+        DeError { message: self.message, path }
+    }
+
+    /// Prepends the variant `name` to the path.
+    fn variant(own self, name: str): DeError {
+        let path = __prepend(name, self.path.as_str())
+        DeError { message: self.message, path }
+    }
+}
+
+/// A field name the reader did not expect (spec/serialization.md, SER6). The caller extends the path with the name.
+fn unknown_field(name: str): DeError {
+    DeError.new(format("unknown field '{name}'"))
+}
+
+/// A field name that appeared twice (spec/serialization.md, SER6). The caller extends the path with the name.
+fn duplicate_field(name: str): DeError {
+    DeError.new(format("duplicate field '{name}'"))
+}
+
+/// A field the reader never saw (spec/serialization.md, SER6). The caller extends the path with the struct's
+/// location, not with the field's, because the field is absent from the input.
+fn missing_field(name: str): DeError {
+    DeError.new(format("missing field '{name}'"))
+}
+
+/// A variant name the reader did not expect (spec/serialization.md, SER8).
+fn unknown_variant(type_name: str, name: str): DeError {
+    DeError.new(format("unknown variant '{name}' of {type_name}"))
+}
+
+/// Prepends `segment` to `path`: a field or variant name uses `.` unless the path starts with `[`; an index or key
+/// segment (which already starts with `[`) adds nothing before a path that starts with `[`.
+priv fn __prepend(segment: str, path: str): String {
+    if path.len() == 0 {
+        segment.to_string()
+    } else if path.starts_with("[") {
+        format("{segment}{path}")
+    } else {
+        format("{segment}.{path}")
+    }
+}
+
+/// The path segment of a map key: `["key"]`, with the key escaped like a string literal.
+priv fn __key_segment(key: str): String {
+    let mut out = String.new()
+    out.push('[')
+    __write_quoted(mut out, key, '"')
+    out.push(']')
+    out
+}
+
+// ----- scalar helpers -----------------------------------------------------------------------------------------
+
+/// Writes the unit value with `s`.
+fn serialize_unit<S: Serializer>(mut s: S): Result<(), DeError> {
+    s.serialize_unit()
+}
+
+/// Writes a `bool` with `s`.
+fn serialize_bool<S: Serializer>(mut s: S, value: bool): Result<(), DeError> {
+    s.serialize_bool(value)
+}
+
+/// Writes an `i8` with `s`.
+fn serialize_i8<S: Serializer>(mut s: S, value: i8): Result<(), DeError> {
+    s.serialize_i8(value)
+}
+
+/// Writes an `i16` with `s`.
+fn serialize_i16<S: Serializer>(mut s: S, value: i16): Result<(), DeError> {
+    s.serialize_i16(value)
+}
+
+/// Writes an `i32` with `s`.
+fn serialize_i32<S: Serializer>(mut s: S, value: i32): Result<(), DeError> {
+    s.serialize_i32(value)
+}
+
+/// Writes an `i64` with `s`.
+fn serialize_i64<S: Serializer>(mut s: S, value: i64): Result<(), DeError> {
+    s.serialize_i64(value)
+}
+
+/// Writes an `isize` with `s`.
+fn serialize_isize<S: Serializer>(mut s: S, value: isize): Result<(), DeError> {
+    s.serialize_isize(value)
+}
+
+/// Writes a `u8` with `s`.
+fn serialize_u8<S: Serializer>(mut s: S, value: u8): Result<(), DeError> {
+    s.serialize_u8(value)
+}
+
+/// Writes a `u16` with `s`.
+fn serialize_u16<S: Serializer>(mut s: S, value: u16): Result<(), DeError> {
+    s.serialize_u16(value)
+}
+
+/// Writes a `u32` with `s`.
+fn serialize_u32<S: Serializer>(mut s: S, value: u32): Result<(), DeError> {
+    s.serialize_u32(value)
+}
+
+/// Writes a `u64` with `s`.
+fn serialize_u64<S: Serializer>(mut s: S, value: u64): Result<(), DeError> {
+    s.serialize_u64(value)
+}
+
+/// Writes a `usize` with `s`.
+fn serialize_usize<S: Serializer>(mut s: S, value: usize): Result<(), DeError> {
+    s.serialize_usize(value)
+}
+
+/// Writes an `f32` with `s`.
+fn serialize_f32<S: Serializer>(mut s: S, value: f32): Result<(), DeError> {
+    s.serialize_f32(value)
+}
+
+/// Writes an `f64` with `s`.
+fn serialize_f64<S: Serializer>(mut s: S, value: f64): Result<(), DeError> {
+    s.serialize_f64(value)
+}
+
+/// Writes a `char` with `s`.
+fn serialize_char<S: Serializer>(mut s: S, value: char): Result<(), DeError> {
+    s.serialize_char(value)
+}
+
+/// Writes a `str` (or a `String`) with `s`.
+fn serialize_str<S: Serializer>(mut s: S, value: str): Result<(), DeError> {
+    s.serialize_str(value)
+}
+
+/// Writes a run of bytes with `s`.
+fn serialize_bytes<S: Serializer>(mut s: S, value: [u8]): Result<(), DeError> {
+    s.serialize_bytes(value)
+}
+
+/// Reads the unit value with `d`.
+fn deserialize_unit<D: Deserializer>(mut d: D): Result<(), DeError> {
+    d.deserialize_unit()
+}
+
+/// Reads a `bool` with `d`.
+fn deserialize_bool<D: Deserializer>(mut d: D): Result<bool, DeError> {
+    d.deserialize_bool()
+}
+
+/// Reads an `i8` with `d`.
+fn deserialize_i8<D: Deserializer>(mut d: D): Result<i8, DeError> {
+    d.deserialize_i8()
+}
+
+/// Reads an `i16` with `d`.
+fn deserialize_i16<D: Deserializer>(mut d: D): Result<i16, DeError> {
+    d.deserialize_i16()
+}
+
+/// Reads an `i32` with `d`.
+fn deserialize_i32<D: Deserializer>(mut d: D): Result<i32, DeError> {
+    d.deserialize_i32()
+}
+
+/// Reads an `i64` with `d`.
+fn deserialize_i64<D: Deserializer>(mut d: D): Result<i64, DeError> {
+    d.deserialize_i64()
+}
+
+/// Reads an `isize` with `d`.
+fn deserialize_isize<D: Deserializer>(mut d: D): Result<isize, DeError> {
+    d.deserialize_isize()
+}
+
+/// Reads a `u8` with `d`.
+fn deserialize_u8<D: Deserializer>(mut d: D): Result<u8, DeError> {
+    d.deserialize_u8()
+}
+
+/// Reads a `u16` with `d`.
+fn deserialize_u16<D: Deserializer>(mut d: D): Result<u16, DeError> {
+    d.deserialize_u16()
+}
+
+/// Reads a `u32` with `d`.
+fn deserialize_u32<D: Deserializer>(mut d: D): Result<u32, DeError> {
+    d.deserialize_u32()
+}
+
+/// Reads a `u64` with `d`.
+fn deserialize_u64<D: Deserializer>(mut d: D): Result<u64, DeError> {
+    d.deserialize_u64()
+}
+
+/// Reads a `usize` with `d`.
+fn deserialize_usize<D: Deserializer>(mut d: D): Result<usize, DeError> {
+    d.deserialize_usize()
+}
+
+/// Reads an `f32` with `d`.
+fn deserialize_f32<D: Deserializer>(mut d: D): Result<f32, DeError> {
+    d.deserialize_f32()
+}
+
+/// Reads an `f64` with `d`.
+fn deserialize_f64<D: Deserializer>(mut d: D): Result<f64, DeError> {
+    d.deserialize_f64()
+}
+
+/// Reads a `char` with `d`.
+fn deserialize_char<D: Deserializer>(mut d: D): Result<char, DeError> {
+    d.deserialize_char()
+}
+
+/// Reads a string with `d`, as a new `String`.
+fn deserialize_str<D: Deserializer>(mut d: D): Result<String, DeError> {
+    d.deserialize_str()
+}
+
+/// Reads a run of bytes with `d`, as a new `List<u8>`.
+fn deserialize_bytes<D: Deserializer>(mut d: D): Result<List<u8>, DeError> {
+    d.deserialize_bytes()
+}
+
+// ----- container helpers --------------------------------------------------------------------------------------
+
+/// Writes a list as a sequence. The compiler's generated impl and a hand-written impl both call this.
+fn serialize_list<T: Serialize, S: Serializer>(mut s: S, value: List<T>): Result<(), DeError> {
+    s.begin_seq(value.len())?
+    for item in value {
+        item.serialize(mut s)?
+    }
+    s.end_seq()
+}
+
+/// Reads a sequence into a new list.
+fn deserialize_list<T: Deserialize, D: Deserializer>(mut d: D): Result<List<T>, DeError> {
+    d.begin_seq()?
+    let mut out = List<T>.new()
+    loop {
+        let more = d.has_next_seq_element()?
+        if !more {
+            break
+        }
+        let item = T.deserialize(mut d)?
+        out.push(item)
+    }
+    d.end_seq()?
+    Ok(out)
+}
+
+/// Writes a map with `String` keys. A key's and a value's error are not extended here; the impl that writes a
+/// struct field or sequence element wraps them.
+fn serialize_map<V: Serialize, A: Allocator, S: Serializer>(mut s: S, value: Map<String, V, A>): Result<(), DeError> {
+    s.begin_map(value.len())?
+    for (key, item) in value {
+        s.map_key(key.as_str())?
+        item.serialize(mut s)?
+    }
+    s.end_map()
+}
+
+/// Reads a map with `String` keys into a new map.
+fn deserialize_map<V: Deserialize, D: Deserializer>(mut d: D): Result<Map<String, V>, DeError> {
+    d.begin_map()?
+    let mut out = Map<String, V>.new()
+    loop {
+        let more = d.has_next_map_entry()?
+        if !more {
+            break
+        }
+        let key = d.map_key()?
+        let value = V.deserialize(mut d)?
+        out.insert(key, value)
+    }
+    d.end_map()?
+    Ok(out)
+}
+
+/// Writes an `Option<T>` as the variant `Option.Some(value)` or `Option.None`.
+fn serialize_option<T: Serialize, S: Serializer>(mut s: S, value: Option<T>): Result<(), DeError> {
+    match value {
+        Some(inner) => {
+            s.begin_variant("Option", "Some", 0, 1)?
+            inner.serialize(mut s)?
+            s.end_variant(1)
+        }
+        None => {
+            s.begin_variant("Option", "None", 1, 0)?
+            s.end_variant(0)
+        }
+    }
+}
+
+/// Reads `Option.Some(value)` or `Option.None`.
+fn deserialize_option<T: Deserialize, D: Deserializer>(mut d: D): Result<Option<T>, DeError> {
+    d.begin_enum("Option")?
+    let name = d.variant_name()?
+    if name.as_str() == "Some" {
+        d.begin_variant_payload(1)?
+        d.variant_payload_field(0)?
+        let inner = match T.deserialize(mut d) {
+            Ok(value) => value,
+            Err(e) => return Err(e.variant("Some")),
+        }
+        d.end_variant_payload(1)?
+        Ok(Some(inner))
+    } else if name.as_str() == "None" {
+        d.begin_variant_payload(0)?
+        d.end_variant_payload(0)?
+        Ok(None)
+    } else {
+        let failure = unknown_variant("Option", name.as_str())
+        Err(failure.variant(name.as_str()))
+    }
+}
+
+/// Writes a `Result<T, E>` as the variant `Result.Ok(value)` or `Result.Err(error)`.
+fn serialize_result<T: Serialize, E: Serialize, S: Serializer>(mut s: S, value: Result<T, E>): Result<(), DeError> {
+    match value {
+        Ok(inner) => {
+            s.begin_variant("Result", "Ok", 0, 1)?
+            inner.serialize(mut s)?
+            s.end_variant(1)
+        }
+        Err(failure) => {
+            s.begin_variant("Result", "Err", 1, 1)?
+            failure.serialize(mut s)?
+            s.end_variant(1)
+        }
+    }
+}
+
+/// Reads `Result.Ok(value)` or `Result.Err(error)`.
+fn deserialize_result<T: Deserialize, E: Deserialize, D: Deserializer>(mut d: D): Result<Result<T, E>, DeError> {
+    d.begin_enum("Result")?
+    let name = d.variant_name()?
+    if name.as_str() == "Ok" {
+        d.begin_variant_payload(1)?
+        d.variant_payload_field(0)?
+        let inner = match T.deserialize(mut d) {
+            Ok(value) => value,
+            Err(e) => return Err(e.variant("Ok")),
+        }
+        d.end_variant_payload(1)?
+        Ok(Ok(inner))
+    } else if name.as_str() == "Err" {
+        d.begin_variant_payload(1)?
+        d.variant_payload_field(0)?
+        let failure = match E.deserialize(mut d) {
+            Ok(value) => value,
+            Err(e) => return Err(e.variant("Err")),
+        }
+        d.end_variant_payload(1)?
+        Ok(Err(failure))
+    } else {
+        let failure = unknown_variant("Result", name.as_str())
+        Err(failure.variant(name.as_str()))
+    }
+}
+
+/// The error of a tuple reader whose sequence ended before every part was read.
+priv fn __tuple_short(arity: usize): DeError {
+    DeError.new(format("expected {arity} elements in a tuple"))
+}
+
+/// Writes a two-part tuple as a two-element sequence.
+fn serialize_tuple2<A: Serialize, B: Serialize, S: Serializer>(mut s: S, value: (A, B)): Result<(), DeError> {
+    s.begin_seq(2)?
+    value.0.serialize(mut s)?
+    value.1.serialize(mut s)?
+    s.end_seq()
+}
+
+/// Reads a two-element sequence into a two-part tuple. A sequence with fewer elements is an error, because the
+/// parts are read in order and nothing else says how many there are (spec/serialization.md, SER7).
+fn deserialize_tuple2<A: Deserialize, B: Deserialize, D: Deserializer>(mut d: D): Result<(A, B), DeError> {
+    d.begin_seq()?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(2))
+    }
+    let a = A.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(2))
+    }
+    let b = B.deserialize(mut d)?
+    d.end_seq()?
+    Ok((a, b))
+}
+
+/// Writes a three-part tuple as a three-element sequence.
+fn serialize_tuple3<A: Serialize, B: Serialize, C: Serialize, S: Serializer>(
+    mut s: S,
+    value: (A, B, C),
+): Result<(), DeError> {
+    s.begin_seq(3)?
+    value.0.serialize(mut s)?
+    value.1.serialize(mut s)?
+    value.2.serialize(mut s)?
+    s.end_seq()
+}
+
+/// Reads a three-element sequence into a three-part tuple.
+fn deserialize_tuple3<A: Deserialize, B: Deserialize, C: Deserialize, D: Deserializer>(
+    mut d: D,
+): Result<(A, B, C), DeError> {
+    d.begin_seq()?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(3))
+    }
+    let a = A.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(3))
+    }
+    let b = B.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(3))
+    }
+    let c = C.deserialize(mut d)?
+    d.end_seq()?
+    Ok((a, b, c))
+}
+
+/// Writes a four-part tuple as a four-element sequence.
+fn serialize_tuple4<A: Serialize, B: Serialize, C: Serialize, D: Serialize, S: Serializer>(
+    mut s: S,
+    value: (A, B, C, D),
+): Result<(), DeError> {
+    s.begin_seq(4)?
+    value.0.serialize(mut s)?
+    value.1.serialize(mut s)?
+    value.2.serialize(mut s)?
+    value.3.serialize(mut s)?
+    s.end_seq()
+}
+
+/// Reads a four-element sequence into a four-part tuple.
+fn deserialize_tuple4<A: Deserialize, B: Deserialize, C: Deserialize, E: Deserialize, X: Deserializer>(
+    mut d: X,
+): Result<(A, B, C, E), DeError> {
+    d.begin_seq()?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(4))
+    }
+    let a = A.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(4))
+    }
+    let b = B.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(4))
+    }
+    let c = C.deserialize(mut d)?
+    if !d.has_next_seq_element()? {
+        return Err(__tuple_short(4))
+    }
+    let e_part = E.deserialize(mut d)?
+    d.end_seq()?
+    Ok((a, b, c, e_part))
+}
+
+// ----- the test format ----------------------------------------------------------------------------------------
+
+// The test format is a tiny, human-readable syntax (spec/serialization.md, SER13). It is for tests and for looking
+// at a value by eye, not a production format. Its writer writes the canonical spacing; its reader accepts any
+// whitespace between tokens.
+
+/// One open container in the test format's writer (spec/serialization.md, SER13).
+priv struct Frame {
+    // 0 = sequence, 1 = map, 2 = struct, 3 = variant payload.
+    kind: i32
+    count: usize
+    pending: bool
+}
+
+/// The test format's writer. It builds the text in `out` and tracks the open containers so it can place separators.
+struct TextSerializer {
+    priv out: String
+    priv frames: List<Frame>
+}
+
+TextSerializer {
+    /// An empty writer.
+    fn new(): TextSerializer {
+        TextSerializer { out: String.new(), frames: List<Frame>.new() }
+    }
+
+    /// The text written so far, ending the writer.
+    fn finish(own self): String {
+        self.out
+    }
+
+    /// Places the separator a value needs in the innermost open container.
+    priv fn value_start(mut self): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Ok(())
+        }
+        let i = self.frames.len() - 1
+        let kind = self.frames[i].kind
+        if kind == 0 || kind == 3 {
+            if self.frames[i].count > 0 {
+                self.out.push_str(", ")
+            }
+            self.frames[i].count = self.frames[i].count + 1
+        } else if kind == 1 {
+            if self.frames[i].pending {
+                self.frames[i].pending = false
+            } else {
+                return Err(DeError.new("a map value without a key"))
+            }
+        } else if kind == 2 {
+            if self.frames[i].pending {
+                self.frames[i].pending = false
+            } else {
+                return Err(DeError.new("a struct field without a name"))
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the innermost container, checking that it is of `kind`.
+    priv fn pop_frame(mut self, kind: i32): Result<Frame, DeError> {
+        match self.frames.pop() {
+            Some(frame) => {
+                if frame.kind == kind {
+                    Ok(frame)
+                } else {
+                    Err(DeError.new("unbalanced container in the test format"))
+                }
+            }
+            None => Err(DeError.new("unbalanced container in the test format")),
+        }
+    }
+}
+
+TextSerializer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str("()")
+        Ok(())
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        self.value_start()?
+        if value {
+            self.out.push_str("true")
+        } else {
+            self.out.push_str("false")
+        }
+        Ok(())
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(value.to_string())
+        Ok(())
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('\'')
+        __write_escape(mut self.out, value, '\'')
+        self.out.push('\'')
+        Ok(())
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        self.value_start()?
+        __write_quoted(mut self.out, value, '"')
+        Ok(())
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('[')
+        let mut i: usize = 0
+        while i < value.len() {
+            if i > 0 {
+                self.out.push_str(", ")
+            }
+            self.out.push_str(value[i].to_string())
+            i = i + 1
+        }
+        self.out.push(']')
+        Ok(())
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('[')
+        self.frames.push(Frame { kind: 0, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.pop_frame(0)?
+        self.out.push(']')
+        Ok(())
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push('{')
+        self.frames.push(Frame { kind: 1, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a map key outside a map"))
+        }
+        let i = self.frames.len() - 1
+        if self.frames[i].kind != 1 {
+            return Err(DeError.new("a map key outside a map"))
+        }
+        if self.frames[i].pending {
+            return Err(DeError.new("two map keys in a row"))
+        }
+        if self.frames[i].count > 0 {
+            self.out.push_str(", ")
+        } else {
+            self.out.push(' ')
+        }
+        __write_quoted(mut self.out, key, '"')
+        self.out.push_str(": ")
+        self.frames[i].count = self.frames[i].count + 1
+        self.frames[i].pending = true
+        Ok(())
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        let frame = self.pop_frame(1)?
+        if frame.count > 0 {
+            self.out.push_str(" }}")
+        } else {
+            self.out.push('}')
+        }
+        Ok(())
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(name)
+        self.out.push_str(" {{")
+        self.frames.push(Frame { kind: 2, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a struct field outside a struct"))
+        }
+        let i = self.frames.len() - 1
+        if self.frames[i].kind != 2 {
+            return Err(DeError.new("a struct field outside a struct"))
+        }
+        if self.frames[i].pending {
+            return Err(DeError.new("two struct field names in a row"))
+        }
+        if self.frames[i].count > 0 {
+            self.out.push_str(", ")
+        } else {
+            self.out.push(' ')
+        }
+        self.out.push_str(name)
+        self.out.push_str(": ")
+        self.frames[i].count = self.frames[i].count + 1
+        self.frames[i].pending = true
+        Ok(())
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        let frame = self.pop_frame(2)?
+        if frame.count > 0 {
+            self.out.push_str(" }}")
+        } else {
+            self.out.push('}')
+        }
+        Ok(())
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        self.value_start()?
+        self.out.push_str(type_name)
+        self.out.push('.')
+        self.out.push_str(variant)
+        if arity > 0 {
+            self.out.push('(')
+        }
+        self.frames.push(Frame { kind: 3, count: 0, pending: false })
+        Ok(())
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        self.pop_frame(3)?
+        if arity > 0 {
+            self.out.push(')')
+        }
+        Ok(())
+    }
+}
+
+/// The test format's reader. It owns a copy of the text because a reader is a value that outlives the call.
+struct TextDeserializer {
+    priv text: String
+    priv pos: usize
+}
+
+TextDeserializer {
+    /// A reader over `text`. The text is copied once.
+    fn new(text: str): TextDeserializer {
+        TextDeserializer { text: text.to_string(), pos: 0 }
+    }
+
+    /// The unread part of the input, as a `str` view.
+    fn remaining(self): str {
+        self.text[self.pos..self.text.len()]
+    }
+
+    /// Checks that no non-whitespace text is left.
+    fn end(mut self): Result<(), DeError> {
+        self.skip_ws()
+        if self.pos < self.text.len() {
+            Err(self.fail("trailing characters"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// An error at the current position, with its line and column.
+    priv fn fail(self, message: str): DeError {
+        let bytes = self.text.as_bytes()
+        let mut line: i32 = 1
+        let mut col: i32 = 1
+        let mut i: usize = 0
+        while i < self.pos {
+            let b = bytes[i]
+            if b == 10 {
+                line = line + 1
+                col = 1
+            } else if b >= 128 && b < 192 {
+                // A UTF-8 continuation byte: still the same character.
+            } else {
+                col = col + 1
+            }
+            i = i + 1
+        }
+        DeError.syntax(message, line, col)
+    }
+
+    /// Skips spaces, tabs, line feeds, and carriage returns.
+    priv fn skip_ws(mut self) {
+        while self.pos < self.text.len() {
+            let b = self.text.as_bytes()[self.pos]
+            if b == 32 || b == 9 || b == 10 || b == 13 {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+    }
+
+    /// Consumes `b` after whitespace, or reports what was expected.
+    priv fn expect_byte(mut self, b: u8): Result<(), DeError> {
+        self.skip_ws()
+        if self.pos < self.text.len() && self.text.as_bytes()[self.pos] == b {
+            self.pos = self.pos + 1
+            Ok(())
+        } else {
+            Err(self.fail(__expected_message(b)))
+        }
+    }
+
+    /// Reads a name: `[A-Za-z_][A-Za-z0-9_]*`.
+    priv fn read_ident(mut self): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        let start = self.pos
+        let b = self.text.as_bytes()[self.pos]
+        if !__is_name_start(b) {
+            return Err(self.fail("expected a name"))
+        }
+        self.pos = self.pos + 1
+        while self.pos < self.text.len() {
+            let next = self.text.as_bytes()[self.pos]
+            if __is_name_part(next) {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+        Ok(self.text[start..self.pos].to_string())
+    }
+
+    /// Reads a quoted text, decoding the escapes, with `quote` (39 for a char, 34 for a string).
+    priv fn read_quoted(mut self, quote: u8): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        if self.text.as_bytes()[self.pos] != quote {
+            return Err(self.fail("expected a quoted value"))
+        }
+        self.pos = self.pos + 1
+        let mut out = String.new()
+        let mut chunk = self.pos
+        while self.pos < self.text.len() {
+            let b = self.text.as_bytes()[self.pos]
+            if b == quote {
+                out.push_str(self.text[chunk..self.pos])
+                self.pos = self.pos + 1
+                return Ok(out)
+            }
+            if b == 92 {
+                out.push_str(self.text[chunk..self.pos])
+                self.pos = self.pos + 1
+                if self.pos >= self.text.len() {
+                    return Err(self.fail("unexpected end of input"))
+                }
+                let e = self.text.as_bytes()[self.pos]
+                self.pos = self.pos + 1
+                if e == 110 {
+                    out.push('\n')
+                } else if e == 114 {
+                    out.push('\r')
+                } else if e == 116 {
+                    out.push('\t')
+                } else if e == 92 {
+                    out.push('\\')
+                } else if e == 48 {
+                    out.push('\0')
+                } else if e == 34 {
+                    out.push('"')
+                } else if e == 39 {
+                    out.push('\'')
+                } else {
+                    return Err(self.fail("invalid escape"))
+                }
+                chunk = self.pos
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+        Err(self.fail("unterminated text"))
+    }
+
+    /// Reads the text of a number: an optional `-`, digits, an optional fraction, and an optional exponent.
+    priv fn read_number_text(mut self): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("expected a number"))
+        }
+        let start = self.pos
+        if self.text.as_bytes()[self.pos] == 45 {
+            self.pos = self.pos + 1
+        }
+        let whole = self.pos
+        while self.pos < self.text.len() && __is_digit(self.text.as_bytes()[self.pos]) {
+            self.pos = self.pos + 1
+        }
+        if self.pos == whole {
+            return Err(self.fail("expected a number"))
+        }
+        if self.pos < self.text.len() && self.text.as_bytes()[self.pos] == 46 {
+            self.pos = self.pos + 1
+            let fraction = self.pos
+            while self.pos < self.text.len() && __is_digit(self.text.as_bytes()[self.pos]) {
+                self.pos = self.pos + 1
+            }
+            if self.pos == fraction {
+                return Err(self.fail("expected a digit after the point"))
+            }
+        }
+        if self.pos < self.text.len() {
+            let b = self.text.as_bytes()[self.pos]
+            if b == 101 || b == 69 {
+                self.pos = self.pos + 1
+                if self.pos < self.text.len() {
+                    let sign = self.text.as_bytes()[self.pos]
+                    if sign == 43 || sign == 45 {
+                        self.pos = self.pos + 1
+                    }
+                }
+                let exponent = self.pos
+                while self.pos < self.text.len() && __is_digit(self.text.as_bytes()[self.pos]) {
+                    self.pos = self.pos + 1
+                }
+                if self.pos == exponent {
+                    return Err(self.fail("expected a digit in the exponent"))
+                }
+            }
+        }
+        Ok(self.text[start..self.pos].to_string())
+    }
+
+    /// Reads the text of a float: a number, or a signed `inf`, `infinity`, or `nan` in any letter case, which
+    /// `f64.parse`/`f32.parse` accept.
+    priv fn read_float_text(mut self): Result<String, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("expected a number"))
+        }
+        let start = self.pos
+        let mut probe = self.pos
+        let first = self.text.as_bytes()[probe]
+        if first == 43 || first == 45 {
+            probe = probe + 1
+        }
+        let numeric = probe < self.text.len() && __is_digit(self.text.as_bytes()[probe])
+        if numeric {
+            return self.read_number_text()
+        }
+        let named = probe < self.text.len() && __is_name_start(self.text.as_bytes()[probe])
+        if named {
+            probe = probe + 1
+            while probe < self.text.len() && __is_name_part(self.text.as_bytes()[probe]) {
+                probe = probe + 1
+            }
+            self.pos = probe
+            return Ok(self.text[start..probe].to_string())
+        }
+        Err(self.fail("expected a number"))
+    }
+
+    /// Whether another entry follows in the container closed by `close`; consumes a separating comma.
+    priv fn has_next(mut self, close: u8): Result<bool, DeError> {
+        self.skip_ws()
+        if self.pos >= self.text.len() {
+            return Err(self.fail("unexpected end of input"))
+        }
+        let b = self.text.as_bytes()[self.pos]
+        if b == close {
+            return Ok(false)
+        }
+        if b == 44 {
+            self.pos = self.pos + 1
+            self.skip_ws()
+        }
+        Ok(true)
+    }
+}
+
+TextDeserializer: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        self.expect_byte(40)?
+        self.expect_byte(41)
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        let text = self.read_ident()?
+        if text.as_str() == "true" {
+            Ok(true)
+        } else if text.as_str() == "false" {
+            Ok(false)
+        } else {
+            Err(self.fail("expected a boolean"))
+        }
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let text = self.read_number_text()?
+        match i8.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let text = self.read_number_text()?
+        match i16.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let text = self.read_number_text()?
+        match i32.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        let text = self.read_number_text()?
+        match i64.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let text = self.read_number_text()?
+        match isize.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let text = self.read_number_text()?
+        match u8.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let text = self.read_number_text()?
+        match u16.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let text = self.read_number_text()?
+        match u32.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        let text = self.read_number_text()?
+        match u64.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let text = self.read_number_text()?
+        match usize.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid integer")),
+        }
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let text = self.read_float_text()?
+        match f32.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid float")),
+        }
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let text = self.read_float_text()?
+        match f64.parse(text.as_str()) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(self.fail("invalid float")),
+        }
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let text = self.read_quoted(39)?
+        let mut count: usize = 0
+        let mut first: char = '\0'
+        for c in text.chars() {
+            count = count + 1
+            first = c
+        }
+        if count != 1 {
+            return Err(self.fail("expected one character"))
+        }
+        Ok(first)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        self.read_quoted(34)
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        self.expect_byte(91)?
+        let mut out = List<u8>.new()
+        let mut more = self.has_next(93)?
+        while more {
+            let text = self.read_number_text()?
+            match u8.parse(text.as_str()) {
+                Ok(value) => out.push(value),
+                Err(_) => return Err(self.fail("invalid byte")),
+            }
+            more = self.has_next(93)?
+        }
+        self.expect_byte(93)?
+        Ok(out)
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        self.expect_byte(91)
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        self.has_next(93)
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.expect_byte(93)
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        self.expect_byte(123)
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        self.has_next(125)
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        let key = self.read_quoted(34)?
+        self.expect_byte(58)?
+        Ok(key)
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.expect_byte(125)
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        let got = self.read_ident()?
+        if got.as_str() != name {
+            return Err(self.fail(format("expected struct '{name}'")))
+        }
+        self.expect_byte(123)
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        self.has_next(125)
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        let name = self.read_ident()?
+        self.expect_byte(58)?
+        Ok(name)
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.expect_byte(125)
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        let got = self.read_ident()?
+        if got.as_str() != name {
+            return Err(self.fail(format("expected enum '{name}'")))
+        }
+        self.expect_byte(46)
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        self.read_ident()
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if arity == 0 {
+            Ok(())
+        } else {
+            self.expect_byte(40)
+        }
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        if index == 0 {
+            Ok(())
+        } else {
+            self.expect_byte(44)
+        }
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if arity == 0 {
+            Ok(())
+        } else {
+            self.expect_byte(41)
+        }
+    }
+}
+
+/// Writes `value` with the test format and returns the text (spec/serialization.md, SER13).
+fn to_text<T: Serialize>(value: T): Result<String, DeError> {
+    let mut s = TextSerializer.new()
+    value.serialize(mut s)?
+    Ok(s.finish())
+}
+
+/// Reads a value of type `T` from the test format's text. The whole input must be consumed.
+fn from_text<T: Deserialize>(text: str): Result<T, DeError> {
+    let mut d = TextDeserializer.new(text)
+    let value = T.deserialize(mut d)?
+    d.end()?
+    Ok(value)
+}
+
+/// Writes one character, escaping the characters an ordinary string or char literal escapes.
+priv fn __write_escape(mut out: String, c: char, quote: char) {
+    if c == '\n' {
+        out.push_str("\\n")
+    } else if c == '\t' {
+        out.push_str("\\t")
+    } else if c == '\r' {
+        out.push_str("\\r")
+    } else if c == '\0' {
+        out.push_str("\\0")
+    } else if c == '\\' {
+        out.push_str("\\\\")
+    } else if c == quote {
+        out.push('\\')
+        out.push(c)
+    } else {
+        out.push(c)
+    }
+}
+
+/// Writes `text` with `quote` around it and the escapes of an ordinary string literal.
+priv fn __write_quoted(mut out: String, text: str, quote: char) {
+    out.push(quote)
+    for c in text.chars() {
+        __write_escape(mut out, c, quote)
+    }
+    out.push(quote)
+}
+
+/// Whether `b` starts a name.
+priv fn __is_name_start(b: u8): bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+/// Whether `b` continues a name.
+priv fn __is_name_part(b: u8): bool {
+    __is_name_start(b) || (b >= 48 && b <= 57)
+}
+
+/// Whether `b` is a decimal digit.
+priv fn __is_digit(b: u8): bool {
+    b >= 48 && b <= 57
+}
+
+/// The message `expected '<b>'`.
+priv fn __expected_message(b: u8): String {
+    let mut out = String.new()
+    out.push_str("expected '")
+    out.push(b as char)
+    out.push('\'')
+    out
+}

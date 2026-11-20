@@ -1,0 +1,7 @@
+{"name":"n","servers":[{"host":"h","port":0,"tls":true,"ratio":-0.5}],"protocol":{"Https":8443},"backup":{"host":"b","port":1,"tls":false,"ratio":2.5},"weights":{"a":-3},"note":"Z"}
+name=n servers=1 note=Z
+protocol=Https 8443
+backup=b 1
+weights=1
+a=-3
+first=h 0 true -0.5

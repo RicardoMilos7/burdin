@@ -93,8 +93,9 @@ Tests: `m21_reflect__derive_describe.golden`, `--item Point.describe`.
 
 ## INS5. Built-in derives
 
-`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, and `Debug` have no source form that the compiler would accept back: their
-code is structural (`spec/derives.md`), and writing the impl by hand is E9000 (issue #402). The type keeps them in
+`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`, `Serialize`, and `Deserialize` have no source form that the
+compiler would accept back: their code is structural (`spec/derives.md`, `spec/serialization.md`), and writing the impl
+by hand is E9000 (issue #402). The type keeps them in
 its `: A, B` list and a comment after it says so, so the expansion states where behavior comes from that is not in
 the text.
 

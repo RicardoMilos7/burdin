@@ -1,0 +1,6 @@
+{"name":"edge","servers":[],"protocol":"Http","backup":null,"weights":{},"note":"x"}
+name=edge servers=0 note=x
+protocol=Http
+backup=none
+weights=0
+a=none

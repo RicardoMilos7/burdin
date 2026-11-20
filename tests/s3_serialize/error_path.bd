@@ -1,0 +1,189 @@
+//@ run
+
+// The error path and the three field messages (spec/serialization.md, SER6, SER9, SER10). A reader wraps the error
+// it got for a field or an element, so an error deep inside a value names the whole route to it.
+
+struct Server: Debug {
+    host: String
+    port: u16
+}
+
+struct Config: Debug {
+    name: String
+    servers: List<Server>
+}
+
+Server: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        s.begin_struct("Server", 2)?
+        s.struct_field("host")?
+        serialize_str(mut s, self.host.as_str())?
+        s.struct_field("port")?
+        serialize_u16(mut s, self.port)?
+        s.end_struct()
+    }
+}
+
+Server: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Server, DeError> {
+        d.begin_struct("Server")?
+        let mut host: Option<String> = None
+        let mut port: Option<u16> = None
+        loop {
+            let more = d.has_next_field()?
+            if !more {
+                break
+            }
+            let name = d.field_name()?
+            if name.as_str() == "host" {
+                if host.is_some() {
+                    return Err(duplicate_field("host").field("host"))
+                }
+                let value = match deserialize_str(mut d) {
+                    Ok(value) => value,
+                    Err(e) => return Err(e.field("host")),
+                }
+                host = Some(value)
+            } else if name.as_str() == "port" {
+                if port.is_some() {
+                    return Err(duplicate_field("port").field("port"))
+                }
+                let value = match deserialize_u16(mut d) {
+                    Ok(value) => value,
+                    Err(e) => return Err(e.field("port")),
+                }
+                port = Some(value)
+            } else {
+                let failure = unknown_field(name.as_str())
+                return Err(failure.field(name.as_str()))
+            }
+        }
+        d.end_struct()?
+        let host = match host {
+            Some(value) => value,
+            None => return Err(missing_field("host")),
+        }
+        let port = match port {
+            Some(value) => value,
+            None => return Err(missing_field("port")),
+        }
+        Ok(Server { host, port })
+    }
+}
+
+Config: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        s.begin_struct("Config", 2)?
+        s.struct_field("name")?
+        serialize_str(mut s, self.name.as_str())?
+        s.struct_field("servers")?
+        s.begin_seq(self.servers.len())?
+        for server in self.servers {
+            server.serialize(mut s)?
+        }
+        s.end_seq()?
+        s.end_struct()
+    }
+}
+
+Config: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Config, DeError> {
+        d.begin_struct("Config")?
+
+        if !d.has_next_field()? {
+            return Err(missing_field("name"))
+        }
+        let first = d.field_name()?
+        if first.as_str() != "name" {
+            let failure = unknown_field(first.as_str())
+            return Err(failure.field(first.as_str()))
+        }
+        let name = match deserialize_str(mut d) {
+            Ok(value) => value,
+            Err(e) => return Err(e.field("name")),
+        }
+
+        if !d.has_next_field()? {
+            return Err(missing_field("servers"))
+        }
+        let second = d.field_name()?
+        if second.as_str() != "servers" {
+            let failure = unknown_field(second.as_str())
+            return Err(failure.field(second.as_str()))
+        }
+        d.begin_seq()?
+        let mut servers = List<Server>.new()
+        let mut index: usize = 0
+        loop {
+            let more = d.has_next_seq_element()?
+            if !more {
+                break
+            }
+            match Server.deserialize(mut d) {
+                Ok(server) => servers.push(server),
+                Err(e) => return Err(e.index(index).field("servers")),
+            }
+            index = index + 1
+        }
+        d.end_seq()?
+
+        d.end_struct()?
+        Ok(Config { name, servers })
+    }
+}
+
+fn main() {
+    let mut servers = List<Server>.new()
+    servers.push(Server { host: "a".to_string(), port: 1 })
+    servers.push(Server { host: "b".to_string(), port: 2 })
+    servers.push(Server { host: "c".to_string(), port: 3 })
+    let value = Config { name: "cfg".to_string(), servers }
+
+    let text = to_text(value).unwrap()
+    let read: Result<Config, DeError> = from_text(text)
+    let back = read.unwrap()
+    println("{}", back.servers.len())
+    println("{}", back.servers[2].port)
+
+    let bad = "Config {{ name: \"cfg\", servers: [Server {{ host: \"a\", port: 1 }}, Server {{ host: \"b\", port: 2 }}, Server {{ host: \"c\", port: x }}] }}"
+    let failed: Result<Config, DeError> = from_text(bad)
+    match failed {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => {
+            let message = e.to_string()
+            println(message)
+        }
+    }
+
+    let missing: Result<Server, DeError> = from_text("Server {{ host: \"a\" }}")
+    match missing {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{}", e),
+    }
+
+    let extra: Result<Server, DeError> = from_text("Server {{ host: \"a\", port: 1, extra: 2 }}")
+    match extra {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{}", e),
+    }
+
+    let twice: Result<Server, DeError> = from_text("Server {{ host: \"a\", host: \"b\", port: 1 }}")
+    match twice {
+        Ok(_) => println("unexpected ok"),
+        Err(e) => println("{}", e),
+    }
+
+    let keyed = DeError.new("boom").key("host").field("table")
+    println("{}", keyed)
+    let shaped = DeError.new("boom").index(0).variant("Circle").field("shape")
+    println("{}", shaped)
+}
+
+//> 3
+//> 3
+//> line 1, column 121: expected a number at servers[2].port
+//> missing field 'port'
+//> unknown field 'extra' at extra
+//> duplicate field 'host' at host
+//> boom at table["host"]
+//> boom at shape.Circle[0]

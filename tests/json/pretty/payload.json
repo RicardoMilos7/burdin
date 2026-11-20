@@ -1,0 +1,1 @@
+{"name":"q","servers":[{"host":"h","port":2,"tls":false,"ratio":1.5}],"protocol":{"Both":[1,2]},"backup":{"host":"b","port":3,"tls":true,"ratio":-0.0},"weights":{},"note":"z"}

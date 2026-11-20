@@ -13,6 +13,7 @@
 #   BURDIN_RELEASE_DIR   local directory to install from, instead of the network (a rehearsal)
 #   BURDIN_NO_MODIFY_PATH  set to any value to leave the shell startup file alone
 #
+# The official packages (spec/packages.md) are installed in packages/ next to the compiler.
 # Every download is verified against the release's SHA256SUMS before it is unpacked. The compiler needs the LLVM 21
 # shared library at run time (libLLVM-21.so on Linux, libLLVM.dylib on macOS, LLVM-C.dll on Windows); this script
 # warns when the installed compiler cannot start (docs/releasing.md). Unless told not to, it adds the install directory
@@ -34,7 +35,7 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 case "${1:-}" in
     -h|--help)
-        sed -n '2,26s/^# \{0,1\}//p' "$0"
+        sed -n '2,/^[^#]/s/^# \{0,1\}//p' "$0"
         exit 0
         ;;
     "") ;;
@@ -184,9 +185,19 @@ source=$tmp/unpacked/burdin-$version-$target/burdin$exe
 
 dir=${BURDIN_INSTALL_DIR:-"$HOME/.local/bin"}
 mkdir -p "$dir" || die "cannot create $dir"
+# The official packages go in packages/ beside the compiler, where it looks for them (spec/packages.md, PKG16). An
+# upgrade replaces the folder; one that is not Burdin's (its README.md has no "# Official packages" heading) is left
+# alone and refused before anything is installed. An archive without the folder (an old release) installs none.
+packages_source=$tmp/unpacked/burdin-$version-$target/packages
+packages_dir=$dir/packages
+if [ -d "$packages_source" ] && [ -e "$packages_dir" ] && ! grep -qs '^# Official packages' "$packages_dir/README.md"; then
+    die "$packages_dir exists and is not Burdin's official packages folder; move it away and run the installer again"
+fi
+
 manager=$tmp/unpacked/burdin-$version-$target/burdin-toolchain$exe
 if [ -f "$manager" ]; then
     # The toolchain manager installs the release as a toolchain and puts its proxies in $dir (spec/toolchain.md TC13).
+    # It copies the archive whole, so the toolchain's own directory keeps packages/ beside the compiler it runs.
     if [ -n "${BURDIN_VERSION:-}" ]; then name=$version; else name=$channel; fi
     chmod 755 "$manager" 2>/dev/null || true
     "$manager" toolchain self install --from "$tmp/unpacked/burdin-$version-$target" --name "$name" \
@@ -200,6 +211,11 @@ else
     else
         cp "$source" "$dir/burdin$exe" && chmod 755 "$dir/burdin$exe" || die "cannot install into $dir"
     fi
+fi
+
+if [ -d "$packages_source" ]; then
+    rm -rf "$packages_dir"
+    cp -R "$packages_source" "$packages_dir" || die "cannot install the official packages into $packages_dir"
 fi
 
 say "installed burdin $version ($channel) for $target in $dir"

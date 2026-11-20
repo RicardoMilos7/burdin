@@ -1,0 +1,5 @@
+use mark.bang
+
+fn loud(): i32 {
+    bang() + 1
+}

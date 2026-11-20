@@ -13,7 +13,8 @@
 #   BURDIN_NO_MODIFY_PATH  set to any value to leave the user's PATH alone (-NoModifyPath)
 #
 # Every download is verified against the release's SHA256SUMS before it is unpacked. The compiler needs LLVM-C.dll at
-# run time; the archive carries it and this script installs it beside burdin.exe. It warns when the installed compiler
+# run time; the archive carries it and this script installs it beside burdin.exe, with the official packages
+# (spec/packages.md) in packages\ beside it. It warns when the installed compiler
 # cannot start anyway (docs/releasing.md). Unless told not to, it appends the install directory to the user's PATH
 # (HKCU\Environment), so new terminals find burdin; the current session is updated too.
 #
@@ -155,6 +156,18 @@ try {
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs/burdin/bin'
     }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    # The official packages go in packages/ beside the compiler, where it looks for them (spec/packages.md, PKG16). An
+    # upgrade replaces the folder; one that is not Burdin's (its README.md has no "# Official packages" heading) is
+    # left alone and refused before anything is installed. An archive without the folder (an old release) installs none.
+    $packagesSource = Join-Path (Split-Path -Parent $source) 'packages'
+    $packagesDir = Join-Path $InstallDir 'packages'
+    $hasPackages = Test-Path $packagesSource
+    if ($hasPackages -and (Test-Path $packagesDir)) {
+        $marker = Join-Path $packagesDir 'README.md'
+        if (-not ((Test-Path $marker) -and (Select-String -Path $marker -Pattern '^# Official packages' -Quiet))) {
+            Fail "$packagesDir exists and is not Burdin's official packages folder; move it away and run the installer again"
+        }
+    }
     $destination = Join-Path $InstallDir 'burdin.exe'
     $releaseRoot = Join-Path $unpacked "burdin-$Version-$Target"
     $manager = Join-Path $releaseRoot 'burdin-toolchain.exe'
@@ -173,6 +186,11 @@ try {
         if (Test-Path $dll) {
             Copy-Item -LiteralPath $dll -Destination (Join-Path $InstallDir 'LLVM-C.dll') -Force
         }
+    }
+
+    if ($hasPackages) {
+        if (Test-Path $packagesDir) { Remove-Item -Recurse -Force -LiteralPath $packagesDir }
+        Copy-Item -Recurse -LiteralPath $packagesSource -Destination $packagesDir
     }
 
     Say "installed burdin $Version ($Channel) for $Target in $InstallDir"

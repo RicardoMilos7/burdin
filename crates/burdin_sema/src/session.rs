@@ -172,6 +172,7 @@ impl<'t> Sema<'t> {
                 edition: package.edition,
                 deps: package.deps.iter().cloned().collect(),
                 root_module: None,
+                official: package.official.clone(),
             });
             for module in &package.modules {
                 let id = globals.modules.len();

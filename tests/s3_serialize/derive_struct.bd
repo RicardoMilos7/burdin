@@ -1,0 +1,35 @@
+//@ run
+
+// `struct T: Serialize, Deserialize` generates both impl blocks: a struct of mixed scalars round-trips through the
+// test format and its text is pinned (spec/serialization.md, SER12).
+
+struct Scalarish: Serialize, Deserialize {
+    flag: bool
+    count: u16
+    big: i64
+    ratio: f64
+    letter: char
+    label: String
+}
+
+fn main() {
+    let value = Scalarish { flag: true, count: 7, big: -9000000000, ratio: 1.25, letter: 'q', label: "hi!".to_string() }
+    let text = to_text(value).unwrap()
+    println(text)
+    let read: Result<Scalarish, DeError> = from_text(text)
+    let back = read.unwrap()
+    println("{back.flag}")
+    println("{back.count}")
+    println("{back.big}")
+    println("{back.ratio}")
+    println("{back.letter}")
+    println("{back.label}")
+}
+
+//> Scalarish { flag: true, count: 7, big: -9000000000, ratio: 1.25, letter: 'q', label: "hi!" }
+//> true
+//> 7
+//> -9000000000
+//> 1.25
+//> q
+//> hi!

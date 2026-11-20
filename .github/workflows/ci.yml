@@ -327,6 +327,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
+      # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
+      - name: Check the json package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_json.py
+
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
       # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
@@ -398,7 +404,7 @@ jobs:
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         if: matrix.part == 'debug'
-        run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
@@ -412,7 +418,7 @@ jobs:
 
       - name: Conformance tests (release profile)
         if: matrix.part == 'release'
-        run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # The incremental equivalence sweep is slow, so the wider one runs once, in release: after every edit of a
       # long sequence, the edited database must answer like a fresh one (spec/query.md, QL4). `cargo test
@@ -712,6 +718,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
+      # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
+      - name: Check the json package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_json.py
+
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
       # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
@@ -784,14 +796,14 @@ jobs:
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         if: matrix.part == 'debug'
-        run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
         if: matrix.part == 'release'
-        run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).
@@ -1104,6 +1116,12 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
 
+      # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
+      # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
+      - name: Check the json package
+        if: matrix.part == 'tools'
+        run: python tests/check_json.py
+
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
       # resumed and verified downloads (also over HTTP), components and targets, the installer's bootstrap, and
@@ -1175,14 +1193,14 @@ jobs:
       # Only milestones that are finished must pass. Extend the list as milestones are completed.
       - name: Conformance tests (finished milestones)
         if: matrix.part == 'debug'
-        run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # Overflow panics in debug and wraps in release, so the finished milestones also run under
       # the release profile, which exercises release code generation; tests marked debug-only are
       # skipped (issue #47).
       - name: Conformance tests (release profile)
         if: matrix.part == 'release'
-        run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts
+        run: python tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize
 
       # The stress tests of the channels catch a lost wake-up or a race only now and then, so they run
       # many times, in both profiles (issue #209).

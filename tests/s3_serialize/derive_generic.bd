@@ -1,0 +1,76 @@
+//@ run
+
+// A generic type gets one bound per type parameter, and a user type that derives both interfaces nests inside it.
+// The container shapes (`List`, `Map`, `Option`, `Result`, a tuple, and the `List<u8>` bytes shape) round-trip
+// (spec/serialization.md, SER2, SER12, SER14).
+
+struct Leaf: Serialize, Deserialize {
+    value: i32
+}
+
+struct Pair<T>: Serialize, Deserialize {
+    first: T
+    second: T
+}
+
+struct Collection: Serialize, Deserialize {
+    values: List<i32>
+    counts: Map<String, i32>
+}
+
+struct Wrapped: Serialize, Deserialize {
+    maybe: Option<i32>
+    outcome: Result<Leaf, String>
+    pair: (i32, Leaf)
+    blob: List<u8>
+}
+
+fn main() {
+    let pair = Pair { first: Leaf { value: 1 }, second: Leaf { value: 2 } }
+    let pair_text = to_text(pair).unwrap()
+    println(pair_text)
+    let pair_read: Result<Pair<Leaf>, DeError> = from_text(pair_text)
+    let pair_back = pair_read.unwrap()
+    println("{} {}", pair_back.first.value, pair_back.second.value)
+
+    let mut values = List<i32>.new()
+    values.push(1)
+    values.push(2)
+    let mut counts = Map<String, i32>.new()
+    counts.insert("a".to_string(), 3)
+    let collection_text = to_text(Collection { values, counts }).unwrap()
+    println(collection_text)
+    let collection_read: Result<Collection, DeError> = from_text(collection_text)
+    let back = collection_read.unwrap()
+    println("{} {} {}", back.values.len(), back.values[1], *back.counts.get("a").unwrap())
+
+    let mut blob = List<u8>.new()
+    blob.push(1)
+    blob.push(2)
+    let wrapped = Wrapped {
+        maybe: Some(7),
+        outcome: Ok(Leaf { value: 1 }),
+        pair: (2, Leaf { value: 3 }),
+        blob,
+    }
+    let wrapped_text = to_text(wrapped).unwrap()
+    println(wrapped_text)
+    let wrapped_read: Result<Wrapped, DeError> = from_text(wrapped_text)
+    let wrapped_back = wrapped_read.unwrap()
+    let maybe = match wrapped_back.maybe {
+        Some(value) => value,
+        None => 0,
+    }
+    let outcome = match wrapped_back.outcome {
+        Ok(leaf) => leaf.value,
+        Err(_) => -1,
+    }
+    println("{} {} {} {}", maybe, outcome, wrapped_back.pair.1.value, wrapped_back.blob.len())
+}
+
+//> Pair { first: Leaf { value: 1 }, second: Leaf { value: 2 } }
+//> 1 2
+//> Collection { values: [1, 2], counts: { "a": 3 } }
+//> 2 2 3
+//> Wrapped { maybe: Option.Some(7), outcome: Result.Ok(Leaf { value: 1 }), pair: [2, Leaf { value: 3 }], blob: [1, 2] }
+//> 7 1 3 2
