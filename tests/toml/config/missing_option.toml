@@ -1,0 +1,17 @@
+name = "edge"
+note = "é"
+weights = { a = 1 }
+protocol = { Both = [80, 443] }
+
+[[servers]]
+host = "a.example"
+port = 80
+tls = false
+ratio = 0.25
+
+[[servers]]
+host = "b.example"
+port = 443
+tls = true
+ratio = 1.0
+

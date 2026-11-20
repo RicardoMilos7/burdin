@@ -183,7 +183,7 @@ fn cached_inputs(key_path: &Path, header: &[String], package_dir: &Path, out_src
         if let Some(rest) = line.strip_prefix("input ") {
             let (hash, path) = rest.split_once(' ')?;
             let full = resolve(package_dir, path);
-            if format!("{:016x}", hash_file(&full)?) != hash {
+            if format!("{:016x}", hash_path(&full)?) != hash {
                 return None;
             }
             inputs.push(full.display().to_string());
@@ -282,7 +282,7 @@ fn run_script(
     }
     for input in &inputs {
         let path = resolve(dir, input);
-        let hash = hash_file(&path).ok_or_else(|| {
+        let hash = hash_path(&path).ok_or_else(|| {
             Failure::new(
                 Code::BUILD_SCRIPT,
                 format!(
@@ -369,8 +369,9 @@ fn describe_status(status: &std::process::ExitStatus) -> String {
     }
 }
 
-/// The files the script listed in `<out>/inputs`, resolved against the package directory. Each must exist: a
-/// declared input that cannot be read would make every later build rerun.
+/// The files and directories the script listed in `<out>/inputs`, resolved against the package directory. Each must
+/// exist: a declared input that cannot be read would make every later build rerun. A directory stands for every file
+/// under it, the way a `rerun-if-changed` on a directory does in other build tools (BS5).
 fn read_declared_inputs(out: &Path, dir: &Path) -> Result<Vec<PathBuf>, Failure> {
     let text = match std::fs::read_to_string(out.join(INPUTS_FILE)) {
         Ok(text) => text,
@@ -386,7 +387,7 @@ fn read_declared_inputs(out: &Path, dir: &Path) -> Result<Vec<PathBuf>, Failure>
             continue;
         }
         let path = resolve(dir, line);
-        if !path.is_file() {
+        if !path.is_file() && !path.is_dir() {
             return Err(Failure::new(
                 Code::BUILD_SCRIPT,
                 format!("the build script declared an input that does not exist: {}", path.display()),
@@ -500,14 +501,41 @@ fn hash_file(path: &Path) -> Option<u64> {
     Some(hash_bytes(&bytes))
 }
 
-/// FNV-1a, 64-bit. The key records content, not modification times, so a touched file does not rerun the script.
-pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+/// A declared input's content hash: a file's bytes, or for a directory every file under it. A directory hash covers
+/// each file's relative path and contents in sorted order, so adding, removing, renaming, or changing any file under
+/// it reruns the script, while touching one does not.
+fn hash_path(path: &Path) -> Option<u64> {
+    if !path.is_dir() {
+        return hash_file(path);
+    }
+    let mut files = Vec::new();
+    walk_files(path, path, &mut files).ok()?;
+    files.sort();
+    let mut hash = fnv_update(FNV_OFFSET, b"directory");
+    for (relative, full) in files {
+        hash = fnv_update(hash, relative.as_bytes());
+        hash = fnv_update(hash, &[0]);
+        let bytes = std::fs::read(full).ok()?;
+        hash = fnv_update(hash, &bytes);
+        hash = fnv_update(hash, &[0xff]);
+    }
+    Some(hash)
+}
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+fn fnv_update(mut hash: u64, bytes: &[u8]) -> u64 {
     for &byte in bytes {
         hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
+}
+
+/// FNV-1a, 64-bit. The key records content, not modification times, so a touched file does not rerun the script.
+pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
+    fnv_update(FNV_OFFSET, bytes)
 }
 
 #[cfg(test)]
@@ -629,10 +657,45 @@ mod tests {
         write(&out.join(INPUTS_FILE), "# a comment\ninclude/point.h\n\n");
         assert_eq!(read_declared_inputs(&out, dir.path()).unwrap(), vec![dir.path().join("include/point.h")]);
 
+        // A directory is an input too: it stands for every file under it.
+        write(&out.join(INPUTS_FILE), "include\n");
+        assert_eq!(read_declared_inputs(&out, dir.path()).unwrap(), vec![dir.path().join("include")]);
+
         write(&out.join(INPUTS_FILE), "include/missing.h\n");
         let failure = read_declared_inputs(&out, dir.path()).err().unwrap();
         assert_eq!(failure.code, Code::BUILD_SCRIPT);
         assert!(failure.message.contains("does not exist"));
+    }
+
+    #[test]
+    fn a_directory_input_hashes_the_content_of_every_file_under_it() {
+        let dir = TempDir::new("directory");
+        let include = dir.path().join("include");
+        write(&include.join("point.h"), "struct Point { int x; };\n");
+        write(&include.join("nested/size.h"), "#define SIZE 4\n");
+        let first = hash_path(&include).unwrap();
+
+        // A touched file keeps the same content hash.
+        let touched = fs::File::options().write(true).open(include.join("point.h")).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        touched.set_modified(later).unwrap();
+        assert_eq!(hash_path(&include).unwrap(), first, "a touched file hashes the same");
+
+        write(&include.join("point.h"), "struct Point { int y; };\n");
+        let changed = hash_path(&include).unwrap();
+        assert_ne!(changed, first, "a changed file under the directory changes the hash");
+        write(&include.join("point.h"), "struct Point { int x; };\n");
+        assert_eq!(hash_path(&include).unwrap(), first);
+
+        write(&include.join("nested/added.h"), "");
+        assert_ne!(hash_path(&include).unwrap(), first, "a new file changes the hash");
+        fs::remove_file(include.join("nested/added.h")).unwrap();
+        assert_eq!(hash_path(&include).unwrap(), first, "removing the file restores the hash");
+
+        // A file and a directory of the same size do not collide, because the directory hash is marked.
+        let lone = dir.path().join("lone.h");
+        write(&lone, "");
+        assert_ne!(hash_path(&lone).unwrap(), hash_path(&include).unwrap());
     }
 
     #[test]

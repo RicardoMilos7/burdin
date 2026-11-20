@@ -15,6 +15,21 @@ close-out checklist in `AGENTS.md`).
   leaves in a section libc never runs. A failed link says whether `BURDIN_LD` or the automatic
   choice supplied the linker and how to go back to the default. `tests/check_linker.py` checks it in every CI job,
   and the Linux job installs `lld`, so the whole suite links through the automatic choice.
+- Build scripts are covered end to end through the command line (stage 3, issue #362; `spec/build-scripts.md`). A
+  declared input in `<out>/inputs` (the `rerun-if-changed` equivalent) may now be a directory: it is hashed
+  recursively over every file under it, so adding, removing, renaming, or changing a file inside reruns the script
+  while touching one does not, and `burdin watch` follows a directory input too. The new black-box suite
+  `crates/burdin_driver/tests/build_scripts.rs` runs with `cargo test --workspace` and drives the `burdin` binary over
+  fixture packages: the success path, the stdout/stderr split, the documented arguments and environment, every rerun
+  rule (declared inputs including a directory, `embed` inputs, generated outputs, the script, the manifest, and the
+  profile), the dependency grant (including `burdin test -p`, where the selected package is the entry), stale
+  generated modules, nested module paths, and every failure path with its code (E0260, E0261, E0262) and exit status.
+- Package templates (issue #354): `burdin new <name> --lib` creates a library, `src/lib.bd` with one function and a
+  `test` that `burdin test` runs, and a `.gitignore` for `target/` only; `--bin` (the default) is the program with
+  `src/main.bd`. `burdin init [<dir>] [--lib | --bin]` writes the same package into an existing directory (the working
+  directory by default) and keeps its other files. `init` refuses, before writing anything, when `burdin.toml`, the root
+  module of its kind, or `.gitignore` already exists; `new` still refuses any existing path. The unit tests are in
+  `crates/burdin_driver/src/new.rs`, and `tests/check_new.py` checks both commands in every CI job.
 - Target directory and artifact cache (issue #353, `spec/target.md`, TG1-TG10): `build`, `run`, and `test` of a package
   directory keep the executable they link under `<package>/target/burdin/<profile>/bin/` (the test binary under `test/`),
   next to a fingerprint file that lists every input (the compiler, the host, the flags, each manifest and source as
@@ -33,6 +48,18 @@ close-out checklist in `AGENTS.md`).
   through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
   from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
   compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
+- The `toml` official package (stage 3, issue #256; `spec/toml.md`, decisions TOML1-TOML16): TOML 1.0.0 reading and
+  writing on the serialization framework, as `packages/toml`. `parse` reads a document into a `Value` tree that keeps
+  the position of every key and value, and `render` writes the canonical form (a table's scalars first, then its
+  tables as sections, and a non-empty all-table array as `[[path]]`; sorted map keys; basic-string escaping; floats
+  and datetimes in the form TOML 1.0.0 reads back). `to_string`/`from_str` map a struct, map, or payload variant
+  through the framework: `Option.Some` is the value, a unit variant its name, a payload variant `{ Name = value }`
+  or `{ Name = [values] }`. The parser rejects everything TOML 1.0.0 rejects, with the message at the place the rule
+  is broken (duplicate and redefined tables, closed inline tables, arrays of tables versus static arrays, integer and
+  float ranges, datetime fields, escapes), and the reader reports a type mismatch at the value's line and column plus
+  the framework's path. `tests/check_toml.py` drives it through `tests/toml/` (round trips, spans, malformed input,
+  the framework's mapping, and writing) together with `burdin add toml` and its official pin,
+  `tests/s3_serialize/toml` is the conformance case, and every CI job runs it.
 
 ## 0.1.1 — 2026-11-20
 

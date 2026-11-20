@@ -8,6 +8,7 @@ What it checks:
   * a second build reuses the cache and does not run it;
   * touching a declared input or an `embed` input does not rerun it, while changing either does;
   * deleting a generated module reruns it, and the debug and release profiles have separate caches;
+  * a declared directory input is hashed by the contents of every file under it;
   * `--emit-deps` lists the declared input and the script's `embed` input;
   * a declared input that does not exist is E0261;
   * `burdin bindgen` exits 2 for a missing header and an unknown option.
@@ -129,6 +130,43 @@ with harness.temporary_dir("burdin-build-scripts-") as work:
     release = build(run_dir, package, "--release")
     check(release.returncode == 0, "the release build failed")
     check("build script ran" in harness.text(release.stderr), "the release profile reused the debug cache")
+
+    # A declared input may be a directory: every file under it decides, recursively.
+    dirs = work / "dirs"
+    write_package(dirs)
+    harness.write_text(
+        dirs / "build.bd",
+        harness.read_text(dirs / "build.bd").replace(
+            'write_file("{out}/inputs", "declared.txt\\n")',
+            'write_file("{out}/inputs", "include\\n")',
+        ),
+    )
+    (dirs / "include").mkdir()
+    harness.write_text(dirs / "include" / "a.h", "first header\n")
+    first_dir = build(run_dir, dirs)
+    check(first_dir.returncode == 0, f"the directory-input build failed: {harness.text(first_dir.stderr)[:400]}")
+    check("build script ran" in harness.text(first_dir.stderr), "the directory-input build did not run the script")
+    os.utime(dirs / "include" / "a.h")
+    touched_dir = build(run_dir, dirs)
+    check(touched_dir.returncode == 0, "the touched directory-input build failed")
+    check(
+        "build script ran" not in harness.text(touched_dir.stderr),
+        "touching a file inside a declared directory reran the script",
+    )
+    harness.write_text(dirs / "include" / "a.h", "a changed header\n")
+    changed_dir = build(run_dir, dirs)
+    check(changed_dir.returncode == 0, "the changed directory-input build failed")
+    check(
+        "build script ran" in harness.text(changed_dir.stderr),
+        "changing a file inside a declared directory did not rerun the script",
+    )
+    harness.write_text(dirs / "include" / "b.h", "an added header\n")
+    added_dir = build(run_dir, dirs)
+    check(added_dir.returncode == 0, "the added directory-input build failed")
+    check(
+        "build script ran" in harness.text(added_dir.stderr),
+        "adding a file to a declared directory did not rerun the script",
+    )
 
     # A declared input that does not exist is E0261, not a cache that reruns forever.
     missing = work / "missing"

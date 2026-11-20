@@ -4,6 +4,46 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
+end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
+or a directory; a directory is hashed recursively over every file under it, so a file added, removed, renamed, or
+changed inside reruns the script and a touched one does not, and `burdin watch` follows a directory input as well
+(`spec/build-scripts.md` BS5). The new suite `crates/burdin_driver/tests/build_scripts.rs` runs in `cargo test
+--workspace` in every CI job and drives the binary over fixture packages: the success path, the stdout/stderr split,
+the documented arguments and environment, every rerun rule (declared inputs including a directory, `embed` inputs,
+generated outputs, the script, the manifest, and the profile), the dependency grant (including `burdin test -p`, where
+the selected package is the entry and its own script is trusted), nested and stale generated modules, and every
+failure path with its code (E0260, E0261, E0262) and exit status. `tests/m22_build/` still covers each diagnostic, and
+`tests/check_build_scripts.py` covers the Python-side cache checks. Not changed: a build script is still native code
+with no operating-system sandbox (BS8); the grant is the trust boundary.
+
+**Package templates (issue #354, 2026-11-20).** `burdin new <name> [--lib | --bin]` and
+`burdin init [<dir>] [--lib | --bin]` (`crates/burdin_driver/src/new.rs`, `tests/check_new.py`). A library has
+`src/lib.bd` (a function and a `test`) and a `.gitignore` for `target/` only. A library has no `main`, so `build` and
+`check` of one fail with the unchanged "has no entry point" error; a hint naming `burdin test` would change a golden
+(`tests/check/golden/lib_tests.txt`) and was left out. `new` still refuses any existing path. `init` writes into an
+existing directory and refuses only when `burdin.toml`, its root module, or `.gitignore` already exists, before writing
+anything; other files are left alone. Not done: a `--name` override (a directory whose name is not an identifier cannot
+be initialized), `git init`, and a template choice beyond `--lib`/`--bin`.
+
+**The TOML package (issue #256, 2026-11-20).** `packages/toml` reads and writes TOML 1.0.0 on the serialization
+framework, under the decisions of `spec/toml.md` (TOML1-TOML16): `parse`/`render` (the `Value` tree and the canonical
+form), `to_value`/`from_value`, and `to_string`/`from_str`. Both directions go through an arena of nodes: the parser
+fills one while it applies the table rules (dotted keys, headers, arrays of tables, and the closed inline table), the
+writer fills one as the framework calls it, and the reader flattens a `Value` into one. The parser keeps a span on
+every key and value, so `parse` reports syntax errors at places TOML 1.0.0 does, and the reader reports a type error
+at the value it rejects with the framework's path. The canonical writer puts a table's scalars first, then its tables
+as sections, and a non-empty all-table array as `[[path]]`; a map's keys are sorted and a struct's keep declaration
+order. The goldens are `tests/toml/{roundtrip,spans,bad,config,write}/*.expected`, the black-box check is
+`tests/check_toml.py` (in every CI job), and `tests/s3_serialize/toml` is the conformance case. Open decisions and
+limitations: (1) an `Option.None` field is written by omitting the key, but a derived reader cannot tell an omitted key
+from a missing one, so reading it back is `missing field` (SER6; pinned by `tests/toml/write` and
+`tests/toml/config/missing_option`) — the fix belongs to the framework, not to TOML; (2) a datetime has no framework
+shape, so it is read and written through `parse`/`render`, not `from_str`/`to_string`; (3) `u64`/`usize` above
+`i64::MAX` and `unit` are errors, as TOML has no form for them. While writing the package, a recursion defect showed
+up: a type that recurses through `List<Self>` (`struct Node { kind: i32, children: List<Node> }`) builds fine and
+overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
+instead. The defect belongs to the compiler, not to the package.
 **Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
 package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
 Rust-shim, and failed-test entries) and the artifact cache. A build of a package directory publishes its linked
@@ -46,7 +86,7 @@ off, and the C API cannot set it), which the GNU linker folds into `.init_array`
 never runs — an lld-linked fuzz build finds no coverage at all. `tests/check_linker.py` checks it in every CI job, and
 the Linux job installs `lld` so the whole suite links through the automatic choice.
 
-Updated at the end of the fifty-sixth session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
+Updated at the end of the fifty-seventh session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
 overloading and `Index`), 20 (comptime), 21 (reflection, user derives, const generics, `embed`, generic aliases, and impls for specific instances), 22 (build scripts, dependency grants, generated modules, and the minimal `bindgen`), and 23 (allocators, `Arena`, `Shared<T>`, leak detection, and allocator-aware containers) are done**, milestone 24
@@ -392,7 +432,8 @@ package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the packag
 (an identifier, not a reserved word, not `std`), and refuses an existing path with exit status 2 before writing
 anything. The `.gitignore` lists `/target/` and the executable `burdin build .` leaves in the package directory,
 because the driver writes it to the working directory. Unit tests in `new.rs` and `tests/check_new.py` (run in every
-CI job) cover it. There is no `burdin new --lib` or template choice, no `git init`, and no `--name` override yet.
+CI job) cover it. There was no `--lib` or template choice, no `git init`, and no `--name` override; issue #354 added
+`--lib` and `burdin init` (see the State entry).
 
 The forty-eighth session implemented stage 3's C bindgen (issue #244, sub-issues #245-#248, #475, #476, #663). The
 import side is a new crate, `crates/burdin_bindgen`, which knows nothing about the compiler: `clang.rs` finds and loads
@@ -1392,8 +1433,9 @@ The first format package is done: `packages/json` (issue #255, `packages/json/RE
 errors, and a negative zero is written `-0.0` because the display form `-.0` is not a JSON number. Syntax errors carry
 a line and a column (scalar values, so a column is not a byte offset), duplicate object names are rejected, and
 reading never panics on any byte sequence. The goldens are `tests/json/*/*.expected`, the black-box check is
-`tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The remaining formats (toml #256, csv
-#257, yaml #258, xml #259) follow the same shape.
+`tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The second format package is `packages/toml`
+(issue #256, `spec/toml.md`, described under State) and follows the same shape. The remaining formats (csv #257, yaml
+#258, xml #259) do too.
 
 ## Session: `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (stage 3, issue #350)
 
