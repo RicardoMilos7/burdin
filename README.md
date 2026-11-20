@@ -386,6 +386,7 @@ Environment:
 | `BURDIN_COMMIT` | Overrides the git commit `--version` prints (for builds without a `.git` directory). |
 | `BURDIN_CODEGEN_UNITS` | Split code generation into exactly this many units instead of choosing by program size (a testing aid; `tests/check_parallel.py` uses it). |
 | `BURDIN_JOBS` | The default of `-j`: the most threads parsing, code generation, and `fmt` use; `1` is sequential. Default: the machine's parallelism. |
+| `BURDIN_LD` | The linker to use: `mold`, `lld`, another name, a path (clang), or `platform` (default: `mold`/`lld` when installed on Linux, else the compiler driver's linker; sanitizer and fuzz builds always keep that linker). |
 | `BURDIN_VERSION` | Overrides the version `--version` prints (nightly builds). |
 | `LLVM_SYS_211_PREFIX` | The LLVM 21 installation; its `bin/llvm-config` drives `--link-lib LLVM-C`. |
 
@@ -919,6 +920,28 @@ names the compiler and suggests `BURDIN_CC`:
 ```
 error: cannot run the linker `cc`: No such file or directory (os error 2) (set BURDIN_CC)
 ```
+
+### Choosing the linker
+
+The C compiler driver still supplies the C runtime and the libraries, but the link itself can be done by a faster
+linker. On Linux the driver names one when it is installed — `mold` when `ld.mold` is on `PATH`, then `lld` when
+`ld.lld` is — by passing `-fuse-ld=<name>` to the compiler driver. Otherwise the driver's own linker is used, as on
+macOS (ld64) and Windows (`link.exe`). `BURDIN_LD` overrides the choice: a linker name (`mold`, `lld`, `gold`), a path
+to the linker (clang accepts a path; gcc wants the `ld.<name>` name), or `platform`/`default` to force the compiler
+driver's own linker. An empty value is the same as unset.
+
+```console
+$ BURDIN_LD=mold ./target/debug/burdin build hello.bd
+$ BURDIN_LD=platform ./target/debug/burdin test
+```
+
+`--lto` keeps the compiler driver's linker and refuses mold: LLVM bitcode needs lld, and the installed lld may not be
+the LLVM version that produced it. A sanitizer or fuzz build (`--sanitize`, `burdin fuzz`) keeps it too: those runtimes
+start up from module constructors that LLVM emits into `.ctors`, which lld leaves in a section libc never runs, so
+naming another linker there is a usage error. An MSVC-style driver (`cl`, `cl.exe`, `clang-cl`) always uses `link.exe`
+and has no `-fuse-ld`, so a `BURDIN_LD` value other than `platform`, `default`, `link`, or `msvc` is a usage error.
+When a link fails, the error says whether `BURDIN_LD` or the automatic choice supplied the linker, and how to go back
+to the default. `tests/check_linker.py` checks all of it.
 
 ### Exit status
 

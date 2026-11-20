@@ -238,8 +238,8 @@ crates/
                             what the compiler built, never links LLVM, and the driver is its only caller
   burdin_driver/            the `burdin` binary: build, run, test, bench, check, expand, asm, bloat, fmt, lint, doc, bindgen, new, add, repl, lsp; it runs its
                             front end through `burdin_query`, and keeps build scripts (`build.rs`), the bench runner
-                            (`bench_runner.rs`), the bindgen command line (`bindgen.rs`), and the export header built
-                            from the checked program (`export.rs`)
+                            (`bench_runner.rs`), the linker choice (`linker.rs`), the bindgen command line
+                            (`bindgen.rs`), and the export header built from the checked program (`export.rs`)
   burdin_bench/             generated benchmark inputs and the `cargo bench` targets for lexing, parsing, name
                             resolution and type checking, code generation, and the query library's keystroke edits
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
