@@ -4,6 +4,22 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
+package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
+Rust-shim, and failed-test entries) and the artifact cache. A build of a package directory publishes its linked
+executable with a fingerprint file: the format line, the compiler's identity, the host, the flags, every manifest and
+source as checked, the build inputs, the Rust shim libraries, each hashed, and the executable's SHA-256. A matching
+fingerprint copies the executable instead of linking again, and the front end always runs first, so diagnostics do not
+change. Not cached: debug builds (`-g` writes PDB, Natvis, and dSYM sidecars beside the executable), `--emit`,
+`--emit-ir`, `--pgo-use`, bench and fuzz builds, and one-file targets. The code is `crates/burdin_driver/src/artifact.rs`
+and `write_executable`/`copy_executable` in `main.rs`. Tests: `tests/check_target.py` (80 checks; a broken linker proves
+each link happened) and the unit tests in `artifact.rs`. Two mutations of the freshness test (ignoring the fingerprint
+body, and not checking the executable's hash) each make the check fail. Not done: `burdin clean`, removing staging files
+of interrupted builds, keeping more than one executable per profile and kind, and per-dependency object caching
+(code generation is whole-program). The issue's `--offline` and registry-publish cases do not apply, since this compiler
+has neither, and no new test covers workspace selection. Windows is not run locally: CI's Windows job is the first run
+of the MSVC naming rule and of the rename over an existing executable.
+
 **Watch mode (issue #632, 2026-11-19).** `burdin watch [check|build|test|run] <target>` and `--watch`/`--no-clear` on
 `build`, `run`, `test`, and `check` (`crates/burdin_driver/src/watch.rs`, `spec/watch.md`, `tests/check_watch.py`). It polls
 modification times (no new dependency) and reruns the command as a child `burdin`; `run` builds to a temporary file and
