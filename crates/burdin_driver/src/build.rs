@@ -239,6 +239,7 @@ fn run_script(
         report_clean: false,
         run_build_scripts: false,
         locked: false,
+        offline: false,
         jobs: options.jobs,
         sanitize: Default::default(),
         fuzz_target: None,

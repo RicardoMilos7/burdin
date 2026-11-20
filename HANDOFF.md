@@ -1367,6 +1367,20 @@ reading never panics on any byte sequence. The goldens are `tests/json/*/*.expec
 `tests/check_json.py`, and `tests/s3_serialize/json` is the conformance case. The remaining formats (toml #256, csv
 #257, yaml #258, xml #259) follow the same shape.
 
+## Session: `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (stage 3, issue #350)
+
+`spec/packages.md` (PKG19-PKG24) is the design. `clean.rs`, `pack.rs`, and `vendor.rs` in the driver are the command
+lines; the work is in `burdin_pkg`: `archive.rs` (the segment glob for `[package] include`/`exclude`, and a USTAR writer
+with fixed headers so the same tree packs to the same bytes), `vendor.rs` (copies git packages into `vendor/<name>/`
+and lists them in `vendor/burdin-vendor.txt`, which is the only thing that lets a run remove an entry), and
+`git::restore` plus `resolve::Mode` (offline: a pinned git package comes from the cache, or is restored from
+`vendor/<name>`, checked against the lockfile; nothing is fetched). `CompileOptions` and the `Args` structs gained
+`offline` beside `locked`. Verified by `crates/burdin_pkg/tests/vendor.rs`, the unit tests of `archive.rs` and
+`vendor.rs`, and `tests/check_package_tools.py` (in CI with `check_packages.py`).
+
+Not done: publishing and a registry, workspaces (issue #337), compressed archives, `--offline` for `burdin add`, and
+vendoring path packages.
+
 ## The fifty-sixth session: the toolchain manager (stage 3, issue #624, sub-issues #626, #628, #630, #631)
 
 The name is `burdin toolchain`, not `burdinup` (`spec/toolchain.md`). `crates/burdin_toolchain` builds
