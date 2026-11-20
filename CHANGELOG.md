@@ -16,6 +16,9 @@ close-out checklist in `AGENTS.md`).
   through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
   from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
   compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
+
+## 0.1.1 — 2026-11-20
+
 - The toolchain manager (stage 3, issue #624: #626, #628, #630, #631; `spec/toolchain.md`). The new
   `crates/burdin_toolchain` builds `burdin-toolchain`, which the release archive carries and the installers copy into
   the install directory as the `burdin` and `burdin-lsp` proxies. `burdin toolchain install|update|list|default|remove`
