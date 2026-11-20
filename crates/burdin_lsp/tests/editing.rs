@@ -41,6 +41,43 @@ fn hover_shows_signatures_types_and_docs() {
     assert_eq!(client.shutdown(), 0);
 }
 
+/// Hover on the callee of a call that is still being written (issue #848): a method named without its call, a call
+/// whose arguments are not closed yet, a module's function named without arguments. The signature shows, never
+/// `{error}`.
+#[test]
+fn hover_shows_the_callee_of_an_incomplete_call() {
+    let root = fixture("incomplete");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    // Each case writes `let q = <expr>` before the `println` of `main`, then hovers the callee's name in `<expr>`.
+    let cases: &[(&str, &str, &str)] = &[
+        ("sq.area", "area", "fn area(self): i32"),
+        ("sq.area(", "area", "fn area(self): i32"),
+        ("sq.area()", "area", "fn area(self): i32"),
+        ("sq.grow", "grow", "fn grow(mut self, by: i32)"),
+        ("sq.grow(", "grow", "fn grow(mut self, by: i32)"),
+        ("Square.area", "area", "fn area(self): i32"),
+        ("Square.area(", "area", "fn area(self): i32"),
+        ("json.from_str", "from_str", "fn from_str<T: Deserialize>(text: str): Result<T, DeError>"),
+        ("json.from_str(", "from_str", "fn from_str<T: Deserialize>(text: str): Result<T, DeError>"),
+        ("add", "add", "fn add(a: i32, b: i32): i32"),
+        ("add(1, ", "add", "fn add(a: i32, b: i32): i32"),
+    ];
+    for (version, (expr, callee, expected)) in (2..).zip(cases) {
+        let edited = text.replace("    println", &format!("    let q = {expr}\n    println"));
+        client.change(&uri, version, &edited);
+        let needle = format!("let q = {expr}");
+        let delta = "let q = ".len() + expr.find(callee).unwrap();
+        let result = client.call("textDocument/hover", client.at(&uri, &edited, &needle, 0, delta));
+        assert!(!result.is_null(), "no hover on `{callee}` in `{expr}`");
+        let markdown = result.at(&["contents", "value"]).as_str().unwrap().to_string();
+        assert!(markdown.contains(expected), "`{expr}`: {markdown}");
+        assert!(!markdown.contains("{error}"), "`{expr}`: {markdown}");
+    }
+    assert_eq!(client.shutdown(), 0);
+}
+
 fn labels(result: &Json) -> Vec<String> {
     let items = if result.get("items").is_null() { result.as_array() } else { result.get("items").as_array() };
     items.iter().map(|i| i.get("label").as_str().unwrap().to_string()).collect()
