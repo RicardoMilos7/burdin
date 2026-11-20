@@ -103,7 +103,7 @@ fn content_key(target: &Path, text: &str, options: &CompileOptions) -> Result<St
     env!("BURDIN_GIT_COMMIT").hash(&mut hasher);
     burdin_codegen::llvm_version().hash(&mut hasher);
     text.hash(&mut hasher);
-    options.release.hash(&mut hasher);
+    options.profile.key().hash(&mut hasher);
     options.debug.hash(&mut hasher);
     options.strip.hash(&mut hasher);
     options.lto.hash(&mut hasher);

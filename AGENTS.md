@@ -12,7 +12,7 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md`, `spec/toml.md`, `spec/toolchain.md`, `spec/watch.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md`, `spec/toml.md`, `spec/toolchain.md`, `spec/watch.md`, `spec/build-tool.md`, `spec/profiles.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
    operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, the language server, dependencies with `burdin.lock` and `burdin add`, and the toolchain manager.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
@@ -67,6 +67,8 @@ python3 tests/check_lsp.py               check `burdin lsp`: the driver's server
 python3 tests/check_repl.py              check `burdin repl`: the golden sessions, :ir, and :compile
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
+python3 tests/check_cli.py               check the command surface: every command's help, the golden command list, unknown commands
+python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links

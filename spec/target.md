@@ -38,14 +38,18 @@ cache. Every other build links into its output as it always did, without reading
 Tests: `tests/check_target.py` (`-g` links every time, and the cache is left alone); the unit test
 `only_build_and_test_of_a_package_are_cached`.
 
-**TG3. The fingerprint.** A fingerprint file is text. Its first line is `burdin-artifact-v1`, so a change to the format
+**TG3. The fingerprint.** A fingerprint file is text. Its first line is `burdin-artifact-v2`, so a change to the format
 makes every older fingerprint mismatch. Then come one line per input, in this order:
 
 - `compiler <identity>`: the compiler's version, commit, LLVM version, and its own file's length and modification time
   (the identity that BS5 uses for build scripts);
 - `host <os> <arch>`;
 - `profile <profile>`, `kind <kind>`, and `name <name>`, the package's name;
-- `options release=<b> strip=<b> lto=<b> pgo-generate=<b> sanitize=<list>`, where `<list>` is `none` or the enabled
+- `settings <key>`: the profile's code generation settings as `spec/profiles.md` spells the cache key
+  (`opt=<n>;debug=<b>;debug-assertions=<b>;overflow-checks=<b>;panic=<strategy>`), so two profiles that write the
+  same directory are still told apart;
+- `package <name> overflow-checks=<b> debug-assertions=<b>` for each per-package override, in the manifest's order;
+- `options strip=<b> lto=<b> pgo-generate=<b> sanitize=<list>`, where `<list>` is `none` or the enabled
   sanitizers, comma-separated;
 - `link-lib <name>` for each `--link-lib`, in the order given;
 - `manifest <sha256> <path>` for the `burdin.toml` of each package in the closure;

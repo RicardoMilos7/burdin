@@ -42,7 +42,7 @@ def check(condition: bool, message: str) -> None:
 burdin = harness.require_burdin()
 BROKEN = "/definitely-not-a-compiler"
 MANIFEST = '[package]\nname = "{name}"\nversion = "0.1.0"\n'
-FINGERPRINT_FORMAT = "burdin-artifact-v1"
+FINGERPRINT_FORMAT = "burdin-artifact-v2"
 
 
 def write(path: Path, content: str) -> None:
@@ -122,7 +122,15 @@ with harness.temporary_dir("burdin-target-") as work:
         lines and re.fullmatch(r"artifact [0-9a-f]{64}", lines[-1]) is not None,
         "the fingerprint does not end with the executable's SHA-256",
     )
-    for name in ("compiler", "host", "profile debug", "kind bin", "name hit", "options release=false"):
+    for name in (
+        "compiler",
+        "host",
+        "profile debug",
+        "kind bin",
+        "name hit",
+        "settings opt=0;debug=false;debug-assertions=true;overflow-checks=true;panic=abort",
+        "options strip=false",
+    ):
         check(any(line.startswith(name) for line in lines), f"the fingerprint has no `{name}` line")
     main_source = os.path.join("src", "main.bd")
     check(

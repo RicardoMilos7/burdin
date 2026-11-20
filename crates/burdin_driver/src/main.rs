@@ -28,6 +28,7 @@ mod migrate;
 mod msvc;
 mod new;
 mod pack;
+mod profile;
 mod refactor;
 mod repl;
 mod rust_build;
@@ -51,7 +52,13 @@ use std::process::{Command, ExitCode};
 pub(crate) struct Args {
     pub(crate) command: String,
     pub(crate) target: PathBuf,
+    /// `--release`: the `release` profile. Kept alongside `profile` because a few link and PGO decisions still
+    /// ask whether the build is the optimized `release` one.
     pub(crate) release: bool,
+    /// `--profile <name>`: the requested profile name, resolved against the package's manifest into `profile`.
+    pub(crate) profile_name: Option<String>,
+    /// The resolved profile (`spec/profiles.md`).
+    pub(crate) profile: profile::Profile,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
     /// `--features`, `--no-default-features`, and `--all-features`: the features the entry package enables
@@ -213,6 +220,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         };
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
+            "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
             "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
@@ -374,6 +382,15 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             // `burdin fuzz <target> <name>`.
             _ if args.command == "fuzz" && args.fuzz_name.is_none() => args.fuzz_name = Some(a.to_string()),
             _ => return Err(format!("unexpected argument `{a}`")),
+        }
+    }
+    if args.release {
+        match &args.profile_name {
+            Some(name) if name != "release" => {
+                return Err(format!("`--release` is `--profile release`; it conflicts with `--profile {name}`"));
+            }
+            Some(_) => {}
+            None => args.profile_name = Some("release".to_string()),
         }
     }
     if args.pgo_generate && args.pgo_use.is_some() {
@@ -737,13 +754,25 @@ fn driver_main() -> ExitCode {
         Ok(a) => a,
         Err(msg) => return cli::usage_error(&command, &msg),
     };
+    let default_profile = match command.as_str() {
+        "test" => "test",
+        "bench" => "bench",
+        _ => "dev",
+    };
+    let profile =
+        match profile::resolve_for_command(&command, &args.target, args.profile_name.as_deref(), default_profile) {
+            Ok(profile) => profile,
+            Err(code) => return code,
+        };
+    let mut args = args;
+    args.profile = profile;
     let emit = (!args.emit.is_empty()).then(|| emit::Emit {
         kinds: args.emit.clone(),
         asm_syntax: args.asm_syntax,
         skip_link: false,
     });
     let options = CompileOptions {
-        release: args.release,
+        profile: args.profile.clone(),
         debug: args.debug,
         strip: args.strip,
         lto: args.lto,
@@ -854,7 +883,9 @@ pub(crate) fn exit_code_of(status: std::process::ExitStatus) -> u8 {
 
 /// The options of one compilation.
 pub(crate) struct CompileOptions<'a> {
-    pub(crate) release: bool,
+    /// The resolved build profile: optimization level, debug info, assertions, overflow checks, and panic
+    /// strategy (`spec/profiles.md`).
+    pub(crate) profile: profile::Profile,
     /// Emit source-level debug information.
     pub(crate) debug: bool,
     /// Strip the executable.
@@ -982,7 +1013,7 @@ pub(crate) fn front_end(
     let mut script_inputs: Vec<String> = Vec::new();
     let mut rust_libs: Vec<String> = Vec::new();
     if options.run_build_scripts {
-        match build::run(&mut loaded, options.release, options) {
+        match build::run(&mut loaded, options.profile.clone(), options) {
             Ok(outcome) => {
                 script_inputs = outcome.inputs;
                 rust_libs = outcome.link_libs;
@@ -1019,7 +1050,9 @@ pub(crate) fn front_end(
     // A batch build asks once and exits, so it does not keep the checked bodies a language server would.
     let query_options = burdin_query::Options {
         mode,
-        release: options.release,
+        release: !options.profile.debug_assertions,
+        overflow_checks: options.profile.overflow_checks,
+        debug_assertions: options.profile.debug_assertions,
         comptime_steps: options.comptime_steps,
         no_cache: true,
         jobs: options.jobs,
@@ -1146,9 +1179,10 @@ fn write_executable(
     options: &CompileOptions,
     rust_libs: &[String],
 ) -> Result<(), ExitCode> {
+    let package_flags = package_flags(loaded, &options.profile);
     let Some(plan) = artifact::Plan::for_build(loaded, files, sources, &program.build_inputs, rust_libs, options)
     else {
-        return emit_program(program, sources, &loaded.stem, output, options, rust_libs);
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
     if plan.is_fresh() {
         return copy_executable(&plan.exe, output);
@@ -1156,9 +1190,9 @@ fn write_executable(
     let Ok(staged) = plan.staging() else {
         // A cache that cannot be created is not a failed build: link straight into the output, as an uncached
         // build does.
-        return emit_program(program, sources, &loaded.stem, output, options, rust_libs);
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
-    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs) {
+    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags) {
         let _ = std::fs::remove_file(&staged);
         return Err(code);
     }
@@ -1193,6 +1227,28 @@ pub(crate) fn write_artifact(path: &Path, text: &str) -> Result<(), ExitCode> {
     })
 }
 
+/// The per-package codegen flags a profile gives the packages of a build (`spec/profiles.md`, BP7). A package
+/// override whose package is not in the build is ignored; the embedded standard library has no directory, so no
+/// override can name it.
+pub(crate) fn package_flags(
+    loaded: &package::Workspace,
+    profile: &profile::Profile,
+) -> Vec<burdin_codegen::PackageFlags> {
+    let mut flags = Vec::new();
+    for over in &profile.packages {
+        let Some(dir) = loaded.packages.iter().find(|package| package.name == over.package).and_then(|p| p.dir.clone())
+        else {
+            continue;
+        };
+        let (overflow_checks, debug_assertions) = profile.package_flags(&over.package);
+        // The source map spells a path the way diagnostics do: on Windows the canonical path's verbatim prefix is
+        // removed (`source_path_text`), and the prefix comparison has to use the same spelling.
+        let dir = PathBuf::from(source_path_text(&dir));
+        flags.push(burdin_codegen::PackageFlags { dir, overflow_checks, debug_assertions });
+    }
+    flags
+}
+
 /// Emits the object files of the checked `program` and links them into `output`. This is the half of `compile` after
 /// the front end; the doc-test builds (`test_runner/doc_tests.rs`) share it, rendering a failed build themselves
 /// instead of printing it here.
@@ -1203,6 +1259,7 @@ pub(crate) fn emit_program(
     output: &Path,
     options: &CompileOptions,
     rust_libs: &[String],
+    package_flags: &[burdin_codegen::PackageFlags],
 ) -> Result<(), ExitCode> {
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -1221,10 +1278,13 @@ pub(crate) fn emit_program(
     let emit = options.emit;
     let artifact = |kind: emit::EmitKind| emit.filter(|e| e.wants(kind)).map(|e| e.path(output, kind));
     let opts = burdin_codegen::Options {
-        release: options.release,
+        opt_level: options.profile.opt_level,
+        debug_assertions: options.profile.debug_assertions,
+        overflow_checks: options.profile.overflow_checks,
+        package_flags: package_flags.to_vec(),
         emit_ir: options.emit_ir.map(Path::to_path_buf).or_else(|| artifact(emit::EmitKind::LlvmIr)),
         pgo_ir,
-        debug: options.debug,
+        debug: options.debug || options.profile.debug,
         bitcode: options.lto,
         instrument: options.pgo_generate,
         jobs: options.jobs,
@@ -1250,7 +1310,7 @@ pub(crate) fn emit_program(
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
-            pgo_object(&dir.path, &ir, profile, options.release).map_err(fail)?;
+            pgo_object(&dir.path, &ir, profile, options.profile.opt_level).map_err(fail)?;
             vec![dir.path.join(if cfg!(windows) { "program.pgo.obj" } else { "program.pgo.o" })]
         }
         None => objects,
@@ -1441,7 +1501,7 @@ fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
 
 /// Runs `--pgo-use`: merges the profile, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`.
 /// `opt` is used because the LLVM C API does not expose the pass builder's profile options.
-fn pgo_object(dir: &Path, ir: &Path, profile: &Path, release: bool) -> Result<(), String> {
+fn pgo_object(dir: &Path, ir: &Path, profile: &Path, level: burdin_codegen::OptLevel) -> Result<(), String> {
     if !profile.is_file() {
         return Err(format!("the profile `{}` does not exist", profile.display()));
     }
@@ -1451,7 +1511,8 @@ fn pgo_object(dir: &Path, ir: &Path, profile: &Path, release: bool) -> Result<()
     run_tool(&profdata_tool, &["merge".into(), "-o".into(), profdata.clone().into(), profile.into()])?;
     let opt = llvm_tool("opt").ok_or("`--pgo-use` needs `opt`; install the LLVM 21 tools or put them on PATH")?;
     let llc = llvm_tool("llc").ok_or("`--pgo-use` needs `llc`; install the LLVM 21 tools or put them on PATH")?;
-    let pipeline = if release { "pgo-instr-use,default<O2>" } else { "pgo-instr-use" };
+    let pipeline =
+        if level.optimized() { format!("pgo-instr-use,{}", level.pipeline()) } else { "pgo-instr-use".to_string() };
     let bitcode = dir.join("program.pgo.bc");
     run_tool(
         &opt,

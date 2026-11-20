@@ -63,7 +63,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         }
     };
     let options = CompileOptions {
-        release: args.release,
+        profile: args.profile.clone(),
         debug: args.debug,
         strip: false,
         lto: false,

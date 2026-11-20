@@ -334,6 +334,7 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
+            profiles: Vec::new(),
             include: None,
             exclude: Vec::new(),
         };
@@ -895,6 +896,10 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// The `[profile...]` entries, in file order (`spec/profiles.md`). The parser records them without checking
+    /// them: only the entry package's tables are read, and the driver validates the selected profile, so a
+    /// dependency's table (which is ignored) cannot fail a build.
+    pub profiles: Vec<ProfileEntry>,
     /// `[package] include`: the file patterns `burdin package` selects, when the manifest gives any
     /// (`spec/packages.md`, PKG21).
     pub include: Option<Vec<String>>,
@@ -937,6 +942,18 @@ impl Node {
     }
 }
 
+/// One `key = value` line of a `[profile...]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileEntry {
+    /// The section as written, without the brackets: `profile.dev` or `profile.fast.package.low`.
+    pub section: String,
+    pub key: String,
+    /// The raw right-hand side, still quoted when it is a string.
+    pub value: String,
+    /// The line number, counted from 1.
+    pub line: usize,
+}
+
 /// The minimal `burdin.toml` this stage needs: `[package] name = "..."` and `version`, `[dependencies]` entries
 /// with a `path`, a `git` repository, or `true`, and `[build] allow = [...]` grants. Unknown sections and keys are ignored, so a newer manifest does
 /// not break an older compiler.
@@ -959,6 +976,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut rust = RustConfig::default();
     // Each dependency name with the line it was declared on: a name is declared once per manifest (PKG25).
     let mut declared: Vec<(String, usize)> = Vec::new();
+    let mut profiles: Vec<ProfileEntry> = Vec::new();
     let mut include: Option<Vec<String>> = None;
     let mut exclude: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
@@ -1097,6 +1115,14 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                     }
                 }
             }
+            // `[profile.<name>]` and `[profile.<name>.package.<package>]` (`spec/profiles.md`). The entries are
+            // collected verbatim; the driver validates only the selected profile of the entry package.
+            section if section.starts_with("profile.") => profiles.push(ProfileEntry {
+                section: section.to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
+                line: index + 1,
+            }),
             _ => {}
         }
     }
@@ -1117,6 +1143,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         lint,
         rust,
         edition,
+        profiles,
         include,
         exclude,
     };

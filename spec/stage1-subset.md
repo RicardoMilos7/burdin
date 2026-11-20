@@ -382,7 +382,8 @@ overlapped per-operation Windows path are later refinements.
 The query-based compiler library has landed (`spec/query.md`, issue #241): the command line runs its front end
 through it, and the memo, the tool API, cancellation, and the budget are in place. The lockfile and `burdin add`
 have landed too (`spec/packages.md`, issues #238 and #239); multiple-package workspaces, cached object files, and the
-package registry are still open.
+package registry are still open. The build tool's command surface is recorded in `spec/build-tool.md` (issue #338),
+and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in `spec/profiles.md` (issue #339).
 
 ### When wanted
 

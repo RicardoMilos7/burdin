@@ -130,7 +130,8 @@ matches return addresses against real function addresses.
 
 ## `burdin debug` (issue #574)
 
-**DBG9 — the command.** `burdin debug <target> [-- args]` compiles the target in the debug profile with `-g`
+**DBG9 — the command.** `burdin debug <target> [-- args]` compiles the target in the selected profile (`dev` by
+default; `--release` is `--profile release`, `spec/profiles.md`) with `-g`
 into a temporary directory and starts the platform debugger on it: lldb on macOS, gdb on Linux when it is
 installed and lldb otherwise, and cdb (the VS/WinDbg console debugger) on Windows; `--debugger <name or path>`
 overrides (`gdb`, `lldb`, `cdb`, or an arbitrary program, which is how the black-box tests drive it with a

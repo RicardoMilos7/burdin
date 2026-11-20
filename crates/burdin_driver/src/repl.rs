@@ -53,7 +53,7 @@ fn parse(argv: &[String]) -> Result<ReplArgs, String> {
 /// The options every native build of the session uses (`:compile`, `:ir`).
 fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path>) -> CompileOptions<'a> {
     CompileOptions {
-        release: args.release,
+        profile: if args.release { crate::profile::Profile::release() } else { crate::profile::Profile::dev() },
         debug: false,
         strip: false,
         lto: false,

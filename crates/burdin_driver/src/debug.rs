@@ -30,6 +30,8 @@ pub(crate) struct Args {
     /// Everything after `--`, passed to the program.
     pub(crate) program_args: Vec<String>,
     pub(crate) release: bool,
+    /// `--profile <name>` (`spec/profiles.md`).
+    pub(crate) profile_name: Option<String>,
     pub(crate) jobs: Option<usize>,
     pub(crate) diagnostics: DiagnosticOptions,
 }
@@ -43,6 +45,7 @@ impl Default for Args {
             break_on_panic: false,
             program_args: Vec::new(),
             release: false,
+            profile_name: None,
             jobs: None,
             diagnostics: DiagnosticOptions {
                 format: DiagnosticFormat::Human,
@@ -93,6 +96,13 @@ pub(crate) fn parse(args: &[String]) -> Result<Args, String> {
                     return Err("`--release` takes no value".to_string());
                 }
                 parsed.release = true;
+            }
+            "--profile" => {
+                let value = match inline {
+                    Some(value) => value.to_string(),
+                    None => rest.next().cloned().ok_or("`--profile` needs a profile name")?,
+                };
+                parsed.profile_name = Some(value);
             }
             "-j" | "--jobs" => {
                 let value = match inline {
@@ -262,6 +272,21 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         }
     };
     let target = args.target.clone();
+    let requested = match (&args.profile_name, args.release) {
+        (Some(name), true) if name != "release" => {
+            return crate::cli::usage_error(
+                "debug",
+                &format!("`--release` is `--profile release`; it conflicts with `--profile {name}`"),
+            );
+        }
+        (Some(name), _) => Some(name.clone()),
+        (None, true) => Some("release".to_string()),
+        (None, false) => None,
+    };
+    let profile = match crate::profile::resolve_for_command("debug", &target, requested.as_deref(), "dev") {
+        Ok(profile) => profile,
+        Err(code) => return code,
+    };
     let dir = match TempDir::new() {
         Ok(dir) => dir,
         Err(error) => {
@@ -272,7 +297,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
     let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "program".to_string());
     let exe = dir.path.join(stem).with_extension(std::env::consts::EXE_EXTENSION);
     let options = CompileOptions {
-        release: args.release,
+        profile,
         debug: true,
         strip: false,
         lto: false,

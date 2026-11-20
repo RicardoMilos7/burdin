@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// The first line of every fingerprint file (TG3). A change to the format changes this line, so every older
 /// fingerprint mismatches and its artifact is built again.
-const FORMAT: &str = "burdin-artifact-v1";
+const FORMAT: &str = "burdin-artifact-v2";
 
 /// The directory kind of a cacheable build, or `None` when the build is not cached (TG2). Only what `build`, `run`, and
 /// `test` produce for a package directory is cached. A debug build writes sidecar files beside its executable (the PDB,
@@ -66,9 +66,15 @@ impl Plan {
     ) -> Option<Plan> {
         let package_dir = loaded.packages.get(loaded.entry_package)?.dir.as_deref();
         let emits = options.emit.is_some() || options.emit_ir.is_some();
-        let kind = cached_kind(options.mode, options.debug, emits, options.pgo_use.is_some(), package_dir.is_some())?;
+        let kind = cached_kind(
+            options.mode,
+            options.debug || options.profile.debug,
+            emits,
+            options.pgo_use.is_some(),
+            package_dir.is_some(),
+        )?;
         let package_dir = package_dir?.canonicalize().ok()?;
-        let dir = package_dir.join("target").join("burdin").join(profile_name(options.release)).join(kind);
+        let dir = package_dir.join("target").join("burdin").join(&options.profile.dir).join(kind);
         let body = fingerprint_body(loaded, files, sources, build_inputs, rust_libs, options, &package_dir, kind);
         Some(Plan::new(dir, &loaded.stem, body))
     }
@@ -139,18 +145,24 @@ fn fingerprint_body(
         FORMAT.to_string(),
         format!("compiler {}", compiler_fingerprint()),
         format!("host {} {}", std::env::consts::OS, std::env::consts::ARCH),
-        format!("profile {}", profile_name(options.release)),
+        format!("profile {}", options.profile.dir),
         format!("kind {kind}"),
         format!("name {}", loaded.stem),
+        format!("settings {}", options.profile.key()),
         format!(
-            "options release={} strip={} lto={} pgo-generate={} sanitize={}",
-            options.release,
+            "options strip={} lto={} pgo-generate={} sanitize={}",
             options.strip,
             options.lto,
             options.pgo_generate,
             sanitizer_names(options.sanitize)
         ),
     ];
+    for over in &options.profile.packages {
+        lines.push(format!(
+            "package {} overflow-checks={:?} debug-assertions={:?}",
+            over.package, over.overflow_checks, over.debug_assertions
+        ));
+    }
     lines.extend(options.link_libs.iter().map(|lib| format!("link-lib {lib}")));
     for package in &loaded.packages {
         if let Some(dir) = &package.dir {
@@ -195,11 +207,6 @@ fn sanitizer_names(sanitize: burdin_codegen::Sanitizers) -> String {
     .map(|(_, name)| name)
     .collect();
     if enabled.is_empty() { "none".to_string() } else { enabled.join(",") }
-}
-
-/// The name of a build's profile, which names its directory under `target/burdin/`.
-fn profile_name(release: bool) -> &'static str {
-    if release { "release" } else { "debug" }
 }
 
 /// The SHA-256 of a file's bytes, or `missing` when it cannot be read.

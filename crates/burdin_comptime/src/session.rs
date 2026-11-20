@@ -146,7 +146,14 @@ pub fn eval_stmts(
     let span = body.stmts.get(from).map_or_else(|| body.tail.as_ref().map_or(func.span, |t| t.span), stmt_span);
     let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
     let slots = {
-        let mut it = Interp::with_output(program, &mut consts, opts.steps, opts.release, Output::Live);
+        let mut it = Interp::with_output(
+            program,
+            &mut consts,
+            opts.steps,
+            opts.overflow_checks,
+            opts.debug_assertions,
+            Output::Live,
+        );
         let run = it.session_run(func.locals.as_slice(), &bindings.0, body, from.min(items), span);
         match run {
             Ok(slots) => slots,
@@ -167,7 +174,14 @@ pub fn drop_bindings(
 ) -> Result<(), Fault> {
     let func = &program.functions[main.0];
     let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
-    let mut it = Interp::with_output(program, &mut consts, opts.steps, opts.release, Output::Live);
+    let mut it = Interp::with_output(
+        program,
+        &mut consts,
+        opts.steps,
+        opts.overflow_checks,
+        opts.debug_assertions,
+        Output::Live,
+    );
     let mut dropped = Vec::new();
     for (id, value) in bindings.0.iter().rev() {
         let local = func.locals.get(id.0).expect("a binding of the body");
