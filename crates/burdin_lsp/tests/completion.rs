@@ -304,3 +304,108 @@ fn derives_and_the_derivable_interfaces() {
     assert!(has(&s.complete("struct Pair: Clone, ", 20), "Eq"));
     assert_eq!(s.client.shutdown(), 0);
 }
+
+/// The labels completion offers at `needle`, `delta` bytes in, once `edit` has changed the `completion` fixture's
+/// `main.bd`. Each call opens its own session.
+fn offered_after(edit: impl Fn(&str) -> String, needle: &str, delta: usize) -> Vec<String> {
+    let mut s = open(false);
+    let edited = edit(&s.text);
+    s.edit(&edited);
+    let items = s.complete(needle, delta);
+    assert_eq!(s.client.shutdown(), 0);
+    labels(&items)
+}
+
+fn contains(labels: &[String], names: &[&str]) -> bool {
+    names.iter().all(|name| labels.iter().any(|l| l == name))
+}
+
+fn excludes(labels: &[String], names: &[&str]) -> bool {
+    names.iter().all(|name| !labels.iter().any(|l| l == name))
+}
+
+/// `self` and a bounded generic parameter complete inside an interface impl's method (issue #852; LS12): `self.` offers
+/// the impl's type's fields and methods while the body does not parse, and `s.` with `s: S` and `S: Serializer` offers
+/// the methods of the bound, from the declared parameter or from the last analysis.
+#[test]
+fn self_and_bounded_parameters_complete_in_an_interface_impl() {
+    let root = fixture("impls");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let offered = |client: &mut Client, text: &str, needle: &str, delta: usize| -> Vec<String> {
+        let params = client.at(&uri, text, needle, 0, delta);
+        labels(client.call("textDocument/completion", params).get("items").as_array())
+    };
+    // As the issue types it: `self.` alone on its line, the body unfinished, and no analysis has ever run on it.
+    let own = offered(&mut client, &text, "self.\n", 5);
+    assert!(contains(&own, &["name", "serialize"]), "{own:?}");
+    assert!(excludes(&own, &["main", "println", "Data"]), "{own:?}");
+    // A body that parses gives the same answer for `self`, and `s` is a method of its bound.
+    let valid =
+        text.replace("        self.\n        // s.\n", "        let n = self.name\n        s.serialize_unit()\n");
+    client.change(&uri, 2, &valid);
+    client.diagnostics(&uri, |_| true);
+    let bound = offered(&mut client, &valid, "s.serialize_unit", 2);
+    assert!(contains(&bound, &["serialize_bool", "serialize_str", "serialize_unit"]), "{bound:?}");
+    assert!(excludes(&bound, &["name", "serialize"]), "{bound:?}");
+    let own = offered(&mut client, &valid, "self.name", 5);
+    assert!(contains(&own, &["name", "serialize"]), "{own:?}");
+    // Hover names the bound's method, not `{error}`.
+    let hover = client.call("textDocument/hover", client.at(&uri, &valid, "serialize_unit", 0, 3));
+    let markdown = hover.at(&["contents", "value"]).as_str().unwrap().to_string();
+    assert!(markdown.contains("method of `Serializer`"), "{markdown}");
+    // Back to `s.` alone on its line, with the last good analysis still holding `s`.
+    let broken = valid.replace("s.serialize_unit()\n", "s.\n");
+    client.change(&uri, 3, &broken);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let after = offered(&mut client, &broken, "s.\n", 2);
+    assert!(contains(&after, &["serialize_bool", "serialize_unit"]), "{after:?}");
+    assert_eq!(client.shutdown(), 0);
+}
+
+/// Completion narrows to what the position takes (issue #849; LS12): a type where a type is written, an interface
+/// where a bound or an impl's interface list is written, and every name where a value is. The derive list after a
+/// struct's name offers only derives.
+#[test]
+fn completion_offers_only_what_the_position_takes() {
+    let in_main = |line: &'static str| move |t: &str| t.replace("    let mut p", &format!("{line}\n    let mut p"));
+    let appended = |text: &'static str| move |t: &str| format!("{t}{text}");
+    let types = |edit: &dyn Fn(&str) -> String, needle: &str| -> Vec<String> {
+        let labels = offered_after(edit, needle, needle.len());
+        assert!(contains(&labels, &["Point", "String", "i32"]), "{needle}: {labels:?}");
+        assert!(excludes(&labels, &["main", "println", "n", "twice", "Describe"]), "{needle}: {labels:?}");
+        labels
+    };
+    // A type: a `let` annotation, a parameter, a return, a field, and a generic parameter in a body.
+    types(&in_main("    let t: "), "let t: ");
+    types(&appended("\nfn take(a: \n"), "take(a: ");
+    types(&appended("\nfn make(): \n"), "make(): ");
+    types(&appended("\nstruct Pair {\n    first: \n}\n"), "first: ");
+    let generic = types(&appended("\nfn gen<Item>(x: i32) {\n    let t: \n}\n"), "let t: ");
+    assert!(contains(&generic, &["Item"]), "{generic:?}");
+    // An interface: an impl block's interface, a bound, a `where` clause, a `+`, `any`, and a `requires` list.
+    let bounds: [(&str, &str); 6] = [
+        ("\nPair: \n", "Pair: "),
+        ("\nfn bounded<T: \n", "bounded<T: "),
+        ("\nfn bounded2<T>(x: T): T where T: \n", "where T: "),
+        ("\nfn bounded3<T: Describe + \n", "Describe + "),
+        ("\nfn any_of(x: any \n", "any "),
+        ("\ninterface Shape requires \n", "requires "),
+    ];
+    for (insert, needle) in bounds {
+        let labels = offered_after(|t| format!("{t}{insert}"), needle, needle.len());
+        assert!(contains(&labels, &["Describe"]), "{needle}: {labels:?}");
+        assert!(
+            excludes(&labels, &["Point", "String", "i32", "main", "println", "n", "twice"]),
+            "{needle}: {labels:?}"
+        );
+    }
+    // The derive list after `struct Data:` (the issue's example): derives, and nothing else.
+    let derives = offered_after(appended("\nstruct Data:  {\n}\n"), "struct Data: ", 13);
+    assert!(contains(&derives, &["Clone", "Ord", "Describe"]), "{derives:?}");
+    assert!(excludes(&derives, &["Point", "String", "main", "println", "n"]), "{derives:?}");
+    // A value still offers everything in scope.
+    let value = offered_after(in_main("    let t = "), "let t = ", 8);
+    assert!(contains(&value, &["n", "println", "Point", "twice"]), "{value:?}");
+}

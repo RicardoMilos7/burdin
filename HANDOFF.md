@@ -22,6 +22,19 @@ parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it 
 arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
 `it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
 its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
+**Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
+`self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`
+completes and `self.area(` navigates while the body does not parse. A parameter of a generic type (`s: S`, `S:
+Serializer`) completes and resolves the methods of its bounds (`FileIndex::generic_params`, `bounds_of`,
+`parameter_type`). Completion after `:` in a type position (`let`, `const`, a parameter, a return, a field) offers types
+and the generic parameters of the function, and in a bound position (`<T: `, `where`, `+`, `any `, `requires `, a
+top-level `Type: `) offers interfaces only (`Context::Type` and `Context::Bound` in `crates/burdin_lsp/src/edit.rs`).
+The rules are LS8 and LS12 in `spec/lsp.md`, and the tests are `definition_resolves_the_callee_of_an_incomplete_call`,
+`self_and_bounded_parameters_complete_in_an_interface_impl`, and `completion_offers_only_what_the_position_takes`. Gaps: a
+generic parameter of a signature still being typed (no body yet) is not offered; a call on a local (`a.append(`) in a file
+that has never analyzed successfully still resolves nothing, because the local's type comes from the analysis (a
+syntactic guess from `let a = List<i32>.new()` was left out); `tests/check_lsp.py` needs a built driver (LLVM) and was
+not run on this machine.
 
 **Generic types named without their type arguments (issue #850, 2026-11-20).** `Map.new()`, `List.new()`, `Set.new()`,
 and `Pair.new()` for a user generic, and a bare `Map` or `Map<i32>` in a type position, are E0003 at the name. The
