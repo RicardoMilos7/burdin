@@ -155,7 +155,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked, args.offline) {
         return code;
     }
-    let workspace = match crate::test_runner::load_selection(args) {
+    let workspace = match crate::test_runner::load_selection(args, EntryMode::Bench) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -219,6 +219,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: args.locked,
+        features: args.features.clone(),
         offline: args.offline,
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: Default::default(),

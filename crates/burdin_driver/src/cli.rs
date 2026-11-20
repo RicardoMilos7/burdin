@@ -284,6 +284,24 @@ fn locked() -> Arg {
     flag("locked", "Fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)")
 }
 
+/// `--features`: the features the package enables (`spec/packages.md`, PKG29). It may repeat.
+fn features_option() -> Arg {
+    option(
+        "features",
+        "list",
+        "Enable these features of the package, separated by commas or spaces; may repeat (spec/packages.md)",
+    )
+    .action(ArgAction::Append)
+}
+
+fn no_default_features() -> Arg {
+    flag("no-default-features", "Do not enable the package's default feature (spec/packages.md, PKG29)")
+}
+
+fn all_features() -> Arg {
+    flag("all-features", "Enable every feature and optional dependency of the package (spec/packages.md, PKG29)")
+}
+
 fn offline() -> Arg {
     flag("offline", "Fetch no git package: read it from the git cache or vendor/ (spec/packages.md)")
 }
@@ -338,6 +356,9 @@ fn build() -> Command {
                 profile_option(),
                 debug_info(),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 offline(),
                 flag("strip", "Strip the executable (with MSVC, optimize for size)"),
                 flag("lto", "Emit bitcode and link with -flto (needs an LLVM compiler driver)"),
@@ -393,6 +414,9 @@ fn run() -> Command {
                 profile_option(),
                 debug_info(),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 offline(),
                 link_lib(),
                 sanitize(),
@@ -501,6 +525,9 @@ fn test() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     offline(),
                     sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
@@ -539,6 +566,9 @@ fn fuzz() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     offline(),
                     compile_jobs(),
                     comptime_steps(),
@@ -599,6 +629,9 @@ fn bench() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    features_option(),
+                    no_default_features(),
+                    all_features(),
                     offline(),
                     jobs("Compile on at most n threads; benches are measured one at a time"),
                     comptime_steps(),
@@ -621,6 +654,9 @@ fn check() -> Command {
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
+                features_option(),
+                no_default_features(),
+                all_features(),
                 offline(),
                 option(
                     "format",

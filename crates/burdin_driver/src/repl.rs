@@ -72,6 +72,7 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         // A one-file target has no package directory, so there is no build script to run.
         run_build_scripts: false,
         locked: false,
+        features: Default::default(),
         offline: false,
         jobs,
         sanitize: Default::default(),

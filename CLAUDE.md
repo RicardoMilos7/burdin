@@ -133,6 +133,7 @@ python3 tests/check_new.py               check `burdin new`: the generated packa
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
 python3 tests/check_workspace.py         check workspaces: members, default members, excludes, the selection flags, inherited
                                          fields, and one lockfile at the root
+python3 tests/check_features.py          check dependency tables, features, and targets: selection, unification, dev-dependencies, `cfg` tables, the generated `features` module, and the potential-graph lockfile
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)

@@ -139,7 +139,8 @@ Tests: `package.rs` (`dependencies_are_inherited_from_the_root`), `tests/check_w
 **WS17. A member.** A member is a package: its directory has a `burdin.toml` with a `[package]` section, and no
 `[workspace]` section (WS11). A member's directory is inside the root, so its path has no `..` and is not absolute
 (WS3). A member is an ordinary package in every other respect: its `src/`, its `[lint]`, its `[build] allow`, its
-`[rust]`, and its `edition` apply to it alone. Members may depend on one another, by path or by inheritance, as on any
+`[rust]`, and its `edition` apply to it alone, and `--features` and `--no-default-features` apply to every selected
+member (`spec/packages.md`, PKG28). Members may depend on one another, by path or by inheritance, as on any
 other package; a name identifies one package in the graph (PKG1). Tests: `workspace.rs` (`members_must_be_packages`),
 `tests/check_workspace.py`.
 

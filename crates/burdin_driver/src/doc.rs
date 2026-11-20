@@ -172,6 +172,7 @@ fn document(target: &Path, args: &DocArgs) -> ExitCode {
         report_clean: false,
         run_build_scripts: true,
         locked: false,
+        features: Default::default(),
         offline: false,
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),

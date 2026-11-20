@@ -3,7 +3,8 @@
 //! `resolve` walks the graph from the entry package, or from every member of a manifest-level workspace, because the
 //! lockfile at its root covers them all (`spec/workspaces.md`, WS14): a path dependency is read where it is, and a git dependency is
 //! pinned to the commit `burdin.lock` already records for its repository and reference, or resolved now when the
-//! lockfile has none. Each git package is checked out once per commit and its files are hashed; a checksum that
+//! lockfile has none. The walk covers every dependency a build could use, whatever its features and platform, and the
+//! entry package's dev-dependencies (`spec/packages.md`, PKG33), so one lockfile serves every build. Each git package is checked out once per commit and its files are hashed; a checksum that
 //! disagrees with the lockfile is an error, because the files are no longer the ones the lockfile pinned. An
 //! official package is read from the compiler's `packages/` folder and hashed too, but its files belong to the
 //! compiler, so a different checksum is a difference between the lockfile and the graph, not a corrupt checkout.
@@ -14,7 +15,7 @@
 use crate::git;
 use crate::sha256::Sha256;
 use burdin_query::lockfile::{self, GitRef, GitSource, LockedPackage, Lockfile};
-use burdin_query::package::{self, DepSource, source_path_text};
+use burdin_query::package::{self, DepSource, Dependency, source_path_text};
 use burdin_query::workspace;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -231,8 +232,9 @@ pub fn resolve_with(
         visiting: Vec::new(),
         edited: root_manifest.map(|text| (dir.clone(), text.to_string())),
     };
+    // Every member is a root, and every member's dev-dependencies are in the lockfile (`spec/workspaces.md`, WS14).
     for root in &roots {
-        walker.visit(root, None, Origin::Path)?;
+        walker.visit(root, None, Origin::Path, true)?;
     }
     let has_pinned = walker.packages.values().any(|p| p.git.is_some() || p.official);
     Ok(Resolution { lock: Lockfile { packages: walker.packages.into_values().collect() }, has_pinned })
@@ -261,8 +263,15 @@ struct Walker<'a> {
 }
 
 impl Walker<'_> {
-    /// Visits the package in `dir` (canonical) and its dependencies; returns its package name.
-    fn visit(&mut self, dir: &Path, manifest_text: Option<&str>, origin: Origin) -> Result<String, String> {
+    /// Visits the package in `dir` (canonical) and its dependencies; returns its package name. `is_root` is the entry
+    /// package, whose dev-dependencies are part of the graph (PKG26).
+    fn visit(
+        &mut self,
+        dir: &Path,
+        manifest_text: Option<&str>,
+        origin: Origin,
+        is_root: bool,
+    ) -> Result<String, String> {
         if self.visiting.iter().any(|d| d == dir) {
             let mut chain: Vec<String> = self.visiting.iter().map(|p| source_path_text(p)).collect();
             chain.push(source_path_text(dir));
@@ -295,30 +304,29 @@ impl Walker<'_> {
         self.dirs.insert(dir.to_path_buf(), (manifest.name.clone(), origin.clone()));
         self.visiting.push(dir.to_path_buf());
         let mut dependencies = Vec::new();
-        let mut seen: Vec<&str> = Vec::new();
-        for (key, source) in &manifest.deps {
-            if seen.contains(&key.as_str()) {
-                return Err(format!("`{}`: dependency `{key}` is declared twice", source_path_text(&manifest_path)));
-            }
-            seen.push(key);
-            let name = match source {
+        // The potential graph (PKG33): every dependency the manifest declares, whatever its features and platform,
+        // and the dev-dependencies of the entry package alone (PKG26).
+        let dev: &[Dependency] = if is_root { &manifest.dev_deps } else { &[] };
+        for dependency in manifest.deps.iter().chain(dev) {
+            let key = &dependency.name;
+            let name = match &dependency.source {
                 DepSource::Path(relative) => {
                     let dep_dir = dir
                         .join(relative)
                         .canonicalize()
                         .map_err(|e| format!("`{}`: dependency `{key}`: {e}", manifest_path.display()))?;
-                    self.visit(&dep_dir, None, Origin::Path)?
+                    self.visit(&dep_dir, None, Origin::Path, false)?
                 }
                 DepSource::Git { url, reference } => {
                     let (commit, dep_dir, checksum) = self.git_dependency(key, url, reference)?;
                     let source = GitSource { url: url.clone(), reference: reference.clone(), commit };
-                    self.visit(&dep_dir, None, Origin::Git(source, checksum))?
+                    self.visit(&dep_dir, None, Origin::Git(source, checksum), false)?
                 }
                 DepSource::Official => {
                     let (dep_dir, checksum) = self
                         .official_dependency(key)
                         .map_err(|e| format!("`{}`: dependency `{key} = true`: {e}", manifest_path.display()))?;
-                    self.visit(&dep_dir, None, Origin::Official(checksum))?
+                    self.visit(&dep_dir, None, Origin::Official(checksum), false)?
                 }
             };
             dependencies.push(name);
@@ -520,6 +528,42 @@ mod tests {
         // No git package and no lockfile: nothing to write.
         assert_eq!(sync(&app, false).unwrap(), Synced::NotNeeded);
         assert!(!app.join("burdin.lock").exists());
+    }
+
+    #[test]
+    fn the_lockfile_pins_the_potential_graph() {
+        let s = Scratch::new("potential");
+        s.package("inner", "[package]\nname = \"inner\"\n");
+        s.package("libdev", "[package]\nname = \"libdev\"\n");
+        s.package("opt", "[package]\nname = \"opt\"\n");
+        s.package("wintool", "[package]\nname = \"wintool\"\n");
+        s.package("testkit", "[package]\nname = \"testkit\"\n[dependencies]\ninner = { path = \"../inner\" }\n");
+        // A dependency's own dev-dependencies are never part of the graph.
+        s.package("lib", "[package]\nname = \"lib\"\n[dev-dependencies]\nlibdev = { path = \"../libdev\" }\n");
+        let app = s.package(
+            "app",
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\
+             [dependencies]\nlib = { path = \"../lib\" }\nopt = { path = \"../opt\", optional = true }\n\
+             [target.'cfg(windows)'.dependencies]\nwintool = { path = \"../wintool\" }\n\
+             [dev-dependencies]\ntestkit = { path = \"../testkit\" }\n",
+        );
+        let lock = resolve(&app, None, None, false).unwrap().lock;
+        let names: Vec<&str> = lock.packages.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["app", "inner", "lib", "opt", "testkit", "wintool"]);
+        let deps = |name: &str| lock.packages.iter().find(|p| p.name == name).unwrap().dependencies.clone();
+        assert_eq!(deps("app"), ["lib", "opt", "testkit", "wintool"]);
+        assert_eq!(deps("testkit"), ["inner"]);
+        assert!(deps("lib").is_empty(), "a dependency's dev-dependencies are not in the lockfile");
+        // The lockfile does not depend on the platform or the features, so a second resolution is the same.
+        assert_eq!(resolve(&app, None, None, false).unwrap().lock, lock);
+    }
+
+    #[test]
+    fn a_missing_dev_dependency_path_is_an_error_in_every_build() {
+        let s = Scratch::new("missing-dev");
+        let app = s.package("app", "[package]\nname = \"app\"\n[dev-dependencies]\ngone = { path = \"../gone\" }\n");
+        let error = resolve(&app, None, None, false).map(|_| ()).expect_err("the resolution must fail");
+        assert!(error.contains("dependency `gone`"), "{error}");
     }
 
     #[test]
