@@ -42,14 +42,16 @@ grant itself or another package; only the entry package decides.
 
 ## BS3. Running the script
 
-The driver compiles `build.bd` in the same profile as the build (`debug` unless `--release`), then runs it:
+The driver compiles `build.bd` in the same profile as the build (`dev` by default; `--release` is `--profile
+release`, [`spec/profiles.md`](profiles.md)), then runs it:
 
 - working directory: the package directory;
 - `argv[1]`: the package directory (absolute);
 - `argv[2]`: the output directory (absolute);
 - `PATH`: the directory of the running `burdin` executable first, so the script finds the same compiler (and
   `burdin bindgen`, BS7);
-- environment: `BURDIN_MANIFEST_DIR`, `BURDIN_OUT_DIR`, `BURDIN_PROFILE` (`debug` or `release`), and `BURDIN` (the
+- environment: `BURDIN_MANIFEST_DIR`, `BURDIN_OUT_DIR`, `BURDIN_PROFILE` (the profile's output directory: `debug`,
+  `release`, or a custom profile's name), and `BURDIN` (the
   driver's path), in addition to the inherited environment;
 - standard output and standard error: forwarded to the compiler's **stderr**, never its stdout, so `burdin run`'s
   program output stays exact.
@@ -92,7 +94,7 @@ package's source modules, and are visible to another package exactly as far as t
 ## BS5. Caching
 
 The driver reruns a script only when its inputs changed. The cache lives in `<out>/build.key` and is keyed per
-package and profile. The key contains the hashes of:
+package and profile settings (`spec/profiles.md`, BP6). The key contains the hashes of:
 
 - `build.bd` and `burdin.toml`;
 - the compiler binary (its version, commit, LLVM version, length, and modification time), so rebuilding the compiler
@@ -108,7 +110,8 @@ The comparison is by content, not modification time: touching a file does not re
 deleting an output does. A declared input that does not exist is E0261, because otherwise every later build would
 rerun. The driver clears `<out>/src/` before a rerun, so an output that disappears from a script does not linger.
 Two builds of the same package in one profile are not synchronized; like a compiler's object directory, the output
-directory belongs to one build at a time.
+directory belongs to one build at a time. Two profiles that write the same directory (`dev` and `test`, `release`
+and `bench`) also share it, and their cache keys agree exactly when their settings do.
 
 The inputs a run declared are also added to the program's `--emit-deps` list, after the program's own `embed`
 inputs, so an external build system rebuilds when a header the script declared changes.

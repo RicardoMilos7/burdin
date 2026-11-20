@@ -573,7 +573,7 @@ fn build_one(
     let name = entry_name(&example.package);
     write_package(&dir, name, example, &program.text)?;
     let doc_options = CompileOptions {
-        release: options.release,
+        profile: options.profile.clone(),
         debug: options.debug,
         strip: options.strip,
         lto: options.lto,
@@ -631,7 +631,7 @@ fn build_one(
     }
     let checked = checked.expect("no errors means checking produced a program");
     let exe = dir.join("program").with_extension(std::env::consts::EXE_EXTENSION);
-    emit_program(&checked, &sources, name, &exe, &doc_options, &[])?;
+    emit_program(&checked, &sources, name, &exe, &doc_options, &[], &[])?;
     Ok(Built::Exe(exe))
 }
 

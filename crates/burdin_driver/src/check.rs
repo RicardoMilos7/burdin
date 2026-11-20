@@ -29,6 +29,8 @@ enum OwnershipFormat {
 struct CheckArgs {
     target: PathBuf,
     release: bool,
+    /// `--profile <name>` (`spec/profiles.md`).
+    profile_name: Option<String>,
     tests: bool,
     /// `--locked`: refuse to update `burdin.lock`.
     locked: bool,
@@ -62,6 +64,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         }
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
+            "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
             "--offline" => args.offline = flag_without_value(a, inline)?,
@@ -99,6 +102,15 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         return Err("`--fn` needs `--explain-ownership`".to_string());
     }
     args.target = target.ok_or("missing target file")?;
+    if args.release {
+        match &args.profile_name {
+            Some(name) if name != "release" => {
+                return Err(format!("`--release` is `--profile release`; it conflicts with `--profile {name}`"));
+            }
+            Some(_) => {}
+            None => args.profile_name = Some("release".to_string()),
+        }
+    }
     Ok(args)
 }
 
@@ -107,8 +119,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("check", &message),
     };
+    let profile = match crate::profile::resolve_for_command("check", &args.target, args.profile_name.as_deref(), "dev")
+    {
+        Ok(profile) => profile,
+        Err(code) => return code,
+    };
     let options = CompileOptions {
-        release: args.release,
+        profile,
         debug: false,
         strip: false,
         lto: false,

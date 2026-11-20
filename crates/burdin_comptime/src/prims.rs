@@ -680,9 +680,9 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::Unreachable => return Err(panic("unreachable", span)),
             Builtin::Assertion(kind) => {
-                // `debug_assert*` is removed from a release build; neither its condition nor its message is
-                // evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
-                if kind.is_debug() && self.release {
+                // `debug_assert*` is removed when the profile turns debug assertions off; neither its condition
+                // nor its message is evaluated (`spec/stdlib.md`, "Memory helpers and assertions").
+                if kind.is_debug() && !self.debug_assertions {
                     return Ok(Value::Unit);
                 }
                 let compares = kind.compares_values();
@@ -1664,7 +1664,7 @@ impl<'p> Interp<'p, '_> {
                 };
                 match exact_checked(m, x, y) {
                     Some(v) if v >= i.min() && v <= i.max() => v,
-                    _ if self.release => wrap(exact(m, x, y), i),
+                    _ if !self.overflow_checks => wrap(exact(m, x, y), i),
                     _ => {
                         let verb = match op {
                             BinOp::Add => "add",
@@ -1680,7 +1680,7 @@ impl<'p> Interp<'p, '_> {
                     return Err(panic("division by zero", span));
                 }
                 if i.signed() && x == i.min() && y == -1 {
-                    if !self.release {
+                    if self.overflow_checks {
                         let what = if op == BinOp::Div { "divide" } else { "calculate the remainder" };
                         return Err(panic(format!("attempt to {what} with overflow"), span));
                     }
@@ -1711,7 +1711,7 @@ impl<'p> Interp<'p, '_> {
         }
         let r = -x;
         if r < i.min() || r > i.max() {
-            if self.release {
+            if !self.overflow_checks {
                 return Ok(wrap(r, i));
             }
             return Err(panic("attempt to negate with overflow", span));

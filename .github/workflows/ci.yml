@@ -328,6 +328,15 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
 
+      # The command surface (spec/build-tool.md) and named build profiles (spec/profiles.md).
+      - name: Check the command surface
+        if: matrix.part == 'tools'
+        run: python3 tests/check_cli.py
+
+      - name: Check build profiles
+        if: matrix.part == 'tools'
+        run: python3 tests/check_profiles.py
+
       # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
       # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).
       - name: Check burdin add and burdin.lock
@@ -756,6 +765,15 @@ jobs:
       - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python3 tests/check_new.py
+
+      # The command surface (spec/build-tool.md) and named build profiles (spec/profiles.md).
+      - name: Check the command surface
+        if: matrix.part == 'tools'
+        run: python3 tests/check_cli.py
+
+      - name: Check build profiles
+        if: matrix.part == 'tools'
+        run: python3 tests/check_profiles.py
 
       # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
       # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).
@@ -1192,6 +1210,15 @@ jobs:
       - name: Check burdin new and burdin init
         if: matrix.part == 'tools'
         run: python tests/check_new.py
+
+      # The command surface (spec/build-tool.md) and named build profiles (spec/profiles.md).
+      - name: Check the command surface
+        if: matrix.part == 'tools'
+        run: python tests/check_cli.py
+
+      - name: Check build profiles
+        if: matrix.part == 'tools'
+        run: python tests/check_profiles.py
 
       # `burdin add` and `burdin.lock`: path and git dependencies (local repositories), the golden manifest and
       # lockfile, `--locked` on a stale lockfile, checksums, and failures that change nothing (issues #238, #239).

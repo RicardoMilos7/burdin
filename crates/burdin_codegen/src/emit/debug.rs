@@ -195,7 +195,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             true,
             line,
             DIFlagsConstants::PUBLIC,
-            self.release,
+            self.optimized,
         );
         db.scope = Some(scope);
         db.file = Some(file);

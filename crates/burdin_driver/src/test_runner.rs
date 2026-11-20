@@ -215,7 +215,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         }
     };
     let options = CompileOptions {
-        release: args.release,
+        profile: args.profile.clone(),
         debug: args.debug,
         strip: args.strip,
         lto: args.lto,
@@ -429,7 +429,7 @@ fn default_timeout(args: &Args) -> Option<Duration> {
 /// output. A single-file target has no package directory, so it keeps none.
 fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
     let dir = workspace.packages[workspace.entry_package].dir.as_ref()?;
-    let profile = if args.release { "release" } else { "debug" };
+    let profile = &args.profile.dir;
     Some(dir.join("target").join("burdin").join(profile).join("test-failed.txt"))
 }
 
@@ -449,7 +449,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         Err(message) => return crate::cli::usage_error("test", &message),
     };
     let options = CompileOptions {
-        release: args.release,
+        profile: args.profile.clone(),
         debug: false,
         strip: false,
         lto: false,
@@ -472,7 +472,8 @@ fn run_interpreted(args: &Args) -> ExitCode {
     };
     let compile_options = CompileOptions { link_libs: args.link_libs.as_slice(), ..options };
     let interp_options = burdin_comptime::Options {
-        release: args.release,
+        overflow_checks: args.profile.overflow_checks,
+        debug_assertions: args.profile.debug_assertions,
         steps: args.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
     };
     let qualify = selected.len() > 1;
@@ -1205,7 +1206,7 @@ mod tests {
         let ws = workspace(0, vec![package("app", Some("app")), package("std", None)]);
         let path = failed_record_path(&ws, &args("app")).unwrap();
         assert_eq!(path, Path::new("app").join("target").join("burdin").join("debug").join("test-failed.txt"));
-        let release = Args { release: true, ..args("app") };
+        let release = Args { release: true, profile: crate::profile::Profile::release(), ..args("app") };
         assert!(failed_record_path(&ws, &release).unwrap().ends_with("release/test-failed.txt"));
         // A single-file target has no directory to keep a record in.
         let single = workspace(0, vec![package("one", None)]);

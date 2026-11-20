@@ -4,6 +4,21 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**The build tool's command surface and profiles (issues #338 and #339, 2026-11-20).** `spec/build-tool.md` records
+every command, the Cargo commands that are planned but not copied (with their issue), what is deliberately left out,
+the command-line and environment rules, and the exit statuses; `tests/check_cli.py` checks the golden command list,
+every command's help, unknown and out-of-scope commands, and one package through `build`/`run`/`check`/`test`.
+`spec/profiles.md` replaces the single `--release` switch with named profiles: the built-ins `dev`, `release`,
+`test`, and `bench`; `--profile <name>` on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and `debug`;
+`[profile.<name>]` in `burdin.toml` with `inherits`, `opt-level` (0-3), `debug`, `debug-assertions`,
+`overflow-checks`, and `panic = "abort"`; and `[profile.<name>.package.<package>]` overrides of `overflow-checks`
+and `debug-assertions` for one package's functions. `--release` is `--profile release`, and the defaults reproduce
+the old behavior exactly. `crates/burdin_driver/src/profile.rs` resolves and validates profiles, the generator's
+options now carry an optimization level and the two flags instead of one `release` bit, and the comptime
+interpreter takes the same two flags. `tests/check_profiles.py` proves the observable differences and every failure
+path. Not done: `opt-level` `s`/`z`, `panic = "unwind"`, per-package `opt-level`, and per-package flags in the
+comptime interpreter.
+
 **Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
 end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
 or a directory; a directory is hashed recursively over every file under it, so a file added, removed, renamed, or
@@ -44,6 +59,7 @@ shape, so it is read and written through `parse`/`render`, not `from_str`/`to_st
 up: a type that recurses through `List<Self>` (`struct Node { kind: i32, children: List<Node> }`) builds fine and
 overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
 instead. The defect belongs to the compiler, not to the package.
+
 **Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
 package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
 Rust-shim, and failed-test entries) and the artifact cache. A build of a package directory publishes its linked
