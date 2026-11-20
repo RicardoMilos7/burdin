@@ -74,6 +74,18 @@ method is the new E0234, and the old clause is a plain syntax error. Parser, sem
 `burdin doc`, `std/`, the tests, and the specs moved together (decision 31 in `tests/README.md`). The LSP
 completion of the list is issue #824.
 
+**Linker choice (issue #335, 2026-11-20).** The driver can hand the link to a fast linker
+(`crates/burdin_driver/src/linker.rs`, README "Choosing the linker"). On Linux it names `mold` when `ld.mold` is on
+`PATH`, then `lld` when `ld.lld` is, with `-fuse-ld=`; `BURDIN_LD` overrides the choice (a linker name, a path, or
+`platform`/`default`), and otherwise the C compiler driver's own linker is used (ld64 on macOS, `link.exe` with
+`cl`). `--lto` keeps the driver's linker and refuses mold, an MSVC-style driver rejects any other `BURDIN_LD` value
+as a usage error, and a failed link says whether `BURDIN_LD` or the automatic choice supplied the linker and how to
+go back to the default. A sanitizer or fuzz build keeps the driver's linker too, and naming another one there is a
+usage error: LLVM puts the sanitizer runtime's module constructors in `.ctors` (its `TargetOptions::UseInitArray` is
+off, and the C API cannot set it), which the GNU linker folds into `.init_array` and lld leaves in a section libc
+never runs — an lld-linked fuzz build finds no coverage at all. `tests/check_linker.py` checks it in every CI job, and
+the Linux job installs `lld` so the whole suite links through the automatic choice.
+
 Updated at the end of the fifty-seventh session (2026-11-20). **Milestones 1 to 11 are done, so stage 0 is complete,
 and the stage 0 gaps of issue #48 are closed; milestones 12 (closures), 13 (iterators), 14 (formatting), 15
 (`any` and `impl`), 16 (errors), 17 (default and named arguments), 18 (extension methods), 19 (operator
@@ -574,7 +586,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 
 | What | Where | Status |
 | --- | --- | --- |
-| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twenty-second added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check_docs.py` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
+| Driver contract | `README.md` | Written: targets and `burdin.toml`, `build`/`run`/`test`/`explain`, diagnostics and their formats, `--emit-ir`, `--link-lib` and the `LLVM-C` resolution, `BURDIN_CC` and `BURDIN_LD`, and exit statuses. The nineteenth session added `-g`, `--strip`, `--lto`, PGO, `--version`, `BURDIN_JOBS`, and the runtime behavior; the twenty-second added `BURDIN_VERSION`/`BURDIN_CHANNEL`, the `channel:` line, the installers, and `docs/releasing.md`. `tests/check_docs.py` checks the links and the documented behavior, and every CI job runs it and the other check scripts |
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |

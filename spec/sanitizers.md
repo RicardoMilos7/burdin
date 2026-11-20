@@ -36,7 +36,10 @@ suite with `--sanitize=address`.
 - **SAN3. Linking.** `address`, `thread`, and `leak` link LLVM's runtime libraries (compiler-rt) with
   `-fsanitize=<list>`, so the linker is clang: `BURDIN_CC` when it names clang, otherwise `clang-21` or `clang` from
   `LLVM_SYS_211_PREFIX/bin` or `PATH`. A `BURDIN_CC` that is not clang, or no clang at all, is an error that says
-  what to install. `undefined` alone links like any other build.
+  what to install. `undefined` alone links like any other build. A sanitizer build keeps the compiler driver's own
+  linker, so `BURDIN_LD` naming another one is a usage error (`README.md`, "Choosing the linker"): the runtime starts
+  up from module constructors that LLVM emits into `.ctors`, which lld leaves in a section libc never runs, so an
+  lld-linked sanitizer would come up uninitialized.
 - **SAN4. `undefined`.** The checks a debug build has for integer overflow (`+`, `-`, `*`, negation, and the
   `MIN / -1` division) stay in a release build instead of wrapping, and every dereference of a `CPtr<T>` (a read,
   a write, or a field of the pointee) first checks that the pointer is not null and that its address is a multiple

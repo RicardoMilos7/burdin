@@ -81,8 +81,8 @@ from the cache when there is one. The key is a 128-bit hash of: the script's tex
 closure — its name, its `burdin.toml`, and every file under its directory in sorted order (hidden files and
 `target/` skipped); the compiler's version, commit, and LLVM version; and the flags that change a build
 (`--release`, `-g`, `--strip`, `--lto`, PGO, `--link-lib`). Program arguments, the working directory, the script's
-path, and `BURDIN_CC` are not part of it: the same content builds the same binary. A plain one-file target — no
-shebang, no fragment — is never cached.
+path, and `BURDIN_CC`/`BURDIN_LD` are not part of it: the same content builds the same binary. A plain one-file
+target — no shebang, no fragment — is never cached.
 Tests: `tests/check_scripts.py` (the cache hit with a broken linker, the content change that forces a rebuild, the
 dependency change, `touch`, and the plain-file negative).
 

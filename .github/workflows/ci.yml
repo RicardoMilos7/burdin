@@ -76,13 +76,13 @@ jobs:
             fi
             # The runner image's package index can be older than the mirror (gdb's libc6-dbg 404s without this).
             bash .github/scripts/retry.sh sudo apt-get update
-            bash .github/scripts/retry.sh sudo apt-get install -y libzstd-dev zlib1g-dev gdb
+            bash .github/scripts/retry.sh sudo apt-get install -y lld libzstd-dev zlib1g-dev gdb
           else
             bash .github/scripts/retry.sh sudo apt-get update
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             bash .github/scripts/retry.sh sudo ./llvm.sh 21
-            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libclang-rt-21-dev libpolly-21-dev libzstd-dev zlib1g-dev gdb
+            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libclang-rt-21-dev libpolly-21-dev lld libzstd-dev zlib1g-dev gdb
             mkdir -p "$cache/root"
             sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
             # Ubuntu splits the headers and libLLVM out of the tree: the in-tree symlinks
@@ -301,6 +301,12 @@ jobs:
       - name: Check build scripts
         if: matrix.part == 'tools'
         run: python3 tests/check_build_scripts.py
+
+      # The linker choice (issue #335): mold/lld when installed, `BURDIN_LD`, the platform fallback, an error that
+      # names the choice, and the link time against the platform linker's.
+      - name: Check the linker choice
+        if: matrix.part == 'tools'
+        run: python3 tests/check_linker.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
@@ -729,6 +735,12 @@ jobs:
       - name: Check build scripts
         if: matrix.part == 'tools'
         run: python3 tests/check_build_scripts.py
+
+      # The linker choice (issue #335): mold/lld when installed, `BURDIN_LD`, the platform fallback, an error that
+      # names the choice, and the link time against the platform linker's.
+      - name: Check the linker choice
+        if: matrix.part == 'tools'
+        run: python3 tests/check_linker.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
@@ -1164,6 +1176,12 @@ jobs:
       - name: Check build scripts
         if: matrix.part == 'tools'
         run: python tests/check_build_scripts.py
+
+      # The linker choice (issue #335): mold/lld when installed, `BURDIN_LD`, the platform fallback, an error that
+      # names the choice, and the link time against the platform linker's.
+      - name: Check the linker choice
+        if: matrix.part == 'tools'
+        run: python tests/check_linker.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,

@@ -22,6 +22,7 @@ mod export;
 mod fix;
 mod fmt;
 mod fuzz_runner;
+mod linker;
 mod lint;
 mod migrate;
 mod msvc;
@@ -1599,24 +1600,37 @@ struct LinkOptions {
 
 /// Links the object files (which define `main` and the runtime) with libc into the executable `output`.
 fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Result<(), String> {
+    // `BURDIN_LD` names the linker, or forces the compiler driver's own (`linker.rs`, issue #335).
+    let burdin_ld = std::env::var("BURDIN_LD").ok();
     if opts.sanitize.needs_runtime() {
-        // The runtimes are compiler-rt's, which clang links with `-fsanitize=` (`spec/sanitizers.md`, SAN3).
+        // The runtimes are compiler-rt's, which clang links with `-fsanitize=` (`spec/sanitizers.md`, SAN3), and
+        // they start up through module constructors, so this link keeps the compiler driver's own linker
+        // (`linker.rs`, issue #335).
+        let choice = linker::choose_for_runtime(burdin_ld.as_deref())?;
         let cc = sanitize::linker()?;
         let out = Command::new(&cc)
-            .args(unix_link_args(objects, output, libs, opts))
+            .args(unix_link_args(objects, output, libs, opts, choice.linker.fuse_ld()))
             .output()
             .map_err(|e| linker_error(&cc, e))?;
         if !out.status.success() {
             return Err(format!(
-                "linking failed ({cc}):\n{}{}",
+                "linking failed ({cc}):\n{}{}{}",
                 String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
+                String::from_utf8_lossy(&out.stderr),
+                linker::failure_note(&choice)
             ));
         }
         return Ok(());
     }
     let named = std::env::var("BURDIN_CC").ok();
     let mut cc = named.clone().unwrap_or_else(|| if cfg!(windows) { "cl".into() } else { "cc".into() });
+    let choice = linker::choose(
+        is_msvc_style(&cc),
+        opts.lto,
+        cfg!(target_os = "linux"),
+        burdin_ld.as_deref(),
+        linker::find_on_path,
+    )?;
     // Outside a Developer Command Prompt `LIB` is not set and link.exe cannot find the C runtime, so find the
     // installation and name its library directories (issue #826). clang-cl finds them itself.
     let toolchain = if cfg!(windows) && is_cl(&cc) && !msvc::lib_env_is_set() {
@@ -1642,7 +1656,7 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
         write_natvis(output)?;
     }
     let mut cmd = Command::new(&cc);
-    cmd.args(link_args(&cc, objects, output, libs, opts));
+    cmd.args(link_args(&cc, objects, output, libs, opts, choice.linker.fuse_ld()));
     if let Some(toolchain) = &toolchain {
         cmd.args(toolchain.libpath_args());
         if named.is_none() {
@@ -1658,9 +1672,10 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
             ""
         };
         return Err(format!(
-            "linking failed ({cc}):\n{}{}{hint}",
+            "linking failed ({cc}):\n{}{}{}{hint}",
             String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&out.stderr),
+            linker::failure_note(&choice)
         ));
     }
     if opts.debug && cfg!(target_os = "macos") {
@@ -1716,7 +1731,15 @@ fn linker_error(cc: &str, error: std::io::Error) -> String {
 }
 
 /// The linker command line. Split out so the MSVC branch, which cannot run on Linux CI, has unit tests.
-fn link_args(cc: &str, objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
+/// `fuse` is the `-fuse-ld=` value the linker choice named, if any (`linker.rs`).
+fn link_args(
+    cc: &str,
+    objects: &[PathBuf],
+    output: &Path,
+    libs: &[String],
+    opts: &LinkOptions,
+    fuse: Option<&str>,
+) -> Vec<OsString> {
     if is_msvc_style(cc) {
         // `LLVM-C.lib` lives in the LLVM installation, which is not in the linker's `LIB` path. `LLVM_SYS_211_PREFIX`
         // and `llvm-config` are how the rest of the build finds that installation.
@@ -1730,7 +1753,7 @@ fn link_args(cc: &str, objects: &[PathBuf], output: &Path, libs: &[String], opts
         }
         args
     } else {
-        unix_link_args(objects, output, libs, opts)
+        unix_link_args(objects, output, libs, opts, fuse)
     }
 }
 
@@ -1810,8 +1833,20 @@ fn is_library_path(lib: &str) -> bool {
         || [".a", ".o", ".obj", ".lib", ".so", ".dylib", ".dll"].iter().any(|extension| lower.ends_with(extension))
 }
 
-fn unix_link_args(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions) -> Vec<OsString> {
-    let mut args: Vec<OsString> = vec!["-o".into(), output.into()];
+fn unix_link_args(
+    objects: &[PathBuf],
+    output: &Path,
+    libs: &[String],
+    opts: &LinkOptions,
+    fuse: Option<&str>,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
+    if let Some(fuse) = fuse {
+        // The compiler driver still supplies the C runtime and the libraries; only the linker is replaced.
+        args.push(format!("-fuse-ld={fuse}").into());
+    }
+    args.push("-o".into());
+    args.push(output.into());
     args.extend(objects.iter().map(OsString::from));
     if opts.debug {
         // ld64 keeps debug sections only when the link names -g; GNU ld ignores the flag.
@@ -2047,7 +2082,7 @@ mod tests {
     #[test]
     fn msvc_debug_builds_write_the_pdb_and_embed_the_natvis() {
         let opts = LinkOptions { debug: true, ..Default::default() };
-        let args = as_strings(link_args("cl", &[PathBuf::from("program.obj")], Path::new("out.exe"), &[], &opts));
+        let args = as_strings(link_args("cl", &[PathBuf::from("program.obj")], Path::new("out.exe"), &[], &opts, None));
         assert!(args.contains(&"/DEBUG".to_string()), "{args:?}");
         assert!(args.contains(&"/INCREMENTAL:NO".to_string()), "{args:?}");
         assert!(args.contains(&"/NATVIS:out.exe.natvis".to_string()), "{args:?}");
@@ -2059,6 +2094,7 @@ mod tests {
             Path::new("out.exe"),
             &[],
             &LinkOptions::default(),
+            None,
         ));
         assert!(!plain.iter().any(|arg| arg == "/DEBUG" || arg.starts_with("/NATVIS:")), "{plain:?}");
     }
@@ -2119,15 +2155,33 @@ mod tests {
             Path::new("out"),
             &["m".to_string()],
             &LinkOptions::default(),
+            None,
         ));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
     }
 
     #[test]
+    fn a_named_linker_comes_first_on_the_unix_command_line() {
+        let args = as_strings(unix_link_args(
+            &[PathBuf::from("program.o")],
+            Path::new("out"),
+            &[],
+            &LinkOptions::default(),
+            Some("mold"),
+        ));
+        assert_eq!(args, ["-fuse-ld=mold", "-o", "out", "program.o", "-lm"]);
+    }
+
+    #[test]
     fn a_link_lib_that_names_a_file_is_linked_as_it_is() {
         let libs = ["build/wrappers.a".to_string(), "extra.o".to_string(), "z".to_string()];
-        let unix =
-            as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &libs, &LinkOptions::default()));
+        let unix = as_strings(unix_link_args(
+            &[PathBuf::from("program.o")],
+            Path::new("out"),
+            &libs,
+            &LinkOptions::default(),
+            None,
+        ));
         assert_eq!(unix, ["-o", "out", "program.o", "build/wrappers.a", "extra.o", "-lz", "-lm"]);
         let msvc = as_strings(msvc_link_args(&[PathBuf::from("program.obj")], Path::new("out.exe"), &libs, None));
         assert!(msvc.contains(&"build/wrappers.a".to_string()), "{msvc:?}");
@@ -2139,22 +2193,27 @@ mod tests {
     fn unix_link_args_link_the_math_library_once() {
         // The float functions call libm, so every Unix program links it; naming it again with `--link-lib m`
         // does not repeat the flag.
-        let args =
-            as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &LinkOptions::default()));
+        let args = as_strings(unix_link_args(
+            &[PathBuf::from("program.o")],
+            Path::new("out"),
+            &[],
+            &LinkOptions::default(),
+            None,
+        ));
         assert_eq!(args, ["-o", "out", "program.o", "-lm"]);
     }
 
     #[test]
     fn unix_link_args_keep_debug_information() {
         let opts = LinkOptions { debug: true, ..Default::default() };
-        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts));
+        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts, None));
         assert!(args.contains(&"-g".to_string()), "{args:?}");
     }
 
     #[test]
     fn unix_link_args_export_symbols_for_backtraces() {
         let opts = LinkOptions { export_dynamic: true, ..Default::default() };
-        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts));
+        let args = as_strings(unix_link_args(&[PathBuf::from("program.o")], Path::new("out"), &[], &opts, None));
         assert!(args.contains(&"-rdynamic".to_string()), "{args:?}");
     }
 
@@ -2338,7 +2397,7 @@ mod tests {
     #[test]
     fn every_codegen_unit_is_linked_in_order() {
         let objects = [PathBuf::from("program.o"), PathBuf::from("program.1.o"), PathBuf::from("program.2.o")];
-        let args = as_strings(unix_link_args(&objects, Path::new("out"), &[], &LinkOptions::default()));
+        let args = as_strings(unix_link_args(&objects, Path::new("out"), &[], &LinkOptions::default(), None));
         assert_eq!(&args[2..5], ["program.o", "program.1.o", "program.2.o"]);
         let objects = [PathBuf::from("program.obj"), PathBuf::from("program.1.obj")];
         let args = as_strings(msvc_link_args(&objects, Path::new("out.exe"), &[], None));
