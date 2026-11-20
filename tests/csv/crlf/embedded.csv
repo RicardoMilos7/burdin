@@ -1,0 +1,5 @@
+name,age,email,score,active,role
+"two
+lines",30,x@y.z,0,true,Member
+Bob,41,"a
+b",7,false,Guest

@@ -157,3 +157,28 @@ pub fn checkout(url: &str, commit: &str) -> Result<PathBuf, String> {
     }
     Ok(target)
 }
+
+/// The directory holding the files of `url` at `commit` in the cache, restored from `vendored` (a copy `burdin
+/// vendor` made) when the cache has no checkout of them. Nothing is fetched, so this is the offline counterpart of
+/// [`checkout`] (PKG24). The caller checks the restored files against the lockfile's checksum.
+pub fn restore(url: &str, commit: &str, vendored: &Path) -> Result<PathBuf, String> {
+    let target = git_checkout_dir(url, commit)?;
+    if target.is_dir() {
+        return Ok(target);
+    }
+    let parent = target.parent().ok_or("a checkout directory has no parent")?.to_path_buf();
+    std::fs::create_dir_all(&parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    let tmp = parent.join(format!(".tmp-restore-{commit}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    if let Err(e) = crate::vendor::copy_tree(vendored, &tmp) {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(format!("cannot restore {url} at {commit} from {}: {e}", vendored.display()));
+    }
+    if std::fs::rename(&tmp, &target).is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        if !target.is_dir() {
+            return Err(format!("cannot move the restored checkout of {url} to {}", target.display()));
+        }
+    }
+    Ok(target)
+}

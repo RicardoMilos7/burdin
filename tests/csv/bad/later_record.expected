@@ -1,0 +1,10 @@
+name,age,email,score,active,role
+A,1,,1,true,Admin
+B,2,,2,true,Admin
+C,3,,3,true,Admin
+error: line 5, column 3: expected a non-negative integer at [3].age
+records=3
+same=true
+A | 1 | <none> | 1 | true | Admin
+B | 2 | <none> | 2 | true | Admin
+C | 3 | <none> | 3 | true | Admin

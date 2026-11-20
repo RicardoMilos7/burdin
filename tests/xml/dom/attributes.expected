@@ -1,0 +1,10 @@
+<a one="1" two="2" three="3" four="4" five="a b  c"/>
+<a one="1" two="2" three="3" four="4" five="a b  c"/>
+declaration none
+before=0 after=0
+a ns=[] at 1:1
+  @one="1" ns=[]
+  @two="2" ns=[]
+  @three="3" ns=[]
+  @four="4" ns=[]
+  @five="a b  c" ns=[]

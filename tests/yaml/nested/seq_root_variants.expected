@@ -1,0 +1,24 @@
+grid:
+  rows:
+    - - 1
+    - - 2
+      - 3
+rows:
+  - id: 1
+    tags: []
+  - id: 2
+    tags:
+      - x
+pair:
+  - 1
+  - one
+flag: true
+ratio: 1
+big: 2
+small: 3
+raw:
+  - 4
+unit: null
+inf: 1
+nan: 16
+grid=2 rows=2 raw=1 pair=1 one

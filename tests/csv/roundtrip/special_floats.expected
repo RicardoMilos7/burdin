@@ -1,0 +1,13 @@
+name,age,email,score,active,role
+A,1,,inf,true,Admin
+B,2,,-inf,true,Admin
+C,3,,NaN,true,Admin
+D,4,,0.001,true,Admin
+E,5,,123456789.125,true,Admin
+records=5
+same=true
+A | 1 | <none> | inf | true | Admin
+B | 2 | <none> | -inf | true | Admin
+C | 3 | <none> | NaN | true | Admin
+D | 4 | <none> | 0.001 | true | Admin
+E | 5 | <none> | 123456789.125 | true | Admin

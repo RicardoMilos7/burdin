@@ -1,0 +1,6 @@
+<Config>
+  <name>x</name>
+  <servers>
+    <item><host>h</host><port>1</port><tls>true</tls><ratio>one</ratio></item>
+  </servers>
+</Config>

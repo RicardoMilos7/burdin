@@ -1,0 +1,6 @@
+name: !!str 123
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: !!str &x y

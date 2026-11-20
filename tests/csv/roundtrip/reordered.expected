@@ -1,0 +1,7 @@
+name,age,email,score,active,role
+Dee,22,dee@x.org,3.5,true,Guest
+Eve,23,,4.5,false,Admin
+records=2
+same=true
+Dee | 22 | dee@x.org | 3.5 | true | Guest
+Eve | 23 | <none> | 4.5 | false | Admin

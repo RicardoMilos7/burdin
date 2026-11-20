@@ -1,0 +1,6 @@
+<Config><name>with backup</name><servers/><protocol><Https>8443</Https></protocol><backup><Some><host>backup.example</host><port>22</port><tls>true</tls><ratio>-0.5</ratio></Some></backup><weights/><note>b</note></Config>
+name="with backup" servers=0 note='b'
+protocol=Https 8443
+backup=backup.example 22
+weights=0
+a=none

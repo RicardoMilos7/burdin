@@ -1,0 +1,7 @@
+name: x
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+extra: 1

@@ -1,0 +1,7 @@
+name,age,email,score,active,role
+Zoë,30,zoe@exämple.org,8.5,true,Member
+日本語,31,,0.5,false,Guest
+records=2
+same=true
+Zoë | 30 | zoe@exämple.org | 8.5 | true | Member
+日本語 | 31 | <none> | 0.5 | false | Guest

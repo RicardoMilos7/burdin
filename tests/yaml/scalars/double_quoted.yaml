@@ -1,0 +1,6 @@
+name: "tab\there, quote \" backslash \\ nl\n unicode \u00e9 \U0001F600 hex \x41 slash \/ nbsp\_ done"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: "\u00e9"
