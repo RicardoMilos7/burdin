@@ -5,12 +5,14 @@
 //! top of tests/run_tests.py.
 
 mod add;
+mod artifact;
 mod asm;
 mod bench_runner;
 mod bindgen;
 mod bloat;
 mod build;
 mod check;
+mod clean;
 mod cli;
 mod debug;
 mod doc;
@@ -24,6 +26,7 @@ mod lint;
 mod migrate;
 mod msvc;
 mod new;
+mod pack;
 mod profile;
 mod refactor;
 mod repl;
@@ -32,6 +35,7 @@ mod rust_interop;
 mod sanitize;
 mod scripts;
 mod test_runner;
+mod vendor;
 mod watch;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
@@ -56,6 +60,8 @@ pub(crate) struct Args {
     pub(crate) profile: profile::Profile,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// `--offline`: fetch no git package; read it from the cache or `vendor/` (`spec/packages.md`, PKG24).
+    pub(crate) offline: bool,
     /// Emit source-level debug information (DWARF in the object and the executable).
     pub(crate) debug: bool,
     /// Pass the linker's strip option (Unix `-s`; with MSVC, optimize for size).
@@ -216,6 +222,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--lto" => args.lto = flag_without_value(a, inline)?,
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
+            "--offline" => args.offline = flag_without_value(a, inline)?,
             "--pgo-generate" => args.pgo_generate = flag_without_value(a, inline)?,
             "--pgo-use" => args.pgo_use = Some(option_value(&mut it, inline, a, "a profile path")?.into()),
             "-o" => args.output = Some(option_value(&mut it, inline, a, "a path")?.into()),
@@ -722,6 +729,9 @@ fn driver_main() -> ExitCode {
         "debug" => return debug::run(rest),
         "new" => return new::run(rest),
         "add" => return add::run(rest),
+        "clean" => return clean::run(rest),
+        "package" => return pack::run(rest),
+        "vendor" => return vendor::run(rest),
         "lsp" => return lsp(rest),
         "dap" => return dap(rest),
         "repl" => return repl::run(rest),
@@ -767,6 +777,7 @@ fn driver_main() -> ExitCode {
         report_clean: args.command == "build",
         run_build_scripts: true,
         locked: args.locked,
+        offline: args.offline,
         jobs: jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
@@ -894,6 +905,8 @@ pub(crate) struct CompileOptions<'a> {
     /// `--locked`: a `burdin.lock` that does not match the manifests is an error instead of being rewritten
     /// (`spec/packages.md`, PKG8).
     pub(crate) locked: bool,
+    /// `--offline`: a git package comes from the cache or `vendor/`, and nothing is fetched (PKG24).
+    pub(crate) offline: bool,
     /// The most threads parsing and code generation use (`-j`); 0 is the machine's parallelism.
     pub(crate) jobs: usize,
     /// The sanitizers to instrument for and link (`--sanitize`, `spec/sanitizers.md`).
@@ -946,11 +959,11 @@ pub(crate) struct FrontEnd {
 /// Resolves the dependencies of a package directory and brings its `burdin.lock` up to date before the package is
 /// loaded (`spec/packages.md`, PKG8): git dependencies are fetched into the cache, and with `locked` a lockfile that
 /// would change is an error. A one-file target has no lockfile. Errors are printed; the exit status is 1.
-pub(crate) fn sync_dependencies(target: &Path, locked: bool) -> Result<(), ExitCode> {
+pub(crate) fn sync_dependencies(target: &Path, locked: bool, offline: bool) -> Result<(), ExitCode> {
     if !target.join("burdin.toml").is_file() {
         return Ok(());
     }
-    match burdin_pkg::resolve::sync(target, locked) {
+    match burdin_pkg::resolve::sync_with(target, burdin_pkg::resolve::Mode { locked, offline }) {
         Ok(_) => Ok(()),
         Err(message) => {
             eprintln!("error: {message}");
@@ -973,7 +986,7 @@ pub(crate) fn front_end(
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
-    sync_dependencies(target, options.locked)?;
+    sync_dependencies(target, options.locked, options.offline)?;
     let mut loaded = match if mode.wants_main() { package::load(target) } else { package::load_for_tests(target) } {
         Ok(loaded) => loaded,
         Err(message) => {
@@ -1120,8 +1133,7 @@ pub(crate) fn compile(
             write_artifact(&emit.path(&output, emit::EmitKind::Tir), &text)?;
         }
     }
-    let package_flags = package_flags(&loaded, &options.profile);
-    emit_program(&program, &sources, &loaded.stem, &output, options, &rust_libs, &package_flags)?;
+    write_executable(&program, &sources, &loaded, &files, &output, options, &rust_libs)?;
     let site = |span: burdin_diag::Span| {
         let file = sources.get(span.file);
         Site { file: file.path.clone(), line: file.line_col(span.lo).0 }
@@ -1138,6 +1150,58 @@ pub(crate) fn compile(
         fuzzes: program.fuzzes,
         fuzz_sites,
         build_inputs: program.build_inputs,
+    })
+}
+
+/// Writes the executable of the checked `program` to `output` (`spec/target.md`, TG4-TG6). A cacheable build copies
+/// the cached executable when its fingerprint matches; otherwise it links into a staging file and publishes that as
+/// the cache. Every other build links straight into `output`.
+fn write_executable(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    loaded: &package::Workspace,
+    files: &[(PathBuf, bool)],
+    output: &Path,
+    options: &CompileOptions,
+    rust_libs: &[String],
+) -> Result<(), ExitCode> {
+    let package_flags = package_flags(loaded, &options.profile);
+    let Some(plan) = artifact::Plan::for_build(loaded, files, sources, &program.build_inputs, rust_libs, options)
+    else {
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
+    };
+    if plan.is_fresh() {
+        return copy_executable(&plan.exe, output);
+    }
+    let Ok(staged) = plan.staging() else {
+        // A cache that cannot be created is not a failed build: link straight into the output, as an uncached
+        // build does.
+        return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
+    };
+    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(code);
+    }
+    if plan.publish(&staged).is_ok() {
+        return copy_executable(&plan.exe, output);
+    }
+    // A cache that cannot be written is not a failed build: the staged program is the output.
+    let result = copy_executable(&staged, output);
+    let _ = std::fs::remove_file(&staged);
+    result
+}
+
+/// Copies a built executable to where the user asked for it, under the name the linker would have given it. The MSVC
+/// linker appends `.exe` to an output name with no extension, so `-o app` is `app.exe` on Windows. Copying a file onto
+/// itself is nothing to do.
+fn copy_executable(from: &Path, to: &Path) -> Result<(), ExitCode> {
+    let to = if cfg!(windows) && to.extension().is_none() { to.with_extension("exe") } else { to.to_path_buf() };
+    if from == to {
+        return Ok(());
+    }
+    std::fs::copy(from, &to).map(|_| ()).map_err(|e| {
+        eprintln!("error: cannot write {}: {e}", to.display());
+        ExitCode::from(2)
     })
 }
 
@@ -1163,6 +1227,9 @@ pub(crate) fn package_flags(
             continue;
         };
         let (overflow_checks, debug_assertions) = profile.package_flags(&over.package);
+        // The source map spells a path the way diagnostics do: on Windows the canonical path's verbatim prefix is
+        // removed (`source_path_text`), and the prefix comparison has to use the same spelling.
+        let dir = PathBuf::from(source_path_text(&dir));
         flags.push(burdin_codegen::PackageFlags { dir, overflow_checks, debug_assertions });
     }
     flags

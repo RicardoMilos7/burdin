@@ -1,0 +1,8 @@
+name: |2
+   two spaces kept
+  plain
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

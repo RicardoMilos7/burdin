@@ -237,11 +237,77 @@ help line: `` `json` is an official package: add `json = true` to [dependencies]
 one-file target and a script have no manifest to add it to, so they get no such help. Tests:
 `tests/check_packages.py`, the checker's unit tests (`unknown_module_names_an_official_package`).
 
+## Cleaning, packaging, vendoring, and offline builds
+
+The package tools are `burdin clean`, `burdin package`, `burdin vendor`, and the `--offline` flag. They live in the
+driver (`clean.rs`, `pack.rs`, `vendor.rs`) over the new modules of `burdin_pkg` (`archive.rs` for the archive and its
+file selection, `vendor.rs` for the copies, and `git::restore` for offline checkouts). The black-box check is
+`tests/check_package_tools.py`; `crates/burdin_pkg/tests/vendor.rs` and the unit tests of `archive.rs` run under
+`cargo test --workspace`.
+
+**PKG19. `burdin clean`.** `burdin clean [<dir>] [--cache]` removes the `target` directory of the package in `<dir>`
+(default: the working directory), which holds everything a build writes: executables, generated modules and build
+script output, and the test, bench, and documentation output. `<dir>` must hold a `burdin.toml`; otherwise the command
+exits 1 and says so. It prints `Removed <path>`, or `Nothing to remove: <path> does not exist`. With `--cache` it also
+removes `cache/` (compiled single-file scripts, `spec/scripts.md` SC6) and `git/` (the git cache, PKG3) under the
+Burdin home, and prints each path it removed. It never removes `vendor/` (PKG23): that copy is what an offline build
+needs. Cleaning a cache costs only time: the next build fetches or recompiles what it needs. Tests:
+`tests/check_package_tools.py`.
+
+**PKG20. `burdin package`.** `burdin package [<dir>]` writes an archive of the package to
+`target/package/<name>-<version>.tar` (a USTAR tar, uncompressed; an existing archive is replaced) and prints
+`Packaged <n> files into <path> (sha256:<hex>)`, the SHA-256 of the archive (`file` when `<n>` is 1). The package needs `[package] version`:
+without one the command exits 1 and says so. The archive holds regular files only; a symbolic link among the selected
+files is an error that names it. Tests: `tests/check_package_tools.py`, `archive.rs` (`tar_header_layout`).
+
+**PKG21. Which files are packaged.** Without `[package] include`, every file under the package directory is selected
+except the top-level `.git`, `target`, and `vendor` directories. With `include = [...]`, only the files matching one of
+its patterns are selected, and the top-level directories above are then not excluded by default (a pattern names
+them). `exclude = [...]` removes the files matching one of its patterns from the selection. `burdin.toml` is always
+selected, and `target/package/` never is. A pattern is a `/`-separated path relative to the package: `*` matches any
+run of characters within one path segment, `?` one character, and `**` as a whole segment matches zero or more
+segments. A pattern matches a file when it matches the file's path or the path of a directory containing it, so
+`docs` selects `docs/a.md`. Both keys are one-line arrays of strings (`include = ["src/**", "README.md"]`); an empty
+pattern, a pattern that starts with `/`, or a value that is not an array of strings is an error naming the line. Tests:
+`archive.rs` (`patterns_match_segments_and_directories`, `selection_defaults_and_overrides`),
+`tests/check_package_tools.py`.
+
+**PKG22. Reproducible archives.** The same tree gives the same bytes on every host and at every time. Entries are
+sorted by their path's bytes; directories have no entries of their own; every header has mode `0644`, uid and gid `0`,
+empty user and group names, modification time `0`, no device numbers, and no PAX extension. A path of up to 100 bytes
+is the name; a longer one is split at a `/` into a prefix of up to 155 bytes and a name of up to 100 bytes, and a path
+that fits neither is an error naming the file. The archive ends with two zero blocks. Tests: `archive.rs`
+(`tar_header_layout`, `identical_trees_give_identical_bytes`), `tests/check_package_tools.py` (repacking after the
+modification times change gives the same checksum).
+
+**PKG23. `burdin vendor`.** `burdin vendor [<dir>]` resolves the package's graph as a build does (writing
+`burdin.lock` when it is missing or out of date), then copies every git package of the lockfile in full into
+`<dir>/vendor/<name>/`: the files PKG7 hashes, that is everything except the top-level `.git` and `target`. Each copy's
+checksum must equal the lockfile's before the command succeeds. Official packages are not copied, because they ship
+with the compiler, and path packages are read where they are, as always. The directory `vendor/` is burdin's: the
+file `vendor/burdin-vendor.txt` lists the names it wrote (a header comment, then one name per line). A run removes the
+directories that file lists and writes the current set. A `vendor/<name>` directory that the file does not list is an
+error (exit 1) that says to move it aside: burdin never overwrites or removes what it did not write. A graph with no
+git package prints `No git dependencies to vendor` and removes what an earlier run wrote. The success line is
+`Vendored <n> packages into <path>` (`package` when `<n>` is 1). Like a build, vendoring fetches what the git cache lacks. Tests:
+`crates/burdin_pkg/tests/vendor.rs`, `tests/check_package_tools.py`.
+
+**PKG24. `--offline`.** `burdin build`, `run`, `test`, `bench`, and `check` take `--offline`: the build contacts no
+network. A git package the lockfile pins is read from the git cache when its checkout is there, as always; when it is
+not, it is restored into the cache from `vendor/<name>` (PKG23), and the restored files are checked against the
+lockfile's checksum like any checkout (PKG7). When neither has the checkout, the command exits 1 and names both places
+and says to run `burdin vendor` with network access. A git dependency the lockfile does not record is an error under
+`--offline`, because a reference cannot be resolved without the network. `--offline` combines with `--locked`.
+Tests: `crates/burdin_pkg/tests/vendor.rs`, `tests/check_package_tools.py` (the build succeeds after the cache and the
+source repository are deleted, and fails without a vendored copy).
+
 ## Not yet
 
 - Official packages in a script's inline manifest, a package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the
   lockfile). Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
   the lockfile (which re-resolves every git dependency).
-- A git dependency whose package is in a subdirectory of the repository, and `--offline`.
+- A git dependency whose package is in a subdirectory of the repository.
+- Publishing a package (`burdin publish`, a registry), workspaces, compressed archives, and `--offline` for `burdin add`.
+  Vendoring copies no path packages.
 - Doc tests build each example as its own package, so an example of a package with git dependencies resolves them
   for that example instead of reading the documented package's lockfile.

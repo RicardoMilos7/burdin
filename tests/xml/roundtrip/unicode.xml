@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Config>
+  <name>Ünïcödé 日本語 😀</name>
+  <servers/>
+  <protocol><Https>1</Https></protocol>
+  <backup><None/></backup>
+  <weights><entry><key>ключ</key><value>-7</value></entry></weights>
+  <note>日</note>
+</Config>

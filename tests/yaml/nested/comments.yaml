@@ -1,0 +1,23 @@
+# leading comment
+grid:   # after a key
+  # between entries
+  rows:
+    - [1, 2] # after an item
+    # another
+    - [3]
+
+rows:
+  - id: 7 # trailing
+    # inside a mapping
+    tags: ["a # not a comment", 'b#c', d#e]
+pair: [0, "x"] #end
+flag: false
+ratio: 2
+big: 1
+small: 0
+raw: [ 1 ,2 # comment in a flow
+  , 3 ]
+unit: null
+inf: .Inf
+nan: .NAN
+# trailing comment

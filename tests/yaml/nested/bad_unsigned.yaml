@@ -1,0 +1,11 @@
+grid: {rows: []}
+rows: []
+pair: [1, a]
+flag: true
+ratio: 1
+big: -1
+small: 1
+raw: []
+unit: ~
+inf: 1
+nan: 1

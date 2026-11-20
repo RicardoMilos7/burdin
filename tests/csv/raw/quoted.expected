@@ -1,0 +1,4 @@
+row 1 (3 fields): [a,b|c"d|e]
+row 2 (3 fields): [multi\nline|x|y]
+row 3 (3 fields): [|z|\n]
+rows=3

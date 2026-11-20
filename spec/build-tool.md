@@ -26,6 +26,9 @@ The complete list:
 | `doc` | generate documentation as a site, JSON, or a coverage report | `spec/doc.md` |
 | `new` | create a package directory | `tests/check_new.py` |
 | `add` | add a path, git, or official dependency and update `burdin.lock` | `spec/packages.md` |
+| `clean` | remove a package's build output, and with `--cache` the caches | `spec/packages.md`, PKG19 |
+| `package` | write the package's reproducible archive to `target/package` | `spec/packages.md`, PKG20-PKG22 |
+| `vendor` | copy the git dependencies into `vendor/` for offline builds | `spec/packages.md`, PKG23-PKG24 |
 | `repl` | start an interactive session | `spec/repl.md` |
 | `watch` | rerun `check`, `build`, `test`, or `run` when the sources change | `spec/watch.md` |
 | `debug` | build with debug information and start a debugger | `spec/debug.md` |
@@ -53,7 +56,6 @@ These Cargo commands are in the plan, each owned by its issue. Until that lands,
 | `update`, `tree`, `metadata` | issue #346 |
 | `publish`, `yank`, `login`, `search` | issue #347, with the registry of #361 and #252 |
 | `install` | issue #348 |
-| `clean`, `package`, `vendor` | issue #350 |
 | `owner`, `logout`, `uninstall`, `info` | issue #473 |
 | feature selection (`--features`, `--all-features`) | issue #340 |
 | workspace member selection | issues #342 and #240 |
@@ -63,8 +65,9 @@ These Cargo commands are in the plan, each owned by its issue. Until that lands,
 | build timing reports | issue #472 |
 | `--quiet` and a global `--verbose` output control (the `-v` of `test` and `bench` shows passing output) | issue #799 |
 
-Registry protocols, workspaces, and offline mode have their own entries in `spec/stage1-subset.md`; the command
-surface will grow with them, and this table is the list of what is still missing.
+Registry protocols and workspaces have their own entries in `spec/stage1-subset.md`; offline mode landed with
+`burdin vendor` (BT1, issue #350). The command surface will grow with the rest, and this table is the list of what
+is still missing.
 
 ## BT3. What is deliberately not copied from Cargo
 

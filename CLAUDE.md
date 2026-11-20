@@ -139,6 +139,7 @@ python3 tests/check_scripts.py           check single-file scripts: the shebang,
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
 python3 tests/check_cli.py               check the command surface: every command's help, the golden command list, unknown commands
 python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
+python3 tests/check_target.py            check the target directory's artifact cache: the layout, fingerprints, invalidation, the failure paths (spec/target.md)
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links

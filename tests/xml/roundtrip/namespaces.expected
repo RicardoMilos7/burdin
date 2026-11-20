@@ -1,0 +1,7 @@
+<Config><name>namespaced</name><servers><item><host>n.example</host><port>1</port><tls>true</tls><ratio>2.5</ratio></item></servers><protocol><Http/></protocol><backup><None/></backup><weights/><note>n</note></Config>
+name="namespaced" servers=1 note='n'
+protocol=Http
+backup=none
+weights=0
+a=none
+first=n.example 1 true 2.5

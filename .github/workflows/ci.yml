@@ -336,11 +336,29 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python3 tests/check_package_tools.py
+
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_xml.py
 
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
@@ -399,6 +417,12 @@ jobs:
       - name: Check watch mode
         if: matrix.part == 'tools'
         run: python3 tests/check_watch.py
+
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python3 tests/check_target.py
 
       - name: Check host target
         if: matrix.part == 'unit'
@@ -736,11 +760,29 @@ jobs:
         if: matrix.part == 'tools'
         run: python3 tests/check_packages.py
 
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python3 tests/check_package_tools.py
+
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python3 tests/check_json.py
+
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python3 tests/check_xml.py
 
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
@@ -799,6 +841,12 @@ jobs:
       - name: Check watch mode
         if: matrix.part == 'tools'
         run: python3 tests/check_watch.py
+
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python3 tests/check_target.py
 
       # The LLVM target machine, isize/usize width, and generated object must follow the arm64 host.
       - name: Check host target
@@ -1143,11 +1191,29 @@ jobs:
         if: matrix.part == 'tools'
         run: python tests/check_packages.py
 
+      # `burdin clean`, `burdin package`, `burdin vendor`, and `--offline` (issue #350): the archive's selection and
+      # bytes, the vendored copy, and offline builds after the git cache and the repository are deleted.
+      - name: Check clean, package, vendor, and --offline
+        if: matrix.part == 'tools'
+        run: python tests/check_package_tools.py
+
       # The `json` official package (issue #255): the tests/json fixtures (round trips, pretty output, and malformed
       # input with its line, column, and path), `burdin add json`, and the official pin that `--locked` enforces.
       - name: Check the json package
         if: matrix.part == 'tools'
         run: python tests/check_json.py
+
+      - name: Check the csv package
+        if: matrix.part == 'tools'
+        run: python tests/check_csv.py
+
+      - name: Check the yaml package
+        if: matrix.part == 'tools'
+        run: python tests/check_yaml.py
+
+      - name: Check the xml package
+        if: matrix.part == 'tools'
+        run: python tests/check_xml.py
 
       # The toolchain manager and the `burdin` proxy (issues #624, #626, #628, #630, #631; spec/toolchain.md): fixture
       # releases with a fake compiler, install/update/list/default/remove, selection and burdin-toolchain.toml,
@@ -1206,6 +1272,12 @@ jobs:
       - name: Check watch mode
         if: matrix.part == 'tools'
         run: python tests/check_watch.py
+
+      # The artifact cache of a package's target directory (spec/target.md, issue #353): the layout, the content key,
+      # the failure paths, and the debug bypass, checked with a deliberately broken linker.
+      - name: Check target cache
+        if: matrix.part == 'tools'
+        run: python tests/check_target.py
 
       - name: Check host target
         if: matrix.part == 'unit'

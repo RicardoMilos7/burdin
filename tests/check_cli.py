@@ -47,6 +47,9 @@ COMMANDS = [
     "doc",
     "new",
     "add",
+    "clean",
+    "package",
+    "vendor",
     "repl",
     "watch",
     "debug",
@@ -72,9 +75,6 @@ OUT_OF_SCOPE = [
     "login",
     "search",
     "install",
-    "clean",
-    "package",
-    "vendor",
     "owner",
     "logout",
     "uninstall",
@@ -100,6 +100,9 @@ Commands:
   doc       Generate the documentation of a package
   new       Create a new package
   add       Add a path, git, or official dependency to burdin.toml
+  clean     Remove a package's build output, and with --cache its caches
+  package   Write the package's reproducible archive to target/package
+  vendor    Copy the git dependencies into vendor/ for offline builds
   repl      Start an interactive session
   watch     Rerun check, build, test, or run whenever the sources change
   debug     Build a program with debug info and start a debugger on it

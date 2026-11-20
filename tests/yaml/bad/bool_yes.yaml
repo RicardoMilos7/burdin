@@ -1,0 +1,6 @@
+name: x
+servers:
+  - host: a
+    port: 1
+    tls: yes
+    ratio: 1

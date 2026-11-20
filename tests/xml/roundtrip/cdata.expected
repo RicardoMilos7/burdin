@@ -1,0 +1,6 @@
+<Config><name>&lt;b&gt;bold&lt;/b&gt; &amp; more </name><servers/><protocol><Http/></protocol><backup><None/></backup><weights/><note>c</note></Config>
+name="<b>bold</b> & more " servers=0 note='c'
+protocol=Http
+backup=none
+weights=0
+a=none

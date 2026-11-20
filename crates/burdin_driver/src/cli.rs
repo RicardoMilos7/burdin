@@ -122,6 +122,36 @@ pub(crate) fn usage_error(name: &str, message: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// The arguments of a command that takes one optional package directory and the flags in `flags` (`clean`,
+/// `package`, `vendor`): the directory (the working directory when none is given) and the flags given, or `None`
+/// for `--help`. An unknown option, or a second directory, is a usage error (exit status 2).
+pub(crate) fn parse_dir_args(
+    name: &str,
+    argv: &[String],
+    flags: &[&str],
+) -> Result<Option<(std::path::PathBuf, Vec<String>)>, ExitCode> {
+    let mut dir: Option<std::path::PathBuf> = None;
+    let mut given = Vec::new();
+    for arg in argv {
+        if arg == "-h" || arg == "--help" {
+            return Ok(None);
+        }
+        if flags.contains(&arg.as_str()) {
+            given.push(arg.clone());
+        } else if arg.starts_with('-') {
+            return Err(usage_error(name, &format!("unknown option `{arg}` for `burdin {name}`")));
+        } else if dir.is_some() {
+            return Err(usage_error(
+                name,
+                &format!("`burdin {name}` takes one package directory, got a second: `{arg}`"),
+            ));
+        } else {
+            dir = Some(std::path::PathBuf::from(arg));
+        }
+    }
+    Ok(Some((dir.unwrap_or_else(|| std::path::PathBuf::from(".")), given)))
+}
+
 fn usage_error_text(name: &str, message: &str) -> String {
     let usage = subcommand(name).render_usage().to_string();
     let usage = usage.trim_end().strip_prefix("Usage:").map(|rest| format!("usage:{rest}")).unwrap_or(usage);
@@ -175,6 +205,9 @@ pub(crate) fn command() -> Command {
             doc(),
             new(),
             add(),
+            clean(),
+            package(),
+            vendor(),
             repl(),
             watch(),
             debug(),
@@ -248,6 +281,10 @@ fn locked() -> Arg {
     flag("locked", "Fail instead of writing burdin.lock when it does not match the manifests (spec/packages.md)")
 }
 
+fn offline() -> Arg {
+    flag("offline", "Fetch no git package: read it from the git cache or vendor/ (spec/packages.md)")
+}
+
 fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
 }
@@ -294,6 +331,7 @@ fn build() -> Command {
                 profile_option(),
                 debug_info(),
                 locked(),
+                offline(),
                 flag("strip", "Strip the executable (with MSVC, optimize for size)"),
                 flag("lto", "Emit bitcode and link with -flto (needs an LLVM compiler driver)"),
                 flag("pgo-generate", "Instrument the program for profile-guided optimization"),
@@ -345,6 +383,7 @@ fn run() -> Command {
                 profile_option(),
                 debug_info(),
                 locked(),
+                offline(),
                 link_lib(),
                 sanitize(),
                 compile_jobs(),
@@ -436,6 +475,7 @@ fn test() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    offline(),
                     sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
                     comptime_steps(),
@@ -473,6 +513,7 @@ fn fuzz() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    offline(),
                     compile_jobs(),
                     comptime_steps(),
                 ]
@@ -532,6 +573,7 @@ fn bench() -> Command {
                     profile_option(),
                     debug_info(),
                     locked(),
+                    offline(),
                     jobs("Compile on at most n threads; benches are measured one at a time"),
                     comptime_steps(),
                 ]
@@ -553,6 +595,7 @@ fn check() -> Command {
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
+                offline(),
                 option(
                     "format",
                     "fmt",
@@ -813,6 +856,46 @@ fn add() -> Command {
         )
 }
 
+fn clean() -> Command {
+    Command::new("clean")
+        .about("Remove a package's build output, and with --cache its caches")
+        .override_usage("burdin clean [<dir>] [--cache]")
+        .args([
+            package_dir(),
+            flag("cache", "Also remove the caches under the Burdin home: compiled scripts and the git cache"),
+        ])
+        .after_help(
+            "Removes <dir>/target, which holds everything a build writes. It never removes vendor/, which an offline \
+             build needs. The behavior is spec/packages.md (PKG19).",
+        )
+}
+
+fn package() -> Command {
+    Command::new("package")
+        .about("Write the package's reproducible archive to target/package")
+        .override_usage("burdin package [<dir>]")
+        .arg(package_dir())
+        .after_help(
+            "Writes target/package/<name>-<version>.tar and prints its checksum. The files are chosen by [package] \
+             include and exclude, and the archive is the same for the same tree (spec/packages.md, PKG20-PKG22).",
+        )
+}
+
+fn vendor() -> Command {
+    Command::new("vendor")
+        .about("Copy the git dependencies into vendor/ for offline builds")
+        .override_usage("burdin vendor [<dir>]")
+        .arg(package_dir())
+        .after_help(
+            "Resolves the graph, writing burdin.lock as a build does, then copies each git package into \
+             vendor/<name>. A build with --offline then reads them without the network (spec/packages.md, PKG23-PKG24).",
+        )
+}
+
+fn package_dir() -> Arg {
+    Arg::new("dir").value_name("dir").help("The package directory (default: the working directory)")
+}
+
 fn repl() -> Command {
     with_diagnostics(
         Command::new("repl")
@@ -1042,9 +1125,10 @@ mod tests {
     #[test]
     fn the_command_list_names_every_command() {
         let help = command().render_help().to_string();
-        for name in
-            ["build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "explain", "watch", "lsp"]
-        {
+        for name in [
+            "build", "run", "test", "bench", "check", "fmt", "lint", "doc", "new", "add", "clean", "package", "vendor",
+            "explain", "watch", "lsp",
+        ] {
             assert!(help.contains(&format!("  {name} ")), "`{name}` is missing from:\n{help}");
         }
         // The list stays short: the options of a command are only in its own help.

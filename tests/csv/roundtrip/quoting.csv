@@ -1,0 +1,6 @@
+name,age,email,score,active,role
+"Lovelace, Ada",36,"ada@example.com",9.5,true,Admin
+"Say ""hi""",20,"",1.25,false,Guest
+"two
+lines",30,x@y.z,0,true,Member
+" padded ",1,,1e3,false,Admin

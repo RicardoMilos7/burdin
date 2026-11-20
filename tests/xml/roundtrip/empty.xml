@@ -1,0 +1,8 @@
+<Config>
+  <name/>
+  <servers></servers>
+  <protocol><Http/></protocol>
+  <backup><None/></backup>
+  <weights></weights>
+  <note> </note>
+</Config>

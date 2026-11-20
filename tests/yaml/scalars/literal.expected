@@ -1,0 +1,10 @@
+name: "first line\n  indented line\n\nafter a blank line\n"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="first line\n  indented line\n\nafter a blank line\n" servers=0 note=z
+protocol=Http
+backup=none
+weights=0

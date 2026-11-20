@@ -7,7 +7,8 @@ the code blocks in its doc comments. The syntax is in
 [`tests/check_test_runner.py`](../tests/check_test_runner.py) with the conformance tests in
 [`tests/m10_test_runner`](../tests/m10_test_runner).
 
-The runner builds the selected packages in test mode. A test body is compiled as a function that returns
+The runner builds the selected packages in test mode, into a cached binary under
+`<package>/target/burdin/<profile>/test/` (`spec/target.md`, TG1). A test body is compiled as a function that returns
 `Result<()>`, the dynamic error type, so `?` accepts both an assertion failure and any other error type; `assert`
 and `assert_eq` return a typed error in test mode, and a helper can propagate it with `?`. A failing assertion's
 message (the condition text, the values, and the location) is printed to standard
@@ -268,7 +269,7 @@ a driver failure: the message goes to standard error and the exit status is 2, w
   Every `burdin test` run that runs tests updates it: a test that ran and passed leaves the record, a test that
   failed enters it, a test that did not run keeps its status, and an entry whose test no longer exists is dropped
   (entries of packages the run did not select stay). A run that fails to compile leaves it alone, a green run with
-  no record on disk writes nothing, and a `--list` run never writes. With `--failed` and no record at all, every
+  no record on disk writes nothing to it, and a `--list` run never writes. With `--failed` and no record at all, every
   test is selected and `note: no record of a previous run was found; running every selected test` goes to standard
   error; with a record that has no failures, nothing is selected and `note: the previous run had no failed tests`
   says why. A test is identified by its package and its package-local path, so the record does not depend on which

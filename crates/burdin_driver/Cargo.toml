@@ -21,6 +21,7 @@ burdin_rustgen.workspace = true
 burdin_doc.workspace = true
 burdin_query.workspace = true
 burdin_pkg.workspace = true
+burdin_sha256.workspace = true
 burdin_lsp.workspace = true
 burdin_dap.workspace = true
 burdin_repl.workspace = true

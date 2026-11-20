@@ -1,0 +1,10 @@
+name: it's a "single" \n quote folded
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="it's a \"single\" \\n quote folded" servers=0 note=z
+protocol=Http
+backup=none
+weights=0
