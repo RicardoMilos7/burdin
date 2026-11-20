@@ -167,8 +167,10 @@ with harness.temporary_dir("burdin-features-") as work:
         {"unixonly.bd": "fn platform(): i32 {\n    1\n}\n"},
     )
     # A source that does not parse: loading it is the witness that its package was loaded.
-    package(work, "winonly", '[package]\nname = "winonly"\n', {"winonly.bd": "fn broken(: i32 {\n}\n"})
+    package(work, "winbroken", '[package]\nname = "winbroken"\n', {"winbroken.bd": "fn broken(: i32 {\n}\n"})
     package(work, "brokenkit", '[package]\nname = "brokenkit"\n', {"brokenkit.bd": "fn broken(: i32 {\n}\n"})
+    # The lockfile fixture uses a Windows-only dependency, so its source must parse on Windows too.
+    package(work, "winonly", '[package]\nname = "winonly"\n', {"winonly.bd": "fn sentinel(): i32 {\n    1\n}\n"})
     app = package(work, "app", APP_MANIFEST, {"main.bd": APP_BODY})
 
     # --- Selecting the features of the entry package -------------------------------------------------------------
@@ -350,13 +352,13 @@ with harness.temporary_dir("burdin-features-") as work:
         work,
         "winapp",
         "[package]\nname = \"winapp\"\n\n[target.'cfg(windows)'.dependencies]\n"
-        'winonly = { path = "../winonly" }\n',
+        'winbroken = { path = "../winbroken" }\n',
         {"main.bd": 'fn main() {\n    println("host")\n}\n'},
     )
     windows_dep = run_in(winapp, "run", ".")
     if PLATFORM == "windows":
         check(
-            windows_dep.returncode == 1 and "winonly.bd:1" in err(windows_dep),
+            windows_dep.returncode == 1 and "winbroken.bd:1" in err(windows_dep),
             f"a Windows-only dependency was not loaded on Windows: {err(windows_dep)[:300]}",
         )
     else:

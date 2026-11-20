@@ -1777,10 +1777,10 @@ helper = []
             module.text.as_deref().unwrap().to_string()
         };
         let lib_features = module(&workspace, "lib");
-        assert!(lib_features.contains("pub const extra: bool = true\n"), "{lib_features}");
-        assert!(lib_features.contains("pub const plain: bool = false\n"), "{lib_features}");
-        assert!(lib_features.contains("pub const helper: bool = true\n"), "{lib_features}");
-        assert!(module(&workspace, "helper").contains("pub const deep: bool = true\n"), "forwarded feature");
+        assert!(lib_features.contains("const extra: bool = true\n"), "{lib_features}");
+        assert!(lib_features.contains("const plain: bool = false\n"), "{lib_features}");
+        assert!(lib_features.contains("const helper: bool = true\n"), "{lib_features}");
+        assert!(module(&workspace, "helper").contains("const deep: bool = true\n"), "forwarded feature");
         // The entry package's `tooling` loads `tool`; `--all-features` enables every optional dependency too.
         let tooling = FeatureRequest { items: vec!["tooling".into()], ..Default::default() };
         assert_eq!(loaded(&tooling).0, ["app", "helper", "lib", "std", "tool"]);
@@ -1835,7 +1835,7 @@ helper = []
         write_package(
             &root.join("clash"),
             "[package]\nname = \"clash\"\n[features]\nfast = []\n",
-            &[("main.bd", "fn main() {}\n"), ("features.bd", "pub const x: bool = true\n")],
+            &[("main.bd", "fn main() {}\n"), ("features.bd", "const x: bool = true\n")],
         );
         let clash = root.join("clash").canonicalize().unwrap();
         let error =
