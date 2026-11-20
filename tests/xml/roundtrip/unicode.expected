@@ -1,0 +1,6 @@
+<Config><name>Ünïcödé 日本語 😀</name><servers/><protocol><Https>1</Https></protocol><backup><None/></backup><weights><entry><key>ключ</key><value>-7</value></entry></weights><note>日</note></Config>
+name="Ünïcödé 日本語 😀" servers=0 note='日'
+protocol=Https 1
+backup=none
+weights=1
+a=none

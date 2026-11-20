@@ -1,0 +1,14 @@
+name: "null"
+servers: []
+protocol: Http
+backup: null
+weights:
+  "true": 1
+  "": 2
+  "a: b": 3
+  " pad ": 4
+  "- dash": 5
+  "#hash": 6
+  "multi\nline": 7
+  "é": 8
+note: "#"

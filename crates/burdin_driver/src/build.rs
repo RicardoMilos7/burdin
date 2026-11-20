@@ -240,6 +240,7 @@ fn run_script(
         run_build_scripts: false,
         locked: false,
         features: Default::default(),
+        offline: false,
         jobs: options.jobs,
         sanitize: Default::default(),
         fuzz_target: None,
@@ -472,7 +473,7 @@ pub(crate) fn merge_generated(package: &mut PackageFiles, out_src: &Path) -> Res
 /// A stable description of the compiler binary, so a rebuilt compiler reruns the scripts. The version and commit
 /// make the result meaningful across checkouts; the executable's length and modification time make it change
 /// within one commit too.
-fn compiler_fingerprint() -> String {
+pub(crate) fn compiler_fingerprint() -> String {
     let (length, modified) = std::env::current_exe()
         .ok()
         .and_then(|exe| std::fs::metadata(exe).ok())

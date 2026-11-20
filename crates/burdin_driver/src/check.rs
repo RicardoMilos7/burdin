@@ -32,8 +32,10 @@ struct CheckArgs {
     tests: bool,
     /// `--locked`: refuse to update `burdin.lock`.
     locked: bool,
-    /// `--features`, `--no-default-features`, and `--all-features` (`spec/packages.md`, PKG25).
+    /// `--features`, `--no-default-features`, and `--all-features` (`spec/packages.md`, PKG31).
     features: burdin_query::package::FeatureRequest,
+    /// `--offline`: fetch no git package (`spec/packages.md`, PKG24).
+    offline: bool,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
     comptime_steps: Option<u64>,
@@ -70,6 +72,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             }
             "--no-default-features" => args.features.no_default_features = flag_without_value(a, inline)?,
             "--all-features" => args.features.all_features = flag_without_value(a, inline)?,
+            "--offline" => args.offline = flag_without_value(a, inline)?,
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
@@ -131,6 +134,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         run_build_scripts: true,
         locked: args.locked,
         features: args.features.clone(),
+        offline: args.offline,
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,

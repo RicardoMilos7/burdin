@@ -1,0 +1,3 @@
+error: line 2, column 13: expected true or false at [0].active
+records=0
+same=true

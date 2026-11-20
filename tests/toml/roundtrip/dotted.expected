@@ -1,0 +1,29 @@
+"quoted key" = 1
+"literal key" = 2
+
+[name]
+first = "Tom"
+last = "Preston-Werner"
+
+[physical]
+color = "orange"
+
+[physical.shape]
+kind = "round"
+
+[site]
+"google.com" = true
+
+[fruit]
+
+[fruit.apple]
+color = "red"
+
+[fruit.apple.taste]
+sweet = true
+
+[fruit.apple.texture]
+smooth = true
+
+[fruit.banana]
+color = "yellow"

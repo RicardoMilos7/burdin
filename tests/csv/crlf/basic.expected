@@ -1,0 +1,6 @@
+name,age,email,score,active,role\r
+Ada,36,ada@example.com,9.5,true,Admin\r
+Bob,41,,7,false,Member\r
+records=2
+Ada | 36 | ada@example.com | 9.5 | true | Admin
+Bob | 41 | <none> | 7 | false | Member

@@ -7,7 +7,7 @@
 //! relative to `src/` (`geometry/shapes.bd` is module `geometry.shapes`).
 //!
 //! Which dependencies a build loads is decided here: features, optional dependencies, dev-dependencies of the entry
-//! package in a test build, and `[target.'cfg(...)']` tables (`spec/packages.md`, PKG19-PKG27). The loader activates
+//! package in a test build, and `[target.'cfg(...)']` tables (`spec/packages.md`, PKG25-PKG33). The loader activates
 //! packages from the entry package outward, until the features of every package are settled (`Loader::activate`).
 
 use crate::cfg::{self, Cfg, Host};
@@ -71,10 +71,10 @@ pub struct Workspace {
     pub stem: String,
 }
 
-/// What a command asks for beyond the manifests: the feature flags of the command line (PKG23, PKG25).
+/// What a command asks for beyond the manifests: the feature flags of the command line (PKG29, PKG31).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FeatureRequest {
-    /// `--features`: the items to enable for the entry package, each as in PKG22. A list may be split in several.
+    /// `--features`: the items to enable for the entry package, each as in PKG28. A list may be split in several.
     pub items: Vec<String>,
     /// `--no-default-features`: the entry package does not enable its `default` feature.
     pub no_default_features: bool,
@@ -91,8 +91,8 @@ impl FeatureRequest {
 
 /// Loads the target for `mode`: a `.bd` file, or a directory containing `burdin.toml`. A package directory must have a
 /// `src/main.bd` entry point when `mode` wants `main` (`EntryMode::wants_main`), because `build` and `run` need one.
-/// The entry package's dev-dependencies are loaded for every other mode (PKG20), and `request` selects its features
-/// (PKG23). The features of a one-file target are not selectable: a request other than the default is an error.
+/// The entry package's dev-dependencies are loaded for every other mode (PKG26), and `request` selects its features
+/// (PKG29). The features of a one-file target are not selectable: a request other than the default is an error.
 pub fn load_selected(target: &Path, mode: EntryMode, request: &FeatureRequest) -> Result<Workspace, String> {
     load_impl(target, mode.wants_main(), mode != EntryMode::Build, request)
 }
@@ -334,6 +334,8 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
+            include: None,
+            exclude: Vec::new(),
         };
         let mut loader = Loader::new(None);
         let root = loader.add_node(base.to_path_buf(), target.to_path_buf(), script_manifest)?;
@@ -536,18 +538,18 @@ struct Node {
     edges: Vec<(String, usize)>,
 }
 
-/// What a build enables in one package (PKG22-PKG24). Each set only grows while the loader settles the graph.
+/// What a build enables in one package (PKG28-PKG30). Each set only grows while the loader settles the graph.
 #[derive(Default)]
 struct Activation {
     /// Whether the build loads this package at all.
     active: bool,
-    /// The items enabled here: feature names, `dep:x`, and `x/feature` (PKG22). An item of a feature is added here
+    /// The items enabled here: feature names, `dep:x`, and `x/feature` (PKG28). An item of a feature is added here
     /// when the feature is enabled.
     enabled: BTreeSet<String>,
     /// The optional dependencies this package enables: named by `dep:x`, by `x/feature`, or by the implicit feature
     /// `x`.
     optional_on: BTreeSet<String>,
-    /// The features `x/feature` requests of each dependency, keyed by the dependency's name (PKG22, PKG24).
+    /// The features `x/feature` requests of each dependency, keyed by the dependency's name (PKG28, PKG30).
     forwarded: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -606,7 +608,7 @@ impl Loader {
         self.add_node(dir, manifest_path, manifest)
     }
 
-    /// Enables what the command asks for in the entry package `root` and settles the graph (PKG23-PKG24).
+    /// Enables what the command asks for in the entry package `root` and settles the graph (PKG29-PKG30).
     ///
     /// Each round expands every active package's enabled items and activates the dependencies those items and the
     /// package's tables select. Enabling a feature can enable an optional dependency and request features of another
@@ -639,7 +641,7 @@ impl Loader {
         self.check_cycles(root)
     }
 
-    /// Expands the enabled items of package `i` (PKG22). Returns whether anything new was enabled.
+    /// Expands the enabled items of package `i` (PKG28). Returns whether anything new was enabled.
     fn expand(&mut self, i: usize) -> Result<bool, String> {
         let items: Vec<String> = self.nodes[i].state.enabled.iter().cloned().collect();
         let mut changed = false;
@@ -677,7 +679,7 @@ impl Loader {
     }
 
     /// Activates the dependencies of package `i` that its tables and enabled features select, loads them, and passes
-    /// on the features they request (PKG19-PKG21, PKG24). Returns whether anything changed.
+    /// on the features they request (PKG25-PKG27, PKG30). Returns whether anything changed.
     fn activate_dependencies(&mut self, i: usize, dev: bool) -> Result<bool, String> {
         let host = Host::current();
         let deps: Vec<Dependency> = {
@@ -847,23 +849,23 @@ pub enum DepSource {
 }
 
 /// One entry of a dependency table: `[dependencies]`, `[dev-dependencies]`, or a `[target.'cfg(...)']` table of either
-/// (`spec/packages.md`, PKG19-PKG21).
+/// (`spec/packages.md`, PKG25-PKG27).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dependency {
     /// The name `use` reaches the package by.
     pub name: String,
     pub source: DepSource,
-    /// `optional = true`: loaded only when a feature enables it (PKG22).
+    /// `optional = true`: loaded only when a feature enables it (PKG28).
     pub optional: bool,
-    /// `default-features`: whether the dependency's `default` feature is requested (PKG19).
+    /// `default-features`: whether the dependency's `default` feature is requested (PKG25).
     pub default_features: bool,
-    /// `features = [...]`: the features the dependency is asked to enable (PKG19).
+    /// `features = [...]`: the features the dependency is asked to enable (PKG25).
     pub features: Vec<String>,
-    /// The predicate of a `[target.'cfg(...)']` table; `None` applies to every platform (PKG21).
+    /// The predicate of a `[target.'cfg(...)']` table; `None` applies to every platform (PKG27).
     pub target: Option<Cfg>,
 }
 
-/// One entry of the `[features]` table: its name and the items enabling it turns on (PKG22).
+/// One entry of the `[features]` table: its name and the items enabling it turns on (PKG28).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Feature {
     pub name: String,
@@ -877,14 +879,14 @@ pub struct Manifest {
     pub name: String,
     /// `[package] version`, when the manifest gives one.
     pub version: Option<String>,
-    /// `[dependencies]` and the `[target.'cfg(...)'.dependencies]` tables, in file order (PKG19).
+    /// `[dependencies]` and the `[target.'cfg(...)'.dependencies]` tables, in file order (PKG25).
     pub deps: Vec<Dependency>,
-    /// `[dev-dependencies]` and the target tables of them, in file order (PKG20).
+    /// `[dev-dependencies]` and the target tables of them, in file order (PKG26).
     pub dev_deps: Vec<Dependency>,
-    /// The `[features]` entries, in file order (PKG22).
+    /// The `[features]` entries, in file order (PKG28).
     pub features: Vec<Feature>,
     /// Whether the manifest has a `[features]` section, even an empty one: it gives the package its `features` module
-    /// (PKG26).
+    /// (PKG32).
     pub features_section: bool,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
     pub build_allow: Vec<String>,
@@ -893,6 +895,11 @@ pub struct Manifest {
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
+    /// `[package] include`: the file patterns `burdin package` selects, when the manifest gives any
+    /// (`spec/packages.md`, PKG21).
+    pub include: Option<Vec<String>>,
+    /// `[package] exclude`: the file patterns `burdin package` leaves out (PKG21).
+    pub exclude: Vec<String>,
 }
 
 impl Manifest {
@@ -901,7 +908,7 @@ impl Manifest {
         self.features.iter().find(|feature| feature.name == name)
     }
 
-    /// The names of the optional dependencies (every target's, PKG19), in file order.
+    /// The names of the optional dependencies (every target's, PKG25), in file order.
     pub fn optional_deps(&self) -> impl Iterator<Item = &str> {
         self.deps.iter().filter(|dep| dep.optional).map(|dep| dep.name.as_str())
     }
@@ -909,13 +916,13 @@ impl Manifest {
 
 impl Node {
     /// Whether the package gets a generated `features` module: it has a `[features]` table or an optional dependency
-    /// (PKG26).
+    /// (PKG32).
     fn generates_features(&self) -> bool {
         self.manifest.features_section || self.manifest.optional_deps().next().is_some()
     }
 
     /// The constants of the generated module: each declared feature and each optional dependency, enabled or not
-    /// (PKG26).
+    /// (PKG32).
     fn feature_constants(&self) -> Vec<(String, bool)> {
         let mut entries: Vec<(String, bool)> = self
             .manifest
@@ -950,8 +957,10 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut build_allow: Vec<String> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
-    // Each dependency name with the line it was declared on: a name is declared once per manifest (PKG19).
+    // Each dependency name with the line it was declared on: a name is declared once per manifest (PKG25).
     let mut declared: Vec<(String, usize)> = Vec::new();
+    let mut include: Option<Vec<String>> = None;
+    let mut exclude: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
@@ -1027,6 +1036,19 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                         let known: Vec<&str> = burdin_sema::Edition::ALL.iter().map(|e| e.as_str()).collect();
                         format!("{}: unknown edition `{text}` (this compiler knows {})", where_(), known.join(" and "))
                     })?;
+                } else if key == "include" || key == "exclude" {
+                    let patterns = parse_string_array(value).map_err(|e| format!("{}: `{key}`: {e}", where_()))?;
+                    if let Some(bad) = patterns.iter().find(|p| p.is_empty() || p.starts_with('/')) {
+                        return Err(format!(
+                            "{}: `{key}` pattern `{bad}` must be a path relative to the package",
+                            where_()
+                        ));
+                    }
+                    if key == "include" {
+                        include = Some(patterns);
+                    } else {
+                        exclude = patterns;
+                    }
                 }
             }
             "features" => {
@@ -1084,8 +1106,20 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     if !is_ident(&name) {
         return Err(format!("{}: `{name}` is not a valid package name", path.display()));
     }
-    let manifest =
-        Manifest { name, version, deps, dev_deps, features, features_section, build_allow, lint, rust, edition };
+    let manifest = Manifest {
+        name,
+        version,
+        deps,
+        dev_deps,
+        features,
+        features_section,
+        build_allow,
+        lint,
+        rust,
+        edition,
+        include,
+        exclude,
+    };
     check_features(&manifest, path)?;
     Ok(manifest)
 }
@@ -1101,7 +1135,7 @@ fn dependency_table(section: &str) -> Option<Result<(Option<Cfg>, bool), String>
     }
 }
 
-/// `target.'cfg(...)'.dependencies` or `target.'cfg(...)'.dev-dependencies`, with either quote mark (PKG21). The
+/// `target.'cfg(...)'.dependencies` or `target.'cfg(...)'.dev-dependencies`, with either quote mark (PKG27). The
 /// result is the predicate and whether the table holds dev-dependencies.
 fn target_table(section: &str) -> Result<(Option<Cfg>, bool), String> {
     let usage = format!(
@@ -1123,7 +1157,7 @@ fn target_table(section: &str) -> Result<(Option<Cfg>, bool), String> {
     }
 }
 
-/// The checks of the `[features]` table that need the whole manifest (PKG22): an item names a feature or an optional
+/// The checks of the `[features]` table that need the whole manifest (PKG28): an item names a feature or an optional
 /// dependency, `dep:x` names an optional one, `x/feature` names a dependency that is not a dev-dependency, and a
 /// feature does not share a name with an optional dependency.
 fn check_features(manifest: &Manifest, path: &Path) -> Result<(), String> {
@@ -1231,7 +1265,7 @@ pub(crate) fn parse_string(value: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// What a dependency value says: its source and the keys that shape the dependency (PKG19).
+/// What a dependency value says: its source and the keys that shape the dependency (PKG25).
 pub(crate) struct DependencySpec {
     pub(crate) source: DepSource,
     pub(crate) optional: bool,
@@ -1241,7 +1275,7 @@ pub(crate) struct DependencySpec {
 
 /// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), `{ git = "<url>" }` with at most one of `branch`,
 /// `tag`, and `rev`, or `true` for the official package of that name (`spec/packages.md`, PKG1-PKG2, PKG15), with the
-/// keys of PKG19: `optional`, `default-features`, and `features`. Other keys are ignored, so a newer manifest loads.
+/// keys of PKG25: `optional`, `default-features`, and `features`. Other keys are ignored, so a newer manifest loads.
 fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     let plain =
         |source: DepSource| DependencySpec { source, optional: false, default_features: true, features: Vec::new() };
@@ -1311,7 +1345,7 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
 }
 
 /// The source of a dependency that takes only a path, as a script's inline manifest and `[rust.crates]` do (PKG2): the
-/// keys of PKG19 belong to package dependencies, so they are errors here.
+/// keys of PKG25 belong to package dependencies, so they are errors here.
 fn parse_dependency(value: &str) -> Result<DepSource, String> {
     let spec = parse_dependency_spec(value)?;
     if spec.optional || !spec.default_features || !spec.features.is_empty() {

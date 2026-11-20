@@ -1,0 +1,10 @@
+name: "a plain scalar that goes on\nover several lines"
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="a plain scalar that goes on\nover several lines" servers=0 note=z
+protocol=Http
+backup=none
+weights=0

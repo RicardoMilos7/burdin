@@ -152,7 +152,7 @@ struct Baseline {
 }
 
 pub(crate) fn run(args: &Args) -> ExitCode {
-    if let Err(code) = crate::sync_dependencies(&args.target, args.locked) {
+    if let Err(code) = crate::sync_dependencies(&args.target, args.locked, args.offline) {
         return code;
     }
     let workspace = match crate::package::load_selected(&args.target, EntryMode::Bench, &args.features) {
@@ -221,6 +221,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         run_build_scripts: true,
         locked: args.locked,
         features: args.features.clone(),
+        offline: args.offline,
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,

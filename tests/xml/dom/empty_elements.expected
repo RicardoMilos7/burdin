@@ -1,0 +1,17 @@
+<a><b/><c/><d> </d><e/><f/></a>
+<a>
+  <b/>
+  <c/>
+  <d> </d>
+  <e/>
+  <f/>
+</a>
+declaration none
+before=0 after=0
+a ns=[] at 1:1
+  b ns=[] at 1:4
+  c ns=[] at 1:11
+  d ns=[] at 1:15
+    text " "
+  e ns=[] at 1:23
+  f ns=[] at 2:3

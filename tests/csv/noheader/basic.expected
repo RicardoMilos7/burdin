@@ -1,0 +1,6 @@
+Ada,36,ada@example.com,9.5,true,Admin
+Bob,41,,7,false,Member
+records=2
+same=true
+Ada | 36 | ada@example.com | 9.5 | true | Admin
+Bob | 41 | <none> | 7 | false | Member

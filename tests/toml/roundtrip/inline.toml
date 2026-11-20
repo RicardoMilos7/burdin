@@ -1,0 +1,4 @@
+point = { x = 1, y = 2 }
+empty = {}
+nested = { outer = { inner = "deep" }, list = [ 1, 2 ] }
+dotted = { a.b = 1, a.c = 2 }

@@ -590,6 +590,7 @@ fn build_one(
         run_build_scripts: true,
         locked: false,
         features: options.features.clone(),
+        offline: false,
         jobs: per_compile,
         sanitize: options.sanitize,
         fuzz_target: None,

@@ -1,0 +1,3 @@
+error: line 2, column 9: expected a number at [0].score
+records=0
+same=true

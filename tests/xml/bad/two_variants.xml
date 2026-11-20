@@ -1,0 +1,5 @@
+<Config>
+  <name>x</name>
+  <servers/>
+  <protocol><Http/><Https>1</Https></protocol>
+</Config>

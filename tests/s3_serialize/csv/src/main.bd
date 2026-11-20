@@ -1,0 +1,311 @@
+//@ run
+//> id,title,note,price
+//> 1,"Pen, blue",,1.5
+//> 2,"Say ""hi""","",0
+//> 3,"two
+//> lines",x,-0.0
+//> 3 records
+//> 1 Pen, blue none 1.5
+//> 2 Say "hi" some() 0
+//> 3 two\nlines some(x) 0
+//> sign of the last price: -inf
+//> chunk: id,title,note,price|7,a,,1|
+//> chunk: 8,b,,2|
+//> empty: 0
+//> id,title,note,price\r\n1,a,,1\r\n
+//> nested struct: a CSV field cannot hold a struct, a map, or a sequence at address
+//> list: a CSV field cannot hold a struct, a map, or a sequence at tags
+//> bytes: bytes cannot be written as a CSV field at data
+//> variant with a value: variant 'Circle' has a value and cannot be written as one CSV field at shape
+//> other header: the fields of this record are not the fields of the header row
+//> still works: ok
+//> id,title,note,price
+//> 1,ok,,1
+//> 2,fine,,2
+//> name,shape
+//> n,Dot
+//> a CSV field cannot hold a struct, a map, or a sequence at [0].address
+//> v
+//> 1
+//> ""
+//> 3
+//> 3 solos
+//> solo 1 is none
+//> low,high,small,flag,letter
+//> -9223372036854775808,18446744073709551615,-128,true,é
+//> true true -128 true é
+//> short row: a record has 1 fields but the first had 4
+//> a,"b,c","","d""e"
+//> 4 fields: a|b,c||d"e
+//> true
+//> x+y
+//> 1,2
+//> 3,4
+//> 2 pairs
+//> line 1, column 1: expected 2 elements in a tuple at [0]
+//> line 1, column 5: the record has more fields than the type reads at [0]
+//> line 2, column 3: a CSV field cannot hold a struct, a map, or a sequence at [0].address
+//> line 2, column 3: variant 'Circle' has a value and cannot be read from one CSV field at [0].shape
+//> line 1, column 1: reading a struct needs a header row or `set_headers` at [0]
+//> 1
+//> the delimiter must be an ASCII character other than a quote or a line break
+//> the delimiter must be an ASCII character other than a quote or a line break
+//> id<TAB>title<TAB>note<TAB>price|1<TAB>Pen, blue<TAB><TAB>1.5|2<TAB>"Say ""hi"""<TAB>""<TAB>0|3<TAB>"two|lines"<TAB>x<TAB>-0.0|
+
+// The `csv` official package (issue #257; spec/serialization.md). The data model is the framework's; this file pins
+// how CSV writes and reads it: one record per call, the header row from a struct's field names, quoting, `None` as an
+// empty field and `Some("")` as `""`, and the ways a value CSV cannot hold (a nested struct, a list, a variant with a
+// payload, bytes) is an error instead of a panic. A tuple of scalars is a sequence record and has no header row.
+
+use csv
+use csv.{Reader, Writer}
+
+struct Item: Serialize, Deserialize, Debug {
+    id: u32,
+    title: String,
+    note: Option<String>,
+    price: f64,
+}
+
+struct Address: Serialize, Deserialize, Debug {
+    city: String,
+    zip: u32,
+}
+
+struct Outer: Serialize, Deserialize, Debug {
+    name: String,
+    address: Address,
+}
+
+struct Tagged: Serialize, Deserialize, Debug {
+    name: String,
+    tags: List<String>,
+}
+
+struct Blob: Serialize, Deserialize, Debug {
+    name: String,
+    data: List<u8>,
+}
+
+enum Shape: Serialize, Deserialize, Debug {
+    Circle(f64),
+    Dot,
+}
+
+struct Drawing: Serialize, Deserialize, Debug {
+    name: String,
+    shape: Shape,
+}
+
+struct Solo: Serialize, Deserialize, Debug {
+    v: Option<i32>,
+}
+
+struct Big: Serialize, Deserialize, Debug {
+    low: i64,
+    high: u64,
+    small: i8,
+    flag: bool,
+    letter: char,
+}
+
+struct Leaf: Copy, Clone, Debug {
+    v: i32,
+}
+
+Leaf: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        serialize_i32(mut s, self.v)
+    }
+}
+
+Leaf: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Leaf, DeError> {
+        let v = deserialize_i32(mut d)?
+        Ok(Leaf { v })
+    }
+}
+
+struct Two: Debug {
+    pair: (Leaf, Leaf),
+}
+
+Two: Serialize {
+    fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError> {
+        serialize_tuple2(mut s, self.pair)
+    }
+}
+
+Two: Deserialize {
+    fn deserialize<D: Deserializer>(mut d: D): Result<Two, DeError> {
+        let read: Result<(Leaf, Leaf), DeError> = deserialize_tuple2(mut d)
+        let pair = match read {
+            Ok(value) => value,
+            Err(e) => return Err(e),
+        }
+        Ok(Two { pair })
+    }
+}
+
+fn item(id: u32, title: str, own note: Option<String>, price: f64): Item {
+    Item { id, title: title.to_string(), note, price }
+}
+
+fn show(label: str, result: Result<(), DeError>) {
+    match result {
+        Ok(_) => println("{}: ok", label),
+        Err(e) => println("{}: {}", label, e.to_string()),
+    }
+}
+
+fn main() {
+    // A header row from the field names, quoting, and the two empty fields.
+    let mut items = List<Item>.new()
+    items.push(item(1, "Pen, blue", None, 1.5))
+    items.push(item(2, "Say \"hi\"", Some("".to_string()), 0.0))
+    items.push(item(3, "two\nlines", Some("x".to_string()), -0.0))
+    let text = csv.to_string(items).unwrap()
+    print(text)
+
+    let read: Result<List<Item>, DeError> = csv.from_str(text.as_str())
+    let back = read.unwrap()
+    println("{} records", back.len())
+    for entry in back {
+        let note = match entry.note {
+            Some(n) => format("some({})", n),
+            None => "none".to_string(),
+        }
+        println("{} {} {} {}", entry.id, entry.title.replace("\n", "\\n"), note, entry.price.abs())
+    }
+    println("sign of the last price: {}", 1.0 / back[2].price)
+
+    // Streaming: the writer hands over what it holds after each record.
+    let mut writer = Writer.new()
+    writer.write(item(7, "a", None, 1.0)).unwrap()
+    println("chunk: {}", writer.take().replace("\n", "|"))
+    writer.write(item(8, "b", None, 2.0)).unwrap()
+    println("chunk: {}", writer.take().replace("\n", "|"))
+    println("empty: {}", writer.take().len())
+
+    // Line endings.
+    let mut crlf = Writer.new()
+    crlf.use_crlf()
+    crlf.write(item(1, "a", None, 1.0)).unwrap()
+    println("{}", crlf.finish().replace("\r", "\\r").replace("\n", "\\n"))
+
+    // Values CSV cannot hold are errors, and a failed record leaves the output as it was.
+    let mut bad = Writer.new()
+    bad.write(item(1, "ok", None, 1.0)).unwrap()
+    show(
+        "nested struct",
+        bad.write(Outer { name: "n".to_string(), address: Address { city: "c".to_string(), zip: 1 } }),
+    )
+    let mut tags = List<String>.new()
+    tags.push("x".to_string())
+    show("list", bad.write(Tagged { name: "n".to_string(), tags }))
+    let mut data = List<u8>.new()
+    data.push(1)
+    show("bytes", bad.write(Blob { name: "n".to_string(), data }))
+    show("variant with a value", bad.write(Drawing { name: "n".to_string(), shape: Shape.Circle(1.0) }))
+    show("other header", bad.write(Address { city: "c".to_string(), zip: 1 }))
+    show("still works", bad.write(item(2, "fine", None, 2.0)))
+    print(bad.finish())
+
+    let mut unit_variant = List<Drawing>.new()
+    unit_variant.push(Drawing { name: "n".to_string(), shape: Shape.Dot })
+    print(csv.to_string(unit_variant).unwrap())
+
+    let mut outers = List<Outer>.new()
+    outers.push(Outer { name: "n".to_string(), address: Address { city: "c".to_string(), zip: 1 } })
+    println("{}", csv.to_string(outers).unwrap_err().to_string())
+
+    // A record whose only field is empty must not become a blank line.
+    let mut solos = List<Solo>.new()
+    solos.push(Solo { v: Some(1) })
+    solos.push(Solo { v: None })
+    solos.push(Solo { v: Some(3) })
+    let solo_text = csv.to_string(solos).unwrap()
+    print(solo_text)
+    let solo_read: Result<List<Solo>, DeError> = csv.from_str(solo_text.as_str())
+    let solo_back = solo_read.unwrap()
+    println("{} solos", solo_back.len())
+    match solo_back[1].v {
+        Some(_) => println("solo 1 is some"),
+        None => println("solo 1 is none"),
+    }
+
+    // The extremes of the integer widths, a char, and a bool.
+    let mut bigs = List<Big>.new()
+    bigs.push(Big { low: i64.MIN, high: u64.MAX, small: -128, flag: true, letter: 'é' })
+    let big_text = csv.to_string(bigs).unwrap()
+    print(big_text)
+    let big_read: Result<List<Big>, DeError> = csv.from_str(big_text.as_str())
+    let big_back = big_read.unwrap()
+    println(
+        "{} {} {} {} {}",
+        big_back[0].low == i64.MIN,
+        big_back[0].high == u64.MAX,
+        big_back[0].small,
+        big_back[0].flag,
+        big_back[0].letter,
+    )
+
+    // Raw rows.
+    let mut raw = Writer.new()
+    let mut fields = List<String>.new()
+    fields.push("a".to_string())
+    fields.push("b,c".to_string())
+    fields.push("".to_string())
+    fields.push("d\"e".to_string())
+    raw.write_row(fields).unwrap()
+    let mut short = List<String>.new()
+    short.push("only".to_string())
+    show("short row", raw.write_row(short))
+    let raw_text = raw.finish()
+    print(raw_text)
+    let mut reader = Reader.with_options(raw_text.as_str(), ',', false).unwrap()
+    match reader.read_row().unwrap() {
+        Some(row) => println("{} fields: {}", row.len(), row.join("|")),
+        None => println("no row"),
+    }
+    println("{}", reader.read_row().unwrap().is_none())
+
+    // Headers.
+    let mut with_headers = Reader.new("x,y\n1,2\n")
+    println("{}", with_headers.headers().unwrap().join("+"))
+
+    // A tuple of scalars is a sequence: no header row.
+    let mut pairs = List<Two>.new()
+    pairs.push(Two { pair: (Leaf { v: 1 }, Leaf { v: 2 }) })
+    pairs.push(Two { pair: (Leaf { v: 3 }, Leaf { v: 4 }) })
+    let pair_text = csv.to_string_with(pairs, ',', false).unwrap()
+    print(pair_text)
+    let pair_read: Result<List<Two>, DeError> = csv.from_str_with(pair_text.as_str(), ',', false)
+    println("{} pairs", pair_read.unwrap().len())
+    let short_pair: Result<List<Two>, DeError> = csv.from_str_with("1\n", ',', false)
+    println("{}", short_pair.unwrap_err().to_string())
+    let long_pair: Result<List<Two>, DeError> = csv.from_str_with("1,2,3\n", ',', false)
+    println("{}", long_pair.unwrap_err().to_string())
+
+    // Reading what CSV cannot hold, and what has no names.
+    let nested: Result<List<Outer>, DeError> = csv.from_str("name,address\nx,y\n")
+    println("{}", nested.unwrap_err().to_string())
+    let payload: Result<List<Drawing>, DeError> = csv.from_str("name,shape\nx,Circle\n")
+    println("{}", payload.unwrap_err().to_string())
+    let nameless: Result<List<Item>, DeError> = csv.from_str_with("1,a,,1\n", ',', false)
+    println("{}", nameless.unwrap_err().to_string())
+    let dot: Result<List<Drawing>, DeError> = csv.from_str("name,shape\nx,Dot\n")
+    println("{}", dot.unwrap().len())
+
+    // Delimiters that would break the format are refused.
+    match Writer.with_options('"', true) {
+        Ok(_) => println("quote accepted"),
+        Err(e) => println("{}", e.to_string()),
+    }
+    match Reader.with_options("a", 'é', true) {
+        Ok(_) => println("é accepted"),
+        Err(e) => println("{}", e.to_string()),
+    }
+    let tab = csv.to_string_with(back, '\t', true).unwrap()
+    println("{}", tab.replace("\t", "<TAB>").replace("\n", "|"))
+}

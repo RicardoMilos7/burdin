@@ -1,0 +1,12 @@
+name: >
+  folded text that
+  continues here
+
+  second paragraph
+    more indented
+  back to normal
+servers: []
+protocol: Http
+backup: null
+weights: {}
+note: z

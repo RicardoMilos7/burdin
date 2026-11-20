@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """Checks dependency tables, features, and target-specific dependencies (stage 3, issues #340 and #341;
-spec/packages.md, PKG19-PKG27).
+spec/packages.md, PKG25-PKG33).
 
 Needs a built driver (BURDIN selects it, like tests/run_tests.py).
 
 What it checks:
   * `[features]` and `--features`/`--no-default-features`/`--all-features` decide the constants of the generated
-    `features` module, and a program branches on them with `comptime if` (PKG22, PKG23, PKG26);
+    `features` module, and a program branches on them with `comptime if` (PKG28, PKG29, PKG32);
   * a feature forwards to a dependency's feature (`x/feature`) and an optional dependency is switched by `dep:x`
-    (PKG22);
+    (PKG28);
   * features unify across the graph: two dependents request different features of one package and both are enabled,
-    although neither edge asks for both (PKG24);
-  * a request for an inactive dependency is ignored on this platform (PKG24);
+    although neither edge asks for both (PKG30);
+  * a request for an inactive dependency is ignored on this platform (PKG30);
   * the `[features]` table is validated when the manifest is read, and an unknown `--features` item is an error
-    (PKG22, PKG23);
+    (PKG28, PKG29);
   * a dev-dependency is invisible to `build`, `run`, and `check`, and visible to `test` and `check --tests` through
-    its package name; a missing dev-dependency path is an error in every build (PKG20);
-  * a dependency's own dev-dependencies are never loaded (PKG20);
-  * a target-specific dependency of another platform is not loaded, and one of this platform is (PKG21);
+    its package name; a missing dev-dependency path is an error in every build (PKG26);
+  * a dependency's own dev-dependencies are never loaded (PKG26);
+  * a target-specific dependency of another platform is not loaded, and one of this platform is (PKG27);
   * an unknown predicate and a bare target triple are errors, and a target-specific dev-dependency follows the
-    platform too (PKG21);
-  * a one-file target takes no feature flags (PKG25);
+    platform too (PKG27);
+  * a one-file target takes no feature flags (PKG31);
   * `burdin.lock` pins the potential graph (optional, dev, and every target's dependencies, and what a dev-dependency
-    reaches), `--locked` accepts it, and features and the command leave it unchanged (PKG27);
+    reaches), `--locked` accepts it, and features and the command leave it unchanged (PKG33);
   * a source module named `features` conflicts with the generated one, and a package with neither features nor an
-    optional dependency has no such module (PKG26).
+    optional dependency has no such module (PKG32).
 """
 
 import os
@@ -240,7 +240,7 @@ with harness.temporary_dir("burdin-features-") as work:
         f"a dependency's `default` feature is not enabled by default: {out(defaulted)!r} {err(defaulted)[:300]}",
     )
 
-    # A request for a dependency this platform does not select is ignored (PKG24).
+    # A request for a dependency this platform does not select is ignored (PKG30).
     winfeature = package(
         work,
         "winfeature",
@@ -260,7 +260,7 @@ with harness.temporary_dir("burdin-features-") as work:
             f"a request for an inactive dependency was not ignored: {err(ignored)[:300]}",
         )
 
-    # --- Dev-dependencies (PKG20) --------------------------------------------------------------------------------
+    # --- Dev-dependencies (PKG26) --------------------------------------------------------------------------------
     devapp = package(
         work,
         "devapp",
@@ -314,7 +314,7 @@ with harness.temporary_dir("burdin-features-") as work:
         'test "the kit" {\n    assert_eq(testkit.answer(), 3)?\n}\n',
     )
 
-    # A missing dev-dependency path fails every build: its manifest is pinned for the lockfile (PKG20, PKG27).
+    # A missing dev-dependency path fails every build: its manifest is pinned for the lockfile (PKG26, PKG33).
     missing = package(
         work,
         "missing",
@@ -347,7 +347,7 @@ with harness.temporary_dir("burdin-features-") as work:
         f"a dependency's own dev-dependency was loaded: {err(lib_build)[:300]}",
     )
 
-    # --- Target-specific dependencies (PKG21) --------------------------------------------------------------------
+    # --- Target-specific dependencies (PKG27) --------------------------------------------------------------------
     winapp = package(
         work,
         "winapp",
@@ -448,7 +448,7 @@ with harness.temporary_dir("burdin-features-") as work:
         f"an unknown `--features` item is not an error: {err(unknown)[:300]}",
     )
 
-    # A one-file target has no features (PKG25).
+    # A one-file target has no features (PKG31).
     script = work / "script.bd"
     write(script, 'fn main() {\n    println("one")\n}\n')
     for flag in (["--no-default-features"], ["--all-features"], ["--features", "x"]):
@@ -458,7 +458,7 @@ with harness.temporary_dir("burdin-features-") as work:
             f"`burdin run script.bd {' '.join(flag)}` was not refused: {refused.returncode} {err(refused)[:300]}",
         )
 
-    # --- The generated `features` module (PKG26) -----------------------------------------------------------------
+    # --- The generated `features` module (PKG32) -----------------------------------------------------------------
     plain = package(work, "plain", '[package]\nname = "plain"\n', {"main.bd": 'fn main() {\n    println("plain")\n}\n'})
     plain_run = run_in(plain, "run", ".")
     check(plain_run.returncode == 0 and out(plain_run) == "plain\n", f"a package without features did not run: {err(plain_run)[:300]}")
@@ -476,7 +476,7 @@ with harness.temporary_dir("burdin-features-") as work:
         f"a source module named `features` is not refused: {err(conflict)[:300]}",
     )
 
-    # --- The lockfile pins the potential graph (PKG27) -----------------------------------------------------------
+    # --- The lockfile pins the potential graph (PKG33) -----------------------------------------------------------
     lockapp = package(
         work,
         "lockapp",

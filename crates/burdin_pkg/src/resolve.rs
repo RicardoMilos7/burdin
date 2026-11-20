@@ -3,7 +3,7 @@
 //! `resolve` walks the graph from the entry package: a path dependency is read where it is, and a git dependency is
 //! pinned to the commit `burdin.lock` already records for its repository and reference, or resolved now when the
 //! lockfile has none. The walk covers every dependency a build could use, whatever its features and platform, and the
-//! entry package's dev-dependencies (`spec/packages.md`, PKG27), so one lockfile serves every build. Each git package is checked out once per commit and its files are hashed; a checksum that
+//! entry package's dev-dependencies (`spec/packages.md`, PKG33), so one lockfile serves every build. Each git package is checked out once per commit and its files are hashed; a checksum that
 //! disagrees with the lockfile is an error, because the files are no longer the ones the lockfile pinned. An
 //! official package is read from the compiler's `packages/` folder and hashed too, but its files belong to the
 //! compiler, so a different checksum is a difference between the lockfile and the graph, not a corrupt checkout.
@@ -39,18 +39,32 @@ pub enum Synced {
     NotNeeded,
 }
 
+/// What a command may do about the lockfile and the network (PKG8, PKG24).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mode {
+    /// `--locked`: a lockfile that would change is an error, and nothing is written (PKG8).
+    pub locked: bool,
+    /// `--offline`: a git package is read from the git cache or `vendor/`, and nothing is fetched (PKG24).
+    pub offline: bool,
+}
+
+/// [`sync_with`] for a build that is not offline.
+pub fn sync(dir: &Path, locked: bool) -> Result<Synced, String> {
+    sync_with(dir, Mode { locked, offline: false })
+}
+
 /// Resolves the graph of the package in `dir` against its lockfile and writes the lockfile when it changed. With
 /// `locked`, a lockfile that would change is an error that names each difference, and nothing is written (PKG8).
-pub fn sync(dir: &Path, locked: bool) -> Result<Synced, String> {
+pub fn sync_with(dir: &Path, mode: Mode) -> Result<Synced, String> {
     let existing = lockfile::read(dir)?;
-    let resolution = resolve(dir, None, existing.as_ref(), locked)?;
+    let resolution = resolve_with(dir, None, existing.as_ref(), mode)?;
     if existing.as_ref() == Some(&resolution.lock) {
         return Ok(Synced::UpToDate);
     }
     if existing.is_none() && !resolution.has_pinned {
         return Ok(Synced::NotNeeded);
     }
-    if locked {
+    if mode.locked {
         return Err(stale_message(&differences(existing.as_ref(), &resolution.lock)));
     }
     write(dir, &resolution.lock)?;
@@ -183,9 +197,22 @@ pub fn resolve(
     existing: Option<&Lockfile>,
     locked: bool,
 ) -> Result<Resolution, String> {
+    resolve_with(dir, root_manifest, existing, Mode { locked, offline: false })
+}
+
+/// [`resolve`] under `mode`: offline, a pinned git package that the cache lacks comes from `vendor/` (PKG24).
+pub fn resolve_with(
+    dir: &Path,
+    root_manifest: Option<&str>,
+    existing: Option<&Lockfile>,
+    mode: Mode,
+) -> Result<Resolution, String> {
+    let dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
     let mut walker = Walker {
         existing,
-        locked,
+        locked: mode.locked,
+        offline: mode.offline,
+        entry: dir.clone(),
         names: HashMap::new(),
         dirs: HashMap::new(),
         packages: BTreeMap::new(),
@@ -202,6 +229,10 @@ pub fn resolve(
 struct Walker<'a> {
     existing: Option<&'a Lockfile>,
     locked: bool,
+    /// `--offline`: nothing is fetched (PKG24).
+    offline: bool,
+    /// The entry package's directory: an offline build reads its `vendor/` (PKG24).
+    entry: PathBuf,
     /// The package name and origin of each visited directory.
     dirs: HashMap<PathBuf, (String, Origin)>,
     /// The directory each package name came from: names are unique in a graph.
@@ -217,7 +248,7 @@ struct Walker<'a> {
 
 impl Walker<'_> {
     /// Visits the package in `dir` (canonical) and its dependencies; returns its package name. `is_root` is the entry
-    /// package, whose dev-dependencies are part of the graph (PKG20).
+    /// package, whose dev-dependencies are part of the graph (PKG26).
     fn visit(
         &mut self,
         dir: &Path,
@@ -256,8 +287,8 @@ impl Walker<'_> {
         self.dirs.insert(dir.to_path_buf(), (manifest.name.clone(), origin.clone()));
         self.visiting.push(dir.to_path_buf());
         let mut dependencies = Vec::new();
-        // The potential graph (PKG27): every dependency the manifest declares, whatever its features and platform,
-        // and the dev-dependencies of the entry package alone (PKG20).
+        // The potential graph (PKG33): every dependency the manifest declares, whatever its features and platform,
+        // and the dev-dependencies of the entry package alone (PKG26).
         let dev: &[Dependency] = if is_root { &manifest.dev_deps } else { &[] };
         for dependency in manifest.deps.iter().chain(dev) {
             let key = &dependency.name;
@@ -311,6 +342,24 @@ impl Walker<'_> {
         Ok(result)
     }
 
+    /// The checkout of a pinned git package in an offline build (PKG24): the git cache's when it has one, otherwise a
+    /// copy of `vendor/<name>` restored into the cache. With neither, an error; nothing is fetched.
+    fn offline_checkout(&self, key: &str, url: &str, commit: &str, name: &str) -> Result<PathBuf, String> {
+        let cached = lockfile::git_checkout_dir(url, commit)?;
+        if cached.is_dir() {
+            return Ok(cached);
+        }
+        let vendored = self.entry.join("vendor").join(name);
+        if vendored.is_dir() {
+            return git::restore(url, commit, &vendored);
+        }
+        Err(format!(
+            "git dependency `{key}` ({url} at {commit}) is not in the git cache, and {} does not have it: --offline \
+             fetches nothing; run `burdin vendor` with network access first",
+            source_path_text(&vendored)
+        ))
+    }
+
     /// The commit, checkout, and checksum of a git dependency: the lockfile's commit when it records this repository
     /// and reference, otherwise a fresh resolution (refused under `--locked`).
     fn git_dependency(
@@ -327,7 +376,11 @@ impl Walker<'_> {
         let result = match pinned {
             Some(package) => {
                 let commit = package.git.as_ref().map(|g| g.commit.clone()).unwrap_or_default();
-                let dir = git::checkout(url, &commit)?;
+                let dir = if self.offline {
+                    self.offline_checkout(key, url, &commit, &package.name)?
+                } else {
+                    git::checkout(url, &commit)?
+                };
                 let checksum = checksum(&dir)?;
                 if let Some(expected) = &package.checksum
                     && *expected != checksum
@@ -346,6 +399,13 @@ impl Walker<'_> {
                     "git dependency `{key}` ({url}, {}) is not in burdin.lock",
                     reference.describe()
                 )]));
+            }
+            None if self.offline => {
+                return Err(format!(
+                    "git dependency `{key}` ({url}, {}) is not in burdin.lock, and --offline does not resolve a \
+                     reference: run the command without --offline to record it",
+                    reference.describe()
+                ));
             }
             None => {
                 let commit = git::resolve(url, reference)?;

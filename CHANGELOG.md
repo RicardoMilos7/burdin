@@ -6,7 +6,7 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
-- Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG19-PKG27).
+- Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG25-PKG33).
   `[features]` declares named features whose items are other features, `dep:x` for an optional dependency, or
   `x/feature` to forward to a dependency; every optional dependency is an implicit feature of its name, `default` is
   enabled unless `--no-default-features`, and `--features <list>` and `--all-features` extend the selection on `build`,
@@ -23,6 +23,14 @@ close-out checklist in `AGENTS.md`).
   reaches, but never a dependency's own dev-dependencies — so features, the platform, and the command never rewrite it.
   `tests/check_features.py` checks all of it in every CI job, `tests/check_watch.py` checks the pass-through, and the
   loader's unit tests cover the `cfg` grammar, feature validation, unification, and the generated module.
+- Target directory and artifact cache (issue #353, `spec/target.md`, TG1-TG10): `build`, `run`, and `test` of a package
+  directory keep the executable they link under `<package>/target/burdin/<profile>/bin/` (the test binary under `test/`),
+  next to a fingerprint file that lists every input (the compiler, the host, the flags, each manifest and source as
+  checked, the build inputs, and the Rust shim libraries) and the executable's SHA-256. A build whose fingerprint matches
+  copies the cached executable instead of linking again; the front end always runs, so diagnostics do not change. Debug
+  (`-g`), `--emit`, `--emit-ir`, and `--pgo-use` builds, bench and fuzz builds, and one-file targets are not cached. An
+  `-o` copy gets the `.exe` suffix the MSVC linker would have added. `tests/check_target.py` checks it with a broken
+  linker.
 - Official packages (`spec/packages.md`, PKG15-PKG18): `name = true` in `[dependencies]` declares a package that ships with
   the compiler, from the new top-level `packages/` folder (`packages/README.md` explains it, and `json` is the first
   package in it). `burdin add
@@ -33,6 +41,18 @@ close-out checklist in `AGENTS.md`).
   through `BURDIN_PACKAGES`, `<exe dir>/../packages`, `<exe dir>/packages`, and (debug builds) the repository it was built
   from; the release archive carries `packages/` beside `burdin`, and `install.sh` and `install.ps1` install it beside the
   compiler. `tests/check_packages.py` and `tests/check_release.py` check it against the fixtures in `tests/packages/`.
+- The `toml` official package (stage 3, issue #256; `spec/toml.md`, decisions TOML1-TOML16): TOML 1.0.0 reading and
+  writing on the serialization framework, as `packages/toml`. `parse` reads a document into a `Value` tree that keeps
+  the position of every key and value, and `render` writes the canonical form (a table's scalars first, then its
+  tables as sections, and a non-empty all-table array as `[[path]]`; sorted map keys; basic-string escaping; floats
+  and datetimes in the form TOML 1.0.0 reads back). `to_string`/`from_str` map a struct, map, or payload variant
+  through the framework: `Option.Some` is the value, a unit variant its name, a payload variant `{ Name = value }`
+  or `{ Name = [values] }`. The parser rejects everything TOML 1.0.0 rejects, with the message at the place the rule
+  is broken (duplicate and redefined tables, closed inline tables, arrays of tables versus static arrays, integer and
+  float ranges, datetime fields, escapes), and the reader reports a type mismatch at the value's line and column plus
+  the framework's path. `tests/check_toml.py` drives it through `tests/toml/` (round trips, spans, malformed input,
+  the framework's mapping, and writing) together with `burdin add toml` and its official pin,
+  `tests/s3_serialize/toml` is the conformance case, and every CI job runs it.
 
 ## 0.1.1 — 2026-11-20
 
@@ -82,7 +102,7 @@ close-out checklist in `AGENTS.md`).
   requirement is not checked yet (`spec/serialization.md`, SER12).
 - The compiler-provided impls for primitives and built-in containers, and the derive's field requirement, are the
   next phase; until then a hand-written impl and the derived scalars call the helpers. The format packages are
-  separate official packages; `json` is the first one (below), and toml, csv, yaml, and xml follow.
+  separate official packages; `json` is the first one (below), csv, yaml, and xml follow it, and toml is still to come.
 - `tests/s3_serialize/` covers the scalars (including the non-finite floats), nested sequences and maps, a hand-written
   enum, the field/index/key/variant error paths, the derived struct, enum, generic type, and errors, and the tuple
   helpers end to end. Every writer helper takes the serializer first and the value second, and every tuple reader
@@ -101,6 +121,23 @@ close-out checklist in `AGENTS.md`).
 - `tests/json/` holds the fixtures (`roundtrip`, `pretty`, and one malformed document per file under `bad`) with
   their `.expected` goldens; `tests/check_json.py` runs them and checks `burdin add json`, the official pin in
   `burdin.lock`, and `--locked` against a changed package. `tests/s3_serialize/json` is the conformance case.
+
+### The `csv`, `yaml`, and `xml` official packages (issues #257, #258, #259)
+
+- `packages/csv`: a record-at-a-time reader and writer (`Reader`, `Writer`, `to_string`, `from_str`) with RFC 4180
+  quoting, headers (a struct's field names), LF/CRLF/CR line endings, a custom delimiter, and typed records on the
+  serialization framework. Errors carry a line, a column, and the record/field path; a malformed input never panics.
+- `packages/yaml`: a safe YAML subset (block and flow collections, plain/quoted/block scalars, comments, anchors and
+  aliases resolved while reading with node, size, and depth limits). Tags other than `!!str`, directives, merge keys,
+  complex keys, and multiple documents are rejected with a located error, so nothing constructs arbitrary types.
+  `yaml.to_string` and `yaml.from_str`; the README lists the subset exactly.
+- `packages/xml`: a namespace-aware reader and writer with the predefined entities, numeric references, CDATA,
+  comments, processing instructions, and a small DOM (`Document`, `Element`, `Node`, builder, compact and pretty
+  output). A DOCTYPE is an error, so there are no external entities or entity-expansion bombs. `xml.to_string` and
+  `xml.from_str` map types to elements.
+- `tests/csv/`, `tests/yaml/`, and `tests/xml/` hold the fixtures with `.expected` goldens; `tests/check_csv.py`,
+  `check_yaml.py`, and `check_xml.py` run them and check `burdin add`, the official pin, and `--locked`. The conformance
+  cases are `tests/s3_serialize/{csv,yaml,xml}`, and CI runs all three checks.
 
 ### Advanced testing tools (issue #615, sub-issues #616, #618, #620, #622)
 

@@ -1,4 +1,4 @@
-//! Platform predicates: the `cfg(...)` of a `[target.'cfg(...)']` table (`spec/packages.md`, PKG21).
+//! Platform predicates: the `cfg(...)` of a `[target.'cfg(...)']` table (`spec/packages.md`, PKG27).
 //!
 //! The predicate is evaluated for the host the compiler runs on, which is the target it builds for. The grammar is
 //! small on purpose: `unix`, `windows`, `target_os = "..."`, `target_arch = "..."`, `target_family = "..."`, and

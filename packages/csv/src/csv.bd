@@ -1,0 +1,1195 @@
+// The CSV format (spec/serialization.md; issue #257).
+//
+// A format package: it implements only the format side of the framework. `Writer` implements `Serializer` and
+// `Reader` implements `Deserializer`; the public surface is `to_string`, `from_str`, and the two streaming types.
+//
+// A CSV document is a list of records, so the unit the framework sees is one record, not the whole document:
+// `Writer.write(record)` serializes one record and `Reader.read()` deserializes one. A record is a struct (its
+// field names are the header row), a map with string keys (the same), or a sequence of scalars (no names). CSV has
+// no nesting, so a field holds one scalar:
+//   unit -> an empty field; bool -> true/false; every integer width and f32/f64 -> the number's text;
+//   char, str -> text, quoted when it needs to be; an enum variant without a payload -> its name;
+//   Option.Some -> the value itself; Option.None -> an empty field.
+// A struct, map, sequence, bytes, or a variant with a payload inside a field is an error.
+//
+// An empty string is written as `""` so that it can be told from `None`: an empty field with no quotes is `None`
+// (or the unit value), and an empty quoted field is the empty string.
+
+// ----- the writer ----------------------------------------------------------------------------------------------
+
+/// The CSV writer. Records are buffered one at a time (a header row needs every field name before it can be
+/// written), and a finished record is appended to `out`, which `take` and `finish` hand over.
+struct Writer {
+    out: String,
+    delim: u8,
+    has_headers: bool,
+    crlf: bool,
+    // The header row, once written.
+    header: List<String>,
+    header_done: bool,
+    // The number of fields of the first record; every record has the same.
+    width: usize,
+    // 1 = a struct or map record, 2 = a sequence record, 3 = the payload of an `Option` or a unit variant. Only the
+    // first frame is ever a record: nothing nests in CSV.
+    frames: List<i32>,
+    names: List<String>,
+    cells: List<String>,
+    pending: bool,
+}
+
+Writer {
+    /// A writer with commas, a header row, and `\n` line endings.
+    fn new(): Writer {
+        Writer {
+            out: String.new(),
+            delim: 44,
+            has_headers: true,
+            crlf: false,
+            header: List<String>.new(),
+            header_done: false,
+            width: 0,
+            frames: List<i32>.new(),
+            names: List<String>.new(),
+            cells: List<String>.new(),
+            pending: false,
+        }
+    }
+
+    /// A writer with the given delimiter (an ASCII character other than a quote or a line break) and whether the
+    /// first record of a struct or map writes a header row.
+    fn with_options(delimiter: char, has_headers: bool): Result<Writer, DeError> {
+        let code = delimiter as u32
+        if code >= 128 || code == 34 || code == 10 || code == 13 {
+            return Err(DeError.new("the delimiter must be an ASCII character other than a quote or a line break"))
+        }
+        let mut writer = Writer.new()
+        writer.delim = code as u8
+        writer.has_headers = has_headers
+        Ok(writer)
+    }
+
+    /// Ends each record with `\r\n` instead of `\n`.
+    fn use_crlf(mut self) {
+        self.crlf = true
+    }
+
+    /// The text written so far, ending the writer.
+    fn finish(own self): String {
+        self.out
+    }
+
+    /// The text written since the last call, leaving the writer empty. A caller that writes a large table drains
+    /// the output after each record instead of keeping it all.
+    fn take(mut self): String {
+        let text = self.out.clone()
+        self.out.clear()
+        text
+    }
+
+    /// Writes one record. A failure leaves the output as it was: nothing of the record is written.
+    fn write<T: Serialize>(mut self, record: T): Result<(), DeError> {
+        let result = record.serialize(mut self)
+        match result {
+            Ok(_) => {
+                if !self.frames.is_empty() {
+                    self.reset_record()
+                    return Err(DeError.new("a CSV record was not finished"))
+                }
+                self.reset_record()
+                Ok(())
+            }
+            Err(e) => {
+                self.reset_record()
+                Err(e)
+            }
+        }
+    }
+
+    /// Writes one record of text fields, quoting what needs it. No header row is written for it.
+    fn write_row(mut self, fields: List<String>): Result<(), DeError> {
+        self.reset_record()
+        let mut i: usize = 0
+        while i < fields.len() {
+            let encoded = __encode(fields[i].as_str(), self.delim)
+            self.cells.push(encoded)
+            i = i + 1
+        }
+        let result = self.flush_record(false)
+        self.reset_record()
+        result
+    }
+
+    /// Forgets a record that was started but not finished.
+    priv fn reset_record(mut self) {
+        self.frames = List<i32>.new()
+        self.names = List<String>.new()
+        self.cells = List<String>.new()
+        self.pending = false
+    }
+
+    /// Starts a record of `kind`. A record inside a record is a nested value, which CSV cannot hold.
+    priv fn open_record(mut self, kind: i32): Result<(), DeError> {
+        if !self.frames.is_empty() {
+            return Err(self.field_error("a CSV field cannot hold a struct, a map, or a sequence"))
+        }
+        self.frames.push(kind)
+        Ok(())
+    }
+
+    /// An error about the field being written: its name is the path, as in the errors of the reader.
+    priv fn field_error(self, message: str): DeError {
+        let failure = DeError.new(message)
+        if self.frames.len() > 0 && self.frames[0] == 1 && self.names.len() > 0 {
+            let last = self.names[self.names.len() - 1].clone()
+            return failure.field(last.as_str())
+        }
+        failure
+    }
+
+    /// Removes the record frame, checking that it is of `kind`.
+    priv fn close_record(mut self, kind: i32): Result<(), DeError> {
+        if self.frames.len() != 1 || self.frames[0] != kind || self.pending {
+            return Err(DeError.new("unbalanced CSV record"))
+        }
+        self.frames.pop()
+        Ok(())
+    }
+
+    /// Adds one field to the record.
+    priv fn cell(mut self, own text: String): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a CSV record must be a struct, a map, or a sequence"))
+        }
+        if self.frames[0] == 1 {
+            if !self.pending {
+                return Err(DeError.new("a CSV field value without a field name"))
+            }
+            self.pending = false
+        }
+        self.cells.push(text)
+        Ok(())
+    }
+
+    /// Adds a field of text, quoted when it needs to be.
+    priv fn text_cell(mut self, text: str): Result<(), DeError> {
+        let encoded = __encode(text, self.delim)
+        self.cell(encoded)
+    }
+
+    /// Adds the name of the next field of a struct or map record.
+    priv fn name(mut self, name: str): Result<(), DeError> {
+        if self.frames.is_empty() || self.frames[0] != 1 || self.frames.len() != 1 {
+            return Err(DeError.new("a CSV field name outside a record"))
+        }
+        if self.pending {
+            return Err(DeError.new("two CSV field names in a row"))
+        }
+        self.names.push(name.to_string())
+        self.pending = true
+        Ok(())
+    }
+
+    /// Appends the finished record, preceded by the header row when it is the first record that has names.
+    /// Everything is checked before anything is appended.
+    priv fn flush_record(mut self, with_names: bool): Result<(), DeError> {
+        if self.cells.is_empty() {
+            return Err(DeError.new("a CSV record needs at least one field"))
+        }
+        let named = with_names && self.has_headers
+        if with_names && self.names.len() != self.cells.len() {
+            return Err(DeError.new("a CSV field wrote no value"))
+        }
+        let mut write_header = false
+        if named {
+            if self.header_done {
+                if !__same_names(self.header, self.names) {
+                    return Err(DeError.new("the fields of this record are not the fields of the header row"))
+                }
+            } else {
+                write_header = true
+            }
+        }
+        let count = self.cells.len()
+        let expected = if write_header { self.names.len() } else if self.width == 0 { count } else { self.width }
+        if count != expected {
+            return Err(DeError.new(format("a record has {} fields but the first had {}", count, expected)))
+        }
+        if write_header {
+            let mut encoded = List<String>.new()
+            let mut i: usize = 0
+            let delim = self.delim
+            while i < self.names.len() {
+                let name = self.names[i].clone()
+                encoded.push(__encode(name.as_str(), delim))
+                i = i + 1
+            }
+            self.push_line(encoded)
+            self.header = self.names.clone()
+            self.header_done = true
+        }
+        if self.cells.len() == 1 && self.cells[0].len() == 0 {
+            // A line with nothing on it is a blank line, which a reader skips; quote the empty field.
+            self.cells[0] = "\"\"".to_string()
+        }
+        let row = self.cells.clone()
+        self.push_line(row)
+        self.width = count
+        Ok(())
+    }
+
+    /// Appends one line: the fields, the delimiter between them, and the line ending.
+    priv fn push_line(mut self, fields: List<String>) {
+        let mut i: usize = 0
+        while i < fields.len() {
+            if i > 0 {
+                self.out.push(self.delim as char)
+            }
+            self.out.push_str(fields[i].as_str())
+            i = i + 1
+        }
+        if self.crlf {
+            self.out.push('\r')
+        }
+        self.out.push('\n')
+    }
+}
+
+Writer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        self.cell(String.new())
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        if value {
+            self.cell("true".to_string())
+        } else {
+            self.cell("false".to_string())
+        }
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        self.cell(value.to_string())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        self.cell(__float_text(value.to_string()))
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        self.cell(__float_text(value.to_string()))
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        let mut text = String.new()
+        text.push(value)
+        self.text_cell(text.as_str())
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        self.text_cell(value)
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        Err(self.field_error("bytes cannot be written as a CSV field"))
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        self.open_record(2)
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close_record(2)?
+        self.flush_record(false)
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.open_record(1)
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        self.name(key)
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close_record(1)?
+        self.flush_record(true)
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.open_record(1)
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        self.name(name)
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close_record(1)?
+        self.flush_record(true)
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a CSV record must be a struct, a map, or a sequence"))
+        }
+        // `Option` is the one enum with a special form: `None` is an empty field and `Some` is its payload.
+        if type_name == "Option" {
+            if variant == "None" {
+                self.cell(String.new())?
+            }
+            self.frames.push(3)
+            return Ok(())
+        }
+        if arity != 0 {
+            return Err(
+                self.field_error(
+                    format("variant '{}' has a value and cannot be written as one CSV field", variant).as_str(),
+                ),
+            )
+        }
+        self.text_cell(variant)?
+        self.frames.push(3)
+        Ok(())
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        if self.frames.len() < 2 || self.frames[self.frames.len() - 1] != 3 {
+            return Err(DeError.new("unbalanced CSV variant"))
+        }
+        self.frames.pop()
+        Ok(())
+    }
+}
+
+// ----- the reader ----------------------------------------------------------------------------------------------
+
+/// One field of the current record: its text, whether it was quoted, and the byte offset where it starts.
+struct Cell {
+    text: String,
+    quoted: bool,
+    pos: usize,
+}
+
+/// One open enum in the reader. They nest (an `Option` payload may be an enum), so they are a stack.
+struct EnumFrame {
+    option: bool,
+    none: bool,
+    variant: String,
+    pos: usize,
+}
+
+/// The CSV reader: a copy of the input, the offset of the next unread record, and the record being read. The line
+/// and column of an error are computed from an offset when it is reported (SER10).
+struct Reader {
+    text: String,
+    pos: usize,
+    // Where the text starts, after a byte order mark.
+    start: usize,
+    delim: u8,
+    has_headers: bool,
+    headers: List<String>,
+    headers_done: bool,
+    // The number of fields every record must have; 0 until the first record (or the header row) is read.
+    width: usize,
+    row: List<Cell>,
+    row_pos: usize,
+    col: usize,
+    // 0 = no record opened, 1 = a struct or map, 2 = a sequence.
+    depth: i32,
+    enums: List<EnumFrame>,
+    records: usize,
+}
+
+Reader {
+    /// A reader over `text`, with commas and a header row. The text is copied once.
+    fn new(text: str): Reader {
+        let mut start: usize = 0
+        let bytes = text.as_bytes()
+        if bytes.len() >= 3 && bytes[0] == 239 && bytes[1] == 187 && bytes[2] == 191 {
+            start = 3
+        }
+        Reader {
+            text: text.to_string(),
+            pos: start,
+            start,
+            delim: 44,
+            has_headers: true,
+            headers: List<String>.new(),
+            headers_done: false,
+            width: 0,
+            row: List<Cell>.new(),
+            row_pos: 0,
+            col: 0,
+            depth: 0,
+            enums: List<EnumFrame>.new(),
+            records: 0,
+        }
+    }
+
+    /// A reader with the given delimiter (an ASCII character other than a quote or a line break) and whether the
+    /// first record is a header row.
+    fn with_options(text: str, delimiter: char, has_headers: bool): Result<Reader, DeError> {
+        let code = delimiter as u32
+        if code >= 128 || code == 34 || code == 10 || code == 13 {
+            return Err(DeError.new("the delimiter must be an ASCII character other than a quote or a line break"))
+        }
+        let mut reader = Reader.new(text)
+        reader.delim = code as u8
+        reader.has_headers = has_headers
+        Ok(reader)
+    }
+
+    /// Names the columns of a text that has no header row, so a struct can be read from it. Use it with
+    /// `has_headers` false: no record is taken as the header.
+    fn set_headers(mut self, own names: List<String>) {
+        self.width = names.len()
+        self.headers = names
+        self.headers_done = true
+    }
+
+    /// The header row, reading it if nothing has been read yet. Empty when the reader has no header row.
+    fn headers(mut self): Result<List<String>, DeError> {
+        self.ensure_headers()?
+        Ok(self.headers.clone())
+    }
+
+    /// The next record as its text fields, or `None` at the end. The header row is not a record.
+    fn read_row(mut self): Result<Option<List<String>>, DeError> {
+        self.ensure_headers()?
+        if !self.next_record()? {
+            return Ok(None)
+        }
+        let mut fields = List<String>.new()
+        let mut i: usize = 0
+        while i < self.row.len() {
+            fields.push(self.row[i].text.clone())
+            i = i + 1
+        }
+        self.records = self.records + 1
+        Ok(Some(fields))
+    }
+
+    /// The next record as a `T`, or `None` at the end. An error names the record's line and column and carries the
+    /// record's index, then the field, as its path.
+    fn read<T: Deserialize>(mut self): Result<Option<T>, DeError> {
+        self.ensure_headers()?
+        if !self.next_record()? {
+            return Ok(None)
+        }
+        let index = self.records
+        self.records = self.records + 1
+        let result = T.deserialize(mut self)
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(e) => Err(self.locate(e).index(index)),
+        }
+    }
+
+    /// Gives an error that has no position the line and column where the current record starts.
+    priv fn locate(self, own e: DeError): DeError {
+        let message = e.message.clone()
+        if message.as_str().starts_with("line ") {
+            return e
+        }
+        let located = self.fail_at(message.as_str(), self.row_pos)
+        DeError { message: located.message, path: e.path }
+    }
+
+    /// Reads the header row once, when the reader has one.
+    priv fn ensure_headers(mut self): Result<(), DeError> {
+        if self.headers_done {
+            return Ok(())
+        }
+        self.headers_done = true
+        if !self.has_headers {
+            return Ok(())
+        }
+        if self.next_record()? {
+            let mut i: usize = 0
+            while i < self.row.len() {
+                let name = self.row[i].text.clone()
+                self.headers.push(name)
+                i = i + 1
+            }
+        }
+        Ok(())
+    }
+
+    /// The byte at the current position, or 0 at the end (callers check the length first).
+    priv fn peek(self): u8 {
+        if self.pos >= self.text.len() {
+            0
+        } else {
+            let bytes = self.text.as_bytes()
+            bytes[self.pos]
+        }
+    }
+
+    /// An error at `position`, with its line and column. A column counts Unicode scalar values, and a line ends at
+    /// `\n`, `\r\n`, or a lone `\r` (SER10).
+    priv fn fail_at(self, message: str, position: usize): DeError {
+        let bytes = self.text.as_bytes()
+        let mut line: i32 = 1
+        let mut col: i32 = 1
+        let mut i: usize = self.start
+        while i < position && i < bytes.len() {
+            let b = bytes[i]
+            if b == 10 {
+                line = line + 1
+                col = 1
+            } else if b == 13 {
+                if i + 1 < bytes.len() && bytes[i + 1] == 10 {
+                    // The line ends at the `\n` that follows.
+                } else {
+                    line = line + 1
+                    col = 1
+                }
+            } else if b >= 128 && b < 192 {
+                // A UTF-8 continuation byte: still the same character.
+            } else {
+                col = col + 1
+            }
+            i = i + 1
+        }
+        DeError.syntax(message, line, col)
+    }
+
+    /// An error at the current position.
+    priv fn fail(self, message: str): DeError {
+        self.fail_at(message, self.pos)
+    }
+
+    /// Reads the next record into `row`. False at the end of the input. Blank lines between records are skipped. A
+    /// syntax error ends the input, so a caller that goes on reads nothing more.
+    priv fn next_record(mut self): Result<bool, DeError> {
+        self.enums = List<EnumFrame>.new()
+        self.depth = 0
+        self.col = 0
+        self.row = List<Cell>.new()
+        loop {
+            if self.pos >= self.text.len() {
+                return Ok(false)
+            }
+            let b = self.peek()
+            if b == 10 {
+                self.pos = self.pos + 1
+            } else if b == 13 {
+                self.pos = self.pos + 1
+                if self.pos < self.text.len() && self.peek() == 10 {
+                    self.pos = self.pos + 1
+                }
+            } else {
+                break
+            }
+        }
+        self.row_pos = self.pos
+        loop {
+            let cell = match self.read_cell() {
+                Ok(cell) => cell,
+                Err(e) => {
+                    self.pos = self.text.len()
+                    return Err(e)
+                }
+            }
+            self.row.push(cell)
+            if self.pos >= self.text.len() {
+                break
+            }
+            let b = self.peek()
+            if b == self.delim {
+                self.pos = self.pos + 1
+            } else {
+                // The cell ended at a line ending.
+                self.pos = self.pos + 1
+                if b == 13 && self.pos < self.text.len() && self.peek() == 10 {
+                    self.pos = self.pos + 1
+                }
+                break
+            }
+        }
+        if self.width == 0 {
+            self.width = self.row.len()
+        } else if self.row.len() != self.width {
+            return Err(
+                self.fail_at(
+                    format("expected {} fields but found {}", self.width, self.row.len()),
+                    self.row_pos,
+                ),
+            )
+        }
+        Ok(true)
+    }
+
+    /// Reads one field, leaving the position at the delimiter or the line ending that follows it, or at the end.
+    priv fn read_cell(mut self): Result<Cell, DeError> {
+        let start = self.pos
+        let size = self.text.len()
+        if self.pos < size && self.peek() == 34 {
+            self.pos = self.pos + 1
+            let mut out = String.new()
+            let mut chunk = self.pos
+            loop {
+                if self.pos >= size {
+                    return Err(self.fail_at("unterminated quoted field", start))
+                }
+                if self.peek() == 34 {
+                    out.push_str(self.text[chunk..self.pos])
+                    if self.pos + 1 < size && self.text.as_bytes()[self.pos + 1] == 34 {
+                        out.push('"')
+                        self.pos = self.pos + 2
+                        chunk = self.pos
+                    } else {
+                        self.pos = self.pos + 1
+                        break
+                    }
+                } else {
+                    self.pos = self.pos + 1
+                }
+            }
+            if self.pos < size {
+                let next = self.peek()
+                if next != self.delim && next != 10 && next != 13 {
+                    return Err(self.fail("expected a delimiter or the end of the record after the closing quote"))
+                }
+            }
+            return Ok(Cell { text: out, quoted: true, pos: start })
+        }
+        while self.pos < size {
+            let b = self.peek()
+            if b == self.delim || b == 10 || b == 13 {
+                break
+            }
+            if b == 34 {
+                return Err(self.fail("unexpected quote in an unquoted field"))
+            }
+            self.pos = self.pos + 1
+        }
+        Ok(Cell { text: self.text[start..self.pos].to_string(), quoted: false, pos: start })
+    }
+
+    /// Checks that a value can be read: a record is open and a field is left in it.
+    priv fn require_field(self): Result<(), DeError> {
+        if self.depth == 0 {
+            return Err(DeError.new("a CSV record must be read as a struct, a map, or a sequence"))
+        }
+        if self.col >= self.row.len() {
+            return Err(self.fail_at("missing field", self.row_pos))
+        }
+        Ok(())
+    }
+
+    /// Takes the current field and moves to the next.
+    priv fn next_cell(mut self): Result<Cell, DeError> {
+        self.require_field()?
+        let cell = Cell {
+            text: self.row[self.col].text.clone(),
+            quoted: self.row[self.col].quoted,
+            pos: self.row[self.col].pos,
+        }
+        self.col = self.col + 1
+        Ok(cell)
+    }
+
+    /// Opens a record of `depth`. A record inside a field is a nested value, which CSV cannot hold.
+    priv fn open_record(mut self, depth: i32): Result<(), DeError> {
+        if self.depth != 0 {
+            let at = if self.col < self.row.len() { self.row[self.col].pos } else { self.row_pos }
+            return Err(self.fail_at("a CSV field cannot hold a struct, a map, or a sequence", at))
+        }
+        self.depth = depth
+        Ok(())
+    }
+
+    /// Opens a struct or map record, which needs one header name for every field.
+    priv fn open_named(mut self): Result<(), DeError> {
+        if self.depth == 0 && self.headers.len() == 0 {
+            return Err(DeError.new("reading a struct needs a header row or `set_headers`"))
+        }
+        if self.depth == 0 && self.headers.len() != self.row.len() {
+            return Err(
+                self.fail_at(
+                    format("expected {} fields but found {}", self.headers.len(), self.row.len()),
+                    self.row_pos,
+                ),
+            )
+        }
+        self.open_record(1)
+    }
+
+    /// Checks that the record was read to its end, and closes it.
+    priv fn close_record(mut self, depth: i32): Result<(), DeError> {
+        if self.depth != depth {
+            return Err(DeError.new("unbalanced CSV record"))
+        }
+        if self.col < self.row.len() {
+            return Err(self.fail_at("the record has more fields than the type reads", self.row[self.col].pos))
+        }
+        self.depth = 0
+        Ok(())
+    }
+
+    /// Whether a field means `None`: empty without quotes. In a record of one field an empty quoted field means
+    /// it too, because that is how the writer spells a lone `None`.
+    priv fn is_none_cell(self): bool {
+        let cell = self.row[self.col].text.len() == 0
+        cell && (!self.row[self.col].quoted || self.row.len() == 1)
+    }
+
+    /// Reads a signed integer of the range `low..=high`, reporting `width` on overflow.
+    priv fn read_signed(mut self, low: i64, high: i64, width: str): Result<i64, DeError> {
+        let cell = self.next_cell()?
+        let text = cell.text.as_str()
+        if !__is_integer(text, true) {
+            return Err(self.fail_at("expected an integer", cell.pos))
+        }
+        match i64.parse(text) {
+            Ok(value) => {
+                if value < low || value > high {
+                    Err(self.fail_at(format("a number that does not fit in {}", width), cell.pos))
+                } else {
+                    Ok(value)
+                }
+            }
+            Err(_) => Err(self.fail_at(format("a number that does not fit in {}", width), cell.pos)),
+        }
+    }
+
+    /// Reads an unsigned integer no larger than `high`, reporting `width` on overflow.
+    priv fn read_unsigned(mut self, high: u64, width: str): Result<u64, DeError> {
+        let cell = self.next_cell()?
+        let text = cell.text.as_str()
+        if !__is_integer(text, false) {
+            return Err(self.fail_at("expected a non-negative integer", cell.pos))
+        }
+        match u64.parse(text) {
+            Ok(value) => {
+                if value > high {
+                    Err(self.fail_at(format("a number that does not fit in {}", width), cell.pos))
+                } else {
+                    Ok(value)
+                }
+            }
+            Err(_) => Err(self.fail_at(format("a number that does not fit in {}", width), cell.pos)),
+        }
+    }
+}
+
+Reader: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        let cell = self.next_cell()?
+        if cell.text.len() != 0 {
+            return Err(self.fail_at("expected an empty field", cell.pos))
+        }
+        Ok(())
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        let cell = self.next_cell()?
+        if cell.text.as_str() == "true" {
+            Ok(true)
+        } else if cell.text.as_str() == "false" {
+            Ok(false)
+        } else {
+            Err(self.fail_at("expected true or false", cell.pos))
+        }
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let value = self.read_signed(-128, 127, "i8")?
+        Ok(value as i8)
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let value = self.read_signed(-32768, 32767, "i16")?
+        Ok(value as i16)
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
+        Ok(value as i32)
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        self.read_signed(i64.MIN, i64.MAX, "i64")
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
+        Ok(value as isize)
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let value = self.read_unsigned(255, "u8")?
+        Ok(value as u8)
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let value = self.read_unsigned(65535, "u16")?
+        Ok(value as u16)
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let value = self.read_unsigned(4294967295, "u32")?
+        Ok(value as u32)
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        self.read_unsigned(u64.MAX, "u64")
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let value = self.read_unsigned(usize.MAX as u64, "usize")?
+        Ok(value as usize)
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let cell = self.next_cell()?
+        match f32.parse(cell.text.as_str()) {
+            Ok(value) => {
+                if value.is_finite() || !__has_digit(cell.text.as_str()) {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at("a number that does not fit in f32", cell.pos))
+                }
+            }
+            Err(_) => Err(self.fail_at("expected a number", cell.pos)),
+        }
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let cell = self.next_cell()?
+        match f64.parse(cell.text.as_str()) {
+            Ok(value) => {
+                if value.is_finite() || !__has_digit(cell.text.as_str()) {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at("a number that does not fit in f64", cell.pos))
+                }
+            }
+            Err(_) => Err(self.fail_at("expected a number", cell.pos)),
+        }
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let cell = self.next_cell()?
+        let mut count: usize = 0
+        let mut first: char = '\0'
+        for c in cell.text.chars() {
+            count = count + 1
+            first = c
+        }
+        if count != 1 {
+            return Err(self.fail_at("expected one character", cell.pos))
+        }
+        Ok(first)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        let cell = self.next_cell()?
+        Ok(cell.text)
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        Err(DeError.new("bytes cannot be read from a CSV field"))
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        self.open_record(2)
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        Ok(self.depth == 2 && self.col < self.row.len())
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close_record(2)
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        self.open_named()
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        Ok(self.depth == 1 && self.col < self.row.len())
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        self.require_field()?
+        Ok(self.headers[self.col].clone())
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close_record(1)
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        self.open_named()
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        Ok(self.depth == 1 && self.col < self.row.len())
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        self.require_field()?
+        Ok(self.headers[self.col].clone())
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close_record(1)
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        self.require_field()?
+        if name == "Option" {
+            let none = self.is_none_cell()
+            let pos = self.row[self.col].pos
+            if none {
+                self.col = self.col + 1
+            }
+            self.enums.push(EnumFrame { option: true, none, variant: String.new(), pos })
+        } else {
+            let cell = self.next_cell()?
+            self.enums.push(EnumFrame { option: false, none: false, variant: cell.text, pos: cell.pos })
+        }
+        Ok(())
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        if self.enums[i].option {
+            if self.enums[i].none {
+                return Ok("None".to_string())
+            }
+            return Ok("Some".to_string())
+        }
+        Ok(self.enums[i].variant.clone())
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let i = self.enums.len() - 1
+        if self.enums[i].option {
+            return Ok(())
+        }
+        if arity != 0 {
+            let name = self.enums[i].variant.clone()
+            return Err(
+                self.fail_at(
+                    format("variant '{}' has a value and cannot be read from one CSV field", name),
+                    self.enums[i].pos,
+                ),
+            )
+        }
+        Ok(())
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        Ok(())
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.enums.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        self.enums.pop()
+        Ok(())
+    }
+}
+
+// ----- the public surface ---------------------------------------------------------------------------------------
+
+/// Writes `records` as CSV: a header row of the first record's field names (for a struct or map), then one line
+/// for each record. An empty list is empty text. An error carries the index of the record that failed.
+fn to_string<T: Serialize>(records: List<T>): Result<String, DeError> {
+    let mut writer = Writer.new()
+    __write_all(mut writer, records)?
+    Ok(writer.finish())
+}
+
+/// Like `to_string`, with the delimiter and the header row chosen.
+fn to_string_with<T: Serialize>(records: List<T>, delimiter: char, has_headers: bool): Result<String, DeError> {
+    let mut writer = Writer.with_options(delimiter, has_headers)?
+    __write_all(mut writer, records)?
+    Ok(writer.finish())
+}
+
+/// Reads every record of `text` as a `T`. The first record is the header row.
+fn from_str<T: Deserialize>(text: str): Result<List<T>, DeError> {
+    let mut reader = Reader.new(text)
+    __read_all(mut reader)
+}
+
+/// Like `from_str`, with the delimiter and the header row chosen.
+fn from_str_with<T: Deserialize>(text: str, delimiter: char, has_headers: bool): Result<List<T>, DeError> {
+    let mut reader = Reader.with_options(text, delimiter, has_headers)?
+    __read_all(mut reader)
+}
+
+// ----- helpers -------------------------------------------------------------------------------------------------
+
+/// Writes every record, naming the index of one that fails.
+priv fn __write_all<T: Serialize>(mut writer: Writer, records: List<T>): Result<(), DeError> {
+    let mut i: usize = 0
+    while i < records.len() {
+        match writer.write(records[i]) {
+            Ok(_) => {}
+            Err(e) => return Err(e.index(i)),
+        }
+        i = i + 1
+    }
+    Ok(())
+}
+
+/// Reads every record.
+priv fn __read_all<T: Deserialize>(mut reader: Reader): Result<List<T>, DeError> {
+    let mut out = List<T>.new()
+    loop {
+        let next: Result<Option<T>, DeError> = reader.read()
+        match next {
+            Ok(Some(value)) => out.push(value),
+            Ok(None) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(out)
+}
+
+/// The text of a float. A negative zero prints as `-.0`, which no float reader takes, so it gets its `0`.
+priv fn __float_text(own text: String): String {
+    if text.as_str().starts_with("-.") {
+        let mut fixed = String.new()
+        fixed.push_str("-0")
+        fixed.push_str(text.as_str()[1..text.len()])
+        fixed
+    } else {
+        text
+    }
+}
+
+/// `text` as a field: as it is, or in quotes when it holds the delimiter, a quote, or a line break (and a quote
+/// inside doubled). The empty string is `""`, which is what tells it from the empty field of `None`.
+priv fn __encode(text: str, delim: u8): String {
+    if text.len() == 0 {
+        return "\"\"".to_string()
+    }
+    let bytes = text.as_bytes()
+    let mut quote = false
+    let mut i: usize = 0
+    while i < bytes.len() {
+        let b = bytes[i]
+        if b == delim || b == 34 || b == 10 || b == 13 {
+            quote = true
+            break
+        }
+        i = i + 1
+    }
+    if !quote {
+        return text.to_string()
+    }
+    let mut out = String.new()
+    out.push('"')
+    for c in text.chars() {
+        if c == '"' {
+            out.push_str("\"\"")
+        } else {
+            out.push(c)
+        }
+    }
+    out.push('"')
+    out
+}
+
+/// Whether two lists of names are the same.
+priv fn __same_names(a: List<String>, b: List<String>): bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < a.len() {
+        if a[i].as_str() != b[i].as_str() {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether `text` is an integer: digits, with a leading `-` when `signed`.
+priv fn __is_integer(text: str, signed: bool): bool {
+    let bytes = text.as_bytes()
+    let mut i: usize = 0
+    if signed && bytes.len() > 0 && bytes[0] == 45 {
+        i = 1
+    }
+    if i >= bytes.len() {
+        return false
+    }
+    while i < bytes.len() {
+        if bytes[i] < 48 || bytes[i] > 57 {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether the text has a decimal digit.
+priv fn __has_digit(text: str): bool {
+    let bytes = text.as_bytes()
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if bytes[i] >= 48 && bytes[i] <= 57 {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}

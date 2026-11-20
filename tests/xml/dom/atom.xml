@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A small feed -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <title type="text">Example &amp; Co</title>
+  <updated>2026-11-20T12:00:00Z</updated>
+  <entry>
+    <title>First post</title>
+    <dc:creator>Ana</dc:creator>
+    <content type="html"><![CDATA[<p>Hello, <b>world</b> & friends</p>]]></content>
+  </entry>
+  <?render stylesheet="plain"?>
+  <entry>
+    <title>Second post</title>
+    <link href="http://example.org/2?a=1&amp;b=2" rel="alternate"/>
+  </entry>
+</feed>
