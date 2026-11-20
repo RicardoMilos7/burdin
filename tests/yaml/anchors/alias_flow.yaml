@@ -1,0 +1,6 @@
+name: flow aliases
+servers: [&s {host: a, port: 1, tls: true, ratio: 1}, *s]
+protocol: Http
+backup: null
+weights: {a: &one 1, b: *one}
+note: z

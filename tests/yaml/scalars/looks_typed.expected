@@ -1,0 +1,14 @@
+name: "123"
+servers: []
+protocol: Http
+backup: null
+weights:
+  a: 15
+  b: 255
+  c: 5
+  d: 0
+note: "7"
+name="123" servers=0 note=7
+protocol=Http
+backup=none
+weights=4

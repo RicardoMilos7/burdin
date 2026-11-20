@@ -1,0 +1,15 @@
+name: shared
+servers:
+  - host: shared
+    port: 1
+    tls: true
+    ratio: 1
+protocol: Http
+backup: null
+weights: {}
+note: z
+name="shared" servers=1 note=z
+protocol=Http
+backup=none
+weights=0
+first=shared 1 true 1

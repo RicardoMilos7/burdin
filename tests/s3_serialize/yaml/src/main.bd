@@ -1,0 +1,162 @@
+//@ run
+//> name: edge
+//> servers:
+//>   - host: a.example
+//>     port: 80
+//>     tls: false
+//>   - host: b.example
+//>     port: 443
+//>     tls: true
+//> protocol:
+//>   Both:
+//>     - 80
+//>     - 443
+//> backup: null
+//> weights:
+//>   a: 1
+//> note: é
+//> edge 2 é
+//> both 80 443
+//> no backup
+//> host: a
+//> port: 1
+//> tls: true
+//> missing field 'servers'
+//> line 1, column 7: expected a string at name
+//> unknown variant 'Https2' of Protocol at protocol
+//> line 2, column 1: duplicate key 'name'
+//> line 1, column 8: invalid escape
+//> shared 1
+//> line 5, column 36: aliases expand to too many nodes (the limit is 100000 copied nodes)
+//> line 1, column 8: the tag '!!python/object:os.system' is not supported (only !!str is)
+//> first: "yes"
+//> second: plain
+//> Value: null
+//> Pair:
+//>   - 1
+//>   - One: 2
+//> pair 1 2
+
+// The `yaml` official package (issue #258; spec/serialization.md). The data model is the framework's; this file pins
+// how YAML writes and reads it: block mappings and sequences, `null` for `Option.None` and the payload for `Some`,
+// externally tagged variants, anchors and aliases resolved while loading (with a bound on what they expand to), tags
+// that are refused, and errors that name their line and column without an input ever panicking. The `Outer` lines
+// are a variant whose payload is an `Option`, and one whose payload is another enum: the reader keeps one enum
+// state per open enum, so a payload may nest.
+
+use yaml
+
+struct Server: Serialize, Deserialize, Debug {
+    host: String,
+    port: u16,
+    tls: bool,
+}
+
+enum Protocol: Serialize, Deserialize, Debug {
+    Http,
+    Https(u16),
+    Both(u16, u16),
+}
+
+struct Config: Serialize, Deserialize, Debug {
+    name: String,
+    servers: List<Server>,
+    protocol: Protocol,
+    backup: Option<Server>,
+    weights: Map<String, i32>,
+    note: char,
+}
+
+struct Names: Serialize, Deserialize, Debug {
+    first: String,
+    second: String,
+}
+
+enum Inner: Serialize, Deserialize, Debug {
+    Unit,
+    One(i32),
+}
+
+enum Outer: Serialize, Deserialize, Debug {
+    Value(Option<i32>),
+    Pair(Option<i32>, Inner),
+}
+
+fn main() {
+    let mut servers = List<Server>.new()
+    servers.push(Server { host: "a.example".to_string(), port: 80, tls: false })
+    servers.push(Server { host: "b.example".to_string(), port: 443, tls: true })
+    let mut weights = Map<String, i32>.new()
+    weights.insert("a".to_string(), 1)
+    let value = Config {
+        name: "edge".to_string(),
+        servers,
+        protocol: Protocol.Both(80, 443),
+        backup: None,
+        weights,
+        note: 'é',
+    }
+    let text = yaml.to_string(value).unwrap()
+    print(text)
+
+    let read: Result<Config, DeError> = yaml.from_str(text.as_str())
+    let back = read.unwrap()
+    println("{} {} {}", back.name, back.servers.len(), back.note)
+    match back.protocol {
+        Protocol.Both(first, second) => println("both {first} {second}"),
+        Protocol.Http => println("http"),
+        Protocol.Https(_port) => println("https"),
+    }
+    match back.backup {
+        Some(server) => println("backup {}", server.port),
+        None => println("no backup"),
+    }
+
+    let small = Server { host: "a".to_string(), port: 1, tls: true }
+    print(yaml.to_string(small).unwrap())
+
+    let missing: Result<Config, DeError> = yaml.from_str("name: edge\n")
+    println(missing.unwrap_err().to_string())
+    let wrong: Result<Config, DeError> = yaml.from_str("name: [3]\n")
+    println(wrong.unwrap_err().to_string())
+    let variant: Result<Config, DeError> = yaml.from_str(
+        "name: a\nservers: []\nprotocol: Https2\nbackup: null\nweights: {{}}\nnote: x\n",
+    )
+    println(variant.unwrap_err().to_string())
+    let duplicate: Result<Config, DeError> = yaml.from_str("name: a\nname: b\n")
+    println(duplicate.unwrap_err().to_string())
+    let escape: Result<Config, DeError> = yaml.from_str("name: \"\\q\"\n")
+    println(escape.unwrap_err().to_string())
+
+    // An alias is a copy of the anchored value; a document whose aliases expand without bound is an error.
+    let aliased: Result<Names, DeError> = yaml.from_str("first: &a shared\nsecond: *a\n")
+    let names = aliased.unwrap()
+    println("{} {}", names.first, names.second.len() - 5)
+    let bomb: Result<Names, DeError> = yaml.from_str(
+        "a: &a [x, x, x, x, x, x, x, x, x, x]\nb: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]\nc: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]\nd: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]\ne: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]\nf: &f [*e, *e, *e, *e, *e, *e, *e, *e, *e, *e]\n",
+    )
+    println(bomb.unwrap_err().to_string())
+    let tag: Result<Names, DeError> = yaml.from_str("first: !!python/object:os.system x\n")
+    println(tag.unwrap_err().to_string())
+
+    // A string that would read back as something else is quoted.
+    let words = Names { first: "yes".to_string(), second: "plain".to_string() }
+    print(yaml.to_string(words).unwrap())
+
+    let nested = yaml.to_string(Outer.Value(None)).unwrap()
+    print(nested)
+    let both = yaml.to_string(Outer.Pair(Some(1), Inner.One(2))).unwrap()
+    print(both)
+    let read: Result<Outer, DeError> = yaml.from_str(both.as_str())
+    match read {
+        Ok(Outer.Pair(value, inner)) => match value {
+            Some(n) => match inner {
+                Inner.One(m) => println("pair {} {}", n, m),
+                Inner.Unit => println("pair unit"),
+            }
+            None => println("pair none"),
+        }
+        Ok(_) => println("unexpected variant"),
+        Err(e) => println(e.to_string()),
+    }
+}

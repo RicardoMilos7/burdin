@@ -1,0 +1,6 @@
+<Config><name>reordered</name><servers/><protocol><Http/></protocol><backup><None/></backup><weights><entry><key>b</key><value>2</value></entry></weights><note>o</note></Config>
+name="reordered" servers=0 note='o'
+protocol=Http
+backup=none
+weights=1
+a=none

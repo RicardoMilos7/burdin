@@ -1,0 +1,18 @@
+<p>Some <b>bold</b> and <i>italic</i> text,
+  with a <a href="x">link</a>.</p>
+<p>Some <b>bold</b> and <i>italic</i> text,
+  with a <a href="x">link</a>.</p>
+declaration none
+before=0 after=0
+p ns=[] at 1:1
+  text "Some "
+  b ns=[] at 1:9
+    text "bold"
+  text " and "
+  i ns=[] at 1:25
+    text "italic"
+  text " text,\n  with a "
+  a ns=[] at 2:10
+    @href="x" ns=[]
+    text "link"
+  text "."

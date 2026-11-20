@@ -10,6 +10,9 @@ What it checks:
     forces the compiler driver's own linker; an empty value is the same as unset;
   * `BURDIN_LD` naming an unavailable linker fails, and the error says that `BURDIN_LD` chose it;
   * mold with `--lto` is refused before anything is linked, because mold cannot read LLVM bitcode;
+  * a sanitizer build keeps the compiler driver's linker: `BURDIN_LD` naming another one is a usage error (the
+    runtimes start up from module constructors in `.ctors`, which lld leaves where libc never runs them), and an
+    installed `ld.mold` is not picked up;
   * an MSVC-style compiler driver (`cl`) has no `-fuse-ld`, so any other `BURDIN_LD` value is a usage error;
   * the program builds and runs in every case, and with a real fast linker installed its build time is compared
     with the platform linker's (reported, not asserted: CI machines vary).
@@ -210,6 +213,33 @@ with harness.temporary_dir("burdin-linker-") as work:
         text = harness.text(result.stderr)
         check(result.returncode == 2, f"`--lto` with BURDIN_LD=mold exited {result.returncode}, expected 2")
         check("mold" in text and "--lto" in text, f"the mold refusal does not explain itself: {text[:400]}")
+
+        # --- A sanitizer build keeps the compiler driver's linker ------------------------------------------
+        if harness.PLATFORM == "linux":
+            # Naming a fast linker there is a usage error: the runtimes start up from module constructors in
+            # `.ctors`, and lld keeps those out of `.init_array`, so the sanitizer would never initialize.
+            result = build(["build", "hello.bd", "--sanitize=address"], environment({"BURDIN_LD": "lld"}))
+            text = harness.text(result.stderr)
+            check(
+                result.returncode == 2,
+                f"BURDIN_LD=lld with --sanitize=address exited {result.returncode}, expected 2",
+            )
+            check("BURDIN_LD" in text and "lld" in text, f"the sanitizer refusal does not name BURDIN_LD: {text[:400]}")
+            check(".ctors" in text, f"the sanitizer refusal does not explain itself: {text[:500]}")
+            # `platform` is the same as unset, so the build goes ahead (it needs clang, which the checks below guard).
+            result = build(["build", "hello.bd", "--sanitize=address"], environment({"BURDIN_LD": "platform"}))
+            check("BURDIN_LD" not in harness.text(result.stderr), "BURDIN_LD=platform was refused for a sanitizer build")
+            # An installed fast linker is not picked up: the build still works with an `ld.mold` that would fail it.
+            if shutil.which("clang-21") or shutil.which("clang"):
+                only_mold = work / "mold-only"
+                only_mold.mkdir(exist_ok=True)
+                script(only_mold / "ld.mold", "#!/bin/sh\nexit 1\n")
+                path = os.pathsep.join([str(only_mold), os.environ.get("PATH", "")])
+                result = build(["build", "hello.bd", "--sanitize=address"], environment({}, path=path))
+                check(
+                    result.returncode == 0,
+                    f"a sanitizer build picked up ld.mold: {harness.text(result.stderr)[:500]}",
+                )
 
     # --- A real fast linker, when this machine has one: build, run, and time it ----------------------------
     if harness.PLATFORM == "linux":

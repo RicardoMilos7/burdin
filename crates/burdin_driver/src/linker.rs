@@ -14,6 +14,11 @@
 //! macOS and Windows keep their platform linkers: ld64 is already the native linker, and an MSVC-style compiler
 //! driver starts `link.exe` and has no `-fuse-ld`. `--lto` also keeps the driver's linker, because LLVM bitcode needs
 //! lld (not mold) and the installed lld may not be the LLVM version that produced the bitcode.
+//!
+//! A sanitizer or fuzz build keeps it as well, whatever else is installed: those runtimes start up from module
+//! constructors (`asan.module_ctor`, libFuzzer's coverage registration), which LLVM emits into `.ctors` — the C API
+//! cannot turn its `.init_array` option on — and lld keeps `.ctors` as a section of its own, where libc never runs
+//! it. An lld-linked sanitizer binary would come up uninitialized, silently (`choose_for_runtime`).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -130,6 +135,24 @@ pub(crate) fn choose(
     Ok(Choice::platform())
 }
 
+/// Chooses the linker of a sanitizer or fuzz build: always the compiler driver's own.
+///
+/// LLVM's module constructors — AddressSanitizer's global registration, libFuzzer's coverage registration — are
+/// emitted into `.ctors`, which the GNU linker's default script folds into `.init_array` and lld does not: lld keeps
+/// a `.ctors` section that libc never runs, so the runtime would start uninitialized and fail silently. `BURDIN_LD`
+/// names the linker everywhere else, so naming one here is a usage error rather than a setting quietly ignored.
+pub(crate) fn choose_for_runtime(environment: Option<&str>) -> Result<Choice, String> {
+    let environment = environment.map(str::trim).filter(|value| !value.is_empty());
+    match environment {
+        Some(value) if !is_platform_name(value) => Err(format!(
+            "BURDIN_LD=`{value}` does not apply to a sanitizer or fuzz build: their runtimes start up from module \
+             constructors in `.ctors`, which lld leaves in a section libc never runs; unset BURDIN_LD, or set \
+             BURDIN_LD=platform"
+        )),
+        _ => Ok(Choice::platform()),
+    }
+}
+
 /// The note a failed link adds when something other than the platform linker was chosen, or empty text.
 pub(crate) fn failure_note(choice: &Choice) -> String {
     match (choice.origin, choice.linker.fuse_ld()) {
@@ -166,21 +189,17 @@ fn find_in_path(path: Option<OsString>, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Whether `path` is a program: a regular file that carries an execute bit.
+#[cfg(unix)]
 fn is_program(path: &Path) -> bool {
-    path.metadata().is_ok_and(|metadata| {
-        if !metadata.is_file() {
-            return false;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            metadata.permissions().mode() & 0o111 != 0
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
-    })
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata().is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+/// Whether `path` is a program: on Windows a regular file is enough, since the extension is what makes it run.
+#[cfg(not(unix))]
+fn is_program(path: &Path) -> bool {
+    path.metadata().is_ok_and(|metadata| metadata.is_file())
 }
 
 #[cfg(test)]
@@ -262,6 +281,18 @@ mod tests {
             assert!(error.contains("BURDIN_LD") && error.contains(value), "{value}: {error}");
             assert!(error.contains("link.exe"), "{value}: {error}");
         }
+    }
+
+    #[test]
+    fn a_sanitizer_or_fuzz_build_keeps_the_drivers_linker() {
+        assert_eq!(choose_for_runtime(None).unwrap().linker, Linker::Platform);
+        assert_eq!(choose_for_runtime(Some("platform")).unwrap().linker, Linker::Platform);
+        assert_eq!(choose_for_runtime(Some(" ")).unwrap().linker, Linker::Platform);
+        // Naming a fast linker there is a usage error, not a setting that is quietly ignored: the runtime's module
+        // constructors would not run under lld.
+        let error = choose_for_runtime(Some("lld")).unwrap_err();
+        assert!(error.contains("BURDIN_LD") && error.contains("lld"), "{error}");
+        assert!(error.contains(".ctors") && error.contains("sanitizer"), "{error}");
     }
 
     #[test]

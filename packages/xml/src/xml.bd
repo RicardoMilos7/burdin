@@ -1,0 +1,2741 @@
+// The XML package (spec/serialization.md; issue #259).
+//
+// Three layers, each usable by itself:
+//   1. a small DOM (`Document`, `Element`, `Node`, `Attribute`) with a builder API, namespace-aware lookup, and a
+//      serializer with compact and pretty output;
+//   2. a reader (`parse`) that turns text into a DOM: the XML declaration, elements and attributes, namespaces
+//      (`xmlns` declarations and prefix resolution), the five predefined entities and numeric character
+//      references, CDATA sections, comments, and processing instructions. A DOCTYPE is an error, so there are no
+//      user-defined entities, no external entities, and no entity expansion (no XXE, no billion laughs);
+//   3. the serialization framework's format side: `Writer` implements `Serializer` and `Reader` implements
+//      `Deserializer`, and `to_string`, `to_string_pretty`, and `from_str` drive them. The mapping is in README.md.
+//
+// Every failure is a `DeError` (spec/serialization.md, SER15); a syntax error carries its line and column (SER10).
+// Nothing here panics on malformed input.
+
+// The namespace the `xml` prefix is always bound to.
+const XML_NAMESPACE: str = "http://www.w3.org/XML/1998/namespace"
+
+// The deepest element nesting the reader accepts and the serializer writes. A nesting this deep never occurs in
+// data; the limit keeps hostile input from exhausting the stack.
+const MAX_DEPTH: usize = 256
+
+// The most attributes one start tag may have. Duplicate detection compares each new name with the earlier ones, so
+// the limit keeps a hostile tag from costing quadratic time.
+const MAX_ATTRIBUTES: usize = 1024
+
+// ----- the DOM -------------------------------------------------------------------------------------------------
+
+/// An attribute. `name` is the qualified name as written (`id`, `xml:lang`, `xmlns:p`); `namespace` is the URI its
+/// prefix resolves to, and is empty for an unprefixed name (an attribute never takes the default namespace) and for a
+/// namespace declaration.
+struct Attribute: Clone {
+    name: String,
+    value: String,
+    namespace: String,
+}
+
+Attribute {
+    /// An attribute with no namespace.
+    fn new(name: str, value: str): Attribute {
+        Attribute { name: name.to_string(), value: value.to_string(), namespace: String.new() }
+    }
+
+    /// Whether this attribute declares a namespace (`xmlns` or `xmlns:prefix`).
+    fn is_declaration(self): bool {
+        self.name.as_str() == "xmlns" || self.name.starts_with("xmlns:")
+    }
+
+    /// The part of the name before the colon, or an empty string.
+    fn prefix(self): String {
+        __prefix_of(self.name.as_str())
+    }
+
+    /// The part of the name after the colon, or the whole name.
+    fn local_name(self): String {
+        __local_of(self.name.as_str())
+    }
+}
+
+/// A processing instruction: `<?target data?>`.
+struct Instruction: Clone {
+    target: String,
+    data: String,
+}
+
+/// The XML declaration: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`.
+struct Declaration: Clone {
+    version: String,
+    encoding: Option<String>,
+    standalone: Option<bool>,
+}
+
+Declaration {
+    /// Version 1.0 and UTF-8, the declaration a new document gets from `with_declaration`.
+    fn new(): Declaration {
+        Declaration { version: "1.0".to_string(), encoding: Some("UTF-8".to_string()), standalone: None }
+    }
+}
+
+/// An element. `name` is the qualified name as written (`item`, `svg:rect`); `namespace` is the URI its prefix (or the
+/// default namespace) resolves to, empty for none. `line` and `column` are where its start tag began (1-based, in
+/// Unicode scalar values) when the element was parsed, and 0 for one that was built.
+struct Element {
+    name: String,
+    namespace: String,
+    attributes: List<Attribute>,
+    children: List<Node>,
+    line: usize,
+    column: usize,
+}
+
+/// A child of an element. An element child sits behind a `Heap` because a tree contains itself.
+enum Node {
+    Element(Heap<Element>),
+    Text(String),
+    CData(String),
+    Comment(String),
+    Pi(Instruction),
+}
+
+/// A document: the optional declaration, the comments and instructions before the root, the root element, and the
+/// comments and instructions after it.
+struct Document {
+    declaration: Option<Declaration>,
+    before: List<Node>,
+    root: Element,
+    after: List<Node>,
+}
+
+Node {
+    /// A deep copy.
+    fn copy(self): Node {
+        match self {
+            Node.Element(e) => Node.Element(Heap.new((*e).copy())),
+            Node.Text(t) => Node.Text(t.clone()),
+            Node.CData(t) => Node.CData(t.clone()),
+            Node.Comment(t) => Node.Comment(t.clone()),
+            Node.Pi(p) => Node.Pi(p.clone()),
+        }
+    }
+
+    /// Whether this is a text node of white space only.
+    fn is_blank_text(self): bool {
+        match self {
+            Node.Text(t) => __is_blank(t.as_str()),
+            else => false,
+        }
+    }
+
+    priv fn write_to(self, mut out: String, pretty: bool, level: usize): Result<(), DeError> {
+        match self {
+            Node.Element(e) => (*e).write_to(mut out, pretty, level),
+            Node.Text(t) => __escape_text(mut out, t.as_str()),
+            Node.CData(t) => {
+                __check_chars(t.as_str())?
+                if t.find_str("]]>").is_some() {
+                    return Err(DeError.new("a CDATA section cannot contain ']]>'"))
+                }
+                out.push_str("<![CDATA[")
+                out.push_str(t.as_str())
+                out.push_str("]]>")
+                Ok(())
+            }
+            Node.Comment(t) => {
+                __check_chars(t.as_str())?
+                if t.find_str("--").is_some() || t.ends_with("-") {
+                    return Err(DeError.new("a comment cannot contain '--' or end with '-'"))
+                }
+                out.push_str("<!--")
+                out.push_str(t.as_str())
+                out.push_str("-->")
+                Ok(())
+            }
+            Node.Pi(p) => {
+                if !__is_name(p.target.as_str()) || p.target.as_str().eq_ignore_ascii_case("xml") {
+                    return Err(DeError.new(format("invalid processing instruction target '{}'", p.target)))
+                }
+                __check_chars(p.data.as_str())?
+                if p.data.find_str("?>").is_some() {
+                    return Err(DeError.new("processing instruction data cannot contain '?>'"))
+                }
+                out.push_str("<?")
+                out.push_str(p.target.as_str())
+                if p.data.len() > 0 {
+                    out.push(' ')
+                    out.push_str(p.data.as_str())
+                }
+                out.push_str("?>")
+                Ok(())
+            }
+        }
+    }
+}
+
+Element {
+    /// An element with the qualified name `name`, no namespace, no attributes, and no children.
+    fn new(name: str): Element {
+        Element {
+            name: name.to_string(),
+            namespace: String.new(),
+            attributes: List<Attribute>.new(),
+            children: List<Node>.new(),
+            line: 0,
+            column: 0,
+        }
+    }
+
+    /// The part of the name before the colon, or an empty string.
+    fn prefix(self): String {
+        __prefix_of(self.name.as_str())
+    }
+
+    /// The part of the name after the colon, or the whole name.
+    fn local_name(self): String {
+        __local_of(self.name.as_str())
+    }
+
+    // ----- building
+
+    /// Whether an attribute of this element has the namespace and local name of `other` (a declaration never does).
+    priv fn has_same_expanded_name(self, other: Attribute): bool {
+        if other.namespace.len() == 0 {
+            return false
+        }
+        let local = other.local_name()
+        let mut i: usize = 0
+        while i < self.attributes.len() {
+            if !self.attributes[i].is_declaration()
+                && self.attributes[i].namespace.as_str() == other.namespace.as_str()
+                && self.attributes[i].local_name().as_str() == local.as_str() {
+                return true
+            }
+            i = i + 1
+        }
+        false
+    }
+
+    /// The index of the attribute `name`.
+    priv fn attr_index(self, name: str): Option<usize> {
+        let mut i: usize = 0
+        while i < self.attributes.len() {
+            if self.attributes[i].name.as_str() == name {
+                return Some(i)
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// Adds or replaces the attribute `name`.
+    fn set_attr(mut self, name: str, value: str) {
+        match self.attr_index(name) {
+            Some(i) => self.attributes[i].value = value.to_string(),
+            None => self.attributes.push(Attribute.new(name, value)),
+        }
+    }
+
+    /// Adds or replaces a prefixed attribute and records its namespace; the declaration `xmlns:prefix` is added when
+    /// this element does not declare the prefix yet.
+    fn set_attr_ns(mut self, name: str, namespace: str, value: str) {
+        self.set_attr(name, value)
+        match self.attr_index(name) {
+            Some(i) => self.attributes[i].namespace = namespace.to_string(),
+            None => {}
+        }
+        let prefix = __prefix_of(name)
+        if prefix.len() > 0 && prefix.as_str() != "xml" && self.lookup_namespace(prefix.as_str()).is_none() {
+            self.declare_namespace(prefix.as_str(), namespace)
+        }
+    }
+
+    /// Removes the attribute `name`; whether there was one.
+    fn remove_attr(mut self, name: str): bool {
+        match self.attr_index(name) {
+            Some(i) => {
+                self.attributes.remove(i)
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Declares a namespace on this element: `xmlns="uri"` for an empty prefix, `xmlns:prefix="uri"` otherwise.
+    fn declare_namespace(mut self, prefix: str, uri: str) {
+        if prefix.len() == 0 {
+            self.set_attr("xmlns", uri)
+        } else {
+            self.set_attr(format("xmlns:{prefix}").as_str(), uri)
+        }
+    }
+
+    /// Puts this element in the namespace `uri` and declares it for the element's own prefix.
+    fn set_namespace(mut self, uri: str) {
+        self.namespace = uri.to_string()
+        let prefix = self.prefix()
+        self.declare_namespace(prefix.as_str(), uri)
+    }
+
+    /// Appends a child element.
+    fn push_child(mut self, own child: Element) {
+        self.children.push(Node.Element(Heap.new(child)))
+    }
+
+    /// Appends a text node.
+    fn push_text(mut self, text: str) {
+        self.children.push(Node.Text(text.to_string()))
+    }
+
+    /// Appends a CDATA section.
+    fn push_cdata(mut self, text: str) {
+        self.children.push(Node.CData(text.to_string()))
+    }
+
+    /// Appends a comment.
+    fn push_comment(mut self, text: str) {
+        self.children.push(Node.Comment(text.to_string()))
+    }
+
+    /// Appends a processing instruction.
+    fn push_instruction(mut self, target: str, data: str) {
+        self.children.push(Node.Pi(Instruction { target: target.to_string(), data: data.to_string() }))
+    }
+
+    /// The builder form of `set_attr`.
+    fn with_attr(own self, name: str, value: str): Element {
+        let mut element = self
+        element.set_attr(name, value)
+        element
+    }
+
+    /// The builder form of `set_namespace`.
+    fn with_namespace(own self, uri: str): Element {
+        let mut element = self
+        element.set_namespace(uri)
+        element
+    }
+
+    /// The builder form of `push_child`.
+    fn with_child(own self, own child: Element): Element {
+        let mut element = self
+        element.push_child(child)
+        element
+    }
+
+    /// The builder form of `push_text`.
+    fn with_text(own self, text: str): Element {
+        let mut element = self
+        element.push_text(text)
+        element
+    }
+
+    // ----- reading
+
+    /// The value of the attribute `name` (the qualified name as written), if there is one.
+    fn attr(self, name: str): Option<String> {
+        match self.attr_index(name) {
+            Some(i) => Some(self.attributes[i].value.clone()),
+            None => None,
+        }
+    }
+
+    /// Whether there is an attribute `name`.
+    fn has_attr(self, name: str): bool {
+        self.attr(name).is_some()
+    }
+
+    /// The value of the attribute whose namespace is `namespace` and whose local name is `local`. A namespace
+    /// declaration is never matched.
+    fn attr_ns(self, namespace: str, local: str): Option<String> {
+        let mut i: usize = 0
+        while i < self.attributes.len() {
+            let found = !self.attributes[i].is_declaration()
+                && self.attributes[i].namespace.as_str() == namespace
+                && self.attributes[i].local_name().as_str() == local
+            if found {
+                return Some(self.attributes[i].value.clone())
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// The URI this element's own declarations bind `prefix` to (an empty prefix is the default namespace); `xml` is
+    /// always bound.
+    fn lookup_namespace(self, prefix: str): Option<String> {
+        if prefix == "xml" {
+            return Some(XML_NAMESPACE.to_string())
+        }
+        if prefix.len() == 0 {
+            return self.attr("xmlns")
+        }
+        self.attr(format("xmlns:{prefix}").as_str())
+    }
+
+    /// The text of the text and CDATA children, joined.
+    fn text(self): String {
+        let mut out = String.new()
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Text(t) => out.push_str(t.as_str()),
+                Node.CData(t) => out.push_str(t.as_str()),
+                else => {}
+            }
+            i = i + 1
+        }
+        out
+    }
+
+    /// The text of this element and all its descendants, in document order.
+    fn text_content(self): String {
+        let mut out = String.new()
+        self.collect_text(mut out)
+        out
+    }
+
+    priv fn collect_text(self, mut out: String) {
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Text(t) => out.push_str(t.as_str()),
+                Node.CData(t) => out.push_str(t.as_str()),
+                Node.Element(e) => (*e).collect_text(mut out),
+                else => {}
+            }
+            i = i + 1
+        }
+    }
+
+    /// The first child element whose qualified name is `name`: a copy.
+    fn child(self, name: str): Option<Element> {
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    if (*e).name.as_str() == name {
+                        return Some((*e).copy())
+                    }
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// The child elements whose qualified name is `name`: copies, in order.
+    fn children_named(self, name: str): List<Element> {
+        let mut out = List<Element>.new()
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    if (*e).name.as_str() == name {
+                        out.push((*e).copy())
+                    }
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        out
+    }
+
+    /// Every child element: copies, in order.
+    fn elements(self): List<Element> {
+        let mut out = List<Element>.new()
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => out.push((*e).copy()),
+                else => {}
+            }
+            i = i + 1
+        }
+        out
+    }
+
+    /// The first child element in the namespace `namespace` with the local name `local`: a copy.
+    fn child_ns(self, namespace: str, local: str): Option<Element> {
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    if (*e).is_named(namespace, local) {
+                        return Some((*e).copy())
+                    }
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// The child elements in the namespace `namespace` with the local name `local`: copies, in order.
+    fn children_ns(self, namespace: str, local: str): List<Element> {
+        let mut out = List<Element>.new()
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    if (*e).is_named(namespace, local) {
+                        out.push((*e).copy())
+                    }
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        out
+    }
+
+    /// The first element, this one or a descendant in document order, in the namespace `namespace` with the local
+    /// name `local`: a copy.
+    fn find_ns(self, namespace: str, local: str): Option<Element> {
+        if self.is_named(namespace, local) {
+            return Some(self.copy())
+        }
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    match (*e).find_ns(namespace, local) {
+                        Some(found) => return Some(found),
+                        None => {}
+                    }
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// Whether this element is in the namespace `namespace` and has the local name `local`.
+    fn is_named(self, namespace: str, local: str): bool {
+        self.namespace.as_str() == namespace && self.local_name().as_str() == local
+    }
+
+    /// A deep copy.
+    fn copy(self): Element {
+        let mut out = Element {
+            name: self.name.clone(),
+            namespace: self.namespace.clone(),
+            attributes: self.attributes.clone(),
+            children: List<Node>.new(),
+            line: self.line,
+            column: self.column,
+        }
+        let mut i: usize = 0
+        while i < self.children.len() {
+            out.children.push(self.children[i].copy())
+            i = i + 1
+        }
+        out
+    }
+
+    // ----- writing
+
+    /// This element as compact XML (no declaration, no added white space). Text that XML cannot carry (a control
+    /// character), a name that is not a name, and a comment, CDATA section, or instruction that cannot be written
+    /// are errors.
+    fn to_xml(self): Result<String, DeError> {
+        let mut out = String.new()
+        self.write_to(mut out, false, 0)?
+        Ok(out)
+    }
+
+    /// This element as XML with two-space indentation: an element that has only element, comment, and instruction
+    /// children puts each on its own line, and an element with text keeps its content as written.
+    fn to_xml_pretty(self): Result<String, DeError> {
+        let mut out = String.new()
+        self.write_to(mut out, true, 0)?
+        Ok(out)
+    }
+
+    priv fn write_to(self, mut out: String, pretty: bool, level: usize): Result<(), DeError> {
+        if level >= MAX_DEPTH {
+            return Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
+        }
+        if !__is_name(self.name.as_str()) {
+            return Err(DeError.new(format("invalid element name '{}'", self.name)))
+        }
+        out.push('<')
+        out.push_str(self.name.as_str())
+        let mut i: usize = 0
+        while i < self.attributes.len() {
+            if !__is_name(self.attributes[i].name.as_str()) {
+                return Err(DeError.new(format("invalid attribute name '{}'", self.attributes[i].name)))
+            }
+            out.push(' ')
+            out.push_str(self.attributes[i].name.as_str())
+            out.push_str("=\"")
+            __escape_attribute(mut out, self.attributes[i].value.as_str())?
+            out.push('"')
+            i = i + 1
+        }
+        if self.children.is_empty() {
+            out.push_str("/>")
+            return Ok(())
+        }
+        out.push('>')
+        // An element is laid out one child per line only when no child is text; mixed content is kept as written.
+        let mut structural = false
+        if pretty {
+            let mut has_text = false
+            let mut has_other = false
+            let mut k: usize = 0
+            while k < self.children.len() {
+                match self.children[k] {
+                    Node.Text(t) => {
+                        if !__is_blank(t.as_str()) {
+                            has_text = true
+                        }
+                    }
+                    Node.CData(_) => has_text = true,
+                    else => has_other = true,
+                }
+                k = k + 1
+            }
+            structural = has_other && !has_text
+        }
+        let mut j: usize = 0
+        while j < self.children.len() {
+            if structural {
+                if !self.children[j].is_blank_text() {
+                    out.push('\n')
+                    __indent(mut out, level + 1)
+                    self.children[j].write_to(mut out, true, level + 1)?
+                }
+            } else {
+                self.children[j].write_to(mut out, false, level + 1)?
+            }
+            j = j + 1
+        }
+        if structural {
+            out.push('\n')
+            __indent(mut out, level)
+        }
+        out.push_str("</")
+        out.push_str(self.name.as_str())
+        out.push('>')
+        Ok(())
+    }
+
+    priv fn flatten_into(self, mut slots: List<Slot>, depth: usize): Result<usize, DeError> {
+        if depth >= MAX_DEPTH {
+            return Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
+        }
+        let index = slots.len()
+        slots.push(Slot {
+            name: self.local_name(),
+            text: self.text(),
+            kids: List<usize>.new(),
+            line: self.line,
+            column: self.column,
+        })
+        let mut i: usize = 0
+        while i < self.children.len() {
+            match self.children[i] {
+                Node.Element(e) => {
+                    let child = (*e).flatten_into(mut slots, depth + 1)?
+                    slots[index].kids.push(child)
+                }
+                else => {}
+            }
+            i = i + 1
+        }
+        Ok(index)
+    }
+}
+
+Document {
+    /// A document with this root element, no declaration, and nothing before or after the root.
+    fn new(own root: Element): Document {
+        Document {
+            declaration: None,
+            before: List<Node>.new(),
+            root,
+            after: List<Node>.new(),
+        }
+    }
+
+    /// The same document with the declaration `<?xml version="1.0" encoding="UTF-8"?>`.
+    fn with_declaration(own self): Document {
+        let mut document = self
+        document.declaration = Some(Declaration.new())
+        document
+    }
+
+    /// The document as compact XML: the declaration (if any) and the nodes directly one after the other.
+    fn to_xml(self): Result<String, DeError> {
+        self.write_all(false)
+    }
+
+    /// The document as XML with two-space indentation (see `Element.to_xml_pretty`), one line for the declaration
+    /// and each node outside the root, and a final newline.
+    fn to_xml_pretty(self): Result<String, DeError> {
+        self.write_all(true)
+    }
+
+    priv fn write_all(self, pretty: bool): Result<String, DeError> {
+        let mut out = String.new()
+        match self.declaration {
+            Some(d) => {
+                __write_declaration(mut out, d)?
+                if pretty {
+                    out.push('\n')
+                }
+            }
+            None => {}
+        }
+        let mut i: usize = 0
+        while i < self.before.len() {
+            self.before[i].write_to(mut out, false, 0)?
+            if pretty {
+                out.push('\n')
+            }
+            i = i + 1
+        }
+        self.root.write_to(mut out, pretty, 0)?
+        if pretty {
+            out.push('\n')
+        }
+        let mut j: usize = 0
+        while j < self.after.len() {
+            self.after[j].write_to(mut out, false, 0)?
+            if pretty {
+                out.push('\n')
+            }
+            j = j + 1
+        }
+        Ok(out)
+    }
+}
+
+// ----- the reader: text to DOM ---------------------------------------------------------------------------------
+
+/// A namespace binding in scope while parsing.
+struct Binding {
+    prefix: String,
+    uri: String,
+}
+
+/// An attribute as written, before its prefix is resolved.
+struct RawAttribute {
+    name: String,
+    value: String,
+    position: usize,
+}
+
+/// A parsed start tag: the element, whether it was `<a/>`, and how many namespace bindings it pushed.
+struct StartTag {
+    element: Element,
+    empty: bool,
+    declared: usize,
+}
+
+/// The XML reader: a copy of the input and the byte offset of the next unread byte. The line and column of an error
+/// are computed from the offset when it is reported (SER10).
+struct Parser {
+    text: String,
+    pos: usize,
+    scopes: List<Binding>,
+    mark_pos: usize,
+    mark_line: usize,
+    mark_column: usize,
+}
+
+Parser {
+    /// A reader over `text`. The text is copied once; a leading byte order mark is skipped.
+    fn new(text: str): Parser {
+        let bytes = text.as_bytes()
+        let mut start: usize = 0
+        if bytes.len() >= 3 && bytes[0] == 239 && bytes[1] == 187 && bytes[2] == 191 {
+            start = 3
+        }
+        Parser {
+            text: text[start..text.len()].to_string(),
+            pos: 0,
+            scopes: List<Binding>.new(),
+            mark_pos: 0,
+            mark_line: 1,
+            mark_column: 1,
+        }
+    }
+
+    /// Reads the whole text as one document.
+    fn parse_document(mut self): Result<Document, DeError> {
+        let mut declaration: Option<Declaration> = None
+        if self.starts_with_at("<?xml") && self.xml_declaration_follows() {
+            declaration = Some(self.parse_declaration()?)
+        }
+        let mut before = List<Node>.new()
+        loop {
+            self.skip_ws()
+            if self.at_end() {
+                return Err(self.fail("the document has no root element"))
+            }
+            if self.starts_with_at("<!--") {
+                let comment = self.parse_comment()?
+                before.push(Node.Comment(comment))
+            } else if self.starts_with_at("<?") {
+                let instruction = self.parse_instruction()?
+                before.push(Node.Pi(instruction))
+            } else if self.starts_with_at("<!") {
+                return Err(self.unsupported_declaration())
+            } else if self.peek() == 60 {
+                break
+            } else {
+                return Err(self.fail("text is not allowed before the root element"))
+            }
+        }
+        let root = self.parse_element()?
+        let mut after = List<Node>.new()
+        loop {
+            self.skip_ws()
+            if self.at_end() {
+                break
+            }
+            if self.starts_with_at("<!--") {
+                let comment = self.parse_comment()?
+                after.push(Node.Comment(comment))
+            } else if self.starts_with_at("<?") {
+                let instruction = self.parse_instruction()?
+                after.push(Node.Pi(instruction))
+            } else if self.peek() == 60 {
+                return Err(self.fail("a document has only one root element"))
+            } else {
+                return Err(self.fail("text is not allowed after the root element"))
+            }
+        }
+        Ok(Document { declaration, before, root, after })
+    }
+
+    // ----- scanning
+
+    priv fn at_end(self): bool {
+        self.pos >= self.text.len()
+    }
+
+    /// A copy of the input bytes `start` up to (not including) `end`.
+    priv fn slice_text(self, start: usize, end: usize): String {
+        self.text[start..end].to_string()
+    }
+
+    /// Appends the input bytes `start` up to (not including) `end` to `out`.
+    priv fn copy_chunk(self, mut out: String, start: usize, end: usize) {
+        out.push_str(self.text[start..end])
+    }
+
+    /// The byte `offset` bytes past the current position, or 0 past the end.
+    priv fn byte_after(self, offset: usize): u8 {
+        let bytes = self.text.as_bytes()
+        if self.pos + offset >= bytes.len() {
+            0
+        } else {
+            bytes[self.pos + offset]
+        }
+    }
+
+    /// The byte at the current position, or 0 at the end (callers check `at_end` first).
+    priv fn peek(self): u8 {
+        if self.pos >= self.text.len() {
+            0
+        } else {
+            let bytes = self.text.as_bytes()
+            bytes[self.pos]
+        }
+    }
+
+    /// Whether the input at the current position starts with `literal`. The comparison is over bytes, so a position
+    /// inside a character never matches and never splits one.
+    priv fn starts_with_at(self, literal: str): bool {
+        let hay = self.text.as_bytes()
+        let needle = literal.as_bytes()
+        if self.pos + needle.len() > self.text.len() {
+            return false
+        }
+        let mut i: usize = 0
+        while i < needle.len() {
+            if hay[self.pos + i] != needle[i] {
+                return false
+            }
+            i = i + 1
+        }
+        true
+    }
+
+    /// Skips spaces, tabs, line feeds, and carriage returns; whether any was skipped.
+    priv fn skip_ws(mut self): bool {
+        let start = self.pos
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 32 || b == 9 || b == 10 || b == 13 {
+                self.pos = self.pos + 1
+            } else {
+                break
+            }
+        }
+        self.pos > start
+    }
+
+    /// Moves the cached line and column to `position`, counting from the cache when it is not past it.
+    priv fn advance_mark(mut self, position: usize) {
+        if position < self.mark_pos {
+            self.mark_pos = 0
+            self.mark_line = 1
+            self.mark_column = 1
+        }
+        let bytes = self.text.as_bytes()
+        let mut i = self.mark_pos
+        let mut line = self.mark_line
+        let mut column = self.mark_column
+        let end = position.min(bytes.len())
+        while i < end {
+            let b = bytes[i]
+            if b == 10 {
+                line = line + 1
+                column = 1
+            } else if b >= 128 && b < 192 {
+                // A UTF-8 continuation byte: still the same character.
+            } else {
+                column = column + 1
+            }
+            i = i + 1
+        }
+        self.mark_pos = end
+        self.mark_line = line
+        self.mark_column = column
+    }
+
+    /// An error at the current position, with its line and column.
+    priv fn fail(self, message: str): DeError {
+        self.fail_at(message, self.pos)
+    }
+
+    /// An error at `position`, with its line and column. A column counts Unicode scalar values (SER10).
+    priv fn fail_at(self, message: str, position: usize): DeError {
+        let bytes = self.text.as_bytes()
+        let mut line: i32 = 1
+        let mut column: i32 = 1
+        let mut i: usize = 0
+        while i < position && i < bytes.len() {
+            let b = bytes[i]
+            if b == 10 {
+                line = line + 1
+                column = 1
+            } else if b >= 128 && b < 192 {
+                // A UTF-8 continuation byte: still the same character.
+            } else {
+                column = column + 1
+            }
+            i = i + 1
+        }
+        DeError.syntax(message, line, column)
+    }
+
+    priv fn unsupported_declaration(self): DeError {
+        if self.starts_with_at("<!DOCTYPE") {
+            self.fail("a DOCTYPE is not supported: DTDs and external entities are rejected")
+        } else {
+            self.fail("markup declarations other than comments and CDATA sections are not supported")
+        }
+    }
+
+    /// Reads an XML name: ASCII letters, digits, `_`, `:`, `-`, `.`, and every non-ASCII character.
+    priv fn read_name(mut self): Result<String, DeError> {
+        let start = self.pos
+        if self.at_end() || !__is_name_start(self.peek()) {
+            return Err(self.fail("expected a name"))
+        }
+        self.pos = self.pos + 1
+        while self.pos < self.text.len() && __is_name_byte(self.peek()) {
+            self.pos = self.pos + 1
+        }
+        Ok(self.text[start..self.pos].to_string())
+    }
+
+    /// Whether the text after `<?xml` makes it the declaration (white space or `?`), not another target.
+    priv fn xml_declaration_follows(self): bool {
+        let hay = self.text.as_bytes()
+        if self.pos + 5 >= self.text.len() {
+            return false
+        }
+        let b = hay[self.pos + 5]
+        b == 32 || b == 9 || b == 10 || b == 13 || b == 63
+    }
+
+    // ----- the declaration, comments, instructions, CDATA
+
+    /// Reads `name = "value"` of the declaration.
+    priv fn read_pseudo_attribute(mut self, name: str): Result<String, DeError> {
+        self.pos = self.pos + name.len()
+        self.skip_ws()
+        if self.at_end() || self.peek() != 61 {
+            return Err(self.fail(format("expected '=' after '{name}' in the XML declaration")))
+        }
+        self.pos = self.pos + 1
+        self.skip_ws()
+        if self.at_end() || (self.peek() != 34 && self.peek() != 39) {
+            return Err(self.fail("expected a quoted value in the XML declaration"))
+        }
+        let quote = self.peek()
+        self.pos = self.pos + 1
+        let start = self.pos
+        while self.pos < self.text.len() && self.peek() != quote {
+            self.pos = self.pos + 1
+        }
+        if self.at_end() {
+            return Err(self.fail("unterminated value in the XML declaration"))
+        }
+        let value = self.text[start..self.pos].to_string()
+        self.pos = self.pos + 1
+        Ok(value)
+    }
+
+    priv fn parse_declaration(mut self): Result<Declaration, DeError> {
+        self.pos = self.pos + 5
+        self.skip_ws()
+        if !self.starts_with_at("version") {
+            return Err(self.fail("the XML declaration needs a version"))
+        }
+        let version_at = self.pos
+        let version = self.read_pseudo_attribute("version")?
+        if version.as_str() != "1.0" {
+            return Err(self.fail_at(format("unsupported XML version '{version}': only 1.0 is supported"), version_at))
+        }
+        let mut encoding: Option<String> = None
+        let mut standalone: Option<bool> = None
+        let mut spaced = self.skip_ws()
+        if self.starts_with_at("encoding") {
+            if !spaced {
+                return Err(self.fail("expected white space before 'encoding'"))
+            }
+            let at = self.pos
+            let value = self.read_pseudo_attribute("encoding")?
+            if !__encoding_ok(value) {
+                let shown = value.clone()
+                let message = format("unsupported encoding '{shown}': only UTF-8 is supported")
+                return Err(self.fail_at(message.as_str(), at))
+            }
+            encoding = Some(value)
+            spaced = self.skip_ws()
+        }
+        if self.starts_with_at("standalone") {
+            if !spaced {
+                return Err(self.fail("expected white space before 'standalone'"))
+            }
+            let at = self.pos
+            let value = self.read_pseudo_attribute("standalone")?
+            match __yes_no(value) {
+                Some(answer) => standalone = Some(answer),
+                None => return Err(self.fail_at("standalone must be 'yes' or 'no'", at)),
+            }
+            self.skip_ws()
+        }
+        if !self.starts_with_at("?>") {
+            return Err(self.fail("expected '?>' at the end of the XML declaration"))
+        }
+        self.pos = self.pos + 2
+        Ok(Declaration { version, encoding, standalone })
+    }
+
+    /// Reads `<!-- text -->`.
+    priv fn parse_comment(mut self): Result<String, DeError> {
+        self.pos = self.pos + 4
+        let start = self.pos
+        loop {
+            if self.at_end() {
+                return Err(self.fail("unterminated comment"))
+            }
+            if self.invalid_char_here() {
+                return Err(self.fail("a character that XML cannot contain"))
+            }
+            if self.starts_with_at("--") {
+                if self.starts_with_at("-->") {
+                    let raw = self.slice_text(start, self.pos)
+                    let body = __normalize_newlines(raw.as_str())
+                    self.pos = self.pos + 3
+                    return Ok(body)
+                }
+                return Err(self.fail("'--' is not allowed inside a comment"))
+            }
+            self.pos = self.pos + 1
+        }
+    }
+
+    /// Reads `<?target data?>`.
+    priv fn parse_instruction(mut self): Result<Instruction, DeError> {
+        self.pos = self.pos + 2
+        let target_at = self.pos
+        let target = match self.read_name() {
+            Ok(name) => name,
+            Err(_) => return Err(self.fail("expected a processing instruction target")),
+        }
+        if target.as_str().eq_ignore_ascii_case("xml") {
+            return Err(self.fail_at("the XML declaration is only allowed at the very start of the document", target_at))
+        }
+        if self.starts_with_at("?>") {
+            self.pos = self.pos + 2
+            return Ok(Instruction { target, data: String.new() })
+        }
+        if !self.skip_ws() {
+            return Err(self.fail("expected white space or '?>' after the instruction target"))
+        }
+        let start = self.pos
+        loop {
+            if self.at_end() {
+                return Err(self.fail("unterminated processing instruction"))
+            }
+            if self.starts_with_at("?>") {
+                let raw = self.slice_text(start, self.pos)
+                let data = __normalize_newlines(raw.as_str())
+                self.pos = self.pos + 2
+                return Ok(Instruction { target, data })
+            }
+            if self.invalid_char_here() {
+                return Err(self.fail("a character that XML cannot contain"))
+            }
+            self.pos = self.pos + 1
+        }
+    }
+
+    /// Reads `<![CDATA[ text ]]>`.
+    priv fn parse_cdata(mut self): Result<String, DeError> {
+        self.pos = self.pos + 9
+        let start = self.pos
+        loop {
+            if self.at_end() {
+                return Err(self.fail("unterminated CDATA section"))
+            }
+            if self.starts_with_at("]]>") {
+                let raw = self.slice_text(start, self.pos)
+                let body = __normalize_newlines(raw.as_str())
+                self.pos = self.pos + 3
+                return Ok(body)
+            }
+            if self.invalid_char_here() {
+                return Err(self.fail("a character that XML cannot contain"))
+            }
+            self.pos = self.pos + 1
+        }
+    }
+
+    /// Whether the byte at the current position starts a character XML cannot contain: a control character other
+    /// than tab, line feed, and carriage return, or U+FFFE and U+FFFF.
+    priv fn invalid_char_here(self): bool {
+        let bytes = self.text.as_bytes()
+        __invalid_char_at(bytes, self.pos)
+    }
+
+    // ----- text, references, attribute values
+
+    /// Reads a reference at `&` and appends what it stands for: a predefined entity or a character reference. Any
+    /// other entity is an error; there is no DTD to declare one.
+    priv fn read_reference(mut self, mut out: String): Result<(), DeError> {
+        let start = self.pos
+        self.pos = self.pos + 1
+        if self.at_end() {
+            return Err(self.fail("unexpected end of input in a reference"))
+        }
+        if self.peek() == 35 {
+            self.pos = self.pos + 1
+            let mut hex = false
+            if !self.at_end() && self.peek() == 120 {
+                hex = true
+                self.pos = self.pos + 1
+            }
+            let mut value: u32 = 0
+            let mut count: usize = 0
+            while self.pos < self.text.len() {
+                let b = self.peek()
+                let digit: i32 = if hex {
+                    __hex_value(b)
+                } else if b >= 48 && b <= 57 {
+                    (b - 48) as i32
+                } else {
+                    -1
+                }
+                if digit < 0 {
+                    break
+                }
+                // Past U+10FFFF the value only needs to stay out of range, so it stops growing.
+                if value <= 1114111 {
+                    let base: u32 = if hex { 16 } else { 10 }
+                    value = value * base + (digit as u32)
+                }
+                count = count + 1
+                self.pos = self.pos + 1
+            }
+            if count == 0 {
+                return Err(self.fail_at("invalid character reference", start))
+            }
+            if self.at_end() || self.peek() != 59 {
+                return Err(self.fail("expected ';' after a character reference"))
+            }
+            self.pos = self.pos + 1
+            if !__is_xml_char(value) {
+                return Err(self.fail_at("a character reference to a character that XML cannot contain", start))
+            }
+            match value.to_char() {
+                Some(c) => out.push(c),
+                None => return Err(self.fail_at("invalid character reference", start)),
+            }
+            return Ok(())
+        }
+        let name = match self.read_name() {
+            Ok(name) => name,
+            Err(_) => return Err(self.fail_at("expected an entity name after '&'", start)),
+        }
+        if self.at_end() || self.peek() != 59 {
+            return Err(self.fail("expected ';' after an entity name"))
+        }
+        self.pos = self.pos + 1
+        if name.as_str() == "amp" {
+            out.push('&')
+        } else if name.as_str() == "lt" {
+            out.push('<')
+        } else if name.as_str() == "gt" {
+            out.push('>')
+        } else if name.as_str() == "quot" {
+            out.push('"')
+        } else if name.as_str() == "apos" {
+            out.push('\'')
+        } else {
+            return Err(self.fail_at(format("undefined entity '&{name};': only the five predefined entities exist"), start))
+        }
+        Ok(())
+    }
+
+    /// Reads character data up to the next `<`, resolving references and normalizing line ends to line feeds.
+    priv fn parse_text(mut self): Result<String, DeError> {
+        let mut out = String.new()
+        let mut chunk = self.pos
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == 60 {
+                break
+            }
+            if b == 38 {
+                self.copy_chunk(mut out, chunk, self.pos)
+                self.read_reference(mut out)?
+                chunk = self.pos
+            } else if b == 13 {
+                self.copy_chunk(mut out, chunk, self.pos)
+                out.push('\n')
+                self.pos = self.pos + 1
+                if !self.at_end() && self.peek() == 10 {
+                    self.pos = self.pos + 1
+                }
+                chunk = self.pos
+            } else if b == 93 && self.starts_with_at("]]>") {
+                return Err(self.fail("']]>' is not allowed in text"))
+            } else if self.invalid_char_here() {
+                return Err(self.fail("a character that XML cannot contain"))
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+        self.copy_chunk(mut out, chunk, self.pos)
+        Ok(out)
+    }
+
+    /// Reads a quoted attribute value: references are resolved and each tab, line feed, and carriage return becomes a
+    /// space (a character reference to one is kept).
+    priv fn read_attribute_value(mut self): Result<String, DeError> {
+        if self.at_end() || (self.peek() != 34 && self.peek() != 39) {
+            return Err(self.fail("expected a quoted attribute value"))
+        }
+        let quote = self.peek()
+        self.pos = self.pos + 1
+        let mut out = String.new()
+        let mut chunk = self.pos
+        while self.pos < self.text.len() {
+            let b = self.peek()
+            if b == quote {
+                self.copy_chunk(mut out, chunk, self.pos)
+                self.pos = self.pos + 1
+                return Ok(out)
+            }
+            if b == 60 {
+                return Err(self.fail("'<' is not allowed in an attribute value"))
+            }
+            if b == 38 {
+                self.copy_chunk(mut out, chunk, self.pos)
+                self.read_reference(mut out)?
+                chunk = self.pos
+            } else if b == 9 || b == 10 {
+                self.copy_chunk(mut out, chunk, self.pos)
+                out.push(' ')
+                self.pos = self.pos + 1
+                chunk = self.pos
+            } else if b == 13 {
+                self.copy_chunk(mut out, chunk, self.pos)
+                out.push(' ')
+                self.pos = self.pos + 1
+                if !self.at_end() && self.peek() == 10 {
+                    self.pos = self.pos + 1
+                }
+                chunk = self.pos
+            } else if self.invalid_char_here() {
+                return Err(self.fail("a character that XML cannot contain"))
+            } else {
+                self.pos = self.pos + 1
+            }
+        }
+        Err(self.fail("unterminated attribute value"))
+    }
+
+    // ----- namespaces
+
+    /// The URI bound to `prefix` in the scopes that are open (an empty prefix is the default namespace).
+    priv fn lookup(self, prefix: str): Option<String> {
+        if prefix == "xml" {
+            return Some(XML_NAMESPACE.to_string())
+        }
+        let mut i = self.scopes.len()
+        while i > 0 {
+            i = i - 1
+            if self.scopes[i].prefix.as_str() == prefix {
+                return Some(self.scopes[i].uri.clone())
+            }
+        }
+        if prefix.len() == 0 {
+            return Some(String.new())
+        }
+        None
+    }
+
+    // ----- elements
+
+    /// Reads a start tag at `<`: the name, the attributes, and `>` or `/>`; resolves the namespaces it declares and
+    /// the prefixes it uses. The bindings stay in scope for a tag that is not empty.
+    priv fn parse_start_tag(mut self): Result<StartTag, DeError> {
+        let start = self.pos
+        self.pos = self.pos + 1
+        let name = self.read_name()?
+        let problem = __qname_problem(name)
+        if problem.len() > 0 {
+            return Err(self.fail_at(problem.as_str(), start + 1))
+        }
+        let mut raw = List<RawAttribute>.new()
+        let mut empty = false
+        loop {
+            let spaced = self.skip_ws()
+            if self.at_end() {
+                return Err(self.fail("unexpected end of input in a start tag"))
+            }
+            let b = self.peek()
+            if b == 62 {
+                self.pos = self.pos + 1
+                break
+            }
+            if b == 47 {
+                if self.byte_after(1) == 62 {
+                    self.pos = self.pos + 2
+                    empty = true
+                    break
+                }
+                return Err(self.fail("expected '>' after '/'"))
+            }
+            if !spaced {
+                return Err(self.fail("expected white space before an attribute"))
+            }
+            let attribute_at = self.pos
+            let attribute_name = self.read_name()?
+            let attribute_problem = __qname_problem(attribute_name)
+            if attribute_problem.len() > 0 {
+                return Err(self.fail_at(attribute_problem.as_str(), attribute_at))
+            }
+            self.skip_ws()
+            if self.at_end() || self.peek() != 61 {
+                let shown = attribute_name.clone()
+                return Err(self.fail(format("expected '=' after the attribute name '{shown}'").as_str()))
+            }
+            self.pos = self.pos + 1
+            self.skip_ws()
+            let value = self.read_attribute_value()?
+            if raw.len() >= MAX_ATTRIBUTES {
+                return Err(self.fail_at(format("more than {MAX_ATTRIBUTES} attributes in one element"), attribute_at))
+            }
+            if __has_raw(raw, attribute_name) {
+                let shown = attribute_name.clone()
+                let message = format("duplicate attribute '{shown}'")
+                return Err(self.fail_at(message.as_str(), attribute_at))
+            }
+            raw.push(RawAttribute { name: attribute_name, value, position: attribute_at })
+        }
+        let base = self.scopes.len()
+        // The declarations first: they are in scope for the element's own name and for every attribute.
+        let mut i: usize = 0
+        while i < raw.len() {
+            if raw[i].name.as_str() == "xmlns" {
+                if raw[i].value.as_str() == XML_NAMESPACE {
+                    self.scopes.truncate(base)
+                    return Err(self.fail_at("the XML namespace cannot be the default namespace", raw[i].position))
+                }
+                self.scopes.push(Binding { prefix: String.new(), uri: raw[i].value.clone() })
+            } else if raw[i].name.starts_with("xmlns:") {
+                let prefix = __after_prefix(raw[i].name)
+                let uri = raw[i].value.clone()
+                let problem_text = __declaration_problem(prefix, uri)
+                if problem_text.len() > 0 {
+                    self.scopes.truncate(base)
+                    return Err(self.fail_at(problem_text.as_str(), raw[i].position))
+                }
+                self.scopes.push(Binding { prefix, uri })
+            }
+            i = i + 1
+        }
+        let mut element = Element.new(name.as_str())
+        let (line, column) = self.position_of(start)
+        element.line = line
+        element.column = column
+        let prefix = element.prefix()
+        if prefix.as_str() == "xmlns" {
+            self.scopes.truncate(base)
+            return Err(self.fail_at("the prefix 'xmlns' cannot be used on an element", start + 1))
+        }
+        match self.lookup(prefix.as_str()) {
+            Some(uri) => element.namespace = uri,
+            None => {
+                self.scopes.truncate(base)
+                return Err(self.fail_at(format("the namespace prefix '{prefix}' is not declared"), start + 1))
+            }
+        }
+        let mut j: usize = 0
+        while j < raw.len() {
+            let mut attribute = Attribute {
+                name: raw[j].name.clone(),
+                value: raw[j].value.clone(),
+                namespace: String.new(),
+            }
+            if !attribute.is_declaration() {
+                let attribute_prefix = attribute.prefix()
+                if attribute_prefix.len() > 0 {
+                    match self.lookup(attribute_prefix.as_str()) {
+                        Some(uri) => attribute.namespace = uri,
+                        None => {
+                            self.scopes.truncate(base)
+                            return Err(self.fail_at(
+                                format("the namespace prefix '{attribute_prefix}' is not declared"),
+                                raw[j].position,
+                            ))
+                        }
+                    }
+                }
+                // Two names that differ only in the prefix are one attribute when the prefixes name one namespace.
+                if element.has_same_expanded_name(attribute) {
+                    self.scopes.truncate(base)
+                    let message = format("duplicate attribute '{}' after resolving its namespace", attribute.name.clone())
+                    return Err(self.fail_at(message.as_str(), raw[j].position))
+                }
+            }
+            element.attributes.push(attribute)
+            j = j + 1
+        }
+        let declared = self.scopes.len() - base
+        if empty {
+            self.scopes.truncate(base)
+        }
+        Ok(StartTag { element, empty, declared })
+    }
+
+    /// The line and column of `position`.
+    priv fn position_of(mut self, position: usize): (usize, usize) {
+        self.advance_mark(position)
+        (self.mark_line, self.mark_column)
+    }
+
+    /// Reads the root element and everything inside it. The open elements are a stack, not recursion, so a deeply
+    /// nested input cannot exhaust the stack: past `MAX_DEPTH` it is an error instead.
+    priv fn parse_element(mut self): Result<Element, DeError> {
+        let mut stack = List<Element>.new()
+        let mut declared = List<usize>.new()
+        let first = self.parse_start_tag()?
+        if first.empty {
+            return Ok(first.element)
+        }
+        declared.push(first.declared)
+        stack.push(first.element)
+        loop {
+            let top = stack.len() - 1
+            if self.at_end() {
+                let open = stack[top].name.clone()
+                return Err(self.fail(format("unexpected end of input: <{open}> is never closed")))
+            }
+            if self.starts_with_at("</") {
+                let close_at = self.pos
+                self.pos = self.pos + 2
+                let name = match self.read_name() {
+                    Ok(name) => name,
+                    Err(_) => return Err(self.fail("expected an element name after '</'")),
+                }
+                self.skip_ws()
+                if self.at_end() || self.peek() != 62 {
+                    return Err(self.fail("expected '>' at the end of a closing tag"))
+                }
+                self.pos = self.pos + 1
+                if name != stack[top].name {
+                    let open = stack[top].name.clone()
+                    return Err(self.fail_at(format("the closing tag </{name}> does not match <{open}>"), close_at))
+                }
+                let finished = match stack.pop() {
+                    Some(element) => element,
+                    None => return Err(self.fail("unbalanced elements")),
+                }
+                let count = match declared.pop() {
+                    Some(count) => count,
+                    None => 0,
+                }
+                let keep = self.scopes.len() - count
+                self.scopes.truncate(keep)
+                if stack.is_empty() {
+                    return Ok(finished)
+                }
+                let parent = stack.len() - 1
+                stack[parent].children.push(Node.Element(Heap.new(finished)))
+            } else if self.starts_with_at("<!--") {
+                let comment = self.parse_comment()?
+                stack[top].children.push(Node.Comment(comment))
+            } else if self.starts_with_at("<![CDATA[") {
+                let data = self.parse_cdata()?
+                stack[top].children.push(Node.CData(data))
+            } else if self.starts_with_at("<?") {
+                let instruction = self.parse_instruction()?
+                stack[top].children.push(Node.Pi(instruction))
+            } else if self.starts_with_at("<!") {
+                return Err(self.unsupported_declaration())
+            } else if self.peek() == 60 {
+                let tag_at = self.pos
+                if stack.len() >= MAX_DEPTH {
+                    return Err(self.fail(format("elements are nested more than {MAX_DEPTH} deep")))
+                }
+                let tag = self.parse_start_tag()?
+                if tag.empty {
+                    stack[top].children.push(Node.Element(Heap.new(tag.element)))
+                } else {
+                    declared.push(tag.declared)
+                    stack.push(tag.element)
+                }
+            } else {
+                let text = self.parse_text()?
+                stack[top].children.push(Node.Text(text))
+            }
+        }
+    }
+}
+
+// ----- the writer: values to a DOM -------------------------------------------------------------------------------
+
+/// One open container in the writer: the element being built and what it holds.
+struct WriterFrame {
+    element: Element,
+    // 0 = sequence, 1 = struct, 2 = map, 3 = enum variant.
+    kind: i32,
+    // The struct field name or the map key written, waiting for its value.
+    pending: Option<String>,
+    variant: String,
+    arity: usize,
+}
+
+/// The format side of serialization (`Serializer`): it builds the DOM that the README's mapping describes. `root`
+/// names the root element; without one, a struct or an enum is named after its type and anything else `root`.
+struct Writer {
+    frames: List<WriterFrame>,
+    root: Option<Element>,
+    root_name: String,
+}
+
+Writer {
+    /// A writer that names the root element after the value.
+    fn new(): Writer {
+        Writer { frames: List<WriterFrame>.new(), root: None, root_name: String.new() }
+    }
+
+    /// A writer whose root element is called `name`.
+    fn with_root(name: str): Writer {
+        Writer { frames: List<WriterFrame>.new(), root: None, root_name: name.to_string() }
+    }
+
+    /// The root element that was written, ending the writer.
+    fn finish(own self): Result<Element, DeError> {
+        if !self.frames.is_empty() {
+            return Err(DeError.new("a container was not closed"))
+        }
+        match self.root {
+            Some(element) => Ok(element),
+            None => Err(DeError.new("no value was written")),
+        }
+    }
+
+    /// The name of the element the next value becomes.
+    priv fn element_name(mut self, type_name: str): Result<String, DeError> {
+        if self.frames.is_empty() {
+            if self.root_name.len() > 0 {
+                return Ok(self.root_name.clone())
+            }
+            if type_name.len() > 0 {
+                return Ok(type_name.to_string())
+            }
+            return Ok("root".to_string())
+        }
+        let i = self.frames.len() - 1
+        let kind = self.frames[i].kind
+        if kind == 0 {
+            return Ok("item".to_string())
+        }
+        if kind == 1 {
+            return match self.frames[i].pending.take() {
+                Some(name) => Ok(name),
+                None => Err(DeError.new("a struct value without a field name")),
+            }
+        }
+        if kind == 2 {
+            if self.frames[i].pending.is_none() {
+                return Err(DeError.new("a map value without a key"))
+            }
+            return Ok("value".to_string())
+        }
+        if self.frames[i].arity == 1 {
+            Ok(self.frames[i].variant.clone())
+        } else {
+            Ok("item".to_string())
+        }
+    }
+
+    /// Places a finished element in the container that is open, or makes it the root.
+    priv fn attach(mut self, own element: Element): Result<(), DeError> {
+        if self.frames.is_empty() {
+            if self.root.is_some() {
+                return Err(DeError.new("an XML document has one root element"))
+            }
+            self.root = Some(element)
+            return Ok(())
+        }
+        let i = self.frames.len() - 1
+        if self.frames[i].kind == 2 {
+            let key = match self.frames[i].pending.take() {
+                Some(key) => key,
+                None => return Err(DeError.new("a map value without a key")),
+            }
+            let mut entry = Element.new("entry")
+            entry.push_child(Element.new("key").with_text(key.as_str()))
+            entry.push_child(element)
+            self.frames[i].element.push_child(entry)
+        } else {
+            self.frames[i].element.push_child(element)
+        }
+        Ok(())
+    }
+
+    /// Writes a scalar: an element holding `text` (none for an empty text).
+    priv fn leaf(mut self, text: str): Result<(), DeError> {
+        let name = self.element_name("")?
+        let mut element = Element.new(name.as_str())
+        if text.len() > 0 {
+            element.push_text(text)
+        }
+        self.attach(element)
+    }
+
+    priv fn open(mut self, type_name: str, kind: i32, variant: str, arity: usize): Result<(), DeError> {
+        let name = self.element_name(type_name)?
+        self.frames.push(WriterFrame {
+            element: Element.new(name.as_str()),
+            kind,
+            pending: None,
+            variant: variant.to_string(),
+            arity,
+        })
+        Ok(())
+    }
+
+    priv fn close(mut self, kind: i32): Result<WriterFrame, DeError> {
+        match self.frames.pop() {
+            Some(frame) => {
+                if frame.kind == kind {
+                    Ok(frame)
+                } else {
+                    Err(DeError.new("unbalanced XML container"))
+                }
+            }
+            None => Err(DeError.new("unbalanced XML container")),
+        }
+    }
+
+    priv fn set_pending(mut self, kind: i32, name: str): Result<(), DeError> {
+        if self.frames.is_empty() {
+            return Err(DeError.new("a name outside a struct or a map"))
+        }
+        let i = self.frames.len() - 1
+        if self.frames[i].kind != kind {
+            return Err(DeError.new("a name outside a struct or a map"))
+        }
+        if self.frames[i].pending.is_some() {
+            return Err(DeError.new("two names in a row"))
+        }
+        self.frames[i].pending = Some(name.to_string())
+        Ok(())
+    }
+}
+
+Writer: Serializer {
+    fn serialize_unit(mut self): Result<(), DeError> {
+        self.leaf("")
+    }
+
+    fn serialize_bool(mut self, value: bool): Result<(), DeError> {
+        if value {
+            self.leaf("true")
+        } else {
+            self.leaf("false")
+        }
+    }
+
+    fn serialize_i8(mut self, value: i8): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_i16(mut self, value: i16): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_i32(mut self, value: i32): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_i64(mut self, value: i64): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_isize(mut self, value: isize): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_u8(mut self, value: u8): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_u16(mut self, value: u16): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_u32(mut self, value: u32): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_u64(mut self, value: u64): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_usize(mut self, value: usize): Result<(), DeError> {
+        self.leaf(value.to_string().as_str())
+    }
+
+    fn serialize_f32(mut self, value: f32): Result<(), DeError> {
+        if value.is_nan() {
+            return self.leaf("NaN")
+        }
+        if value.is_infinite() {
+            return if value > 0.0 { self.leaf("INF") } else { self.leaf("-INF") }
+        }
+        let text = __float_text(value.to_string().as_str())
+        self.leaf(text.as_str())
+    }
+
+    fn serialize_f64(mut self, value: f64): Result<(), DeError> {
+        if value.is_nan() {
+            return self.leaf("NaN")
+        }
+        if value.is_infinite() {
+            return if value > 0.0 { self.leaf("INF") } else { self.leaf("-INF") }
+        }
+        let text = __float_text(value.to_string().as_str())
+        self.leaf(text.as_str())
+    }
+
+    fn serialize_char(mut self, value: char): Result<(), DeError> {
+        let mut text = String.new()
+        text.push(value)
+        self.leaf(text.as_str())
+    }
+
+    fn serialize_str(mut self, value: str): Result<(), DeError> {
+        self.leaf(value)
+    }
+
+    fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
+        let mut text = String.new()
+        let mut i: usize = 0
+        while i < value.len() {
+            text.push(__hex_digit((value[i] / 16) as u32))
+            text.push(__hex_digit((value[i] & 15) as u32))
+            i = i + 1
+        }
+        self.leaf(text.as_str())
+    }
+
+    fn begin_seq(mut self, len: usize): Result<(), DeError> {
+        self.open("", 0, "", 0)
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        let frame = self.close(0)?
+        self.attach(frame.element)
+    }
+
+    fn begin_map(mut self, len: usize): Result<(), DeError> {
+        self.open("", 2, "", 0)
+    }
+
+    fn map_key(mut self, key: str): Result<(), DeError> {
+        self.set_pending(2, key)
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        let frame = self.close(2)?
+        self.attach(frame.element)
+    }
+
+    fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
+        self.open(name, 1, "", 0)
+    }
+
+    fn struct_field(mut self, name: str): Result<(), DeError> {
+        self.set_pending(1, name)
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        let frame = self.close(1)?
+        self.attach(frame.element)
+    }
+
+    fn begin_variant(
+        mut self,
+        type_name: str,
+        variant: str,
+        index: usize,
+        arity: usize,
+    ): Result<(), DeError> {
+        self.open(type_name, 3, variant, arity)
+    }
+
+    fn end_variant(mut self, arity: usize): Result<(), DeError> {
+        let mut frame = self.close(3)?
+        if arity == 0 {
+            let child = Element.new(frame.variant.as_str())
+            frame.element.push_child(child)
+        } else if arity > 1 {
+            let mut wrapper = Element.new(frame.variant.as_str())
+            wrapper.children = frame.element.children.split_off(0)
+            frame.element.push_child(wrapper)
+        }
+        self.attach(frame.element)
+    }
+}
+
+// ----- the reader: a DOM to values ---------------------------------------------------------------------------------
+
+/// An element flattened for the reader: its local name, its direct text, the indexes of its child elements, and where
+/// it began. The reader walks indexes into a list of these, so reading copies a string only when a value is built.
+struct Slot {
+    name: String,
+    text: String,
+    kids: List<usize>,
+    line: usize,
+    column: usize,
+}
+
+/// An open sequence, map, or struct: the container's slot and the index of its next child. `started` is whether the
+/// first `has_next_*` call has been made, and `reads` is the reader's count of values read when the container opened.
+struct Cursor {
+    slot: usize,
+    next: usize,
+    started: bool,
+    reads: usize,
+}
+
+/// An open enum: the enum's slot, the slot of the variant element, the payload's arity, and the next payload child.
+struct VariantFrame {
+    slot: usize,
+    variant: usize,
+    arity: usize,
+    next: usize,
+}
+
+/// The format side of deserialization (`Deserializer`) over a parsed document. It matches elements by local name and
+/// ignores attributes and namespaces; the README has the mapping.
+struct Reader {
+    slots: List<Slot>,
+    value: usize,
+    reads: usize,
+    cursors: List<Cursor>,
+    variants: List<VariantFrame>,
+}
+
+Reader {
+    /// A reader over the document in `text`: the text is parsed first, so a syntax error is reported here.
+    fn new(text: str): Result<Reader, DeError> {
+        let document = parse(text)?
+        Reader.from_document(document)
+    }
+
+    /// A reader over the root element of `document`.
+    fn from_document(document: Document): Result<Reader, DeError> {
+        let mut slots = List<Slot>.new()
+        document.root.flatten_into(mut slots, 0)?
+        Ok(Reader {
+            slots,
+            value: 0,
+            reads: 0,
+            cursors: List<Cursor>.new(),
+            variants: List<VariantFrame>.new(),
+        })
+    }
+
+    /// An error at the start of the element `slot`.
+    priv fn fail_at(self, slot: usize, message: str): DeError {
+        DeError.syntax(message, self.slots[slot].line as i32, self.slots[slot].column as i32)
+    }
+
+    /// The text of the current value, which must be an element without child elements.
+    priv fn leaf_text(mut self): Result<String, DeError> {
+        self.reads = self.reads + 1
+        let slot = self.value
+        if !self.slots[slot].kids.is_empty() {
+            let name = self.slots[slot].name.clone()
+            return Err(self.fail_at(slot, format("expected text in <{name}>, found a child element")))
+        }
+        Ok(self.slots[slot].text.clone())
+    }
+
+    /// Whether `slot` has child elements or text that is not white space.
+    priv fn has_content(self, slot: usize): bool {
+        !self.slots[slot].kids.is_empty() || !__is_blank(self.slots[slot].text.as_str())
+    }
+
+    /// Checks that `slot` holds no text of its own: a container's content is its child elements.
+    priv fn require_no_text(self, slot: usize): Result<(), DeError> {
+        if __is_blank(self.slots[slot].text.as_str()) {
+            Ok(())
+        } else {
+            let name = self.slots[slot].name.clone()
+            Err(self.fail_at(slot, format("unexpected text in <{name}>")))
+        }
+    }
+
+    /// Opens a sequence, map, or struct on the current value.
+    priv fn open(mut self): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let slot = self.value
+        self.require_no_text(slot)?
+        self.cursors.push(Cursor { slot, next: 0, started: false, reads: self.reads })
+        Ok(())
+    }
+
+    priv fn close(mut self): Result<(), DeError> {
+        match self.cursors.pop() {
+            Some(_) => Ok(()),
+            None => Err(DeError.new("unbalanced XML container")),
+        }
+    }
+
+    /// Whether the open container has another child element.
+    priv fn more(self): Result<bool, DeError> {
+        if self.cursors.is_empty() {
+            return Err(DeError.new("a value outside a container"))
+        }
+        let top = self.cursors.len() - 1
+        let slot = self.cursors[top].slot
+        Ok(self.cursors[top].next < self.slots[slot].kids.len())
+    }
+
+    /// Takes the next child element of the open container.
+    priv fn take_child(mut self): Result<usize, DeError> {
+        if self.cursors.is_empty() {
+            return Err(DeError.new("a value outside a container"))
+        }
+        let top = self.cursors.len() - 1
+        let slot = self.cursors[top].slot
+        let next = self.cursors[top].next
+        if next >= self.slots[slot].kids.len() {
+            return Err(self.fail_at(slot, "expected another element"))
+        }
+        self.cursors[top].next = next + 1
+        Ok(self.slots[slot].kids[next])
+    }
+
+    /// The child of `slot` called `name`, which must be there exactly once.
+    priv fn only_child(self, slot: usize, name: str): Result<usize, DeError> {
+        let mut found: Option<usize> = None
+        let mut i: usize = 0
+        while i < self.slots[slot].kids.len() {
+            let kid = self.slots[slot].kids[i]
+            if self.slots[kid].name.as_str() == name {
+                if found.is_some() {
+                    return Err(self.fail_at(kid, format("duplicate <{name}>")))
+                }
+                found = Some(kid)
+            }
+            i = i + 1
+        }
+        match found {
+            Some(kid) => Ok(kid),
+            None => Err(self.fail_at(slot, format("missing <{name}>"))),
+        }
+    }
+
+    priv fn read_signed(mut self, low: i64, high: i64, width: str): Result<i64, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        if !__is_integer_text(trimmed) {
+            return Err(self.fail_at(slot, "expected an integer"))
+        }
+        match i64.parse(trimmed) {
+            Ok(value) => {
+                if value < low || value > high {
+                    Err(self.fail_at(slot, format("a number that does not fit in {width}")))
+                } else {
+                    Ok(value)
+                }
+            }
+            Err(_) => Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
+        }
+    }
+
+    priv fn read_unsigned(mut self, high: u64, width: str): Result<u64, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        if !__is_integer_text(trimmed) {
+            return Err(self.fail_at(slot, "expected an integer"))
+        }
+        match u64.parse(trimmed) {
+            Ok(value) => {
+                if value > high {
+                    Err(self.fail_at(slot, format("a number that does not fit in {width}")))
+                } else {
+                    Ok(value)
+                }
+            }
+            Err(_) => Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
+        }
+    }
+}
+
+Reader: Deserializer {
+    fn deserialize_unit(mut self): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let slot = self.value
+        if !self.has_content(slot) {
+            Ok(())
+        } else {
+            Err(self.fail_at(slot, "expected an empty element"))
+        }
+    }
+
+    fn deserialize_bool(mut self): Result<bool, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        if trimmed == "true" {
+            Ok(true)
+        } else if trimmed == "false" {
+            Ok(false)
+        } else {
+            Err(self.fail_at(slot, "expected 'true' or 'false'"))
+        }
+    }
+
+    fn deserialize_i8(mut self): Result<i8, DeError> {
+        let value = self.read_signed(-128, 127, "i8")?
+        Ok(value as i8)
+    }
+
+    fn deserialize_i16(mut self): Result<i16, DeError> {
+        let value = self.read_signed(-32768, 32767, "i16")?
+        Ok(value as i16)
+    }
+
+    fn deserialize_i32(mut self): Result<i32, DeError> {
+        let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
+        Ok(value as i32)
+    }
+
+    fn deserialize_i64(mut self): Result<i64, DeError> {
+        self.read_signed(i64.MIN, i64.MAX, "i64")
+    }
+
+    fn deserialize_isize(mut self): Result<isize, DeError> {
+        let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
+        Ok(value as isize)
+    }
+
+    fn deserialize_u8(mut self): Result<u8, DeError> {
+        let value = self.read_unsigned(255, "u8")?
+        Ok(value as u8)
+    }
+
+    fn deserialize_u16(mut self): Result<u16, DeError> {
+        let value = self.read_unsigned(65535, "u16")?
+        Ok(value as u16)
+    }
+
+    fn deserialize_u32(mut self): Result<u32, DeError> {
+        let value = self.read_unsigned(4294967295, "u32")?
+        Ok(value as u32)
+    }
+
+    fn deserialize_u64(mut self): Result<u64, DeError> {
+        self.read_unsigned(u64.MAX, "u64")
+    }
+
+    fn deserialize_usize(mut self): Result<usize, DeError> {
+        let value = self.read_unsigned(usize.MAX as u64, "usize")?
+        Ok(value as usize)
+    }
+
+    fn deserialize_f32(mut self): Result<f32, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        match f32.parse(trimmed) {
+            Ok(value) => {
+                if value.is_finite() || __names_non_finite(trimmed) {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at(slot, "a number that does not fit in f32"))
+                }
+            }
+            Err(_) => Err(self.fail_at(slot, "expected a number")),
+        }
+    }
+
+    fn deserialize_f64(mut self): Result<f64, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        match f64.parse(trimmed) {
+            Ok(value) => {
+                if value.is_finite() || __names_non_finite(trimmed) {
+                    Ok(value)
+                } else {
+                    Err(self.fail_at(slot, "a number that does not fit in f64"))
+                }
+            }
+            Err(_) => Err(self.fail_at(slot, "expected a number")),
+        }
+    }
+
+    fn deserialize_char(mut self): Result<char, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let mut count: usize = 0
+        let mut first: char = '\0'
+        for c in text.chars() {
+            count = count + 1
+            first = c
+        }
+        if count != 1 {
+            return Err(self.fail_at(slot, "expected one character"))
+        }
+        Ok(first)
+    }
+
+    fn deserialize_str(mut self): Result<String, DeError> {
+        self.leaf_text()
+    }
+
+    fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
+        let slot = self.value
+        let text = self.leaf_text()?
+        let trimmed = text.trim()
+        let bytes = trimmed.as_bytes()
+        if bytes.len() % 2 != 0 {
+            return Err(self.fail_at(slot, "expected an even number of hexadecimal digits"))
+        }
+        let mut out = List<u8>.new()
+        let mut i: usize = 0
+        while i < bytes.len() {
+            let high = __hex_value(bytes[i])
+            let low = __hex_value(bytes[i + 1])
+            if high < 0 || low < 0 {
+                return Err(self.fail_at(slot, "expected hexadecimal digits"))
+            }
+            out.push((high * 16 + low) as u8)
+            i = i + 2
+        }
+        Ok(out)
+    }
+
+    fn begin_seq(mut self): Result<(), DeError> {
+        self.open()?
+        // A derived tuple reads its first part before it ever asks `has_next_seq_element`, so the first child is
+        // already the current value.
+        let slot = self.value
+        if !self.slots[slot].kids.is_empty() {
+            self.value = self.slots[slot].kids[0]
+        }
+        Ok(())
+    }
+
+    fn has_next_seq_element(mut self): Result<bool, DeError> {
+        if self.cursors.is_empty() {
+            return Err(DeError.new("a value outside a container"))
+        }
+        let top = self.cursors.len() - 1
+        if !self.cursors[top].started {
+            self.cursors[top].started = true
+            // Nothing was read since the sequence opened: this call hands out the first child. Otherwise the first
+            // child was read already (a derived tuple) and this call moves on to the second.
+            if self.reads != self.cursors[top].reads {
+                self.cursors[top].next = 1
+            }
+        }
+        if !self.more()? {
+            return Ok(false)
+        }
+        let child = self.take_child()?
+        if self.slots[child].name.as_str() != "item" {
+            let name = self.slots[child].name.clone()
+            return Err(self.fail_at(child, format("expected <item>, found <{name}>")))
+        }
+        self.value = child
+        Ok(true)
+    }
+
+    fn end_seq(mut self): Result<(), DeError> {
+        self.close()
+    }
+
+    fn begin_map(mut self): Result<(), DeError> {
+        self.open()
+    }
+
+    fn has_next_map_entry(mut self): Result<bool, DeError> {
+        self.more()
+    }
+
+    fn map_key(mut self): Result<String, DeError> {
+        let entry = self.take_child()?
+        if self.slots[entry].name.as_str() != "entry" {
+            let name = self.slots[entry].name.clone()
+            return Err(self.fail_at(entry, format("expected <entry>, found <{name}>")))
+        }
+        self.require_no_text(entry)?
+        if self.slots[entry].kids.len() != 2 {
+            return Err(self.fail_at(entry, "an <entry> holds one <key> and one <value>"))
+        }
+        let key = self.only_child(entry, "key")?
+        let value = self.only_child(entry, "value")?
+        if !self.slots[key].kids.is_empty() {
+            return Err(self.fail_at(key, "a <key> holds text"))
+        }
+        self.value = value
+        Ok(self.slots[key].text.clone())
+    }
+
+    fn end_map(mut self): Result<(), DeError> {
+        self.close()
+    }
+
+    fn begin_struct(mut self, name: str): Result<(), DeError> {
+        self.open()
+    }
+
+    fn has_next_field(mut self): Result<bool, DeError> {
+        self.more()
+    }
+
+    fn field_name(mut self): Result<String, DeError> {
+        let child = self.take_child()?
+        self.value = child
+        Ok(self.slots[child].name.clone())
+    }
+
+    fn end_struct(mut self): Result<(), DeError> {
+        self.close()
+    }
+
+    fn begin_enum(mut self, name: str): Result<(), DeError> {
+        self.reads = self.reads + 1
+        let slot = self.value
+        self.variants.push(VariantFrame { slot, variant: slot, arity: 0, next: 0 })
+        Ok(())
+    }
+
+    fn variant_name(mut self): Result<String, DeError> {
+        if self.variants.is_empty() {
+            return Err(DeError.new("a variant outside an enum"))
+        }
+        let top = self.variants.len() - 1
+        let slot = self.variants[top].slot
+        self.require_no_text(slot)?
+        if self.slots[slot].kids.len() != 1 {
+            let name = self.slots[slot].name.clone()
+            return Err(self.fail_at(slot, format("expected one variant element in <{name}>")))
+        }
+        let variant = self.slots[slot].kids[0]
+        self.variants[top].variant = variant
+        Ok(self.slots[variant].name.clone())
+    }
+
+    fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        if self.variants.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let top = self.variants.len() - 1
+        let variant = self.variants[top].variant
+        self.variants[top].arity = arity
+        self.variants[top].next = 0
+        if arity == 0 {
+            if self.has_content(variant) {
+                let name = self.slots[variant].name.clone()
+                return Err(self.fail_at(variant, format("the variant <{name}> has no payload")))
+            }
+        } else if arity == 1 {
+            self.value = variant
+        } else {
+            self.require_no_text(variant)?
+        }
+        Ok(())
+    }
+
+    fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
+        if self.variants.is_empty() {
+            return Err(DeError.new("a variant payload outside an enum"))
+        }
+        let top = self.variants.len() - 1
+        let arity = self.variants[top].arity
+        if arity <= 1 {
+            return Ok(())
+        }
+        let variant = self.variants[top].variant
+        let next = self.variants[top].next
+        if next >= self.slots[variant].kids.len() {
+            let name = self.slots[variant].name.clone()
+            return Err(self.fail_at(variant, format("the variant <{name}> has {arity} payload values")))
+        }
+        let child = self.slots[variant].kids[next]
+        if self.slots[child].name.as_str() != "item" {
+            let name = self.slots[child].name.clone()
+            return Err(self.fail_at(child, format("expected <item>, found <{name}>")))
+        }
+        self.variants[top].next = next + 1
+        self.value = child
+        Ok(())
+    }
+
+    fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
+        let frame = match self.variants.pop() {
+            Some(frame) => frame,
+            None => return Err(DeError.new("a variant payload outside an enum")),
+        }
+        if arity > 1 && frame.next < self.slots[frame.variant].kids.len() {
+            let extra = self.slots[frame.variant].kids[frame.next]
+            return Err(self.fail_at(extra, "too many payload values"))
+        }
+        Ok(())
+    }
+}
+
+// ----- the public surface ---------------------------------------------------------------------------------------
+
+/// Reads `text` as one XML document.
+fn parse(text: str): Result<Document, DeError> {
+    let mut parser = Parser.new(text)
+    parser.parse_document()
+}
+
+/// Writes `value` as a DOM: the tree the serialization mapping builds. The root element is named after a struct or
+/// an enum, and `root` otherwise.
+fn to_document<T: Serialize>(value: T): Result<Document, DeError> {
+    let mut writer = Writer.new()
+    value.serialize(mut writer)?
+    let root = writer.finish()?
+    Ok(Document.new(root))
+}
+
+/// Like `to_document`, with the root element called `root`.
+fn to_document_root<T: Serialize>(value: T, root: str): Result<Document, DeError> {
+    let mut writer = Writer.with_root(root)
+    value.serialize(mut writer)?
+    let element = writer.finish()?
+    Ok(Document.new(element))
+}
+
+/// Writes `value` as compact XML, with no declaration.
+fn to_string<T: Serialize>(value: T): Result<String, DeError> {
+    let document = to_document(value)?
+    document.to_xml()
+}
+
+/// Writes `value` as XML with two-space indentation and a final newline.
+fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
+    let document = to_document(value)?
+    document.to_xml_pretty()
+}
+
+/// Reads a value of type `T` from the document in `text`. The root element's name is not checked.
+fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
+    let mut reader = Reader.new(text)?
+    T.deserialize(mut reader)
+}
+
+/// Reads a value of type `T` from the root element of a document.
+fn from_document<T: Deserialize>(document: Document): Result<T, DeError> {
+    let mut reader = Reader.from_document(document)?
+    T.deserialize(mut reader)
+}
+
+// ----- helpers -------------------------------------------------------------------------------------------------
+
+/// An error message when `name` is not a valid qualified name, or an empty string.
+priv fn __qname_problem(name: String): String {
+    let mut colons: usize = 0
+    for c in name.chars() {
+        if c == ':' {
+            colons = colons + 1
+        }
+    }
+    if colons > 1 || name.starts_with(":") || name.ends_with(":") {
+        format("invalid qualified name '{name}'")
+    } else {
+        String.new()
+    }
+}
+
+/// Whether `raw` already has an attribute `name`.
+priv fn __has_raw(raw: List<RawAttribute>, name: String): bool {
+    let mut i: usize = 0
+    while i < raw.len() {
+        if raw[i].name.as_str() == name.as_str() {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+/// The part of the name `xmlns:prefix` after the colon.
+priv fn __after_prefix(name: String): String {
+    name[6..name.len()].to_string()
+}
+
+/// The reason a declaration `xmlns:prefix="uri"` is not allowed, or an empty string.
+priv fn __declaration_problem(prefix: String, uri: String): String {
+    if prefix.as_str() == "xmlns" {
+        "the prefix 'xmlns' cannot be declared".to_string()
+    } else if prefix.as_str() == "xml" && uri.as_str() != XML_NAMESPACE {
+        "the prefix 'xml' can only be bound to the XML namespace".to_string()
+    } else if prefix.as_str() != "xml" && uri.as_str() == XML_NAMESPACE {
+        "the XML namespace can only be bound to the prefix 'xml'".to_string()
+    } else if uri.len() == 0 {
+        format("the prefix '{prefix}' cannot be bound to an empty namespace")
+    } else {
+        String.new()
+    }
+}
+
+/// Whether `name` names an encoding the package reads and writes.
+priv fn __encoding_ok(name: String): bool {
+    let lower = name.to_ascii_lowercase()
+    lower.as_str() == "utf-8" || lower.as_str() == "us-ascii"
+}
+
+/// `Some(true)` for `yes`, `Some(false)` for `no`.
+priv fn __yes_no(text: String): Option<bool> {
+    if text.as_str() == "yes" {
+        Some(true)
+    } else if text.as_str() == "no" {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// The part of a qualified name before the colon, or an empty string.
+priv fn __prefix_of(name: str): String {
+    match name.find(':') {
+        Some(i) => name[0..i].to_string(),
+        None => String.new(),
+    }
+}
+
+/// The part of a qualified name after the colon, or the whole name.
+priv fn __local_of(name: str): String {
+    match name.find(':') {
+        Some(i) => name[i + 1..name.len()].to_string(),
+        None => name.to_string(),
+    }
+}
+
+/// Whether `b` can start a name: a letter, `_`, `:`, or the first byte of a non-ASCII character.
+priv fn __is_name_start(b: u8): bool {
+    (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95 || b == 58 || b >= 128
+}
+
+/// Whether `b` can continue a name.
+priv fn __is_name_byte(b: u8): bool {
+    __is_name_start(b) || (b >= 48 && b <= 57) || b == 45 || b == 46
+}
+
+/// Whether `text` is a name (the serializer checks every name it writes).
+priv fn __is_name(text: str): bool {
+    let bytes = text.as_bytes()
+    if bytes.len() == 0 || !__is_name_start(bytes[0]) {
+        return false
+    }
+    let mut i: usize = 1
+    while i < bytes.len() {
+        if !__is_name_byte(bytes[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether `text` is empty or white space only.
+priv fn __is_blank(text: str): bool {
+    let bytes = text.as_bytes()
+    let mut i: usize = 0
+    while i < bytes.len() {
+        let b = bytes[i]
+        if b != 32 && b != 9 && b != 10 && b != 13 {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether `code` is a character XML 1.0 allows.
+priv fn __is_xml_char(code: u32): bool {
+    code == 9
+        || code == 10
+        || code == 13
+        || (code >= 32 && code <= 55295)
+        || (code >= 57344 && code <= 65533)
+        || (code >= 65536 && code <= 1114111)
+}
+
+/// Whether the byte at `i` starts a character XML cannot contain: a control character other than tab, line feed, and
+/// carriage return, or U+FFFE and U+FFFF.
+priv fn __invalid_char_at(bytes: [u8], i: usize): bool {
+    let b = bytes[i]
+    if b < 32 {
+        return b != 9 && b != 10 && b != 13
+    }
+    if b == 239 && i + 2 < bytes.len() {
+        return bytes[i + 1] == 191 && (bytes[i + 2] == 190 || bytes[i + 2] == 191)
+    }
+    false
+}
+
+/// `text` with each carriage return and each carriage return line feed turned into a line feed.
+priv fn __normalize_newlines(text: str): String {
+    let mut out = String.new()
+    let bytes = text.as_bytes()
+    let mut chunk: usize = 0
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if bytes[i] == 13 {
+            out.push_str(text[chunk..i])
+            out.push('\n')
+            if i + 1 < bytes.len() && bytes[i + 1] == 10 {
+                i = i + 1
+            }
+            chunk = i + 1
+        }
+        i = i + 1
+    }
+    out.push_str(text[chunk..bytes.len()])
+    out
+}
+
+/// Checks that every character of `text` is one XML can carry.
+priv fn __check_chars(text: str): Result<(), DeError> {
+    for c in text.chars() {
+        let code = c as u32
+        if !__is_xml_char(code) {
+            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+        }
+    }
+    Ok(())
+}
+
+/// A code point as hexadecimal digits, four at least.
+priv fn __code_text(code: u32): String {
+    let mut digits = List<char>.new()
+    let mut rest = code
+    while rest > 0 {
+        digits.push(__hex_digit(rest & 15).to_ascii_uppercase())
+        rest = rest / 16
+    }
+    while digits.len() < 4 {
+        digits.push('0')
+    }
+    let mut out = String.new()
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
+/// Writes `text` as character data: `&`, `<`, and `>` are escaped, and a carriage return is a character reference so it
+/// survives the reader's line-end normalization.
+priv fn __escape_text(mut out: String, text: str): Result<(), DeError> {
+    for c in text.chars() {
+        let code = c as u32
+        if c == '&' {
+            out.push_str("&amp;")
+        } else if c == '<' {
+            out.push_str("&lt;")
+        } else if c == '>' {
+            out.push_str("&gt;")
+        } else if code == 13 {
+            out.push_str("&#13;")
+        } else if !__is_xml_char(code) {
+            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+        } else {
+            out.push(c)
+        }
+    }
+    Ok(())
+}
+
+/// Writes `text` as the inside of a double-quoted attribute value: also `"`, and tab and line ends as references so
+/// the reader's attribute-value normalization keeps them.
+priv fn __escape_attribute(mut out: String, text: str): Result<(), DeError> {
+    for c in text.chars() {
+        let code = c as u32
+        if c == '&' {
+            out.push_str("&amp;")
+        } else if c == '<' {
+            out.push_str("&lt;")
+        } else if c == '>' {
+            out.push_str("&gt;")
+        } else if c == '"' {
+            out.push_str("&quot;")
+        } else if code == 9 {
+            out.push_str("&#9;")
+        } else if code == 10 {
+            out.push_str("&#10;")
+        } else if code == 13 {
+            out.push_str("&#13;")
+        } else if !__is_xml_char(code) {
+            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+        } else {
+            out.push(c)
+        }
+    }
+    Ok(())
+}
+
+/// Writes the declaration `<?xml version="..." encoding="..." standalone="..."?>`.
+priv fn __write_declaration(mut out: String, declaration: Declaration): Result<(), DeError> {
+    if declaration.version.as_str() != "1.0" {
+        return Err(DeError.new(format("unsupported XML version '{}'", declaration.version)))
+    }
+    out.push_str("<?xml version=\"1.0\"")
+    match declaration.encoding {
+        Some(encoding) => {
+            let lower = encoding.to_ascii_lowercase()
+            if lower.as_str() != "utf-8" && lower.as_str() != "us-ascii" {
+                return Err(DeError.new(format("unsupported encoding '{encoding}': only UTF-8 is supported")))
+            }
+            out.push_str(" encoding=\"")
+            out.push_str(encoding.as_str())
+            out.push('"')
+        }
+        None => {}
+    }
+    match declaration.standalone {
+        Some(yes) => {
+            if yes {
+                out.push_str(" standalone=\"yes\"")
+            } else {
+                out.push_str(" standalone=\"no\"")
+            }
+        }
+        None => {}
+    }
+    out.push_str("?>")
+    Ok(())
+}
+
+/// Writes two spaces for each level.
+priv fn __indent(mut out: String, level: usize) {
+    let mut i: usize = 0
+    while i < level {
+        out.push_str("  ")
+        i = i + 1
+    }
+}
+
+/// A float's text for an element: `Display` writes a negative zero as `-.0`, which gets its leading `0` back.
+priv fn __float_text(text: str): String {
+    let mut out = String.new()
+    if text.starts_with("-.") {
+        out.push_str("-0")
+        out.push_str(text[1..text.len()])
+    } else {
+        out.push_str(text)
+    }
+    out
+}
+
+/// Whether the number text names infinity or NaN, which `INF`, `-INF`, and `NaN` do.
+priv fn __names_non_finite(text: str): bool {
+    let lower = text.to_ascii_lowercase()
+    lower.find_str("inf").is_some() || lower.find_str("nan").is_some()
+}
+
+/// Whether `text` is an optional minus sign and at least one digit.
+priv fn __is_integer_text(text: str): bool {
+    let bytes = text.as_bytes()
+    let mut i: usize = 0
+    if bytes.len() > 0 && bytes[0] == 45 {
+        i = 1
+    }
+    if i >= bytes.len() {
+        return false
+    }
+    while i < bytes.len() {
+        if bytes[i] < 48 || bytes[i] > 57 {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// The lowercase hexadecimal digit for `n` (0 to 15).
+priv fn __hex_digit(n: u32): char {
+    if n < 10 {
+        (48 + n) as char
+    } else {
+        (97 + n - 10) as char
+    }
+}
+
+/// The value of a hexadecimal digit, or -1 when `b` is not one.
+priv fn __hex_value(b: u8): i32 {
+    if b >= 48 && b <= 57 {
+        (b - 48) as i32
+    } else if b >= 97 && b <= 102 {
+        (b - 87) as i32
+    } else if b >= 65 && b <= 70 {
+        (b - 55) as i32
+    } else {
+        -1
+    }
+}

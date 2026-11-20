@@ -1,0 +1,7 @@
+<r xmlns="urn:d" xmlns:p="urn:p" xml:lang="en" p:id="7" plain="x">
+  <p:item>one</p:item>
+  <item>two</item>
+  <x xmlns=""><y/></x>
+  <p:item p:id="8"/>
+  <z xmlns:p="urn:other"><p:item/></z>
+</r>

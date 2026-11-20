@@ -43,7 +43,7 @@ no claim at all.
 | `-g` debug information | `tests/check_debug_info.py` | yes (DWARF; gdb when installed) | yes (DWARF in `.dSYM`; gdb when installed) | metadata only; no PDB |
 | `--strip` and the size budget | `tests/check_build_flags.py` | yes | yes | flags only; no size budget |
 | `--lto`, `--pgo-generate`, `--pgo-use` | `tests/check_build_flags.py` | yes, with an LLVM driver | yes, with an LLVM driver | `--lto`/`--pgo-generate` rejected by `cl`; `--pgo-use` untested |
-| Linker choice (`BURDIN_LD`, `mold`/`lld`) | `tests/check_linker.py` | yes (lld installed, mold simulated) | explicit `BURDIN_LD` only (ld64 stays the platform linker) | `link.exe` only; another `BURDIN_LD` is a usage error |
+| Linker choice (`BURDIN_LD`, `mold`/`lld`) | `tests/check_linker.py` | yes (lld installed, mold simulated; sanitizer and fuzz builds keep the platform linker) | explicit `BURDIN_LD` only (ld64 stays the platform linker) | `link.exe` only; another `BURDIN_LD` is a usage error |
 | Diagnostics formats, color, width, and limits | `tests/check_diagnostics.py` | yes | yes | yes |
 | Error-code reference and `burdin explain` | `tests/check_error_docs.py` | yes | yes | yes |
 | C bridge (`extern "C"`, `CPtr`, `CString`) | `tests/m08_modules/extern_libc.bd`, `tests/m08_modules/cstr_roundtrip.bd` | yes | yes | yes |

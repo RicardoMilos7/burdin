@@ -372,7 +372,7 @@ Environment:
 | `BURDIN_COMMIT` | Overrides the git commit `--version` prints (for builds without a `.git` directory). |
 | `BURDIN_CODEGEN_UNITS` | Split code generation into exactly this many units instead of choosing by program size (a testing aid; `tests/check_parallel.py` uses it). |
 | `BURDIN_JOBS` | The default of `-j`: the most threads parsing, code generation, and `fmt` use; `1` is sequential. Default: the machine's parallelism. |
-| `BURDIN_LD` | The linker to use: `mold`, `lld`, another name, a path (clang), or `platform` (default: `mold`/`lld` when installed on Linux, else the compiler driver's linker). |
+| `BURDIN_LD` | The linker to use: `mold`, `lld`, another name, a path (clang), or `platform` (default: `mold`/`lld` when installed on Linux, else the compiler driver's linker; sanitizer and fuzz builds always keep that linker). |
 | `BURDIN_VERSION` | Overrides the version `--version` prints (nightly builds). |
 | `LLVM_SYS_211_PREFIX` | The LLVM 21 installation; its `bin/llvm-config` drives `--link-lib LLVM-C`. |
 
@@ -464,6 +464,10 @@ Compiles the target to a native executable. On success it prints nothing and exi
   optimization passes.
 - `--emit-deps <file>` writes the files the build read besides the sources, one path per line: the files `embed`
   embedded (`spec/comptime.md`, CT15). A build system uses it to rebuild when one of them changes.
+- A package directory keeps the executable it links under `<package>/target/burdin/<profile>/bin/` (`burdin test`
+  keeps its binary under `test/`), beside a fingerprint of every input. An unchanged package is copied rather than
+  linked again, and the front end still runs, so the diagnostics are the same. `-g`, `--emit-ir`, `--emit`, and
+  `--pgo-use` builds are not cached. `spec/target.md` has the rules.
 
 ```console
 $ ./target/debug/burdin build hello.bd
@@ -918,10 +922,12 @@ $ BURDIN_LD=platform ./target/debug/burdin test
 ```
 
 `--lto` keeps the compiler driver's linker and refuses mold: LLVM bitcode needs lld, and the installed lld may not be
-the LLVM version that produced it. An MSVC-style driver (`cl`, `cl.exe`, `clang-cl`) always uses `link.exe` and has no
-`-fuse-ld`, so a `BURDIN_LD` value other than `platform`, `default`, `link`, or `msvc` is a usage error. When a link
-fails, the error says whether `BURDIN_LD` or the automatic choice supplied the linker, and how to go back to the
-default. `tests/check_linker.py` checks all of it.
+the LLVM version that produced it. A sanitizer or fuzz build (`--sanitize`, `burdin fuzz`) keeps it too: those runtimes
+start up from module constructors that LLVM emits into `.ctors`, which lld leaves in a section libc never runs, so
+naming another linker there is a usage error. An MSVC-style driver (`cl`, `cl.exe`, `clang-cl`) always uses `link.exe`
+and has no `-fuse-ld`, so a `BURDIN_LD` value other than `platform`, `default`, `link`, or `msvc` is a usage error.
+When a link fails, the error says whether `BURDIN_LD` or the automatic choice supplied the linker, and how to go back
+to the default. `tests/check_linker.py` checks all of it.
 
 ### Exit status
 

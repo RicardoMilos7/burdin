@@ -1,0 +1,24 @@
+name: edge
+servers:
+  - host: a.example
+    port: 80
+    tls: false
+    ratio: 0.25
+  - host: b.example
+    port: 443
+    tls: true
+    ratio: 1
+protocol:
+  Both:
+    - 80
+    - 443
+backup: null
+weights:
+  a: 1
+  b: -2
+note: é
+name="edge" servers=2 note=é
+protocol=Both 80 443
+backup=none
+weights=2
+first=a.example 80 false 0.25

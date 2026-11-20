@@ -1,0 +1,20 @@
+<!-- before --><?first one?><root>
+  <?inside two?>
+  <!-- inside -->
+</root><!-- after --><?last three?>
+<!-- before -->
+<?first one?>
+<root>
+  <?inside two?>
+  <!-- inside -->
+</root>
+<!-- after -->
+<?last three?>
+declaration none
+before=2 after=2
+root ns=[] at 3:1
+  text "\n  "
+  pi inside "two"
+  text "\n  "
+  comment " inside "
+  text "\n"

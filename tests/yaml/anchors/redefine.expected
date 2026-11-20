@@ -1,0 +1,14 @@
+name: redefined anchors
+servers: []
+protocol: Http
+backup: null
+weights:
+  four: 3
+  one: 1
+  three: 3
+  two: 1
+note: z
+name="redefined anchors" servers=0 note=z
+protocol=Http
+backup=none
+weights=4
