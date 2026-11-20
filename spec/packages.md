@@ -63,7 +63,9 @@ the repository does not have is an error: `<url> has no tag nope`. Tests: `tests
 
 ## `burdin.lock`
 
-**PKG5. The format.** The lockfile sits beside the entry package's `burdin.toml`. It is a TOML file that burdin
+**PKG5. The format.** The lockfile sits beside the entry package's `burdin.toml`, or, for a member of a
+manifest-level workspace, beside the *workspace root's* manifest: one lockfile records the whole workspace graph
+(`spec/workspaces.md`, WS14). It is a TOML file that burdin
 writes and reads itself: a header comment, `version = 1`, and one `[[package]]` table per package of the graph, the
 entry package included, sorted by name:
 
@@ -242,6 +244,7 @@ one-file target and a script have no manifest to add it to, so they get no such 
 - Official packages in a script's inline manifest, a package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the
   lockfile). Moving a branch dependency forward today means `burdin add` with the same branch again, or removing
   the lockfile (which re-resolves every git dependency).
-- A git dependency whose package is in a subdirectory of the repository, and `--offline`.
+- A git dependency whose package is in a subdirectory of the repository, and `--offline`: a path-only workspace
+  already builds without the network, and a flag that refuses to fetch is a separate item.
 - Doc tests build each example as its own package, so an example of a package with git dependencies resolves them
   for that example instead of reading the documented package's lockfile.

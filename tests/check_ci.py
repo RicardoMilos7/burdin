@@ -330,6 +330,7 @@ required_steps = [
     "tests/check_sanitizers.py",
     "tests/check_interpret.py",
     "tests/check_fmt.py",
+    "tests/check_workspace.py",
     "tests/check_lint.py",
     "tests/check_fix.py",
     "tests/check_ssr.py",

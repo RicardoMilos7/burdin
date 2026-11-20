@@ -1,6 +1,7 @@
 //! Dependency resolution and `burdin.lock` (`spec/packages.md`, PKG5-PKG10).
 //!
-//! `resolve` walks the graph from the entry package: a path dependency is read where it is, and a git dependency is
+//! `resolve` walks the graph from the entry package, or from every member of a manifest-level workspace, because the
+//! lockfile at its root covers them all (`spec/workspaces.md`, WS14): a path dependency is read where it is, and a git dependency is
 //! pinned to the commit `burdin.lock` already records for its repository and reference, or resolved now when the
 //! lockfile has none. Each git package is checked out once per commit and its files are hashed; a checksum that
 //! disagrees with the lockfile is an error, because the files are no longer the ones the lockfile pinned. An
@@ -14,6 +15,7 @@ use crate::git;
 use crate::sha256::Sha256;
 use burdin_query::lockfile::{self, GitRef, GitSource, LockedPackage, Lockfile};
 use burdin_query::package::{self, DepSource, source_path_text};
+use burdin_query::workspace;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -41,7 +43,9 @@ pub enum Synced {
 /// Resolves the graph of the package in `dir` against its lockfile and writes the lockfile when it changed. With
 /// `locked`, a lockfile that would change is an error that names each difference, and nothing is written (PKG8).
 pub fn sync(dir: &Path, locked: bool) -> Result<Synced, String> {
-    let existing = lockfile::read(dir)?;
+    // The lockfile is the workspace root's when the package is a member (WS14), and its own otherwise.
+    let lock_dir = workspace::lock_dir(dir)?;
+    let existing = lockfile::read(&lock_dir)?;
     let resolution = resolve(dir, None, existing.as_ref(), locked)?;
     if existing.as_ref() == Some(&resolution.lock) {
         return Ok(Synced::UpToDate);
@@ -52,7 +56,7 @@ pub fn sync(dir: &Path, locked: bool) -> Result<Synced, String> {
     if locked {
         return Err(stale_message(&differences(existing.as_ref(), &resolution.lock)));
     }
-    write(dir, &resolution.lock)?;
+    write(&lock_dir, &resolution.lock)?;
     Ok(Synced::Wrote)
 }
 
@@ -182,6 +186,13 @@ pub fn resolve(
     existing: Option<&Lockfile>,
     locked: bool,
 ) -> Result<Resolution, String> {
+    let dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
+    // The lockfile of a workspace covers every member, whichever one the command names (WS14), so every member is a
+    // root of the graph. `root_manifest` replaces the manifest of `dir`, wherever the graph reaches it.
+    let roots: Vec<PathBuf> = match workspace::layout_of(&dir)? {
+        Some(layout) => layout.members.into_iter().map(|member| member.dir).collect(),
+        None => vec![dir.clone()],
+    };
     let mut walker = Walker {
         existing,
         locked,
@@ -191,9 +202,11 @@ pub fn resolve(
         git: HashMap::new(),
         official: HashMap::new(),
         visiting: Vec::new(),
+        edited: root_manifest.map(|text| (dir.clone(), text.to_string())),
     };
-    let dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display()))?;
-    walker.visit(&dir, root_manifest, Origin::Path)?;
+    for root in &roots {
+        walker.visit(root, None, Origin::Path)?;
+    }
     let has_pinned = walker.packages.values().any(|p| p.git.is_some() || p.official);
     Ok(Resolution { lock: Lockfile { packages: walker.packages.into_values().collect() }, has_pinned })
 }
@@ -212,6 +225,8 @@ struct Walker<'a> {
     official: HashMap<String, (PathBuf, String)>,
     /// The directories being visited, to report a cycle.
     visiting: Vec<PathBuf>,
+    /// The directory whose manifest is being edited (`burdin add`) and the text it is about to have.
+    edited: Option<(PathBuf, String)>,
 }
 
 impl Walker<'_> {
@@ -232,7 +247,8 @@ impl Walker<'_> {
             return Ok(name.clone());
         }
         let manifest_path = dir.join("burdin.toml");
-        let manifest = match manifest_text {
+        let edited = self.edited.as_ref().filter(|(edited_dir, _)| edited_dir == dir).map(|(_, text)| text.as_str());
+        let manifest = match edited.or(manifest_text) {
             Some(text) => package::parse_manifest_text(text, &manifest_path)?,
             None => package::parse_manifest(&manifest_path)?,
         };

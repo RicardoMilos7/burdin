@@ -208,7 +208,13 @@ Tests: `tests/lint/docs/`, `tests/check_lint.py`.
 ```
 burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
            [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
+burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
 ```
+
+**DC21b. Members.** In a manifest-level workspace (`spec/workspaces.md`, WS12), `-p`, `--workspace`, and `--exclude`
+select the members to document: one site per member, under that member's `target/doc` when `-o` is absent, with the
+usual message for each, and `--coverage` prints one report per member. `-o` names one place, so it needs exactly one
+selected member.
 
 **DC22. Loading and status.** `burdin doc` loads the target the way `burdin build` does, including build scripts and
 compile-time evaluation, with `test` blocks treated as tests (so a library package needs no `main`). A package that

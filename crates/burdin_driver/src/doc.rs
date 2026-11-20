@@ -2,6 +2,7 @@
 //! `burdin lint` does (so a package that does not compile has no documentation), builds the documented API from the
 //! syntax trees with `burdin_doc`, and writes a static HTML site, a JSON document, or a coverage report.
 
+use crate::workspace;
 use crate::{
     CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
     jobs_or_default, option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
@@ -32,6 +33,10 @@ struct DocArgs {
     comptime_steps: Option<u64>,
     /// `-j`: the most parser threads.
     jobs: Option<usize>,
+    /// `-p`, `--workspace`, and `--exclude`: which members of the workspace to document (`spec/workspaces.md`, WS12).
+    packages: Vec<String>,
+    workspace: bool,
+    exclude: Vec<String>,
 }
 
 fn parse(argv: &[String]) -> Result<DocArgs, String> {
@@ -45,6 +50,9 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
         diagnostics: DiagnosticOptions::default(),
         comptime_steps: None,
         jobs: None,
+        packages: Vec::new(),
+        workspace: false,
+        exclude: Vec::new(),
     };
     let mut target = None;
     let mut it = argv.iter();
@@ -65,6 +73,9 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
                 };
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
+            "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
             "--private" => args.private = flag_without_value(a, inline)?,
             "--coverage" => args.coverage = flag_without_value(a, inline)?,
             "--deny-warnings" => args.deny_warnings = flag_without_value(a, inline)?,
@@ -111,6 +122,38 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("doc", &message),
     };
+    let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
+    let scope = match workspace::choose(&args.target, flags, false) {
+        Ok(scope) => scope,
+        Err(workspace::Failure::Usage(message)) => return crate::cli::usage_error("doc", &message),
+        Err(workspace::Failure::Error(message)) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    let workspace::Scope::Members { members, .. } = scope else {
+        return document(&args.target, &args);
+    };
+    // `-o` names one place, so it needs one package (WS12).
+    if args.out.is_some() && members.len() > 1 {
+        return crate::cli::usage_error(
+            "doc",
+            "`-o` names one place: select one package with `-p` (this selects several)",
+        );
+    }
+    // Each selected member gets its own site (or report), and the command reports the first failure (WS12).
+    let mut status = ExitCode::SUCCESS;
+    for member in &members {
+        let code = document(&member.dir, &args);
+        if code != ExitCode::SUCCESS && status == ExitCode::SUCCESS {
+            status = code;
+        }
+    }
+    status
+}
+
+/// Documents the package in `target`: checks it, then writes its site, its JSON, or its coverage report.
+fn document(target: &Path, args: &DocArgs) -> ExitCode {
     let options = CompileOptions {
         release: false,
         debug: false,
@@ -133,7 +176,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         sanitize: Default::default(),
         fuzz_target: None,
     };
-    let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
+    let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(f) => f,
         Err(code) => return code,
     };
@@ -143,7 +186,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         eprint!("{}", rendered.text);
         let errors = front.diags.iter().filter(|d| d.severity == Severity::Error).count();
         let s = if errors == 1 { "" } else { "s" };
-        eprintln!("error: could not check {} ({errors} error{s}); fix them before documenting", args.target.display());
+        eprintln!("error: could not check {} ({errors} error{s}); fix them before documenting", target.display());
         return ExitCode::from(1);
     }
     let packages = packages_of(&front);
@@ -181,7 +224,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
             }
         }
         Format::Html => {
-            let out = args.out.clone().unwrap_or_else(|| default_out(&args.target));
+            let out = args.out.clone().unwrap_or_else(|| default_out(target));
             let pages = burdin_doc::html::render(&api);
             match write_site(&out, &pages) {
                 Ok(()) => eprintln!("doc: wrote {} files to {}", pages.len(), out.display()),

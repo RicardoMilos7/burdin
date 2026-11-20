@@ -314,9 +314,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     let migration = if args.migrate {
         match crate::migrate::plan(&args.target) {
             Ok(plan) => Some(plan),
-            Err(message) => {
+            Err(crate::migrate::Refusal::Usage(message)) => {
                 eprintln!("error: {message}");
                 return ExitCode::from(2);
+            }
+            Err(crate::migrate::Refusal::Error(message)) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(1);
             }
         }
     } else {

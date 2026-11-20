@@ -39,6 +39,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
 | [`spec/watch.md`](spec/watch.md) | `burdin watch` and `--watch`: what is watched and ignored, the debounce, restarting `run`, and the changed-modules-first `test` run (stage 3). |
+| [`spec/workspaces.md`](spec/workspaces.md) | Workspaces: members, default members, excludes, the selection flags, inherited package fields and dependencies, and one lockfile at the root (stage 3). |
 | [`spec/inspect.md`](spec/inspect.md) | Inspecting what the compiler generated: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and `burdin check --print-instances` (stage 3). |
 | [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
@@ -167,16 +168,19 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 usage:
   burdin build <file.bd | package directory> [--release] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
+               [-p <member>]... [--workspace [--exclude <member>]...] [--link-lib <name>]...
+               [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
   burdin run <file.bd | package directory> [--release] [-g] [-j <n>] [--link-lib <name>]...
-             [--comptime-steps <n>] [--sanitize <list>] [diagnostics] [-- <program arguments>...]
+             [-p <member>]... [--workspace [--exclude <member>]...] [--comptime-steps <n>] [--sanitize <list>]
+             [diagnostics] [-- <program arguments>...]
   burdin test <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
-              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
+              [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]...
+              [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
               [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
   burdin bench <file.bd | package directory> [<filter>...] [--release] [-g] [-j <n>] [--verbose]
-               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
+               [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
@@ -187,9 +191,11 @@ usage:
   burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
   burdin <build|run|test|check> <target> --watch [--no-clear] ...
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
+  burdin fmt -p <member>... | --workspace [--exclude <member>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
              [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
+  burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
   burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
                [--break-on-panic] [--release] [-j <n>] [diagnostics] [-- <program arguments>...]
   burdin explain [<error code>]
@@ -221,8 +227,9 @@ check options (type-check only: the front end and every memory check, no code ge
 
 test options:
   -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
-  -p <package>         run the tests of one package of the build; may repeat
-  --workspace          run the tests of the entry package and every path dependency
+  -p, --package <name> run the tests of one package of the build, or one member of a workspace; may repeat
+  --workspace          run the tests of the entry package and every path dependency, or of every workspace member
+  --exclude <member>   with --workspace, leave out this workspace member; may repeat
   <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
                        is the same as a positional filter
   --exact              filters and --skip patterns must equal the full path instead of being contained in it
@@ -242,8 +249,9 @@ test options:
 bench options (the behavior is spec/bench.md; benchmarks build in the release profile, so --release is the
 default and changes nothing):
   -j, --jobs <n>       compilation threads only: benches are measured one at a time
-  -p <package>         measure the benches of one package of the build; may repeat
-  --workspace          measure the entry package and every path dependency
+  -p, --package <name> measure the benches of one package of the build, or one member of a workspace; may repeat
+  --workspace          measure the entry package and every path dependency, or every workspace member
+  --exclude <member>   with --workspace, leave out this workspace member; may repeat
   <filter>...          measure only benches whose full path contains any filter; --filter <text> is the same as a
                        positional filter
   --exact              filters and --skip patterns must equal the full path instead of being contained in it
@@ -517,7 +525,8 @@ The report is deterministic: failures and the summary follow declaration order, 
 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
 `--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
-`<package>::<test>`.
+`<package>::<test>`. In a workspace, `-p`, `--workspace`, and `--exclude` select members instead, and the selected
+members run together with one report (`spec/workspaces.md`, WS11).
 
 Doc tests run with the `test` blocks: every Burdin code block in a `///` or `//!` comment of the selected packages
 is built as its own program against the package as a dependency (its public API only) and run like a `test` block;

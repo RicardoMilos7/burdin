@@ -110,9 +110,13 @@ The target is a `.bd` file or a package directory.
 - `-p <name>` selects a package of the build; it may repeat and duplicates are removed. The packages are the entry
   package and every package reachable through `[dependencies]` path entries. The embedded standard library has no
   directory and cannot be selected.
-- `--workspace` selects the entry package and every path dependency. In this stage a *workspace* is the build's
-  package graph; a manifest-level workspace with independent members is stage 3 (`stage1-subset.md`), so
-  `--workspace` is exactly those packages. `-p` and `--workspace` cannot be combined.
+- In a manifest-level workspace (`spec/workspaces.md`), `-p` and `--workspace` select members instead, and
+  `--exclude` leaves members out: the selected members run together with one report, and their shared outputs (the
+  `--failed` record) live under the workspace root's `target/` (WS6, WS11). The members are the build's roots, so a
+  package two members reach is loaded once. Outside a workspace the rules above apply unchanged (WS7).
+- `--workspace` selects the entry package and every path dependency. A *workspace* here is the build's package
+  graph; in a manifest-level workspace it is the member set instead (`spec/workspaces.md`, WS11). `-p` and
+  `--workspace` cannot be combined.
 - When more than one package is selected, a test's displayed name is `<package>::<test name>` so two packages may
   use the same test name. A single selected package keeps the plain test name. `FAIL`, `PASS`, `IGNORED`, and the
   captured-output headings all use the displayed name.

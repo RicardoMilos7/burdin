@@ -155,7 +155,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked) {
         return code;
     }
-    let workspace = match crate::package::load_for_tests(&args.target) {
+    let workspace = match crate::test_runner::load_selection(args) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -168,11 +168,10 @@ pub(crate) fn run(args: &Args) -> ExitCode {
             return crate::cli::usage_error("bench", &message);
         }
     };
-    // Baselines live under the entry package's target directory, so they need a package on disk.
-    let package_dir = workspace.packages[workspace.entry_package]
-        .dir
-        .as_ref()
-        .map(|dir| dir.join("target").join("burdin").join("bench"));
+    // Baselines live under the entry package's target directory, or the workspace root's for members (WS11), so they
+    // need a directory on disk.
+    let package_dir =
+        crate::test_runner::shared_dir(&workspace, args).map(|dir| dir.join("target").join("burdin").join("bench"));
     if package_dir.is_none() && (args.baseline.is_some() || args.save_baseline.is_some()) {
         return crate::cli::usage_error(
             "bench",

@@ -19,6 +19,7 @@ pub mod navigate;
 pub mod package;
 mod reparse;
 mod stats;
+pub mod workspace;
 
 pub use api::{
     Convention, DefinitionKind, ExprFacts, FunctionOwnership, ItemSignature, LocalUse, Location, Member, MoveEvent,

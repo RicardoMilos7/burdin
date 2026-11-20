@@ -278,9 +278,13 @@ fn build() -> Command {
     with_diagnostics(
         Command::new("build")
             .about("Compile a file or package into an executable")
-            .override_usage("burdin build <file.bd | package directory> [OPTIONS]")
+            .override_usage(
+                "burdin build <file.bd | package directory | workspace root> [OPTIONS]
+       \n                 burdin build <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]",
+            )
             .arg(target().required(true))
             .arg(Arg::new("output").short('o').value_name("output").help("Where to write the executable"))
+            .args(member_selection())
             .args([
                 release("Build with optimizations"),
                 debug_info(),
@@ -322,8 +326,11 @@ fn run() -> Command {
     with_diagnostics(
         Command::new("run")
             .about("Build a program and run it")
-            .override_usage("burdin run <file.bd | package directory> [OPTIONS] [-- <program arguments>...]")
+            .override_usage(
+                "burdin run <file.bd | package directory> [-p <member>] [OPTIONS] [-- <program arguments>...]",
+            )
             .arg(target().required(true))
+            .args(member_selection())
             .arg(
                 Arg::new("program-args")
                     .value_name("program arguments")
@@ -351,7 +358,22 @@ fn run() -> Command {
 }
 
 /// The selection options `test` and `bench` share.
-fn selection(noun: &'static str) -> [Arg; 5] {
+/// The flags that pick members of a workspace for the commands that build packages (`spec/workspaces.md`, WS6).
+fn member_selection() -> [Arg; 3] {
+    [
+        Arg::new("package")
+            .short('p')
+            .long("package")
+            .value_name("package")
+            .action(ArgAction::Append)
+            .help("Select this member of the workspace; may repeat"),
+        flag("workspace", "Select every member of the workspace, except those --exclude names"),
+        option("exclude", "member", "With --workspace, leave out this member; may repeat").action(ArgAction::Append),
+    ]
+    .map(|arg| arg.help_heading(SELECTION))
+}
+
+fn selection(noun: &'static str) -> [Arg; 6] {
     let (packages, workspace, skip) = match noun {
         "tests" => (
             "Run the tests of one package of the build; may repeat",
@@ -365,8 +387,9 @@ fn selection(noun: &'static str) -> [Arg; 5] {
         ),
     };
     [
-        Arg::new("package").short('p').value_name("package").action(ArgAction::Append).help(packages),
+        Arg::new("package").short('p').long("package").value_name("package").action(ArgAction::Append).help(packages),
         flag("workspace", workspace),
+        option("exclude", "member", "With --workspace, leave out this member; may repeat").action(ArgAction::Append),
         option("filter", "text", "The same as a positional filter").action(ArgAction::Append),
         flag("exact", "Filters and --skip patterns must equal the full path instead of being contained in it"),
         option("skip", "pattern", skip).action(ArgAction::Append),
@@ -574,6 +597,7 @@ fn fmt() -> Command {
             .about("Format source files")
             .override_usage(
                 "burdin fmt [<file.bd | directory>]... [OPTIONS]\n       \
+                 burdin fmt -p <member>... | --workspace [--exclude <member>]... [OPTIONS]\n       \
                  burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [OPTIONS]",
             )
             .arg(
@@ -593,6 +617,7 @@ fn fmt() -> Command {
                 option("range", "lo>:<hi", "With --stdin, format only the items that overlap these byte offsets"),
                 jobs("Format at most n files at once (default: BURDIN_JOBS, then the number of CPUs)"),
             ])
+            .args(member_selection())
             .after_help("There is one style and nothing to configure. The behavior is spec/fmt.md."),
     )
 }
@@ -738,8 +763,12 @@ fn doc() -> Command {
     with_diagnostics(
         Command::new("doc")
             .about("Generate the documentation of a package")
-            .override_usage("burdin doc <file.bd | package directory> [OPTIONS]")
+            .override_usage(
+                "burdin doc <file.bd | package directory | workspace root> [OPTIONS]
+       \n                 burdin doc <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]",
+            )
             .arg(target().required(true))
+            .args(member_selection())
             .args([
                 Arg::new("out").short('o').long("out").value_name("dir | file").help(
                     "Where to write: a directory for html (default: <package>/target/doc), a file for json \
