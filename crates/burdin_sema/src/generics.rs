@@ -94,6 +94,9 @@ pub(crate) struct GenericFn {
     /// The receiver type of a generic extension method, with the parameters as `Ty::Param`; `None` for an
     /// ordinary generic function. An instance's `self` type is this with the arguments substituted.
     pub recv: Option<Ty>,
+    /// Whether a parameter is written `impl I`, which adds a hidden type parameter the call infers: such a
+    /// function takes no explicit type arguments (`spec/arguments.md`, TA4).
+    pub hidden: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +129,8 @@ pub(crate) struct GenericMethod {
     pub(crate) identity: FuncId,
     pub(crate) params: Vec<String>,
     pub(crate) bounds: Vec<Vec<Bound>>,
+    /// Whether a parameter is written `impl I` (see [`GenericFn::hidden`]).
+    pub(crate) hidden: bool,
 }
 
 #[derive(Clone, Debug)]

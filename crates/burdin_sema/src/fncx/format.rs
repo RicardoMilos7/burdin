@@ -307,7 +307,7 @@ impl FnCx<'_> {
     /// `__f.name(args)` on the hidden formatter.
     fn formatter_call(&mut self, name: &str, args: Vec<ast::Arg>, span: Span) -> tir::Expr {
         let recv = expr(ast::ExprKind::Name { name: ident("__f", span), args: Vec::new() }, span);
-        self.method_call(&recv, &ident(name, span), &args, span, None)
+        self.method_call(&recv, &ident(name, span), &[], &args, span, None)
     }
 
     fn set_spec_call(&mut self, spec: &ast::FormatSpec, span: Span) -> tir::Expr {

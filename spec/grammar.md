@@ -401,10 +401,10 @@ endpoints must be integers, and both take their type from context, from the othe
 The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
 required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
 
-Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6). The `<` starts a type
-list when one parses and its closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without
-the uppercase-name requirement; otherwise it is a comparison. Member type arguments are accepted only for the
-compiler-known `is` and `downcast` methods of an `any I` value; any other member with type arguments is E0002.
+Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), and a method or associated
+function with type parameters of its own (`arguments.md`, TA1). The `<` starts a type list when one parses and its
+closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without the uppercase-name requirement;
+otherwise it is a comparison. A list on a callee that takes no type arguments is E0003 (`arguments.md`, TA5).
 
 ## 7. Patterns
 
@@ -432,9 +432,12 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
 
 1. **Struct literals are not allowed** directly in the head of `if`, `while`, `match`, `for`, or the right side of `let ... else`.
    Wrap them in parentheses there. Inside any `(...)`, `[...]` or block the restriction is lifted.
-2. **Generic arguments in expressions.** After an identifier that starts with an uppercase letter, a `<` starts generic
-   arguments if a type list parses and its closing `>` is followed by `.`, `(`, or `{`. Otherwise it is a comparison.
-   This is why `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison.
+2. **Generic arguments in expressions.** After an identifier, a `<` starts generic arguments if a list of type syntax
+   parses (types, const arguments, and the punctuation around them, so `a < b && c > (d)` is never one) and its closing
+   `>` is followed by `.`, `(`, or `{` after an identifier that starts with an uppercase letter, or by `(` after one that
+   starts with a lowercase letter (`f<i32>(x)`; `arguments.md`, TA1). Otherwise it is a comparison. This is why
+   `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison. The one shape
+   that reads as a list by mistake is `f(a < b, c > (d))`: parenthesize the first comparison (`arguments.md`, TA6).
 3. **Paths in expressions** are parsed as an identifier followed by field accesses. Whether `a.b.c` is a module path,
    an associated function, a variant, or a field access is decided during name resolution, not parsing.
 4. **Call-site markers.** A named `mut` parameter is passed with `mut` before the argument (`add_to(mut c, 4)`);

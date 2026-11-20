@@ -56,6 +56,6 @@ impl FnCx<'_> {
             return Some(super::error_expr(span));
         };
         let expect = Ty::Result(Box::new(ty.clone()), Box::new(de_error));
-        Some(self.generic_call(g, name, args, span, Some(&expect)))
+        Some(self.generic_call(g, name, args, &[], span, Some(&expect)))
     }
 }

@@ -307,6 +307,9 @@ pub struct GenericParam {
     /// `A: Allocator = Global`: the type a use of the type may leave out (`spec/allocators.md`, AL5). Only a
     /// struct's or enum's type parameters take one.
     pub default: Option<Type>,
+    /// The hidden parameter of an `impl I` parameter (`spec/existentials.md`, AN4). Its name is not written, so a call
+    /// cannot give it a type argument (`spec/arguments.md`, TA4).
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone)]
