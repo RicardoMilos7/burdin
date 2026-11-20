@@ -69,6 +69,7 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         | K::Float(_)
         | K::Char(_)
         | K::Str(_)
+        | K::InlineSnapshot(_)
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
