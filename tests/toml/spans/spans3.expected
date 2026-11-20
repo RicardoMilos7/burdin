@@ -1,0 +1,4 @@
+point key 1:1 value 1:9
+point.x key 1:11 value 1:15
+a key 2:1 value 2:1
+a.b key 2:3 value 2:7

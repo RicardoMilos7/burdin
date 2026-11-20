@@ -1,0 +1,10 @@
+basic = "tab\there \"quoted\" back\\slash \u00e9 \U0001F600"
+literal = 'C:\path "raw"'
+multi_basic = """
+first line
+second \
+    joined"""
+multi_literal = '''
+raw \ text
+'''
+empty = ""

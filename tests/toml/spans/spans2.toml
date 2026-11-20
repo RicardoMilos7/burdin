@@ -1,0 +1,8 @@
+[fruit.apple]
+color = "red"
+
+[[items]]
+id = 1
+
+[[items]]
+id = 2

@@ -611,8 +611,6 @@ These are deferred and are not to be implemented early:
 - Borrowed outputs (`&str`, `&[u8]`), `from_bytes` without a copy, and zero-copy map values (SER11).
 - `Heap<T>`, `any I`, and closures (SER2).
 - Skipping an unknown field instead of reporting it, and `deny_unknown_fields` or its opposite.
-- The remaining format packages (toml, csv) and their tests; `json`, `xml`, and `yaml` are written (`packages/json`, `packages/xml`,
-  `packages/yaml`, issues #255, #259, and #258) and `json` is the reference for what a format package looks like.
 - A reflection-based structural fallback serializer (`Type.fields` at run time), a binary encoding, and a schema.
 - Inferring a generic function's type arguments through `?` and through a nested expected type: today
   `deserialize_list(mut d)?` cannot infer its element type, which is why SER14's reader pattern annotates the call's
@@ -639,10 +637,12 @@ These are deferred and are not to be implemented early:
 | `derive_errors` | SER6, SER8, SER12: the derived unknown/missing/duplicate field messages and an unknown variant |
 | `tuple_hand` | SER7, SER14: `serialize_tuple2`/`deserialize_tuple2` in a hand-written impl, and the short-sequence error |
 | `json/` | SER1-SER10 in JSON (`packages/json`): a round trip, the pretty form, and the error message of malformed input |
+| `toml/` | SER1-SER10 in TOML (`packages/toml`, spec/toml.md): the canonical form, a datetime, and the reader's errors |
 | `xml/` | SER1-SER10 in XML (`packages/xml`): the element mapping, the DOM and its namespaces, a refused DOCTYPE, and inputs a fixture cannot hold |
 | `yaml/` | SER1-SER10 in YAML (`packages/yaml`): a round trip, aliases and their bound, a refused tag, and the error message of malformed input |
 
 `tests/json/` holds the format package's own fixtures (`roundtrip`, `pretty`, and one malformed document per file in
-`bad`, each with its `.expected` message); `tests/check_json.py` runs them against the package. `tests/yaml/` and
+`bad`, each with its `.expected` message); `tests/check_json.py` runs them against the package. `tests/toml/` does the
+same for TOML (`roundtrip`, `spans`, `bad`, `config`, and `write`), and `tests/check_toml.py` runs it. `tests/yaml/` and
 `tests/check_yaml.py` do the same for `packages/yaml`, whose safe YAML subset is listed in its README.
 `tests/xml/` and `tests/check_xml.py` do the same for `packages/xml`, whose mapping of types to elements is in its README.
