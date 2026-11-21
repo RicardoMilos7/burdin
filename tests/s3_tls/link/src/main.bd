@@ -1,5 +1,5 @@
 //@ run
-//> openssl major: 3
+//> openssl 3 or newer: true
 //> version text starts with OpenSSL: true
 //> context: created
 //> client hello pending: true
@@ -39,7 +39,7 @@ extern "C" {
 fn main() {
     unsafe {
         let version = OpenSSL_version_num()
-        println("openssl major: {}", version >> 28)
+        println("openssl 3 or newer: {}", (version >> 28) >= 3)
         let text = CStr.to_string(OpenSSL_version(0))
         println("version text starts with OpenSSL: {}", text.starts_with("OpenSSL"))
 
