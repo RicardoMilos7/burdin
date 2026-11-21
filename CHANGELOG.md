@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The `regex` official package (stage 3, issue #264; `spec/regex.md`, RX1-RX14): a Pike VM with leftmost-first matches, named
+  groups, the flags `i m s x`, Unicode and POSIX classes, replacement templates, splitting, and escaping, all over byte offsets.
+  Backreferences, lookaround, atomic groups, and possessive quantifiers are errors, not emulations, so every search runs in
+  time linear in the pattern and the text. `tests/regex/cases.tsv` holds the goldens, `tests/check_regex.py` runs them and a
+  seeded differential against Python's `re`, and `tests/s3_regex/usage` is the conformance case.
 - Issue #878: on Windows the `tls` package uses SChannel, the system's own TLS stack, so Windows needs no OpenSSL
   install and the driver downloads nothing. Linux and macOS still link the system's OpenSSL 3. The `tls` package has an
   `openssl` feature and `http` a `tls` feature, both on by default, so `http = { official = true, default-features = false }`

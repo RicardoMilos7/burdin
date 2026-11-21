@@ -24,6 +24,9 @@ Official packages today:
 - `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-origin connection reuse, and `https` over
   `tls` (on by default, so a program that uses it links OpenSSL 3; `http = { official = true, default-features = false }`
   leaves TLS out) (issues #260, #262, #878; `packages/http/README.md`, `spec/http-client.md`).
+- `regex` — regular expressions on a Pike VM (no backtracking, so linear time), with named groups, flags, classes,
+  replacement templates, and splitting; an experiment, not a Python `re` replacement (issue #264; `packages/regex/README.md`,
+  `spec/regex.md`).
 - `crypto` — hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 in pure Burdin; an experiment,
   not a security claim (issue #266; `packages/crypto/README.md`, `spec/crypto.md`).
 - `math` — numbers, statistics, `Vector<N>`, and fixed-size and heap-backed matrices over `f64`, with integer number theory
