@@ -202,7 +202,8 @@ with harness.temporary_dir("burdin-fix-") as raw:
 with harness.temporary_dir("burdin-fix-") as raw:
     work = Path(raw)
     code, out, err = run(["fix"], work)
-    check(code == 2 and "missing target" in err and "usage: burdin fix" in err, f"no target: {code}\n{err}")
+    # Without a target the working directory is the target: outside a package it is an error of the package.
+    check(code == 1 and "burdin.toml" in err, f"no target outside a package: {code}\n{err}")
     code, out, err = run(["fix", "x.bd", "--bogus"], work)
     check(code == 2 and "unknown option `--bogus`" in err, f"bad option: {code}\n{err}")
 
