@@ -7,6 +7,7 @@ mod call;
 mod closure;
 mod comptime;
 mod control;
+pub(crate) mod conversion;
 mod edition;
 mod embed;
 mod expr;

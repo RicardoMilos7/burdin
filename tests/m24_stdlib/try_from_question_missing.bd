@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// `?` converts the error of `try_from` into the function's error type through `From`. Without a `From` block the
+// `TryFromIntError` does not convert into `Percent`'s error, so this is E0212 at the `?`.
+
+enum PercentError {
+    Negative
+}
+
+fn byte_of(v: i64): Result<u8, PercentError> {
+    let b = u8.try_from(v)? //~ E0212
+    Ok(b)
+}
+
+fn main() {}

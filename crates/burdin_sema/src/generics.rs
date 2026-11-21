@@ -27,6 +27,9 @@ pub(crate) enum Bound {
     Ord,
     Hash,
     Default,
+    /// `From<S>`: a value of the source type `S` converts into the bounded type, through a built-in pair or a `From`
+    /// block (`spec/stdlib.md`, FR7).
+    From(Ty),
     /// A closure capability: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. The index selects the signature in
     /// [`Globals::fn_bounds`].
     Fn(usize, tir::FnKind),
@@ -35,7 +38,8 @@ pub(crate) enum Bound {
     ConstOf(Ty),
 }
 
-pub(crate) const BUILTIN_INTERFACES: &[&str] = &["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Drop", "From"];
+pub(crate) const BUILTIN_INTERFACES: &[&str] =
+    &["Copy", "Clone", "Eq", "Ord", "Hash", "Default", "Drop", "From", "TryFrom"];
 
 /// The bounds of each type parameter in scope: `(name, bounds)`. A name may appear more than once.
 pub(crate) type Env = [(String, Vec<Bound>)];
@@ -408,6 +412,7 @@ impl Globals {
     pub(crate) fn subst_bound(&self, bound: &Bound, subst: &[(String, Ty)]) -> Bound {
         match bound {
             Bound::User(i, args) => Bound::User(*i, args.iter().map(|a| self.subst_ty(a, subst)).collect()),
+            Bound::From(source) => Bound::From(self.subst_ty(source, subst)),
             other => other.clone(),
         }
     }
@@ -429,6 +434,7 @@ impl Globals {
             Bound::Ord => "Ord".into(),
             Bound::Hash => "Hash".into(),
             Bound::Default => "Default".into(),
+            Bound::From(source) => format!("From<{source}>"),
             Bound::Fn(i, kind) => self.fn_sig_name(*i, *kind),
             Bound::ConstOf(ty) => format!("const {ty}"),
         }
@@ -527,6 +533,15 @@ impl Globals {
         // A plain name: a built-in interface, or one in scope.
         if segs.len() == 1 {
             let name = first.name.name.as_str();
+            if name == "From" {
+                if first.args.len() != 1 {
+                    let message = format!("`From` takes 1 type argument, but {} were given", first.args.len());
+                    diags.error(Code::TYPE_MISMATCH, ty.span, message);
+                    return None;
+                }
+                let source = self.resolve_type_in(&first.args[0], None, subst, module, diags);
+                return Some(Bound::From(source));
+            }
             let builtin = match name {
                 "Copy" => Some(Bound::Copy),
                 "Clone" => Some(Bound::Clone),
@@ -534,7 +549,7 @@ impl Globals {
                 "Ord" => Some(Bound::Ord),
                 "Hash" => Some(Bound::Hash),
                 "Default" => Some(Bound::Default),
-                "Drop" | "From" => {
+                "Drop" | "TryFrom" => {
                     diags.error(
                         Code::UNSUPPORTED, // e9000: bound-drop-from
                         ty.span,
@@ -709,6 +724,22 @@ impl Globals {
 
     /// `satisfies`, with the type parameters of the enclosing declaration replaced by `subst`. A closure bound's
     /// signature may name other type parameters (`F: Fn(T): T`), so a call checks the substituted signature.
+    /// Whether a value of `from` converts into `to` (FR7): a built-in pair (FR1), a `From` block of `to` whose source
+    /// is `from`, or, for a type parameter `to`, a `From` bound in `env`.
+    pub(crate) fn converts_into(&self, to: &Ty, from: &Ty, env: &Env) -> bool {
+        if *from == Ty::Error {
+            return true;
+        }
+        match to {
+            Ty::Error => true,
+            Ty::Param(name) => self.bound_in_env(name, &Bound::From(from.clone()), env),
+            _ => {
+                crate::fncx::conversion::lossless_from(to, from)
+                    || self.conversions_into(to, "from").iter().any(|c| c.source == *from)
+            }
+        }
+    }
+
     pub(crate) fn satisfies_with(&self, ty: &Ty, bound: &Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
         let want = self.subst_bound(bound, subst);
         match ty {
@@ -726,6 +757,7 @@ impl Globals {
                 Bound::Ord => self.has_ord_in(ty, env) || self.implements_partial_ord(ty, env),
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
+                Bound::From(source) => self.converts_into(ty, &source, env),
                 Bound::User(i, args) => self.implements(ty, i, &args, env),
                 Bound::Fn(i, kind) => match ty {
                     Ty::Fn { sig, kind: actual, .. } => **sig == self.bound_fn_sig(i, subst) && actual.at_least(kind),

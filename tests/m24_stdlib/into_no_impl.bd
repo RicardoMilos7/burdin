@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// `into` needs a conversion from the receiver's type into the expected type (spec/stdlib.md, FR5). There is no i64
+// to i32 conversion, and a user type with no `From` block takes no integer.
+
+struct Plain {
+    value: i32
+}
+
+fn main() {
+    let big: i64 = 5
+    let narrow: i32 = big.into() //~ E0003
+    let plain: Plain = 5.into() //~ E0003
+    println("{} {}", narrow, plain.value)
+}

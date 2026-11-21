@@ -6,7 +6,7 @@ use crate::globals::{FromImpl, Globals, TypeName, adt_key};
 use crate::session::{FnItem, ImplTemplate, Sema};
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
-use burdin_tir::Ty;
+use burdin_tir::{FuncId, Ty};
 
 impl<'t> Sema<'t> {
     /// Registers the impl blocks of every module. This runs after imports, because the type and the interface it
@@ -86,7 +86,7 @@ impl<'t> Sema<'t> {
         }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
-            if matches!(kind, ImplKind::Builtin | ImplKind::From) && self_ty != Ty::Error {
+            if matches!(kind, ImplKind::Builtin | ImplKind::From | ImplKind::TryFrom) && self_ty != Ty::Error {
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
@@ -111,12 +111,9 @@ impl<'t> Sema<'t> {
         };
         match kind {
             ImplKind::Builtin => builtin_by_hand(imp.span, diags),
-            ImplKind::From => {
-                let source = iface_seg
-                    .and_then(|s| s.args.first())
-                    .map(|t| self.globals.resolve_type_in(t, None, &[], module, diags))
-                    .unwrap_or(Ty::Error);
-                self.register_from_impl(imp, module, &self_ty, key, source, diags);
+            ImplKind::From => self.register_conversion_impl(imp, module, &self_ty, key, iface_seg, "from", diags),
+            ImplKind::TryFrom => {
+                self.register_conversion_impl(imp, module, &self_ty, key, iface_seg, "try_from", diags)
             }
             ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, &MethodScope::plain(), diags),
             ImplKind::Inherent | ImplKind::User(_) => {
@@ -168,11 +165,12 @@ impl<'t> Sema<'t> {
                 );
                 false
             }
-            ImplKind::From if !local_type => {
+            ImplKind::From | ImplKind::TryFrom if !local_type => {
+                let name = if matches!(kind, ImplKind::From) { "From" } else { "TryFrom" };
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
-                    "`From` can only be implemented for a type declared in this package",
+                    format!("`{name}` can only be implemented for a type declared in this package"),
                 );
                 false
             }
@@ -218,16 +216,17 @@ impl<'t> Sema<'t> {
             if name == "Drop" {
                 return Some((ImplKind::Drop, None));
             }
-            if name == "From" {
+            if name == "From" || name == "TryFrom" {
                 if seg.args.len() != 1 {
                     diags.error(
                         Code::ARG_COUNT,
                         t.span,
-                        format!("`From` takes one type argument, but {} were given", seg.args.len()),
+                        format!("`{name}` takes one type argument, but {} were given", seg.args.len()),
                     );
                     return None;
                 }
-                return Some((ImplKind::From, Some(seg)));
+                let kind = if name == "From" { ImplKind::From } else { ImplKind::TryFrom };
+                return Some((kind, Some(seg)));
             }
             if BUILTIN_INTERFACES.contains(&name.as_str()) {
                 if !seg.args.is_empty() {
@@ -560,37 +559,57 @@ impl<'t> Sema<'t> {
         wheres
     }
 
-    /// `Type: From<Source> { fn from(value: Source): Type }`: the conversion `?` applies to an error.
-    fn register_from_impl(
+    /// `Type: From<Source> { fn from(value: Source): Type }` and `Type: TryFrom<Source> { fn try_from(value: Source):
+    /// Result<Type, E> }`. The conversion method is not one of the type's named members: a type converts from each
+    /// source type once, `Type.from(v)` and `Type.try_from(v)` pick the block by the type of `v`, and `?` picks a
+    /// `From` block by its error type (`spec/errors.md`, ERR3; `spec/stdlib.md`, "Conversions"). The other methods of
+    /// the block are ordinary members. The signature is checked once the signatures exist (resolve.rs).
+    #[allow(clippy::too_many_arguments)]
+    fn register_conversion_impl(
         &mut self,
         imp: &'t ast::ImplBlock,
         module: usize,
         self_ty: &Ty,
         key: (bool, usize),
-        source: Ty,
+        iface_seg: Option<&ast::PathSegment>,
+        method: &str,
         diags: &mut Diagnostics,
     ) {
-        let Some(m) = imp.methods.iter().find(|m| m.name.name == "from") else {
+        let iface = if method == "from" { "From" } else { "TryFrom" };
+        let source = iface_seg
+            .and_then(|s| s.args.first())
+            .map(|t| self.globals.resolve_type_in(t, None, &[], module, diags))
+            .unwrap_or(Ty::Error);
+        let mut named = imp.methods.iter().filter(|m| m.name.name == method);
+        let Some(m) = named.next() else {
             diags.error(
                 Code::MISSING_INTERFACE_METHOD,
                 imp.span,
-                "this implementation of `From` is missing the method `from`",
+                format!("this implementation of `{iface}` is missing the method `{method}`"),
             );
             return;
         };
+        if let Some(again) = named.next() {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                again.name.span,
+                format!("`{self_ty}` already has a member named `{method}`"),
+            );
+            return;
+        }
         if !m.generics.is_empty() || !m.where_clause.is_empty() {
             diags.error(
                 Code::TYPE_MISMATCH,
                 m.name.span,
-                "a `From` conversion cannot be generic: `?` calls it with exactly one argument",
+                format!("a `{iface}` conversion cannot be generic: `{method}` is called with exactly one argument"),
             );
             return;
         }
-        // Each target converts from a source type once (`spec/errors.md`, ERR3). The two generated blocks are
-        // separate impl blocks, so the duplicate is detected here rather than as a duplicate member: a source
-        // written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in the
-        // source text the syntax check compares.
-        if self.globals.from_impls.iter().any(|i| i.target == *self_ty && i.source == source) {
+        // Each target converts from a source type once (`spec/errors.md`, ERR3). The two generated blocks of an
+        // error enum are separate impl blocks, so the duplicate is detected here rather than as a duplicate member:
+        // a source written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in
+        // the source text the syntax check compares.
+        if self.globals.conversions_into(self_ty, method).iter().any(|c| c.source == source) {
             diags.error(
                 Code::DUPLICATE_FROM,
                 imp.span,
@@ -598,10 +617,26 @@ impl<'t> Sema<'t> {
             );
             return;
         }
-        self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
-        let Some(&func) = self.globals.methods.get(&(key, "from".to_string())) else { return };
+        if self.globals.methods.contains_key(&(key, method.to_string())) {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                m.name.span,
+                format!("`{self_ty}` already has a member named `{method}`"),
+            );
+            return;
+        }
+        for other in imp.methods.iter().filter(|x| x.name.name != method) {
+            self.add_method(key, self_ty, other, module, &MethodScope::plain(), diags);
+        }
+        let label = format!("{self_ty}.{method}<{source}>");
+        let func = self.push_method(self_ty, m, module, &MethodScope::plain(), label, diags);
         self.globals.from_methods.push(func);
-        self.globals.from_impls.push(FromImpl { target: self_ty.clone(), source, func });
+        let conversion = FromImpl { target: self_ty.clone(), source, func, span: m.name.span };
+        if method == "from" {
+            self.globals.from_impls.push(conversion);
+        } else {
+            self.globals.try_from_impls.push(conversion);
+        }
     }
 
     /// `Type<T>: Drop { ... }` for one instance of the generic type, with what the block's names stand for.
@@ -688,6 +723,8 @@ enum ImplKind {
     Drop,
     /// `Type: From<Source> { fn from(value: Source): Type }`.
     From,
+    /// `Type: TryFrom<Source> { fn try_from(value: Source): Result<Type, E> }`.
+    TryFrom,
     /// A built-in interface other than `Drop`, which is only derived for now.
     Builtin,
     /// `Type: Interface { ... }` for an interface declared in the program (an index into the interfaces).
@@ -818,7 +855,9 @@ impl<'t> Sema<'t> {
             _ => false,
         };
         let method_key = (key, decl.name.name.clone());
-        if self.globals.methods.contains_key(&method_key) || clashes_with_variant {
+        let shares_conversion = matches!(decl.name.name.as_str(), "from" | "try_from")
+            && !self.globals.conversions_into(self_ty, &decl.name.name).is_empty();
+        if self.globals.methods.contains_key(&method_key) || clashes_with_variant || shares_conversion {
             diags.error(
                 Code::DUPLICATE_NAME,
                 decl.name.span,
@@ -826,6 +865,26 @@ impl<'t> Sema<'t> {
             );
             return;
         }
+        let label = format!("{self_ty}.{}", decl.name.name);
+        let id = self.push_method(self_ty, decl, module, scope, label, diags);
+        self.globals.methods.insert(method_key.clone(), id);
+        self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
+        self.globals.method_spans.insert(method_key.clone(), decl.name.span);
+        self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
+    }
+
+    /// Creates the function of one method and returns its id. `label` is its name: `Type.name`, or `Type.from<Source>`
+    /// for a conversion, whose symbol must differ from the other conversions of its type. The name is not entered in
+    /// the type's members, so a conversion block (`register_conversion_impl`) can add one per source type.
+    fn push_method(
+        &mut self,
+        self_ty: &Ty,
+        decl: &'t ast::FnDecl,
+        module: usize,
+        scope: &MethodScope,
+        label: String,
+        diags: &mut Diagnostics,
+    ) -> FuncId {
         // A method-level type parameter is opaque in the identity function; each call instantiates it. It comes
         // first so that the method's own `F` wins over an impl parameter with the same name in a default method.
         let mut subst: Vec<(String, Ty)> = Vec::new();
@@ -842,7 +901,7 @@ impl<'t> Sema<'t> {
         let generics: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         let item = FnItem {
             decl,
-            name: format!("{self_ty}.{}", decl.name.name),
+            name: label.clone(),
             module,
             self_ty: Some(self_ty.clone()),
             subst,
@@ -853,14 +912,10 @@ impl<'t> Sema<'t> {
             is_exported: false,
         };
         let id = self.push_fn(item);
-        self.globals.methods.insert(method_key.clone(), id);
-        self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
-        self.globals.method_spans.insert(method_key.clone(), decl.name.span);
-        self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
         if !generics.is_empty() {
             let template = crate::session::MethodTemplate {
                 decl,
-                name: format!("{self_ty}.{}", decl.name.name),
+                name: label,
                 module,
                 self_ty: Some(self_ty.clone()),
                 base_subst: scope.subst.to_vec(),
@@ -882,5 +937,6 @@ impl<'t> Sema<'t> {
                 },
             );
         }
+        id
     }
 }

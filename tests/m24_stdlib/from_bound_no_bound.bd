@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `T.from` needs a `From` bound on `T` (spec/stdlib.md, FR7): without one, `T` has no `from` function (E0141).
+
+fn widen<T>(v: i32): T {
+    T.from(v) //~ E0141
+}
+
+fn main() {
+}

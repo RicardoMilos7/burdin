@@ -1,0 +1,42 @@
+//@ run
+//> 42 -5 65
+//> 65
+//> 300
+//> 1
+
+// `into` converts to the type the context expects (spec/stdlib.md, FR4): a built-in pair, a user `From` block, a
+// typed `let`, an argument, and a return value.
+
+struct Meters {
+    value: i32
+}
+
+Meters: From<i32> {
+    fn from(v: i32): Meters {
+        Meters { value: v * 2 }
+    }
+}
+
+fn widen(v: i64): i64 {
+    v
+}
+
+fn to_u32(b: u8): u32 {
+    b.into()
+}
+
+fn main() {
+    let n: i32 = 21
+    let m: Meters = n.into()
+    let small: i8 = -5
+    let letter: u8 = 65
+    let code: u32 = letter.into()
+    println("{} {} {}", m.value, widen(small.into()), code)
+    println("{}", to_u32(letter))
+    let big: i32 = 300
+    let wide: i64 = big.into()
+    println("{}", wide)
+    let flag: bool = true
+    let bit: i32 = flag.into()
+    println("{}", bit)
+}

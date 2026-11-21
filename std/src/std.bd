@@ -231,6 +231,11 @@ error enum ParseIntError: Eq, Debug {
     Invalid "invalid integer"
 }
 
+/// The error type of `T.try_from(value)` for an integer `T` (spec/stdlib.md, "Conversions").
+error enum TryFromIntError: Eq, Debug {
+    OutOfRange "out of range integral type conversion attempted"
+}
+
 /// The error type of `assert`, `assert_eq`, and `assert_ne` in a `burdin test` build.
 error enum AssertError {
     Failed { condition: String, location: String } "assertion failed: {condition} at {location}"

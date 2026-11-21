@@ -27,7 +27,7 @@ page.
 | `pattern-or-binding` | `crates/burdin_sema/src/fncx/pattern.rs` | A binding inside an alternative of an or-pattern | Stage 1 | #493 |
 | `bound-non-path` | `crates/burdin_sema/src/generics.rs` | A bound that is not a type path (a tuple, reference, array, or other type form) | Stage 1 | #399 |
 | `bound-empty` | `crates/burdin_sema/src/generics.rs` | An empty bound path (a defensive branch; the parser cannot produce one today) | Stage 1 | #399 |
-| `bound-drop-from` | `crates/burdin_sema/src/generics.rs` | `Drop` or `From` used as a bound | Stage 1 | #399 |
+| `bound-drop-from` | `crates/burdin_sema/src/generics.rs` | `Drop` or `TryFrom` used as a bound | Stage 1 | #399 |
 | `impl-where-concrete` | `crates/burdin_sema/src/impls.rs` | A `where` clause on a non-generic impl block | Stage 1 | #394 |
 | `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | Stage 1 | #402 |
 | `impl-interface-path-kind` | `crates/burdin_sema/src/impls.rs` | An interface path that is not a type path | Stage 1 | #400 |

@@ -4,6 +4,26 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
+built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
+(the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
+`lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
+(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+Tests: `tests/m24_stdlib/from_*` and `into_*`.
+
+**`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
+Result<Type, E> }` and `T.try_from(v)` for integer types (`spec/stdlib.md`, "Conversions", TF1-TF7). An integer
+`try_from` is lowered by sema (`int_try_from` in `fncx/call.rs`) to an `if` over only the bounds the source type can
+leave, with the `Err` of `std.TryFromIntError.OutOfRange`. The conversion blocks are no longer named members:
+`register_conversion_impl` (`impls.rs`) keeps every `From` and `TryFrom` block in `from_impls` or `try_from_impls`,
+one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the argument's type, and
+`check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
+conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
+blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
+with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
+(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+from `char`, and `try_from` for other primitive types. Tests:
+`tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
 (`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
 quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
