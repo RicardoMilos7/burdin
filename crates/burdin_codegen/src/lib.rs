@@ -421,7 +421,7 @@ fn emit_single(
         }
     } else {
         machine.write_to_file(module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
-        if let (Some(cache), Some(key)) = (cache, &cache_key) {
+        if let (Some(cache), Some(key)) = (cache, cache_key) {
             cache.store(key, object);
             cache.prune(&std::iter::once(key.clone()).collect());
         }
