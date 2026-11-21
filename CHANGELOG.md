@@ -41,6 +41,10 @@ close-out checklist in `AGENTS.md`).
   leaves, innermost first. `tests/m02_basics/labeled_loops*.bd`, `labeled_loop_not_loop.bd`, and
   `tests/m05_ownership/labeled_loop_moves.bd` cover it.
 
+- Fixed a use-after-free and double drop when a block, `if`, or `match` value was passed as a borrowed argument, used
+  as a method receiver, or bound with `let _`: `f(g()?)` with a `?` temporary was the first report (issue #866;
+  `spec/memory-rules.md`, MV9). The tail of such a value now moves out, so the temporary drops exactly once.
+  `tests/m05_ownership/temporary_question_arg.bd` and `tests/m05_ownership/move_block_value_borrowed.bd` cover it.
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.

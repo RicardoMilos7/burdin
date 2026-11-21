@@ -92,6 +92,13 @@ Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_t
 `match_guard_temporary`, `match_guard_temporary_fields`, `match_heap_pointee_partial`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
 `m07_generics/generic_stack`.
 
+**MV9 Block values.** The value of a block, an `if`, or a `match` (including the one a `?` lowers to) is an owned
+temporary whatever uses it. Its tail or arm moves the value out, even where the expression is only borrowed: a read-only
+argument, a method receiver, a comparison operand, a `let _`. A temporary scrutinee of such a value is moved into its
+compiler-made local as MV8 says, so the value drops exactly once, at the end of the statement that created it (DR5),
+and a local the tail moves out is not usable afterwards (E0100).
+Tests: `m05_ownership/temporary_question_arg` (run), `m05_ownership/move_block_value_borrowed` (E0100).
+
 ## 2. Mutability (MU)
 
 **MU1** Assigning to a place, or taking `&mut` of it, requires the place to be mutable: a `let mut` binding, a `mut` parameter,
@@ -490,7 +497,7 @@ Tests: `tests/s2_tasks/scope_*.bd`.
 
 ## Summary of error codes used here
 
-E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
+E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, MV9, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
 E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7, SK1, SK3 · E0113 CV2, MU3, MU4, CL6 · E0114 CV2 · E0115 CV2 ·
 E0120 SC2, CL3 · E0121 RT3, RT3a · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
 E0171 CL3, CL9, CL11, SK2, SK3.

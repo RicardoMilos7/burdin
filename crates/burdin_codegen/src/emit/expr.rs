@@ -207,8 +207,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Some(ptr.into())
             }
             K::Slice { base, lo, hi, inclusive } => Some(self.slice(base, lo, hi, *inclusive, e.span)?.into()),
-            K::Block(b) => self.block(b, mode)?,
-            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty, mode)?,
+            // The value of a block, `if`, or `match` is an owned temporary whatever uses it: its tail moves out
+            // (spec/memory-rules.md, MV9), so a borrowed use does not leave a second owner behind.
+            K::Block(b) => self.block(b, Mode::Move)?,
+            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty)?,
             K::While(..)
             | K::ForRange { .. }
             | K::ForRangeValue { .. }

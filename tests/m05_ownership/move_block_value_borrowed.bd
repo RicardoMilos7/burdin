@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The value of a block is moved out of its tail even where the block is only borrowed: the temporary owns it
+// (MV9). Using `s` afterwards is a use of a moved value.
+
+fn measure(text: String): usize {
+    text.len()
+}
+
+fn main() {
+    let s = String.from("abc")
+    let n = measure({ s })
+    println(s) //~ E0100
+    println(n.to_string())
+}
