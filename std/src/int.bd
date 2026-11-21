@@ -2033,6 +2033,512 @@ fn __i64_from_ne_bytes(b: [u8; 8]): i64 {
     __i64_from_le_bytes(b)
 }
 
+// ---- i128 ----
+
+const __i128_MIN: i128 = -170141183460469231731687303715884105727 - 1
+const __i128_MAX: i128 = 170141183460469231731687303715884105727
+const __i128_BITS: u32 = 128
+
+/// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+fn i128.pow(self, exp: u32): i128 {
+    let mut result: i128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result * base
+        }
+        e = e >> 1
+        if e > 0 {
+            base = base * base
+        }
+    }
+    result
+}
+
+/// `self` to the power `exp`, wrapping around on overflow.
+fn i128.wrapping_pow(self, exp: u32): i128 {
+    let mut result: i128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result.wrapping_mul(base)
+        }
+        e = e >> 1
+        if e > 0 {
+            base = base.wrapping_mul(base)
+        }
+    }
+    result
+}
+
+/// `self` to the power `exp`, or `None` on overflow.
+fn i128.checked_pow(self, exp: u32): Option<i128> {
+    let mut result: i128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            match result.checked_mul(base) {
+                Some(v) => {
+                    result = v
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+        e = e >> 1
+        if e > 0 {
+            match base.checked_mul(base) {
+                Some(v) => {
+                    base = v
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+    Some(result)
+}
+
+/// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+fn i128.checked_div(self, other: i128): Option<i128> {
+    if other == 0 || (self == __i128_MIN && other == -1) {
+        return None
+    }
+    Some(self / other)
+}
+
+/// `self % other`, or `None` when `other` is 0 or the division overflows.
+fn i128.checked_rem(self, other: i128): Option<i128> {
+    if other == 0 || (self == __i128_MIN && other == -1) {
+        return None
+    }
+    Some(self % other)
+}
+
+/// `-self`, or `None` for the minimum value.
+fn i128.checked_neg(self): Option<i128> {
+    if self == __i128_MIN {
+        return None
+    }
+    Some(0 - self)
+}
+
+/// `-self`, wrapping around for the minimum value.
+fn i128.wrapping_neg(self): i128 {
+    let zero: i128 = 0
+    zero.wrapping_sub(self)
+}
+
+/// `self << n`, or `None` when `n` is the number of bits or more.
+fn i128.checked_shl(self, n: u32): Option<i128> {
+    if n >= 128 {
+        return None
+    }
+    Some(self << n)
+}
+
+/// `self >> n`, or `None` when `n` is the number of bits or more.
+fn i128.checked_shr(self, n: u32): Option<i128> {
+    if n >= 128 {
+        return None
+    }
+    Some(self >> n)
+}
+
+/// `self << (n % bits)`.
+fn i128.wrapping_shl(self, n: u32): i128 {
+    self << (n % 128)
+}
+
+/// `self >> (n % bits)`.
+fn i128.wrapping_shr(self, n: u32): i128 {
+    self >> (n % 128)
+}
+
+/// `self + other`, clamped to the range of the type.
+fn i128.saturating_add(self, other: i128): i128 {
+    match self.checked_add(other) {
+        Some(v) => v,
+        None => {
+            if other > 0 {
+                __i128_MAX
+            } else {
+                __i128_MIN
+            }
+        }
+    }
+}
+
+/// `self - other`, clamped to the range of the type.
+fn i128.saturating_sub(self, other: i128): i128 {
+    match self.checked_sub(other) {
+        Some(v) => v,
+        None => {
+            if other > 0 {
+                __i128_MIN
+            } else {
+                __i128_MAX
+            }
+        }
+    }
+}
+
+/// `self * other`, clamped to the range of the type.
+fn i128.saturating_mul(self, other: i128): i128 {
+    match self.checked_mul(other) {
+        Some(v) => v,
+        None => {
+            if (self < 0) == (other < 0) {
+                __i128_MAX
+            } else {
+                __i128_MIN
+            }
+        }
+    }
+}
+
+/// `self` to the power `exp`, clamped to the range of the type.
+fn i128.saturating_pow(self, exp: u32): i128 {
+    match self.checked_pow(exp) {
+        Some(v) => v,
+        None => {
+            if self < 0 && exp % 2 == 1 {
+                __i128_MIN
+            } else {
+                __i128_MAX
+            }
+        }
+    }
+}
+
+/// `self + other` wrapped, and whether it overflowed.
+fn i128.overflowing_add(self, other: i128): (i128, bool) {
+    (self.wrapping_add(other), self.checked_add(other).is_none())
+}
+
+/// `self - other` wrapped, and whether it overflowed.
+fn i128.overflowing_sub(self, other: i128): (i128, bool) {
+    (self.wrapping_sub(other), self.checked_sub(other).is_none())
+}
+
+/// `self * other` wrapped, and whether it overflowed.
+fn i128.overflowing_mul(self, other: i128): (i128, bool) {
+    (self.wrapping_mul(other), self.checked_mul(other).is_none())
+}
+
+/// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+fn i128.div_euclid(self, other: i128): i128 {
+    let q = self / other
+    if self % other < 0 {
+        if other > 0 {
+            return q - 1
+        }
+        return q + 1
+    }
+    q
+}
+
+/// The remainder, never negative. Division by 0 panics.
+fn i128.rem_euclid(self, other: i128): i128 {
+    let r = self % other
+    if r < 0 {
+        if other > 0 {
+            return r + other
+        }
+        return r - other
+    }
+    r
+}
+
+/// The distance between `self` and `other`, as the unsigned type.
+fn i128.abs_diff(self, other: i128): u128 {
+    if self > other {
+        return (self.wrapping_sub(other)) as u128
+    }
+    (other.wrapping_sub(self)) as u128
+}
+
+/// The absolute value as the unsigned type, so the minimum value is representable.
+fn i128.unsigned_abs(self): u128 {
+    if self < 0 {
+        let zero: i128 = 0
+        return (zero.wrapping_sub(self)) as u128
+    }
+    self as u128
+}
+
+/// `-1`, `0`, or `1` by the sign of `self`.
+fn i128.signum(self): i128 {
+    if self > 0 {
+        return 1
+    }
+    if self < 0 {
+        return 0 - 1
+    }
+    0
+}
+
+/// Whether `self` is greater than 0.
+fn i128.is_positive(self): bool {
+    self > 0
+}
+
+/// Whether `self` is less than 0.
+fn i128.is_negative(self): bool {
+    self < 0
+}
+
+/// The number of 1 bits.
+fn i128.count_ones(self): u32 {
+    let mut v: u128 = self as u128
+    let mut n: u32 = 0
+    while v != 0 {
+        n = n + (v & 1) as u32
+        v = v >> 1
+    }
+    n
+}
+
+/// The number of 0 bits.
+fn i128.count_zeros(self): u32 {
+    128 - self.count_ones()
+}
+
+/// The number of 0 bits before the first 1 bit, from the top.
+fn i128.leading_zeros(self): u32 {
+    let v: u128 = self as u128
+    let mut n: u32 = 0
+    let mut i: u32 = 128
+    while i > 0 {
+        i = i - 1
+        if (v >> i) & 1 == 1 {
+            return n
+        }
+        n = n + 1
+    }
+    n
+}
+
+/// The number of 0 bits after the last 1 bit, from the bottom.
+fn i128.trailing_zeros(self): u32 {
+    let v: u128 = self as u128
+    let mut n: u32 = 0
+    while n < 128 {
+        if (v >> n) & 1 == 1 {
+            return n
+        }
+        n = n + 1
+    }
+    n
+}
+
+/// The bits rotated left by `n % bits` places.
+fn i128.rotate_left(self, n: u32): i128 {
+    let v: u128 = self as u128
+    let k = n % 128
+    if k == 0 {
+        return self
+    }
+    let back: u32 = 128 - k
+    ((v << k) | (v >> back)) as i128
+}
+
+/// The bits rotated right by `n % bits` places.
+fn i128.rotate_right(self, n: u32): i128 {
+    let v: u128 = self as u128
+    let k = n % 128
+    if k == 0 {
+        return self
+    }
+    let back: u32 = 128 - k
+    ((v >> k) | (v << back)) as i128
+}
+
+/// The bytes in the opposite order.
+fn i128.swap_bytes(self): i128 {
+    let v: u128 = self as u128
+    let mut r: u128 = 0
+    let mut i: u32 = 0
+    while i < 16 {
+        let shift: u32 = 8 * i
+        r = (r << 8) | ((v >> shift) & 255)
+        i = i + 1
+    }
+    r as i128
+}
+
+/// The bits in the opposite order.
+fn i128.reverse_bits(self): i128 {
+    let v: u128 = self as u128
+    let mut r: u128 = 0
+    let mut i: u32 = 0
+    while i < 128 {
+        r = (r << 1) | ((v >> i) & 1)
+        i = i + 1
+    }
+    r as i128
+}
+
+/// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+fn i128.isqrt(self): i128 {
+    if self < 0 {
+        panic("isqrt of a negative number")
+    }
+    let mut n: u128 = self as u128
+    let mut result: u128 = 0
+    let mut bit: u128 = 1 << 126
+    while bit > n {
+        bit = bit >> 2
+    }
+    while bit != 0 {
+        if n >= result + bit {
+            n = n - (result + bit)
+            result = (result >> 1) + bit
+        } else {
+            result = result >> 1
+        }
+        bit = bit >> 2
+    }
+    result as i128
+}
+
+/// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+fn i128.ilog2(self): u32 {
+    if self <= 0 {
+        panic("ilog2 of a number that is not positive")
+    }
+    127 - self.leading_zeros()
+}
+
+/// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+fn i128.ilog10(self): u32 {
+    if self <= 0 {
+        panic("ilog10 of a number that is not positive")
+    }
+    let mut v = self
+    let mut n: u32 = 0
+    while v >= 10 {
+        v = v / 10
+        n = n + 1
+    }
+    n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). An optional leading `-` is allowed. Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __i128_parse_radix(s: str, radix: u32): Result<i128, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: i128 = radix as i128
+    let mut value: i128 = 0
+    let mut seen_digit = false
+    let mut negative = false
+    let mut first = true
+    for c in s.chars() {
+        if first {
+            first = false
+            if c == '-' {
+                negative = true
+                continue
+            }
+        }
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: i128 = d as i128
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn i128.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    if self < 0 {
+        out.push('-')
+    }
+    let mut v: u128 = self.unsigned_abs()
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u128 = radix as u128
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
+/// The bytes in little-endian order.
+fn i128.to_le_bytes(self): [u8; 16] {
+    let v: u128 = self as u128
+    [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 120) & 255) as u8]
+}
+
+/// The bytes in big-endian order.
+fn i128.to_be_bytes(self): [u8; 16] {
+    let v: u128 = self as u128
+    [((v >> 120) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
+}
+
+/// The bytes in the byte order of the target, which is little-endian on every supported platform.
+fn i128.to_ne_bytes(self): [u8; 16] {
+    self.to_le_bytes()
+}
+
+/// The value whose little-endian bytes are `b`.
+fn __i128_from_le_bytes(b: [u8; 16]): i128 {
+    let v: u128 = ((b[0] as u128) << 0) | ((b[1] as u128) << 8) | ((b[2] as u128) << 16) | ((b[3] as u128) << 24) | ((b[4] as u128) << 32) | ((b[5] as u128) << 40) | ((b[6] as u128) << 48) | ((b[7] as u128) << 56) | ((b[8] as u128) << 64) | ((b[9] as u128) << 72) | ((b[10] as u128) << 80) | ((b[11] as u128) << 88) | ((b[12] as u128) << 96) | ((b[13] as u128) << 104) | ((b[14] as u128) << 112) | ((b[15] as u128) << 120)
+    v as i128
+}
+
+/// The value whose big-endian bytes are `b`.
+fn __i128_from_be_bytes(b: [u8; 16]): i128 {
+    let v: u128 = ((b[0] as u128) << 120) | ((b[1] as u128) << 112) | ((b[2] as u128) << 104) | ((b[3] as u128) << 96) | ((b[4] as u128) << 88) | ((b[5] as u128) << 80) | ((b[6] as u128) << 72) | ((b[7] as u128) << 64) | ((b[8] as u128) << 56) | ((b[9] as u128) << 48) | ((b[10] as u128) << 40) | ((b[11] as u128) << 32) | ((b[12] as u128) << 24) | ((b[13] as u128) << 16) | ((b[14] as u128) << 8) | ((b[15] as u128) << 0)
+    v as i128
+}
+
+/// The value whose native-endian bytes are `b`.
+fn __i128_from_ne_bytes(b: [u8; 16]): i128 {
+    __i128_from_le_bytes(b)
+}
+
 // ---- isize ----
 
 const __isize_MIN: isize = -9223372036854775807 - 1
@@ -4329,6 +4835,454 @@ fn __u64_from_be_bytes(b: [u8; 8]): u64 {
 /// The value whose native-endian bytes are `b`.
 fn __u64_from_ne_bytes(b: [u8; 8]): u64 {
     __u64_from_le_bytes(b)
+}
+
+// ---- u128 ----
+
+const __u128_MIN: u128 = 0
+const __u128_MAX: u128 = 340282366920938463463374607431768211455
+const __u128_BITS: u32 = 128
+
+/// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+fn u128.pow(self, exp: u32): u128 {
+    let mut result: u128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result * base
+        }
+        e = e >> 1
+        if e > 0 {
+            base = base * base
+        }
+    }
+    result
+}
+
+/// `self` to the power `exp`, wrapping around on overflow.
+fn u128.wrapping_pow(self, exp: u32): u128 {
+    let mut result: u128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result.wrapping_mul(base)
+        }
+        e = e >> 1
+        if e > 0 {
+            base = base.wrapping_mul(base)
+        }
+    }
+    result
+}
+
+/// `self` to the power `exp`, or `None` on overflow.
+fn u128.checked_pow(self, exp: u32): Option<u128> {
+    let mut result: u128 = 1
+    let mut base = self
+    let mut e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            match result.checked_mul(base) {
+                Some(v) => {
+                    result = v
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+        e = e >> 1
+        if e > 0 {
+            match base.checked_mul(base) {
+                Some(v) => {
+                    base = v
+                }
+                None => {
+                    return None
+                }
+            }
+        }
+    }
+    Some(result)
+}
+
+/// `self / other`, or `None` when `other` is 0.
+fn u128.checked_div(self, other: u128): Option<u128> {
+    if other == 0 {
+        return None
+    }
+    Some(self / other)
+}
+
+/// `self % other`, or `None` when `other` is 0.
+fn u128.checked_rem(self, other: u128): Option<u128> {
+    if other == 0 {
+        return None
+    }
+    Some(self % other)
+}
+
+/// `-self`: `Some(0)` for 0 and `None` for every other value.
+fn u128.checked_neg(self): Option<u128> {
+    if self == 0 {
+        return Some(0)
+    }
+    None
+}
+
+/// `-self`, wrapping around (two's complement).
+fn u128.wrapping_neg(self): u128 {
+    let zero: u128 = 0
+    zero.wrapping_sub(self)
+}
+
+/// `self << n`, or `None` when `n` is the number of bits or more.
+fn u128.checked_shl(self, n: u32): Option<u128> {
+    if n >= 128 {
+        return None
+    }
+    Some(self << n)
+}
+
+/// `self >> n`, or `None` when `n` is the number of bits or more.
+fn u128.checked_shr(self, n: u32): Option<u128> {
+    if n >= 128 {
+        return None
+    }
+    Some(self >> n)
+}
+
+/// `self << (n % bits)`.
+fn u128.wrapping_shl(self, n: u32): u128 {
+    self << (n % 128)
+}
+
+/// `self >> (n % bits)`.
+fn u128.wrapping_shr(self, n: u32): u128 {
+    self >> (n % 128)
+}
+
+/// `self + other`, clamped to the range of the type.
+fn u128.saturating_add(self, other: u128): u128 {
+    match self.checked_add(other) {
+        Some(v) => v,
+        None => __u128_MAX,
+    }
+}
+
+/// `self - other`, clamped to the range of the type.
+fn u128.saturating_sub(self, other: u128): u128 {
+    match self.checked_sub(other) {
+        Some(v) => v,
+        None => 0,
+    }
+}
+
+/// `self * other`, clamped to the range of the type.
+fn u128.saturating_mul(self, other: u128): u128 {
+    match self.checked_mul(other) {
+        Some(v) => v,
+        None => __u128_MAX,
+    }
+}
+
+/// `self` to the power `exp`, clamped to the range of the type.
+fn u128.saturating_pow(self, exp: u32): u128 {
+    match self.checked_pow(exp) {
+        Some(v) => v,
+        None => __u128_MAX,
+    }
+}
+
+/// `self + other` wrapped, and whether it overflowed.
+fn u128.overflowing_add(self, other: u128): (u128, bool) {
+    (self.wrapping_add(other), self.checked_add(other).is_none())
+}
+
+/// `self - other` wrapped, and whether it overflowed.
+fn u128.overflowing_sub(self, other: u128): (u128, bool) {
+    (self.wrapping_sub(other), self.checked_sub(other).is_none())
+}
+
+/// `self * other` wrapped, and whether it overflowed.
+fn u128.overflowing_mul(self, other: u128): (u128, bool) {
+    (self.wrapping_mul(other), self.checked_mul(other).is_none())
+}
+
+/// `self / other`. Division by 0 panics.
+fn u128.div_euclid(self, other: u128): u128 {
+    self / other
+}
+
+/// `self % other`. Division by 0 panics.
+fn u128.rem_euclid(self, other: u128): u128 {
+    self % other
+}
+
+/// The distance between `self` and `other`.
+fn u128.abs_diff(self, other: u128): u128 {
+    if self > other {
+        return self - other
+    }
+    other - self
+}
+
+/// The number of 1 bits.
+fn u128.count_ones(self): u32 {
+    let mut v: u128 = self
+    let mut n: u32 = 0
+    while v != 0 {
+        n = n + (v & 1) as u32
+        v = v >> 1
+    }
+    n
+}
+
+/// The number of 0 bits.
+fn u128.count_zeros(self): u32 {
+    128 - self.count_ones()
+}
+
+/// The number of 0 bits before the first 1 bit, from the top.
+fn u128.leading_zeros(self): u32 {
+    let v: u128 = self
+    let mut n: u32 = 0
+    let mut i: u32 = 128
+    while i > 0 {
+        i = i - 1
+        if (v >> i) & 1 == 1 {
+            return n
+        }
+        n = n + 1
+    }
+    n
+}
+
+/// The number of 0 bits after the last 1 bit, from the bottom.
+fn u128.trailing_zeros(self): u32 {
+    let v: u128 = self
+    let mut n: u32 = 0
+    while n < 128 {
+        if (v >> n) & 1 == 1 {
+            return n
+        }
+        n = n + 1
+    }
+    n
+}
+
+/// The bits rotated left by `n % bits` places.
+fn u128.rotate_left(self, n: u32): u128 {
+    let v: u128 = self
+    let k = n % 128
+    if k == 0 {
+        return self
+    }
+    let back: u32 = 128 - k
+    ((v << k) | (v >> back)) as u128
+}
+
+/// The bits rotated right by `n % bits` places.
+fn u128.rotate_right(self, n: u32): u128 {
+    let v: u128 = self
+    let k = n % 128
+    if k == 0 {
+        return self
+    }
+    let back: u32 = 128 - k
+    ((v >> k) | (v << back)) as u128
+}
+
+/// The bytes in the opposite order.
+fn u128.swap_bytes(self): u128 {
+    let v: u128 = self
+    let mut r: u128 = 0
+    let mut i: u32 = 0
+    while i < 16 {
+        let shift: u32 = 8 * i
+        r = (r << 8) | ((v >> shift) & 255)
+        i = i + 1
+    }
+    r as u128
+}
+
+/// The bits in the opposite order.
+fn u128.reverse_bits(self): u128 {
+    let v: u128 = self
+    let mut r: u128 = 0
+    let mut i: u32 = 0
+    while i < 128 {
+        r = (r << 1) | ((v >> i) & 1)
+        i = i + 1
+    }
+    r as u128
+}
+
+/// Whether exactly one bit is set.
+fn u128.is_power_of_two(self): bool {
+    self != 0 && self & (self - 1) == 0
+}
+
+/// The smallest power of two that is at least `self`, or `None` when it does not fit.
+fn u128.checked_next_power_of_two(self): Option<u128> {
+    if self <= 1 {
+        return Some(1)
+    }
+    let top = 128 - (self - 1).leading_zeros()
+    if top >= 128 {
+        return None
+    }
+    Some(1 << top)
+}
+
+/// The smallest power of two that is at least `self`. It panics when the result does not fit.
+fn u128.next_power_of_two(self): u128 {
+    match self.checked_next_power_of_two() {
+        Some(v) => v,
+        None => panic("next_power_of_two overflowed"),
+    }
+}
+
+/// The integer square root: the greatest `r` with `r * r <= self`.
+fn u128.isqrt(self): u128 {
+    let mut n: u128 = self
+    let mut result: u128 = 0
+    let mut bit: u128 = 1 << 126
+    while bit > n {
+        bit = bit >> 2
+    }
+    while bit != 0 {
+        if n >= result + bit {
+            n = n - (result + bit)
+            result = (result >> 1) + bit
+        } else {
+            result = result >> 1
+        }
+        bit = bit >> 2
+    }
+    result
+}
+
+/// The base 2 logarithm rounded down. A `self` that is 0 panics.
+fn u128.ilog2(self): u32 {
+    if self <= 0 {
+        panic("ilog2 of a number that is not positive")
+    }
+    127 - self.leading_zeros()
+}
+
+/// The base 10 logarithm rounded down. A `self` that is 0 panics.
+fn u128.ilog10(self): u32 {
+    if self <= 0 {
+        panic("ilog10 of a number that is not positive")
+    }
+    let mut v = self
+    let mut n: u32 = 0
+    while v >= 10 {
+        v = v / 10
+        n = n + 1
+    }
+    n
+}
+
+/// The number in the text in base `radix` (2 to 36; any other radix panics). Any failure (no digits, a character that is not a digit of the base, or a value out of range) is `ParseIntError.Invalid`.
+fn __u128_parse_radix(s: str, radix: u32): Result<u128, ParseIntError> {
+    if radix < 2 || radix > 36 {
+        panic("parse_radix: radix must be 2 to 36")
+    }
+    let base: u128 = radix as u128
+    let mut value: u128 = 0
+    let mut seen_digit = false
+    for c in s.chars() {
+        match c.to_digit(radix) {
+            Some(d) => {
+                let digit: u128 = d as u128
+                let scaled = value.checked_mul(base)
+                if scaled.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                let next = scaled.unwrap().checked_add(digit)
+                if next.is_none() {
+                    return Err(ParseIntError.Invalid)
+                }
+                value = next.unwrap()
+                seen_digit = true
+            }
+            None => {
+                return Err(ParseIntError.Invalid)
+            }
+        }
+    }
+    if !seen_digit {
+        return Err(ParseIntError.Invalid)
+    }
+    Ok(value)
+}
+
+/// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+fn u128.to_string_radix(self, radix: u32): String {
+    if radix < 2 || radix > 36 {
+        panic("to_string_radix: radix must be 2 to 36")
+    }
+    let mut out = String.new()
+    let mut v: u128 = self
+    if v == 0 {
+        out.push('0')
+        return out
+    }
+    let base: u128 = radix as u128
+    let mut digits = List<char>.new()
+    while v > 0 {
+        let d = (v % base) as u32
+        if d < 10 {
+            digits.push((48 + d) as char)
+        } else {
+            digits.push((87 + d) as char)
+        }
+        v = v / base
+    }
+    let mut i = digits.len()
+    while i > 0 {
+        i = i - 1
+        out.push(digits[i])
+    }
+    out
+}
+
+/// The bytes in little-endian order.
+fn u128.to_le_bytes(self): [u8; 16] {
+    let v: u128 = self
+    [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 120) & 255) as u8]
+}
+
+/// The bytes in big-endian order.
+fn u128.to_be_bytes(self): [u8; 16] {
+    let v: u128 = self
+    [((v >> 120) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
+}
+
+/// The bytes in the byte order of the target, which is little-endian on every supported platform.
+fn u128.to_ne_bytes(self): [u8; 16] {
+    self.to_le_bytes()
+}
+
+/// The value whose little-endian bytes are `b`.
+fn __u128_from_le_bytes(b: [u8; 16]): u128 {
+    let v: u128 = ((b[0] as u128) << 0) | ((b[1] as u128) << 8) | ((b[2] as u128) << 16) | ((b[3] as u128) << 24) | ((b[4] as u128) << 32) | ((b[5] as u128) << 40) | ((b[6] as u128) << 48) | ((b[7] as u128) << 56) | ((b[8] as u128) << 64) | ((b[9] as u128) << 72) | ((b[10] as u128) << 80) | ((b[11] as u128) << 88) | ((b[12] as u128) << 96) | ((b[13] as u128) << 104) | ((b[14] as u128) << 112) | ((b[15] as u128) << 120)
+    v
+}
+
+/// The value whose big-endian bytes are `b`.
+fn __u128_from_be_bytes(b: [u8; 16]): u128 {
+    let v: u128 = ((b[0] as u128) << 120) | ((b[1] as u128) << 112) | ((b[2] as u128) << 104) | ((b[3] as u128) << 96) | ((b[4] as u128) << 88) | ((b[5] as u128) << 80) | ((b[6] as u128) << 72) | ((b[7] as u128) << 64) | ((b[8] as u128) << 56) | ((b[9] as u128) << 48) | ((b[10] as u128) << 40) | ((b[11] as u128) << 32) | ((b[12] as u128) << 24) | ((b[13] as u128) << 16) | ((b[14] as u128) << 8) | ((b[15] as u128) << 0)
+    v
+}
+
+/// The value whose native-endian bytes are `b`.
+fn __u128_from_ne_bytes(b: [u8; 16]): u128 {
+    __u128_from_le_bytes(b)
 }
 
 // ---- usize ----

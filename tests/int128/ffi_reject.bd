@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A 128-bit integer cannot cross the C boundary: C has no 128-bit integer type that every platform declares, so an
+// extern declaration with one in a parameter or a return type is E0162 (spec/int128.md, I128-9).
+
+extern "C" {
+    fn takes_wide(x: i128): i128 //~ E0162
+    fn returns_wide(): u128 //~ E0162
+}
+
+fn main() {
+}

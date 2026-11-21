@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: division by zero
+//> before
+
+// Division by zero panics in every profile, for a 128-bit divisor (spec/int128.md, I128-3).
+
+fn main() {
+    let n: u128 = 7
+    let zero: u128 = 0
+    println("before")
+    println((n / zero).to_string())
+    println("after")
+}

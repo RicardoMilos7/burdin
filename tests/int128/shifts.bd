@@ -1,0 +1,28 @@
+//@ run
+//> 170141183460469231731687303715884105728
+//> 1
+//> -1
+//> -2
+//> 9223372036854775808
+//> 170141183460469231731687303715884105728
+//> 1
+//> -85070591730234615865843651857942052864
+
+// Shifts on 128-bit integers: the top bit, arithmetic right shift of a negative value, and a shift amount taken from
+// a variable (spec/int128.md, I128-4).
+
+fn main() {
+    let one: u128 = 1
+    println((one << 127).to_string())
+    let top: u128 = one << 127
+    println((top >> 127).to_string())
+    let neg: i128 = -1
+    println((neg >> 127).to_string())
+    println((neg << 1).to_string())
+    println(((one << 127) >> 64).to_string())
+    let s: u32 = 127
+    println((one << s).to_string())
+    println((top >> s).to_string())
+    let m: i128 = -170141183460469231731687303715884105728
+    println((m >> 1).to_string())
+}

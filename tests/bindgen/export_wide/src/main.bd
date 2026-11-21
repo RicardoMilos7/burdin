@@ -1,0 +1,14 @@
+// C has no 128-bit integer type that every platform declares, so an exported struct cannot hold one: the header
+// cannot spell its field (spec/int128.md, I128-13). `burdin bindgen --export` reports it with E0263
+// (tests/check_bindgen.py). A 128-bit value passed directly is rejected earlier, with E0162.
+
+struct Wide repr(C) {
+    low: u64
+    high: u128
+}
+
+extern "C" fn wide_sum(own w: CPtr<Wide>): i32 {
+    0
+}
+
+fn main() {}

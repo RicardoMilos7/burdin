@@ -4,6 +4,18 @@ use super::Codegen;
 use burdin_tir::{FloatTy, IntTy, Ty, TypeDefs};
 use inkwell::AddressSpace;
 use inkwell::types::{BasicType, BasicTypeEnum, IntType, StructType};
+use inkwell::values::IntValue;
+
+/// The constant of integer type `t` with value `v`. A value is carried as an `i128`, and a `u128` above
+/// `i128::MAX` as its bit pattern (`spec/int128.md`, I128-1), so both 128-bit types take both words.
+pub(super) fn int_const<'ctx>(t: IntType<'ctx>, v: i128) -> IntValue<'ctx> {
+    if t.get_bit_width() == 128 {
+        t.const_int_arbitrary_precision(&[v as u64, (v >> 64) as u64])
+    } else {
+        // Truncating to 64 bits keeps the two's complement bits of a negative value.
+        t.const_int(v as u64, false)
+    }
+}
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn int_ty(&self, i: IntTy) -> IntType<'ctx> {
@@ -13,6 +25,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             IntTy::I16 | IntTy::U16 => self.cx.i16_type(),
             IntTy::I32 | IntTy::U32 => self.cx.i32_type(),
             IntTy::I64 | IntTy::U64 => self.cx.i64_type(),
+            IntTy::I128 | IntTy::U128 => self.cx.i128_type(),
         }
     }
 

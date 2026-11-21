@@ -416,6 +416,8 @@ impl FnCx<'_> {
         };
         let f = f.clone();
         match e.ty.clone() {
+            Ty::Int(IntTy::I128) => self.std_call("__fmt_i128", vec![e, int(128), f], span),
+            Ty::Int(IntTy::U128) => self.std_call("__fmt_u128", vec![e, f], span),
             Ty::Int(i) if i.signed() => {
                 let bits = i128::from(i.bits());
                 self.std_call("__fmt_i64", vec![cast(e, IntTy::I64), int(bits), f], span)

@@ -255,7 +255,8 @@ impl Globals {
         };
         if let ConstExpr::Lit(v) = folded {
             let fits = match declared {
-                Ty::Int(int) => (int.min()..=int.max()).contains(&v),
+                // Compared in the type's order, where a `u128` bit pattern above `i128::MAX` is in range (I128-1).
+                Ty::Int(int) => (int.key(int.min())..=int.key(int.max())).contains(&int.key(v)),
                 Ty::Bool => v == 0 || v == 1,
                 _ => true,
             };

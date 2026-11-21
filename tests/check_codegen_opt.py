@@ -60,7 +60,8 @@ with harness.temporary_dir("burdin-opt-") as work:
         # other `i1` is the live flag of the `to_string` temporary in `main`, which drops at the end of its
         # statement (DR5); every temporary carries one so a temporary created in only one branch of a `match`
         # is dropped only where it exists.
-        expect_count("drop-flag elimination", work / "flags.ll", "alloca i1", 2)
+        # The comma keeps `alloca i128` (the 128-bit runtime routines) from matching the flags' `alloca i1`.
+        expect_count("drop-flag elimination", work / "flags.ll", "alloca i1,", 2)
         expect_count("drop-flag elimination (temporary)", work / "flags.ll", "tmp.live = alloca i1", 1)
         checks += 1
         ran = harness.run([harness.executable_in(work, "flags")], cwd=work)

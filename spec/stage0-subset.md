@@ -42,7 +42,7 @@ the executable form. Two decisions worth calling out here:
 | --- | --- | --- |
 | Lexing and syntax | Identifiers; integer, float, char, string literals with escapes; all comment forms; no semicolons; blocks as expressions | S |
 | Bindings | `let`, `let mut`, `const` with simple constant expressions, shadowing, annotations, local inference | M |
-| Primitive types | `i8`..`i64`, `u8`..`u64`, `isize`, `usize`, `f32`, `f64`, `bool`, `char`, `str`, `()`; `as` casts; debug overflow panic, release wrap; bounds checks | M |
+| Primitive types | `i8`..`i64`, `i128`, `u8`..`u64`, `u128`, `isize`, `usize`, `f32`, `f64`, `bool`, `char`, `str`, `()`; `as` casts; debug overflow panic, release wrap; bounds checks | M |
 | Functions | `fn` with `:` return types, `mut` and `own` parameters, `self` forms, recursion | M |
 | Control flow | `if`/`else`, `while`, `loop`, `for` over built-in iterables, `break`, `continue`, `return` | S |
 | Structs and tuples | Declarations, literals with shorthand, tuples, field access, `Type { ... }` method blocks, type aliases | M |
@@ -108,7 +108,8 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 | Tasks, channels, `select`, `Mutex`, atomics, `thread.spawn` | After stage 1 |
 | Bindgen for C and Rust | After stage 1 |
 | `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After stage 1 |
-| `i128`/`u128`, `break` with a value, compound assignment | When wanted |
+| `i128`/`u128` | Added after stage 0 (issue #273, `spec/int128.md`) |
+| `break` with a value, compound assignment | When wanted |
 | `Set`, `Deque`, doc tests, `bench` blocks | When wanted |
 
 ## Milestones

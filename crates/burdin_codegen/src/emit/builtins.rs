@@ -3,7 +3,7 @@
 use super::place::is_place;
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
+use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, IntTy, Method, Ty};
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
@@ -1959,6 +1959,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let out = self.alloca(self.string_ty.into(), "string")?;
         let i64_ty = self.cx.i64_type();
         match ty {
+            Ty::Int(i @ (IntTy::I128 | IntTy::U128)) => {
+                let f = if i.signed() { self.rt.i128_to_string } else { self.rt.u128_to_string };
+                self.builder.build_call(f, &[v.into(), out.into()], "").map_err(llvm_err)?;
+            }
             Ty::Int(i) => {
                 let wide = self
                     .builder

@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
+  16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
+  `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating
+  from floats), ordering, ranges and iterators at compile time and at run time, patterns and exhaustiveness, hashing,
+  and `List`/`Map`/`Set` all accept them. Division needs no compiler runtime library (MSVC has none). A 128-bit
+  integer cannot cross the C boundary (E0162), and `burdin bindgen --export` cannot spell one (E0263); `burdin
+  bindgen` skips a C `__int128` function with a note. `tests/int128/` (21 programs) and two checks in
+  `tests/check_bindgen.py` witness the rules.
 - `From` for the scalar pairs `as` converts exactly, and `v.into()`: `T.from(v)` and `as` use the same built-in
   conversion, and `into` converts to the type the context expects (`spec/stdlib.md`, "Numeric conversions"). `From<S>` is
   a bound: a generic function with `T: From<S>` can call `T.from(v)` and `v.into()`.

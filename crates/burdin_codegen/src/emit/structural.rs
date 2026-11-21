@@ -1,7 +1,7 @@
 //! Structural comparison and hashing: the derived `Eq`, `Ord`, and `Hash`.
 
 use super::{Codegen, GenResult, llvm_err};
-use burdin_tir::Ty;
+use burdin_tir::{IntTy, Ty};
 use inkwell::values::{IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 
@@ -432,6 +432,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<IntValue<'ctx>> {
         let Some(t) = self.llvm_ty(ty) else { return Ok(acc) };
         match ty {
+            // A 128-bit integer mixes its two 64-bit words, low first, as the comptime `hash` does.
+            Ty::Int(IntTy::I128 | IntTy::U128) => {
+                let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?.into_int_value();
+                let i64_ty = self.cx.i64_type();
+                let high = self
+                    .builder
+                    .build_right_shift(v, t.into_int_type().const_int(64, false), false, "")
+                    .map_err(llvm_err)?;
+                let low = self.builder.build_int_truncate(v, i64_ty, "").map_err(llvm_err)?;
+                let high = self.builder.build_int_truncate(high, i64_ty, "").map_err(llvm_err)?;
+                let acc = self.hash_mix(acc, low)?;
+                self.hash_mix(acc, high)
+            }
             Ty::Int(_) | Ty::Bool | Ty::Char => {
                 let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?.into_int_value();
                 let signed = matches!(ty, Ty::Int(i) if i.signed());

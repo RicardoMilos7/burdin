@@ -2234,6 +2234,17 @@ impl FnCx<'_> {
                 let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
                     return error_expr(span);
                 };
+                // The 128-bit types parse in `std`, in base 10 (`spec/int128.md`, I128-6): the runtime's parser
+                // reads into 64 bits.
+                if matches!(i, IntTy::I128 | IntTy::U128) {
+                    let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_parse_radix", i.name())) else {
+                        unreachable!("std defines the 128-bit parsers")
+                    };
+                    let sig = self.globals.sigs[f.0].clone();
+                    let mut call_args = checked;
+                    call_args.push(mk(tir::ExprKind::Int(10), Ty::Int(IntTy::U32), span));
+                    return mk(tir::ExprKind::Call(f, call_args), sig.ret, span);
+                }
                 let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
                 let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
                 return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);

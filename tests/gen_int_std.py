@@ -16,8 +16,8 @@ OUT = Path(__file__).resolve().parent.parent / "std" / "src" / "int.bd"
 
 TYPES = [
     # name, bits, signed
-    ("i8", 8, True), ("i16", 16, True), ("i32", 32, True), ("i64", 64, True), ("isize", 64, True),
-    ("u8", 8, False), ("u16", 16, False), ("u32", 32, False), ("u64", 64, False), ("usize", 64, False),
+    ("i8", 8, True), ("i16", 16, True), ("i32", 32, True), ("i64", 64, True), ("i128", 128, True), ("isize", 64, True),
+    ("u8", 8, False), ("u16", 16, False), ("u32", 32, False), ("u64", 64, False), ("u128", 128, False), ("usize", 64, False),
 ]
 
 HEADER = """// The integer functions of every integer type (spec/stdlib.md, "Integer functions").

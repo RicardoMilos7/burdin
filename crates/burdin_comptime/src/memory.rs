@@ -117,9 +117,12 @@ pub(crate) fn decode_value(s: Scalar, bytes: &[u8]) -> i128 {
 /// A value brought into its integer type's range, sign-extended from its byte width.
 fn truncate(raw: i128, i: IntTy) -> i128 {
     let bits = i.bits();
-    let mask = (1i128 << bits) - 1;
-    let raw = if bits >= 128 { raw } else { raw & mask };
-    if i.signed() && bits < 128 && (raw >> (bits - 1)) & 1 == 1 { raw - (1i128 << bits) } else { raw }
+    // A 128-bit value is the whole word: there is no narrower mask to apply (`spec/int128.md`, I128-1).
+    if bits >= 128 {
+        return raw;
+    }
+    let raw = raw & ((1i128 << bits) - 1);
+    if i.signed() && (raw >> (bits - 1)) & 1 == 1 { raw - (1i128 << bits) } else { raw }
 }
 
 /// The float a `Float` value's bits hold, as the integer that stores it.
