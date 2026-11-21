@@ -1,0 +1,153 @@
+// Statistics over a slice of `f64` (spec/math.md, MA5). A statistic with no values, or with too few, is `None`.
+
+/// The sum of the values, added left to right. Zero for no values.
+fn sum(xs: [f64]): f64 {
+    let mut total = 0.0
+    for x in xs {
+        total = total + x
+    }
+    total
+}
+
+/// The arithmetic mean, or `None` for no values.
+fn mean(xs: [f64]): Option<f64> {
+    if xs.len() == 0 {
+        return None
+    }
+    Some(sum(xs) / (xs.len() as f64))
+}
+
+/// The population variance: the mean of the squared deviations from the mean. Two passes, so it stays accurate.
+fn variance(xs: [f64]): Option<f64> {
+    match mean(xs) {
+        Some(m) => {
+            let mut total = 0.0
+            for x in xs {
+                let d = x - m
+                total = total + d * d
+            }
+            Some(total / (xs.len() as f64))
+        }
+        None => None,
+    }
+}
+
+/// The sample variance, divided by `n - 1`. `None` for fewer than two values.
+fn sample_variance(xs: [f64]): Option<f64> {
+    if xs.len() < 2 {
+        return None
+    }
+    match variance(xs) {
+        Some(v) => Some(v * (xs.len() as f64) / ((xs.len() - 1) as f64)),
+        None => None,
+    }
+}
+
+/// The population standard deviation: the square root of `variance`.
+fn std_dev(xs: [f64]): Option<f64> {
+    match variance(xs) {
+        Some(v) => Some(v.sqrt()),
+        None => None,
+    }
+}
+
+/// The sample standard deviation: the square root of `sample_variance`.
+fn sample_std_dev(xs: [f64]): Option<f64> {
+    match sample_variance(xs) {
+        Some(v) => Some(v.sqrt()),
+        None => None,
+    }
+}
+
+/// The least value. NaN values are skipped, so the result is NaN only when every value is NaN.
+fn minimum(xs: [f64]): Option<f64> {
+    if xs.len() == 0 {
+        return None
+    }
+    let mut best = xs[0]
+    for x in xs {
+        best = best.min(x)
+    }
+    Some(best)
+}
+
+/// The greatest value. NaN values are skipped, so the result is NaN only when every value is NaN.
+fn maximum(xs: [f64]): Option<f64> {
+    if xs.len() == 0 {
+        return None
+    }
+    let mut best = xs[0]
+    for x in xs {
+        best = best.max(x)
+    }
+    Some(best)
+}
+
+/// The value at fraction `p` of the sorted values, interpolated linearly between the two nearest ranks (the NumPy
+/// default). A NaN sorts after every number. Panics when `p` is not between 0 and 1.
+fn quantile(xs: [f64], p: f64): Option<f64> {
+    if !(p >= 0.0 && p <= 1.0) {
+        panic("quantile: p must be between 0 and 1")
+    }
+    if xs.len() == 0 {
+        return None
+    }
+    let mut sorted = List<f64>.new()
+    for x in xs {
+        sorted.push(x)
+    }
+    sorted.sort_by(|a: &f64, b: &f64| a.total_cmp(*b))
+    let h = p * ((sorted.len() - 1) as f64)
+    let lo = h.floor()
+    let frac = h - lo
+    let low = sorted[lo as usize]
+    if frac == 0.0 {
+        return Some(low)
+    }
+    let high = sorted[(lo as usize) + 1]
+    Some(low + frac * (high - low))
+}
+
+/// The median: `quantile` at one half.
+fn median(xs: [f64]): Option<f64> {
+    quantile(xs, 0.5)
+}
+
+/// The population covariance of two equal-length slices. Panics when the lengths differ.
+fn covariance(xs: [f64], ys: [f64]): Option<f64> {
+    if xs.len() != ys.len() {
+        panic("covariance: the slices differ in length")
+    }
+    if xs.len() == 0 {
+        return None
+    }
+    let mx = sum(xs) / (xs.len() as f64)
+    let my = sum(ys) / (ys.len() as f64)
+    let mut total = 0.0
+    let mut i: usize = 0
+    while i < xs.len() {
+        total = total + (xs[i] - mx) * (ys[i] - my)
+        i = i + 1
+    }
+    Some(total / (xs.len() as f64))
+}
+
+/// The Pearson correlation coefficient. `None` when either side has zero variance, or when there are no values.
+fn correlation(xs: [f64], ys: [f64]): Option<f64> {
+    if xs.len() != ys.len() {
+        panic("correlation: the slices differ in length")
+    }
+    let cov = covariance(xs, ys)
+    let vx = variance(xs)
+    let vy = variance(ys)
+    match (cov, vx, vy) {
+        (Some(c), Some(a), Some(b)) => {
+            if a == 0.0 || b == 0.0 {
+                None
+            } else {
+                Some(c / (a.sqrt() * b.sqrt()))
+            }
+        }
+        _ => None,
+    }
+}

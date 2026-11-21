@@ -1,0 +1,13 @@
+//@ run-abort
+//> before
+//@ stderr: simpson: needs at least one interval
+
+// Zero intervals are a programming error (spec/math.md, MA4, MA9).
+
+use math.simpson
+
+fn main() {
+    println("before")
+    println("{}", simpson(|x: f64| x, 0.0, 1.0, 0))
+    println("after")
+}

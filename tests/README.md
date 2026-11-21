@@ -53,6 +53,10 @@ tests/
                        it with `http = true`), run against a scripted server in the same program (spec/http-client.md)
   s3_crypto/           stage 3: the `crypto` package end to end (`s3_crypto/usage`, spec/crypto.md); its known-answer
                        vectors are in `tests/crypto/` and run by `tests/check_crypto.py`
+  s3_math/             stage 3: the `math` package (spec/math.md): `s3_math/usage` (an end-to-end program), `surface`
+                       (every other public member), `compile_shape` (E0003 for mismatched matrix shapes), and the
+                       `abort_*` cases (one panic each); its about 2,400 known-answer cases are in `tests/math/` and run
+                       by `tests/check_math.py`
   s3_tls/              stage 3: the `tls` package (spec/tls.md): `s3_tls/link` (the package's manifest links the system
                        OpenSSL 3 and a client runs over memory BIOs) and `s3_tls/conformance` (certificates, keys, and
                        configurations, then clients and servers in one process over 127.0.0.1: verification, versions,
