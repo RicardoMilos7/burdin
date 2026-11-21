@@ -14,7 +14,15 @@ close-out checklist in `AGENTS.md`).
   integer cannot cross the C boundary (E0162), and `burdin bindgen --export` cannot spell one (E0263); `burdin
   bindgen` skips a C `__int128` function with a note. `tests/int128/` (21 programs) and two checks in
   `tests/check_bindgen.py` witness the rules.
-
+- `From` for the scalar pairs `as` converts exactly, and `v.into()`: `T.from(v)` and `as` use the same built-in
+  conversion, and `into` converts to the type the context expects (`spec/stdlib.md`, "Numeric conversions"). `From<S>` is
+  a bound: a generic function with `T: From<S>` can call `T.from(v)` and `v.into()`.
+- `TryFrom` and `try_from` (issue #274; `spec/stdlib.md`, "Conversions"). A `Type: TryFrom<Source>` block gives a
+  type a fallible conversion whose `Result` error type the block chooses, and every integer type has `T.try_from(v)`,
+  which returns `Result<T, TryFromIntError>` and is `Err` when the value is out of range. A type now converts from
+  several source types through `From` as well: a type with two `From` blocks of different sources was rejected with
+  E0007, so an error enum with two `from` variants of different sources did not compile. `tests/m24_stdlib/try_from_*`
+  covers the feature and its diagnostics.
 - Labeled loops (issue #275; `spec/grammar.md`, rule 8.9; `spec/memory-rules.md`, DR6 and CL8). A `while`, `loop`, or
   `for` may carry a label, `'outer: for ...`, and `break 'outer` and `continue 'outer` leave or go on with it from
   inside any loop nested in it; an unlabeled `break` or `continue` still names the innermost loop. A label no enclosing

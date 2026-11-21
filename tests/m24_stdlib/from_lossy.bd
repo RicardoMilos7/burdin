@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// `T.from(v)` needs a built-in pair (spec/stdlib.md, FR2): an i64 does not convert into an i32, a u32 is not always
+// a char, and an integer literal is an i32, which does not convert into a u8.
+
+fn main() {
+    let big: i64 = 5
+    let narrow = i32.from(big) //~ E0003
+    let code: u32 = 65
+    let letter = char.from(code) //~ E0003
+    let literal = u8.from(5) //~ E0003
+    println("{} {} {}", narrow, letter, literal)
+}

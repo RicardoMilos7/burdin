@@ -1150,10 +1150,11 @@ fn main() {}
 **How to fix:** give a `from` variant exactly one tuple field, use only payload field names or positions in the
 message, and write no `from` on a generic error enum. `spec/errors.md` ERR1-ERR3.
 
-## E0211: Duplicate `from` conversion
+## E0211: Duplicate conversion source
 
-One error enum may convert from a given source type only once: the generated `Type: From<Source>` blocks would
-collide, and `?` would not know which variant to build.
+A type may convert from a given source type only once, whether the conversion is a `From` or a `TryFrom` block or a
+`from` variant of an error enum: the blocks would collide, and `?` and `Type.from(v)` would not know which one to
+call.
 
 <!-- error-example: E0211 -->
 ```burdin
@@ -1166,8 +1167,9 @@ fn main() {}
 ```
 <!-- /error-example -->
 
-**How to fix:** keep one `from` variant per source type; convert the other source types with a hand-written
-`Type: From<Source>` block if they must map to a different variant.
+**How to fix:** keep one conversion per source type. Convert the other source types with a `From` or `TryFrom`
+block for a different source, or with a hand-written `Type: From<Source>` block if they must map to a different
+variant.
 
 ## E0212: Missing error conversion
 

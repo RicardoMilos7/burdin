@@ -1,0 +1,96 @@
+//@ run
+//> ok 42
+//> err percent: Negative
+//> err percent: TooLarge
+//> err percent: NotANumber
+//> ok 255
+//> err range: out of range integral type conversion attempted
+//> err number: invalid integer
+//> ok 7
+
+// A user `TryFrom` block (spec/stdlib.md, "Conversions"). A type converts from each source type once, and
+// `Type.try_from(v)` picks the block by the type of `v`. `?` converts each error through the error enum's `From`
+// blocks, so the conversion's error needs no special handling.
+
+struct Percent {
+    value: u8
+}
+
+enum PercentError: Debug {
+    Negative
+    TooLarge
+    NotANumber
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, PercentError> {
+        if v < 0 { return Err(PercentError.Negative) }
+        if v > 100 { return Err(PercentError.TooLarge) }
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+Percent: TryFrom<str> {
+    fn try_from(s: str): Result<Percent, PercentError> {
+        match i32.parse(s) {
+            Ok(n) => Percent.try_from(n),
+            Err(_) => Err(PercentError.NotANumber),
+        }
+    }
+}
+
+error enum AppError {
+    Bad(PercentError) from "percent: {0:?}"
+    Range(TryFromIntError) from "range: {0}"
+    Number(ParseIntError) from "number: {0}"
+}
+
+fn percent_of_text(s: str): Result<Percent, AppError> {
+    let p = Percent.try_from(s)?
+    Ok(p)
+}
+
+fn byte_of(v: i64): Result<u8, AppError> {
+    let b = u8.try_from(v)?
+    Ok(b)
+}
+
+fn parsed(s: str): Result<i32, AppError> {
+    let n = i32.parse(s)?
+    Ok(n)
+}
+
+fn report_percent(s: str) {
+    match percent_of_text(s) {
+        Ok(p) => println("ok {}", p.value),
+        Err(e) => println("err {}", e),
+    }
+}
+
+fn report_byte(v: i64) {
+    match byte_of(v) {
+        Ok(b) => println("ok {}", b),
+        Err(e) => println("err {}", e),
+    }
+}
+
+fn main() {
+    report_percent("42")
+    report_percent("-3")
+    report_percent("150")
+    report_percent("x")
+    report_byte(255)
+    report_byte(300)
+
+    match parsed("zz") {
+        Ok(n) => println("ok {}", n),
+        Err(e) => println("err {}", e),
+    }
+
+    // The same name dispatches to the block for the argument's type, and the literal takes the `i32` block.
+    let direct = Percent.try_from(7)
+    match direct {
+        Ok(p) => println("ok {}", p.value),
+        Err(_) => println("unexpected"),
+    }
+}

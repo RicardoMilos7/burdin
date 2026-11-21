@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// The `try_from` of a `TryFrom` block returns `Result<Type, E>`, so a plain `Percent` is E0003 at the method
+// (spec/stdlib.md, "Conversions").
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Percent { //~ E0003
+        Percent { value: v as u8 }
+    }
+}
+
+fn main() {}

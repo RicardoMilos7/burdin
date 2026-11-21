@@ -324,6 +324,12 @@ impl FnCx<'_> {
         if name.name == "default" && args.is_empty() && self.param_has(ty, Bound::Default) {
             return mk(tir::ExprKind::Call(SYMBOLIC_CALL, Vec::new()), ty.clone(), span);
         }
+        if name.name == "from"
+            && args.len() == 1
+            && let Some(call) = self.param_from_call(ty, args, span)
+        {
+            return call;
+        }
         let found = self.globals.bound_method(ty, &name.name, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| !sig.has_self) else {
             self.diags.error(
@@ -348,6 +354,41 @@ impl FnCx<'_> {
         };
         let Some((checked, ret)) = checked else { return error_expr(span) };
         mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
+    }
+
+    /// `T.from(v)` in a generic body: `T` has a `From<S>` bound and `v` is of type `S` (FR7). The call is a placeholder
+    /// typed `T`, as the bound's other functions are. `None` when `T` has no `From` bound, so the caller reports the
+    /// missing function.
+    fn param_from_call(&mut self, ty: &Ty, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
+        let Ty::Param(param) = ty else { return None };
+        let sources: Vec<Ty> = self
+            .bounds
+            .iter()
+            .filter(|(name, _)| name.as_str() == &**param)
+            .flat_map(|(_, bounds)| bounds.iter())
+            .filter_map(|bound| match bound {
+                Bound::From(source) => Some(source.clone()),
+                _ => None,
+            })
+            .collect();
+        if sources.is_empty() {
+            return None;
+        }
+        let expect = match sources.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        };
+        let value = self.expr(&args[0].expr, expect.as_ref());
+        if value.ty == Ty::Error {
+            return Some(error_expr(span));
+        }
+        if !sources.contains(&value.ty) {
+            let listed: Vec<String> = sources.iter().map(|s| format!("`{s}`")).collect();
+            let message = format!("`{ty}` converts from {}, not from `{}`", listed.join(" or "), value.ty);
+            self.diags.error(Code::TYPE_MISMATCH, value.span, message);
+            return Some(error_expr(span));
+        }
+        Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value]), ty.clone(), span))
     }
 
     /// The instance of generic type `g` once the arguments are known: from `bindings`, and from the expected type

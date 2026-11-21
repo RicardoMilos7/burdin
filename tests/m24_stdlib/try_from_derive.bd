@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `TryFrom` has no default method, so it cannot be listed after a type's name (E0234, as for `From`).
+
+struct Percent: TryFrom { //~ E0234
+    value: u8
+}
+
+fn main() {}

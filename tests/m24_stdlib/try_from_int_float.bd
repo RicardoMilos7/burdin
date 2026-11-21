@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// An integer type converts integers only: a float is E0003 at the argument.
+
+fn main() {
+    let x = i8.try_from(1.5) //~ E0003
+}

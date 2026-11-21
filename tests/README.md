@@ -254,7 +254,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
 | E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
-| E0211 | Two variants of one error enum convert from the same source type |
+| E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
 | E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |

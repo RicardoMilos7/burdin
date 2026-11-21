@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A call checks its bound (spec/stdlib.md, FR7): `String` has no conversion from an `i32`, so `widen<String>` is E0141.
+
+fn widen<T: From<i32>>(v: i32): T {
+    T.from(v)
+}
+
+fn main() {
+    let s = widen<String>(1) //~ E0141
+    println("{}", s)
+}

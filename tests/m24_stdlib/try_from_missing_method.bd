@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A `TryFrom` block without `try_from` is E0140 at the block (spec/errors.md, ERR3 and spec/stdlib.md, "Conversions").
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> { //~ E0140
+    fn check(v: i32): bool {
+        v >= 0
+    }
+}
+
+fn main() {}

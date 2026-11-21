@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A conversion takes exactly one argument, so a `try_from` with two parameters is E0004 at the method.
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32, scale: i32): Result<Percent, i32> { //~ E0004
+        Ok(Percent { value: (v * scale) as u8 })
+    }
+}
+
+fn main() {}

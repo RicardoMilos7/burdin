@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// A type converts from each source type once, so a second `TryFrom<i32>` is E0211 at the block (spec/errors.md, ERR3).
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, i32> {
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+Percent: TryFrom<i32> { //~ E0211
+    fn try_from(v: i32): Result<Percent, i32> {
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+fn main() {}

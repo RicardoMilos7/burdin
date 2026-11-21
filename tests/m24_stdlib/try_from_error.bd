@@ -1,0 +1,27 @@
+//@ run
+//> out of range integral type conversion attempted
+//> true
+//> OutOfRange
+//> false true
+//> 255
+
+// `TryFromIntError` is an ordinary error enum (spec/errors.md, ERR1-ERR2): its message is the one `Display` prints,
+// it is `Eq` and `Debug`, and `Result` helpers see its `Err`. A conversion that fits is `Ok` and carries the value.
+
+fn main() {
+    let big: i32 = 300
+    match u8.try_from(big) {
+        Ok(b) => println("{}", b),
+        Err(e) => {
+            println("{}", e)
+            println("{}", e == TryFromIntError.OutOfRange)
+            println("{:?}", e)
+        }
+    }
+    println("{} {}", u8.try_from(big).is_ok(), u8.try_from(big).is_err())
+    let fits: i32 = 255
+    match u8.try_from(fits) {
+        Ok(b) => println("{}", b),
+        Err(e) => println("{}", e),
+    }
+}

@@ -21,6 +21,26 @@ claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit oper
 `gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
 earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
 
+**`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
+built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
+(the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
+`lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
+(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+Tests: `tests/m24_stdlib/from_*` and `into_*`.
+
+**`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
+Result<Type, E> }` and `T.try_from(v)` for integer types (`spec/stdlib.md`, "Conversions", TF1-TF7). An integer
+`try_from` is lowered by sema (`int_try_from` in `fncx/call.rs`) to an `if` over only the bounds the source type can
+leave, with the `Err` of `std.TryFromIntError.OutOfRange`. The conversion blocks are no longer named members:
+`register_conversion_impl` (`impls.rs`) keeps every `From` and `TryFrom` block in `from_impls` or `try_from_impls`,
+one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the argument's type, and
+`check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
+conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
+blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
+with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
+(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+from `char`, and `try_from` for other primitive types. Tests:
+`tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
 (`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
 quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
@@ -575,6 +595,21 @@ that CI repeats 20 times in both profiles. The Windows reactor uses a completion
 UDP wakeup sent from a second socket (Winsock serializes the socket a thread is polling, so the polled socket cannot
 wake itself); the macOS path uses `kqueue`. Every CI job runs `tests/s2_io` on its own platform, and the Windows
 socket and pool paths were also run locally on Windows x86-64 while fixing that job.
+
+Issue #867 (a write to a closed peer). Fixed on Linux: a write to a peer that had closed killed the process with
+`SIGPIPE` (exit 141), because `send` passed no `MSG_NOSIGNAL`. `send` and `sendto` now pass `MSG_NOSIGNAL` on Linux, and
+a macOS socket sets `SO_NOSIGPIPE` at creation. `tests/s2_io/net_write_peer_closed` covers a peer closed before the
+write, a peer closed during the wait, and a silent peer under a write timeout; it exits 141 on the old runtime and passes
+now (debug and release on Linux). Still open, for Windows: a probe of `WSAPoll` (PowerShell, a half-closed peer with a
+full send buffer) shows the socket reporting `POLLHUP` at once for a `POLLWRNORM`-only request, with no room to write.
+`reactor_iocp.ll` claims any nonzero `revents`, so the writer wakes, its `send` gets `WSAEWOULDBLOCK`, and it waits
+again: a spin rather than a sleep. That does not account for a hang that survives a write timeout, so the reported
+hang needs a Windows run to reproduce. The fix taken is a pause rather than a change to the reactor: `TcpStream.write`
+now sleeps 10 ms (`WRITE_BACKOFF_NANOS`, capped by the deadline) after a wake that made no room, so a half-closed peer
+costs one wake per 10 ms instead of a tight loop. `WSAPoll` still returns at once for such a socket, so the reactor
+itself is not idle while one is parked; a fallback re-poll or `WSAEventSelect` would remove that, and is the next step
+if the pause is not enough. `s2_io/net_write_waits_for_room` covers the wake-up path on every platform. Whether the spin
+is gone is confirmed only by the Windows CI run, not by a measurement.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component

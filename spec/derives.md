@@ -22,7 +22,7 @@ is one of:
   implements it exactly as the empty impl block `Type: Iface {}` would, so the usual impl rules apply (`Send` and
   `Sync` still need an `unsafe` block, E0281). To override a default, write the impl block by hand instead.
 
-An interface with a method that has no default (`Drop`, `From`, `Display`, or a user interface) cannot be listed:
+An interface with a method that has no default (`Drop`, `From`, `TryFrom`, `Display`, or a user interface) cannot be listed:
 that is E0234 at the name, because the method has to be written in an impl block. A name that is none of the three
 is E0002. The names are separated by `,`, with no trailing comma, and `repr(C)` comes after the list. On a generic
 type, each type parameter needs the interface as well (`Pair<T>: Describe` holds for `Pair<A>` when `A: Describe`),

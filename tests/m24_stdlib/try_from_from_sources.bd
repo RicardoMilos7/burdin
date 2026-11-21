@@ -1,0 +1,55 @@
+//@ run
+//> 3 20
+//> 1007
+//> 5
+//> OutOfRange
+
+// A type converts from each source type once (spec/errors.md, ERR3; spec/stdlib.md, "Conversions"). `From` and
+// `TryFrom` are separate blocks, so one type can have both for one source, and `Type.from(v)` and `Type.try_from(v)`
+// each pick the block of that method for the argument's type.
+
+struct Small {
+    v: i32
+}
+
+struct Wide {
+    v: i64
+}
+
+struct Total {
+    v: i64
+}
+
+Total: From<Small> {
+    fn from(s: Small): Total { Total { v: s.v as i64 } }
+}
+
+Total: From<Wide> {
+    fn from(w: Wide): Total { Total { v: w.v * 2 } }
+}
+
+Total: From<i32> {
+    fn from(n: i32): Total { Total { v: n as i64 + 1000 } }
+}
+
+Total: TryFrom<i32> {
+    fn try_from(n: i32): Result<Total, TryFromIntError> {
+        let small = u8.try_from(n)?
+        Ok(Total { v: small as i64 })
+    }
+}
+
+fn main() {
+    let a = Total.from(Small { v: 3 })
+    let b = Total.from(Wide { v: 10 })
+    println("{} {}", a.v, b.v)
+    println("{}", Total.from(7).v)
+    match Total.try_from(5) {
+        Ok(t) => println("{}", t.v),
+        Err(e) => println("{:?}", e),
+    }
+    match Total.try_from(9000) {
+        Ok(t) => println("{}", t.v),
+        Err(e) => println("{:?}", e),
+    }
+}
