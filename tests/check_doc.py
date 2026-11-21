@@ -105,8 +105,12 @@ def page(site: Path, relative: str) -> str:
 
 GEOMETRY = DOC / "geometry"
 
+# Without a target the working directory is the target, so outside a package there is nothing to document.
+with harness.temporary_dir("burdin-doc-empty-") as empty:
+    out, err, status = doc([], cwd=empty)
+    check(status == 1 and "burdin.toml" in err, f"cli: no target outside a package: exit {status}: {err.strip()[:300]}")
+
 for label, args in [
-    ("no target", []),
     ("an unknown option", [str(GEOMETRY), "--frobnicate"]),
     ("a second target", [str(GEOMETRY), str(GEOMETRY)]),
     ("an unknown format", [str(GEOMETRY), "--output-format", "pdf"]),
