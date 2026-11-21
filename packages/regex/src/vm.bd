@@ -1,0 +1,337 @@
+// The Pike VM (spec/regex.md, RX1, RX4, RX8, RX14): a Thompson NFA run over the text with one thread per live
+// instruction. The threads step together one character at a time, so the time is the program size times the text
+// length, and nothing backtracks. A thread carries its capture slots, and the threads are kept in priority order, so
+// the first match to reach `Match` is the leftmost-first match.
+
+use classes.is_word_char
+use compile.{Inst, Program}
+use parse.Assertion
+
+/// The threads of one step: their program counters in priority order, their capture slots (`slots` per thread, in a
+/// flat list), and the program counters already visited this step. `seen[pc] == gen` means visited.
+struct Threads {
+    pcs: List<usize>,
+    slots: List<Option<usize>>,
+    seen: List<usize>,
+    gen: usize,
+}
+
+Threads {
+    fn new(size: usize): Threads {
+        let mut seen = List<usize>.new()
+        let mut i: usize = 0
+        while i < size {
+            seen.push(0)
+            i = i + 1
+        }
+        Threads { pcs: List<usize>.new(), slots: List<Option<usize>>.new(), seen: seen, gen: 1 }
+    }
+
+    fn clear(mut self) {
+        self.pcs.clear()
+        self.slots.clear()
+        self.gen = self.gen + 1
+    }
+
+    fn contains(self, pc: usize): bool {
+        self.seen[pc] == self.gen
+    }
+
+    fn mark(mut self, pc: usize) {
+        self.seen[pc] = self.gen
+    }
+}
+
+/// A step of the empty-transition walk: follow an instruction, or restore a capture slot when the walk returns from
+/// the branch that set it.
+enum Work: Copy, Clone, Eq, Debug {
+    Visit(usize)
+    Restore(usize, Option<usize>)
+}
+
+/// The scratch state of one search: two thread lists (the current one and the next one, chosen by index), the
+/// capture slots of the walk, and its stack.
+struct Pike {
+    lists: List<Threads>,
+    caps: List<Option<usize>>,
+    stack: List<Work>,
+    slots: usize,
+}
+
+Pike {
+    fn new(size: usize, slots: usize): Pike {
+        let mut lists = List<Threads>.new()
+        lists.push(Threads.new(size))
+        lists.push(Threads.new(size))
+        let mut caps = List<Option<usize>>.new()
+        let mut k: usize = 0
+        while k < slots {
+            caps.push(None)
+            k = k + 1
+        }
+        Pike { lists: lists, caps: caps, stack: List<Work>.new(), slots: slots }
+    }
+
+    fn reset_caps(mut self) {
+        let mut k: usize = 0
+        while k < self.slots {
+            self.caps[k] = None
+            k = k + 1
+        }
+    }
+
+    /// Loads the capture slots of thread `index` of list `which` into the walk's slots.
+    fn load(mut self, which: usize, index: usize) {
+        let base = index * self.slots
+        let mut k: usize = 0
+        while k < self.slots {
+            self.caps[k] = self.lists[which].slots[base + k]
+            k = k + 1
+        }
+    }
+
+    /// The capture slots of thread `index` of list `which`, as a copy.
+    fn thread_slots(self, which: usize, index: usize): List<Option<usize>> {
+        let mut out = List<Option<usize>>.new()
+        let base = index * self.slots
+        let mut k: usize = 0
+        while k < self.slots {
+            out.push(self.lists[which].slots[base + k])
+            k = k + 1
+        }
+        out
+    }
+
+    /// Adds a thread for `pc` and for every instruction it reaches without consuming a character, in priority order.
+    /// `prev` and `next` are the characters on either side of `pos`, for the assertions.
+    fn add(mut self, prog: &Program, which: usize, start_pc: usize, pos: usize, prev: Option<char>, next: Option<char>) {
+        self.stack.push(Work.Visit(start_pc))
+        loop {
+            match self.stack.pop() {
+                None => break,
+                Some(Work.Restore(slot, old)) => {
+                    self.caps[slot] = old
+                }
+                Some(Work.Visit(pc)) => {
+                    if self.lists[which].contains(pc) {
+                        continue
+                    }
+                    self.lists[which].mark(pc)
+                    match prog.code[pc] {
+                        Inst.Jmp(target) => self.stack.push(Work.Visit(target)),
+                        Inst.Split(first, second) => {
+                            self.stack.push(Work.Visit(second))
+                            self.stack.push(Work.Visit(first))
+                        }
+                        Inst.Save(slot) => {
+                            let old = self.caps[slot]
+                            self.stack.push(Work.Restore(slot, old))
+                            self.caps[slot] = Some(pos)
+                            self.stack.push(Work.Visit(pc + 1))
+                        }
+                        Inst.Assert(kind) => {
+                            if assertion_holds(kind, prev, next, pos) {
+                                self.stack.push(Work.Visit(pc + 1))
+                            }
+                        }
+                        _ => self.push_thread(which, pc),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Appends a consuming (or `Match`) thread with the walk's current slots.
+    fn push_thread(mut self, which: usize, pc: usize) {
+        self.lists[which].pcs.push(pc)
+        let mut k: usize = 0
+        while k < self.slots {
+            let value = self.caps[k]
+            self.lists[which].slots.push(value)
+            k = k + 1
+        }
+    }
+}
+
+/// Whether a zero-width test holds at `pos`, given the characters before and after it (RX5, RX6, RX14).
+fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>, pos: usize): bool {
+    match kind {
+        Assertion.TextStart => pos == 0,
+        Assertion.TextEnd => next.is_none(),
+        Assertion.LineStart => match prev {
+            None => true,
+            Some(c) => c == '\n',
+        },
+        Assertion.LineEnd => match next {
+            None => true,
+            Some(c) => c == '\n',
+        },
+        Assertion.WordBoundary => word_at(prev) != word_at(next),
+        Assertion.NotWordBoundary => word_at(prev) == word_at(next),
+    }
+}
+
+fn word_at(c: Option<char>): bool {
+    match c {
+        None => false,
+        Some(x) => is_word_char(x),
+    }
+}
+
+/// Whether the instruction's character test holds for `c` (a `Char` with a folded flag compares lower case).
+fn char_matches(c: char, want: char, fold: bool): bool {
+    if fold {
+        c.to_lowercase() == want
+    } else {
+        c == want
+    }
+}
+
+/// The character that starts at byte `pos` and its width in bytes, or None at the end of the text. The text is valid
+/// UTF-8 (RX14), so the lead byte says how many bytes follow.
+fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
+    if pos >= bytes.len() {
+        return None
+    }
+    let lead = bytes[pos] as u32
+    if lead < 128 {
+        return match lead.to_char() {
+            Some(c) => Some((c, 1)),
+            None => None,
+        }
+    }
+    let mut width: usize = 2
+    let mut code = lead & 31
+    if lead >= 240 {
+        width = 4
+        code = lead & 7
+    } else if lead >= 224 {
+        width = 3
+        code = lead & 15
+    }
+    let mut k: usize = 1
+    while k < width {
+        if pos + k >= bytes.len() {
+            return None
+        }
+        code = (code << 6) | ((bytes[pos + k] as u32) & 63)
+        k = k + 1
+    }
+    match code.to_char() {
+        Some(c) => Some((c, width)),
+        None => None,
+    }
+}
+
+/// The character that ends at byte `pos`, or None at the start of the text.
+fn char_before(bytes: [u8], pos: usize): Option<char> {
+    if pos == 0 || pos > bytes.len() {
+        return None
+    }
+    let mut start = pos - 1
+    while start > 0 && ((bytes[start] as u32) & 192) == 128 {
+        start = start - 1
+    }
+    match decode_at(bytes, start) {
+        Some((c, _)) => Some(c),
+        None => None,
+    }
+}
+
+/// The leftmost-first match of `prog` in `bytes` that starts at or after `start` (RX4). The result holds the capture
+/// slots of the match (`2 * (groups + 1)` of them, `None` for a slot that did not take part), or None when nothing
+/// matches. With `forbid_empty`, an empty match at `start` does not count (RX10): the search goes on to the next
+/// match in priority order, which may be a non-empty one at the same position.
+fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Option<List<Option<usize>>> {
+    let size = prog.code.len()
+    let mut vm = Pike.new(size, prog.slots)
+    let mut cur: usize = 0
+    let mut matched: Option<List<Option<usize>>> = None
+    let mut pos = start
+    let mut prev = char_before(bytes, start)
+    loop {
+        let here = decode_at(bytes, pos)
+        let here_char: Option<char> = match here {
+            Some((c, _)) => Some(c),
+            None => None,
+        }
+        // A new thread starts at every position until one has matched, at the lowest priority.
+        if matched.is_none() {
+            vm.reset_caps()
+            vm.add(prog, cur, 0, pos, prev, here_char)
+        }
+        if vm.lists[cur].pcs.is_empty() {
+            if matched.is_some() {
+                break
+            }
+            // Nothing is live at this position: move on, and forget the visits made for the old one.
+            vm.lists[cur].clear()
+            match here {
+                None => break,
+                Some((_, width)) => {
+                    prev = here_char
+                    pos = pos + width
+                    continue
+                }
+            }
+        }
+        let next_pos = match here {
+            Some((_, width)) => pos + width,
+            None => pos,
+        }
+        let after = match decode_at(bytes, next_pos) {
+            Some((c, _)) => Some(c),
+            None => None,
+        }
+        let nxt = 1 - cur
+        vm.lists[nxt].clear()
+        let count = vm.lists[cur].pcs.len()
+        let mut i: usize = 0
+        while i < count {
+            let pc = vm.lists[cur].pcs[i]
+            match prog.code[pc] {
+                Inst.Match => {
+                    if !(forbid_empty && pos == start) {
+                        matched = Some(vm.thread_slots(cur, i))
+                        break
+                    }
+                }
+                Inst.Char(want, fold) => {
+                    if let Some(c) = here_char {
+                        if char_matches(c, want, fold) {
+                            vm.load(cur, i)
+                            vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
+                        }
+                    }
+                }
+                Inst.Any(dotall) => {
+                    if let Some(c) = here_char {
+                        if dotall || c != '\n' {
+                            vm.load(cur, i)
+                            vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
+                        }
+                    }
+                }
+                Inst.Class(k) => {
+                    if let Some(c) = here_char {
+                        if prog.classes[k].matches(c) {
+                            vm.load(cur, i)
+                            vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i = i + 1
+        }
+        cur = nxt
+        match here {
+            None => break,
+            Some((_, width)) => {
+                prev = here_char
+                pos = pos + width
+            }
+        }
+    }
+    matched
+}

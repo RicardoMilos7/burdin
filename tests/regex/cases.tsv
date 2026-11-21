@@ -1,0 +1,224 @@
+# tests/regex/cases.tsv: the golden rows of the regex package (spec/regex.md). One row per case:
+# op, pattern, text, arg, expected. Every field is percent-encoded (%25 %, %09 tab, %0A line feed, %0D carriage
+# return). `expected` is the runner's output line, encoded the same way. A `#` line names the section of the rows
+# after it. tests/check_regex.py checks every row, and a differential run against Python's re covers the rest.
+# RX3 errors: one row per message, plus offsets
+match	(abc	x		error: invalid regex at byte 0: unclosed group
+match	abc)	x		error: invalid regex at byte 3: unopened group
+match	[abc	x		error: invalid regex at byte 0: unclosed character class
+match	[z-a]	x		error: invalid regex at byte 1: invalid class range
+match	[\d-z]	x		false
+match	*a	x		error: invalid regex at byte 0: nothing to repeat
+match	a**	x		error: invalid regex at byte 2: nothing to repeat
+match	^*	x		error: invalid regex at byte 1: nothing to repeat
+match	a{3,2}	x		error: invalid regex at byte 1: invalid repetition count
+match	a{x}	x		error: invalid regex at byte 1: invalid repetition count
+match	a{1001}	x		error: invalid regex at byte 1: repetition count above 1000
+match	a{,3}	x		error: invalid regex at byte 1: invalid repetition count
+match	a\	x		error: invalid regex at byte 1: trailing backslash
+match	\q	x		error: invalid regex at byte 0: unknown escape sequence
+match	\xZZ	x		error: invalid regex at byte 0: invalid hex escape
+match	\x{110000}	x		error: invalid regex at byte 0: invalid hex escape
+match	\p{Foo}	x		error: invalid regex at byte 0: unknown Unicode property
+match	[[:foo:]]	x		error: invalid regex at byte 1: unknown POSIX class
+match	(?z)a	x		error: invalid regex at byte 2: unknown group flag
+match	(?P<1a>x)	x		error: invalid regex at byte 0: invalid group name
+match	(?<a>x)(?<a>y)	x		error: invalid regex at byte 7: duplicate group name
+match	\1	x		error: invalid regex at byte 0: backreferences are not supported
+match	\k<a>	x		error: invalid regex at byte 0: backreferences are not supported
+match	(?=a)	x		error: invalid regex at byte 0: lookaround is not supported
+match	(?<=a)b	x		error: invalid regex at byte 0: lookaround is not supported
+match	(?>a)	x		error: invalid regex at byte 0: atomic groups are not supported
+match	a*+	x		error: invalid regex at byte 2: possessive quantifiers are not supported
+match	é(	x		error: invalid regex at byte 2: unclosed group
+match	(?P<>x)	x		error: invalid regex at byte 0: invalid group name
+match	(a){1000}{2}	x		error: invalid regex at byte 9: nothing to repeat
+match	((a{1000}){1000}){1000}	x		error: invalid regex at byte 23: the compiled regex is too large
+match	(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))	a		error: invalid regex at byte 100: nesting is too deep
+match	((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))	a		true
+# RX2 syntax: literals, escapes, groups, alternation, repetition
+as_str	a.b\.c			a.b\.c
+match	a}b	a}b		true
+match	x{2}	xx		true
+match	x{2,}	xxxxx		true
+find	x{2,3}	xxxxx		0:3:xxx
+find	x{2,3}?	xxxxx		0:2:xx
+find	a+?b	aaab		0:4:aaab
+find	a*?	aaa		0:0:<>
+find	a??b	ab		0:2:ab
+find	(a|b|)c	xbc		1:3:bc
+find	a|b|			0:0:<>
+find	a|	ba		0:0:<>
+find	\x41\x{42}\t	AB%09C		0:3:AB%2509
+find	\n\r	x%0A%0Dy		1:3:%250A%250D
+find	(?:ab)+	ababx		0:4:abab
+groups	(a)(?:b)(?P<n>c)(?<m>d)			3
+index	(a)(?:b)(?P<n>c)(?<m>d)		m	3
+index	(a)(?P<n>c)		zz	none
+captures	(a)(?:b)(?P<n>c)(?<m>d)	xabcd		[1:5:abcd 1:2:a 3:4:c 4:5:d]
+find	^	abc		0:0:<>
+find	$	abc		3:3:<>
+find	\A	abc		0:0:<>
+find	\z	abc		3:3:<>
+find	\b	ab cd		0:0:<>
+find	\B	ab cd		1:1:<>
+find_all	\b	ab cd		[0:0:<> 2:2:<> 3:3:<> 5:5:<>]
+# RX5 classes
+find_all	\d+	a1b22c333		[1:2:1 3:5:22 6:9:333]
+find_all	\D+	a1b22c333		[0:1:a 2:3:b 5:6:c]
+find_all	\w+	ab_1 -c		[0:4:ab_1 6:7:c]
+find_all	\W	a b-c		[1:2:%2520 3:4:-]
+find_all	\s+	a %09%0Ab		[1:4:%2520%2509%250A]
+find_all	\S+	a %09%0Ab		[0:1:a 4:5:b]
+find_all	[a-c]+	xabcdcba		[1:4:abc 5:8:cba]
+find_all	[^a-c]+	abxyzc		[2:5:xyz]
+find_all	[]a]+	]a]x		[0:3:]a]]
+find_all	[a\-z]+	a-zb		[0:3:a-z]
+find_all	[\d\s]+	1 2x3		[0:3:1%25202 4:5:3]
+find_all	[[:alpha:]_]+	ab_1c		[0:3:ab_ 4:5:c]
+find_all	[[:^digit:]]+	ab1c		[0:2:ab 3:4:c]
+find_all	[[:punct:]]+	a!?b		[1:3:!?]
+find_all	[[:xdigit:]]+	0fzg		[0:2:0f]
+find_all	\p{L}+	ab1é2		[0:2:ab 3:5:é]
+find_all	\p{Lu}+	abCDe		[2:4:CD]
+find_all	\p{Ll}+	ABcd		[2:4:cd]
+find_all	\p{N}+	a12b		[1:3:12]
+find_all	\PN+	12ab		[2:4:ab]
+find_all	\pL	1a		[1:2:a]
+find_all	\p{White_Space}+	a b		[1:2:%2520]
+find_all	[\p{L}]+	é1		[0:2:é]
+find_all	[b-]	a-b		[1:2:- 2:3:b]
+find	[ab	x		error: invalid regex at byte 0: unclosed character class
+match	[\b]	b		error: invalid regex at byte 1: unknown escape sequence
+match	[a-\d]	a		error: invalid regex at byte 2: invalid class range
+find_all	[-a]+	b-a		[1:3:-a]
+match	[]	]		error: invalid regex at byte 0: unclosed character class
+# RX6 flags
+find_all	(?i)abc	ABC aBc		[0:3:ABC 4:7:aBc]
+find	(?i:a)b	Ab AB		0:2:Ab
+find_all	(?i)a(?-i)b	aB AB ab		[6:8:ab]
+find	(?m)^b$	a%0Ab%0Ac		2:3:b
+find	^b$	a%0Ab%0Ac		none
+find	(?s).+	a%0Ab		0:3:a%250Ab
+find	.+	a%0Ab		0:1:a
+find	(?x) a b # comment%0A c	abc		0:3:abc
+find	(?x)a [ ]b	a bab		0:3:a%2520b
+find	(?x)a\ b	a b		0:3:a%2520b
+find	(?i)ß	ß		0:2:ß
+# RX4 leftmost-first
+find	a|ab	abc		0:1:a
+find	ab|a	abc		0:2:ab
+find	a*	aaa		0:3:aaa
+find	a*?	aaa		0:0:<>
+find	(a|ab)(c|bcd)(d*)	abcd		0:4:abcd
+find	x*y?	zz		0:0:<>
+captures	(a+)(b*)	xaab		[1:4:aab 1:3:aa 3:4:b]
+captures	(a)|(b)	b		[0:1:b - 0:1:b]
+# RX7 limits (accepted)
+match	a{1000}	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa		true
+match	((((((((((((((((((((a))))))))))))))))))))	a		true
+# RX1 linear time
+match	(a+)+$	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!		false
+find	(x+x+)+y	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx		none
+find_all	(a|aa)*c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa		[]
+# RX8 captures
+captures	(a)(b)?	a		[0:1:a 0:1:a -]
+captures	(a)(b)?	ab		[0:2:ab 0:1:a 1:2:b]
+captures	(a)|(b)	a		[0:1:a 0:1:a -]
+captures	(\d)+	x1 23		[1:2:1 1:2:1]
+captures	(?P<y>\d{4})-(?P<m>\d{2})	on 2024-05 ok		[3:10:2024-05 3:7:2024 8:10:05]
+captures	x(y)?z	xz		[0:2:xz -]
+captures_all	(a)(b)?	ab a		[[0:2:ab 0:1:a 1:2:b] [3:4:a 3:4:a -]]
+captures_all	(\w)(\d)?	a1b		[[0:2:a1 0:1:a 1:2:1] [2:3:b 2:3:b -]]
+name	(?P<y>\d{4})-(?P<m>\d{2})	2024-05	m	5:7:05
+name	(?P<y>\d{4})-(?P<m>\d{2})	2024-05	y	0:4:2024
+name	(?P<y>\d{4})-(?P<m>\d{2})	2024-05	nope	none
+name	(?P<y>\d{4})(-(?<m>\d{2}))?	2024	m	none
+name	(?<first>\w+) (?<last>\w+)	jane doe	last	5:8:doe
+name	(?<first>\w+) (?<last>\w+)	jane doe	first	0:4:jane
+name	(a)	a		none
+name	(a)	b	a	none
+# RX11 expand and replacement templates
+expand	(?P<y>\d{4})-(?P<m>\d{2})	2024-05	$m/$y	05/2024
+expand	(a)(b)?	a	[$1|$2|$0]	[a||a]
+expand	(a)	a	$$1 $$	$1%2520$
+expand	(a)	a	$1x	ax
+expand	(a)	a	${1}x	ax
+expand	(?P<w>a)	a	${w}_$w	a_a
+expand	(?P<w>a)	a	$nope|${9}|$	||$
+expand	(a)(b)?	a	$2-$1	-a
+expand	(a)	a	cost $5	cost%2520
+expand	(é)	é	[$1]	[é]
+replace	a	banana	o	bonana
+replace	(a)	banana	[$1]	b[a]nana
+replace_all	a	banana	o	bonono
+replace_all	(?P<w>an)	banana	<$w>	b%253Can>%253Can>a
+replace_all	a	banana		bnn
+replace_all	x*	abxd	-	-a-b--d-
+replacen	a	banana	2;o	bonona
+replacen	a	banana	0;o	banana
+replacen	a	banana	9;o	bonono
+replace_all	a	banana	$$	b$n$n$
+replace_all	(a)	ba	$0$0	baa
+replace	x	abc	y	abc
+replace_all	(\d+)	a1b22	#$1#	a#1#b#22#
+replace_all	(?P<x>\d)	a1	${x}0	a10
+replace_all	a	héllo		héllo
+# RX10 iteration (empty matches and the Python rule)
+find_all	x*	abxd		[0:0:<> 1:1:<> 2:3:x 3:3:<> 4:4:<>]
+find_all		abc		[0:0:<> 1:1:<> 2:2:<> 3:3:<>]
+find_all	a	banana		[1:2:a 3:4:a 5:6:a]
+find_all	a			[]
+find_all	\b			[]
+find_all	x*			[0:0:<>]
+find_all	a|x*	bxa		[0:0:<> 1:2:x 2:3:a 3:3:<>]
+find_all	\d*	1a22		[0:1:1 1:1:<> 2:4:22 4:4:<>]
+captures_all	(x)?	xx		[[0:1:x 0:1:x] [1:2:x 1:2:x] [2:2:<> -]]
+replace_all		ab	-	-a-b-
+replace_all	(?:)		-	-
+replace_all	b*	abc	-	-a--c-
+replace_all	b|	ab	-	-a--
+# RX12 splitting
+split	,	a,b,,c		[a b <> c]
+split	,			[<>]
+split	,	,		[<> <>]
+split	x*	abxd		[<> a b <> d <>]
+split		abc		[<> a b c <>]
+split	\s+	 a  b 		[<> a b <>]
+split	(,)	a,b		[a b]
+splitn	,	a,b,c,d	2	[a b,c,d]
+splitn	,	a,b,c,d	0	[]
+splitn	,	a,b,c,d	1	[a,b,c,d]
+splitn	,	a,b,c,d	9	[a b c d]
+splitn	x*	abxd	3	[<> a bxd]
+splitn	,		2	[<>]
+# RX13 escaping
+escape		a.b*c{d}[e]|f^g$h\i#j&k-l~m?n(o)p+q		a\.b\*c\{d\}\[e\]\|f\^g\$h\\i\#j\&k\-l\~m\?n\(o\)p\+q
+escape		plain		plain
+escape		é tab%09here		é%2520tab%2509here
+escape		<%25>		%253C%2525>
+# RX14 text and characters
+find	é+	caféé!		3:7:éé
+find_all	.	日本		[0:3:日 3:6:本]
+find	日	x日本		1:4:日
+find	\w+	naïve x		0:6:naïve
+find_all	[^a]	aé		[1:3:é]
+find	\bb	ébb		none
+find	^a	éa		none
+find	a	é a		3:4:a
+index	(?P<ü>x)		ü	error: invalid regex at byte 4: invalid group name
+name	(?P<ü>x)	x	ü	error: invalid regex at byte 4: invalid group name
+find	\A(b)	ab		none
+# Ordinary use
+match	^\d{3}-\d{4}$	555-1234		true
+match	^\d{3}-\d{4}$	555-12345		false
+match	colou?r	The color		true
+find	[A-Za-z]+@[A-Za-z]+\.com	mail bob@example.com now		5:20:bob@example.com
+find	https?://[^ ]+	see http://x.org/a now		4:18:http://x.org/a
+captures	(\d+)\.(\d+)	v 3.14!		[2:6:3.14 2:3:3 4:6:14]
+replace_all	\s+	a  b%09 c	 	a%2520b%2520c
+as_str	(?i)^x\d+$			(?i)^x\d+$
+groups	(a)(?:b)(c)			2
+groups				0
+as_str				<>
+find	a	xxx		none
