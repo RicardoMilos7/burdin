@@ -17,7 +17,7 @@
 > http://h/a/b/c?x=1 | https://s/x
   https://s/x
 > http://h/a/b/c?x=1 | ftp://s/x
-  error: unsupported URL scheme 'ftp': only http is supported
+  error: unsupported URL scheme 'ftp': only http and https are supported
 > http://h/a/b/c?x=1 | sub/../x
   http://h/a/b/x
 > http://h/a/b/c?x=1 | #frag

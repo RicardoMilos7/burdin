@@ -2,8 +2,9 @@
 
 The `http` package (stage 3, issue #260, with #328 requests, responses, headers, and the body stream; #329 redirects,
 timeouts, and retries; #330 connection reuse and body framing; `packages/http`). The package is an ordinary official
-package (`spec/packages.md`, PKG15-PKG18) written in Burdin over `std`'s `TcpStream` (`spec/io.md`). This page says what
-it sends, what it accepts, and which tests witness each rule. The rule IDs are HC1-HC16. The package documentation,
+package (`spec/packages.md`, PKG15-PKG18) written in Burdin over `std`'s `TcpStream` (`spec/io.md`) and, for `https`,
+over the official `tls` package (`spec/tls.md`), which it declares as a dependency (`tls = true`). This page says what
+it sends, what it accepts, and which tests witness each rule. The rule IDs are HC1-HC17. The package documentation,
 `packages/http/README.md`, repeats the decisions for users.
 
 A failure is an `HttpError` returned from a `Result`, never a panic and never a compiler diagnostic, so the rules are
@@ -11,28 +12,32 @@ pinned by golden fixtures and a conformance program rather than by registry code
 and body decoders) are pinned by the fixtures under `tests/http/`, one folder per mode, each fixture a text file of
 one-line cases with an `.expected` golden. The behavior that needs a connection is pinned by the conformance package
 `tests/s3_http/client`, which starts a scripted server in the same process (a `TcpListener` on `127.0.0.1:0`, one task per
-connection) and so touches no network outside the machine. `tests/check_http.py` runs both.
+connection) and so touches no network outside the machine. The `https` behavior (HC17) is pinned by
+`tests/s3_http/tls`, whose scripted server also speaks TLS (`tls.TlsStream.accept` with the test certificates). No test
+reaches a real server on the Internet. `tests/check_http.py` runs all three.
 
 ## What is not here
 
-- **No TLS.** The standard library has no TLS, so `https` is not supported (HC1). An `https` URL parses, and every
-  attempt to send to one, including a redirect to one, fails with `HttpError.TlsUnsupported` before a socket is opened.
-  The client never falls back to plain text.
-- No proxies, no cookies, no authentication schemes, no `Expect: 100-continue`, no compression (`gzip` or `deflate`
+- **No TLS settings beyond trust.** `https` is supported (HC17) through the `tls` package, which links OpenSSL 3
+  (`spec/tls.md`, TLS7). The client verifies the server by default; it offers no client-certificate shortcut, no session
+  resumption, no pinning, and no HTTP/2 (it offers the ALPN protocol `http/1.1` only). It never falls back to plain
+  text.
+- No proxies (so no `CONNECT` tunnels), no cookies, no authentication schemes, no `Expect: 100-continue`, no compression (`gzip` or `deflate`
   content or transfer codings), no HTTP/2, no upgrade (a `101` response is an error), no IPv6 literal hosts, and no
   streaming request bodies: a request body is bytes held in memory.
 
 ## HC1. URLs
 
 `Url.parse(text)` reads `scheme://host[:port][/path][?query]`. The scheme and the host are lower-cased. The scheme must be
-`http` or `https`, which have default ports 80 and 443; any other scheme is `UnsupportedScheme`, and a text without
+`http` or `https`, which have default ports 80 and 443; any other scheme is `UnsupportedScheme` ("only http and https are supported"), and a text without
 `://` is `InvalidUrl` ("the scheme is missing"). The port is 1 to 65535. A fragment (`#...`) is dropped. An empty path is
 `/`. A user name or password (`user:pw@`), an IPv6 literal (`[::1]`), an empty host, and a space or control character
 (which must be percent-encoded) are `InvalidUrl`; escapes are neither decoded nor re-encoded. `to_text` writes the
 default port as nothing, `authority` is `host` or `host:port`, `target` is the path and query sent on the request line,
 and `origin` is the scheme, host, and port that decide whether two URLs are the same origin (HC12).
 
-Tests: `tests/http/url/basic.txt`; `https`, `ftp`, and userinfo in `tests/s3_http/client/src/basics.bd`.
+Tests: `tests/http/url/basic.txt`; `ftp` and userinfo in `tests/s3_http/client/src/basics.bd`; what an `https` URL does
+when it is sent is HC17.
 
 ## HC2. Reference resolution
 
@@ -142,19 +147,23 @@ sends the request again to the resolved URL (HC2). A redirect without a `Locatio
 is returned as the response. The method and body change as follows: `POST` becomes `GET` for `301`, `302`, and `303`;
 `PUT`, `DELETE`, and the other methods become `GET` only for `303`; `HEAD` stays `HEAD`; `307` and `308` keep the
 method and the body. When the method becomes `GET` the body and `Content-Type`, `Content-Encoding`, and
-`Content-Language` are dropped. When the new URL is on another origin (scheme, host, or port differ), `Authorization`,
-`Cookie`, `Proxy-Authorization`, and `Host` are dropped; all other fields are kept. The body of a redirect response is
+`Content-Language` are dropped. When the new URL is on another origin (scheme, host, or port differ, so a redirect from
+`https` to `http` or the reverse always is), `Authorization`, `Cookie`, `Proxy-Authorization`, and `Host` are dropped; all
+other fields are kept. The body of a redirect response is
 read away (up to 64 KiB) so its connection is reused. `response.url` is the last URL and `response.redirects` the
 count.
 
 More redirects than `max_redirects` is `TooManyRedirects { limit }` (the redirect that would exceed the limit is not
 followed); a redirect to a URL already visited in this call, the starting URL included, is `RedirectLoop`, reported at
-once; a `Location` that does not resolve is `BadRedirect`; one to another scheme is `UnsupportedScheme`, and one to
-`https` is `TlsUnsupported` (HC1).
+once; a `Location` that does not resolve is `BadRedirect`; one to a scheme other than `http` and `https` is `UnsupportedScheme`. A redirect to `https` is followed like any
+other (HC17); a redirect from `https` to `http` is followed too (the rules above do not forbid it) and carries none of
+the credentials, but a program that wants to refuse a downgrade sets `follow_redirects` to `false` and checks the
+`Location` itself.
 
 Tests: `redirects.bd`: `statuses_for_get` (each status), `method_matrix` (every method and status above, with the body
-and header checks), `locations`, `limit`, `loops`, `cross_origin` (two servers), `not_followed`, `bad_locations`, and
-`redirect_with_body`.
+and header checks), `locations`, `limit`, `loops`, `cross_origin` (two servers), `not_followed`, `bad_locations`
+(which follows a redirect to an `https` URL and gets the connection refusal), and `redirect_with_body`; the `https`
+redirects are in `tests/s3_http/tls` (HC17).
 
 ## HC13. Timeouts
 
@@ -164,6 +173,10 @@ every read of the body, so a server that sends a byte at a time keeps the reques
 `send`, redirects, retries, backoff sleeps, and the body included, and every wait is cut to what is left of it. Expiry
 is `HttpError.Timeout { phase }`, which is both `is_timeout` and `is_connection_failure`; a limit of zero is never read
 as "no limit". A timeout while reading the body is reported by the body read, after the status was already returned.
+
+For an `https` URL the TLS handshake is part of opening the connection: each wait of the handshake is bounded by
+`connect_timeout` (and cut to what is left of `total_timeout`), and the expiry is `Timeout` with the phase
+`TLS handshake with host:port` (HC17).
 
 The expiry of `connect_timeout` is not tested with a real stalled connection: a loopback connect never stalls, so
 nothing deterministic can make one. Its plumbing is covered by `tests/s2_io/net_tcp_connect_timeout.bd` (a connection
@@ -188,10 +201,12 @@ asked for, a `POST`, exhausted), `timeout_retried`, and `partial_head_not_retrie
 ## HC15. Connection reuse
 
 After a response whose body was read to its end and whose connection may be kept (HC16), the connection goes into the
-client's pool, keyed by host and port, and the next request to the same host and port takes it. The pool keeps at most
+client's pool, keyed by scheme, host, and port (the `origin`), and the next request to the same origin takes it, so an
+`http` and an `https` connection to the same host and port are never exchanged (HC17). The pool keeps at most
 `max_idle_per_host` idle connections per key (a connection past the limit is closed) and drops one idle for more than
-`idle_timeout`. Before a pooled connection is used, a non-blocking probe checks that the server has not closed it, and
-a closed one is discarded. A pooled connection can still be closed between the probe and the write; when a reused
+`idle_timeout`. Before a pooled connection is used, a non-blocking probe checks that the server has not closed it (over TLS the
+probe reads through the TLS layer, so a `close_notify` or a cut connection discards it too), and a closed one is
+discarded. A pooled connection can still be closed between the probe and the write; when a reused
 connection fails before any response byte, an idempotent request is repeated on a new connection without using up a
 retry, and any other request returns the error (HC14). `max_idle_per_host = 0` turns reuse off and sends
 `Connection: close`. `idle_connections` counts the idle connections and `close_idle` closes them all.
@@ -211,3 +226,54 @@ next request open a new one.
 
 Tests: `pooling.bd`: `unread_body` (the server sees the client close), `partial_then_discard`, `connection_close`,
 `http_10` (with and without `keep-alive`), `no_pool`; `basics.bd`: `close-delimited used two connections`.
+
+## HC17. `https`
+
+An `https` URL is sent over TLS provided by the `tls` package (`spec/tls.md`). The rules:
+
+- **Opening.** The client connects TCP to the URL's host and port (443 unless the URL names one), then runs
+  `TlsStream.connect` with the URL's host as the server name. That one value is the SNI and the name the certificate must
+  match (`spec/tls.md`, TLS3); a host that is an IP address is matched against the certificate's IP entries and is not
+  sent as SNI. The request is written only after the handshake has finished, so a connection whose handshake failed has
+  carried no HTTP byte. The request line, `Host`, framing, bodies, redirects, and retries then work exactly as for
+  `http`: the connection is one `Read` and `Write` underneath, and everything above it is shared.
+- **Verification is on by default.** The default configuration is `tls.ClientConfig.new()`: the system trust store
+  (`SSL_CERT_FILE` and `SSL_CERT_DIR` apply), TLS 1.2 or later, the certificate chain and the host name checked. A failure
+  is `HttpError.Tls(TlsError)`: the `tls` error with its message (`certificate verification failed: ...`, `the certificate
+  does not match the host: ...`, or a handshake failure), and `is_tls()` and `is_verification()` classify it.
+  `HttpError.Tls` is not a connection failure (HC14): it is never retried, and the client never makes the request again
+  without TLS, on the same connection or another. There is no fallback to plain text and no "try `http` instead".
+- **Configuration.** `client.trust(store)` verifies against exactly the authorities of a `tls.TrustStore`;
+  `client.insecure_skip_verify()` turns verification off (it is named for what it does and is for tests; see the warning
+  in `spec/tls.md`, TLS3); `client.tls_config(config)` takes a whole `tls.ClientConfig` (a minimum version, a client
+  certificate, and so on) and uses it as it is. The default and the first two offer the ALPN protocol `http/1.1` and no
+  other; a server that selects nothing is fine. The package speaks HTTP/1.1 only. A clone of a client has the
+  configuration its original had when it was cloned and then its own.
+- **Timeouts.** The handshake is bounded by `connect_timeout` per wait and by `total_timeout` (HC13); the expiry is
+  `Timeout { phase: "TLS handshake with host:port" }`. `read_timeout` bounds the reads and writes after it, as for `http`.
+  A transport failure during the handshake (a reset) is `Io` and a connection failure, like one while connecting; a TLS
+  failure, a server that closes during the handshake included, is `Tls`.
+- **The pool.** A connection is pooled under its origin: `https://host:port` and `http://host:port` are different keys
+  (HC15). A pooled TLS connection is probed through the TLS layer before it is reused (a `close_notify`, stray data, or a
+  cut connection discards it), and a stale one is replaced on a new connection, with a new handshake, when the request is
+  safe to repeat (HC15). Discarding a pooled TLS connection (`close_idle`, the idle limit, or dropping a response whose
+  body was not read) sends a `close_notify`, best effort and never waiting more than 200 ms.
+- **Truncation.** A TLS connection that ends without a `close_notify` is not an orderly end (`spec/tls.md`, TLS5). A body
+  whose framing says more bytes follow (a `Content-Length` or chunked body) that ends that way is `BodyTruncated`, and so is
+  a close-delimited body: over TLS it ends cleanly only with a `close_notify`, so a server that closes such a body by
+  closing the socket is reported as truncated. A response head that ends that way before any byte of it is
+  `ConnectionClosed` (and repeated when safe, HC14). A TLS error after the handshake (a bad record, a fatal alert) is
+  `Io`, with the TLS message as its reason.
+- **Redirects.** A redirect from `http` to `https`, from `https` to `https`, and from `https` to `http` follows the rules
+  of HC12; the last one changes the origin, so it drops `Authorization`, `Cookie`, and `Proxy-Authorization`.
+- **What is not provided:** proxies and `CONNECT`, session resumption, HTTP/2, a way to read the negotiated protocol or the
+  peer certificate from a `Response`, and any check beyond what `tls` does (no revocation, no pinning, no certificate
+  transparency). This is an experiment, not a security claim (`spec/tls.md`).
+
+Not verified on macOS and Windows: the TLS tests run in CI after the job installs OpenSSL (`spec/tls.md`, TLS7), but only
+Linux with OpenSSL 3.5 has been run by hand.
+
+Tests: `tests/s3_http/tls`, a scripted server that speaks TLS with the certificates of `tests/tls/regenerate.py`:
+`get`, `post`, `bodies`, `keep-alive`, `pool keys`, `redirects`, `unknown authority`, `wrong host`, `expired`, `skip verify`,
+`trust`, `truncated`, `handshake timeout`, `plain port`, and `retries`; and the scheme message in
+`tests/http/url/basic.txt`, `tests/http/join/references.txt`, and `tests/http/request/wire.txt`.

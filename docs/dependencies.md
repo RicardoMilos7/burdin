@@ -28,6 +28,11 @@ and [`tests/check_deps.py`](../tests/check_deps.py) enforces it in every CI job 
 - **No vendoring.** LLVM, the C library, and the C compiler driver come from the host toolchain and
   are not copied into the repository. The build links the LLVM 21 shared library, so the distributed
   program depends on it at run time; `burdin --version` prints the linked LLVM version.
+- **OpenSSL is a system library of one package, never of the compiler.** The official `tls` package links the host's
+  OpenSSL 3 (`libssl`, `libcrypto`; Apache-2.0) through its manifest's `[link]` table (`spec/tls.md`, TLS7). The
+  compiler, `std`, and every other package link nothing new, a program that does not depend on `tls` does not need
+  OpenSSL, and OpenSSL is not copied into the repository. It is not a Rust crate, so `tests/check_deps.py` does not audit
+  it; the installation steps per platform are in `packages/tls/README.md`.
 
 ## Review
 

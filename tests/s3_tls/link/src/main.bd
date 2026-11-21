@@ -1,0 +1,75 @@
+//@ run
+//> openssl 3 or newer: true
+//> version text starts with OpenSSL: true
+//> context: created
+//> client hello pending: true
+//> client hello is a handshake record: true
+//> handshake wants more: true
+//> freed
+
+// The `tls` package's bindings reach the system OpenSSL (issue #322; spec/tls.md, TLS1 and TLS2). The package's
+// manifest declares the libraries, and the program declares none (spec/packages.md, PKG34), so this case builds
+// only if the link table of a dependency reaches the linker. It then drives a client through a pair of memory BIOs:
+// no socket is involved, yet the first call of the handshake leaves a ClientHello waiting in the write BIO.
+
+use tls.openssl.{
+    BIO_ctrl_pending,
+    BIO_new,
+    BIO_read,
+    BIO_s_mem,
+    OpenSSL_version,
+    OpenSSL_version_num,
+    SSL_CTX_free,
+    SSL_CTX_new,
+    SSL_ERROR_WANT_READ,
+    SSL_connect,
+    SSL_free,
+    SSL_get_error,
+    SSL_new,
+    SSL_set_bio,
+    SSL_set_connect_state,
+    TLS_client_method,
+}
+
+extern "C" {
+    fn calloc(count: usize, size: usize): CPtr<u8>
+    fn free(pointer: CPtr<u8>)
+}
+
+fn main() {
+    unsafe {
+        let version = OpenSSL_version_num()
+        println("openssl 3 or newer: {}", (version >> 28) >= 3)
+        let text = CStr.to_string(OpenSSL_version(0))
+        println("version text starts with OpenSSL: {}", text.starts_with("OpenSSL"))
+
+        let ctx = SSL_CTX_new(TLS_client_method())
+        if ctx.is_null() {
+            println("context: failed")
+            return
+        }
+        println("context: created")
+
+        let ssl = SSL_new(ctx)
+        let incoming = BIO_new(BIO_s_mem())
+        let outgoing = BIO_new(BIO_s_mem())
+        SSL_set_bio(ssl, incoming, outgoing)
+        SSL_set_connect_state(ssl)
+
+        let result = SSL_connect(ssl)
+        let wanted = SSL_get_error(ssl, result)
+        let pending = BIO_ctrl_pending(outgoing)
+        println("client hello pending: {}", pending > 5)
+
+        let buffer = calloc(1, 16384)
+        let count = BIO_read(outgoing, buffer, 16384)
+        println("client hello is a handshake record: {}", count > 5 && *buffer == 22)
+        println("handshake wants more: {}", result <= 0 && wanted == SSL_ERROR_WANT_READ)
+        free(buffer)
+
+        // `SSL_set_bio` gave the BIOs to the connection, so freeing it frees them.
+        SSL_free(ssl)
+        SSL_CTX_free(ctx)
+        println("freed")
+    }
+}

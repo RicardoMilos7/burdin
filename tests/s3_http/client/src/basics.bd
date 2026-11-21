@@ -210,11 +210,7 @@ fn stream() {
 }
 
 fn refused_urls() {
-    let server = Server.start(0)
     let client = http.Client.new()
-    let secure = format("https://127.0.0.1:{}/", server.port)
-    println("https: {}", server.mask(fetch(client.clone(), secure.as_str()).as_str()))
-    println("https made no connection: accepted {}", server.accepted())
     println("scheme: {}", fetch(client.clone(), "ftp://127.0.0.1/"))
     println("userinfo: {}", fetch(client.clone(), "http://user:pw@127.0.0.1/"))
 }

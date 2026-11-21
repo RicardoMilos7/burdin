@@ -21,9 +21,14 @@ Official packages today:
 - `csv` — a record-at-a-time CSV reader and writer (issue #257; `packages/csv/README.md`).
 - `yaml` — a safe YAML subset with anchors resolved (issue #258; `packages/yaml/README.md`).
 - `xml` — an XML reader and writer with namespaces and a small DOM (issue #259; `packages/xml/README.md`).
-- `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-host connection reuse (issue #260; `packages/http/README.md`).
+- `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-origin connection reuse, and `https` over
+  `tls` (so a program that uses it links OpenSSL 3) (issues #260, #262; `packages/http/README.md`, `spec/http-client.md`).
 - `crypto` — hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 in pure Burdin; an experiment,
   not a security claim (issue #266; `packages/crypto/README.md`, `spec/crypto.md`).
+
+- `tls` — TLS 1.2 and 1.3 over OpenSSL 3 through the C bridge: certificates and keys, verified client connections, servers,
+  and a `Read`/`Write` stream over `TcpStream` (issue #262; `packages/tls/README.md`, `spec/tls.md`). It links a system
+  OpenSSL; an experiment, not a security claim.
 
 Later libraries are added here, one folder each, as they are written.
 

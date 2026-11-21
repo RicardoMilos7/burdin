@@ -35,4 +35,4 @@
   "BREW / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
   "BREW / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
 > GET ftp://example.test/
-  error: unsupported URL scheme 'ftp': only http is supported
+  error: unsupported URL scheme 'ftp': only http and https are supported

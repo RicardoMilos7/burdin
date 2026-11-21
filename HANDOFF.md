@@ -1701,6 +1701,102 @@ reads (`list.push(list[i])` is E0110, so read into a local first); and `str + st
 `push_str`). Not done: RSA, ECDSA/P-256, Argon2/scrypt, and any TLS or X.509 (the issue's "TLS/auth" goal is the next
 package's job; this one is the primitives).
 
+## Session: TLS, phase A (stage 3, issue #262, #322)
+
+Decision (written in `spec/tls.md`, TLS1): TLS is OpenSSL 3 (`libssl`, `libcrypto`) through the C bridge, hand-written
+`extern "C"` declarations in the official package `packages/tls` (`src/openssl.bd`, re-exported by `src/tls.bd`), and the
+engine uses **memory BIOs** (TLS2) so the Burdin side pumps bytes between OpenSSL and a `TcpStream` and no OpenSSL call
+blocks. Native TLS 1.3 would need X.509, RSA/ECDSA, and a trust store (issue #559 is X.509); the platform stacks are three
+different APIs. Phase A landed: the compiler's `[link]` manifest table (`spec/packages.md`, PKG34: `[link] libs = [...]`
+plus additive `[target.'cfg(P)'.link]` tables; `PackageFiles.link_libs`, merged into the link list by `build::run`),
+`tests/check_link.py`, the bindings, and `tests/s3_tls/link` (a client over memory BIOs produces a ClientHello). CI
+installs `libssl-dev` (Linux), `openssl@3` with `LIBRARY_PATH` (macOS), and OpenSSL through choco with `LIB` and `PATH`
+(Windows); only the Linux step was run locally, the macOS and Windows steps are written but unverified. Phases B and C
+(the client with verification, SNI, ALPN, then the server and the in-process tests; TLS3-TLS6, planned test names in the
+spec) are not started. Gotchas: C `long` is 32 bits on Windows, so `openssl.bd` declares `long` parameters as 64-bit and
+`long` results as 32-bit; `pub` is not a keyword (items are public unless `priv`); a dependency's non-root modules are
+hidden, so `tls.bd` re-exports `openssl`; the C bridge cannot pass a Burdin function to C, so server-side ALPN selection,
+SNI certificate selection, and encrypted-key password callbacks are not provided (TLS8). On WSL without `libssl-dev`,
+make `libssl.so`/`libcrypto.so` symlinks in a directory and set `LIBRARY_PATH` to it.
+
+## Session: TLS, phase B (stage 3, issue #262, #323, #324)
+
+The safe layer of `packages/tls` is written: `errors.bd` (`TlsError`, an `error enum`), `ffi.bd` (pointers to bytes, C
+text, the error queue), `certs.bd` (`Certificate`, `PrivateKey`, `TrustStore`), `config.bd` (`ClientConfig`,
+`ServerConfig`, `TlsVersion`; a configuration owns an `SSL_CTX` and is `Send`/`Sync` through `unsafe` impls), `engine.bd`
+(`Engine`: the memory-BIO state machine, steps `Done`/`Data`/`NeedInput`/`Retry`/`Eof`), `stream.bd` (`TlsStream`, which
+owns a `TcpStream` and the engine and pumps bytes), and the root `tls.bd` re-exporting everything. Tests:
+`tests/s3_tls/conformance` (`loading.bd`, `handshake.bd`, `support.bd` with the in-process server; certificates under
+`src/certs`, read with `embed`), `tests/tls/regenerate.py` (the `openssl` CLI; random keys, so a regeneration changes
+every byte but not the meaning), and `tests/check_tls.py` (fixtures, conformance, declared symbols via `nm -D`, README
+examples, `burdin add tls`, the pin). `spec/tls.md` was rewritten to match what exists (TLS3-TLS6).
+
+Gotchas: a `[u8]` cannot be cast to `CPtr<u8>`, but `(&data[0]) as CPtr<u8>` works inside a function that takes the
+slice (it also works for `&mut list[0]`); a hand-written `Clone` for a type is E9000, so `Certificate` has `duplicate`;
+a `Drop` type cannot give a field back, so `TlsStream.close` returns `()` and the socket closes on drop; `PEM_read_bio_*`
+with a null password callback prompts on the terminal, so `PrivateKey.from_pem` passes a non-null empty password and
+refuses text that says `ENCRYPTED`; a task cannot borrow a local of its scope body (E0171: use a channel, as
+`tests/s3_http/client/src/support.bd` does), and **two tasks blocked in `accept` on one listener hung** in
+`tests/s3_tls/conformance` (one task accepts and hands connections out through a channel; the cause was not
+investigated and may be a `std` reactor limitation worth its own issue); in TLS 1.3 a client's handshake can finish
+before the server rejects its certificate, so mutual-TLS rejections surface on the first read; OpenSSL's reason text
+differs between versions, so the tests print only the variant of a `Handshake`/`Protocol` error. (Phase C backdated the
+test certificates by a year: see below.)
+
+Not done: a generic transport (`TlsStream<S>`), server-side ALPN selection and SNI certificate selection (callbacks, TLS8),
+encrypted keys, session resumption, revocation, the client-CA hint list, an engine-only test, and header-level signature
+checks (only symbol existence is checked). Verified only on Linux with OpenSSL 3.5.5 in WSL: the macOS and Windows CI
+paths (OpenSSL location, `LIB`, DLLs on `PATH`) are written but have never run.
+
+## Session: TLS, phase C: `https` in the `http` package (stage 3, issue #262; #260)
+
+`packages/http` depends on `tls` (`[dependencies] tls = true`; official-to-official works as is, and the lockfile of a
+program that uses `http` pins both packages and links `ssl` and `crypto` through the `[link]` table, which the tests
+confirm). A connection is a `Transport` (a struct holding an `Option<TcpStream>` or an `Option<TlsStream>`: **a `match`
+binding on a struct or enum field moves the stream out and drops it at the end of the arm, which closes the socket, so
+the code takes the stream out of its `Option`, uses it, and puts it back**). Everything above it is unchanged. Rules in
+`spec/http-client.md` HC17 (the spec was changed first): verification on by default, SNI and host check from the URL
+host, `HttpError.Tls(TlsError)` replaces `TlsUnsupported`, never retried, no plain-text fallback, pool key is
+`scheme://host:port`, handshake bounded by `connect_timeout`, truncation without `close_notify` is `BodyTruncated`,
+a TLS-cut response head is `ConnectionClosed`, `close_notify` on discarding a pooled connection (the `TlsStream` drop),
+ALPN `http/1.1` only, an https to http redirect is followed (HC12's rules allow it) with the credentials dropped.
+`Client` gained `trust`, `tls_config`, and `insecure_skip_verify`; its default configuration is built once per client
+family (`tls_default`), and clones copy the configuration but **share the pool**, so a pooled connection verified under
+one configuration is reused by a clone with another (documented; use `Client.new()` for another trust store).
+`IoError` (std) and `TlsError` now derive `Clone`, because `HttpError` is `Clone` and carries a `TlsError`. The
+`unsupported URL scheme` message now ends `only http and https are supported` (three goldens under `tests/http/` and two
+lines of `tests/s3_http/client/src/main.bd`; the `https` and `https made no connection` lines of that program, which
+asserted `TlsUnsupported`, were removed, and its `to https` redirect case now reports the connection refusal, because an
+`https` URL is really tried now). Tests: `tests/s3_http/tls` (82 output lines, an
+in-process HTTPS server with the test certificates copied to its `src/certs`), `tests/check_http.py` (runs both
+conformance programs, the README example, and the pins of `http` and `tls`). `tests/tls/regenerate.py` now signs
+everything with `openssl ca` and starts the valid certificates one year before the day they are made, and writes the
+copies for the `http` tests; `tests/check_tls.py` checks the backdating and that the copies are identical. Verified only
+on Linux with OpenSSL 3.5.5 in WSL; macOS and Windows are unverified. Limitations: errors after the handshake (a bad
+record) surface as `HttpError.Io` with the TLS text, not `Tls`; no proxies, session resumption, HTTP/2, pinning, or
+peer-certificate access from a `Response`; a server that closes a close-delimited body without `close_notify` is
+reported as truncated; the system trust store depends on the machine (a minimal container may have none, which makes
+every default `https` request fail verification).
+
+Closing notes (for the issue comments; nothing has been posted):
+
+- **#322 (backend decision and binding):** `spec/tls.md` TLS1, TLS2, TLS7; `packages/tls/src/openssl.bd`;
+  `spec/packages.md` PKG34 and `tests/check_link.py`; `tests/s3_tls/link`. Commands: `python3 tests/check_link.py`,
+  `python3 tests/check_tls.py`, `python3 tests/run_tests.py s3_tls`.
+- **#323 (client):** `spec/tls.md` TLS3-TLS6; `packages/tls/src/{config,engine,stream,certs,errors}.bd`;
+  `tests/s3_tls/conformance` sections "verification", "versions", "names and protocols", and "certificates, keys, and
+  configurations"; fixtures `tests/s3_tls/conformance/src/certs` made by `python3 tests/tls/regenerate.py` (valid from a
+  year before generation). Commands: `python3 tests/run_tests.py s3_tls` (debug and release; release needs
+  `BURDIN_PACKAGES`), `python3 tests/check_tls.py`.
+- **#324 (server and tests):** `spec/tls.md` TLS3 (mutual TLS), TLS5, TLS8; `ServerConfig` and `TlsStream.accept`;
+  `tests/s3_tls/conformance` sections "mutual TLS", "the end of a stream", and "bad peers"; CI installs OpenSSL on all
+  three OSes (`.github/workflows/ci.yml`; only Linux has run).
+- **#262 (the TLS issue as a whole):** the above plus phase C: `spec/http-client.md` HC17, `packages/http/{burdin.toml,
+  README.md,src/http.bd}`, `tests/s3_http/tls`, `tests/check_http.py`; commands `python3 tests/check_http.py`,
+  `python3 tests/run_tests.py s3_http s3_tls`, `python3 tests/check_tls.py`. Manual verification: none against the real
+  Internet (no test touches the network). Not covered: macOS and Windows runs, a real certificate authority.
+- **#260 (http client):** `https` now works (HC17); the earlier note that `https` is refused is obsolete.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

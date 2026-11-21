@@ -1,7 +1,7 @@
 # http
 
-An HTTP/1.1 client over `std`'s `TcpStream` (issue #260, with #328, #329, and #330; the behavior is
-`spec/http-client.md`). Declare it in `burdin.toml` and `use http`:
+An HTTP/1.1 client over `std`'s `TcpStream`, and over TLS for `https` (issue #260, with #328, #329, and #330; the
+behavior is `spec/http-client.md`). Declare it in `burdin.toml` and `use http`:
 
 ```toml
 [dependencies]
@@ -20,9 +20,58 @@ fn main(): Result<()> {
 }
 ```
 
-`https` is not supported: the standard library has no TLS. An `https` URL parses, and sending a request to one fails
-with `HttpError.TlsUnsupported` before any connection is made; it never falls back to plain text, and a redirect to an
-`https` URL fails the same way.
+## https
+
+`https` URLs work the same way as `http` ones: `client.get("https://example.test/")`. The connection is TLS provided by
+the official `tls` package (`spec/tls.md`), which `http` depends on, so **a program that uses `http` links OpenSSL 3**
+(`libssl-dev` on Linux, `brew install openssl@3` with `LIBRARY_PATH` on macOS, an OpenSSL 3 installation on `LIB` on
+Windows: `packages/tls/README.md` has the table).
+
+By default the server is verified: its certificate chain against the system's trust store, and its name against the
+host in the URL (which is also sent as SNI). A failure is `HttpError.Tls(TlsError)` with the reason, it is never
+retried, and the request is never sent, in plain text or otherwise. A program that names `tls` types (`TrustStore`,
+`ClientConfig`) declares `tls = true` itself; `http` does not re-export them:
+
+```burdin
+// example: https
+use http
+use tls.TrustStore
+
+fn main(): Result<()> {
+    // The default client trusts the system's authorities.
+    let client = http.Client.new()
+    match client.get("https://example.test/") {
+        Ok(response) => println("{}", response.status),
+        Err(e) => {
+            if e.is_verification() {
+                println("the certificate is not acceptable: {}", e)
+            } else {
+                println("failed: {}", e)
+            }
+        }
+    }
+
+    // A program that knows its authority trusts exactly that one.
+    let mut trust = TrustStore.empty()
+    trust.add_pem_file("ca.pem")?
+    let mut pinned = http.Client.new()
+    pinned.trust(trust)?
+    let mut response = pinned.get("https://internal.example/")?
+    println("{}", response.text()?)
+    Ok(())
+}
+```
+
+`client.trust(store)` trusts exactly the authorities in a `tls.TrustStore`, `client.tls_config(config)` takes a whole
+`tls.ClientConfig` (a minimum version, a client certificate), and `client.insecure_skip_verify()` turns verification
+off: the connection is encrypted but talks to anyone, so it is for tests. The client offers the ALPN protocol
+`http/1.1` and nothing else. Connections are pooled per scheme, host, and port, so an `http` and an `https` connection
+to one port are never swapped; clones of a client share the pool, so give a client with another trust store its own
+`Client.new()`. A TLS connection that ends without `close_notify` is not an orderly end: a body cut that way is
+`HttpError.BodyTruncated`, even when the body has no length. The TLS handshake is bounded by `connect_timeout`.
+
+Not provided: proxies, session resumption, HTTP/2, and any check beyond what `tls` does (no revocation, no pinning).
+This is an experiment, not a security claim.
 
 ## Surface
 
@@ -31,6 +80,8 @@ Client.new()                                    a client with the defaults below
 client.get(url) / head(url) / delete(url)       Result<Response, HttpError>
 client.post(url, body) / put(url, body)         the body is text
 client.send(request)                            any method, headers, and body
+client.trust(store) / tls_config(config)        https: the authorities to trust, or a whole tls.ClientConfig
+client.insecure_skip_verify()                   https: no verification (tests only)
 client.idle_connections() / close_idle()        the connection pool
 
 Request.new(method, url)                        Result<Request, HttpError>; also get, head, post, put, delete
@@ -43,7 +94,7 @@ response.body                                   a `Read` over the body, for stre
 
 Url.parse(text) / join(reference) / to_text()   Url { scheme, host, port, path, query }
 Headers                                         add, set, get, get_all, contains, remove, has_token
-HttpError                                       an `error enum`: one variant per kind of failure
+HttpError                                       an `error enum`: one variant per kind of failure (`Tls(TlsError)` for https)
 ```
 
 The `Client` settings are public fields:
@@ -69,5 +120,6 @@ reuses it. A body that is dropped unread closes the connection instead.
 
 `tests/http/` holds golden fixtures for the parts that need no socket: URLs, headers, request and response heads, and
 the body decoders. `tests/s3_http/client` runs the client against a scripted server in the same process, on port 0 of
-127.0.0.1, so no test touches the network. `python3 tests/check_http.py` runs both and checks `burdin add http` and the
-official pin.
+127.0.0.1, and `tests/s3_http/tls` does the same over TLS with the test certificates (`tests/tls/regenerate.py`), so no
+test touches the network. `python3 tests/check_http.py` runs all three and checks `burdin add http` and the official pins
+(of `http` and of the `tls` it depends on).

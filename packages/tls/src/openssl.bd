@@ -1,0 +1,182 @@
+// Hand-written bindings to OpenSSL 3 (libssl and libcrypto), the subset the TLS engine needs (spec/tls.md, TLS1 and
+// TLS2). Nothing here is safe: every call is `unsafe`, and the safe layer is the rest of this package.
+//
+// The engine never gives OpenSSL a socket. A connection is an `Ssl` with a pair of memory BIOs: the program writes the
+// bytes it received from the peer into the read BIO and takes the bytes OpenSSL wants to send out of the write BIO, so
+// no OpenSSL call blocks and the reactor stays in charge of the socket (spec/io.md, IO2; spec/tls.md, TLS2).
+//
+// The C types that differ by platform follow one rule. C `long` is 64 bits on Linux and macOS and 32 on Windows
+// (spec/bindgen.md, BG3), so a `long` or `unsigned long` PARAMETER is declared as a 64-bit integer, which the 32-bit
+// callee reads from the low half, and a `long` RESULT is declared as a 32-bit integer, which is all any of these
+// functions returns (an error code, a version number, or a verify result). A `size_t` is `usize`.
+//
+// Several OpenSSL "functions" are macros over `SSL_ctrl`/`SSL_CTX_ctrl` (the server name, the protocol versions); the
+// control codes are the constants below, and the safe layer calls the macro's expansion.
+
+/// An `SSL_METHOD`: which protocol family a context speaks.
+struct SslMethod repr(C) {}
+/// An `SSL_CTX`: the shared configuration of connections.
+struct SslCtx repr(C) {}
+/// An `SSL`: one connection.
+struct Ssl repr(C) {}
+/// A `BIO`: a byte buffer (here always a memory BIO) or a source of bytes.
+struct Bio repr(C) {}
+/// A `BIO_METHOD`.
+struct BioMethod repr(C) {}
+/// An `X509`: a certificate.
+struct X509 repr(C) {}
+/// An `X509_STORE`: a set of trusted certificates.
+struct X509Store repr(C) {}
+/// An `EVP_PKEY`: a private or public key.
+struct EvpPkey repr(C) {}
+/// An `SSL_CIPHER`.
+struct SslCipher repr(C) {}
+/// An `X509_NAME`: a certificate's subject or issuer.
+struct X509Name repr(C) {}
+/// An `ASN1_TIME`: a certificate's validity bound.
+struct Asn1Time repr(C) {}
+/// An `EVP_MD`: a digest algorithm.
+struct EvpMd repr(C) {}
+/// An `X509_VERIFY_PARAM`: the checks a verification makes (here, the IP address to match).
+struct X509VerifyParam repr(C) {}
+
+// `SSL_get_error` results.
+const SSL_ERROR_NONE: i32 = 0
+const SSL_ERROR_SSL: i32 = 1
+const SSL_ERROR_WANT_READ: i32 = 2
+const SSL_ERROR_WANT_WRITE: i32 = 3
+const SSL_ERROR_WANT_X509_LOOKUP: i32 = 4
+const SSL_ERROR_SYSCALL: i32 = 5
+const SSL_ERROR_ZERO_RETURN: i32 = 6
+const SSL_ERROR_WANT_CONNECT: i32 = 7
+const SSL_ERROR_WANT_ACCEPT: i32 = 8
+
+// `SSL_CTX_set_verify` modes.
+const SSL_VERIFY_NONE: i32 = 0
+const SSL_VERIFY_PEER: i32 = 1
+const SSL_VERIFY_FAIL_IF_NO_PEER_CERT: i32 = 2
+
+// Protocol versions, for the minimum and maximum version controls.
+const TLS1_2_VERSION: i64 = 771
+const TLS1_3_VERSION: i64 = 772
+
+// Control codes of the macros over `SSL_ctrl` and `SSL_CTX_ctrl`.
+const SSL_CTRL_EXTRA_CHAIN_CERT: i32 = 14
+const SSL_CTRL_SET_TLSEXT_HOSTNAME: i32 = 55
+const SSL_CTRL_SET_MIN_PROTO_VERSION: i32 = 123
+const SSL_CTRL_SET_MAX_PROTO_VERSION: i32 = 124
+const TLSEXT_NAMETYPE_HOST_NAME: i64 = 0
+
+/// The key file format of `SSL_CTX_use_PrivateKey_file`: PEM.
+const SSL_FILETYPE_PEM: i32 = 1
+/// `SSL_get_verify_result` when the chain verified.
+const X509_V_OK: i32 = 0
+/// `SSL_get_verify_result` when the certificate is valid but names another host or address.
+const X509_V_ERR_HOSTNAME_MISMATCH: i32 = 62
+const X509_V_ERR_IP_ADDRESS_MISMATCH: i32 = 64
+/// `SSL_get_shutdown` bits.
+const SSL_SENT_SHUTDOWN: i32 = 1
+const SSL_RECEIVED_SHUTDOWN: i32 = 2
+/// `OpenSSL_version`'s selector for the version text.
+const OPENSSL_VERSION: i32 = 0
+
+extern "C" {
+    // Library.
+    fn OPENSSL_init_ssl(options: u64, settings: CPtr<u8>): i32
+    /// The version as `0xMNN00PP0` (3.5.5 is `0x30500050`): the major version is the top four bits.
+    fn OpenSSL_version_num(): u32
+    fn OpenSSL_version(which: i32): CPtr<CChar>
+
+    // Errors: the queue is per thread, so a call that failed is followed by `ERR_get_error` on the same thread.
+    fn ERR_get_error(): u32
+    fn ERR_clear_error()
+    fn ERR_error_string_n(code: u64, buffer: CPtr<CChar>, length: usize)
+    /// The short reason of an error code ("certificate verify failed"), or null for a code with none.
+    fn ERR_reason_error_string(code: u64): CPtr<CChar>
+
+    // Contexts.
+    fn TLS_client_method(): CPtr<SslMethod>
+    fn TLS_server_method(): CPtr<SslMethod>
+    fn SSL_CTX_new(method: CPtr<SslMethod>): CPtr<SslCtx>
+    fn SSL_CTX_free(ctx: CPtr<SslCtx>)
+    fn SSL_CTX_ctrl(ctx: CPtr<SslCtx>, command: i32, larg: i64, parg: CPtr<u8>): i32
+    fn SSL_CTX_set_options(ctx: CPtr<SslCtx>, options: u64): u64
+    fn SSL_CTX_set_verify(ctx: CPtr<SslCtx>, mode: i32, callback: CPtr<CVoid>)
+    fn SSL_CTX_set_default_verify_paths(ctx: CPtr<SslCtx>): i32
+    fn SSL_CTX_load_verify_locations(ctx: CPtr<SslCtx>, file: CPtr<CChar>, directory: CPtr<CChar>): i32
+    fn SSL_CTX_get_cert_store(ctx: CPtr<SslCtx>): CPtr<X509Store>
+    fn SSL_CTX_set_alpn_protos(ctx: CPtr<SslCtx>, protocols: CPtr<u8>, length: u32): i32
+    fn SSL_CTX_use_certificate(ctx: CPtr<SslCtx>, certificate: CPtr<X509>): i32
+    fn SSL_CTX_use_PrivateKey(ctx: CPtr<SslCtx>, key: CPtr<EvpPkey>): i32
+    fn SSL_CTX_use_certificate_chain_file(ctx: CPtr<SslCtx>, file: CPtr<CChar>): i32
+    fn SSL_CTX_use_PrivateKey_file(ctx: CPtr<SslCtx>, file: CPtr<CChar>, kind: i32): i32
+    fn SSL_CTX_check_private_key(ctx: CPtr<SslCtx>): i32
+
+    // Connections.
+    fn SSL_new(ctx: CPtr<SslCtx>): CPtr<Ssl>
+    fn SSL_free(ssl: CPtr<Ssl>)
+    fn SSL_set_bio(ssl: CPtr<Ssl>, read: CPtr<Bio>, write: CPtr<Bio>)
+    fn SSL_set_connect_state(ssl: CPtr<Ssl>)
+    fn SSL_set_accept_state(ssl: CPtr<Ssl>)
+    fn SSL_ctrl(ssl: CPtr<Ssl>, command: i32, larg: i64, parg: CPtr<u8>): i32
+    fn SSL_set1_host(ssl: CPtr<Ssl>, name: CPtr<CChar>): i32
+    fn SSL_set_verify(ssl: CPtr<Ssl>, mode: i32, callback: CPtr<CVoid>)
+    fn SSL_set_alpn_protos(ssl: CPtr<Ssl>, protocols: CPtr<u8>, length: u32): i32
+    fn SSL_get0_alpn_selected(ssl: CPtr<Ssl>, data: CPtr<CPtr<u8>>, length: CPtr<u32>)
+    fn SSL_connect(ssl: CPtr<Ssl>): i32
+    fn SSL_accept(ssl: CPtr<Ssl>): i32
+    fn SSL_do_handshake(ssl: CPtr<Ssl>): i32
+    fn SSL_is_init_finished(ssl: CPtr<Ssl>): i32
+    fn SSL_read(ssl: CPtr<Ssl>, buffer: CPtr<u8>, length: i32): i32
+    fn SSL_write(ssl: CPtr<Ssl>, buffer: CPtr<u8>, length: i32): i32
+    fn SSL_pending(ssl: CPtr<Ssl>): i32
+    fn SSL_shutdown(ssl: CPtr<Ssl>): i32
+    fn SSL_get_shutdown(ssl: CPtr<Ssl>): i32
+    fn SSL_get_error(ssl: CPtr<Ssl>, result: i32): i32
+    fn SSL_get_version(ssl: CPtr<Ssl>): CPtr<CChar>
+    fn SSL_get_current_cipher(ssl: CPtr<Ssl>): CPtr<SslCipher>
+    fn SSL_CIPHER_get_name(cipher: CPtr<SslCipher>): CPtr<CChar>
+    fn SSL_get_verify_result(ssl: CPtr<Ssl>): i32
+    fn SSL_get1_peer_certificate(ssl: CPtr<Ssl>): CPtr<X509>
+    fn SSL_get0_param(ssl: CPtr<Ssl>): CPtr<X509VerifyParam>
+    /// The server name the client sent (server side) or the one set (client side), or null.
+    fn SSL_get_servername(ssl: CPtr<Ssl>, kind: i32): CPtr<CChar>
+    fn X509_VERIFY_PARAM_set1_ip_asc(param: CPtr<X509VerifyParam>, address: CPtr<CChar>): i32
+
+    // Memory BIOs.
+    fn BIO_s_mem(): CPtr<BioMethod>
+    fn BIO_new(method: CPtr<BioMethod>): CPtr<Bio>
+    fn BIO_new_mem_buf(data: CPtr<u8>, length: i32): CPtr<Bio>
+    fn BIO_free(bio: CPtr<Bio>): i32
+    fn BIO_read(bio: CPtr<Bio>, buffer: CPtr<u8>, length: i32): i32
+    fn BIO_write(bio: CPtr<Bio>, buffer: CPtr<u8>, length: i32): i32
+    fn BIO_ctrl_pending(bio: CPtr<Bio>): usize
+
+    // Certificates and keys.
+    fn PEM_read_bio_X509(bio: CPtr<Bio>, certificate: CPtr<CPtr<X509>>, callback: CPtr<CVoid>, data: CPtr<CVoid>): CPtr<
+        X509,
+    >
+    fn PEM_read_bio_PrivateKey(
+        bio: CPtr<Bio>,
+        key: CPtr<CPtr<EvpPkey>>,
+        callback: CPtr<CVoid>,
+        data: CPtr<CVoid>,
+    ): CPtr<EvpPkey>
+    fn d2i_X509(certificate: CPtr<CPtr<X509>>, data: CPtr<CPtr<u8>>, length: i64): CPtr<X509>
+    fn d2i_AutoPrivateKey(key: CPtr<CPtr<EvpPkey>>, data: CPtr<CPtr<u8>>, length: i64): CPtr<EvpPkey>
+    /// The DER length of a certificate; with a non-null `data` it also writes the bytes and advances `*data`.
+    fn i2d_X509(certificate: CPtr<X509>, data: CPtr<CPtr<u8>>): i32
+    fn X509_up_ref(certificate: CPtr<X509>): i32
+    fn X509_get_subject_name(certificate: CPtr<X509>): CPtr<X509Name>
+    fn X509_get_issuer_name(certificate: CPtr<X509>): CPtr<X509Name>
+    fn X509_NAME_oneline(name: CPtr<X509Name>, buffer: CPtr<CChar>, size: i32): CPtr<CChar>
+    fn X509_get0_notBefore(certificate: CPtr<X509>): CPtr<Asn1Time>
+    fn X509_get0_notAfter(certificate: CPtr<X509>): CPtr<Asn1Time>
+    fn ASN1_TIME_print(bio: CPtr<Bio>, time: CPtr<Asn1Time>): i32
+    fn EVP_sha256(): CPtr<EvpMd>
+    fn X509_digest(certificate: CPtr<X509>, digest: CPtr<EvpMd>, out: CPtr<u8>, length: CPtr<u32>): i32
+    fn X509_free(certificate: CPtr<X509>)
+    fn EVP_PKEY_free(key: CPtr<EvpPkey>)
+    fn X509_STORE_add_cert(store: CPtr<X509Store>, certificate: CPtr<X509>): i32
+    fn X509_verify_cert_error_string(code: i64): CPtr<CChar>
+}

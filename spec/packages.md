@@ -198,8 +198,12 @@ for any other package give `{ path = "..." }` or `{ git = "..." }`
 
 A script's inline manifest (`spec/scripts.md`, SC3) and `[rust.crates]` take only paths, so `true` is an error
 there. A version string alone stays reserved for a future registry (PKG2). Package names are unique in a graph
-(PKG1), so an official package and a path or git package of the same name cannot be used together. Tests: the
-loader's unit tests (`official_dependency_forms`), `tests/check_packages.py`.
+(PKG1), so an official package and a path or git package of the same name cannot be used together. An official package
+may depend on another: `http` declares `tls = true` (`spec/http-client.md`, HC17), so a program that uses `http` has `tls`
+in its graph, pinned in `burdin.lock` beside `http` (both with `source = "official"` and their own checksums), and links
+`tls`'s native libraries (PKG34); the program names `tls` itself only to `use` its types. Tests: the loader's unit tests
+(`official_dependency_forms`), `tests/check_packages.py`, `tests/check_http.py` (the lockfile of a program that depends
+on `http` pins `tls` too).
 
 **PKG16. Where the official packages are.** The first of these that is a directory is the root; each of its
 subdirectories that has a `burdin.toml` is the official package of that name, and no later place is searched:
@@ -405,6 +409,41 @@ and needs the network the first time, but it is not loaded. A package's `depende
 reaches from it: each of its normal, optional, and target dependencies, and, for the entry package only, its
 dev-dependencies. A dependency's own dev-dependencies appear nowhere in the lockfile. Tests: `tests/check_features.py`
 (the golden lockfile), `resolve.rs` (`the_lockfile_pins_the_potential_graph`).
+## Native libraries
+
+**PKG34. The `[link]` table.** A package that calls a C library (through `extern "C"`, `spec/stdlib.md`) names it in its
+manifest, so a program that depends on the package links it without a `--link-lib` of its own:
+
+```toml
+[link]
+libs = ["z"]
+
+[target.'cfg(unix)'.link]
+libs = ["ssl", "crypto"]
+
+[target.'cfg(windows)'.link]
+libs = ["libssl", "libcrypto"]
+```
+
+`[link]` has one key, `libs`, an array of strings; any other key is an error that names it and its line. A name is a
+library as `--link-lib` takes it: `ssl` becomes `-lssl` on Unix and `ssl.lib` with MSVC, and a value with a path
+separator or a library or object file extension names that file as it is. A name that is empty, starts with `-`, or
+contains a space is an error (`write ssl, not -lssl or a command line`). `[target.'cfg(P)'.link]` takes the
+predicates of PKG27 (a bad predicate is an error with its line) and applies on the platform the compiler builds for.
+The tables are **additive**: a package's libraries on a platform are `[link]`'s followed by the matching target tables',
+in file order, without duplicates; a target table does not replace `[link]`. There is no `search` key: a library in an
+unusual place is found through the linker's variables (`LIBRARY_PATH`, `LIB`) or `BURDIN_CC` flags.
+
+A build links the libraries of **every package in its graph** (the entry package, dependencies, and what they reach, as
+loaded by PKG25-PKG27 and PKG30, so an inactive optional or target dependency contributes nothing). They are merged,
+without duplicates, into the list `--link-lib` makes, after the command line's and in dependency order, and the program
+links them in `burdin build`, `run`, `test`, `bench`, and `fuzz`. They are part of the build's cache fingerprint, so
+changing a list relinks. `burdin check` and the other commands that do not link ignore the table. A package with no
+`[link]` table is unchanged. A missing library is the linker's error, which names it. Tests: the loader's unit tests
+(`link_tables_select_libraries_by_host`), `tests/check_link.py` (a dependency's libraries reach the link and fail it by
+name, a table for another platform does not, and the manifest errors), `tests/s3_tls/link` (the `tls` package builds and
+runs against the system OpenSSL with no `--link-lib`).
+
 ## Not yet
 
 - Official packages in a script's inline manifest, a package registry, version requirements, and `burdin update` (re-resolving one dependency without deleting the

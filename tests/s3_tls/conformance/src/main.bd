@@ -1,0 +1,159 @@
+//@ run
+//> == certificates, keys, and configurations (TLS3, TLS4)
+//> root: subject=/CN=Burdin Test Root issuer=/CN=Burdin Test Root
+//> root validity: true to true
+//> root fingerprint length: 64
+//> expired validity: Jan  1 00:00:00 2020 GMT to Jan  2 00:00:00 2020 GMT
+//> der round trip: same fingerprint=true same subject=true
+//> duplicate: same fingerprint=true
+//> garbage der: BadCertificate (bad certificate: the bytes are not a DER certificate)
+//> empty der: BadCertificate (bad certificate: the DER input is empty)
+//> chain: 2 certificates
+//>   /CN=localhost issued by /CN=Burdin Test Intermediate
+//>   /CN=Burdin Test Intermediate issued by /CN=Burdin Test Root
+//> first of a chain: subject=/CN=localhost issuer=/CN=Burdin Test Intermediate
+//> bundle: 2 roots
+//> plain text: BadCertificate (bad certificate: no certificate found in the PEM text)
+//> empty text: BadCertificate (bad certificate: no certificate found in the PEM text)
+//> a key is not a certificate: BadCertificate (bad certificate: no certificate found in the PEM text)
+//> chain of plain text: BadCertificate
+//> trust of plain text: BadCertificate
+//> missing file: Io (I/O error: cannot read no/such/dir/root.pem: not found)
+//> file: subject=/CN=Burdin Test Root issuer=/CN=Burdin Test Root
+//> file chain: 1 certificate
+//> missing key file: Io
+//> ec key: loaded
+//> rsa key: loaded
+//> ed25519 key: loaded
+//> encrypted key: BadKey (bad private key: encrypted private keys are not supported)
+//> empty key: BadKey (bad private key: no private key found in the PEM text)
+//> plain text key: BadKey (bad private key: no private key found in the PEM text)
+//> certificate as key: BadKey (bad private key: no private key found in the PEM text)
+//> garbage der key: BadKey (bad private key: the bytes are not a DER private key)
+//> empty der key: BadKey (bad private key: the DER input is empty)
+//> server chain and key: ok
+//> server rsa: ok
+//> server ed25519: ok
+//> server mismatched key: KeyMismatch (the private key does not match the certificate)
+//> server mismatched cert: KeyMismatch
+//> server encrypted key: BadKey
+//> server empty chain: BadCertificate
+//> system trust: built, skips verification=false
+//> empty alpn list: ok
+//> empty alpn name: invalid TLS configuration: an ALPN protocol name must be 1 to 255 bytes
+//> alpn h2, http/1.1: ok
+//> min version 1.3: ok
+//> after insecure_skip_verify: true
+//> client identity mismatched: KeyMismatch
+//> == handshake and data (TLS5)
+//> echo: version=TLSv1.3 cipher known=true
+//> echo: reply="hello tls"
+//> echo: reply="second message"
+//> echo: peer subject=/CN=localhost issuer=/CN=Burdin Test Intermediate
+//> echo: alpn=None
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> server: client ended cleanly
+//> large echo: sent 204800 bytes, got 204800 back, equal=true
+//> small messages: 50 round trips ok=true
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> server: client ended cleanly
+//> push: read 300000 bytes, equal=true, then clean end
+//> push: another read after the end: 0 bytes
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> two streams: client 0 ok=true
+//> two streams: client 1 ok=true
+//> == names and protocols (TLS3)
+//> sni: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=example.test peer=-
+//> ip address: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=- peer=-
+//> alpn: connected, chosen protocol=None
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> rsa leaf: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> ed25519 leaf: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> == verification (TLS3)
+//> expired: CertificateInvalid (certificate verification failed: certificate has expired)
+//> server: handshake failed
+//> unknown authority: CertificateInvalid (certificate verification failed: unable to get local issuer certificate)
+//> server: handshake failed
+//> system trust store: CertificateInvalid (certificate verification failed: unable to get local issuer certificate)
+//> server: handshake failed
+//> self-signed: CertificateInvalid (certificate verification failed: self-signed certificate)
+//> server: handshake failed
+//> wrong host (certificate for another name): HostnameMismatch (the certificate does not match the host: localhost)
+//> server: handshake failed
+//> wrong host (connecting to another name): HostnameMismatch (the certificate does not match the host: other.example)
+//> server: handshake failed
+//> wrong address: HostnameMismatch (the certificate does not match the host: 127.0.0.2)
+//> server: handshake failed
+//> intermediate missing from the chain: CertificateInvalid (certificate verification failed: unable to get local issuer certificate)
+//> server: handshake failed
+//> self-signed, trusted by name: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> insecure_skip_verify, unknown authority: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> insecure_skip_verify, wrong name: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=nonsense.invalid peer=-
+//> insecure_skip_verify, expired: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> == versions (TLS3)
+//> TLS 1.2 server, client needs 1.3: Handshake
+//> server: handshake failed
+//> TLS 1.2 server, default client: connected TLSv1.2 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.2 sni=localhost peer=-
+//> TLS 1.3 server, client limited to 1.2: Handshake
+//> server: handshake failed
+//> defaults: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> == mutual TLS (TLS3)
+//> mutual with a certificate: echo="mutual"
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=/CN=burdin client
+//> server: client ended cleanly
+//> mutual without a certificate: rejected
+//> server: handshake failed
+//> mutual with an untrusted certificate: rejected
+//> server: handshake failed
+//> == the end of a stream (TLS5)
+//> close_notify: read 7 bytes "goodbye", then 0 and 0
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> truncation: read 7 bytes "partial"
+//> truncation: then UnexpectedEof (the connection closed without a TLS close_notify (the data may be truncated))
+//> truncation: and then Closed
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> close: ok
+//> write after close: Closed
+//> read after close: Closed
+//> close twice: true
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+//> server: client ended cleanly
+//> == bad peers (TLS6)
+//> plain-text peer with a reply: Handshake
+//> plain peer that closes: UnexpectedEof (the connection closed without a TLS close_notify (the data may be truncated))
+//> garbage record: Handshake
+//> silent peer: Io timeout=true
+//> read timeout: Io timeout=true
+//> after the timeout: read 4 bytes "late"
+//> Read: 3 bytes, then UnexpectedEof
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+
+// The `tls` package over OpenSSL 3 (issue #262; spec/tls.md, TLS3 to TLS6). `loading` builds certificates, keys, trust
+// stores, and configurations; `handshake` connects a client and a server in this process over 127.0.0.1.
+
+use handshake
+use loading
+
+fn main() {
+    task.set_workers(4)
+    let args = env.args()
+    let only = if args.len() > 1 { args[1].clone() } else { String.new() }
+    if only.is_empty() || only.as_str() == "loading" {
+        println("== certificates, keys, and configurations (TLS3, TLS4)")
+        loading.run()
+    }
+    if only.as_str() != "loading" {
+        let section = if args.len() > 2 { args[2].clone() } else { String.new() }
+        handshake.run(section.as_str())
+    }
+}

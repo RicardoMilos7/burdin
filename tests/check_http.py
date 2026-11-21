@@ -12,8 +12,10 @@ What it checks:
   * the conformance program `tests/s3_http/client`, which runs the client against a scripted server in the same
     process (requests, redirects, timeouts, retries, and connection reuse, HC11 to HC16): its output is compared with
     the `//>` lines of its `src/main.bd`, the way tests/run_tests.py does;
+  * the conformance program `tests/s3_http/tls`, the same over TLS with the test certificates (`https`, HC17); the
+    `http` package depends on `tls`, so building any program that uses `http` needs OpenSSL 3 to link (spec/tls.md, TLS7);
   * `burdin add http` writes `http = true`, prints the official-package line, and pins the package in `burdin.lock`
-    with `source = "official"` and the PKG7 checksum of its files;
+    with `source = "official"` and the PKG7 checksum of its files, and pins the `tls` package it depends on too;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
 
@@ -408,32 +410,49 @@ with harness.temporary_dir("burdin-http-") as work:
                     f"{folder}/{fixture.name} printed {actual!r}, expected {wanted!r}",
                 )
 
-    # The conformance program: the client against a scripted server in the same process. It is built from a copy, so
-    # its `burdin.lock` and `target` stay out of the tree, and its output is the `//>` lines of its main file.
-    conformance = work / "conformance"
-    shutil.copytree(harness.TESTS / "s3_http" / "client", conformance)
-    wanted_lines = [
-        line[4:] if line.startswith("//> ") else line[3:]
-        for line in harness.read_text(conformance / "src" / "main.bd").splitlines()
-        if line.startswith("//>")
-    ]
-    check(len(wanted_lines) >= 100, f"tests/s3_http/client expects too few lines ({len(wanted_lines)})")
-    conformance_built = run_in(conformance, "build", ".")
-    check(conformance_built.returncode == 0, f"tests/s3_http/client did not build: {err(conformance_built)[:400]}")
-    conformance_binary = harness.executable_in(conformance, "http_conformance")
-    if conformance_binary.is_file():
-        ran = harness.run([conformance_binary], cwd=conformance, env=env, timeout=120)
-        check(ran.returncode == 0, f"tests/s3_http/client ended with status {ran.returncode}: {err(ran)[:300]}")
-        got_lines = out(ran).splitlines()
-        check(got_lines == wanted_lines, "tests/s3_http/client printed other lines than its //> lines: " + first_difference(got_lines, wanted_lines))
-    else:
-        check(False, "`burdin build .` did not produce the conformance program")
+    # The conformance programs: the client against a scripted server in the same process, over plain TCP
+    # (tests/s3_http/client) and over TLS (tests/s3_http/tls, which links OpenSSL through the `tls` package). Each is built
+    # from a copy, so its `burdin.lock` and `target` stay out of the tree, and its output is the `//>` lines of its main
+    # file.
+    for folder, program, minimum in (("client", "http_conformance", 100), ("tls", "http_tls_conformance", 70)):
+        conformance = work / f"conformance_{folder}"
+        shutil.copytree(harness.TESTS / "s3_http" / folder, conformance)
+        wanted_lines = [
+            line[4:] if line.startswith("//> ") else line[3:]
+            for line in harness.read_text(conformance / "src" / "main.bd").splitlines()
+            if line.startswith("//>")
+        ]
+        check(len(wanted_lines) >= minimum, f"tests/s3_http/{folder} expects too few lines ({len(wanted_lines)})")
+        conformance_built = run_in(conformance, "build", ".")
+        check(conformance_built.returncode == 0, f"tests/s3_http/{folder} did not build: {err(conformance_built)[:400]}")
+        conformance_binary = harness.executable_in(conformance, program)
+        if conformance_binary.is_file():
+            ran = harness.run([conformance_binary], cwd=conformance, env=env, timeout=180)
+            check(ran.returncode == 0, f"tests/s3_http/{folder} ended with status {ran.returncode}: {err(ran)[:300]}")
+            got_lines = out(ran).splitlines()
+            check(got_lines == wanted_lines, f"tests/s3_http/{folder} printed other lines than its //> lines: " + first_difference(got_lines, wanted_lines))
+        else:
+            check(False, f"`burdin build .` did not produce the {folder} conformance program")
+
+    # The README's https example must compile: every ```burdin block that starts with `// example: name` is
+    # type-checked as a program of its own that depends on `http` and `tls`.
+    examples = re.findall(r"```burdin\n(// example: (\w+)\n.*?)```", harness.read_text(readme), re.S)
+    check(len(examples) >= 1, "packages/http/README.md has no checked example")
+    for source, name in examples:
+        example = work / f"example_{name}"
+        write(example / "burdin.toml", f'[package]\nname = "example_{name}"\nversion = "0.1.0"\n\n[dependencies]\nhttp = true\ntls = true\n')
+        write(example / "src" / "main.bd", source)
+        checked = run_in(example, "check", ".")
+        check(checked.returncode == 0, f"the README's {name} example does not compile: {err(checked)[:500]}")
 
     # The lockfile pins the package's files with the official source (PKG15, PKG17).
     lock = harness.read_text(app / "burdin.lock")
     check('source = "official"' in lock, "burdin.lock does not record the official source")
     checksum = tree_checksum(official / "http")
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the http package's files")
+    # `http` depends on `tls` (`tls = true`), so an official package reaches another and both are pinned.
+    check(f'checksum = "{tree_checksum(official / "tls")}"' in lock, "burdin.lock does not pin the tls package http depends on")
+    check('dependencies = ["tls"]' in lock, "burdin.lock does not record that http depends on tls")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
 
