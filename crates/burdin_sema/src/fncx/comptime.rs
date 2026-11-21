@@ -2,7 +2,7 @@
 //! parameters (`spec/comptime.md`). Checking only builds the typed tree: the values are computed by
 //! `burdin_comptime` after the memory checks.
 
-use super::{FnCx, error_expr, mk};
+use super::{FnCx, LoopScope, error_expr, mk};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::visit::pat_locals;
@@ -162,7 +162,7 @@ impl FnCx<'_> {
         self.comptime_known.extend(bound.iter().copied());
         // `break` and `continue` cannot leave the unrolled body: it is not a loop in the generated code.
         let saved_barrier = self.comptime_loop_barrier.replace(self.loops.len());
-        self.loops.push(false);
+        self.loops.push(LoopScope::loop_body());
         let (body, _) = self.block(body, None);
         self.loops.pop();
         self.comptime_loop_barrier = saved_barrier;
@@ -208,8 +208,11 @@ impl FnCx<'_> {
     }
 
     /// `break` or `continue` directly inside a `comptime for` body (CT6): returns whether it was reported.
-    pub(super) fn leaves_comptime_for(&mut self, word: &str, span: Span) -> bool {
-        if self.comptime_loop_barrier == Some(self.loops.len().saturating_sub(1)) {
+    /// Whether a `break` or `continue` that names the loop scope at `target` would leave the body of a `comptime for`
+    /// (CT6). The body's own scope is the barrier; a scope inside it is a loop of the generated code, and a scope
+    /// outside it is not.
+    pub(super) fn leaves_comptime_for(&mut self, word: &str, span: Span, target: usize) -> bool {
+        if self.comptime_loop_barrier.is_some_and(|barrier| target <= barrier) {
             self.diags.error(
                 Code::INVALID_COMPTIME,
                 span,

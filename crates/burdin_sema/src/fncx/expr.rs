@@ -1,7 +1,7 @@
 //! The expression dispatcher.
 
 use super::operators::can_cast;
-use super::{FnCx, error_expr, mk};
+use super::{FnCx, LoopScope, error_expr, mk};
 use crate::types::compatible;
 use burdin_diag::Code;
 use burdin_syntax::ast;
@@ -73,39 +73,24 @@ impl FnCx<'_> {
             K::While { cond, body } => {
                 let cond = self.expr(cond, Some(&Ty::Bool));
                 let cond = self.expect_ty(cond, &Ty::Bool);
-                self.loops.push(false);
+                self.loops.push(LoopScope::loop_body());
                 let (body, _) = self.block(body, None);
                 self.loops.pop();
                 mk(tir::ExprKind::While(Box::new(cond), body), Ty::Unit, span)
             }
             K::Loop(body) => {
-                self.loops.push(false);
+                self.loops.push(LoopScope::loop_body());
                 let (body, _) = self.block(body, None);
-                let has_break = self.loops.pop().unwrap_or(false);
+                let has_break = self.loops.pop().is_some_and(|scope| scope.has_break);
                 mk(tir::ExprKind::Loop(body), if has_break { Ty::Unit } else { Ty::Never }, span)
             }
+            K::Labeled { label, body } => self.labeled_loop(label, body, expect, span),
             K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, span),
             K::Comptime(inner) => self.comptime_expr(inner, expect, span),
             K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),
-            K::Break | K::Continue => {
-                let word = if matches!(e.kind, K::Break) { "break" } else { "continue" };
-                if self.loops.is_empty() {
-                    self.diags.error(Code::SYNTAX, span, format!("`{word}` outside of a loop"));
-                    return error_expr(span);
-                }
-                if self.leaves_comptime_for(word, span) {
-                    return error_expr(span);
-                }
-                if matches!(e.kind, K::Break) {
-                    if let Some(has_break) = self.loops.last_mut() {
-                        *has_break = true;
-                    }
-                    mk(tir::ExprKind::Break, Ty::Never, span)
-                } else {
-                    mk(tir::ExprKind::Continue, Ty::Never, span)
-                }
-            }
+            K::Break(label) => self.jump(label.as_ref(), true, span),
+            K::Continue(label) => self.jump(label.as_ref(), false, span),
             K::Return(value) => {
                 let ret = self.ret.clone();
                 let value = match value {

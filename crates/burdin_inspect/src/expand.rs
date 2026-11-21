@@ -1152,8 +1152,8 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
         | K::Unit
         | K::Name { .. }
         | K::SelfValue
-        | K::Break
-        | K::Continue => {}
+        | K::Break(_)
+        | K::Continue(_) => {}
         K::Interp(parts) => {
             for p in parts {
                 if let ast::InterpPart::Hole(h) = p
@@ -1184,6 +1184,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             block_children(then_block, out);
             out.extend(else_expr.iter().map(|b| &**b));
         }
+        K::Labeled { body, .. } => out.push(body),
         K::While { cond, body } => {
             out.push(cond);
             block_children(body, out);

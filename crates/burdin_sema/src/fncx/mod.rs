@@ -38,14 +38,31 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// One entry on the stack of open loops while a body is checked. A loop with a label has two entries: the label's
+/// (`label` set, `is_loop` false), which the labeled `break`s and `continue`s name, and the loop's own, which the
+/// unlabeled ones name. `has_break` records whether a `break` leaves the entry's loop.
+#[derive(Default)]
+struct LoopScope {
+    label: Option<String>,
+    is_loop: bool,
+    has_break: bool,
+}
+
+impl LoopScope {
+    /// The entry of a loop body, which has no label of its own.
+    fn loop_body() -> Self {
+        LoopScope { label: None, is_loop: true, has_break: false }
+    }
+}
+
 struct FnCx<'a> {
     globals: &'a Globals,
     diags: &'a mut Diagnostics,
     locals: Vec<tir::Local>,
     scopes: Vec<HashMap<String, LocalId>>,
     ret: Ty,
-    /// One entry per enclosing loop: whether it contains a `break`.
-    loops: Vec<bool>,
+    /// The enclosing loops, innermost last (see `LoopScope`).
+    loops: Vec<LoopScope>,
     /// What `Self` means: the type of the enclosing method block.
     self_ty: Option<Ty>,
     /// The `self` parameter of the method being checked.

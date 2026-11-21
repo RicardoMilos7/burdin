@@ -1,6 +1,6 @@
 //! Control flow: `if`, `for`, `match`, and `if let`.
 
-use super::{FnCx, error_expr, mk};
+use super::{FnCx, LoopScope, error_expr, mk};
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -41,6 +41,68 @@ impl FnCx<'_> {
     }
 
     /// The type of two branches that must agree; reports E0003 at `span` when they do not.
+    /// A loop with a label (`'label: while ...`). The label is one scope and the loop is another, so an unlabeled
+    /// `break` in the body names the loop and a labeled one names the scope (see `LoopScope`). A labeled `break`
+    /// makes the loop's type `()`, as an unlabeled one does.
+    pub(super) fn labeled_loop(
+        &mut self,
+        label: &ast::Ident,
+        body: &ast::Expr,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        if self.loops.iter().any(|scope| scope.label.as_deref() == Some(label.name.as_str())) {
+            self.diags.error(
+                Code::DUPLICATE_NAME,
+                label.span,
+                format!("the label `'{}` is already used by an enclosing loop", label.name),
+            );
+        }
+        self.loops.push(LoopScope { label: Some(label.name.clone()), is_loop: false, has_break: false });
+        let mut inner = self.expr(body, expect);
+        let scope = self.loops.pop();
+        if scope.is_some_and(|scope| scope.has_break) && inner.ty == Ty::Never {
+            inner.ty = Ty::Unit;
+        }
+        let ty = inner.ty.clone();
+        mk(tir::ExprKind::Labeled(label.name.clone(), Box::new(inner)), ty, span)
+    }
+
+    /// `break` or `continue`, with or without a label. An unlabeled one names the innermost loop; a labeled one
+    /// names the enclosing loop with that label. A label is looked for only in this body: a closure starts with no
+    /// loops, so it cannot name one outside (CL8).
+    pub(super) fn jump(&mut self, label: Option<&ast::Ident>, is_break: bool, span: Span) -> tir::Expr {
+        let word = if is_break { "break" } else { "continue" };
+        let target = match label {
+            None => self.loops.iter().rposition(|scope| scope.is_loop),
+            Some(label) => self.loops.iter().rposition(|scope| scope.label.as_deref() == Some(label.name.as_str())),
+        };
+        let Some(target) = target else {
+            match label {
+                None => {
+                    self.diags.error(Code::SYNTAX, span, format!("`{word}` outside of a loop"));
+                }
+                Some(label) => {
+                    self.diags.error(
+                        Code::UNKNOWN_NAME,
+                        label.span,
+                        format!("no enclosing loop is labeled `'{}`", label.name),
+                    );
+                }
+            }
+            return error_expr(span);
+        };
+        if self.leaves_comptime_for(word, span, target) {
+            return error_expr(span);
+        }
+        if is_break {
+            self.loops[target].has_break = true;
+            mk(tir::ExprKind::Break(label.map(|label| label.name.clone())), Ty::Never, span)
+        } else {
+            mk(tir::ExprKind::Continue(label.map(|label| label.name.clone())), Ty::Never, span)
+        }
+    }
+
     pub(super) fn unify(&mut self, first: Ty, second: &Ty, span: Span, what: &str) -> Ty {
         if first == Ty::Never || first == Ty::Error {
             return second.clone();
@@ -96,13 +158,13 @@ impl FnCx<'_> {
                     self.scopes.pop();
                     // The endpoints did not produce an integer type, so no element exists to match; the body is
                     // still checked for its own errors.
-                    self.loops.push(false);
+                    self.loops.push(LoopScope::loop_body());
                     let _ = self.block(body, None);
                     self.loops.pop();
                     return error_expr(span);
                 }
             };
-            self.loops.push(false);
+            self.loops.push(LoopScope::loop_body());
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
@@ -200,13 +262,13 @@ impl FnCx<'_> {
                 _ => {
                     self.scopes.pop();
                     // An invalid range type was already reported; check the body for its own errors.
-                    self.loops.push(false);
+                    self.loops.push(LoopScope::loop_body());
                     let _ = self.block(body, None);
                     self.loops.pop();
                     return error_expr(span);
                 }
             };
-            self.loops.push(false);
+            self.loops.push(LoopScope::loop_body());
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
@@ -222,7 +284,7 @@ impl FnCx<'_> {
                 format!("this pattern does not match every value of `{elem}`"),
             );
         }
-        self.loops.push(false);
+        self.loops.push(LoopScope::loop_body());
         let (body, _) = self.block(body, None);
         self.loops.pop();
         self.scopes.pop();

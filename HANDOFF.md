@@ -4,6 +4,19 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
+(`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
+quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
+carry `Option<Ident>`; the TIR mirrors that with `Labeled(String, Box<Expr>)` and `Break(Option<String>)`. Sema keeps a
+`LoopScope` stack in which a labeled loop has two entries (the label, which the labeled jumps name, and the loop, which
+the unlabeled ones name) and checks each jump's target (`jump` and `labeled_loop` in `fncx/control.rs`). Codegen
+(`loop_expr`, `LoopTargets.label`), the comptime interpreter (`Unwind::Break(Option<String>)`, `iteration`), the move
+checker (`loop_expr`, `loop_index`, `LoopInfo.label`), and the lints take the label into account. Decided: the label is
+dropped only in the parser's error path (a label on a non-loop is E0001 and the expression is kept). Tests:
+`tests/m02_basics/labeled_loops.bd` (runs), `labeled_loops_errors.bd`, `labeled_loop_not_loop.bd`, and
+`tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: `break` with a value (still
+"when wanted"), and a labeled block (`'a: { ... }`), which the grammar does not admit.
+
 **Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
 that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`
 (`spec/check.md`, CK12; `spec/diagnostics.md`, DG6; `docs/diagnostic.schema.json`). It replaces the build's `summary`

@@ -206,12 +206,12 @@ unassigned, stale, or owned by a milestone that has shipped.
 | Code | Meaning |
 | --- | --- |
 | E0001 | Syntax error (lexing or parsing) |
-| E0002 | Unknown name (variable, function, type, module, or imported item) |
+| E0002 | Unknown name (variable, function, type, module, or imported item); a `break` or `continue` label that no enclosing loop has (`spec/grammar.md`, rule 8.9) |
 | E0003 | Type mismatch |
 | E0004 | Wrong number of arguments |
 | E0005 | Assignment to an immutable binding, or mutation through a read-only parameter |
 | E0006 | Non-exhaustive `match` (reported at the `match` line) |
-| E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import) |
+| E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import); a loop label that repeats the label of an enclosing loop |
 | E0008 | Literal out of range for its type |
 | E0009 | A declaration depends on itself: a constant (also through the calls of its compile-time evaluation), a type alias, or a type that contains itself |
 | E0100 | Use of a moved or possibly moved value |

@@ -387,7 +387,7 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 
 ### When wanted
 
-`i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
+`i128`/`u128`, `try_from`, `break` with a value, compound assignment, doc tests, `bench` blocks,
 fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 

@@ -327,8 +327,13 @@ pub enum ExprKind {
         body: Block,
     },
     Match(Box<Expr>, Vec<Arm>),
-    Break,
-    Continue,
+    /// A loop with a label (`'label: while ...`). The body is one of the loop expressions; `break 'label` and
+    /// `continue 'label` inside it name this loop, and an unlabeled `break` or `continue` names the innermost loop.
+    Labeled(String, Box<Expr>),
+    /// `break`, or `break 'label` to leave the loop with that label.
+    Break(Option<String>),
+    /// `continue`, or `continue 'label` to go on with the loop with that label.
+    Continue(Option<String>),
     Return(Option<Box<Expr>>),
     /// The left side is a place: a local, or an index into a place.
     Assign(Box<Expr>, Box<Expr>),
