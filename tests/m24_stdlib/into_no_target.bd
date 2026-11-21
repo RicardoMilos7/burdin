@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `into` needs the type it converts to from the context (spec/stdlib.md, FR5): a `let` without a type gives none.
+
+fn main() {
+    let n: i32 = 5
+    let wide = n.into() //~ E0003
+    println("{}", n)
+}

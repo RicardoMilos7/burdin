@@ -108,7 +108,7 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 | Tasks, channels, `select`, `Mutex`, atomics, `thread.spawn` | After stage 1 |
 | Bindgen for C and Rust | After stage 1 |
 | `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After stage 1 |
-| `i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment | When wanted |
+| `i128`/`u128`, labeled loops, `break` with a value, compound assignment | When wanted |
 | `Set`, `Deque`, doc tests, `bench` blocks | When wanted |
 
 ## Milestones

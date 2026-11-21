@@ -1,0 +1,12 @@
+//@ run-abort
+//> before
+//@ stderr: panic: the byte
+
+// `expect` on the `Err` of a conversion panics with the message it is given (spec/stdlib.md, "Conversions").
+
+fn main() {
+    println("before")
+    let big: i64 = 1000
+    let b = u8.try_from(big).expect("the byte")
+    println("after {}", b)
+}

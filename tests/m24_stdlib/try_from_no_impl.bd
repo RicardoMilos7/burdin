@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A type with no `TryFrom` block has no `try_from` function: E0002, as for any missing associated function.
+
+struct Plain {
+    value: i32
+}
+
+fn main() {
+    let x = Plain.try_from(1) //~ E0002
+}

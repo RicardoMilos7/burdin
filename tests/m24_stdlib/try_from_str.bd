@@ -1,0 +1,31 @@
+//@ run
+//> ana
+//> bo
+//> empty
+
+// A `str` source takes a string literal, and a `String` is borrowed as a `str` (IC1), as for any argument.
+
+struct Name {
+    text: String
+}
+
+Name: TryFrom<str> {
+    fn try_from(s: str): Result<Name, str> {
+        if s.len() == 0 { return Err("empty") }
+        Ok(Name { text: String.from(s) })
+    }
+}
+
+fn show(text: str) {
+    match Name.try_from(text) {
+        Ok(n) => println("{}", n.text),
+        Err(e) => println("{}", e),
+    }
+}
+
+fn main() {
+    show("ana")
+    let owned = String.from("bo")
+    show(owned)
+    show("")
+}

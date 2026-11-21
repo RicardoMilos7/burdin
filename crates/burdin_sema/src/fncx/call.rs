@@ -1332,6 +1332,14 @@ impl FnCx<'_> {
         if let Ty::Param(_) = recv.ty {
             return self.param_method_call(recv, name, args, span, expect);
         }
+        // `v.into()`: the conversion into the type the context expects (spec/stdlib.md, FR4), unless the receiver
+        // has an `into` method of its own.
+        if name.name == "into"
+            && args.is_empty()
+            && !adt_key(&recv.ty).is_some_and(|key| self.globals.methods.contains_key(&(key, "into".to_string())))
+        {
+            return self.convert_into(recv, expect, span);
+        }
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
         {
@@ -1973,6 +1981,104 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::SharedNew, vec![value]), ty, span)
     }
 
+    /// `T.try_from(value)` for an integer type `T` and an integer `value` of any type (`spec/stdlib.md`, "Conversions"):
+    /// `Ok` of the value converted to `T` when it fits, and `Err(TryFromIntError.OutOfRange)` when it does not. Only
+    /// the bounds the source type can actually leave are checked, so a conversion that always fits has no check.
+    fn int_try_from(&mut self, to: IntTy, args: &[ast::Arg], span: Span) -> tir::Expr {
+        if args.len() != 1 {
+            let message = format!("`{}.try_from` takes 1 argument, but {} were given", to.name(), args.len());
+            self.diags.error(Code::ARG_COUNT, span, message);
+            return self.args_then_error(args, span);
+        }
+        let value = self.expr(&args[0].expr, None);
+        let from = match &value.ty {
+            Ty::Int(from) => *from,
+            Ty::Error => return error_expr(span),
+            other => {
+                let message = format!("`{}.try_from` converts an integer, not `{other}`", to.name());
+                self.diags.error(Code::TYPE_MISMATCH, value.span, message);
+                return error_expr(span);
+            }
+        };
+        let Some(err_ty) = self.globals.try_from_int_error_ty.clone() else { return error_expr(span) };
+        let Ty::Enum(err) = &err_ty else { return error_expr(span) };
+        let Some(out_of_range) = self.globals.enums[err.id].variants.iter().position(|v| v.name == "OutOfRange") else {
+            return error_expr(span);
+        };
+        let result = Ty::Result(Box::new(Ty::Int(to)), Box::new(err_ty.clone()));
+        // The value is evaluated once, into a local the checks and the conversion read.
+        let (id, mode) = self.payload_local("value", Ty::Int(from), true);
+        let read = || mk(tir::ExprKind::Local(id), Ty::Int(from), span);
+        let bound = |n: i128| mk(tir::ExprKind::Int(n), Ty::Int(from), span);
+        let mut checks = Vec::new();
+        if to.min() > from.min() {
+            let check = tir::ExprKind::Binary(tir::BinOp::Ge, Box::new(read()), Box::new(bound(to.min())));
+            checks.push(mk(check, Ty::Bool, span));
+        }
+        if to.max() < from.max() {
+            let check = tir::ExprKind::Binary(tir::BinOp::Le, Box::new(read()), Box::new(bound(to.max())));
+            checks.push(mk(check, Ty::Bool, span));
+        }
+        let cond = checks
+            .into_iter()
+            .reduce(|a, b| mk(tir::ExprKind::Binary(tir::BinOp::And, Box::new(a), Box::new(b)), Ty::Bool, span))
+            .unwrap_or_else(|| mk(tir::ExprKind::Bool(true), Ty::Bool, span));
+        let converted = mk(tir::ExprKind::Cast(Box::new(read())), Ty::Int(to), span);
+        let ok = mk(tir::ExprKind::Ok(Box::new(converted)), result.clone(), span);
+        let variant = mk(tir::ExprKind::Variant(out_of_range, Vec::new()), err_ty, span);
+        let err = mk(tir::ExprKind::Err(Box::new(variant)), result.clone(), span);
+        let fits = tir::Block { stmts: Vec::new(), tail: Some(Box::new(ok)), close: span };
+        let branch = mk(tir::ExprKind::If(Box::new(cond), fits, Some(Box::new(err))), result.clone(), span);
+        let bind = tir::Stmt::Let(Pat::Binding(id, mode), value, None);
+        let block = tir::Block { stmts: vec![bind], tail: Some(Box::new(branch)), close: span };
+        mk(tir::ExprKind::Block(block), result, span)
+    }
+
+    /// `Type.from(value)` and `Type.try_from(value)` for a type with conversion blocks of that method (`spec/stdlib.md`,
+    /// "Conversions"). The block is chosen by the type of `value`. `None` when the type has no such block, so the
+    /// caller reports the name as unknown.
+    fn conversion_call(&mut self, ty: &Ty, method: &str, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
+        let candidates: Vec<(Ty, FuncId)> =
+            self.globals.conversions_into(ty, method).iter().map(|c| (c.source.clone(), c.func)).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        if args.len() != 1 {
+            let message = format!("`{ty}.{method}` takes 1 argument, but {} were given", args.len());
+            self.diags.error(Code::ARG_COUNT, span, message);
+            return Some(self.args_then_error(args, span));
+        }
+        // With one source type the argument is checked against it, so a literal takes that type.
+        let expect = match candidates.as_slice() {
+            [(source, _)] => Some(source.clone()),
+            _ => None,
+        };
+        let value = self.expr(&args[0].expr, expect.as_ref());
+        if value.ty == Ty::Error {
+            return Some(error_expr(span));
+        }
+        // A `String` is borrowed as a `str` where a `str` is expected (IC1), as for any argument.
+        let exact = candidates.iter().find(|(source, _)| *source == value.ty);
+        let borrowed = candidates.iter().find(|(source, _)| *source == Ty::Str);
+        let found = match (exact, borrowed) {
+            (Some(hit), _) => Some(hit.clone()),
+            (None, Some(hit)) if value.ty == Ty::String => Some(hit.clone()),
+            _ => None,
+        };
+        let Some((source, func)) = found else {
+            let sources: Vec<String> = candidates.iter().map(|(source, _)| format!("`{source}`")).collect();
+            let message = format!("`{ty}` converts from {}, not from `{}`", sources.join(" or "), value.ty);
+            self.diags.error(Code::TYPE_MISMATCH, value.span, message);
+            return Some(error_expr(span));
+        };
+        let value = self.coerce_arg(value, &source);
+        let sig = self.globals.sigs[func.0].clone();
+        let Some(checked) = self.args_pre(method, &sig.params, args, None, span, Some(vec![value])) else {
+            return Some(error_expr(span));
+        };
+        Some(mk(tir::ExprKind::Call(func, checked), sig.ret, span))
+    }
+
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
     pub(super) fn assoc_call(
         &mut self,
@@ -2004,6 +2110,10 @@ impl FnCx<'_> {
         // `from_iter` of the built-in collections and `from` of a `List` or `Map` (`spec/iterators.md`, IT18).
         if let Some(call) = self.builtin_collection_call(ty, name, args, span) {
             return call;
+        }
+        // `T.from(v)` for a scalar `T`: the built-in pairs of `From` (spec/stdlib.md, FR2).
+        if name.name == "from" && matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char) {
+            return self.primitive_from_call(ty, args, span);
         }
         // `Type.size()` and `Type.align()`: the C layout of a type, for `repr(C)` size assertions (issue #490).
         if matches!(name.name.as_str(), "size" | "align") && args.is_empty() {
@@ -2097,6 +2207,9 @@ impl FnCx<'_> {
         }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
+            if name.name == "try_from" {
+                return self.int_try_from(*i, args, span);
+            }
             // The other associated functions of an integer type (`u32.from_le_bytes(b)`) are `std` functions named
             // `__<type>_<name>` (spec/stdlib.md, "Integer functions").
             if name.name != "parse"
@@ -2232,6 +2345,11 @@ impl FnCx<'_> {
             let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };
             let fields = checked.into_iter().enumerate().collect();
             return mk(tir::ExprKind::Variant(index, fields), ty.clone(), span);
+        }
+        if (name.name == "from" || name.name == "try_from")
+            && let Some(call) = self.conversion_call(ty, &name.name, args, span)
+        {
+            return call;
         }
         let method = adt_key(ty).and_then(|k| self.globals.methods.get(&(k, name.name.clone())).copied());
         let Some(f) = method else {

@@ -1,0 +1,27 @@
+//@ run
+//> -5 200 200
+//> true true
+//> 65 A
+//> 1 0
+//> 7 200
+//> true
+
+// The built-in `From` pairs (spec/stdlib.md, "Numeric conversions", FR1): `T.from(v)` is the exact conversion, and it
+// agrees with `as` on the same pair (FR3).
+
+fn main() {
+    let small: i8 = -5
+    let byte: u8 = 200
+    println("{} {} {}", i64.from(small), i32.from(byte), u16.from(byte))
+    let n: i32 = 42
+    let wide: f64 = f64.from(n)
+    let half: f32 = 1.5
+    println("{} {}", wide == 42.0, f64.from(half) == 1.5)
+    let letter: char = 'A'
+    let code: u8 = 65
+    println("{} {}", u32.from(letter), char.from(code))
+    println("{} {}", i64.from(true), i32.from(false))
+    let same: i32 = 7
+    println("{} {}", i32.from(same), usize.from(byte))
+    println("{}", (small as i64) == i64.from(small))
+}

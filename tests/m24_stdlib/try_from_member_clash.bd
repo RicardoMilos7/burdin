@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A type's `try_from` member and its `TryFrom` block's `try_from` share one name, so the member is E0007 at the
+// block's method, the second of the two (spec/stdlib.md, "Conversions").
+
+struct Percent {
+    value: u8
+}
+
+Percent {
+    fn try_from(v: i32): Percent {
+        Percent { value: v as u8 }
+    }
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, i32> { //~ E0007
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+fn main() {}

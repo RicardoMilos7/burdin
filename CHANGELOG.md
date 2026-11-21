@@ -6,6 +6,16 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `From` for the scalar pairs `as` converts exactly, and `v.into()`: `T.from(v)` and `as` use the same built-in
+  conversion, and `into` converts to the type the context expects (`spec/stdlib.md`, "Numeric conversions"). `From<S>` is
+  a bound: a generic function with `T: From<S>` can call `T.from(v)` and `v.into()`.
+- `TryFrom` and `try_from` (issue #274; `spec/stdlib.md`, "Conversions"). A `Type: TryFrom<Source>` block gives a
+  type a fallible conversion whose `Result` error type the block chooses, and every integer type has `T.try_from(v)`,
+  which returns `Result<T, TryFromIntError>` and is `Err` when the value is out of range. A type now converts from
+  several source types through `From` as well: a type with two `From` blocks of different sources was rejected with
+  E0007, so an error enum with two `from` variants of different sources did not compile. `tests/m24_stdlib/try_from_*`
+  covers the feature and its diagnostics.
+
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.

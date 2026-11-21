@@ -204,7 +204,7 @@ the associated function `i32.parse(s)`; it accepts an optional leading `-` and d
 
 Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary `-`. Overflow panics in debug and
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`
-truncate toward zero. `as` converts between numeric types (and `char` to an integer, and `u8` or `u32` to `char`), following Rust's cast rules. `u32 as char` does not check that the value is a Unicode scalar value (the result for a surrogate or a value past `0x10FFFF` is unspecified); `u32.to_char()` does.
+truncate toward zero. `as` converts between numeric types (and `char` to an integer, and `u8` or `u32` to `char`), following Rust's cast rules. For the pairs with a built-in `From` impl (FR1 in "Numeric conversions"), `as` is that `From` conversion (FR3). `u32 as char` does not check that the value is a Unicode scalar value (the result for a surrogate or a value past `0x10FFFF` is unspecified); `u32.to_char()` does.
 
 ### Integer functions (issue #704)
 
@@ -350,6 +350,104 @@ method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, 
 
 Tests: `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`,
 `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names`.
+
+## Conversions (issue #274)
+
+`TryFrom<Source>` is the fallible counterpart of `From`, and a built-in interface like it. A block is written on a struct
+or enum the package declares:
+
+```
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, PercentError> { ... }
+}
+```
+
+The `try_from` method returns `Result<Type, E>`, where `E` is whatever the block chooses. Every integer type has the
+same function for every integer source, written `T.try_from(v)` and returning `Result<T, TryFromIntError>`.
+
+- **TF1.** `Type.try_from(v)` and `Type.from(v)` call the block of `Type` whose source type is the type of `v`. A type
+  converts from each source type once: a second block for the same source is E0211. A `from` or `try_from` member
+  that is not a block's method shares the name and is E0007. `?` picks a `From` block by its error type (`errors.md`,
+  ERR3). Two `From` blocks with different sources are allowed, and so are a `From` and a `TryFrom` for one source,
+  since they are different methods.
+- **TF2.** A `TryFrom` block gives the method `try_from` (E0140 otherwise), and a `From` block gives `from`. The block
+  is for a type the package declares (E0142 otherwise), and its method is not generic (E0003). The method takes one
+  parameter of the source type: another count is E0004, and another type is E0003. Its result is the target type for
+  `from`, and `Result<target, E>` for `try_from`; another result is E0003. The signature is checked where the block is
+  declared, so the callers can rely on it.
+- **TF3.** A `Type.try_from(v)` with no block for the type of `v` is E0003 at `v`, and a type with no `TryFrom` block
+  has no `try_from` function (E0002). A `String` is borrowed as a `str` where the source is `str` (IC1), as for any
+  argument.
+- **TF4.** For an integer type `T` and an integer `v` of any type, `T.try_from(v)` is `Ok(v as T)` when `v` is in the
+  range of `T`, and `Err(TryFromIntError.OutOfRange)` when it is not. A value of another type, such as a float, is
+  E0003, and a call with other than one argument is E0004. `v` is evaluated once.
+- **TF5.** `TryFromIntError` is an error enum in `std` with one variant, `OutOfRange`, whose message is `out of range
+  integral type conversion attempted`. It is `Eq` and `Debug`, and it is an ordinary error value (ERR1-ERR2).
+- **TF6.** The `Result` of `try_from` is an ordinary `Result`, so `?` converts its error through `From` like any other
+  (ERR3). A function whose error type has no `From` block from `TryFromIntError` or from the block's error type is
+  E0212 at the `?`.
+- **TF7.** `TryFrom` is not a bound yet: `T: TryFrom<i32>` is not implemented in this compiler (E9000, the
+  `bound-drop-from` site, `e9000-audit.md`). `From<S>` is a bound (FR7). `TryFrom` cannot be used as `any` (E0200), and
+  it cannot be listed after a type's name, since its method has no default (E0234).
+
+- **TF8.** Not done: a `From` or `TryFrom` block on a generic type (`Holder<i32>: TryFrom<i64>`) is accepted as an
+  ordinary impl, so its method is a member of each instance. `?` does not use it, and its signature and source are
+  not checked against TF2. The same holds for `From` today.
+
+Conversions from `char`, and a `try_from` for other primitive types, are not part of this section.
+
+Tests: `m24_stdlib/try_from_int`, `try_from_user`, `try_from_from_sources`, `try_from_str`, `try_from_error`,
+`try_from_expect_aborts`, `try_from_bad_return`, `try_from_missing_method`, `try_from_orphan`, `try_from_bad_source`,
+`try_from_arity`, `try_from_duplicate`, `try_from_member_clash`, `try_from_int_float`, `try_from_int_arity`,
+`try_from_no_source`, `try_from_no_impl`, `try_from_derive`, `try_from_any`, `try_from_question_missing`.
+
+## Numeric conversions: `From`, `into`, and `as`
+
+`From<Source>` is the infallible conversion. A block written on a type the package declares (TF1 and TF2) works as
+before. The scalar pairs below also have a built-in `From` impl, with no block to write, and `into` and `as` use the
+same rules.
+
+- **FR1.** A pair of scalar types `(S, T)` has a built-in `From` impl when every value of `S` converts to `T` exactly,
+  so `as` from `S` to `T` gives back the same value. The pairs are:
+  - an integer type `S` to an integer type `T` whose range contains the range of `S`. `isize` and `usize` are 64 bits
+    (`POINTER_BITS`), so `u32` converts to `usize`;
+  - an integer type `S` to a float type `T` when every value of `S` is exact in `T`: `i8`, `i16`, `u8`, and `u16` to
+    `f32`, and those with `i32` and `u32` as well to `f64`;
+  - `f32` to `f64`;
+  - `bool` to every integer type;
+  - `char` to an integer type whose range contains every scalar value (`0` through `0x10FFFF`): `u32`, `i32`, `u64`,
+    `i64`, `usize`, and `isize`;
+  - `u8` to `char`;
+  - every integer, float, `bool`, and `char` type to itself.
+  No other pair has a built-in impl. `i64` to `f64`, `f64` to `f32`, and `u32` to `char` do not: the first rounds, the
+  second rounds, and the third is not a scalar value for every `u32`.
+- **FR2.** `T.from(v)` for a pair of FR1 is that conversion. `v` is checked without an expected type, so an integer
+  literal is an `i32`: `i64.from(5)` is valid, and `u8.from(5)` is E0003 (give the value a typed `let`). `T.from(v)`
+  for any other pair is E0003 at `v`. A built-in impl cannot be written by the program, since a `From` block on a
+  built-in type is E0142 (`spec/stdlib.md`, "Conversions", TF2).
+- **FR3.** `as` from `S` to `T` for a pair of FR1 is the same conversion as `T.from(v)`: both use one definition, so
+  they cannot disagree. Every other `as` keeps its behavior: `i64 as i32` truncates, `f64 as f32` rounds, and
+  `i64 as f64` rounds to nearest. None of these pairs has a `From` impl.
+- **FR4.** `v.into()` converts `v` to the type the context expects: a typed `let`, an argument, a return value, a
+  field, or an element. It is `T.from(v)` for that type `T`, through the built-in pairs of FR1 or the `From` blocks of
+  `T`. A receiver whose type has a method named `into` uses that method, as any method of the receiver does.
+- **FR5.** `v.into()` with no expected type is E0003 at the call, and a target with no conversion from the type of `v`
+  is E0003 at the call too. `into` takes its receiver as `from` takes its argument: a receiver that is not `Copy` is
+  moved, so a borrowed value of such a type cannot be converted.
+- **FR6.** Not done: `From` blocks on generic types (TF8). A type parameter as the target of `into` or `from` needs
+  a `From` bound (FR7).
+- **FR7.** `From<S>` is a bound: `T: From<S>` is met by a type `T` into which a value of `S` converts, through a
+  built-in pair (FR1) or a `From` block of `T` whose source is `S`. A bound takes exactly one type argument, and any
+  other count is TYPE_MISMATCH (E0003). In the body of a function with the bound, `T.from(v)` with `v` of type `S`
+  returns `T`, and `v.into()` with the expected type `T` is the same conversion; `v` of another type is E0003 at `v`,
+  and `T.from` or `into` with no such bound is E0141 or E0003. A call of such a function is checked against the bound,
+  with E0141 when it is not met.
+- **FR8.** The bound's type argument may be a type parameter (`fn f<T: From<U>, U>(...)`); it is substituted when the
+  function is instantiated, as any bound argument is.
+
+Tests: `m24_stdlib/from_numeric`, `from_as_lossy`, `into_numeric`, `from_lossy`, `from_arity`, `into_no_target`,
+`into_no_impl`, `into_method_wins`, `from_bound_run`, `from_bound_call`, `from_bound_wrong_source`, `from_bound_no_bound`,
+`from_bound_arity`, `from_bound_into_no_bound`.
 
 ## Characters (issue #416)
 
@@ -2409,6 +2507,8 @@ lists them by rule).
 | `Once` and `Lazy` | `m24_stdlib/once_basic`, `lazy_basic`, `once_lazy_drops` |
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
+| Fallible conversions (`TryFrom`, `try_from`) | `m24_stdlib/try_from_int`, `try_from_user`, `try_from_from_sources`, `try_from_str`, `try_from_error`, `try_from_expect_aborts`, and the `try_from_*` compile-fail cases |
+| Numeric `From`, `into`, and `as` (FR1-FR6) | `m24_stdlib/from_numeric`, `from_as_lossy`, `into_numeric`, `from_lossy`, `from_arity`, `into_no_target`, `into_no_impl`, `into_method_wins`, `from_bound_*` |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |

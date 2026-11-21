@@ -1,0 +1,21 @@
+//@ run
+//> 7
+
+// A receiver with an `into` method of its own calls that method, not the conversion into the expected type
+// (spec/stdlib.md, FR4).
+
+struct Count {
+    n: i32
+}
+
+Count {
+    fn into(own self): i32 {
+        self.n + 2
+    }
+}
+
+fn main() {
+    let c = Count { n: 5 }
+    let total: i32 = c.into()
+    println("{}", total)
+}

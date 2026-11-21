@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A `From` bound takes exactly one type argument (spec/stdlib.md, FR7): the source type. Without it, the bound is
+// an error and `T` has no `from` function.
+
+fn widen<T: From>(v: i32): T { //~ E0003
+    T.from(v) //~ E0141
+}
+
+fn main() {
+}

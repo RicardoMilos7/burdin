@@ -6,7 +6,7 @@
 //! instances and LLVM symbols stay unique. Imports are copied into the importing module's maps by `imports.rs`.
 
 use crate::generics::{GenericAdt, GenericFn, ImplInfo, InterfaceInfo, Request};
-use burdin_diag::FileId;
+use burdin_diag::{FileId, Span};
 use burdin_tir::{self as tir, AdtRef, Builtin, ConstId, FuncId, Signature, Ty};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -121,11 +121,15 @@ pub(crate) struct ExternInfo {
     pub(crate) blocking: bool,
 }
 
-/// One `Type: From<Source>` block: the `from` method `?` calls to convert a `Source` error.
+/// One `Type: From<Source>` or `Type: TryFrom<Source>` block: the `from` or `try_from` method that converts a `Source`
+/// into the target. `?` calls a `From` one to convert an error (`spec/errors.md`, ERR3); `Type.from(v)` and
+/// `Type.try_from(v)` pick one by the type of their argument (`spec/stdlib.md`, "Conversions").
 pub(crate) struct FromImpl {
     pub(crate) target: Ty,
     pub(crate) source: Ty,
     pub(crate) func: FuncId,
+    /// Where the method is declared, for the diagnostics about its signature.
+    pub(crate) span: Span,
 }
 
 /// The standard library's operator interfaces (`spec/operators.md`, OP2). The compiler resolves an operator on a
@@ -194,8 +198,10 @@ pub(crate) struct Globals {
     /// `extern "C"` declarations, by symbol (a symbol is declared once).
     pub(crate) externs: Vec<ExternInfo>,
     pub(crate) extern_symbols: HashMap<String, usize>,
-    /// `Type: From<Source>` conversions, for `?`.
+    /// `Type: From<Source>` conversions, for `?` and `Type.from(v)`.
     pub(crate) from_impls: Vec<FromImpl>,
+    /// `Type: TryFrom<Source>` conversions, for `Type.try_from(v)`.
+    pub(crate) try_from_impls: Vec<FromImpl>,
     /// The signatures of `Fn(...)` bounds, by the index a [`crate::generics::Bound::Fn`] carries.
     pub(crate) fn_bounds: RefCell<Vec<tir::FnSig>>,
     /// The type aliases that have parameters (`crate::aliases`) and how deeply their expansions nest right now.
@@ -209,8 +215,8 @@ pub(crate) struct Globals {
     pub(crate) const_inits: Vec<(usize, &'static burdin_syntax::ast::Expr)>,
     /// The files `embed` read, in the order they were first read: inputs of the build (`spec/comptime.md`, CT15).
     pub(crate) embedded: RefCell<Vec<String>>,
-    /// The methods of `Type: From<..>` blocks: their one parameter is taken by ownership even though the
-    /// declaration does not write `own`, because a conversion consumes its input.
+    /// The methods of `Type: From<..>` and `Type: TryFrom<..>` blocks: their one parameter is taken by ownership
+    /// even though the declaration does not write `own`, because a conversion consumes its input.
     pub(crate) from_methods: Vec<FuncId>,
     /// Instances asked for while resolving types and checking calls, to be allocated before the next pass.
     pub(crate) requests: RefCell<Vec<Request>>,
@@ -272,6 +278,8 @@ pub(crate) struct Globals {
     /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
     pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,
+    /// `std.TryFromIntError`, the error of `T.try_from(v)` for an integer `T` (spec/stdlib.md, "Conversions").
+    pub(crate) try_from_int_error_ty: Option<Ty>,
     /// The generic method template each registered generic method stands for.
     pub(crate) method_templates: HashMap<FuncId, crate::generics::GenericMethod>,
     /// The instance of each generic method for its method-level type arguments.
@@ -578,6 +586,12 @@ impl Globals {
     /// The user's `Type: From<Source>` conversion from `source` into `target`, if there is one.
     pub(crate) fn conversion(&self, source: &Ty, target: &Ty) -> Option<FuncId> {
         self.from_impls.iter().find(|f| &f.source == source && &f.target == target).map(|f| f.func)
+    }
+
+    /// The conversion blocks of `target` for `method` (`from` or `try_from`), in declaration order.
+    pub(crate) fn conversions_into(&self, target: &Ty, method: &str) -> Vec<&FromImpl> {
+        let table = if method == "try_from" { &self.try_from_impls } else { &self.from_impls };
+        table.iter().filter(|f| &f.target == target).collect()
     }
 
     /// The module of `package` whose path is exactly `path`.

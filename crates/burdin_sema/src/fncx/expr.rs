@@ -1,5 +1,6 @@
 //! The expression dispatcher.
 
+use super::conversion::lossless_from;
 use super::operators::can_cast;
 use super::{FnCx, error_expr, mk};
 use crate::types::compatible;
@@ -135,6 +136,10 @@ impl FnCx<'_> {
                         format!("cannot convert `{}` to `{target}` with `as`", operand.ty),
                     );
                     return error_expr(span);
+                }
+                // A pair with a built-in `From` impl is that conversion (FR3); the others keep the cast.
+                if lossless_from(&target, &operand.ty) {
+                    return self.primitive_from_value(target, operand, span);
                 }
                 mk(tir::ExprKind::Cast(Box::new(operand)), target, span)
             }

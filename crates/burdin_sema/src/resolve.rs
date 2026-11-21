@@ -198,6 +198,7 @@ impl Sema<'_> {
         // Duplicate declarations and shadowed extensions need the resolved receiver and every method in place
         // (`spec/extensions.md`, EX4 and EX5).
         self.check_extension_problems(diags);
+        check_conversion_signatures(&self.globals, diags);
     }
 }
 
@@ -480,6 +481,51 @@ pub(crate) fn c_abi_rejection(ty: &Ty, direction: &str) -> String {
 }
 
 /// Whether two `extern` declarations describe the same C function.
+/// The signatures of the conversion blocks (`spec/stdlib.md`, "Conversions"). A `From` block's `from` takes one
+/// parameter of the source type and returns the target; a `TryFrom` block's `try_from` returns `Result<target, E>`.
+/// The callers (`?`, `Type.from`, `Type.try_from`) rely on this shape, so a block that differs is reported here.
+fn check_conversion_signatures(globals: &Globals, diags: &mut Diagnostics) {
+    for (conversions, method) in [(&globals.from_impls, "from"), (&globals.try_from_impls, "try_from")] {
+        let iface = if method == "from" { "From" } else { "TryFrom" };
+        for conv in conversions {
+            let sig = &globals.sigs[conv.func.0];
+            if sig.has_self || sig.params.len() != 1 {
+                diags.error(
+                    Code::ARG_COUNT,
+                    conv.span,
+                    format!(
+                        "`{method}` in a `{iface}` block takes exactly one argument, of the source type `{}`",
+                        conv.source
+                    ),
+                );
+                continue;
+            }
+            let param = &sig.params[0].ty;
+            if *param != conv.source && *param != Ty::Error {
+                diags.error(
+                    Code::TYPE_MISMATCH,
+                    conv.span,
+                    format!("`{method}` takes `{param}`, but this block converts from `{}`", conv.source),
+                );
+                continue;
+            }
+            let returns_target = match method {
+                "from" => sig.ret == conv.target,
+                _ => matches!(&sig.ret, Ty::Result(ok, _) if **ok == conv.target),
+            };
+            if !returns_target && sig.ret != Ty::Error {
+                let expected =
+                    if method == "from" { conv.target.to_string() } else { format!("Result<{}, _>", conv.target) };
+                diags.error(
+                    Code::TYPE_MISMATCH,
+                    conv.span,
+                    format!("`{method}` in a `{iface}` block returns `{expected}`, not `{}`", sig.ret),
+                );
+            }
+        }
+    }
+}
+
 fn same_signature(a: &Signature, b: &Signature) -> bool {
     a.ret == b.ret && a.params.len() == b.params.len() && a.params.iter().zip(&b.params).all(|(x, y)| x.ty == y.ty)
 }

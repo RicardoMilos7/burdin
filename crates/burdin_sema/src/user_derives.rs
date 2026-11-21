@@ -119,6 +119,7 @@ fn required_builtin_method(name: &str) -> Option<&'static str> {
     match name {
         "Drop" => Some("drop"),
         "From" => Some("from"),
+        "TryFrom" => Some("try_from"),
         _ => None,
     }
 }
