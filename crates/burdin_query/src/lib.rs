@@ -15,6 +15,7 @@ pub mod api;
 pub mod cfg;
 mod db;
 pub mod features;
+mod follow_on;
 pub mod lockfile;
 mod memory;
 pub mod navigate;

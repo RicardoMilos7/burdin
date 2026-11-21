@@ -10,6 +10,12 @@ close-out checklist in `AGENTS.md`).
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
 
+- Type checking continues past a syntax error (issue #786; `spec/check.md`, CK4). A file with a syntax error is not
+  type checked, but every other module is, against the declarations the broken file did read. The follow-on errors of
+  a declaration that did not parse (a use of a function, type, or method the broken file failed to declare) are left
+  out, and a diagnostic in the broken file other than its syntax errors is not reported. `burdin check`, `build`, and
+  the language server share the rule (`crates/burdin_query/src/follow_on.rs`). `tests/check/err_syntax_declared.bd`,
+  `tests/check/packages/syntax_neighbors`, and `tests/check/packages/syntax_no_main` cover it.
 - The `http` official package (stage 3, issue #260, sub-issues #328, #329, #330; `spec/http-client.md`, HC1-HC16).
   `packages/http` is an HTTP/1.1 client over `std`'s `TcpStream`: URLs and relative references, requests, responses and
   headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
@@ -19,7 +25,6 @@ close-out checklist in `AGENTS.md`).
   (`spec/io.md`, IO5). `tests/http/` holds golden fixtures for the pure parts, `tests/s3_http/client` is the
   conformance case against a scripted in-process server, and `tests/check_http.py` runs both and checks
   `burdin add http` and the pin; CI runs it.
-
 - The `crypto` official package (stage 3, issue #266; `spec/crypto.md`, CR1-CR14). Pure Burdin, no C library: the
   hashes SHA-224/256/384/512, SHA3-224/256/384/512, SHAKE128/256, SHA-1, and MD5 (the last two documented as broken),
   each one-shot and incremental; HMAC, HKDF, and PBKDF2 over any of them; ChaCha20, XChaCha20, Poly1305, and the

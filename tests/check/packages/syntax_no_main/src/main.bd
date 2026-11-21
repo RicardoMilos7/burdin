@@ -1,0 +1,7 @@
+use util.twice
+
+// The header of `main` cannot be read, so the program has no `main` in its tree. That is a follow-on error of the
+// syntax error, and it is not reported.
+fn main( { //~ E0001
+    println(twice(2).to_string())
+}
