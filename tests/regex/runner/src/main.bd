@@ -1,0 +1,190 @@
+// The fixture runner for the `regex` package (spec/regex.md; tests/regex/README.md). It reads a TSV file of rows,
+// `op<TAB>pattern<TAB>text<TAB>arg<TAB>expected`, runs each row through the package, and prints one line per row: the
+// result of the operation, in the output format of tests/regex/README.md. The `expected` column is for the check
+// script; this program does not read it.
+//
+// Every field is percent-encoded (`%09` tab, `%0A` line feed, `%0D` carriage return, `%25` percent), and the output
+// encodes its texts the same way, with `<>` for an empty text and `%20` for a space, so one row is one line.
+
+use regex.{Captures, Match, Regex}
+
+/// Decodes the `%XX` escapes of a field; every other character stands for itself.
+fn decode(field: str): String {
+    let chars = field.to_char_list()
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < chars.len() {
+        if chars[i] == '%' && i + 2 < chars.len() {
+            match (chars[i + 1].to_digit(16), chars[i + 2].to_digit(16)) {
+                (Some(high), Some(low)) => {
+                    match (high * 16 + low).to_char() {
+                        Some(c) => out.push(c),
+                        None => {}
+                    }
+                    i = i + 3
+                }
+                _ => {
+                    out.push('%')
+                    i = i + 1
+                }
+            }
+        } else {
+            out.push(chars[i])
+            i = i + 1
+        }
+    }
+    out
+}
+
+/// A text as the output shows it: `<>` when empty, otherwise with the separators and escapes percent-encoded.
+fn enc(text: str): String {
+    if text.is_empty() {
+        return "<>".to_string()
+    }
+    let mut out = String.new()
+    for c in text.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '<' => out.push_str("%3C"),
+            ' ' => out.push_str("%20"),
+            '\t' => out.push_str("%09"),
+            '\n' => out.push_str("%0A"),
+            '\r' => out.push_str("%0D"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// A match as `start:end:text`.
+fn span(m: Match): String {
+    format("{}:{}:{}", m.start(), m.end(), enc(m.as_str()))
+}
+
+/// A group as its span, or `-` when it did not take part.
+fn group(caps: Captures, index: usize): String {
+    match caps.get(index) {
+        Some(m) => span(m),
+        None => "-".to_string(),
+    }
+}
+
+/// Every group of a match, bracketed.
+fn groups(caps: Captures): String {
+    let mut parts = List<String>.new()
+    let mut i: usize = 0
+    while i < caps.len() {
+        parts.push(group(caps, i))
+        i = i + 1
+    }
+    format("[{}]", parts.join(" "))
+}
+
+/// The number at the start of `text`, or 0 when there is none.
+fn number(text: str): usize {
+    let mut value: usize = 0
+    for c in text.chars() {
+        match c.to_digit(10) {
+            Some(d) => value = value * 10 + (d as usize),
+            None => break,
+        }
+    }
+    value
+}
+
+/// The output line of one row.
+fn row(op: str, pattern: str, text: str, arg: str): String {
+    if op == "escape" {
+        return enc(Regex.escape(text).as_str())
+    }
+    let re = match Regex.new(pattern) {
+        Ok(re) => re,
+        Err(e) => return format("error: {}", e.to_string()),
+    }
+    match op {
+        "as_str" => enc(re.as_str()),
+        "groups" => format("{}", re.group_count()),
+        "index" => match re.group_index(arg.as_str()) {
+            Some(i) => format("{}", i),
+            None => "none".to_string(),
+        },
+        "match" => format("{}", re.is_match(text)),
+        "find" => match re.find(text) {
+            Some(m) => span(m),
+            None => "none".to_string(),
+        },
+        "find_all" => {
+            let mut parts = List<String>.new()
+            for m in re.find_all(text) {
+                parts.push(span(m))
+            }
+            format("[{}]", parts.join(" "))
+        }
+        "captures" => match re.captures(text) {
+            Some(caps) => groups(caps),
+            None => "none".to_string(),
+        },
+        "captures_all" => {
+            let mut parts = List<String>.new()
+            for caps in re.captures_all(text) {
+                parts.push(groups(caps))
+            }
+            format("[{}]", parts.join(" "))
+        }
+        "name" => match re.captures(text) {
+            Some(caps) => match caps.name(arg.as_str()) {
+                Some(m) => span(m),
+                None => "none".to_string(),
+            },
+            None => "none".to_string(),
+        },
+        "expand" => match re.captures(text) {
+            Some(caps) => enc(caps.expand(arg.as_str()).as_str()),
+            None => "none".to_string(),
+        },
+        "replace" => enc(re.replace(text, arg.as_str()).as_str()),
+        "replace_all" => enc(re.replace_all(text, arg.as_str()).as_str()),
+        "replacen" => {
+            // The argument is `limit;template`; the template itself has no `;` in the fixtures.
+            let parts = arg.split_char(';')
+            let limit = number(parts[0].as_str())
+            enc(re.replacen(text, limit, parts[1].as_str()).as_str())
+        }
+        "split" => {
+            let mut parts = List<String>.new()
+            for piece in re.split(text) {
+                parts.push(enc(piece.as_str()))
+            }
+            format("[{}]", parts.join(" "))
+        }
+        "splitn" => {
+            let mut parts = List<String>.new()
+            for piece in re.splitn(text, number(arg.as_str())) {
+                parts.push(enc(piece.as_str()))
+            }
+            format("[{}]", parts.join(" "))
+        }
+        _ => format("unknown op {}", op),
+    }
+}
+
+fn main() {
+    let args = env.args()
+    let text = read_to_string(args[1].as_str()).unwrap()
+    for line in text.lines() {
+        if line.is_empty() || line.starts_with("#") {
+            continue
+        }
+        let fields = line.split_char('\t')
+        if fields.len() < 3 {
+            println("malformed row: {}", line)
+            continue
+        }
+        // A missing `arg` field (a trailing empty field some editors drop) is the empty text.
+        let mut arg = String.new()
+        if fields.len() > 3 {
+            arg = decode(fields[3].as_str())
+        }
+        println("{}", row(fields[0].as_str(), decode(fields[1].as_str()).as_str(), decode(fields[2].as_str()).as_str(), arg.as_str()))
+    }
+}

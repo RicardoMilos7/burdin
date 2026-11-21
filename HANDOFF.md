@@ -161,6 +161,14 @@ still reports "unknown module" with no hint. Tests: `tests/check_features.py` (b
 `tests/check_watch.py` (the pass-through), the loader's unit tests, and
 `crates/burdin_pkg/src/resolve.rs` (`the_lockfile_pins_the_potential_graph`).
 
+**Issue #341's verification (2026-11-22).** `tests/check_features.py` now also proves that a dev-dependency's code is in
+the test executable and absent from the `build` executable (its positive control is the test executable), and that a
+workspace member's dev-dependency reaches its test through `-p`, with `--offline` and `--locked` on a path-only
+workspace. It passes on Linux (WSL, the debug driver: 61 checks) and on Windows (the installed `stable` driver,
+0.1.2, from the toolchain directory; `BURDIN` must name the driver, not the proxy, because the test's temporary
+`BURDIN_HOME` holds no toolchain). The issue's "examples" are not a Burdin target yet (`--example` is issue #355), so
+dev-dependencies are checked against the test, bench, fuzz, and `check --tests` builds that exist.
+
 **The build tool's command surface and profiles (issues #338 and #339, 2026-11-20).** `spec/build-tool.md` records
 every command, the Cargo commands that are planned but not copied (with their issue), what is deliberately left out,
 the command-line and environment rules, and the exit statuses; `tests/check_cli.py` checks the golden command list,
@@ -1809,6 +1817,42 @@ Closing notes (for the issue comments; nothing has been posted):
   `python3 tests/run_tests.py s3_http s3_tls`, `python3 tests/check_tls.py`. Manual verification: none against the real
   Internet (no test touches the network). Not covered: macOS and Windows runs, a real certificate authority.
 - **#260 (http client):** `https` now works (HC17); the earlier note that `https` is refused is obsolete.
+
+## Session: the `regex` package (stage 3, issue #264)
+
+`packages/regex` is an official package written in Burdin (`spec/regex.md`, RX1-RX14). The engine is a Pike VM over a
+Thompson NFA (RX1), so every search is linear in the pattern and the text; backreferences, lookaround, atomic groups, and
+possessive quantifiers are errors (RX2, RX3). Files: `errors.bd` (`RegexError`), `classes.bd` (character classes and
+POSIX), `parse.bd` (recursive descent to an arena of `Node`s), `compile.bd` (the instruction program, with the limits of
+RX7), `vm.bd` (the Pike VM and the empty-match rule of RX10), and `regex.bd` (the API). The README is
+`packages/regex/README.md`.
+
+Tests: `tests/regex/cases.tsv` (206 golden rows, one or more per RX rule and error message; `tests/regex/README.md` gives
+the format), `tests/regex/runner` (the program that runs the rows), `tests/check_regex.py` (the goldens, a seeded
+differential of about 22000 rows against Python `re` over the subset both define the same way, `burdin add regex`, the
+official pin, and `--locked`), and `tests/s3_regex/usage` (the conformance case). CI runs the check on all three OSes
+and `s3_regex` in the conformance parts.
+
+Decisions made here: RX10 follows Python 3.7's `finditer` rule (after an empty match, a non-empty match may start at the
+same position), so `x*` on `abxd` reports the match `x` at 2 between the empty matches at 1 and 3; names are ASCII
+letters, digits, and `_`; a `-` after a class escape is a literal, and a range that ends in a class escape is an error;
+`{3,2}` is `invalid repetition count`, and `(?z)` is `unknown group flag`.
+
+Known problem, found while writing the package: a `List<Option<String>>` element copied with `names.push(x[i].clone())`
+lost its string, and a later comparison of that element crashed with `invalid memory access`. The package works around it
+in `Captures` by matching the clone first (`match self.names[i].clone() { Some(label) => names.push(Some(label)), ... }`).
+`Regex.new` still copies its names with the direct form; the goldens exercise it and pass, but the compiler defect is
+unexplained and should be reproduced in a small program and fixed or filed before the direct form is relied on.
+
+CI found two more problems that the local runs did not show. The parser recurses once per group level, and a
+depth of 180 overflowed a 1 MB stack (the Windows main-thread default), so the nesting limit is 100 (RX7), not 250.
+On macOS the differential run died with `invalid memory access`; it did not reproduce on Linux, in debug or release,
+with freed memory poisoned (`MALLOC_PERTURB_`). The check now bisects a failing run to its first crashing row, so the
+next failure names the row. The package's `Regex.new` copies its names with the match-on-clone form that works around
+the `Option<String>` defect.
+
+Commands (run from WSL, where the driver is built): `python3 tests/check_regex.py` and `python3 tests/run_tests.py
+s3_regex`, with `BURDIN` pointing at the driver.
 
 ## Decisions already made (do not reopen without a reason)
 
