@@ -6,6 +6,10 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.2 — 2026-11-21
+
 - `https` in the `http` package (stage 3, issue #262 phase C, issue #260; `spec/http-client.md`, HC17). A connection is a
   plain `TcpStream` or a `TlsStream` and everything above it (heads, framing, bodies, redirects, retries, timeouts) is
   shared; `https` URLs connect to port 443 (or the URL's), verify the server against the system's trust store and the
