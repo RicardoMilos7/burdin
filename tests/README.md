@@ -571,6 +571,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     (E0001). Issue #825; `spec/grammar.md`, `spec/derives.md`, `m07_generics/derive_default_interface`,
     `derive_default_bound`, `derive_not_derivable`, `derives_old_syntax`, `m05_ownership/drop_derive`.
 
+32. **Break values.** `break` may carry a value from a `loop` (`let x = loop { break 42 }`), and `break` with no
+    value is `break ()`. The loop's type is the expected type when the context gives one, otherwise the type of the
+    first `break` value, and `!` when nothing breaks out. Every break of one loop must give the same type. A
+    `while` or `for` can end by its condition or its items, so it gives back `()` and takes no break value:
+    `break 1` there is E0003. A labeled `break` carries its value to the loop it names. The value is computed
+    before the scopes being left are dropped, and its view origin joins the loop's result (RT2/RT5: a view of a
+    loop-body local is E0123 or E0122 when it escapes). Issue #276; `spec/grammar.md` rule 8.10,
+    `spec/memory-rules.md` DR6, RT2, and RT5, `m02_basics/break_value`, `break_value_errors`,
+    `m05_ownership/break_value_moves`, `break_value_drops`, `m06_conventions/break_value_view`.
+
 ## Review of the expected outputs
 
 The expected outputs and diagnostics were written by hand before the compiler existed, so a passing test only

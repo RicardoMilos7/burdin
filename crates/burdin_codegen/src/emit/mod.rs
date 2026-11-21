@@ -103,6 +103,8 @@ struct LoopTargets<'ctx> {
     temp_depth: usize,
     /// The number of scopes open when the loop started; `break` and `continue` drop the ones above.
     scope_depth: usize,
+    /// Where a `break` value is stored: the result slot of a `loop` used as a value, or `None` for `()`.
+    result: Option<PointerValue<'ctx>>,
 }
 
 pub(crate) struct Codegen<'ctx, 'a> {

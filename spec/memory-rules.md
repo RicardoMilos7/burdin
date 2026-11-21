@@ -94,7 +94,8 @@ Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_t
 
 **MV9 Block values.** The value of a block, an `if`, or a `match` (including the one a `?` lowers to) is an owned
 temporary whatever uses it. Its tail or arm moves the value out, even where the expression is only borrowed: a read-only
-argument, a method receiver, a comparison operand, a `let _`. A temporary scrutinee of such a value is moved into its
+argument, a method receiver, a comparison operand, a `let _`. A `loop`'s value (what its `break` gives back) is owned the
+same way. A temporary scrutinee of such a value is moved into its
 compiler-made local as MV8 says, so the value drops exactly once, at the end of the statement that created it (DR5),
 and a local the tail moves out is not usable afterwards (E0100).
 Tests: `m05_ownership/temporary_question_arg` (run), `m05_ownership/move_block_value_borrowed` (E0100).
@@ -334,7 +335,8 @@ temporary. `let _x = e` binds. The temporaries of a block's tail expression are 
 Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let_underscore`.
 
 **DR6 Early exits.** `return`, `break`, `continue`, and `?` drop every initialized value in the scopes being left, in reverse
-order, before control transfers. A returned value is computed before the drops run. A labeled `break 'l` or `continue 'l`
+order, before control transfers. A returned value is computed before the drops run, and so is a `break` value (which
+the loop then gives back). A labeled `break 'l` or `continue 'l`
 leaves every loop between it and the loop labeled `'l`, and drops the scopes of all of them, innermost first (issue #275).
 Tests: `m02_basics/labeled_loops` (the drops of a labeled `break` and of a labeled `continue`).
 Tests: `m05_ownership/drop_early_return`, `m09_stdlib/question_and_from`.

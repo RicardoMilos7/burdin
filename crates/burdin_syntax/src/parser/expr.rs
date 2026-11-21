@@ -438,7 +438,10 @@ impl Parser<'_> {
             TokenKind::Break => {
                 self.bump();
                 let label = self.break_label();
-                Ok(Expr { kind: ExprKind::Break(label), span: start.to(self.prev_span()) })
+                // Like `return`, a value only if one starts on the same line (rule 5).
+                let value =
+                    if !self.nl() && Self::can_start_expr(self.kind()) { Some(Box::new(self.expr()?)) } else { None };
+                Ok(Expr { kind: ExprKind::Break { label, value }, span: start.to(self.prev_span()) })
             }
             TokenKind::Continue => {
                 self.bump();

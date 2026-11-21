@@ -212,7 +212,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Block(b) => self.block(b, Mode::Move)?,
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty)?,
             K::While(..)
-            | K::Loop(_)
             | K::ForRange { .. }
             | K::ForRangeValue { .. }
             | K::ForArray { .. }
@@ -220,29 +219,35 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | K::ForList { .. }
             | K::ForMap { .. }
             | K::ForChars { .. } => {
-                self.loop_expr(e, None)?;
+                self.loop_expr(e, None, None)?;
                 None
             }
-            K::Labeled(label, inner) => {
-                self.loop_expr(inner, Some(label.as_str()))?;
-                None
-            }
+            K::Loop(_) => self.loop_value(e, None)?,
+            K::Labeled(label, inner) => self.loop_value(inner, Some(label.as_str()))?,
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
-            K::Break(label) | K::Continue(label) => {
-                // An unlabeled jump names the innermost loop; a labeled one the loop with that label (sema checked it).
-                let index = match label {
-                    None => self.loops.len() - 1,
-                    Some(name) => self
-                        .loops
-                        .iter()
-                        .rposition(|lp| lp.label.as_deref() == Some(name.as_str()))
-                        .expect("checked: a labeled loop encloses it"),
+            K::Break { label, value } => {
+                // The value is computed before the scopes are left, like a `return` value (DR6).
+                let v = match value {
+                    Some(value) => self.expr_mode(value, Mode::Move)?,
+                    None => None,
                 };
+                let index = self.jump_index(label.as_deref());
                 let target = &self.loops[index];
-                let (bb, temp_depth, scope_depth) = match e.kind {
-                    K::Break(_) => (target.break_bb, target.temp_depth, target.scope_depth),
-                    _ => (target.continue_bb, target.temp_depth, target.scope_depth),
-                };
+                let (bb, temp_depth, scope_depth, result) =
+                    (target.break_bb, target.temp_depth, target.scope_depth, target.result);
+                self.drop_scopes_above(scope_depth)?;
+                self.free_temps_from(temp_depth)?;
+                if let (Some(result), Some(v)) = (result, v) {
+                    self.builder.build_store(result, v).map_err(llvm_err)?;
+                }
+                self.builder.build_unconditional_branch(bb).map_err(llvm_err)?;
+                self.continue_dead();
+                None
+            }
+            K::Continue(label) => {
+                let index = self.jump_index(label.as_deref());
+                let target = &self.loops[index];
+                let (bb, temp_depth, scope_depth) = (target.continue_bb, target.temp_depth, target.scope_depth);
                 self.drop_scopes_above(scope_depth)?;
                 self.free_temps_from(temp_depth)?;
                 self.builder.build_unconditional_branch(bb).map_err(llvm_err)?;

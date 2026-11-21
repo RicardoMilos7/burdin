@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// A `break` value carries its origin out of the loop (spec/memory-rules.md, RT2 and RT5): a view of a loop-body local
+// cannot be bound outside the loop (E0123) or returned (E0122). A view of a parameter is fine.
+
+fn escape(): &i32 {
+    let r = loop { //~ E0123
+        let x = 5
+        break &x
+    }
+    r //~ E0122
+}
+
+// The same loop over a parameter's view is what the rules allow.
+fn keep(p: &i32): &i32 {
+    loop { break p }
+}
+
+fn main() {
+}

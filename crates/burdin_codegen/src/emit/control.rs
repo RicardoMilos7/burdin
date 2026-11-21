@@ -18,13 +18,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// Emits a loop's body with its targets: `break` and `continue` go to `break_bb` and `continue_bb`, and a
-    /// labeled one finds this loop by `label`.
+    /// labeled one finds this loop by `label`. `result` is the slot a `break` value is stored in, for a `loop`
+    /// used as a value.
     pub(super) fn loop_body(
         &mut self,
         body: &'a tir::Block,
         continue_bb: BasicBlock<'ctx>,
         break_bb: BasicBlock<'ctx>,
         label: Option<&str>,
+        result: Option<inkwell::values::PointerValue<'ctx>>,
     ) -> GenResult<()> {
         self.loops.push(LoopTargets {
             label: label.map(str::to_string),
@@ -32,15 +34,52 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             break_bb,
             temp_depth: self.temps.len(),
             scope_depth: self.scopes.len(),
+            result,
         });
         self.block(body, Mode::Use)?;
         self.loops.pop();
         Ok(())
     }
 
+    /// A `loop` (with its label, if any) used as a value: it allocates the slot a `break` stores into, runs the
+    /// loop, and loads what the `break` left there.
+    pub(super) fn loop_value(
+        &mut self,
+        e: &'a tir::Expr,
+        label: Option<&str>,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let result = match self.llvm_ty(&e.ty) {
+            Some(t) => Some(self.alloca(t, "loop.result")?),
+            None => None,
+        };
+        self.loop_expr(e, label, result)?;
+        match (result, self.llvm_ty(&e.ty)) {
+            (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// The index of the loop a jump names: the innermost loop for an unlabeled one, or the loop with that label
+    /// (sema has checked that one encloses the jump).
+    pub(super) fn jump_index(&self, label: Option<&str>) -> usize {
+        match label {
+            None => self.loops.len() - 1,
+            Some(name) => self
+                .loops
+                .iter()
+                .rposition(|lp| lp.label.as_deref() == Some(name))
+                .expect("checked: a labeled loop encloses it"),
+        }
+    }
+
     /// A loop expression, with the label written before it, if any. Its body's `break` and `continue` find it by
-    /// that label.
-    pub(super) fn loop_expr(&mut self, e: &'a tir::Expr, label: Option<&str>) -> GenResult<()> {
+    /// that label. `result` holds the value a `break` gives back for a `loop`.
+    pub(super) fn loop_expr(
+        &mut self,
+        e: &'a tir::Expr,
+        label: Option<&str>,
+        result: Option<inkwell::values::PointerValue<'ctx>>,
+    ) -> GenResult<()> {
         use tir::ExprKind as K;
         match &e.kind {
             K::While(cond, body) => {
@@ -53,7 +92,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let c = self.need_int(c, &Ty::Bool);
                 self.builder.build_conditional_branch(c, body_bb, exit).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
-                self.loop_body(body, header, exit, label)?;
+                self.loop_body(body, header, exit, label, None)?;
                 self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
                 self.builder.position_at_end(exit);
             }
@@ -62,7 +101,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let exit = self.new_block("loop.end");
                 self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
-                self.loop_body(body, body_bb, exit, label)?;
+                self.loop_body(body, body_bb, exit, label, result)?;
                 self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
                 self.builder.position_at_end(exit);
             }
@@ -197,7 +236,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if let Some(fact) = fact {
             self.bounds_facts.push(fact);
         }
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         if fact.is_some() {
             self.bounds_facts.pop();
         }
@@ -394,7 +433,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             _ => None,
         };
         self.pat_bind(pat, elem_ptr, elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -450,7 +489,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => None,
         };
         self.pat_bind(pat, elem_ptr, &elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -516,7 +555,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // The entry is `(key, value, hash)`; a `(key, value)` tuple shares the first two fields' layout, so the
         // pattern binds views into the map at the same addresses the key and value occupy.
         self.pat_bind(pat, Some(slot), &pair, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -558,7 +597,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let slot = self.alloca(self.cx.i32_type().into(), "for.char")?;
         self.builder.build_store(slot, cp).map_err(llvm_err)?;
         self.pat_bind(pat, Some(slot), &Ty::Char, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -608,7 +647,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => None,
         };
         self.pat_bind(pat, elem_ptr, &elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label)?;
+        self.loop_body(body, latch, exit, label, None)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);

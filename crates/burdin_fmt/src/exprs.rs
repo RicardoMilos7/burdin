@@ -497,9 +497,25 @@ impl Fmt<'_> {
                 }
                 Ok(Ex::plain(kw))
             }
-            TokenKind::Break | TokenKind::Continue => {
+            TokenKind::Break => {
                 let kw = self.tok_doc();
-                // A label on the same line names the loop the jump leaves or goes on with.
+                let mut parts = vec![kw];
+                // A label on the same line names the loop the jump leaves.
+                if !self.nl() && matches!(self.kind(), TokenKind::Label(_)) {
+                    parts.push(space());
+                    parts.push(self.tok_doc());
+                }
+                // So does a value (`break 42`); `continue` takes none.
+                if !self.nl() && lookahead::can_start_expr(self.kind()) {
+                    let value = self.expr()?;
+                    parts.push(space());
+                    parts.push(value.doc);
+                }
+                Ok(Ex::plain(concat(parts)))
+            }
+            TokenKind::Continue => {
+                let kw = self.tok_doc();
+                // A label on the same line names the loop the jump goes on with.
                 if !self.nl() && matches!(self.kind(), TokenKind::Label(_)) {
                     let label = self.tok_doc();
                     return Ok(Ex::plain(concat(vec![kw, space(), label])));

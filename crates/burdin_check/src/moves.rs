@@ -1083,7 +1083,11 @@ impl<'a> Checker<'a> {
                 }
                 self.states = result.unwrap_or(entry);
             }
-            K::Break(label) => {
+            K::Break { label, value } => {
+                // The value leaves the loop with the jump, so a move in it counts here (as a `return` value does).
+                if let Some(value) = value {
+                    self.expr(value, Mode::Move);
+                }
                 let state = self.states.clone();
                 if let Some(index) = self.loop_index(label.as_deref()) {
                     self.loops[index].exits.push(state);

@@ -1,0 +1,42 @@
+//@ compile-fail
+
+// A `while` or `for` can end by its condition or its items, so it gives back `()` and takes no break value
+// (issue #276, `spec/grammar.md` rule 8.10). A `loop` takes one, and every break of one loop must agree with the
+// loop's expected type.
+
+fn main() {
+    while true {
+        break 1 //~ E0003
+    }
+
+    // A value-less break in a `while` is the ordinary `break ()`.
+    while true {
+        break
+    }
+
+    for i in 0..3 {
+        break 1 //~ E0003
+    }
+
+    // The loop's expected type is what its breaks must give.
+    let a: i32 = loop { break } //~ E0003
+    let c: bool = loop { break 1 } //~ E0003
+
+    // Two breaks of one loop must agree; the first gives the type.
+    let b = loop {
+        if true {
+            break 1
+        } else {
+            break "x" //~ E0003
+        }
+    }
+
+    // A labeled break gives its value to the loop it names.
+    'w: while true {
+        break 'w 1 //~ E0003
+    }
+
+    let _ = a
+    let _ = b
+    let _ = c
+}

@@ -1152,8 +1152,12 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
         | K::Unit
         | K::Name { .. }
         | K::SelfValue
-        | K::Break(_)
         | K::Continue(_) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                out.push(value);
+            }
+        }
         K::Interp(parts) => {
             for p in parts {
                 if let ast::InterpPart::Hole(h) = p

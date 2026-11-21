@@ -354,9 +354,13 @@ impl<'a> Checker<'a> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break(_)
             | K::Continue(_)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value, Mode::Move);
+                }
+            }
             K::Local(_) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) | K::Index(..) => {
                 let access = if mode == Mode::Move && !self.is_copy(&e.ty) { Access::Move } else { Access::Read };
                 self.access_place(e, access);
@@ -822,10 +826,14 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break(_)
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                locals_used(value, out);
+            }
+        }
         K::Field(base, _)
         | K::Deref(base)
         | K::PtrDeref(base)
@@ -954,10 +962,14 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break(_)
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                uses_expr(value, stmt, last);
+            }
+        }
         K::Field(base, _)
         | K::Deref(base)
         | K::PtrDeref(base)

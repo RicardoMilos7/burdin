@@ -73,10 +73,14 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
-        | K::Break(_)
         | K::Continue(_)
         | K::Name { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                out.push(Child::Expr(Role::Plain, value));
+            }
+        }
         K::Interp(parts) => {
             for part in parts {
                 if let InterpPart::Hole(Hole { arg: HoleArg::Expr(x), .. }) = part {
@@ -646,7 +650,7 @@ pub fn control_flow(b: &Block) -> ControlFlow {
     each_expr(b, &mut |e, _| {
         match &e.kind {
             ExprKind::Return(_) => out.returns = true,
-            ExprKind::Break(_) => out.breaks = true,
+            ExprKind::Break { .. } => out.breaks = true,
             ExprKind::Continue(_) => out.continues = true,
             ExprKind::SelfValue => out.self_value = true,
             ExprKind::Comptime(_) | ExprKind::ComptimeAssert(..) => out.comptime = true,

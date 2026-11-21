@@ -397,10 +397,14 @@ impl An<'_> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break(_)
             | K::Continue(_)
             | K::Return(None)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value, false);
+                }
+            }
             K::Local(id) => {
                 self.use_local(*id);
             }
