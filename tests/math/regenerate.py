@@ -6,8 +6,10 @@
 
 No expected value is computed by the package under test. A rational result is computed exactly with
 `fractions.Fraction`, a square root with `decimal.Decimal` at 60 digits, and the transcendental results (`gamma`,
-`ln_gamma`, `acos`) with Python's `math` module, which is an independent implementation. Random inputs come from a fixed
-linear congruential generator, so the files are the same on every machine.
+`ln_gamma`, `acos`) to 60 digits by the series and bisection written in this file. The C library's `math.gamma` and
+`math.acos` are not used as oracles: they are accurate to a few ulps, but their last bits differ between platforms, so
+a file written from them would not be the same everywhere. Random inputs come from a fixed linear congruential
+generator, so the files are the same on every machine.
 
 A fixture line is `name|op|fields...|expected`. A line that starts with `#` is a comment. A vector or list is
 comma-separated (`-` is empty), a matrix is `RxC:v1,v2,...` in row-major order, and an absent answer (`None`) is `none`.
@@ -40,6 +42,90 @@ def fmt(x):
     if math.isinf(x):
         return "inf" if x > 0 else "-inf"
     return repr(float(x))
+
+
+# High-precision oracles for the transcendental results. Each returns a 60-digit Decimal of the true value, so a float
+# written from it is the correctly rounded value on every machine.
+
+PI = Decimal("3.14159265358979323846264338327950288419716939937510582097494459")
+TWO_PI = 2 * PI
+LN_TWO_PI = TWO_PI.ln()
+
+
+def bernoulli(count):
+    """The Bernoulli numbers B_0 to B_count as Fractions (B_1 = -1/2; the even ones feed Stirling's series)."""
+    numbers = [Fraction(1)]
+    for m in range(1, count + 1):
+        numbers.append(-sum(math.comb(m + 1, j) * numbers[j] for j in range(m)) / (m + 1))
+    return numbers
+
+
+BERNOULLI = bernoulli(40)
+
+
+def to_decimal(q):
+    """A Fraction as a 60-digit Decimal."""
+    return Decimal(q.numerator) / Decimal(q.denominator)
+
+
+def sin_digits(y):
+    """sin of a Decimal: reduce to [-pi, pi], then sum the Taylor series."""
+    r = y - TWO_PI * (y / TWO_PI).to_integral_value()
+    total = r
+    term = r
+    n = 1
+    while True:
+        term = -term * r * r / ((2 * n) * (2 * n + 1))
+        if abs(term) < Decimal("1e-70"):
+            return total
+        total += term
+        n += 1
+
+
+def ln_gamma_positive(x):
+    """ln Gamma(x) for a positive Decimal: the recurrence lifts x to at least 60, then Stirling's series with 20 terms."""
+    z = x
+    shift = Decimal(0)
+    while z < 60:
+        shift += z.ln()
+        z += 1
+    total = (z - Decimal("0.5")) * z.ln() - z + LN_TWO_PI / 2
+    for k in range(1, 21):
+        total += to_decimal(BERNOULLI[2 * k]) / (2 * k * (2 * k - 1) * z ** (2 * k - 1))
+    return total - shift
+
+
+def gamma_digits(x):
+    """Gamma(x) for a float x that is not a pole, as a 60-digit Decimal."""
+    d = to_decimal(Fraction(x))
+    if x > 0:
+        return ln_gamma_positive(d).exp()
+    # Reflection: Gamma(x) Gamma(1 - x) = pi / sin(pi x).
+    return PI / (sin_digits(PI * d) * ln_gamma_positive(1 - d).exp())
+
+
+def ln_gamma_digits(x):
+    """ln |Gamma(x)| for a float x that is not a pole, as a 60-digit Decimal. The true value is exactly zero at 1 and 2,
+    where the series leaves a residue of about 1e-57; anything this small is written as zero."""
+    d = to_decimal(Fraction(x))
+    if x > 0:
+        value = ln_gamma_positive(d)
+    else:
+        value = PI.ln() - abs(sin_digits(PI * d)).ln() - ln_gamma_positive(1 - d)
+    return Decimal(0) if abs(value) < Decimal("1e-40") else value
+
+
+def acos_digits(c):
+    """acos of a Fraction in [-1, 1], as a 60-digit Decimal, by bisection on cos (decreasing on [0, pi])."""
+    target = to_decimal(c)
+    low, high = Decimal(0), PI
+    for _ in range(200):
+        middle = (low + high) / 2
+        if sin_digits(middle + PI / 2) > target:  # cos(middle) > target: the answer lies to the right
+            low = middle
+        else:
+            high = middle
+    return (low + high) / 2
 
 
 def fmt_list(values):
@@ -159,13 +245,13 @@ for coefficients, x in [([1.0, 2.0, 3.0], 2.0), ([], 5.0), ([7.0], -3.0), ([1.0,
         value = value * exact(x) + exact(c)
     add(SCALAR, f"poly_{len(fixtures.get(SCALAR, []))}|poly|{fmt_list(coefficients)}|{fmt(x)}|{fmt(value)}")
 
-# gamma and ln_gamma: Python's math module, which is accurate to a few ulps across the range. Poles are NaN for gamma and
-# infinity for ln_gamma. The values are checked against the identity gamma(x + 1) = x gamma(x) below.
+# gamma and ln_gamma: 60-digit values from the Stirling series, rounded once to a float (see gamma_digits). Poles are NaN
+# for gamma and infinity for ln_gamma. The identity gamma(x + 1) = x gamma(x) is checked against math.gamma below.
 GAMMA = "gamma.kat"
 for x in [0.5, 1.0, 1.5, 2.0, 3.0, 3.7, 5.0, 10.0, 14.9, 15.0, 20.0, 0.001, 0.1, 100.0, 150.0, 170.5, 171.0,
           -0.5, -1.5, -2.7, -10.25, 0.25, 7.75]:
-    add(GAMMA, f"gamma_{x}|gamma|{fmt(x)}|{fmt(math.gamma(x))}")
-    add(GAMMA, f"lngamma_{x}|lngamma|{fmt(x)}|{fmt(math.lgamma(x))}")
+    add(GAMMA, f"gamma_{x}|gamma|{fmt(x)}|{fmt(float(gamma_digits(x)))}")
+    add(GAMMA, f"lngamma_{x}|lngamma|{fmt(x)}|{fmt(float(ln_gamma_digits(x)))}")
 for x in [0.0, -1.0, -2.0, -7.0]:
     add(GAMMA, f"gamma_pole_{x}|gamma|{fmt(x)}|nan")
     add(GAMMA, f"lngamma_pole_{x}|lngamma|{fmt(x)}|inf")
@@ -270,9 +356,10 @@ for label, a_raw, b_raw in vector_cases:
     add(VECTOR, f"scale_{label}|scale|{fmt_list(a)}|-2.5|{fmt_list([x * Fraction(-5, 2) for x in a])}")
     add(VECTOR, f"normalized_{label}|normalized|{fmt_list(a)}|-|"
                 f"{fmt_list([x / norm for x in a])}")
-    # The angle is an acos of an exact cosine, so it is not computed exactly; it is the reference value.
+    # The angle is acos of the cosine, rounded to a float and clamped to [-1, 1]; acos is computed to 60 digits.
     cosine = float(dot / (norm * dsqrt(sum((y * y for y in b), Fraction(0)))))
-    add(VECTOR, f"angle_{label}|angle|{fmt_list(a)}|{fmt_list(b)}|{fmt(math.acos(max(-1.0, min(1.0, cosine))))}")
+    add(VECTOR, f"angle_{label}|angle|{fmt_list(a)}|{fmt_list(b)}|"
+                f"{fmt(float(acos_digits(Fraction(max(-1.0, min(1.0, cosine))))))}")
 add(VECTOR, "cross_v3|cross|1,2,3|4,5,6|-3,6,-3")
 add(VECTOR, "cross_axes|cross|1,0,0|0,1,0|0,0,1")
 add(VECTOR, "cross_parallel|cross|2,4,6|1,2,3|0,0,0")
