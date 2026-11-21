@@ -61,13 +61,10 @@ not updated and may disagree with the repository.
    serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
    path-aware errors, the derives, and the test format, `spec/toml.md` is the TOML 1.0.0 package: the subset it reads,
    the canonical form it writes, the framework mapping, the strict reader, and its errors with their locations,
-<<<<<<< HEAD
-   `spec/http-client.md` is the `http` package: URLs, headers, requests, the body framings, redirects, timeouts, retries, and
-   connection reuse (and that `https` is not supported),
-=======
-   `spec/crypto.md` is the `crypto` package: the hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and
-   Ed25519 it provides in pure Burdin, what each reports, and why it is an experiment, not a security claim,
->>>>>>> origin/main
+   `spec/http-client.md` is the `http` package: URLs, headers, requests, the body framings, redirects, timeouts,
+   retries, and connection reuse (and that `https` is not supported), `spec/crypto.md` is the `crypto` package: the
+   hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 it provides in pure Burdin, what each
+   reports, and why it is an experiment, not a security claim,
    `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
@@ -270,7 +267,7 @@ docs/                     the user-facing error-code reference (checked by tests
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
-.github/workflows/        ci.yml (pull requests and main; each OS split into four parallel parts) and release.yml (tag, nightly schedule, or manual dry run)
+.github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, extension
                           methods, test runner, the query library, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts
