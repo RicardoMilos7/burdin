@@ -211,7 +211,11 @@ return the socket; the socket closes when the stream is dropped) and the engine 
   way to write.
 - `Read.read` and `Write.write` are `recv` and `send` with the error as an `IoError` (`TlsError.to_io`): a transport
   error keeps its own value, a truncation is `IoError.UnexpectedEof`, and the rest are `IoError.InvalidData`.
-- `close` sends a `close_notify`, flushes it, and makes every later call `TlsError.Closed`. `abort` ends the stream with
+- `close` sends a `close_notify`, flushes it, then reads and discards what the peer has already sent until the socket
+  has nothing more to read, waiting at most 50 ms for each read (so a silent peer adds at most 50 ms), and makes every
+  later call `TlsError.Closed`. The drain leaves the socket with no unread data when it is dropped: Windows resets a
+  connection that closes with unread data, and the peer may then lose the `close_notify` it was sent (the TLS 1.3
+  session ticket a server sends after the handshake is the usual case). `abort` ends the stream with
   no `close_notify`, as a crash or an attacker would (the tests use it to make the truncation case). Dropping a
   stream that is neither closed nor failed sends a best-effort `close_notify` with a 200 ms write timeout and never
   blocks longer or panics.

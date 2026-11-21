@@ -93,14 +93,14 @@ fn hover_on_a_method_of_a_nested_receiver_shows_its_signature() {
     };
     let nested = "let body = resp.body.read_to_string()";
     let method = hover(&mut client, nested, "let body = resp.body.".len());
-    assert!(method.contains("fn read_to_string(self): Option<str>"), "{method}");
+    assert!(method.contains("fn read_to_string(self): Option<String>"), "{method}");
     assert!(method.contains("Reads the whole body."), "{method}");
     let receiver = hover(&mut client, nested, "let body = ".len());
     assert!(receiver.contains("Response"), "{receiver}");
     let field = hover(&mut client, nested, "let body = resp.".len());
     assert!(field.contains("body: Body"), "{field}");
     let one = hover(&mut client, "let one = resp.read_to_string()", "let one = resp.".len());
-    assert!(one.contains("fn read_to_string(self): Option<str>"), "{one}");
+    assert!(one.contains("fn read_to_string(self): Option<String>"), "{one}");
     assert_eq!(client.shutdown(), 0);
 }
 
