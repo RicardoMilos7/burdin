@@ -1,6 +1,8 @@
 // Small helpers over the OpenSSL declarations: pointers to bytes, C strings, and the error queue. Every function that
 // takes or returns a raw pointer is `unsafe`.
 
+use errors.TlsError
+use features
 use openssl.{ERR_clear_error, ERR_get_error, ERR_reason_error_string}
 
 /// A pointer to the first byte of `data`. `data` must not be empty. The pointer is valid as long as the bytes are.
@@ -18,34 +20,54 @@ unsafe fn c_text(text: CPtr<CChar>): String {
 
 /// The text of an OpenSSL error code: its short reason ("certificate verify failed"), or `error code N`.
 unsafe fn code_text(code: u32): String {
-    let reason = ERR_reason_error_string(code as u64)
-    if reason.is_null() {
-        return format("error code {}", code)
+    comptime if target.os() == target.Os.Windows {
+        String.new()
+    } else if features.openssl {
+        let reason = ERR_reason_error_string(code as u64)
+        if reason.is_null() {
+            return format("error code {}", code)
+        }
+        CStr.to_string(reason)
+    } else {
+        String.new()
     }
-    CStr.to_string(reason)
 }
 
 /// Empties the error queue of this thread and returns the reason of its first entry, or "" when it was empty. A failing
 /// OpenSSL call is followed by this on the same thread with no task switch in between (spec/tls.md, TLS2).
 fn error_text(): String {
-    let mut text = String.new()
-    unsafe {
-        loop {
-            let code = ERR_get_error()
-            if code == 0 {
-                break
-            }
-            if text.is_empty() {
-                text = code_text(code)
+    comptime if target.os() == target.Os.Windows {
+        String.new()
+    } else if features.openssl {
+        let mut text = String.new()
+        unsafe {
+            loop {
+                let code = ERR_get_error()
+                if code == 0 {
+                    break
+                }
+                if text.is_empty() {
+                    text = code_text(code)
+                }
             }
         }
+        text
+    } else {
+        String.new()
     }
-    text
 }
 
 /// Forgets the errors a previous call left behind, so the queue holds only what the next call reports.
 fn clear_errors() {
-    unsafe { ERR_clear_error() }
+    comptime if target.os() == target.Os.Windows {} else if features.openssl {
+        unsafe { ERR_clear_error() }
+    } else {}
+}
+
+/// The failure of every TLS call in a build whose `openssl` feature is off: no OpenSSL is linked, so none is called
+/// (spec/tls.md, TLS7).
+fn no_openssl(): TlsError {
+    TlsError.Unsupported("no OpenSSL in this build: the `openssl` feature of the tls package is off".to_string())
 }
 
 /// `text` with a fallback for the empty string.

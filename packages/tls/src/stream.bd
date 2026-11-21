@@ -192,8 +192,24 @@ TlsStream {
         if self.handshaken && !self.dead {
             self.engine.shutdown()
             self.__flush_out()?
+            self.__linger()
         }
         Ok(())
+    }
+
+    /// Reads what the peer has already sent (a TLS 1.3 session ticket, its own close_notify) and drops it, so the
+    /// socket closes with an empty receive buffer. Windows resets a connection that closes with unread data, and the
+    /// peer may then lose the close_notify it was sent. The wait is short: a peer that sends nothing ends the drain.
+    priv fn __linger(mut self) {
+        self.tcp.set_read_timeout(Some(Duration.from_millis(50)))
+        loop {
+            self.inbuf.clear()
+            match self.tcp.read(mut self.inbuf, NET_CHUNK) {
+                Ok(0) => return,
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
     }
 
     /// Ends the connection without a `close_notify`, as a crash or an attacker would. The peer sees its stream end with

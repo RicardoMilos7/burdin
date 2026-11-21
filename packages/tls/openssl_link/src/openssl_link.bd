@@ -1,0 +1,2 @@
+// The OpenSSL libraries of the `tls` package are named in this package's manifest (spec/tls.md, TLS7); this module
+// has nothing to declare.

@@ -3,11 +3,16 @@
 version = 1
 
 [[package]]
+name = "openssl_link"
+version = "0.1.0"
+dependencies = []
+
+[[package]]
 name = "tls"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:a0552c619e0de1e30f550a65c9c29c689fabd5a8ee50419b0544a0e8a69395f6"
-dependencies = []
+checksum = "sha256:2ba27ca0fd592db5b33e84dbf48cc96c6a41c73ccf587e24857c134af55774e2"
+dependencies = ["openssl_link"]
 
 [[package]]
 name = "tls_conformance"

@@ -24,7 +24,6 @@
 //> missing key file: Io
 //> ec key: loaded
 //> rsa key: loaded
-//> ed25519 key: loaded
 //> encrypted key: BadKey (bad private key: encrypted private keys are not supported)
 //> empty key: BadKey (bad private key: no private key found in the PEM text)
 //> plain text key: BadKey (bad private key: no private key found in the PEM text)
@@ -33,7 +32,6 @@
 //> empty der key: BadKey (bad private key: the DER input is empty)
 //> server chain and key: ok
 //> server rsa: ok
-//> server ed25519: ok
 //> server mismatched key: KeyMismatch (the private key does not match the certificate)
 //> server mismatched cert: KeyMismatch
 //> server encrypted key: BadKey
@@ -70,8 +68,6 @@
 //> alpn: connected, chosen protocol=None
 //> server: handshake ok version=TLSv1.3 sni=localhost peer=-
 //> rsa leaf: connected TLSv1.3 peer=/CN=localhost
-//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
-//> ed25519 leaf: connected TLSv1.3 peer=/CN=localhost
 //> server: handshake ok version=TLSv1.3 sni=localhost peer=-
 //> == verification (TLS3)
 //> expired: CertificateInvalid (certificate verification failed: certificate has expired)

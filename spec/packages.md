@@ -196,10 +196,15 @@ error: burdin.toml: dependency `jsn = true`: it is not an official package; the 
 for any other package give `{ path = "..." }` or `{ git = "..." }`
 ```
 
+The same official package may be written as a table that takes the keys of PKG25: `name = { official = true, default-features = false, features = ["a"] }`
+(`official = false` is an error: remove the line, or give `path` or `git`). A table with `official = true` and a `path` or `git` key is an error.
+`official = true` alone is `name = true`. This is how a package turns an official dependency's default features off, as `http` does for `tls` (`spec/http-client.md`, HC17).
+
 A script's inline manifest (`spec/scripts.md`, SC3) and `[rust.crates]` take only paths, so `true` is an error
 there. A version string alone stays reserved for a future registry (PKG2). Package names are unique in a graph
 (PKG1), so an official package and a path or git package of the same name cannot be used together. An official package
-may depend on another: `http` declares `tls = true` (`spec/http-client.md`, HC17), so a program that uses `http` has `tls`
+may depend on another: `http` declares `tls = { official = true, default-features = false }` and turns the feature on by
+default (`spec/http-client.md`, HC17), so a program that uses `http` has `tls`
 in its graph, pinned in `burdin.lock` beside `http` (both with `source = "official"` and their own checksums), and links
 `tls`'s native libraries (PKG34); the program names `tls` itself only to `use` its types. Tests: the loader's unit tests
 (`official_dependency_forms`), `tests/check_packages.py`, `tests/check_http.py` (the lockfile of a program that depends

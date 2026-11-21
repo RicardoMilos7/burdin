@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #878: on Windows the `tls` package uses SChannel, the system's own TLS stack, so Windows needs no OpenSSL
+  install and the driver downloads nothing. Linux and macOS still link the system's OpenSSL 3. The `tls` package has an
+  `openssl` feature and `http` a `tls` feature, both on by default, so `http = { official = true, default-features = false }`
+  builds a program that links no OpenSSL (on Linux and macOS; the feature has no effect on Windows). A dependency may be
+  written `{ official = true, ... }` to take the keys of PKG25 (PKG15). Rules: `spec/tls.md` TLS1, TLS1a, and TLS7,
+  `spec/http-client.md` HC17.
 - Completion after the `.` of a member chain (`resp.body.`, `client.send(req).`) offers the members on that keystroke
   instead of an empty list, because the receiver's type is read from the declarations along the chain (issue #879;
   `spec/lsp.md` LS12).

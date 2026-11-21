@@ -9,8 +9,23 @@ pub use errors.TlsError
 //   * `TlsStream` (TLS5): a `Read` and `Write` over a `TcpStream` that runs the handshake and pumps the bytes, so no
 //     OpenSSL call blocks;
 //   * `TlsError` (TLS6): every failure is a value, never a panic.
+//   * `backend()` (TLS1): the name of the TLS stack this build uses.
 //
 // A dependency's other modules are hidden, so every public name is re-exported here.
 
-pub use openssl
 pub use stream.TlsStream
+
+use features
+use openssl.{OPENSSL_VERSION, OpenSSL_version}
+
+/// The TLS stack this build uses (spec/tls.md, TLS1): `SChannel` on Windows, and on the other platforms the text of the
+/// linked OpenSSL, such as `OpenSSL 3.0.13 30 Jan 2024`. With the `openssl` feature off it is `none`.
+fn backend(): String {
+    comptime if target.os() == target.Os.Windows {
+        "SChannel".to_string()
+    } else if features.openssl {
+        unsafe { CStr.to_string(OpenSSL_version(OPENSSL_VERSION)) }
+    } else {
+        "none".to_string()
+    }
+}

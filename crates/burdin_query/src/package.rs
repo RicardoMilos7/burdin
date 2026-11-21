@@ -1874,8 +1874,9 @@ pub(crate) struct DependencySpec {
 }
 
 /// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), `{ git = "<url>" }` with at most one of `branch`,
-/// `tag`, and `rev`, or `true` for the official package of that name (`spec/packages.md`, PKG1-PKG2, PKG15), with the
-/// keys of PKG25: `optional`, `default-features`, and `features`. Other keys are ignored, so a newer manifest loads.
+/// `tag`, and `rev`, or `true` (or `{ official = true }`) for the official package of that name (`spec/packages.md`,
+/// PKG1-PKG2, PKG15), with the keys of PKG25: `optional`, `default-features`, and `features`. Other keys are ignored, so
+/// a newer manifest loads.
 fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     let plain =
         |source: DepSource| DependencySpec { source, optional: false, default_features: true, features: Vec::new() };
@@ -1898,6 +1899,7 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     let mut optional = false;
     let mut default_features = true;
     let mut features = Vec::new();
+    let mut official = false;
     for part in split_table(inner) {
         let Some((key, value)) = part.split_once('=') else {
             return Err(format!("expected `key = value` in the dependency table, found `{}`", part.trim()));
@@ -1910,6 +1912,12 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
             "tag" => references.push(GitRef::Tag(parse_string(value)?)),
             "rev" => references.push(GitRef::Rev(parse_string(value)?)),
             "version" => has_version = true,
+            "official" => {
+                if !parse_bool(value)? {
+                    return Err("`official = false` means nothing: remove the key, or give `path` or `git`".to_string());
+                }
+                official = true;
+            }
             "optional" => optional = parse_bool(value)?,
             "default-features" => default_features = parse_bool(value)?,
             "features" => features = parse_string_array(value)?,
@@ -1918,6 +1926,17 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     }
     if references.len() > 1 {
         return Err("a git dependency takes at most one of `branch`, `tag`, and `rev`".to_string());
+    }
+    if official {
+        // `{ official = true, default-features = false }` is the official package with the keys of PKG25 (PKG15).
+        if path.is_some() || git.is_some() {
+            return Err("`official = true` names an official package, so it takes no `path` or `git`".to_string());
+        }
+        if !references.is_empty() || has_version {
+            return Err("`official = true` takes only the keys of PKG25 (`optional`, `default-features`, `features`)"
+                .to_string());
+        }
+        return Ok(DependencySpec { source: DepSource::Official, optional, default_features, features });
     }
     let source = match (path, git) {
         (Some(_), Some(_)) => return Err("a dependency takes a `path` or a `git` repository, not both".to_string()),
@@ -1939,7 +1958,12 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
                         `version` alone cannot be resolved"
                 .to_string());
         }
-        (None, None) => return Err("a dependency needs a `path` or a `git` repository".to_string()),
+        (None, None) => {
+            return Err(
+                "a dependency needs a `path` or a `git` repository, or `official = true` for an official package"
+                    .to_string(),
+            );
+        }
     };
     Ok(DependencySpec { source, optional, default_features, features })
 }
@@ -2240,6 +2264,19 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
         assert!(dep("{ version = \"1.0\" }").unwrap_err().contains("no package registry"));
         assert!(dep("{ git = \"\" }").unwrap_err().contains("repository URL"));
         assert!(dep("{ }").unwrap_err().contains("needs a `path` or a `git`"));
+        assert!(dep("{ official = true, path = \"../lib\" }").unwrap_err().contains("takes no `path` or `git`"));
+        assert!(dep("{ official = true, tag = \"v1\" }").unwrap_err().contains("takes only the keys of PKG25"));
+        assert!(dep("{ official = false }").unwrap_err().contains("means nothing"));
+    }
+
+    #[test]
+    fn official_tables_take_the_keys_of_pkg25() {
+        let text = "[package]\nname = \"app\"\n[dependencies]\ntls = { official = true, default-features = false, features = [\"x\"] }\n";
+        let parsed = manifest(text).unwrap();
+        let tls = parsed.deps.iter().find(|dep| dep.name == "tls").unwrap();
+        assert_eq!(tls.source, DepSource::Official);
+        assert!(!tls.default_features);
+        assert_eq!(tls.features, vec!["x".to_string()]);
     }
 
     /// The `(name, source)` pairs of dependencies, for comparing a manifest's sources.
