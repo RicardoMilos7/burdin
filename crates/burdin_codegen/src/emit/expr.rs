@@ -208,8 +208,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Some(ptr.into())
             }
             K::Slice { base, lo, hi, inclusive } => Some(self.slice(base, lo, hi, *inclusive, e.span)?.into()),
-            K::Block(b) => self.block(b, mode)?,
-            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty, mode)?,
+            // The value of a block, `if`, or `match` is an owned temporary whatever uses it: its tail moves out
+            // (spec/memory-rules.md, MV9), so a borrowed use does not leave a second owner behind.
+            K::Block(b) => self.block(b, Mode::Move)?,
+            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty)?,
             K::While(cond, body) => {
                 let header = self.new_block("while.cond");
                 let body_bb = self.new_block("while.body");
@@ -263,7 +265,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.for_chars(pat, string, body)?;
                 None
             }
-            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty, mode)?,
+            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
             K::Break | K::Continue => {
                 let target = self.loops.last().expect("checked: inside a loop");
                 let (bb, temp_depth, scope_depth) = match e.kind {
