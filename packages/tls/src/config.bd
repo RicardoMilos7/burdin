@@ -1,0 +1,296 @@
+// Client and server configuration (spec/tls.md, TLS3).
+//
+// A configuration owns an OpenSSL `SSL_CTX`, which every connection made with it shares (a connection keeps its own
+// reference, so a configuration may be dropped while its connections live). It is built once, on one task, with the
+// builder methods below, and is then only read: that is why it may be shared between tasks.
+
+use certs.{Certificate, PrivateKey, TrustStore}
+use errors.TlsError
+use ffi.{bytes_ptr, clear_errors, error_text, or_else}
+use openssl.{
+    OpenSSL_version_num,
+    SSL_CTRL_EXTRA_CHAIN_CERT,
+    SSL_CTRL_SET_MAX_PROTO_VERSION,
+    SSL_CTRL_SET_MIN_PROTO_VERSION,
+    SSL_CTX_check_private_key,
+    SSL_CTX_ctrl,
+    SSL_CTX_free,
+    SSL_CTX_get_cert_store,
+    SSL_CTX_new,
+    SSL_CTX_set_alpn_protos,
+    SSL_CTX_set_default_verify_paths,
+    SSL_CTX_set_verify,
+    SSL_CTX_use_PrivateKey,
+    SSL_CTX_use_certificate,
+    SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+    SSL_VERIFY_NONE,
+    SSL_VERIFY_PEER,
+    SslCtx,
+    TLS1_2_VERSION,
+    TLS1_3_VERSION,
+    TLS_client_method,
+    TLS_server_method,
+    X509_STORE_add_cert,
+    X509_up_ref,
+}
+
+/// A protocol version a configuration can require. SSL 3, TLS 1.0, and TLS 1.1 are not available.
+enum TlsVersion: Copy, Clone, Eq, Debug {
+    Tls12,
+    Tls13,
+}
+
+TlsVersion {
+    priv fn code(self): i64 {
+        match self {
+            TlsVersion.Tls12 => TLS1_2_VERSION,
+            TlsVersion.Tls13 => TLS1_3_VERSION,
+        }
+    }
+}
+
+/// A new context with TLS 1.2 as the lowest version. The library must be OpenSSL 3 or later.
+unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
+    if (OpenSSL_version_num() >> 28) < 3 {
+        return Err(TlsError.Unsupported("the linked OpenSSL is older than 3.0".to_string()))
+    }
+    let ctx = if server { SSL_CTX_new(TLS_server_method()) } else { SSL_CTX_new(TLS_client_method()) }
+    if ctx.is_null() {
+        return Err(TlsError.Config(or_else(error_text(), "cannot create an SSL context")))
+    }
+    if SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, CPtr.null()) != 1 {
+        SSL_CTX_free(ctx)
+        return Err(TlsError.Config("cannot set the minimum protocol version".to_string()))
+    }
+    Ok(ctx)
+}
+
+/// Gives `ctx` the roots of `trust`.
+unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), TlsError> {
+    if trust.use_system {
+        if SSL_CTX_set_default_verify_paths(ctx) != 1 {
+            clear_errors()
+            return Err(TlsError.Config("cannot load the system trust store".to_string()))
+        }
+    }
+    let store = SSL_CTX_get_cert_store(ctx)
+    for cert in trust.roots.iter() {
+        let _ = X509_STORE_add_cert(store, cert.handle)
+    }
+    // Adding a certificate the store already has is not an error, but may leave a note in the queue.
+    clear_errors()
+    Ok(())
+}
+
+unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion): Result<(), TlsError> {
+    if SSL_CTX_ctrl(ctx, command, version.code(), CPtr.null()) != 1 {
+        clear_errors()
+        return Err(TlsError.Config("the protocol version range is empty".to_string()))
+    }
+    Ok(())
+}
+
+/// The ALPN protocol list in its wire form: each name preceded by its length.
+fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
+    let mut wire = List<u8>.new()
+    for name in protocols.iter() {
+        let bytes = name.as_bytes()
+        if bytes.len() == 0 || bytes.len() > 255 {
+            return Err(TlsError.Config("an ALPN protocol name must be 1 to 255 bytes".to_string()))
+        }
+        wire.push(bytes.len() as u8)
+        wire.extend_from_slice(bytes)
+    }
+    Ok(wire)
+}
+
+unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsError> {
+    let wire = alpn_wire(protocols)?
+    if wire.len() == 0 {
+        return Ok(())
+    }
+    // `SSL_CTX_set_alpn_protos` returns 0 on success.
+    if SSL_CTX_set_alpn_protos(ctx, bytes_ptr(wire[0..wire.len()]), wire.len() as u32) != 0 {
+        clear_errors()
+        return Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
+    }
+    Ok(())
+}
+
+/// Installs a certificate chain (leaf first) and its key, and checks that they belong together.
+unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
+    if chain.is_empty() {
+        return Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
+    }
+    if SSL_CTX_use_certificate(ctx, chain[0].handle) != 1 {
+        return Err(TlsError.BadCertificate(or_else(error_text(), "cannot use the certificate")))
+    }
+    let mut at: usize = 1
+    while at < chain.len() {
+        // `SSL_CTRL_EXTRA_CHAIN_CERT` takes ownership of one reference, so give it one.
+        if X509_up_ref(chain[at].handle) != 1 {
+            return Err(TlsError.BadCertificate("cannot use an intermediate certificate".to_string()))
+        }
+        if SSL_CTX_ctrl(ctx, SSL_CTRL_EXTRA_CHAIN_CERT, 0, chain[at].handle as CPtr<u8>) != 1 {
+            return Err(TlsError.BadCertificate(or_else(error_text(), "cannot use an intermediate certificate")))
+        }
+        at = at + 1
+    }
+    if SSL_CTX_use_PrivateKey(ctx, key.handle) != 1 {
+        let reason = error_text()
+        if reason.contains("match") {
+            return Err(TlsError.KeyMismatch)
+        }
+        return Err(TlsError.BadKey(or_else(reason, "cannot use the private key")))
+    }
+    if SSL_CTX_check_private_key(ctx) != 1 {
+        clear_errors()
+        return Err(TlsError.KeyMismatch)
+    }
+    Ok(())
+}
+
+// ----- the client -----------------------------------------------------------------------------------------------
+
+/// How a client connection is set up. The defaults verify the server's certificate chain against the system's trust
+/// store and its name against the host connected to, require TLS 1.2 or later, and offer no ALPN protocol.
+///
+/// WARNING: `insecure_skip_verify` turns verification off. A connection made with it is encrypted but talks to
+/// anyone. It exists to prove that verification is what rejects the connections in this package's tests.
+struct ClientConfig {
+    priv ctx: CPtr<SslCtx>,
+    priv skip_verify: bool,
+}
+
+unsafe ClientConfig: Send {}
+unsafe ClientConfig: Sync {}
+
+ClientConfig {
+    /// A configuration that trusts the system's authorities.
+    fn new(): Result<ClientConfig, TlsError> {
+        ClientConfig.with_trust(TrustStore.system())
+    }
+
+    /// A configuration that trusts exactly the authorities of `trust`.
+    fn with_trust(trust: TrustStore): Result<ClientConfig, TlsError> {
+        unsafe {
+            let ctx = new_ctx(false)?
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, CPtr.null())
+            match apply_trust(ctx, trust) {
+                Ok(()) => {}
+                Err(failure) => {
+                    SSL_CTX_free(ctx)
+                    return Err(failure)
+                }
+            }
+            Ok(ClientConfig { ctx: ctx, skip_verify: false })
+        }
+    }
+
+    /// The lowest protocol version the client accepts (TLS 1.2 unless raised).
+    fn min_version(mut self, version: TlsVersion): Result<(), TlsError> {
+        unsafe { set_version(self.ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, version) }
+    }
+
+    /// The highest protocol version the client offers.
+    fn max_version(mut self, version: TlsVersion): Result<(), TlsError> {
+        unsafe { set_version(self.ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, version) }
+    }
+
+    /// The application protocols to offer, most preferred first (`h2`, `http/1.1`). `TlsStream.alpn_protocol` reports
+    /// the one the server chose, if any.
+    fn alpn(mut self, protocols: List<String>): Result<(), TlsError> {
+        unsafe { set_alpn(self.ctx, protocols) }
+    }
+
+    /// The certificate chain (leaf first) and key to present when the server asks for a client certificate.
+    fn client_certificate(mut self, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
+        unsafe { use_identity(self.ctx, chain, key) }
+    }
+
+    /// Turns certificate and hostname verification off. See the warning on `ClientConfig`.
+    fn insecure_skip_verify(mut self) {
+        unsafe { SSL_CTX_set_verify(self.ctx, SSL_VERIFY_NONE, CPtr.null()) }
+        self.skip_verify = true
+    }
+
+    /// Whether verification was turned off.
+    fn skips_verification(self): bool {
+        self.skip_verify
+    }
+}
+
+ClientConfig: Drop {
+    fn drop(mut self) {
+        unsafe {
+            if !self.ctx.is_null() {
+                SSL_CTX_free(self.ctx)
+            }
+        }
+    }
+}
+
+// ----- the server -----------------------------------------------------------------------------------------------
+
+/// How a server connection is set up: one certificate chain and its key. A server speaks no ALPN and serves one
+/// certificate per configuration (spec/tls.md, TLS8: both need callbacks the C bridge cannot pass).
+struct ServerConfig {
+    priv ctx: CPtr<SslCtx>,
+}
+
+unsafe ServerConfig: Send {}
+unsafe ServerConfig: Sync {}
+
+ServerConfig {
+    /// A configuration serving `chain` (leaf first) with `key`. A key that does not belong to the leaf is
+    /// `TlsError.KeyMismatch`.
+    fn new(chain: List<Certificate>, key: PrivateKey): Result<ServerConfig, TlsError> {
+        unsafe {
+            let ctx = new_ctx(true)?
+            match use_identity(ctx, chain, key) {
+                Ok(()) => {}
+                Err(failure) => {
+                    SSL_CTX_free(ctx)
+                    return Err(failure)
+                }
+            }
+            Ok(ServerConfig { ctx: ctx })
+        }
+    }
+
+    /// `new` from PEM texts: the chain (leaf first, then intermediates) and an unencrypted key.
+    fn from_pem(chain_pem: str, key_pem: str): Result<ServerConfig, TlsError> {
+        let chain = Certificate.chain_from_pem(chain_pem)?
+        let key = PrivateKey.from_pem(key_pem)?
+        ServerConfig.new(chain, key)
+    }
+
+    /// The lowest protocol version the server accepts (TLS 1.2 unless raised).
+    fn min_version(mut self, version: TlsVersion): Result<(), TlsError> {
+        unsafe { set_version(self.ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, version) }
+    }
+
+    /// The highest protocol version the server offers.
+    fn max_version(mut self, version: TlsVersion): Result<(), TlsError> {
+        unsafe { set_version(self.ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, version) }
+    }
+
+    /// Requires every client to present a certificate that chains to `roots` (mutual TLS).
+    fn require_client_certificate(mut self, roots: TrustStore): Result<(), TlsError> {
+        unsafe {
+            apply_trust(self.ctx, roots)?
+            SSL_CTX_set_verify(self.ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, CPtr.null())
+        }
+        Ok(())
+    }
+}
+
+ServerConfig: Drop {
+    fn drop(mut self) {
+        unsafe {
+            if !self.ctx.is_null() {
+                SSL_CTX_free(self.ctx)
+            }
+        }
+    }
+}

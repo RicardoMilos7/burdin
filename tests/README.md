@@ -53,6 +53,12 @@ tests/
                        it with `http = true`), run against a scripted server in the same program (spec/http-client.md)
   s3_crypto/           stage 3: the `crypto` package end to end (`s3_crypto/usage`, spec/crypto.md); its known-answer
                        vectors are in `tests/crypto/` and run by `tests/check_crypto.py`
+  s3_tls/              stage 3: the `tls` package (spec/tls.md): `s3_tls/link` (the package's manifest links the system
+                       OpenSSL 3 and a client runs over memory BIOs) and `s3_tls/conformance` (certificates, keys, and
+                       configurations, then clients and servers in one process over 127.0.0.1: verification, versions,
+                       mutual TLS, truncation, timeouts; its test certificates are committed under `src/certs` and made
+                       by `tests/tls/regenerate.py`); needs OpenSSL's development files installed (`libssl-dev`,
+                       `brew install openssl@3`)
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by

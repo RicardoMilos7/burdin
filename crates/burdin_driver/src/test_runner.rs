@@ -976,6 +976,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),

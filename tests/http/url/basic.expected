@@ -13,7 +13,7 @@
   scheme=https host=example.test port=443 path=/secure query=none authority=example.test target=/secure origin=https://example.test:443
   text=https://example.test/secure
 > ftp://example.test/
-  error: unsupported URL scheme 'ftp': only http is supported
+  error: unsupported URL scheme 'ftp': only http and https are supported
 > mailto:x
   error: invalid URL: the scheme is missing: mailto:x
 > http:///nohost

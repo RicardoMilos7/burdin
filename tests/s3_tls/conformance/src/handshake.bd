@@ -1,0 +1,644 @@
+use tls.{Certificate, ClientConfig, PrivateKey, ServerConfig, TlsStream, TlsVersion, TrustStore}
+
+// Connections over 127.0.0.1: handshakes, data, verification, versions, mutual TLS, and the ways a peer can end the
+// stream (spec/tls.md, TLS3, TLS5, and TLS6). Each case runs a server task and a client task in this process.
+
+use support.{
+    Behavior,
+    CHAIN,
+    CLIENT,
+    CLIENT_KEY,
+    ED25519,
+    ED25519_KEY,
+    EXPIRED,
+    EXPIRED_KEY,
+    Peer,
+    ROOT,
+    RSA,
+    RSA_KEY,
+    SELF_SIGNED,
+    SELF_SIGNED_KEY,
+    SERVER,
+    SERVER_KEY,
+    WRONG_HOST,
+    WRONG_HOST_KEY,
+    checksum,
+    client_config,
+    kind_of,
+    pattern,
+    read_exact_tls,
+    round_trip,
+    server_config,
+}
+
+/// A client configuration that trusts the test authority and one more certificate (a self-signed leaf, say).
+fn client_trusting(extra: str): ClientConfig {
+    let mut trust = TrustStore.empty()
+    trust.add_pem(ROOT).unwrap()
+    trust.add_pem(extra).unwrap()
+    ClientConfig.with_trust(trust).unwrap()
+}
+
+/// Connects, reports the outcome under `label`, and (when it connected) returns nothing; the server's log follows.
+fn attempt(label: str, name: str, client: ClientConfig, server: ServerConfig, behavior: Behavior) {
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, behavior))
+        s.spawn(|| {
+            match TlsStream.connect(peer.dial(), name, client) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    println(
+                        "{}: connected {} peer={}",
+                        label,
+                        stream.tls_version(),
+                        match stream.peer_certificate() {
+                            Some(cert) => cert.subject(),
+                            None => "-".to_string(),
+                        },
+                    )
+                    let _ = stream.close()
+                }
+                Err(failure) => {
+                    // OpenSSL's wording of a handshake failure differs between versions; a verification result does not.
+                    if failure.is_verification() {
+                        println("{}: {} ({})", label, kind_of(failure), failure)
+                    } else {
+                        println("{}: {}", label, kind_of(failure))
+                    }
+                }
+            }
+        })
+    })
+    peer.print_log()
+}
+
+fn echo_and_info() {
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Echo))
+        s.spawn(|| {
+            let config = client_config()
+            match TlsStream.connect(peer.dial(), "localhost", config) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    println("echo: version={} cipher known={}", stream.tls_version(), stream.cipher().len() > 0)
+                    match round_trip(mut stream, "hello tls") {
+                        Ok(text) => println("echo: reply={:?}", text),
+                        Err(failure) => println("echo: {}", failure),
+                    }
+                    match round_trip(mut stream, "second message") {
+                        Ok(text) => println("echo: reply={:?}", text),
+                        Err(failure) => println("echo: {}", failure),
+                    }
+                    match stream.peer_certificate() {
+                        Some(cert) => println("echo: peer subject={} issuer={}", cert.subject(), cert.issuer()),
+                        None => println("echo: no peer certificate"),
+                    }
+                    println("echo: alpn={:?}", stream.alpn_protocol())
+                    // Dropping the stream sends close_notify, so the server sees a clean end.
+                }
+                Err(failure) => println("echo: {}", failure),
+            }
+        })
+    })
+    peer.print_log()
+}
+
+fn large_echo() {
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Echo))
+        s.spawn(|| {
+            let config = client_config()
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", config).unwrap()
+            let data = pattern(204800, 9)
+            stream.send_all(data[0..data.len()]).unwrap()
+            let back = read_exact_tls(mut stream, data.len()).unwrap()
+            println(
+                "large echo: sent {} bytes, got {} back, equal={}",
+                data.len(),
+                back.len(),
+                checksum(data[0..data.len()]) == checksum(back[0..back.len()]),
+            )
+            // Many small writes, each its own record.
+            let mut ok = true
+            for i in 0..50 {
+                let text = format("message {}", i)
+                match round_trip(mut stream, text.as_str()) {
+                    Ok(reply) => {
+                        if reply != text {
+                            ok = false
+                        }
+                    }
+                    Err(_) => ok = false,
+                }
+            }
+            println("small messages: 50 round trips ok={}", ok)
+        })
+    })
+    peer.print_log()
+}
+
+fn large_push() {
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Push(300000)))
+        s.spawn(|| {
+            let config = client_config()
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", config).unwrap()
+            let mut data = List<u8>.new()
+            let mut ended = "no end".to_string()
+            loop {
+                match stream.recv(mut data, 4096) {
+                    Ok(0) => {
+                        ended = "clean end".to_string()
+                        break
+                    }
+                    Ok(_) => {}
+                    Err(failure) => {
+                        ended = kind_of(failure)
+                        break
+                    }
+                }
+            }
+            let expected = pattern(300000, 3)
+            println(
+                "push: read {} bytes, equal={}, then {}",
+                data.len(),
+                checksum(data[0..data.len()]) == checksum(expected[0..expected.len()]),
+                ended,
+            )
+            match stream.recv(mut data, 10) {
+                Ok(n) => println("push: another read after the end: {} bytes", n),
+                Err(failure) => println("push: another read after the end: {}", kind_of(failure)),
+            }
+        })
+    })
+    peer.print_log()
+}
+
+fn names_and_protocols() {
+    // SNI reaches the server, and an IP address is not sent as a name.
+    let server = server_config(CHAIN, SERVER_KEY)
+    attempt("sni", "example.test", client_config(), server_config(CHAIN, SERVER_KEY), Behavior.Drain)
+    attempt("ip address", "127.0.0.1", client_config(), server_config(CHAIN, SERVER_KEY), Behavior.Drain)
+
+    // ALPN: the client offers, the server cannot choose (TLS8), and the handshake still succeeds.
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Drain))
+        s.spawn(|| {
+            let mut config = client_config()
+            let mut protocols = List<String>.new()
+            protocols.push("h2".to_string())
+            protocols.push("http/1.1".to_string())
+            config.alpn(protocols).unwrap()
+            match TlsStream.connect(peer.dial(), "localhost", config) {
+                Ok(stream) => println("alpn: connected, chosen protocol={:?}", stream.alpn_protocol()),
+                Err(failure) => println("alpn: {}", failure),
+            }
+        })
+    })
+    peer.print_log()
+
+    // Other key types.
+    attempt("rsa leaf", "localhost", client_config(), server_config(RSA, RSA_KEY), Behavior.Drain)
+    attempt("ed25519 leaf", "localhost", client_config(), server_config(ED25519, ED25519_KEY), Behavior.Drain)
+}
+
+fn verification() {
+    // Every one of these must fail: the default is to verify.
+    attempt("expired", "localhost", client_config(), server_config(EXPIRED, EXPIRED_KEY), Behavior.Drain)
+    attempt(
+        "unknown authority",
+        "localhost",
+        ClientConfig.with_trust(TrustStore.empty()).unwrap(),
+        server_config(CHAIN, SERVER_KEY),
+        Behavior.Drain,
+    )
+    attempt(
+        "system trust store",
+        "localhost",
+        ClientConfig.new().unwrap(),
+        server_config(CHAIN, SERVER_KEY),
+        Behavior.Drain,
+    )
+    attempt("self-signed", "localhost", client_config(), server_config(SELF_SIGNED, SELF_SIGNED_KEY), Behavior.Drain)
+    attempt(
+        "wrong host (certificate for another name)",
+        "localhost",
+        client_config(),
+        server_config(WRONG_HOST, WRONG_HOST_KEY),
+        Behavior.Drain,
+    )
+    attempt(
+        "wrong host (connecting to another name)",
+        "other.example",
+        client_config(),
+        server_config(CHAIN, SERVER_KEY),
+        Behavior.Drain,
+    )
+    attempt("wrong address", "127.0.0.2", client_config(), server_config(CHAIN, SERVER_KEY), Behavior.Drain)
+    attempt(
+        "intermediate missing from the chain",
+        "localhost",
+        client_config(),
+        server_config(SERVER, SERVER_KEY),
+        Behavior.Drain,
+    )
+
+    // And the ways to make them pass.
+    attempt(
+        "self-signed, trusted by name",
+        "localhost",
+        client_trusting(SELF_SIGNED),
+        server_config(SELF_SIGNED, SELF_SIGNED_KEY),
+        Behavior.Drain,
+    )
+    let mut skipping = ClientConfig.with_trust(TrustStore.empty()).unwrap()
+    skipping.insecure_skip_verify()
+    attempt(
+        "insecure_skip_verify, unknown authority",
+        "localhost",
+        skipping,
+        server_config(CHAIN, SERVER_KEY),
+        Behavior.Drain,
+    )
+    let mut skipping = ClientConfig.with_trust(TrustStore.empty()).unwrap()
+    skipping.insecure_skip_verify()
+    attempt(
+        "insecure_skip_verify, wrong name",
+        "nonsense.invalid",
+        skipping,
+        server_config(CHAIN, SERVER_KEY),
+        Behavior.Drain,
+    )
+    let mut skipping = ClientConfig.with_trust(TrustStore.empty()).unwrap()
+    skipping.insecure_skip_verify()
+    attempt("insecure_skip_verify, expired", "localhost", skipping, server_config(EXPIRED, EXPIRED_KEY), Behavior.Drain)
+}
+
+fn versions() {
+    let mut old_server = server_config(CHAIN, SERVER_KEY)
+    old_server.max_version(TlsVersion.Tls12).unwrap()
+    let mut strict = client_config()
+    strict.min_version(TlsVersion.Tls13).unwrap()
+    attempt("TLS 1.2 server, client needs 1.3", "localhost", strict, old_server, Behavior.Drain)
+
+    let mut old_server = server_config(CHAIN, SERVER_KEY)
+    old_server.max_version(TlsVersion.Tls12).unwrap()
+    attempt("TLS 1.2 server, default client", "localhost", client_config(), old_server, Behavior.Drain)
+
+    let mut new_server = server_config(CHAIN, SERVER_KEY)
+    new_server.min_version(TlsVersion.Tls13).unwrap()
+    let mut old_client = client_config()
+    old_client.max_version(TlsVersion.Tls12).unwrap()
+    attempt("TLS 1.3 server, client limited to 1.2", "localhost", old_client, new_server, Behavior.Drain)
+
+    attempt("defaults", "localhost", client_config(), server_config(CHAIN, SERVER_KEY), Behavior.Drain)
+}
+
+fn mutual() {
+    let mut roots = TrustStore.empty()
+    roots.add_pem(ROOT).unwrap()
+    let mut server = server_config(CHAIN, SERVER_KEY)
+    server.require_client_certificate(roots).unwrap()
+
+    // A client with a certificate the server trusts.
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Echo))
+        s.spawn(|| {
+            let mut config = client_config()
+            config
+                .client_certificate(
+                    Certificate.chain_from_pem(CLIENT).unwrap(),
+                    PrivateKey.from_pem(CLIENT_KEY).unwrap(),
+                )
+                .unwrap()
+            match TlsStream.connect(peer.dial(), "localhost", config) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    match round_trip(mut stream, "mutual") {
+                        Ok(text) => println("mutual with a certificate: echo={:?}", text),
+                        Err(failure) => println("mutual with a certificate: {}", kind_of(failure)),
+                    }
+                }
+                Err(failure) => println("mutual with a certificate: {}", failure),
+            }
+        })
+    })
+    peer.print_log()
+
+    // A client with none, and a client whose certificate the server does not trust. In TLS 1.3 the client's handshake
+    // can finish before the server decides, so the rejection may arrive on the first read.
+    let mut roots = TrustStore.empty()
+    roots.add_pem(ROOT).unwrap()
+    let mut server = server_config(CHAIN, SERVER_KEY)
+    server.require_client_certificate(roots).unwrap()
+    rejected("mutual without a certificate", client_config(), server)
+
+    let mut roots = TrustStore.empty()
+    roots.add_pem(ROOT).unwrap()
+    let mut server = server_config(CHAIN, SERVER_KEY)
+    server.require_client_certificate(roots).unwrap()
+    let mut config = client_config()
+    config
+        .client_certificate(
+            Certificate.chain_from_pem(SELF_SIGNED).unwrap(),
+            PrivateKey.from_pem(SELF_SIGNED_KEY).unwrap(),
+        )
+        .unwrap()
+    rejected("mutual with an untrusted certificate", config, server)
+}
+
+/// A connection the server turns away: the connect or the first read must fail, and the server must not see a handshake.
+fn rejected(label: str, client: ClientConfig, server: ServerConfig) {
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Echo))
+        s.spawn(|| {
+            let outcome = match TlsStream.connect(peer.dial(), "localhost", client) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    let mut data = List<u8>.new()
+                    match stream.recv(mut data, 16) {
+                        Ok(_) => "the first read succeeded",
+                        Err(_) => "rejected",
+                    }
+                }
+                Err(_) => "rejected",
+            }
+            println("{}: {}", label, outcome)
+        })
+    })
+    peer.print_log()
+}
+
+fn endings() {
+    // A close_notify is a clean end; nothing after it is an error, and the end is sticky.
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Greet("goodbye".to_string())))
+        s.spawn(|| {
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+            let mut data = List<u8>.new()
+            let first = stream.recv(mut data, 100).unwrap()
+            let end = stream.recv(mut data, 100).unwrap()
+            let again = stream.recv(mut data, 100).unwrap()
+            println(
+                "close_notify: read {} bytes {:?}, then {} and {}",
+                first,
+                String.from_utf8_lossy(data[0..data.len()]),
+                end,
+                again,
+            )
+        })
+    })
+    peer.print_log()
+
+    // A transport that ends without a close_notify is an error: that is how a truncation attack looks.
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Truncate("partial".to_string())))
+        s.spawn(|| {
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+            let mut data = List<u8>.new()
+            let first = stream.recv(mut data, 100).unwrap()
+            println("truncation: read {} bytes {:?}", first, String.from_utf8_lossy(data[0..data.len()]))
+            match stream.recv(mut data, 100) {
+                Ok(n) => println("truncation: then {} bytes", n),
+                Err(failure) => println("truncation: then {} ({})", kind_of(failure), failure),
+            }
+            match stream.recv(mut data, 100) {
+                Ok(n) => println("truncation: and then {} bytes", n),
+                Err(failure) => println("truncation: and then {}", kind_of(failure)),
+            }
+        })
+    })
+    peer.print_log()
+
+    // close() sends close_notify, and the stream is closed afterwards. A reader of the same stream sees Closed.
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Echo))
+        s.spawn(|| {
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+            println(
+                "close: {}",
+                match stream.close() {
+                    Ok(()) => "ok".to_string(),
+                    Err(failure) => kind_of(failure),
+                },
+            )
+            match stream.send("late".as_bytes()) {
+                Ok(_) => println("write after close: accepted"),
+                Err(failure) => println("write after close: {}", kind_of(failure)),
+            }
+            let mut data = List<u8>.new()
+            match stream.recv(mut data, 10) {
+                Ok(_) => println("read after close: accepted"),
+                Err(failure) => println("read after close: {}", kind_of(failure)),
+            }
+            println("close twice: {}", stream.close().is_ok())
+        })
+    })
+    peer.print_log()
+}
+
+fn bad_peers() {
+    // A plain-text server answering a TLS hello with HTTP: an error, not a panic.
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_plain("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".as_bytes(), 0))
+        s.spawn(|| {
+            match TlsStream.connect(peer.dial(), "localhost", client_config()) {
+                Ok(_) => println("plain-text peer with a reply: connected"),
+                Err(failure) => println("plain-text peer with a reply: {}", kind_of(failure)),
+            }
+        })
+    })
+
+    // A plain peer that reads the hello and closes.
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_plain("".as_bytes(), 0))
+        s.spawn(|| {
+            match TlsStream.connect(peer.dial(), "localhost", client_config()) {
+                Ok(_) => println("plain peer that closes: connected"),
+                Err(failure) => println("plain peer that closes: {} ({})", kind_of(failure), failure),
+            }
+        })
+    })
+
+    // Bytes that are not a TLS record: the first byte is no record type.
+    let mut record = List<u8>.new()
+    for _ in 0..16 {
+        record.push(153)
+    }
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_plain(record[0..record.len()], 0))
+        s.spawn(|| {
+            match TlsStream.connect(peer.dial(), "localhost", client_config()) {
+                Ok(_) => println("garbage record: connected"),
+                Err(failure) => println("garbage record: {}", kind_of(failure)),
+            }
+        })
+    })
+
+    // A server that never answers: a read timeout on the socket fails the handshake.
+    let peer = Peer.start()
+    task.scope(|s| {
+        s.spawn(|| peer.serve_plain("".as_bytes(), 500))
+        s.spawn(|| {
+            let mut tcp = peer.dial()
+            tcp.set_read_timeout(Some(Duration.from_millis(100)))
+            match TlsStream.connect(tcp, "localhost", client_config()) {
+                Ok(_) => println("silent peer: connected"),
+                Err(failure) => println("silent peer: {} timeout={}", kind_of(failure), failure.is_timeout()),
+            }
+        })
+    })
+
+    // A silent peer after the handshake: the read times out, and the stream still works afterwards.
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Idle(400)))
+        s.spawn(|| {
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+            stream.set_read_timeout(Some(Duration.from_millis(100)))
+            let mut data = List<u8>.new()
+            match stream.recv(mut data, 10) {
+                Ok(n) => println("read timeout: read {} bytes", n),
+                Err(failure) => println("read timeout: {} timeout={}", kind_of(failure), failure.is_timeout()),
+            }
+            stream.set_read_timeout(None)
+            match stream.recv(mut data, 10) {
+                Ok(n) => println(
+                    "after the timeout: read {} bytes {:?}",
+                    n,
+                    String.from_utf8_lossy(data[0..data.len()]),
+                ),
+                Err(failure) => println("after the timeout: {}", kind_of(failure)),
+            }
+        })
+    })
+
+    // Reading and writing through the std interfaces maps errors to IoError.
+    let peer = Peer.start()
+    let server = server_config(CHAIN, SERVER_KEY)
+    task.scope(|s| {
+        s.spawn(|| peer.serve_tls(server, Behavior.Truncate("abc".to_string())))
+        s.spawn(|| {
+            let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+            let mut data = List<u8>.new()
+            let first = stream.read(mut data, 10).unwrap()
+            match stream.read(mut data, 10) {
+                Ok(n) => println("Read: {} then {} bytes", first, n),
+                Err(failure) => println("Read: {} bytes, then {:?}", first, failure.kind()),
+            }
+        })
+    })
+    peer.print_log()
+}
+
+fn two_client(peer: Peer, results: Mutex<List<String>>, client: usize) {
+    let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
+    let mut ok = true
+    for i in 0..30 {
+        let text = format("client {} message {}", client, i)
+        match round_trip(mut stream, text.as_str()) {
+            Ok(reply) => {
+                if reply != text {
+                    ok = false
+                }
+            }
+            Err(_) => ok = false,
+        }
+    }
+    results.lock(|list| list.push(format("two streams: client {} ok={}", client, ok)))
+}
+
+fn two_streams() {
+    // Two connections on two tasks at once, each with its own server task.
+    let peer = Peer.start()
+    let first_server = server_config(CHAIN, SERVER_KEY)
+    let second_server = server_config(RSA, RSA_KEY)
+    let results = Mutex.new(List<String>.new())
+    task.scope(|s| {
+        s.spawn(|| peer.serve_two(first_server, second_server))
+        s.spawn(|| two_client(peer, results, 0))
+        s.spawn(|| two_client(peer, results, 1))
+    })
+    let lines = results.lock(|list| {
+        let mut copy = List<String>.new()
+        for item in list.iter() {
+            copy.push(item.clone())
+        }
+        copy
+    })
+    for wanted in ["client 0", "client 1"] {
+        for line in lines.iter() {
+            if line.contains(wanted) {
+                println("{}", line)
+            }
+        }
+    }
+}
+
+/// Runs the cases of one section (`only` names it) or all of them (`only` empty).
+fn run(only: str) {
+    let all = only.len() == 0
+    if all || only == "data" {
+        println("== handshake and data (TLS5)")
+        echo_and_info()
+        large_echo()
+        large_push()
+        two_streams()
+    }
+    if only == "echo" {
+        echo_and_info()
+    }
+    if only == "large" {
+        large_echo()
+    }
+    if only == "push" {
+        large_push()
+    }
+    if only == "two" {
+        two_streams()
+    }
+    if all || only == "names" {
+        println("== names and protocols (TLS3)")
+        names_and_protocols()
+    }
+    if all || only == "verify" {
+        println("== verification (TLS3)")
+        verification()
+    }
+    if all || only == "versions" {
+        println("== versions (TLS3)")
+        versions()
+    }
+    if all || only == "mutual" {
+        println("== mutual TLS (TLS3)")
+        mutual()
+    }
+    if all || only == "endings" {
+        println("== the end of a stream (TLS5)")
+        endings()
+    }
+    if all || only == "bad" {
+        println("== bad peers (TLS6)")
+        bad_peers()
+    }
+}

@@ -1,0 +1,16 @@
+pub use certs.{Certificate, PrivateKey, TrustStore}
+pub use config.{ClientConfig, ServerConfig, TlsVersion}
+pub use errors.TlsError
+// TLS over OpenSSL 3 (issue #262; the behavior is spec/tls.md).
+//
+// `tls.openssl` holds the hand-written bindings (everything in it is `unsafe`). The safe layer is:
+//   * `Certificate`, `PrivateKey`, and `TrustStore` (TLS3, TLS4): loaded from PEM text, DER bytes, or files;
+//   * `ClientConfig`, `ServerConfig`, and `TlsVersion` (TLS3): verification on by default, TLS 1.2 or later;
+//   * `TlsStream` (TLS5): a `Read` and `Write` over a `TcpStream` that runs the handshake and pumps the bytes, so no
+//     OpenSSL call blocks;
+//   * `TlsError` (TLS6): every failure is a value, never a panic.
+//
+// A dependency's other modules are hidden, so every public name is re-exported here.
+
+pub use openssl
+pub use stream.TlsStream

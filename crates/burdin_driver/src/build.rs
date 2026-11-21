@@ -63,6 +63,12 @@ pub(crate) fn run(
     // the package that depends on it is loaded. The steps are independent either way.
     for index in (0..workspace.packages.len()).rev() {
         let package = &mut workspace.packages[index];
+        // The libraries a manifest links (`spec/packages.md`, PKG34), merged without duplicates.
+        for lib in &package.link_libs {
+            if !outcome.link_libs.contains(lib) {
+                outcome.link_libs.push(lib.clone());
+            }
+        }
         if crate::rust_build::has_crates(package) {
             let bound = crate::rust_build::run_package(package, &profile.dir, &fingerprint)?;
             for input in bound.inputs {
@@ -723,6 +729,7 @@ mod tests {
                 .collect(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
@@ -753,6 +760,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),

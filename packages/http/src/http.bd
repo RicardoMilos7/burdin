@@ -8,9 +8,12 @@
 //      back to the client's pool;
 //   4. `Client`: timeouts, redirects, retries of safe requests, and per-host connection reuse.
 //
-// There is no TLS in the standard library, so an `https` URL is parsed and then refused with
-// `HttpError.TlsUnsupported`; it never falls back to plain text. Nothing here panics on malformed input from the
-// network: a bad response is an `HttpError`.
+// An `https` URL is sent over the `tls` package (spec/http-client.md, HC17): a connection is a `Transport`, a plain
+// `TcpStream` or a `TlsStream`, and everything above it (heads, framing, bodies, the pool, retries, and redirects) is
+// the same for both. A failed handshake is an error and is never retried as plain text. Nothing here panics on
+// malformed input from the network: a bad response is an `HttpError`.
+
+use tls.{ClientConfig, TlsError, TlsStream, TrustStore}
 
 // The limits that keep a hostile peer from exhausting memory. A response head larger than `MAX_HEAD_BYTES`, with more
 // than `MAX_HEADERS` fields, or a chunk-size line longer than `MAX_LINE` is a malformed response.
@@ -28,8 +31,8 @@ const MAX_REDIRECT_LIMIT: usize = 64
 /// malformed response without parsing the message.
 error enum HttpError: Clone, Debug {
     InvalidUrl(String)                       "invalid URL: {0}"
-    UnsupportedScheme(String)                "unsupported URL scheme '{0}': only http is supported"
-    TlsUnsupported(String)                   "https is not supported because there is no TLS in this build: {0}"
+    UnsupportedScheme(String)                "unsupported URL scheme '{0}': only http and https are supported"
+    Tls(TlsError)                            "https connection failed: {0}"
     InvalidMethod(String)                    "invalid method: {0}"
     InvalidHeader(String)                    "invalid header: {0}"
     InvalidRequest(String)                   "invalid request: {0}"
@@ -55,6 +58,22 @@ HttpError {
         }
     }
 
+    /// Whether the failure is a TLS failure while opening an `https` connection (HC17).
+    fn is_tls(self): bool {
+        match self {
+            HttpError.Tls(_) => true,
+            else => false,
+        }
+    }
+
+    /// Whether the server's certificate did not verify: the chain, the dates, or the host name (HC17).
+    fn is_verification(self): bool {
+        match self {
+            HttpError.Tls(failure) => failure.is_verification(),
+            else => false,
+        }
+    }
+
     /// Whether the failure is one of the connection kind: the request never got a response and may not have been
     /// seen by the server. These are the failures a safe request is retried after (HC15).
     fn is_connection_failure(self): bool {
@@ -72,6 +91,12 @@ HttpError {
 priv fn __io_failure(op: str, failure: IoError): HttpError {
     match failure.kind() {
         IoErrorKind.TimedOut => HttpError.Timeout { phase: op.to_string() },
+        IoErrorKind.InvalidData => match failure {
+            // A TLS failure after the handshake arrives through `Read` and `Write` as an `IoError` that carries the TLS
+            // message in `addr` (`TlsError.to_io`): keep the message.
+            IoError.Net { op: _, addr, kind: _, os_code: _ } => HttpError.Io { op: op.to_string(), reason: addr.clone() },
+            else => HttpError.Io { op: op.to_string(), reason: IoErrorKind.InvalidData.to_string() },
+        },
         other => HttpError.Io { op: op.to_string(), reason: other.to_string() },
     }
 }
@@ -1016,7 +1041,11 @@ BodyReader<R> where R: Read {
         }
         match self.source.read(mut self.buffer, READ_CHUNK) {
             Ok(n) => Ok(n),
-            Err(failure) => Err(__io_failure("reading the response body", failure)),
+            Err(failure) => match failure.kind() {
+                // A TLS connection that ends without a `close_notify` (HC17): the body was cut, not finished.
+                IoErrorKind.UnexpectedEof => Err(HttpError.BodyTruncated),
+                else => Err(__io_failure("reading the response body", failure)),
+            },
         }
     }
 
@@ -1269,10 +1298,124 @@ Budget {
 
 // ----- connections and the pool --------------------------------------------------------------------------------
 
-/// An idle connection waiting in the pool, with the address it goes to and when it was put back.
+/// What a connection is made of: a plain socket, or a TLS session over one (HC17). Heads and bodies read and write
+/// through it without knowing which. Exactly one of the two fields holds a stream. (It is a struct and not an enum
+/// because a stream has to be taken out of its place to be used, and put back: a `match` binding would move it out for
+/// good and close it.)
+struct Transport {
+    plain: Option<TcpStream>
+    secure: Option<TlsStream>
+}
+
+Transport {
+    fn plain(own stream: TcpStream): Transport {
+        Transport { plain: Some(stream), secure: None }
+    }
+
+    fn secure(own stream: TlsStream): Transport {
+        Transport { plain: None, secure: Some(stream) }
+    }
+
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match self.secure.take() {
+            Some(mut stream) => {
+                let result = stream.read(mut buf, max)
+                self.secure = Some(stream)
+                result
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                let result = stream.read(mut buf, max)
+                self.plain = Some(stream)
+                result
+            }
+        }
+    }
+
+    fn write_all(mut self, data: [u8]): Result<(), IoError> {
+        match self.secure.take() {
+            Some(mut stream) => {
+                let result: Result<(), IoError> = match stream.send_all(data) {
+                    Ok(_) => Ok(()),
+                    Err(failure) => Err(failure.to_io()),
+                }
+                self.secure = Some(stream)
+                result
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                let result = stream.write_all(data)
+                self.plain = Some(stream)
+                result
+            }
+        }
+    }
+
+    fn set_read_timeout(mut self, timeout: Option<Duration>) {
+        match self.secure.take() {
+            Some(mut stream) => {
+                stream.set_read_timeout(timeout)
+                self.secure = Some(stream)
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                stream.set_read_timeout(timeout)
+                self.plain = Some(stream)
+            }
+        }
+    }
+
+    fn set_write_timeout(mut self, timeout: Option<Duration>) {
+        match self.secure.take() {
+            Some(mut stream) => {
+                stream.set_write_timeout(timeout)
+                self.secure = Some(stream)
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                stream.set_write_timeout(timeout)
+                self.plain = Some(stream)
+            }
+        }
+    }
+
+    /// Whether an idle connection is still usable: nothing may be waiting on it. A read that would block means a quiet,
+    /// healthy connection; the end of the stream, an error, or stray bytes mean the server closed it (or sent something
+    /// it should not have), so it is not used. Over TLS the read goes through the TLS layer, so a `close_notify`, a cut
+    /// connection, and data all count as closed, and session tickets the server sent are read away.
+    fn is_alive(mut self): bool {
+        let mut scratch = List<u8>.new()
+        match self.secure.take() {
+            Some(mut stream) => {
+                stream.set_read_timeout(Some(Duration.from_nanos(1)))
+                let alive = match stream.recv(mut scratch, 1) {
+                    Ok(_) => false,
+                    Err(failure) => failure.is_timeout(),
+                }
+                self.secure = Some(stream)
+                alive
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                stream.set_read_timeout(Some(Duration.from_nanos(1)))
+                let alive = match stream.read(mut scratch, 1) {
+                    Ok(_) => false,
+                    Err(failure) => match failure.kind() {
+                        IoErrorKind.TimedOut => true,
+                        else => false,
+                    },
+                }
+                self.plain = Some(stream)
+                alive
+            }
+        }
+    }
+}
+
+/// An idle connection waiting in the pool, with the origin it goes to and when it was put back.
 struct Idle {
     key: String
-    stream: TcpStream
+    stream: Transport
     since: Instant
 }
 
@@ -1282,7 +1425,7 @@ type Pool = Shared<Mutex<List<Idle>>>
 /// A connection in use: the socket and what is needed to hand it back to the pool when a response has been read
 /// to its end.
 struct Conn {
-    stream: TcpStream
+    stream: Transport
     key: String
     pool: Pool
     max_idle: usize
@@ -1323,21 +1466,6 @@ Conn: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         self.stream.set_read_timeout(self.budget.limit(self.read_timeout))
         self.stream.read(mut buf, max)
-    }
-}
-
-/// Whether an idle connection is still usable: nothing may be waiting on it. A read that would block means a quiet,
-/// healthy connection; the end of the stream, an error, or stray bytes mean the server closed it (or sent something
-/// it should not have), so it is not used.
-priv fn __is_alive(mut stream: TcpStream): bool {
-    stream.set_read_timeout(Some(Duration.from_nanos(1)))
-    let mut scratch = List<u8>.new()
-    match stream.read(mut scratch, 1) {
-        Ok(_) => false,
-        Err(failure) => match failure.kind() {
-            IoErrorKind.TimedOut => true,
-            else => false,
-        },
     }
 }
 
@@ -1563,6 +1691,31 @@ struct Client: Clone {
     /// The most `Response.bytes` and `Response.text` read.
     max_body: usize
     pool: Pool
+    /// The configuration of `https` connections set by `tls_config`, `trust`, or `insecure_skip_verify` (HC17); `None`
+    /// means the default, which verifies against the system's trust store.
+    tls: Option<Shared<ClientConfig>>
+    /// The default configuration: built on the first `https` connection (loading the system trust store is not free),
+    /// then shared by every clone. Empty until then.
+    tls_default: Shared<Mutex<List<Shared<ClientConfig>>>>
+}
+
+/// `config` with `http/1.1` as the only ALPN protocol: this package speaks HTTP/1.1 and nothing else.
+priv fn __with_alpn(own config: ClientConfig): Result<ClientConfig, HttpError> {
+    let mut config = config
+    let mut names = List<String>.new()
+    names.push("http/1.1".to_string())
+    match config.alpn(names) {
+        Ok(_) => Ok(config),
+        Err(failure) => Err(HttpError.Tls(failure)),
+    }
+}
+
+/// The default `https` configuration: the system's trust store, verification on, ALPN `http/1.1`.
+priv fn __default_tls(): Result<ClientConfig, HttpError> {
+    match ClientConfig.new() {
+        Ok(config) => __with_alpn(config),
+        Err(failure) => Err(HttpError.Tls(failure)),
+    }
 }
 
 /// The most of a redirect or `503` response body that is read to free its connection.
@@ -1592,7 +1745,34 @@ Client {
             idle_timeout: Duration.from_secs(30),
             max_body: 16777216,
             pool: Shared.new(Mutex.new(List<Idle>.new())),
+            tls: None,
+            tls_default: Shared.new(Mutex.new(List<Shared<ClientConfig>>.new())),
         }
+    }
+
+    /// Uses `config` for every `https` connection from now on, as it is (HC17): its trust store, versions, ALPN, and
+    /// client certificate. A client that is cloned afterwards starts with the same configuration.
+    fn tls_config(mut self, own config: ClientConfig) {
+        self.tls = Some(Shared.new(config))
+    }
+
+    /// Verifies `https` servers against exactly the authorities of `store` and offers `http/1.1` by ALPN (HC17).
+    fn trust(mut self, store: TrustStore): Result<(), HttpError> {
+        let config = match ClientConfig.with_trust(store) {
+            Ok(config) => __with_alpn(config)?,
+            Err(failure) => return Err(HttpError.Tls(failure)),
+        }
+        self.tls = Some(Shared.new(config))
+        Ok(())
+    }
+
+    /// Turns certificate and host name verification off for `https` (HC17). WARNING: a connection made this way is
+    /// encrypted but talks to anyone; it exists for tests (spec/tls.md, TLS3).
+    fn insecure_skip_verify(mut self): Result<(), HttpError> {
+        let mut config = __default_tls()?
+        config.insecure_skip_verify()
+        self.tls = Some(Shared.new(config))
+        Ok(())
     }
 
     /// How many idle connections the pool holds, over all hosts.
@@ -1796,12 +1976,11 @@ Client {
         self.roundtrip(conn, request, budget)
     }
 
-    /// An idle connection to the address, or a new one (HC15, HC13). An `https` URL is refused: there is no TLS.
-    priv fn open(self, url: Url, budget: Budget, use_pool: bool): Result<Conn, HttpError> {
-        if url.is_https() {
-            return Err(HttpError.TlsUnsupported(url.to_text()))
-        }
-        let key = url.address()
+    /// An idle connection to the origin, or a new one (HC15, HC13); for an `https` URL a new one has completed its TLS
+    /// handshake (HC17) before it is returned.
+    priv fn open(self, own url: Url, budget: Budget, use_pool: bool): Result<Conn, HttpError> {
+        let key = url.origin()
+        let address = url.address()
         if use_pool {
             let idle = self.checkout(key.as_str())
             match idle {
@@ -1821,15 +2000,20 @@ Client {
             }
         }
         let opened = match budget.limit(self.connect_timeout) {
-            Some(limit) => TcpStream.connect_timeout(key.as_str(), limit),
-            None => TcpStream.connect(key.as_str()),
+            Some(limit) => TcpStream.connect_timeout(address.as_str(), limit),
+            None => TcpStream.connect(address.as_str()),
         }
         match opened {
             Ok(stream) => {
                 let _ = stream.set_nodelay(true)
+                let transport = if url.is_https() {
+                    self.handshake(stream, url, budget)?
+                } else {
+                    Transport.plain(stream)
+                }
                 Ok(Conn {
-                    stream: stream,
-                    key: key.clone(),
+                    stream: transport,
+                    key: key,
                     pool: self.pool.clone(),
                     max_idle: self.max_idle_per_host,
                     read_timeout: self.read_timeout,
@@ -1839,15 +2023,61 @@ Client {
                 })
             }
             Err(failure) => match failure.kind() {
-                IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: format("connecting to {}", key.clone()) }),
-                other => Err(HttpError.Connect { addr: key.clone(), reason: other.to_string() }),
+                IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: format("connecting to {}", address.clone()) }),
+                other => Err(HttpError.Connect { addr: address, reason: other.to_string() }),
+            },
+        }
+    }
+
+    /// The configuration for an `https` connection: the one set on this client, or the default, built once.
+    priv fn tls_settings(self): Result<Shared<ClientConfig>, HttpError> {
+        match self.tls.clone() {
+            Some(config) => return Ok(config),
+            None => {}
+        }
+        let existing: Option<Shared<ClientConfig>> = self.tls_default.get().lock(|slot| {
+            if slot.len() > 0 { Some(slot[0].clone()) } else { None }
+        })
+        match existing {
+            Some(config) => return Ok(config),
+            None => {}
+        }
+        // Two tasks may build one at the same moment; both work, and the first to store its own is the one later
+        // connections share.
+        let built = Shared.new(__default_tls()?)
+        let stored = built.clone()
+        self.tls_default.get().lock(|slot| {
+            if slot.len() == 0 {
+                slot.push(stored.clone())
+            }
+        })
+        Ok(built)
+    }
+
+    /// Runs the TLS handshake over a new connection (HC17), verifying the server against the URL's host. Each wait is
+    /// bounded by `connect_timeout` and the total limit. A failure is never retried in plain text: the socket is closed.
+    priv fn handshake(self, own stream: TcpStream, url: Url, budget: Budget): Result<Transport, HttpError> {
+        let config = self.tls_settings()?
+        let mut stream = stream
+        let wait = budget.limit(self.connect_timeout)
+        stream.set_read_timeout(wait)
+        stream.set_write_timeout(wait)
+        let phase = format("TLS handshake with {}", url.address())
+        match TlsStream.connect(stream, url.host.as_str(), *config.get()) {
+            Ok(secure) => Ok(Transport.secure(secure)),
+            Err(failure) => match failure {
+                TlsError.Io(cause) => match cause.kind() {
+                    IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: phase }),
+                    other => Err(HttpError.Io { op: phase, reason: other.to_string() }),
+                },
+                other => Err(HttpError.Tls(other)),
             },
         }
     }
 
     /// Takes the newest usable idle connection to `key` out of the pool. Connections idle for longer than
     /// `idle_timeout` are dropped first, and so is any that the probe finds closed by the server.
-    priv fn checkout(self, key: str): Option<TcpStream> {
+    priv fn checkout(self, key: str): Option<Transport> {
         let max_age = self.idle_timeout
         loop {
             let wanted = key.to_string()
@@ -1867,7 +2097,7 @@ Client {
                 None => return None,
                 Some(idle) => {
                     let mut stream = idle.stream
-                    if __is_alive(mut stream) {
+                    if stream.is_alive() {
                         return Some(stream)
                     }
                 }
@@ -1935,11 +2165,16 @@ Client {
                 }
                 Ok(_) => {}
                 Err(failure) => {
-                    return Err(Failure {
-                        cause: __io_failure("waiting for the response", failure),
-                        reused: reused,
-                        received: received,
-                    })
+                    // A TLS connection cut without a `close_notify` is a closed connection (HC17).
+                    let cause = match failure.kind() {
+                        IoErrorKind.UnexpectedEof => if received {
+                            HttpError.BadResponse("the connection closed in the middle of the response head".to_string())
+                        } else {
+                            HttpError.ConnectionClosed
+                        },
+                        else => __io_failure("waiting for the response", failure),
+                    }
+                    return Err(Failure { cause: cause, reused: reused, received: received })
                 }
             }
         }

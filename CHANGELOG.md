@@ -6,6 +6,30 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `https` in the `http` package (stage 3, issue #262 phase C, issue #260; `spec/http-client.md`, HC17). A connection is a
+  plain `TcpStream` or a `TlsStream` and everything above it (heads, framing, bodies, redirects, retries, timeouts) is
+  shared; `https` URLs connect to port 443 (or the URL's), verify the server against the system's trust store and the
+  URL's host by default, and fail with the new `HttpError.Tls(TlsError)` (which replaces `HttpError.TlsUnsupported`;
+  `is_tls()` and `is_verification()` classify it) without a retry or a plain-text fallback. `Client.trust(store)`,
+  `tls_config(config)`, and `insecure_skip_verify()` configure it; ALPN offers `http/1.1` only. The pool key is the origin
+  (scheme, host, port), the TLS handshake is bounded by `connect_timeout`, a stale pooled TLS connection is found through
+  the TLS layer, a connection that ends without `close_notify` is a truncated body, and an unread response closes with a
+  `close_notify`. `http` now depends on `tls = true`, so programs that use it link OpenSSL 3. The `unsupported URL scheme`
+  message says `only http and https are supported`. `IoError` and `TlsError` are `Clone`. `tests/s3_http/tls` is the
+  conformance case (an in-process HTTPS server: verification failures, redirects, pooling, truncation, retries, and
+  timeouts); `tests/tls/regenerate.py` backdates the test certificates by a year and writes the copies that test keeps.
+- The `tls` official package (stage 3, issue #262, sub-issues #322, #323, #324; `spec/tls.md`, TLS1-TLS8). TLS 1.2 and
+  1.3 over OpenSSL 3 through the C bridge, with hand-written `extern "C"` bindings and memory BIOs, so no OpenSSL call
+  blocks and the stream parks the task on the reactor. `Certificate`, `PrivateKey`, and `TrustStore` load PEM, DER, and
+  files; `ClientConfig` verifies the chain and the host name by default (system roots, TLS 1.2 minimum, ALPN, a client
+  certificate, and the loudly named `insecure_skip_verify`); `ServerConfig` serves a chain and can require client
+  certificates; `TlsStream` is a `Read` and `Write` over a `TcpStream` with `recv`/`send` (`TlsError` results), clean
+  close versus truncation (`UnexpectedEof`), timeouts, SNI, and the negotiated version. The compiler gains the
+  manifest `[link]` table (`spec/packages.md`, PKG34) so a package declares its native libraries. A server speaks no ALPN
+  and serves one certificate (`spec/tls.md`, TLS8). `tests/s3_tls/` holds the conformance cases (about 130 output
+  lines of verification, version, mutual TLS, truncation, and timeout cases against an in-process server),
+  `tests/tls/regenerate.py` makes the committed test certificates, and `tests/check_tls.py` and `tests/check_link.py`
+  run in CI after the jobs install OpenSSL.
 - 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
   16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
   `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating
@@ -46,7 +70,7 @@ close-out checklist in `AGENTS.md`).
   headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
   limit), redirects with a limit, loop detection, and credential stripping across origins, connect, read, and total
   timeouts, retries of safe requests with backoff, and per-host connection reuse with a staleness probe. `https` URLs
-  parse but fail with `HttpError.TlsUnsupported`: there is no TLS in `std`. `std` gains `TcpStream.connect_timeout`
+  parse but failed with `HttpError.TlsUnsupported` (there was no TLS in `std`; `https` works now, see the entry above). `std` gains `TcpStream.connect_timeout`
   (`spec/io.md`, IO5). `tests/http/` holds golden fixtures for the pure parts, `tests/s3_http/client` is the
   conformance case against a scripted in-process server, and `tests/check_http.py` runs both and checks
   `burdin add http` and the pin; CI runs it.

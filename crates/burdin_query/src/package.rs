@@ -42,6 +42,9 @@ pub struct PackageFiles {
     /// The dependency package names whose `build.bd` this package's manifest allows (`[build] allow`). Only the
     /// entry package's list is consulted; a package's own script is trusted (`spec/build-scripts.md`, BS2).
     pub build_allow: Vec<String>,
+    /// The native libraries the package's manifest links on this host (`[link] libs` and the matching
+    /// `[target.'cfg(...)'.link]` tables, `spec/packages.md`, PKG34), without duplicates.
+    pub link_libs: Vec<String>,
     /// The module other packages reach as `use <package>`.
     pub root_module: Option<usize>,
     /// The `[lint]` table of the manifest: `(lint name, level, line)` in file order (`spec/lint.md`, LN3). The
@@ -122,6 +125,7 @@ pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
         modules,
         deps: Vec::new(),
         build_allow: Vec::new(),
+        link_libs: Vec::new(),
         root_module: Some(entry_module),
         lint: Vec::new(),
         rust: Default::default(),
@@ -330,6 +334,7 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
                 modules: vec![script],
                 deps: Vec::new(),
                 build_allow: Vec::new(),
+                link_libs: Vec::new(),
                 root_module: Some(0),
                 lint: Vec::new(),
                 rust: Default::default(),
@@ -363,6 +368,7 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
             features: Vec::new(),
             features_section: false,
             build_allow: Vec::new(),
+            link: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
@@ -444,6 +450,7 @@ fn std_package() -> PackageFiles {
         modules,
         deps: Vec::new(),
         build_allow: Vec::new(),
+        link_libs: Vec::new(),
         root_module,
         lint: Vec::new(),
         rust: Default::default(),
@@ -823,6 +830,7 @@ impl Loader {
                 modules,
                 deps: node.edges.clone(),
                 build_allow: manifest.build_allow.clone(),
+                link_libs: manifest.link_libs_for(Host::current()),
                 root_module,
                 lint: manifest.lint.clone(),
                 rust: manifest.rust.clone(),
@@ -929,6 +937,8 @@ pub struct Manifest {
     pub features_section: bool,
     /// The dependency names whose build scripts the manifest grants (`[build] allow`).
     pub build_allow: Vec<String>,
+    /// The `[link]` and `[target.'cfg(...)'.link]` entries (PKG34): `(predicate, library)` in file order.
+    pub link: Vec<(Option<Cfg>, String)>,
     /// The `[lint]` entries: `(name, level, line)`.
     pub lint: Vec<(String, String, usize)>,
     pub rust: RustConfig,
@@ -946,6 +956,17 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// The libraries this manifest links on `host`, in file order and without duplicates (PKG34).
+    pub fn link_libs_for(&self, host: Host) -> Vec<String> {
+        let mut libs: Vec<String> = Vec::new();
+        for (target, lib) in &self.link {
+            if target.as_ref().is_none_or(|cfg| cfg.matches(host)) && !libs.contains(lib) {
+                libs.push(lib.clone());
+            }
+        }
+        libs
+    }
+
     /// The feature named `name`, if the `[features]` table declares it.
     pub fn feature(&self, name: &str) -> Option<&Feature> {
         self.features.iter().find(|feature| feature.name == name)
@@ -1454,6 +1475,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut features: Vec<Feature> = Vec::new();
     let mut features_section = false;
     let mut build_allow: Vec<String> = Vec::new();
+    let mut link: Vec<(Option<Cfg>, String)> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
     // Each dependency name with the line it was declared on: a name is declared once per manifest (PKG25).
@@ -1475,7 +1497,9 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             if section == "features" {
                 features_section = true;
             }
-            if let Some(table) = dependency_table(&section) {
+            if let Some(table) = link_table(&section) {
+                table.map_err(|e| format!("{}: {e}", where_()))?;
+            } else if let Some(table) = dependency_table(&section) {
                 table.map_err(|e| format!("{}: {e}", where_()))?;
             }
             continue;
@@ -1484,6 +1508,32 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             return Err(format!("{}: expected `key = value`", where_()));
         };
         let (key, value) = (key.trim(), value.trim());
+        if let Some(table) = link_table(&section) {
+            let target = table.map_err(|e| format!("{}: {e}", where_()))?;
+            if key != "libs" {
+                return Err(format!(
+                    "{}: unknown key `{key}` in `[{section}]`: a link table has only `libs`",
+                    where_()
+                ));
+            }
+            if !value.starts_with('[') {
+                return Err(format!(
+                    "{}: `libs` must be an array of quoted library names, for example [\"ssl\"]",
+                    where_()
+                ));
+            }
+            let names = parse_string_array(value).map_err(|e| format!("{}: `libs`: {e}", where_()))?;
+            for lib in names {
+                if lib.is_empty() || lib.starts_with('-') || lib.contains(char::is_whitespace) {
+                    return Err(format!(
+                        "{}: `{lib}` is not a library name: write `ssl`, not `-lssl` or a command line",
+                        where_()
+                    ));
+                }
+                link.push((target.clone(), lib));
+            }
+            continue;
+        }
         if let Some(table) = dependency_table(&section) {
             let (target, dev) = table.map_err(|e| format!("{}: {e}", where_()))?;
             // `name.workspace = true` is the dotted spelling (WS16); the name is what comes before the dot.
@@ -1647,6 +1697,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         features,
         features_section,
         build_allow,
+        link,
         lint,
         rust,
         edition,
@@ -1656,6 +1707,21 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     };
     check_features(&manifest, path)?;
     Ok(manifest)
+}
+
+/// The predicate of a `[link]` table header: `Some(Ok(None))` for `[link]`, `Some(Ok(Some(predicate)))` for
+/// `[target.'cfg(...)'.link]` (PKG34), `None` for every other section.
+fn link_table(section: &str) -> Option<Result<Option<Cfg>, String>> {
+    if section == "link" {
+        return Some(Ok(None));
+    }
+    let rest = section.strip_prefix("target.")?;
+    let quote = rest.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let end = rest[1..].find(quote)?;
+    if &rest[end + 2..] != ".link" {
+        return None;
+    }
+    Some(cfg::parse_cfg(&rest[1..end + 1]).map(Some))
 }
 
 /// The predicate and kind of a dependency table header: `Some(Ok((predicate, dev)))` for `[dependencies]`,
@@ -1673,7 +1739,7 @@ fn dependency_table(section: &str) -> Option<Result<(Option<Cfg>, bool), String>
 /// result is the predicate and whether the table holds dev-dependencies.
 fn target_table(section: &str) -> Result<(Option<Cfg>, bool), String> {
     let usage = format!(
-        "a target table is `[target.'cfg(...)'.dependencies]` or `[target.'cfg(...)'.dev-dependencies]`, found `[{section}]`"
+        "a target table is `[target.'cfg(...)'.dependencies]`, `[target.'cfg(...)'.dev-dependencies]`, or `[target.'cfg(...)'.link]`, found `[{section}]`"
     );
     let rest = section.strip_prefix("target.").unwrap_or(section);
     let Some(quote) = rest.chars().next().filter(|c| *c == '\'' || *c == '"') else {
@@ -2188,6 +2254,34 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
         for (file, text) in modules {
             fs::write(root.join("src").join(file), text).unwrap();
         }
+    }
+
+    #[test]
+    fn link_tables_select_libraries_by_host() {
+        let text = "[package]
+name = \"tls\"
+[link]
+libs = [\"z\", \"m\"]
+[target.'cfg(unix)'.link]
+libs = [\"ssl\", \"crypto\", \"z\"]
+[target.\"cfg(windows)\".link]
+libs = [\"libssl\", \"libcrypto\"]
+";
+        let m = manifest(text).unwrap();
+        let linux = Host { os: "linux", arch: "x86_64" };
+        let windows = Host { os: "windows", arch: "x86_64" };
+        assert_eq!(m.link_libs_for(linux), ["z", "m", "ssl", "crypto"]);
+        assert_eq!(m.link_libs_for(windows), ["z", "m", "libssl", "libcrypto"]);
+        assert!(manifest("[package]\nname = \"app\"\n").unwrap().link_libs_for(linux).is_empty());
+
+        let unknown_key = manifest("[package]\nname = \"a\"\n[link]\nsearch = [\"x\"]\n");
+        assert!(unknown_key.unwrap_err().contains("unknown key `search`"));
+        let not_array = manifest("[package]\nname = \"a\"\n[link]\nlibs = \"ssl\"\n");
+        assert!(not_array.is_err());
+        let flag = manifest("[package]\nname = \"a\"\n[link]\nlibs = [\"-lssl\"]\n");
+        assert!(flag.unwrap_err().contains("not a library name"));
+        let bad_predicate = manifest("[package]\nname = \"a\"\n[target.'cfg(bogus)'.link]\nlibs = [\"x\"]\n");
+        assert!(bad_predicate.is_err());
     }
 
     #[test]

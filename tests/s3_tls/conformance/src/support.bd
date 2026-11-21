@@ -1,0 +1,280 @@
+// Helpers for the TLS conformance program: the test certificates, a scripted server in the same process, and a few
+// functions that turn results into stable text.
+//
+// A `Peer` listens on 127.0.0.1 and a port the system picks. `serve_tls` accepts one connection, runs the TLS
+// handshake with a server configuration, and then plays a `Behavior`. What the server saw is recorded in a log the test
+// prints after the tasks have finished, so the output does not depend on which task ran first.
+
+use tls.{ClientConfig, ServerConfig, TlsError, TlsStream, TrustStore}
+
+// The fixtures are produced by tests/tls/regenerate.py and committed. `embed` reads them while compiling.
+const ROOT: str = embed("certs/root.pem")
+const INTER: str = embed("certs/inter.pem")
+const SERVER: str = embed("certs/server.pem")
+const SERVER_KEY: str = embed("certs/server.key")
+const CHAIN: str = embed("certs/chain.pem")
+const RSA: str = embed("certs/rsa.pem")
+const RSA_KEY: str = embed("certs/rsa.key")
+const ED25519: str = embed("certs/ed25519.pem")
+const ED25519_KEY: str = embed("certs/ed25519.key")
+const WRONG_HOST: str = embed("certs/wrong_host.pem")
+const WRONG_HOST_KEY: str = embed("certs/wrong_host.key")
+const SELF_SIGNED: str = embed("certs/self_signed.pem")
+const SELF_SIGNED_KEY: str = embed("certs/self_signed.key")
+const EXPIRED: str = embed("certs/expired.pem")
+const EXPIRED_KEY: str = embed("certs/expired.key")
+const CLIENT: str = embed("certs/client.pem")
+const CLIENT_KEY: str = embed("certs/client.key")
+const ENCRYPTED_KEY: str = embed("certs/encrypted.key")
+
+/// A client configuration that trusts only the test authority.
+fn client_config(): ClientConfig {
+    let mut trust = TrustStore.empty()
+    trust.add_pem(ROOT).unwrap()
+    ClientConfig.with_trust(trust).unwrap()
+}
+
+/// A server configuration for a certificate chain and its key (PEM texts).
+fn server_config(chain: str, key: str): ServerConfig {
+    ServerConfig.from_pem(chain, key).unwrap()
+}
+
+/// The name of an error's variant, which does not depend on OpenSSL's wording.
+fn kind_of(failure: TlsError): String {
+    let name = match failure {
+        TlsError.Io(_) => "Io",
+        TlsError.Handshake(_) => "Handshake",
+        TlsError.Protocol(_) => "Protocol",
+        TlsError.CertificateInvalid(_) => "CertificateInvalid",
+        TlsError.HostnameMismatch(_) => "HostnameMismatch",
+        TlsError.UnexpectedEof => "UnexpectedEof",
+        TlsError.Closed => "Closed",
+        TlsError.BadCertificate(_) => "BadCertificate",
+        TlsError.BadKey(_) => "BadKey",
+        TlsError.KeyMismatch => "KeyMismatch",
+        TlsError.Config(_) => "Config",
+        TlsError.Unsupported(_) => "Unsupported",
+    }
+    name.to_string()
+}
+
+/// `count` bytes of a repeating pattern that depends on `seed`.
+fn pattern(count: usize, seed: usize): List<u8> {
+    let mut data = List<u8>.new()
+    for i in 0..count {
+        data.push(((i * 31 + seed) % 251) as u8)
+    }
+    data
+}
+
+/// A checksum of `data` that changes when any byte, or the order of two bytes, changes.
+fn checksum(data: [u8]): u64 {
+    let mut h: u64 = 7
+    for i in 0..data.len() {
+        h = (h * 31 + (data[i] as u64) + 1) % 1000000007
+    }
+    h
+}
+
+/// Reads exactly `count` bytes from `stream`, or fewer when the stream ends first.
+fn read_exact_tls(mut stream: TlsStream, count: usize): Result<List<u8>, TlsError> {
+    let mut data = List<u8>.new()
+    while data.len() < count {
+        let want = count - data.len()
+        let n = stream.recv(mut data, want)?
+        if n == 0 {
+            break
+        }
+    }
+    Ok(data)
+}
+
+/// Sends `text` and reads the same number of bytes back, as text.
+fn round_trip(mut stream: TlsStream, text: str): Result<String, TlsError> {
+    let bytes = text.to_utf8()
+    stream.send_all(bytes[0..bytes.len()])?
+    let back = read_exact_tls(mut stream, bytes.len())?
+    Ok(String.from_utf8_lossy(back[0..back.len()]))
+}
+
+/// What the server does after the handshake.
+enum Behavior: Clone {
+    /// Sends every byte back until the client ends the stream, then sends `close_notify`.
+    Echo,
+    /// Writes the text, then sends `close_notify`.
+    Greet(String),
+    /// Writes the text, then ends the connection with no `close_notify`.
+    Truncate(String),
+    /// Writes this many bytes of the test pattern, then sends `close_notify`.
+    Push(usize),
+    /// Waits this many milliseconds, then writes `late` and sends `close_notify`.
+    Idle(u64),
+    /// Reads until the client ends the stream and does nothing else.
+    Drain,
+}
+
+struct Peer {
+    listener: net.TcpListener,
+    port: u16,
+    log: Mutex<List<String>>,
+}
+
+Peer {
+    fn start(): Peer {
+        let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+        let port = listener.local_addr().unwrap().port()
+        Peer { listener: listener, port: port, log: Mutex.new(List<String>.new()) }
+    }
+
+    fn addr(self): String {
+        format("127.0.0.1:{}", self.port)
+    }
+
+    /// A TCP connection to the peer.
+    fn dial(self): net.TcpStream {
+        net.TcpStream.connect(self.addr().as_str()).unwrap()
+    }
+
+    fn note(self, own text: String) {
+        self.log.lock(|list| list.push(text))
+    }
+
+    /// Prints what the server recorded, in order.
+    fn print_log(self) {
+        let lines = self.log.lock(|list| {
+            let mut copy = List<String>.new()
+            for item in list.iter() {
+                copy.push(item.clone())
+            }
+            copy
+        })
+        for line in lines.iter() {
+            println("{}", line)
+        }
+    }
+
+    /// Accepts one connection, runs the handshake, and plays `behavior`.
+    fn serve_tls(self, config: ServerConfig, behavior: Behavior) {
+        let (tcp, _) = self.listener.accept().unwrap()
+        self.run_tls(tcp, config, behavior)
+    }
+
+    /// Accepts two connections and serves both at once, each on its own task: the first with `first`, the second with
+    /// `second`. The connections reach the tasks through a channel, since a task cannot borrow the scope body's locals.
+    fn serve_two(self, first: ServerConfig, second: ServerConfig) {
+        let work = Channel<net.TcpStream>.bounded(1)
+        task.scope(|s| {
+            s.spawn(|| {
+                match work.recv() {
+                    Some(conn) => self.run_tls(conn, first, Behavior.Echo),
+                    None => {}
+                }
+            })
+            s.spawn(|| {
+                match work.recv() {
+                    Some(conn) => self.run_tls(conn, second, Behavior.Echo),
+                    None => {}
+                }
+            })
+            for _ in 0..2 {
+                let (conn, _) = self.listener.accept().unwrap()
+                let _ = work.send(conn)
+            }
+        })
+    }
+
+    priv fn run_tls(self, own tcp: net.TcpStream, config: ServerConfig, behavior: Behavior) {
+        match TlsStream.accept(tcp, config) {
+            Ok(stream) => {
+                let mut stream = stream
+                let name = match stream.server_name() {
+                    Some(text) => text,
+                    None => "-".to_string(),
+                }
+                let subject = match stream.peer_certificate() {
+                    Some(cert) => cert.subject(),
+                    None => "-".to_string(),
+                }
+                self.note(format("server: handshake ok version={} sni={} peer={}", stream.tls_version(), name, subject))
+                self.play(mut stream, behavior)
+            }
+            Err(_) => self.note("server: handshake failed".to_string()),
+        }
+    }
+
+    /// Accepts one connection and speaks no TLS. With `silent_ms` 0 it reads the client's first bytes; otherwise it
+    /// waits that long without reading. Then it writes `reply` as it is (nothing when empty) and closes.
+    fn serve_plain(self, reply: [u8], silent_ms: u64) {
+        let (tcp, _) = self.listener.accept().unwrap()
+        let mut tcp = tcp
+        tcp.set_read_timeout(Some(Duration.from_millis(2000)))
+        let mut hello = List<u8>.new()
+        if silent_ms == 0 {
+            let _ = tcp.read(mut hello, 4096)
+        } else {
+            time.sleep(Duration.from_millis(silent_ms))
+        }
+        if reply.len() > 0 {
+            let _ = tcp.write_all(reply)
+        }
+        let _ = tcp.close()
+    }
+
+    priv fn play(self, mut stream: TlsStream, behavior: Behavior) {
+        match behavior {
+            Behavior.Echo => {
+                let mut ended = "cleanly".to_string()
+                loop {
+                    let mut chunk = List<u8>.new()
+                    match stream.recv(mut chunk, 16384) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if stream.send_all(chunk[0..n]).is_err() {
+                                ended = "with a write error".to_string()
+                                break
+                            }
+                        }
+                        Err(failure) => {
+                            ended = format("with {}", kind_of(failure))
+                            break
+                        }
+                    }
+                }
+                self.note(format("server: client ended {}", ended))
+                let _ = stream.close()
+            }
+            Behavior.Greet(text) => {
+                let bytes = text.to_utf8()
+                let _ = stream.send_all(bytes[0..bytes.len()])
+                let _ = stream.close()
+            }
+            Behavior.Truncate(text) => {
+                let bytes = text.to_utf8()
+                let _ = stream.send_all(bytes[0..bytes.len()])
+                stream.abort()
+            }
+            Behavior.Push(count) => {
+                let data = pattern(count, 3)
+                let _ = stream.send_all(data[0..data.len()])
+                let _ = stream.close()
+            }
+            Behavior.Idle(millis) => {
+                time.sleep(Duration.from_millis(millis))
+                let late = "late".to_utf8()
+                let _ = stream.send_all(late[0..4])
+                let _ = stream.close()
+            }
+            Behavior.Drain => {
+                let mut chunk = List<u8>.new()
+                loop {
+                    chunk.clear()
+                    match stream.recv(mut chunk, 4096) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+    }
+}

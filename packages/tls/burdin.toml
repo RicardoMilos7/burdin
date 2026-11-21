@@ -1,0 +1,12 @@
+[package]
+name = "tls"
+version = "0.1.0"
+
+# OpenSSL 3 (spec/tls.md, TLS1). The libraries are found by the system linker: `libssl-dev` on Linux,
+# `brew install openssl@3` on macOS (with LIBRARY_PATH naming its lib directory), and an OpenSSL 3 installation
+# whose `lib` directory is on LIB on Windows, where the import libraries are `libssl.lib` and `libcrypto.lib`.
+[target.'cfg(unix)'.link]
+libs = ["ssl", "crypto"]
+
+[target.'cfg(windows)'.link]
+libs = ["libssl", "libcrypto"]

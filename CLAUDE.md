@@ -64,7 +64,9 @@ not updated and may disagree with the repository.
    `spec/http-client.md` is the `http` package: URLs, headers, requests, the body framings, redirects, timeouts,
    retries, and connection reuse (and that `https` is not supported), `spec/crypto.md` is the `crypto` package: the
    hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 it provides in pure Burdin, what each
-   reports, and why it is an experiment, not a security claim,
+   reports, and why it is an experiment, not a security claim, `spec/tls.md` is the `tls` package: OpenSSL 3 through the
+   C bridge as the backend, the memory-BIO engine, configuration and verification, certificates and keys, the stream,
+   errors, and linking (the decision, issue #322),
    `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
@@ -141,6 +143,8 @@ python3 tests/check_features.py          check dependency tables, features, and 
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
 python3 tests/check_crypto.py            check the `crypto` official package: ~500 known-answer vectors (tests/crypto), the error messages, `burdin add crypto`, and its official pin
+python3 tests/check_link.py              check the `[link]` manifest table: a dependency's libraries reach the link by name, target tables, and the manifest errors (needs a built driver)
+python3 tests/check_tls.py               check the `tls` official package: the committed test certificates, the conformance program (clients and servers over 127.0.0.1), the declared OpenSSL symbols, the README's examples, `burdin add tls`, and its official pin (needs OpenSSL 3 to link)
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`

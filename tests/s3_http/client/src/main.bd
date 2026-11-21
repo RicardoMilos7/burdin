@@ -17,9 +17,7 @@
 //> head shared one connection: accepted 1
 //> stream: chunk 3 chunk 3 chunk 2 end
 //> stream shared one connection: accepted 1
-//> https: error: https is not supported because there is no TLS in this build: https://127.0.0.1:PORT/
-//> https made no connection: accepted 0
-//> scheme: error: unsupported URL scheme 'ftp': only http is supported
+//> scheme: error: unsupported URL scheme 'ftp': only http and https are supported
 //> userinfo: error: invalid URL: a user name and password in the URL are not supported: http://user:pw@127.0.0.1/
 //> == response bodies (HC8 to HC10)
 //> chunked: body="hello world" trailer=sum-11 complete=true
@@ -75,8 +73,8 @@
 //> not followed: 302 location=/elsewhere is_redirect=true body="moved"
 //> no location: 302 body="no location"
 //> bad location: error: invalid redirect: bad url: invalid URL: a space or control character must be percent-encoded: bad url
-//> other scheme: error: invalid redirect: ftp://example.test/: unsupported URL scheme 'ftp': only http is supported
-//> to https: error: https is not supported because there is no TLS in this build: https://127.0.0.1:1/secure
+//> other scheme: error: invalid redirect: ftp://example.test/: unsupported URL scheme 'ftp': only http and https are supported
+//> to https: error: cannot connect to 127.0.0.1:1: connection refused
 //> redirect with body: 200 body="landed"
 //> redirect with body shared one connection: accepted 1
 //> == timeouts and retries (HC13, HC14)

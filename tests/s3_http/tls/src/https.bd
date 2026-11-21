@@ -1,0 +1,758 @@
+// `https` against the scripted TLS server (spec/http-client.md, HC17).
+
+use http
+use tls.{ClientConfig, TlsVersion, TrustStore}
+
+use support.{
+    CHAIN,
+    EXPIRED,
+    EXPIRED_KEY,
+    SELF_SIGNED,
+    SELF_SIGNED_KEY,
+    SERVER_KEY,
+    Script,
+    Server,
+    WRONG_HOST,
+    WRONG_HOST_KEY,
+    body_of,
+    describe,
+    fetch,
+    good_config,
+    header_of,
+    letters,
+    ok,
+    redirect,
+    reply,
+    request_line,
+    root_store,
+    server_config,
+    trusting_client,
+}
+
+/// `#connection METHOD target` of the Nth request the server recorded.
+fn short(server: Server, n: usize): String {
+    let raw = server.request(n)
+    let line = request_line(raw.as_str())
+    let first = raw.split("\r\n")[0].clone()
+    let at = first.find('\n').unwrap()
+    format("{} {}", first.as_str()[0..at], line.replace(" HTTP/1.1", ""))
+}
+
+/// The status, body, redirect count, and URL of a response, or the failure, on one line.
+fn landed(client: http.Client, request: http.Request): String {
+    match client.send(request) {
+        Ok(response) => {
+            let mut response = response
+            let status = response.status
+            let count = response.redirects
+            let url = response.url.to_text()
+            match response.text() {
+                Ok(text) => format("{} {:?} redirects={} url={}", status, text, count, url),
+                Err(e) => format("body error: {}", e),
+            }
+        }
+        Err(e) => format("error: {}", e),
+    }
+}
+
+/// An HTTPS GET with the test root as the only authority: the status, the headers, and the body come back, and the
+/// server saw the request over TLS with no SNI (the URL names an IP address).
+fn get() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script
+            .new()
+            .read()
+            .write(reply("200 OK", "X-One: 1\r\nX-One: 2\r\nContent-Type: text/plain\r\n", "hello").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            match client.get(server.url("/greet?name=burdin").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let content_type = response.header("content-type").unwrap()
+                    let ones = response.headers.get_all("X-ONE")
+                    let fields = response.headers.len()
+                    let reason = response.reason.clone()
+                    let status = response.status
+                    let url = response.url.to_text()
+                    let text = response.text().unwrap()
+                    println(
+                        "get: {} {} content-type={} x-one={:?} fields={} body={:?} url={}",
+                        status,
+                        reason,
+                        content_type,
+                        ones,
+                        fields,
+                        text,
+                        server.mask(url.as_str()),
+                    )
+                }
+                Err(e) => println("get: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println(
+        "get sent: {} host={} agent={} length={}",
+        request_line(raw.as_str()),
+        server.mask(header_of(raw.as_str(), "host").as_str()),
+        header_of(raw.as_str(), "user-agent"),
+        header_of(raw.as_str(), "content-length"),
+    )
+    println("get handshakes: {:?}", server.handshakes())
+}
+
+/// A request with a body: the head and the body both arrive over TLS.
+fn post() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(reply("201 Created", "", "stored").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request
+                .post(server.url("/items").as_str())
+                .unwrap()
+                .header("Content-Type", "text/plain")
+                .header("X-Token", "abc")
+                .body_text("name=burdin")
+            match client.send(request) {
+                Ok(response) => {
+                    let mut response = response
+                    let reason = response.reason.clone()
+                    let status = response.status
+                    let text = response.text().unwrap()
+                    println("post: {} {} body={:?}", status, reason, text)
+                }
+                Err(e) => println("post: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println(
+        "post sent: {} length={} type={} token={} body={:?}",
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "content-length"),
+        header_of(raw.as_str(), "content-type"),
+        header_of(raw.as_str(), "x-token"),
+        body_of(raw.as_str()),
+    )
+}
+
+/// A host name in the URL is sent as SNI; an IP address is not (spec/tls.md, TLS3).
+fn server_name() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("named").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("server name: {}", fetch(client.clone(), server.named_url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println(
+        "server name: handshakes {:?} host={}",
+        server.handshakes(),
+        server.mask(header_of(raw.as_str(), "host").as_str()),
+    )
+}
+
+/// The three framings over TLS: a long `Content-Length` body (several records), a chunked body with a trailer, and a
+/// body that runs to the end of the connection, which ends cleanly because the server sent `close_notify`. The first
+/// two share the connection.
+fn bodies() {
+    let server = Server.start_tls(1, good_config())
+    let big = letters(100000)
+    let chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n"
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script
+            .new()
+            .read()
+            .write(ok(big.as_str()).as_str())
+            .read()
+            .write(chunked)
+            .read()
+            .write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nuntil the end")
+            .close(),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            match client.get(server.url("/big").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    println("length: {} bytes, as sent: {}", text.len(), text.as_str() == big.as_str())
+                }
+                Err(e) => println("length: error {}", e),
+            }
+            match client.get(server.url("/chunked").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    println("chunked: body={:?} trailer={}", text, response.trailers().get("X-Sum").unwrap())
+                }
+                Err(e) => println("chunked: error {}", e),
+            }
+            println("close-delimited: {}", fetch(client.clone(), server.url("/rest").as_str()))
+            println("close-delimited: idle {}", client.idle_connections())
+            server.settle()
+        })
+    })
+    println("bodies: accepted {}", server.accepted())
+}
+
+/// Three requests, one connection and one handshake; closing the idle connection sends `close_notify`, which the
+/// server sees as an orderly end (HC15, HC17).
+fn keep_alive() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script
+            .new()
+            .read()
+            .write(ok("one").as_str())
+            .read()
+            .write(ok("two").as_str())
+            .read()
+            .write(ok("three").as_str())
+            .wait_close(),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("keep-alive: {}", fetch(client.clone(), server.url("/1").as_str()))
+            println("idle after the first: {}", client.idle_connections())
+            println("keep-alive: {}", fetch(client.clone(), server.url("/2").as_str()))
+            println("keep-alive: {}", fetch(client.clone(), server.url("/3").as_str()))
+            println("idle after three: {}", client.idle_connections())
+            client.close_idle()
+            println("idle after close_idle: {}", client.idle_connections())
+            server.settle()
+        })
+    })
+    println("keep-alive: accepted {} and {} handshakes", server.accepted(), server.handshakes().len())
+    println("keep-alive: the server saw an orderly close: {}", server.saw("(client closed)"))
+    println("keep-alive: the server saw a cut: {}", server.saw("without close_notify"))
+}
+
+/// A response dropped before its end closes the connection, with a `close_notify` (HC16, HC17).
+fn unread_body() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc").wait_close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let status = response.status
+                    response.close()
+                    println("unread: {} closed without reading the body", status)
+                }
+                Err(e) => println("unread: error {}", e),
+            }
+            server.settle()
+        })
+    })
+    println("unread: the server saw an orderly close: {}", server.saw("(client closed)"))
+}
+
+/// An `http` and an `https` connection to the same host and port are different pool entries (HC15, HC17): the second
+/// request opens a connection of its own, and the third finds the TLS connection again. The server plays its second
+/// script on a bare socket on the very same port.
+fn pool_keys() {
+    let server = Server.start_tls(2, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new().read().write(ok("secure one").as_str()).read().write(ok("secure two").as_str()).wait_close(),
+    )
+    scripts.push(Script.new().plain().read().write(ok("bare").as_str()).wait_close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("https: {}", fetch(client.clone(), server.secure_url("/a").as_str()))
+            println("http: {}", fetch(client.clone(), server.plain_url("/b").as_str()))
+            println("idle: {}", client.idle_connections())
+            println("https again: {}", fetch(client.clone(), server.secure_url("/c").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("pool keys: accepted {}", server.accepted())
+    println("pool keys: {} | {} | {}", short(server, 0), short(server, 1), short(server, 2))
+    println("pool keys: handshakes {:?}", server.handshakes())
+}
+
+/// `http` to `https`, with the credentials of the first request dropped at the change of origin (HC12).
+fn redirect_to_https() {
+    let near = Server.start(1)
+    let far = Server.start_tls(1, good_config())
+    let mut near_scripts = List<Script>.new()
+    near_scripts.push(Script.new().read().write(redirect("302 Found", far.secure_url("/secure").as_str()).as_str()))
+    let mut far_scripts = List<Script>.new()
+    far_scripts.push(Script.new().read().write(ok("landed").as_str()))
+    task.scope(|s| {
+        s.spawn(|| near.serve(near_scripts))
+        s.spawn(|| far.serve(far_scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request
+                .get(near.url("/start").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+                .header("Cookie", "session=1")
+                .header("X-Custom", "kept")
+            println("http -> https: {}", far.mask(landed(client.clone(), request).as_str()))
+            client.close_idle()
+            near.settle()
+            far.settle()
+        })
+    })
+    let raw = far.request(0)
+    println(
+        "http -> https got: {} authorization={} cookie={} x-custom={}",
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "authorization"),
+        header_of(raw.as_str(), "cookie"),
+        header_of(raw.as_str(), "x-custom"),
+    )
+}
+
+/// `https` to `https` on the same origin reuses the connection and keeps every header (HC12, HC15).
+fn redirect_same_origin() {
+    let server = Server.start_tls(1, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new().read().write(redirect("302 Found", "/second").as_str()).read().write(ok("second").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request
+                .get(server.url("/first").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+            println("https -> https (same origin): {}", server.mask(landed(client.clone(), request).as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(1)
+    println(
+        "https -> https (same origin): accepted {} second got {} authorization={}",
+        server.accepted(),
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "authorization"),
+    )
+}
+
+/// `https` to another `https` origin: a second handshake, and the credentials are dropped (HC12).
+fn redirect_other_origin() {
+    let first = Server.start_tls(1, good_config())
+    let second = Server.start_tls(1, good_config())
+    let mut first_scripts = List<Script>.new()
+    first_scripts.push(
+        Script.new().read().write(redirect("307 Temporary Redirect", second.secure_url("/there").as_str()).as_str()),
+    )
+    let mut second_scripts = List<Script>.new()
+    second_scripts.push(Script.new().read().write(ok("there").as_str()))
+    task.scope(|s| {
+        s.spawn(|| first.serve(first_scripts))
+        s.spawn(|| second.serve(second_scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request
+                .get(first.url("/start").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+                .header("X-Custom", "kept")
+            println("https -> https (other origin): {}", second.mask(landed(client.clone(), request).as_str()))
+            client.close_idle()
+            first.settle()
+            second.settle()
+        })
+    })
+    let raw = second.request(0)
+    println(
+        "https -> https (other origin) got: {} authorization={} x-custom={}",
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "authorization"),
+        header_of(raw.as_str(), "x-custom"),
+    )
+}
+
+/// `https` to `http`: the rules of HC12 follow it (the origin changed, so the credentials are dropped), and a client
+/// that must not downgrade sets `follow_redirects` to `false` and gets the redirect itself.
+fn redirect_downgrade() {
+    let secure = Server.start_tls(1, good_config())
+    let bare = Server.start(1)
+    let mut secure_scripts = List<Script>.new()
+    secure_scripts.push(
+        Script.new().read().write(redirect("302 Found", bare.plain_url("/downgraded").as_str()).as_str()),
+    )
+    let mut bare_scripts = List<Script>.new()
+    bare_scripts.push(Script.new().read().write(ok("plain").as_str()))
+    task.scope(|s| {
+        s.spawn(|| secure.serve(secure_scripts))
+        s.spawn(|| bare.serve(bare_scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request
+                .get(secure.url("/start").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+                .header("Cookie", "session=1")
+                .header("X-Custom", "kept")
+            println("https -> http: {}", bare.mask(landed(client.clone(), request).as_str()))
+            client.close_idle()
+            secure.settle()
+            bare.settle()
+        })
+    })
+    let raw = bare.request(0)
+    println(
+        "https -> http got: {} authorization={} cookie={} x-custom={}",
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "authorization"),
+        header_of(raw.as_str(), "cookie"),
+        header_of(raw.as_str(), "x-custom"),
+    )
+
+    let refusing = Server.start_tls(1, good_config())
+    let mut refusing_scripts = List<Script>.new()
+    refusing_scripts.push(Script.new().read().write(redirect("302 Found", "http://127.0.0.1:1/downgraded").as_str()))
+    task.scope(|s| {
+        s.spawn(|| refusing.serve(refusing_scripts))
+        s.spawn(|| {
+            let mut client = trusting_client()
+            client.follow_redirects = false
+            match client.get(refusing.url("/start").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let status = response.status
+                    let location = response.header("Location").unwrap()
+                    let _ = response.text()
+                    println("https -> http, not followed: {} location={}", status, location)
+                }
+                Err(e) => println("https -> http, not followed: error {}", e),
+            }
+            client.close_idle()
+            refusing.settle()
+        })
+    })
+}
+
+/// A certificate the client rejects: the handshake fails with a TLS error that says why, the request is never sent
+/// (the server's handshake fails too, so it could not have read one), and the client does not try again, with TLS or
+/// without it, although `GET` is a safe method and the default allows two retries (HC14, HC17).
+fn rejected(label: str, chain: str, key: str, client: http.Client) {
+    let server = Server.start_tls(1, server_config(chain, key))
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("never sent").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            match client.get(server.url("/secret").as_str()) {
+                Ok(_) => println("{}: a response arrived", label),
+                Err(e) => println("{}: {}", label, describe(e, true)),
+            }
+            server.settle()
+        })
+    })
+    println(
+        "{}: accepted {}, handshakes failed {}, requests seen {}, completed {}",
+        label,
+        server.accepted(),
+        server.failed_handshakes(),
+        server.requests().len(),
+        server.handshakes().len(),
+    )
+}
+
+/// The same bad certificates with `insecure_skip_verify`: they connect, which is what shows that verification is what
+/// rejected them above.
+fn skipped(label: str, chain: str, key: str) {
+    let server = Server.start_tls(1, server_config(chain, key))
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("served anyway").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = trusting_client()
+            client.insecure_skip_verify().unwrap()
+            println("{}: {}", label, fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+fn verification() {
+    // The default client trusts the system's authorities, which do not include the test root.
+    rejected("unknown authority", CHAIN, SERVER_KEY, http.Client.new())
+    rejected("wrong host", WRONG_HOST, WRONG_HOST_KEY, trusting_client())
+    rejected("expired", EXPIRED, EXPIRED_KEY, trusting_client())
+    rejected("self-signed", SELF_SIGNED, SELF_SIGNED_KEY, trusting_client())
+    skipped("skip verify, unknown authority", CHAIN, SERVER_KEY)
+    skipped("skip verify, wrong host", WRONG_HOST, WRONG_HOST_KEY)
+    skipped("skip verify, expired", EXPIRED, EXPIRED_KEY)
+    skipped("skip verify, self-signed", SELF_SIGNED, SELF_SIGNED_KEY)
+}
+
+/// `trust` with a store that holds the server's own certificate, `tls_config` with a whole configuration, and what a
+/// clone does with them: it starts with its original's configuration and then has its own. Clones share one pool (HC11),
+/// so the test empties it between requests.
+fn configuration() {
+    let server = Server.start_tls(6, server_config(SELF_SIGNED, SELF_SIGNED_KEY))
+    let mut scripts = List<Script>.new()
+    for _ in 0..6 {
+        scripts.push(Script.new().read().write(ok("served").as_str()))
+    }
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut pinned = TrustStore.empty()
+            pinned.add_pem(SELF_SIGNED).unwrap()
+            let mut client = http.Client.new()
+            client.trust(pinned).unwrap()
+            println("trust: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+
+            let mut again = TrustStore.empty()
+            again.add_pem(SELF_SIGNED).unwrap()
+            let mut config = ClientConfig.with_trust(again).unwrap()
+            config.min_version(TlsVersion.Tls13).unwrap()
+            let mut custom = http.Client.new()
+            custom.tls_config(config)
+            println("tls_config: {}", fetch(custom.clone(), server.url("/").as_str()))
+            custom.close_idle()
+
+            // Trusting the test root says nothing about the self-signed certificate.
+            let mut other = http.Client.new()
+            other.trust(root_store()).unwrap()
+            match other.get(server.url("/").as_str()) {
+                Ok(_) => println("other store: a response arrived"),
+                Err(e) => println("other store: {}", describe(e, false)),
+            }
+
+            let mut inherited = client.clone()
+            inherited.follow_redirects = false
+            println("clone: {}", fetch(inherited.clone(), server.url("/").as_str()))
+            client.close_idle()
+            let mut changed = client.clone()
+            changed.trust(root_store()).unwrap()
+            match changed.get(server.url("/").as_str()) {
+                Ok(_) => println("clone with its own store: a response arrived"),
+                Err(e) => println("clone with its own store: {}", describe(e, false)),
+            }
+            println("original after the clone changed: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("configuration: accepted {}", server.accepted())
+}
+
+/// A TLS connection that ends without `close_notify` is not an orderly end (HC17): a body whose framing promises more
+/// bytes (a length, chunks, or the end of the connection) is `BodyTruncated`, never a clean short body, while the same
+/// close-delimited body with a `close_notify` ends cleanly.
+fn truncated() {
+    let server = Server.start_tls(4, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc").abort())
+    scripts.push(
+        Script.new().read().write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n").abort(),
+    )
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nuntil the ").abort())
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nuntil the end").close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("truncated length: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("truncated chunked: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("truncated close-delimited: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("close-delimited with close_notify: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("truncated: accepted {}", server.accepted())
+}
+
+/// Retries over TLS follow HC14 and HC15: a safe request whose connection is cut before any response byte is repeated
+/// on a new connection (with a new handshake), an unsafe one is not, and a pooled connection the server closed is
+/// replaced, whether it said `close_notify` or just vanished.
+fn retries() {
+    let server = Server.start_tls(2, good_config())
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().abort())
+    scripts.push(Script.new().read().write(ok("second try").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("get retried: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println(
+        "get retried: accepted {} and saw {} requests, {} handshakes",
+        server.accepted(),
+        server.requests().len(),
+        server.handshakes().len(),
+    )
+
+    let once = Server.start_tls(1, good_config())
+    let mut once_scripts = List<Script>.new()
+    once_scripts.push(Script.new().read().abort())
+    task.scope(|s| {
+        s.spawn(|| once.serve(once_scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            let request = http.Request.post(once.url("/").as_str()).unwrap().body_text("payload")
+            println("post not retried: {}", error_of(client.send(request)))
+            client.close_idle()
+            once.settle()
+        })
+    })
+    println("post not retried: accepted {}", once.accepted())
+
+    stale("close_notify", true)
+    stale("cut", false)
+}
+
+fn error_of(result: Result<http.Response, http.HttpError>): String {
+    match result {
+        Ok(_) => "no error".to_string(),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// The server ends a pooled connection after the response, with or without `close_notify`: the probe finds it closed
+/// and the next request opens a new connection instead of failing.
+fn stale(how: str, notify: bool) {
+    let server = Server.start_tls(2, good_config())
+    let mut scripts = List<Script>.new()
+    if notify {
+        scripts.push(Script.new().read().write(ok("one").as_str()).close())
+    } else {
+        scripts.push(Script.new().read().write(ok("one").as_str()).abort())
+    }
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            println("stale ({}): {}", how, fetch(client.clone(), server.url("/1").as_str()))
+            server.wait_closed(1)
+            println("stale ({}): {}", how, fetch(client.clone(), server.url("/2").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("stale ({}): accepted {} and {} handshakes", how, server.accepted(), server.handshakes().len())
+}
+
+/// The TLS handshake is part of opening the connection: a server that accepts and never speaks is a timeout bounded by
+/// `connect_timeout`, not by the longer read timeout (HC13, HC17).
+fn handshake_timeout() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().sleep(1500))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = trusting_client()
+            client.connect_timeout = Some(Duration.from_millis(150))
+            client.read_timeout = Some(Duration.from_millis(5000))
+            client.max_retries = 0
+            let started = Instant.now()
+            match client.get(server.secure_url("/").as_str()) {
+                Ok(_) => println("handshake timeout: connected"),
+                Err(e) => println(
+                    "handshake timeout: {} is_timeout={} connection_failure={} tls={}",
+                    server.mask(e.to_string().as_str()),
+                    e.is_timeout(),
+                    e.is_connection_failure(),
+                    e.is_tls(),
+                ),
+            }
+            println(
+                "handshake timeout: ended well before the read timeout: {}",
+                started.elapsed() < Duration.from_millis(1200),
+            )
+            server.settle()
+        })
+    })
+}
+
+/// `https` to a port that speaks plain HTTP, or nothing, is a TLS error: not a panic, not a hang, not a retry, and
+/// never the same request in plain text (HC17).
+fn plain_port() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().drain().write("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n").sleep(50))
+    scripts.push(Script.new().drain().sleep(20).close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = trusting_client()
+            match client.get(server.secure_url("/").as_str()) {
+                Ok(_) => println("plain port: a response arrived"),
+                Err(e) => println("plain port: {}", describe(e, false)),
+            }
+            match client.get(server.secure_url("/").as_str()) {
+                Ok(_) => println("silent close: a response arrived"),
+                Err(e) => println("silent close: {}", describe(e, false)),
+            }
+            server.settle()
+        })
+    })
+    println("plain port: accepted {}, requests seen {}", server.accepted(), server.requests().len())
+}
+
+fn run() {
+    println("== https basics (HC17)")
+    get()
+    post()
+    server_name()
+    bodies()
+    keep_alive()
+    unread_body()
+    pool_keys()
+    println("== redirects (HC12, HC17)")
+    redirect_to_https()
+    redirect_same_origin()
+    redirect_other_origin()
+    redirect_downgrade()
+    println("== verification and configuration (HC17)")
+    verification()
+    configuration()
+    println("== truncation, retries, and timeouts (HC13, HC14, HC17)")
+    truncated()
+    retries()
+    handshake_timeout()
+    plain_port()
+}
