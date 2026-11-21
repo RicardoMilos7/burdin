@@ -183,8 +183,11 @@ answer's range is the name. A callee still being written shows its signature too
 (`sq.area`), a call whose arguments are not closed (`sq.area(`), and a module's function named alone. A member of a
 value resolves through the local declared last before it when the typed tree no longer holds the value (the method
 named without a call drops its receiver from the tree, and unclosed text has no tree); a hover never shows `{error}`
-for those.
+for those. A member named after a dot is never resolved through a local or parameter that shares its name when it is
+itself a member: in `resp.body.read_to_string()`, `body` is the field, and a `let body` on the same line is not its
+declaration. The method's signature shows in a nested chain as it does on a one-level call.
 Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_incomplete_call` (`fixtures/incomplete`),
+`hover_on_a_method_of_a_nested_receiver_shows_its_signature` (`fixtures/nested`),
 `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
 (`ownership-hover.json`), `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
 
