@@ -1,0 +1,42 @@
+//@ run
+//> connected within the timeout: hello
+//> refused: connection refused
+//> done
+
+// `connect_timeout` is `connect` with a deadline on the wait for the connection (spec/io.md, IO5). A listener on the
+// loopback accepts at once, so the connection is established well inside the timeout, and a closed port is refused,
+// not timed out. The deadline passing is the same reactor timer `net_tcp_timeout` covers for reads.
+
+fn main() {
+    task.set_workers(2)
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (mut conn, _) = listener.accept().unwrap()
+            let data = "hello".to_utf8()
+            conn.write_all(data[0..data.len()]).unwrap()
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect_timeout(target.as_str(), Duration.from_secs(5)).unwrap()
+            let mut buf = List<u8>.new()
+            let n = client.read(mut buf, 16).unwrap()
+            println("connected within the timeout: {}", from_utf8(buf[0..n]).unwrap())
+            client.close().unwrap()
+        })
+    })
+    match net.TcpStream.connect_timeout("127.0.0.1:1", Duration.from_secs(5)) {
+        Ok(stream) => {
+            let _ = stream.close()
+            println("refused: connected")
+        }
+        Err(failure) => match failure.kind() {
+            IoErrorKind.ConnectionRefused => println("refused: connection refused"),
+            other => println("refused: {}", other),
+        },
+    }
+    println("done")
+}
