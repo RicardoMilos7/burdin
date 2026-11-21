@@ -1,0 +1,28 @@
+//@ compile-fail
+
+// The move checker sees a labeled jump: a value moved in an inner loop and then left with `break 'label` or
+// `continue 'label` is moved in a previous iteration of the labeled loop only when that loop goes on (E0104).
+
+struct Thing {
+    id: i32
+}
+
+fn take(own t: Thing) {}
+
+fn main() {
+    let a = Thing { id: 1 }
+    let b = Thing { id: 2 }
+    // Leaving the labeled loop after the move: there is no next iteration, so no error.
+    'once: loop {
+        for i in 0..3 {
+            take(a)
+            break 'once
+        }
+    }
+    'again: for i in 0..3 {
+        for j in 0..3 {
+            take(b) //~ E0104
+            continue 'again
+        }
+    }
+}

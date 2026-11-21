@@ -1,0 +1,187 @@
+//@ run
+//> 23
+//> 10
+//> 8
+//> 309
+//> 8
+//> 10
+//> 11
+//> 0
+//> done drops
+//> 20
+//> 0
+//> 20
+//> 1
+//> x_
+//> 11
+//> 1005
+//> nothing left
+
+// A loop may carry a label: `'name: while`, `'name: loop`, or `'name: for`. `break 'name` leaves that loop and
+// `continue 'name` goes on with it, from inside any loop nested in it (issue #275, spec/grammar.md rule 8.5). An
+// unlabeled `break` or `continue` still names the innermost loop. A quote that closes after one character is still a
+// character literal.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+// The first product of a row and a column that is 6: the row loop is left from the inner loop.
+fn first_pair(limit: i32): i32 {
+    let mut found = 0
+    'rows: for r in 0..limit {
+        for c in 0..limit {
+            if r * c == 6 {
+                found = r * 10 + c
+                break 'rows
+            }
+        }
+    }
+    found
+}
+
+// Counts the pairs b <= a; a larger b goes on with the next a.
+fn skip_rows(): i32 {
+    let mut pairs = 0
+    'outer: for a in 0..4 {
+        for b in 0..4 {
+            if b > a {
+                continue 'outer
+            }
+            pairs = pairs + 1
+        }
+    }
+    pairs
+}
+
+// `return` inside a labeled loop, and `break 'scan` out of it when the inner loop finishes.
+fn first_over(limit: i32): i32 {
+    'scan: loop {
+        let mut n = 0
+        while n < 100 {
+            n = n + 1
+            if n * n > limit {
+                return n
+            }
+        }
+        break 'scan
+    }
+    0
+}
+
+// The unlabeled `break` leaves only the `for`; the labeled one leaves the `loop`.
+fn total_scan(): i32 {
+    let mut total = 0
+    'scan: loop {
+        for x in [1, 2, 3, 4] {
+            if x == 3 {
+                break
+            }
+            total = total + x
+        }
+        total = total + 100
+        if total > 300 {
+            break 'scan
+        }
+    }
+    total
+}
+
+// A labeled `continue` inside a `match` in a labeled `for` over an array, and a labeled `break` from it.
+fn classify_all(): i32 {
+    let mut sum = 0
+    'each: for v in [3, 0, 5, 9] {
+        match v {
+            0 => continue 'each,
+            _ => {}
+        }
+        if v > 6 {
+            break 'each
+        }
+        sum = sum + v
+    }
+    sum
+}
+
+// The labeled `break` leaves the scope of the inner loop's body: its locals are dropped, innermost first.
+fn drops() {
+    'outer: for i in 0..3 {
+        let a = Noisy { id: i }
+        for j in 0..3 {
+            let b = Noisy { id: 10 + j }
+            if j == 1 {
+                break 'outer
+            }
+        }
+        println("unreached")
+    }
+    println("done drops")
+}
+
+fn drops_continue() {
+    'outer: for i in 0..2 {
+        let a = Noisy { id: i }
+        for j in 0..2 {
+            let b = Noisy { id: 20 + j }
+            continue 'outer
+        }
+    }
+}
+
+// A `while` whose labeled `continue` comes from a `loop` nested in it: the condition runs again.
+fn rising(): i32 {
+    let mut i = 0
+    let mut seen = 0
+    'rise: while i < 10 {
+        i = i + 1
+        loop {
+            if i % 2 == 0 {
+                continue 'rise
+            }
+            break
+        }
+        seen = seen + 1
+    }
+    i * 100 + seen
+}
+
+// Two sibling loops may share a label; a label is in scope only inside its loop.
+fn sibling(): i32 {
+    let mut n = 0
+    'row: for i in 0..3 {
+        n = n + i
+    }
+    'row: while n < 10 {
+        n = n + 4
+        if n > 8 {
+            break 'row
+        }
+    }
+    n
+}
+
+fn main() {
+    println(first_pair(4).to_string())
+    println(skip_rows().to_string())
+    println(first_over(50).to_string())
+    println(total_scan().to_string())
+    println(classify_all().to_string())
+    drops()
+    drops_continue()
+    // Character literals are not labels.
+    let x = 'x'
+    let underscore = '_'
+    println("{x}{underscore}")
+    println(sibling().to_string())
+    println(rising().to_string())
+    'empty: loop {
+        break 'empty
+    }
+    println("nothing left")
+}

@@ -2,7 +2,7 @@
 //! methods of built-in receivers, `sum`, the eager `List` helpers, and the lowering of `for` over a user type or
 //! an iterator value (`spec/iterators.md`).
 
-use super::{FnCx, error_expr, mk};
+use super::{FnCx, LoopScope, error_expr, mk};
 use crate::generics::{Bound, Request, SYMBOLIC_CALL};
 use crate::globals::adt_key;
 use crate::types::check_storable;
@@ -310,7 +310,7 @@ impl FnCx<'_> {
         );
         let arms = vec![
             tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(x, mode))), guard: None, body },
-            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
+            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break(None), Ty::Never, span) },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
         let looped = mk(
@@ -378,7 +378,7 @@ impl FnCx<'_> {
         let iter_ty = iterable.ty.clone();
         let it = self.declare_hidden("__iter", iter_ty.clone(), true, LocalKind::Owned);
         self.scopes.push(Default::default());
-        self.loops.push(false);
+        self.loops.push(LoopScope::loop_body());
         let pat = self.pattern(pattern, &item, true);
         if !self.exhaustive(&item, &[&pat]) {
             self.diags.error(
@@ -397,7 +397,7 @@ impl FnCx<'_> {
                 guard: None,
                 body: mk(tir::ExprKind::Block(body), Ty::Unit, span),
             },
-            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
+            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break(None), Ty::Never, span) },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
         let looped = mk(
@@ -429,7 +429,7 @@ impl FnCx<'_> {
         if iterator.ty == Ty::Error {
             // The iterable did not resolve; the body is still checked for its own errors.
             self.scopes.push(Default::default());
-            self.loops.push(false);
+            self.loops.push(LoopScope::loop_body());
             let _ = self.pattern(pattern, &Ty::Error, true);
             let _ = self.block(body, None);
             self.loops.pop();

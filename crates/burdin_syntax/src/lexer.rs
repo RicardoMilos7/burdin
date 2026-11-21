@@ -162,6 +162,9 @@ impl Lexer<'_> {
             return self.string(lo);
         }
         if c == b'\'' {
+            if self.label(lo) {
+                return Ok(());
+            }
             return self.char_lit(lo);
         }
         if let Some((kind, len)) = self.punct() {
@@ -488,6 +491,27 @@ impl Lexer<'_> {
         self.pos += 1 + hashes;
         self.push(TokenKind::Str(text), lo);
         Ok(true)
+    }
+
+    /// A loop label: a quote, an identifier, and no closing quote after it (`'outer:`). A quote that closes after
+    /// one character or name (`'a'`, `'_'`) starts a character literal instead, so this returns false for it.
+    fn label(&mut self, lo: usize) -> bool {
+        let start = lo + 1;
+        let first = self.src.get(start).copied().unwrap_or(0);
+        if !(first.is_ascii_alphabetic() || first == b'_') {
+            return false;
+        }
+        let mut end = start;
+        while end < self.src.len() && (self.src[end].is_ascii_alphanumeric() || self.src[end] == b'_') {
+            end += 1;
+        }
+        if self.src.get(end) == Some(&b'\'') {
+            return false;
+        }
+        let name = std::str::from_utf8(&self.src[start..end]).unwrap().to_string();
+        self.pos = end;
+        self.push(TokenKind::Label(name), lo);
+        true
     }
 
     fn char_lit(&mut self, lo: usize) -> Result<(), Fatal> {
@@ -836,7 +860,9 @@ mod tests {
 
     #[test]
     fn unterminated_char_literal_recovers_at_the_newline() {
-        let (tokens, d) = lex_all("'a\nb");
+        // `'a` with no closing quote is a loop label now (issue #275), so the quote must be followed by something
+        // other than an identifier to be an unterminated character literal.
+        let (tokens, d) = lex_all("'\nb");
         assert_eq!(d.len(), 1);
         assert!(d.iter().next().unwrap().message.contains("unterminated character literal"));
         assert_eq!(tokens[1].kind, Ident("b".into()));
@@ -983,5 +1009,16 @@ mod tests {
         let mut d = Diagnostics::default();
         lex(FileId(0), r#""a } b""#, &mut d);
         assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn a_quote_starts_a_loop_label_or_a_character_literal() {
+        // A quote that closes after one character or name is a character literal; any other quote is a label.
+        assert_eq!(kinds("'outer: loop"), vec![Label("outer".into()), Colon, Loop, Eof]);
+        assert_eq!(kinds("break 'a"), vec![Break, Label("a".into()), Eof]);
+        assert_eq!(kinds("'a'"), vec![Char('a'), Eof]);
+        assert_eq!(kinds("'_'"), vec![Char('_'), Eof]);
+        assert_eq!(kinds("'\\n'"), vec![Char('\n'), Eof]);
+        assert_eq!(kinds("'x_1: for"), vec![Label("x_1".into()), Colon, For, Eof]);
     }
 }

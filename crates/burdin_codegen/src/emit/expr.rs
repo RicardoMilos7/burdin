@@ -212,64 +212,36 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // (spec/memory-rules.md, MV9), so a borrowed use does not leave a second owner behind.
             K::Block(b) => self.block(b, Mode::Move)?,
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), &e.ty)?,
-            K::While(cond, body) => {
-                let header = self.new_block("while.cond");
-                let body_bb = self.new_block("while.body");
-                let exit = self.new_block("while.end");
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(header);
-                let c = self.expr_mode(cond, Mode::Use)?;
-                let c = self.need_int(c, &Ty::Bool);
-                self.builder.build_conditional_branch(c, body_bb, exit).map_err(llvm_err)?;
-                self.builder.position_at_end(body_bb);
-                self.loop_body(body, header, exit)?;
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(exit);
+            K::While(..)
+            | K::Loop(_)
+            | K::ForRange { .. }
+            | K::ForRangeValue { .. }
+            | K::ForArray { .. }
+            | K::ForSlice { .. }
+            | K::ForList { .. }
+            | K::ForMap { .. }
+            | K::ForChars { .. } => {
+                self.loop_expr(e, None)?;
                 None
             }
-            K::Loop(body) => {
-                let body_bb = self.new_block("loop.body");
-                let exit = self.new_block("loop.end");
-                self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(body_bb);
-                self.loop_body(body, body_bb, exit)?;
-                self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(exit);
-                None
-            }
-            K::ForRange { var, lo, hi, inclusive, body } => {
-                self.for_range(*var, lo, hi, *inclusive, body)?;
-                None
-            }
-            K::ForRangeValue { var, range, body } => {
-                self.for_range_value(*var, range, body)?;
-                None
-            }
-            K::ForArray { pat, array, body } => {
-                self.for_array(pat, array, body)?;
-                None
-            }
-            K::ForSlice { pat, slice, body } => {
-                self.for_slice(pat, slice, body)?;
-                None
-            }
-            K::ForList { pat, list, body } => {
-                self.for_list(pat, list, body)?;
-                None
-            }
-            K::ForMap { pat, map, body } => {
-                self.for_map(pat, map, body)?;
-                None
-            }
-            K::ForChars { pat, string, body } => {
-                self.for_chars(pat, string, body)?;
+            K::Labeled(label, inner) => {
+                self.loop_expr(inner, Some(label.as_str()))?;
                 None
             }
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
-            K::Break | K::Continue => {
-                let target = self.loops.last().expect("checked: inside a loop");
+            K::Break(label) | K::Continue(label) => {
+                // An unlabeled jump names the innermost loop; a labeled one the loop with that label (sema checked it).
+                let index = match label {
+                    None => self.loops.len() - 1,
+                    Some(name) => self
+                        .loops
+                        .iter()
+                        .rposition(|lp| lp.label.as_deref() == Some(name.as_str()))
+                        .expect("checked: a labeled loop encloses it"),
+                };
+                let target = &self.loops[index];
                 let (bb, temp_depth, scope_depth) = match e.kind {
-                    K::Break => (target.break_bb, target.temp_depth, target.scope_depth),
+                    K::Break(_) => (target.break_bb, target.temp_depth, target.scope_depth),
                     _ => (target.continue_bb, target.temp_depth, target.scope_depth),
                 };
                 self.drop_scopes_above(scope_depth)?;

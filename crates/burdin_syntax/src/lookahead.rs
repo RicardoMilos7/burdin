@@ -239,6 +239,7 @@ pub fn can_start_expr(kind: &TokenKind) -> bool {
     matches!(
         kind,
         Ident(_)
+            | Label(_)
             | Int(_)
             | Float(_)
             | Char(_)

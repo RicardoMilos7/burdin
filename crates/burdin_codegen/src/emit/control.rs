@@ -17,13 +17,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// Emits a loop's body with its targets: `break` and `continue` go to `break_bb` and `continue_bb`, and a
+    /// labeled one finds this loop by `label`.
     pub(super) fn loop_body(
         &mut self,
         body: &'a tir::Block,
         continue_bb: BasicBlock<'ctx>,
         break_bb: BasicBlock<'ctx>,
+        label: Option<&str>,
     ) -> GenResult<()> {
         self.loops.push(LoopTargets {
+            label: label.map(str::to_string),
             continue_bb,
             break_bb,
             temp_depth: self.temps.len(),
@@ -34,6 +38,60 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// A loop expression, with the label written before it, if any. Its body's `break` and `continue` find it by
+    /// that label.
+    pub(super) fn loop_expr(&mut self, e: &'a tir::Expr, label: Option<&str>) -> GenResult<()> {
+        use tir::ExprKind as K;
+        match &e.kind {
+            K::While(cond, body) => {
+                let header = self.new_block("while.cond");
+                let body_bb = self.new_block("while.body");
+                let exit = self.new_block("while.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let c = self.expr_mode(cond, Mode::Use)?;
+                let c = self.need_int(c, &Ty::Bool);
+                self.builder.build_conditional_branch(c, body_bb, exit).map_err(llvm_err)?;
+                self.builder.position_at_end(body_bb);
+                self.loop_body(body, header, exit, label)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(exit);
+            }
+            K::Loop(body) => {
+                let body_bb = self.new_block("loop.body");
+                let exit = self.new_block("loop.end");
+                self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(body_bb);
+                self.loop_body(body, body_bb, exit, label)?;
+                self.builder.build_unconditional_branch(body_bb).map_err(llvm_err)?;
+                self.builder.position_at_end(exit);
+            }
+            K::ForRange { var, lo, hi, inclusive, body } => {
+                self.for_range(*var, lo, hi, *inclusive, body, label)?;
+            }
+            K::ForRangeValue { var, range, body } => {
+                self.for_range_value(*var, range, body, label)?;
+            }
+            K::ForArray { pat, array, body } => {
+                self.for_array(pat, array, body, label)?;
+            }
+            K::ForSlice { pat, slice, body } => {
+                self.for_slice(pat, slice, body, label)?;
+            }
+            K::ForList { pat, list, body } => {
+                self.for_list(pat, list, body, label)?;
+            }
+            K::ForMap { pat, map, body } => {
+                self.for_map(pat, map, body, label)?;
+            }
+            K::ForChars { pat, string, body } => {
+                self.for_chars(pat, string, body, label)?;
+            }
+            _ => unreachable!("loop_expr is called with a loop"),
+        }
+        Ok(())
+    }
+
     pub(super) fn for_range(
         &mut self,
         var: Option<tir::LocalId>,
@@ -41,6 +99,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         hi: &'a tir::Expr,
         inclusive: bool,
         body: &'a tir::Block,
+        label: Option<&str>,
     ) -> GenResult<()> {
         let Ty::Int(ity) = lo.ty.clone() else {
             // The range diverges (for example `return..x`); nothing after it runs.
@@ -65,7 +124,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             _ => None,
         };
-        self.range_loop(var, ity, inclusive, lo_v, hi_v, fact, body)
+        self.range_loop(var, ity, inclusive, lo_v, hi_v, fact, body, label)
     }
 
     /// `for i in range`: evaluates the range value once and iterates its endpoints.
@@ -74,6 +133,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         var: Option<tir::LocalId>,
         range: &'a tir::Expr,
         body: &'a tir::Block,
+        label: Option<&str>,
     ) -> GenResult<()> {
         let (elem, inclusive) = match &range.ty {
             Ty::Range(inner, inclusive) => ((**inner).clone(), *inclusive),
@@ -92,7 +152,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let value = value.into_struct_value();
         let lo_v = self.builder.build_extract_value(value, 0, "range.lo").map_err(llvm_err)?.into_int_value();
         let hi_v = self.builder.build_extract_value(value, 1, "range.hi").map_err(llvm_err)?.into_int_value();
-        self.range_loop(var, ity, inclusive, lo_v, hi_v, None, body)
+        self.range_loop(var, ity, inclusive, lo_v, hi_v, None, body, label)
     }
 
     /// The shared loop for both range forms. `fact` is a bounds-check fact the body may use.
@@ -106,6 +166,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         hi_v: inkwell::values::IntValue<'ctx>,
         fact: Option<(tir::LocalId, tir::LocalId)>,
         body: &'a tir::Block,
+        label: Option<&str>,
     ) -> GenResult<()> {
         let signed = ity.signed();
         let counter = self.alloca(self.int_ty(ity).into(), "for.counter")?;
@@ -136,7 +197,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if let Some(fact) = fact {
             self.bounds_facts.push(fact);
         }
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         if fact.is_some() {
             self.bounds_facts.pop();
         }
@@ -295,7 +356,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// `for pattern in array`: binds each element in order.
-    pub(super) fn for_array(&mut self, pat: &'a Pat, array: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+    pub(super) fn for_array(
+        &mut self,
+        pat: &'a Pat,
+        array: &'a tir::Expr,
+        body: &'a tir::Block,
+        label: Option<&str>,
+    ) -> GenResult<()> {
         let Ty::Array(elem, n) = &array.ty else {
             // The array expression diverges; nothing after it runs.
             self.expr_mode(array, Mode::Use)?;
@@ -327,7 +394,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             _ => None,
         };
         self.pat_bind(pat, elem_ptr, elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -340,7 +407,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// `for pattern in list`: binds each element in order; the list is borrowed.
-    pub(super) fn for_list(&mut self, pat: &'a Pat, list: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+    pub(super) fn for_list(
+        &mut self,
+        pat: &'a Pat,
+        list: &'a tir::Expr,
+        body: &'a tir::Block,
+        label: Option<&str>,
+    ) -> GenResult<()> {
         let Ty::List(elem, _) = &list.ty else {
             self.expr_mode(list, Mode::Use)?;
             return Ok(());
@@ -377,7 +450,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => None,
         };
         self.pat_bind(pat, elem_ptr, &elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -391,7 +464,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// `for pattern in map`: binds each live `(key, value)` pair; the map is borrowed. The hash table's slots are
     /// scanned in order and empty ones are skipped, so the iteration order is unspecified.
-    pub(super) fn for_map(&mut self, pat: &'a Pat, map: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+    pub(super) fn for_map(
+        &mut self,
+        pat: &'a Pat,
+        map: &'a tir::Expr,
+        body: &'a tir::Block,
+        label: Option<&str>,
+    ) -> GenResult<()> {
         let Ty::Map(key, value, _) = &map.ty else {
             self.expr_mode(map, Mode::Use)?;
             return Ok(());
@@ -437,7 +516,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // The entry is `(key, value, hash)`; a `(key, value)` tuple shares the first two fields' layout, so the
         // pattern binds views into the map at the same addresses the key and value occupy.
         self.pat_bind(pat, Some(slot), &pair, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -450,7 +529,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// `for pattern in string.chars()`: binds each UTF-8 character in order.
-    pub(super) fn for_chars(&mut self, pat: &'a Pat, string: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+    pub(super) fn for_chars(
+        &mut self,
+        pat: &'a Pat,
+        string: &'a tir::Expr,
+        body: &'a tir::Block,
+        label: Option<&str>,
+    ) -> GenResult<()> {
         let v = self.expr_mode(string, Mode::Use)?;
         let s = self.need(v, &Ty::Str).into_struct_value();
         let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
@@ -473,7 +558,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let slot = self.alloca(self.cx.i32_type().into(), "for.char")?;
         self.builder.build_store(slot, cp).map_err(llvm_err)?;
         self.pat_bind(pat, Some(slot), &Ty::Char, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
@@ -484,7 +569,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.position_at_end(exit);
         Ok(())
     }
-    pub(super) fn for_slice(&mut self, pat: &'a Pat, slice: &'a tir::Expr, body: &'a tir::Block) -> GenResult<()> {
+    pub(super) fn for_slice(
+        &mut self,
+        pat: &'a Pat,
+        slice: &'a tir::Expr,
+        body: &'a tir::Block,
+        label: Option<&str>,
+    ) -> GenResult<()> {
         let Ty::Slice(elem) = &slice.ty else {
             // The slice expression diverges; nothing after it runs.
             self.expr_mode(slice, Mode::Use)?;
@@ -517,7 +608,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => None,
         };
         self.pat_bind(pat, elem_ptr, &elem, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit)?;
+        self.loop_body(body, latch, exit, label)?;
         self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
 
         self.builder.position_at_end(latch);
