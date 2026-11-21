@@ -1,0 +1,267 @@
+// SHA-3 and SHAKE (FIPS 202), the Keccak-f[1600] sponge, in pure Burdin.
+
+const KECCAK_RC: [u64; 24] = [
+    0x0000000000000001,
+    0x0000000000008082,
+    0x800000000000808a,
+    0x8000000080008000,
+    0x000000000000808b,
+    0x0000000080000001,
+    0x8000000080008081,
+    0x8000000000008009,
+    0x000000000000008a,
+    0x0000000000000088,
+    0x0000000080008009,
+    0x000000008000000a,
+    0x000000008000808b,
+    0x800000000000008b,
+    0x8000000000008089,
+    0x8000000000008003,
+    0x8000000000008002,
+    0x8000000000000080,
+    0x000000000000800a,
+    0x800000008000000a,
+    0x8000000080008081,
+    0x8000000000008080,
+    0x0000000080000001,
+    0x8000000080008008,
+]
+
+const KECCAK_ROT: [u32; 24] = [
+    1,
+    3,
+    6,
+    10,
+    15,
+    21,
+    28,
+    36,
+    45,
+    55,
+    2,
+    14,
+    27,
+    41,
+    56,
+    8,
+    25,
+    43,
+    62,
+    18,
+    39,
+    61,
+    20,
+    44,
+]
+const KECCAK_PI: [usize; 24] = [10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1]
+
+/// The Keccak-f[1600] permutation.
+fn keccak_f(mut state: [u64; 25]) {
+    let mut bc: [u64; 5] = [0; 5]
+    let mut round: usize = 0
+    while round < 24 {
+        let mut i: usize = 0
+        while i < 5 {
+            bc[i] = state[i] ^ state[i + 5] ^ state[i + 10] ^ state[i + 15] ^ state[i + 20]
+            i = i + 1
+        }
+        i = 0
+        while i < 5 {
+            let t = bc[(i + 4) % 5] ^ bc[(i + 1) % 5].rotate_left(1)
+            let mut j: usize = 0
+            while j < 25 {
+                state[j + i] = state[j + i] ^ t
+                j = j + 5
+            }
+            i = i + 1
+        }
+        let mut t = state[1]
+        i = 0
+        while i < 24 {
+            let j = KECCAK_PI[i]
+            let saved = state[j]
+            state[j] = t.rotate_left(KECCAK_ROT[i])
+            t = saved
+            i = i + 1
+        }
+        let mut j: usize = 0
+        while j < 25 {
+            i = 0
+            while i < 5 {
+                bc[i] = state[j + i]
+                i = i + 1
+            }
+            i = 0
+            while i < 5 {
+                state[j + i] = state[j + i] ^ ((bc[(i + 1) % 5] ^ 0xffffffffffffffff) & bc[(i + 2) % 5])
+                i = i + 1
+            }
+            j = j + 5
+        }
+        state[0] = state[0] ^ KECCAK_RC[round]
+        round = round + 1
+    }
+}
+
+/// An incremental SHA-3 hasher, or a SHAKE extendable-output function.
+struct Sha3 {
+    state: [u64; 25],
+    buf: List<u8>,
+    rate: usize,
+    out_len: usize,
+    suffix: u8,
+}
+
+Sha3 {
+    fn with(rate: usize, out_len: usize, suffix: u8): Sha3 {
+        Sha3 { state: [0; 25], buf: List<u8>.new(), rate: rate, out_len: out_len, suffix: suffix }
+    }
+
+    /// SHA3-224 (28-byte digest).
+    fn new224(): Sha3 {
+        Sha3.with(144, 28, 0x06)
+    }
+
+    /// SHA3-256 (32-byte digest).
+    fn new256(): Sha3 {
+        Sha3.with(136, 32, 0x06)
+    }
+
+    /// SHA3-384 (48-byte digest).
+    fn new384(): Sha3 {
+        Sha3.with(104, 48, 0x06)
+    }
+
+    /// SHA3-512 (64-byte digest).
+    fn new512(): Sha3 {
+        Sha3.with(72, 64, 0x06)
+    }
+
+    /// SHAKE128 producing `out_len` bytes.
+    fn shake128(out_len: usize): Sha3 {
+        Sha3.with(168, out_len, 0x1f)
+    }
+
+    /// SHAKE256 producing `out_len` bytes.
+    fn shake256(out_len: usize): Sha3 {
+        Sha3.with(136, out_len, 0x1f)
+    }
+
+    /// The block size in bytes (the sponge rate).
+    fn block_len(self): usize {
+        self.rate
+    }
+
+    /// The digest size in bytes.
+    fn output_len(self): usize {
+        self.out_len
+    }
+
+    fn absorb(mut self, block: [u8]) {
+        let mut i: usize = 0
+        while i < self.rate / 8 {
+            let mut word: u64 = 0
+            let mut k: usize = 8
+            while k > 0 {
+                k = k - 1
+                word = (word << 8) | (block[i * 8 + k] as u64)
+            }
+            self.state[i] = self.state[i] ^ word
+            i = i + 1
+        }
+        keccak_f(mut self.state)
+    }
+
+    /// Hashes more input.
+    fn update(mut self, data: [u8]) {
+        let mut pos: usize = 0
+        if self.buf.len() > 0 {
+            while pos < data.len() && self.buf.len() < self.rate {
+                self.buf.push(data[pos])
+                pos = pos + 1
+            }
+            if self.buf.len() == self.rate {
+                let block = self.buf.clone()
+                self.absorb(block.as_slice())
+                self.buf.clear()
+            }
+        }
+        let rate = self.rate
+        while pos + rate <= data.len() {
+            self.absorb(data[pos..pos + rate])
+            pos = pos + rate
+        }
+        while pos < data.len() {
+            self.buf.push(data[pos])
+            pos = pos + 1
+        }
+    }
+
+    /// Ends the hash and returns the digest. The hasher must not be used afterwards.
+    fn finish(mut self): List<u8> {
+        let mut last = self.buf.clone()
+        let used = last.len()
+        while last.len() < self.rate {
+            last.push(0)
+        }
+        last[used] = last[used] ^ self.suffix
+        last[self.rate - 1] = last[self.rate - 1] ^ 0x80
+        self.buf.clear()
+        self.absorb(last.as_slice())
+        let mut out = List<u8>.new()
+        loop {
+            let mut i: usize = 0
+            while i < self.rate && out.len() < self.out_len {
+                out.push((self.state[i / 8] >> ((i % 8) as u32 * 8)) as u8)
+                i = i + 1
+            }
+            if out.len() >= self.out_len {
+                break
+            }
+            keccak_f(mut self.state)
+        }
+        out
+    }
+}
+
+/// The SHA3-224 digest of `data`.
+fn sha3_224(data: [u8]): List<u8> {
+    let mut h = Sha3.new224()
+    h.update(data)
+    h.finish()
+}
+
+/// The SHA3-256 digest of `data`.
+fn sha3_256(data: [u8]): List<u8> {
+    let mut h = Sha3.new256()
+    h.update(data)
+    h.finish()
+}
+
+/// The SHA3-384 digest of `data`.
+fn sha3_384(data: [u8]): List<u8> {
+    let mut h = Sha3.new384()
+    h.update(data)
+    h.finish()
+}
+
+/// The SHA3-512 digest of `data`.
+fn sha3_512(data: [u8]): List<u8> {
+    let mut h = Sha3.new512()
+    h.update(data)
+    h.finish()
+}
+
+/// `out_len` bytes of SHAKE128 output for `data`.
+fn shake128(data: [u8], out_len: usize): List<u8> {
+    let mut h = Sha3.shake128(out_len)
+    h.update(data)
+    h.finish()
+}
+
+/// `out_len` bytes of SHAKE256 output for `data`.
+fn shake256(data: [u8], out_len: usize): List<u8> {
+    let mut h = Sha3.shake256(out_len)
+    h.update(data)
+    h.finish()
+}

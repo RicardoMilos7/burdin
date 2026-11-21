@@ -1595,6 +1595,26 @@ is how `tests/check_toolchain.py` tests it. Gaps: no target components until cro
 follows the stable channel only; the GitHub API path and the Windows user-PATH removal are on the manual checklist in
 `spec/toolchain.md`.
 
+## Session: the `crypto` package (stage 3, issue #266)
+
+`packages/crypto` is an official package written entirely in Burdin (`spec/crypto.md`, CR1-CR14; the decision of native
+versus a C library is CR1: native). Files under `packages/crypto/src`: `sha256.bd`, `sha512.bd`, `sha1.bd`, `md5.bd`,
+`sha3.bd` (the hashes), `hash.bd` (`HashAlg`), `hmac.bd` (HMAC, HKDF, PBKDF2), `chacha.bd` (ChaCha20, XChaCha20,
+Poly1305, and the AEADs), `aes.bd` (AES, CTR, CBC, GCM; the S-box tables are generated, not typed), `curve25519.bd`
+(X25519 and Ed25519 after TweetNaCl, field elements as sixteen 16-bit limbs in `i64`), `util.bd`, `errors.bd`, and the
+root `crypto.bd`, which re-exports them with `pub use`. A dependency's non-root modules are hidden, so every public name
+has to be re-exported there. Tests: `tests/crypto/` (fixtures, `regenerate.py`, and the `runner` package),
+`tests/check_crypto.py`, `tests/s3_crypto/usage`, and one CI step per OS.
+
+Things the next person will trip over: `error` is a keyword, so the error module is `errors.bd`; an interface cannot
+have `own self` or a static function, so every hasher's `finish` takes `mut self`; a `mut` parameter of a slice type
+cannot be assigned through (use `fill`, or pass an array or a `List`); the borrow checker treats the result of a call
+that takes `x.as_slice()` as possibly borrowing `x`, so `x = f(x.as_slice())` needs a clone first
+(`let input = x.clone(); x = f(input.as_slice())`); two arguments touching one place conflict even when one only
+reads (`list.push(list[i])` is E0110, so read into a local first); and `str + str` does not exist (`format` or
+`push_str`). Not done: RSA, ECDSA/P-256, Argon2/scrypt, and any TLS or X.509 (the issue's "TLS/auth" goal is the next
+package's job; this one is the primitives).
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

@@ -1,0 +1,87 @@
+// One name for each hash, so HMAC, HKDF, and PBKDF2 work with any of them.
+
+use md5.md5
+use sha1.sha1
+use sha256.{sha224, sha256}
+use sha3.{sha3_224, sha3_256, sha3_384, sha3_512}
+use sha512.{sha384, sha512}
+
+/// A hash function. `Md5` and `Sha1` are broken for collision resistance and are here for old protocols only.
+enum HashAlg: Copy, Clone, Eq, Debug {
+    Md5,
+    Sha1,
+    Sha224,
+    Sha256,
+    Sha384,
+    Sha512,
+    Sha3_224,
+    Sha3_256,
+    Sha3_384,
+    Sha3_512,
+}
+
+HashAlg {
+    /// The input block size in bytes (the rate, for SHA-3). HMAC pads its key to this length.
+    fn block_len(self): usize {
+        match self {
+            HashAlg.Md5 => 64,
+            HashAlg.Sha1 => 64,
+            HashAlg.Sha224 => 64,
+            HashAlg.Sha256 => 64,
+            HashAlg.Sha384 => 128,
+            HashAlg.Sha512 => 128,
+            HashAlg.Sha3_224 => 144,
+            HashAlg.Sha3_256 => 136,
+            HashAlg.Sha3_384 => 104,
+            HashAlg.Sha3_512 => 72,
+        }
+    }
+
+    /// The digest size in bytes.
+    fn output_len(self): usize {
+        match self {
+            HashAlg.Md5 => 16,
+            HashAlg.Sha1 => 20,
+            HashAlg.Sha224 => 28,
+            HashAlg.Sha256 => 32,
+            HashAlg.Sha384 => 48,
+            HashAlg.Sha512 => 64,
+            HashAlg.Sha3_224 => 28,
+            HashAlg.Sha3_256 => 32,
+            HashAlg.Sha3_384 => 48,
+            HashAlg.Sha3_512 => 64,
+        }
+    }
+
+    /// The name, as in `"SHA-256"`.
+    fn name(self): str {
+        match self {
+            HashAlg.Md5 => "MD5",
+            HashAlg.Sha1 => "SHA-1",
+            HashAlg.Sha224 => "SHA-224",
+            HashAlg.Sha256 => "SHA-256",
+            HashAlg.Sha384 => "SHA-384",
+            HashAlg.Sha512 => "SHA-512",
+            HashAlg.Sha3_224 => "SHA3-224",
+            HashAlg.Sha3_256 => "SHA3-256",
+            HashAlg.Sha3_384 => "SHA3-384",
+            HashAlg.Sha3_512 => "SHA3-512",
+        }
+    }
+
+    /// The digest of `data`.
+    fn digest(self, data: [u8]): List<u8> {
+        match self {
+            HashAlg.Md5 => md5(data),
+            HashAlg.Sha1 => sha1(data),
+            HashAlg.Sha224 => sha224(data),
+            HashAlg.Sha256 => sha256(data),
+            HashAlg.Sha384 => sha384(data),
+            HashAlg.Sha512 => sha512(data),
+            HashAlg.Sha3_224 => sha3_224(data),
+            HashAlg.Sha3_256 => sha3_256(data),
+            HashAlg.Sha3_384 => sha3_384(data),
+            HashAlg.Sha3_512 => sha3_512(data),
+        }
+    }
+}

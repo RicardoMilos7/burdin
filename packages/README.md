@@ -21,6 +21,8 @@ Official packages today:
 - `csv` — a record-at-a-time CSV reader and writer (issue #257; `packages/csv/README.md`).
 - `yaml` — a safe YAML subset with anchors resolved (issue #258; `packages/yaml/README.md`).
 - `xml` — an XML reader and writer with namespaces and a small DOM (issue #259; `packages/xml/README.md`).
+- `crypto` — hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 in pure Burdin; an experiment,
+  not a security claim (issue #266; `packages/crypto/README.md`, `spec/crypto.md`).
 
 Later libraries are added here, one folder each, as they are written.
 
