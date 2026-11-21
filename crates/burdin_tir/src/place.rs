@@ -79,7 +79,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break(_)
+        | K::Break { .. }
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
         K::Local(_) => record(e, out),

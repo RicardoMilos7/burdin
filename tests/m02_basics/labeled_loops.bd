@@ -16,6 +16,8 @@
 //> 11
 //> 1005
 //> nothing left
+//> 1
+//> 4
 
 // A loop may carry a label: `'name: while`, `'name: loop`, or `'name: for`. `break 'name` leaves that loop and
 // `continue 'name` goes on with it, from inside any loop nested in it (issue #275, spec/grammar.md rule 8.5). An
@@ -166,6 +168,35 @@ fn sibling(): i32 {
     n
 }
 
+// A labeled `for` that lowers to the iteration protocol puts the label on its generated `loop`, so a jump that
+// names the `for` itself still has a loop to target (IT4).
+fn label_protocol_for(): i32 {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    let mut total = 0
+    'a: for x in xs.into_iter() {
+        total = total + x
+        break 'a
+    }
+    total
+}
+
+fn label_protocol_continue(): i32 {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    let mut total = 0
+    'a: for x in xs.into_iter() {
+        if x == 2 {
+            continue 'a
+        }
+        total = total + x
+    }
+    total
+}
+
 fn main() {
     println(first_pair(4).to_string())
     println(skip_rows().to_string())
@@ -184,4 +215,6 @@ fn main() {
         break 'empty
     }
     println("nothing left")
+    println(label_protocol_for().to_string())
+    println(label_protocol_continue().to_string())
 }

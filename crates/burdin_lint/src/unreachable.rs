@@ -70,7 +70,7 @@ impl Finder<'_> {
 
     fn diverges(&self, e: &Expr) -> bool {
         match &e.kind {
-            ExprKind::Return(_) | ExprKind::Break(_) | ExprKind::Continue(_) => true,
+            ExprKind::Return(_) | ExprKind::Break { .. } | ExprKind::Continue(_) => true,
             ExprKind::Call(callee, _) => self.never_returns(callee),
             ExprKind::Block(b) | ExprKind::UnsafeBlock(b) => self.block_diverges(b),
             ExprKind::If { then_block, else_expr: Some(other), .. }
@@ -113,8 +113,18 @@ fn contains_break(body: &Block, label: Option<&str>) -> bool {
     impl Visit for Breaks<'_> {
         fn expr(&mut self, e: &Expr) {
             match &e.kind {
-                ExprKind::Break(None) if self.nested == 0 => self.found = true,
-                ExprKind::Break(Some(name)) if Some(name.name.as_str()) == self.label => self.found = true,
+                ExprKind::Break { label: None, value } if self.nested == 0 => {
+                    self.found = true;
+                    if let Some(value) = value {
+                        walk_expr(self, value);
+                    }
+                }
+                ExprKind::Break { label: Some(name), value } if Some(name.name.as_str()) == self.label => {
+                    self.found = true;
+                    if let Some(value) = value {
+                        walk_expr(self, value);
+                    }
+                }
                 ExprKind::Loop(_) | ExprKind::While { .. } | ExprKind::For { .. } => {
                     self.nested += 1;
                     walk_expr(self, e);

@@ -559,9 +559,13 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break(_)
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                walk(value, captures, globals, usage, Mode::Move);
+            }
+        }
         K::Local(_) => moved_place(e, globals, usage),
         // The base may be a call: a user `Index`/`IndexMut` is lowered to one, and the call's conventions decide
         // whether the captured receiver is mutated (`spec/operators.md`, OP10).
@@ -830,8 +834,12 @@ impl FreeNames {
             | K::Str(_)
             | K::InlineSnapshot(_)
             | K::Bool(_)
-            | K::Break(_)
             | K::Continue(_) => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
             K::Interp(parts) => {
                 for part in parts {
                     if let ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) = part {
@@ -992,8 +1000,8 @@ fn contains_return(e: &ast::Expr) -> bool {
         | K::Bool(_)
         | K::Name { .. }
         | K::SelfValue
-        | K::Break(_)
         | K::Continue(_) => false,
+        K::Break { value, .. } => value.as_deref().is_some_and(contains_return),
         K::Interp(parts) => parts.iter().any(|part| {
             matches!(part, ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) if contains_return(e))
         }),

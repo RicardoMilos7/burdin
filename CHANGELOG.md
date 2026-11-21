@@ -30,6 +30,16 @@ close-out checklist in `AGENTS.md`).
   lines of verification, version, mutual TLS, truncation, and timeout cases against an in-process server),
   `tests/tls/regenerate.py` makes the committed test certificates, and `tests/check_tls.py` and `tests/check_link.py`
   run in CI after the jobs install OpenSSL.
+- `break` with a value (issue #276; `spec/grammar.md`, rule 8.10). A `loop` gives back the value of its `break`, so
+  `let x = loop { break 42 }` binds `i32`; `break` with no value is `break ()`. The loop's type is the expected type
+  when the context gives one, otherwise the type of the first break value, and `!` when nothing breaks out; every
+  break of one loop must agree. A `while` or `for` can end by its condition or its items, so it always gives back
+  `()` and `break 1` there is E0003. A labeled `break` carries its value to the loop it names. The value is computed
+  before the scopes the jump leaves are dropped, and its view origin joins the loop's result, so a view of a
+  loop-body local is still E0123/E0122. `tests/m02_basics/break_value*.bd`,
+  `tests/m05_ownership/break_value_*.bd`, and `tests/m06_conventions/break_value_view.bd` cover it. Also fixes a labeled `for` that lowers to the iteration protocol:
+  the label now goes on the generated `loop` rather than on the generated block, so `break 'a`/`continue 'a` by the
+  name of such a `for` work (issue #275 follow-up).
 - 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
   16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
   `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating
@@ -55,6 +65,10 @@ close-out checklist in `AGENTS.md`).
   leaves, innermost first. `tests/m02_basics/labeled_loops*.bd`, `labeled_loop_not_loop.bd`, and
   `tests/m05_ownership/labeled_loop_moves.bd` cover it.
 
+- Fixed a use-after-free and double drop when a block, `if`, or `match` value was passed as a borrowed argument, used
+  as a method receiver, or bound with `let _`: `f(g()?)` with a `?` temporary was the first report (issue #866;
+  `spec/memory-rules.md`, MV9). The tail of such a value now moves out, so the temporary drops exactly once.
+  `tests/m05_ownership/temporary_question_arg.bd` and `tests/m05_ownership/move_block_value_borrowed.bd` cover it.
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.

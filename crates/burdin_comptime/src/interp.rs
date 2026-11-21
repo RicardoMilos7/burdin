@@ -30,8 +30,9 @@ pub(crate) enum Fault {
 }
 
 pub(crate) enum Unwind {
-    /// `break`, or `break 'label`: the label is the name the loop must have to stop here (None: the innermost loop).
-    Break(Option<String>),
+    /// `break`, `break 'label`, or `break value`: the label is the name the loop must have to stop here (None: the
+    /// innermost loop), and the value is what the loop gives back (unit when no value is written).
+    Break(Option<String>, Value),
     /// `continue`, or `continue 'label`: as for `Break`.
     Continue(Option<String>),
     Return(Value),
@@ -214,7 +215,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         match result {
             Ok(v) => Ok(v),
             Err(Unwind::Fault(f)) => Err(f),
-            Err(Unwind::Return(_)) | Err(Unwind::Break(_)) | Err(Unwind::Continue(_)) => {
+            Err(Unwind::Return(_)) | Err(Unwind::Break(..)) | Err(Unwind::Continue(_)) => {
                 Err(Fault::Internal("control flow left a comptime expression".into(), span))
             }
         }
@@ -458,7 +459,13 @@ impl<'p, 'c> Interp<'p, 'c> {
             | K::ComptimeFor { .. } => self.loop_expr(e, None)?,
             K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str()))?,
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, mode, span)?,
-            K::Break(label) => return Err(Unwind::Break(label.clone())),
+            K::Break { label, value } => {
+                let value = match value {
+                    Some(value) => self.eval(value, Mode::Move)?,
+                    None => Value::Unit,
+                };
+                return Err(Unwind::Break(label.clone(), value));
+            }
             K::Continue(label) => return Err(Unwind::Continue(label.clone())),
             K::Return(v) => {
                 let v = match v {
@@ -628,15 +635,15 @@ impl<'p, 'c> Interp<'p, 'c> {
         Ok(match &e.kind {
             K::While(c, body) => {
                 while self.eval(c, Mode::Use)?.bool() {
-                    if !iteration(self.block(body, Mode::Use), label)? {
+                    if let LoopStep::Break(_) = iteration(self.block(body, Mode::Use), label)? {
                         break;
                     }
                 }
                 Value::Unit
             }
             K::Loop(body) => loop {
-                if !iteration(self.block(body, Mode::Use), label)? {
-                    break Value::Unit;
+                if let LoopStep::Break(value) = iteration(self.block(body, Mode::Use), label)? {
+                    break value;
                 }
             },
             K::ForRange { var, lo, hi, inclusive, body } => {
@@ -716,7 +723,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             }
             let r = self.block(body, Mode::Use);
             self.end_scope(mark, body_span(body))?;
-            if !iteration(r, label)? {
+            if let LoopStep::Break(_) = iteration(r, label)? {
                 break;
             }
             match i.checked_add(1) {
@@ -745,7 +752,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             let r = self.block(body, Mode::Use);
             self.end_scope(mark, span)?;
             self.end_temps(temps, span)?;
-            if !iteration(r, label)? {
+            if let LoopStep::Break(_) = iteration(r, label)? {
                 break;
             }
         }
@@ -986,7 +993,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: owned });
         let r = match self.block(body, Mode::Move) {
             Ok(v) | Err(Unwind::Return(v)) => Ok(v),
-            Err(Unwind::Break(_)) | Err(Unwind::Continue(_)) => {
+            Err(Unwind::Break(..)) | Err(Unwind::Continue(_)) => {
                 Err(Fault::Internal("`break` left a function".into(), span).into())
             }
             Err(u) => Err(u),
@@ -1346,15 +1353,22 @@ pub(crate) fn pattern_matches(pat: &Pat, v: &Value) -> bool {
     }
 }
 
-/// What a loop does with the outcome of one iteration of its body: `Ok(true)` goes on with the next iteration,
-/// `Ok(false)` leaves the loop, and an `Err` leaves the loop and goes on outwards. A `break` or `continue` with no
-/// label is the loop's own; one with a label is the loop's only when the label is its own (`label`).
-fn iteration(outcome: R<Value>, label: Option<&str>) -> R<bool> {
+/// What a loop does with the outcome of one iteration of its body.
+enum LoopStep {
+    Continue,
+    Break(Value),
+}
+
+/// What a loop does with the outcome of one iteration of its body: `Continue` goes on with the next iteration,
+/// `Break` leaves the loop with that value, and an `Err` leaves the loop and goes on outwards. A `break` or
+/// `continue` with no label is the loop's own; one with a label is the loop's only when the label is its own
+/// (`label`).
+fn iteration(outcome: R<Value>, label: Option<&str>) -> R<LoopStep> {
     let names = |target: &Option<String>| target.is_none() || target.as_deref() == label;
     match outcome {
-        Ok(_) => Ok(true),
-        Err(Unwind::Continue(target)) if names(&target) => Ok(true),
-        Err(Unwind::Break(target)) if names(&target) => Ok(false),
+        Ok(_) => Ok(LoopStep::Continue),
+        Err(Unwind::Continue(target)) if names(&target) => Ok(LoopStep::Continue),
+        Err(Unwind::Break(target, value)) if names(&target) => Ok(LoopStep::Break(value)),
         Err(u) => Err(u),
     }
 }

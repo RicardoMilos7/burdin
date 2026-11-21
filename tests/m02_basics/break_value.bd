@@ -1,0 +1,123 @@
+//@ run
+//> 42
+//> 23
+//> 10
+//> true
+//> 3
+//> -1
+//> 0
+//> 7
+//> 8
+//> 7
+//> after loop
+//> hi
+//> 9
+
+// A `loop` gives back the value of its `break` (issue #276, `spec/grammar.md` rule 8.10). The loop's type is the
+// expected type when the context gives one, otherwise the first `break` value, and every break of one loop must
+// agree. A `while` or `for` always gives back `()` and takes no break value.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+// A labeled `break` carries its value out of the loops nested in the `loop` it names.
+fn first_six(): i32 {
+    'rows: loop {
+        for r in 0..4 {
+            for c in 0..4 {
+                if r * c == 6 {
+                    break 'rows r * 10 + c
+                }
+            }
+        }
+    }
+}
+
+// A `for` that lowers to the iteration protocol has a generated `loop` under a block; a labeled `break` still
+// carries its value out of the `loop` that label names.
+fn first_double(): i32 {
+    'outer: loop {
+        let mut xs = List<i32>.new()
+        xs.push(1)
+        xs.push(2)
+        for x in xs.into_iter() {
+            break 'outer x * 10
+        }
+    }
+}
+
+// Every path breaks with a value; the first break gives the loop its type.
+fn sign(x: i32): i32 {
+    loop {
+        if x < 0 {
+            break -1
+        }
+        if x > 0 {
+            break 1
+        }
+        break 0
+    }
+}
+
+// A labeled and an unlabeled break of the same `loop` are breaks of one loop, so they share its type.
+fn mixed(flag: bool): i32 {
+    'a: loop {
+        if flag {
+            break 'a 7
+        }
+        break 8
+    }
+}
+
+// A `loop` that never breaks has type `!`, so it fits any expected type.
+fn spin(): i32 {
+    loop {}
+}
+
+fn main() {
+    let x = loop { break 42 }
+    println(x.to_string())
+
+    println(first_six().to_string())
+    println(first_double().to_string())
+
+    // `None` takes its type from the loop's expected type.
+    let n: Option<i32> = loop { break None }
+    println(n.is_none().to_string())
+
+    // `continue` leaves the break value untouched.
+    let mut i = 0
+    let count = loop {
+        i = i + 1
+        if i < 3 {
+            continue
+        }
+        break i
+    }
+    println(count.to_string())
+
+    println(sign(-5).to_string())
+    println(sign(0).to_string())
+    println(mixed(true).to_string())
+    println(mixed(false).to_string())
+
+    // The loop result is a temporary of its statement, dropped when the statement ends (DR5).
+    loop { break Noisy { id: 7 } }
+    println("after loop")
+
+    let s = loop { break "hi" }
+    println(s)
+
+    let small: u8 = loop { break 9 }
+    println(small.to_string())
+
+    let unit = loop { break }
+    let _ = unit
+}

@@ -535,8 +535,12 @@ pub enum ExprKind {
         label: Ident,
         body: Box<Expr>,
     },
-    /// `break`, or `break 'label` to leave the loop with that label.
-    Break(Option<Ident>),
+    /// `break`, `break 'label`, or `break value`: leave the loop with that label, giving it `value`. Only a
+    /// `loop` takes a value (`spec/grammar.md`, rule 8.10).
+    Break {
+        label: Option<Ident>,
+        value: Option<Box<Expr>>,
+    },
     /// `continue`, or `continue 'label` to go on with the loop with that label.
     Continue(Option<Ident>),
     Assign(Box<Expr>, Box<Expr>),

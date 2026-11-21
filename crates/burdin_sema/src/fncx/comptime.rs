@@ -162,7 +162,7 @@ impl FnCx<'_> {
         self.comptime_known.extend(bound.iter().copied());
         // `break` and `continue` cannot leave the unrolled body: it is not a loop in the generated code.
         let saved_barrier = self.comptime_loop_barrier.replace(self.loops.len());
-        self.loops.push(LoopScope::loop_body());
+        self.loops.push(LoopScope::for_body(None));
         let (body, _) = self.block(body, None);
         self.loops.pop();
         self.comptime_loop_barrier = saved_barrier;

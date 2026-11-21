@@ -177,7 +177,15 @@ impl Pattern {
             (ExprKind::Str(a), ExprKind::Str(b)) => a == b,
             (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
             (ExprKind::Unit, ExprKind::Unit) | (ExprKind::SelfValue, ExprKind::SelfValue) => true,
-            (ExprKind::Break(a), ExprKind::Break(b)) | (ExprKind::Continue(a), ExprKind::Continue(b)) => {
+            (ExprKind::Break { label: la, value: va }, ExprKind::Break { label: lb, value: vb }) => {
+                la.as_ref().map(|l| &l.name) == lb.as_ref().map(|l| &l.name)
+                    && match (va, vb) {
+                        (Some(a), Some(b)) => self.matches(cx, a, b, bound),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (ExprKind::Continue(a), ExprKind::Continue(b)) => {
                 a.as_ref().map(|l| &l.name) == b.as_ref().map(|l| &l.name)
             }
             (ExprKind::Labeled { label: a, body: x }, ExprKind::Labeled { label: b, body: y }) => {

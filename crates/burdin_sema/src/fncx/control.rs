@@ -1,6 +1,6 @@
 //! Control flow: `if`, `for`, `match`, and `if let`.
 
-use super::{FnCx, LoopScope, error_expr, mk};
+use super::{FnCx, LoopKind, LoopScope, error_expr, mk};
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -40,10 +40,9 @@ impl FnCx<'_> {
         mk(tir::ExprKind::If(Box::new(cond), then, Some(Box::new(other))), ty, span)
     }
 
-    /// The type of two branches that must agree; reports E0003 at `span` when they do not.
-    /// A loop with a label (`'label: while ...`). The label is one scope and the loop is another, so an unlabeled
-    /// `break` in the body names the loop and a labeled one names the scope (see `LoopScope`). A labeled `break`
-    /// makes the loop's type `()`, as an unlabeled one does.
+    /// A loop with a label (`'label: while ...`). The label and the loop are one construct, so the loop's own
+    /// scope carries the label: a labeled `break`/`continue` names it by that name, and an unlabeled one still
+    /// names the innermost loop.
     pub(super) fn labeled_loop(
         &mut self,
         label: &ast::Ident,
@@ -58,26 +57,78 @@ impl FnCx<'_> {
                 format!("the label `'{}` is already used by an enclosing loop", label.name),
             );
         }
-        self.loops.push(LoopScope { label: Some(label.name.clone()), is_loop: false, has_break: false });
-        let mut inner = self.expr(body, expect);
-        let scope = self.loops.pop();
-        if scope.is_some_and(|scope| scope.has_break) && inner.ty == Ty::Never {
-            inner.ty = Ty::Unit;
+        match &body.kind {
+            ast::ExprKind::Loop(b) => self.loop_expr(b, Some(label), expect, span),
+            ast::ExprKind::While { cond, body: b } => self.while_expr(cond, b, Some(label), span),
+            ast::ExprKind::For { pattern, iter, mutable, body: b } => {
+                self.for_expr(pattern, iter, *mutable, b, Some(label), span)
+            }
+            _ => unreachable!("the parser admits only a loop after a label"),
         }
+    }
+
+    /// Wraps `inner` in the label's `Labeled` when there is one. A label goes on the loop node itself, never on
+    /// the block a user `for` lowers to, so the checks and codegen find a loop (IT4). The loops that lower to
+    /// several nodes wrap the node the jumps target.
+    pub(super) fn with_label(label: Option<&ast::Ident>, inner: tir::Expr) -> tir::Expr {
+        let Some(label) = label else { return inner };
         let ty = inner.ty.clone();
+        let span = inner.span;
         mk(tir::ExprKind::Labeled(label.name.clone(), Box::new(inner)), ty, span)
+    }
+
+    /// `loop { ... }`: the only loop that gives back a value. Its type is the type every `break` value has, the
+    /// expected type when one is known, and `!` when nothing breaks out of it.
+    pub(super) fn loop_expr(
+        &mut self,
+        body: &ast::Block,
+        label: Option<&ast::Ident>,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        self.loops.push(LoopScope::loop_body(label, expect));
+        let (body, _) = self.block(body, None);
+        let scope = self.loops.pop().expect("pushed above");
+        let ty = if scope.has_break { scope.break_ty.unwrap_or(Ty::Unit) } else { Ty::Never };
+        Self::with_label(label, mk(tir::ExprKind::Loop(body), ty, span))
+    }
+
+    /// `while cond { ... }`: it can end by its condition, so it always gives back `()`.
+    pub(super) fn while_expr(
+        &mut self,
+        cond: &ast::Expr,
+        body: &ast::Block,
+        label: Option<&ast::Ident>,
+        span: Span,
+    ) -> tir::Expr {
+        let cond = self.expr(cond, Some(&Ty::Bool));
+        let cond = self.expect_ty(cond, &Ty::Bool);
+        self.loops.push(LoopScope::while_body(label));
+        let (body, _) = self.block(body, None);
+        self.loops.pop();
+        Self::with_label(label, mk(tir::ExprKind::While(Box::new(cond), body), Ty::Unit, span))
     }
 
     /// `break` or `continue`, with or without a label. An unlabeled one names the innermost loop; a labeled one
     /// names the enclosing loop with that label. A label is looked for only in this body: a closure starts with no
     /// loops, so it cannot name one outside (CL8).
-    pub(super) fn jump(&mut self, label: Option<&ast::Ident>, is_break: bool, span: Span) -> tir::Expr {
+    pub(super) fn jump(
+        &mut self,
+        label: Option<&ast::Ident>,
+        is_break: bool,
+        value: Option<&ast::Expr>,
+        span: Span,
+    ) -> tir::Expr {
         let word = if is_break { "break" } else { "continue" };
         let target = match label {
-            None => self.loops.iter().rposition(|scope| scope.is_loop),
+            None => self.loops.len().checked_sub(1),
             Some(label) => self.loops.iter().rposition(|scope| scope.label.as_deref() == Some(label.name.as_str())),
         };
         let Some(target) = target else {
+            // The value is still checked for its own errors before the jump is dropped.
+            if let Some(value) = value {
+                self.expr(value, None);
+            }
             match label {
                 None => {
                     self.diags.error(Code::SYNTAX, span, format!("`{word}` outside of a loop"));
@@ -93,13 +144,66 @@ impl FnCx<'_> {
             return error_expr(span);
         };
         if self.leaves_comptime_for(word, span, target) {
+            if let Some(value) = value {
+                self.expr(value, None);
+            }
             return error_expr(span);
         }
-        if is_break {
+        if !is_break {
+            return mk(tir::ExprKind::Continue(label.map(|label| label.name.clone())), Ty::Never, span);
+        }
+        let value = self.break_value(target, value, span);
+        mk(tir::ExprKind::Break { label: label.map(|label| label.name.clone()), value }, Ty::Never, span)
+    }
+
+    /// The value of a `break` in the loop at `target` (an index into `self.loops`), checked against the loop's
+    /// break type and returning whether it has one. A `for` or `while` can end normally, so it takes no value:
+    /// E0003, and the value is still checked for its own errors.
+    fn break_value(&mut self, target: usize, value: Option<&ast::Expr>, span: Span) -> Option<Box<tir::Expr>> {
+        let kind = self.loops[target].kind;
+        if kind != LoopKind::Loop {
+            let loop_word = if kind == LoopKind::For { "for" } else { "while" };
+            if let Some(value) = value {
+                self.expr(value, None);
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!("a `{loop_word}` loop can end without a `break`, so it gives back `()`, not a value"),
+                );
+            }
             self.loops[target].has_break = true;
-            mk(tir::ExprKind::Break(label.map(|label| label.name.clone())), Ty::Never, span)
-        } else {
-            mk(tir::ExprKind::Continue(label.map(|label| label.name.clone())), Ty::Never, span)
+            self.loops[target].break_ty = Some(Ty::Unit);
+            return None;
+        }
+        match (&self.loops[target].break_ty.clone(), value) {
+            (Some(want), Some(value)) => {
+                let checked = self.expr(value, Some(want));
+                let checked = self.expect_ty(checked, want);
+                self.loops[target].has_break = true;
+                Some(Box::new(checked))
+            }
+            (Some(want), None) => {
+                if !compatible(&Ty::Unit, want) {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        format!("this `break` gives no value, but the loop gives back `{want}`"),
+                    );
+                }
+                self.loops[target].has_break = true;
+                None
+            }
+            (None, Some(value)) => {
+                let checked = self.expr(value, None);
+                self.loops[target].break_ty = Some(checked.ty.clone());
+                self.loops[target].has_break = true;
+                Some(Box::new(checked))
+            }
+            (None, None) => {
+                self.loops[target].break_ty = Some(Ty::Unit);
+                self.loops[target].has_break = true;
+                None
+            }
         }
     }
 
@@ -119,10 +223,11 @@ impl FnCx<'_> {
         iter: &ast::Expr,
         mutable: bool,
         body: &ast::Block,
+        label: Option<&ast::Ident>,
         span: Span,
     ) -> tir::Expr {
         if mutable {
-            return self.for_mut(pattern, iter, body, span);
+            return self.for_mut(pattern, iter, body, label, span);
         }
         if let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind {
             let (lo, hi) = self.operands(lo, hi, None);
@@ -146,7 +251,7 @@ impl FnCx<'_> {
                     Ty::RangeIter(Box::new(ty.clone()), *inclusive),
                     span,
                 );
-                return self.protocol_for(pattern, iterator, ty, body, span);
+                return self.protocol_for(pattern, iterator, ty, body, label, span);
             }
             self.scopes.push(HashMap::new());
             let var = match &pattern.kind {
@@ -158,18 +263,18 @@ impl FnCx<'_> {
                     self.scopes.pop();
                     // The endpoints did not produce an integer type, so no element exists to match; the body is
                     // still checked for its own errors.
-                    self.loops.push(LoopScope::loop_body());
+                    self.loops.push(LoopScope::for_body(label));
                     let _ = self.block(body, None);
                     self.loops.pop();
                     return error_expr(span);
                 }
             };
-            self.loops.push(LoopScope::loop_body());
+            self.loops.push(LoopScope::for_body(label));
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
             let kind = tir::ExprKind::ForRange { var, lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive, body };
-            return mk(kind, Ty::Unit, span);
+            return Self::with_label(label, mk(kind, Ty::Unit, span));
         }
         let iterable = self.expr(iter, None);
         // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
@@ -208,10 +313,10 @@ impl FnCx<'_> {
                         return error_expr(span);
                     }
                 }
-                return self.protocol_for(pattern, iterator, item, body, span);
+                return self.protocol_for(pattern, iterator, item, body, label, span);
             }
             if let Some(item) = self.globals.iterator_item(&iterable.ty, &self.bounds) {
-                return self.protocol_for(pattern, iterable, item, body, span);
+                return self.protocol_for(pattern, iterable, item, body, label, span);
             }
             self.diags.error(
                 Code::TYPE_MISMATCH,
@@ -250,7 +355,7 @@ impl FnCx<'_> {
                     Ty::RangeIter(Box::new(elem.clone()), inclusive),
                     span,
                 );
-                return self.protocol_for(pattern, iterator, elem, body, span);
+                return self.protocol_for(pattern, iterator, elem, body, label, span);
             }
             // A range value's endpoints are integers, so the loop binding is a plain owned integer like the
             // literal form.
@@ -262,18 +367,18 @@ impl FnCx<'_> {
                 _ => {
                     self.scopes.pop();
                     // An invalid range type was already reported; check the body for its own errors.
-                    self.loops.push(LoopScope::loop_body());
+                    self.loops.push(LoopScope::for_body(label));
                     let _ = self.block(body, None);
                     self.loops.pop();
                     return error_expr(span);
                 }
             };
-            self.loops.push(LoopScope::loop_body());
+            self.loops.push(LoopScope::for_body(label));
             let (body, _) = self.block(body, None);
             self.loops.pop();
             self.scopes.pop();
             let kind = tir::ExprKind::ForRangeValue { var, range: Box::new(iterable), body };
-            return mk(kind, Ty::Unit, span);
+            return Self::with_label(label, mk(kind, Ty::Unit, span));
         }
         // `for` borrows the collection, so its elements are read-only views.
         let pat = self.pattern(pattern, &elem, false);
@@ -284,7 +389,7 @@ impl FnCx<'_> {
                 format!("this pattern does not match every value of `{elem}`"),
             );
         }
-        self.loops.push(LoopScope::loop_body());
+        self.loops.push(LoopScope::for_body(label));
         let (body, _) = self.block(body, None);
         self.loops.pop();
         self.scopes.pop();
@@ -297,7 +402,7 @@ impl FnCx<'_> {
             ForKind::Chars => tir::ExprKind::ForChars { pat, string: array, body },
             ForKind::Range => unreachable!("handled above"),
         };
-        mk(kind, Ty::Unit, span)
+        Self::with_label(label, mk(kind, Ty::Unit, span))
     }
 
     /// `lo..hi` or `lo..=hi`: an ordinary value of `Range<T>` or `RangeInclusive<T>`. The endpoints are integers;

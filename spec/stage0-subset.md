@@ -109,7 +109,8 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 | Bindgen for C and Rust | After stage 1 |
 | `fmt`, `lint`, `doc`, `add`, language server, lockfile, multiple-package workspaces | After stage 1 |
 | `i128`/`u128` | Added after stage 0 (issue #273, `spec/int128.md`) |
-| `break` with a value, compound assignment | When wanted |
+| `break` with a value | Added after stage 0 (issue #276, `spec/grammar.md` rule 8.10) |
+| Compound assignment | When wanted |
 | `Set`, `Deque`, doc tests, `bench` blocks | When wanted |
 
 ## Milestones
