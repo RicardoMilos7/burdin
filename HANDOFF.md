@@ -16,10 +16,23 @@ of that file are suppressed; I left that behavior as it is. `-1` for an unsigned
 claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit operations, and the high-half hashing
 (not observable from program output). Verification: `tests/int128/` (21 programs, all passing in debug and release);
 `tests/check_bindgen.py` (81 checks, including the E0263 export case and the `__int128` skip); the full suite in debug
-(1135 passed, 0 failed, 4 skipped) and release (1122 passed, 0 failed, 17 skipped); `cargo test --workspace` (898 passed,
-0 failed); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `check_tests.py`, `check_ci.py`,
+(1139 passed, 0 failed, 4 skipped) and release (1126 passed, 0 failed, 17 skipped), after merging `main` (labeled loops,
+#275); `cargo test --workspace` (899 passed, 0 failed); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `check_tests.py`, `check_ci.py`,
 `gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
 earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
+
+**Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
+(`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
+quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
+carry `Option<Ident>`; the TIR mirrors that with `Labeled(String, Box<Expr>)` and `Break(Option<String>)`. Sema keeps a
+`LoopScope` stack in which a labeled loop has two entries (the label, which the labeled jumps name, and the loop, which
+the unlabeled ones name) and checks each jump's target (`jump` and `labeled_loop` in `fncx/control.rs`). Codegen
+(`loop_expr`, `LoopTargets.label`), the comptime interpreter (`Unwind::Break(Option<String>)`, `iteration`), the move
+checker (`loop_expr`, `loop_index`, `LoopInfo.label`), and the lints take the label into account. Decided: the label is
+dropped only in the parser's error path (a label on a non-loop is E0001 and the expression is kept). Tests:
+`tests/m02_basics/labeled_loops.bd` (runs), `labeled_loops_errors.bd`, `labeled_loop_not_loop.bd`, and
+`tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: `break` with a value (still
+"when wanted"), and a labeled block (`'a: { ... }`), which the grammar does not admit.
 
 **Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
 that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`

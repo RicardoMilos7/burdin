@@ -225,7 +225,7 @@ fn session_fault(u: Unwind, at: Span) -> Fault {
         Unwind::Return(_) => {
             Fault::ControlFlow("a `return` cannot leave the session's function; the input was discarded".into(), at)
         }
-        Unwind::Break | Unwind::Continue => {
+        Unwind::Break(_) | Unwind::Continue(_) => {
             Fault::ControlFlow("a `break` or `continue` left its loop; the input was discarded".into(), at)
         }
     }

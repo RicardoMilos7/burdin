@@ -529,8 +529,16 @@ pub enum ExprKind {
         body: Block,
     },
     Return(Option<Box<Expr>>),
-    Break,
-    Continue,
+    /// `'label: loop`, `'label: while`, or `'label: for`: a loop that `break 'label` and `continue 'label` name
+    /// (spec/grammar.md, rule 8.9). The parser admits only a loop as the body.
+    Labeled {
+        label: Ident,
+        body: Box<Expr>,
+    },
+    /// `break`, or `break 'label` to leave the loop with that label.
+    Break(Option<Ident>),
+    /// `continue`, or `continue 'label` to go on with the loop with that label.
+    Continue(Option<Ident>),
     Assign(Box<Expr>, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
@@ -706,6 +714,7 @@ impl Expr {
                 | ExprKind::While { .. }
                 | ExprKind::Loop(_)
                 | ExprKind::For { .. }
+                | ExprKind::Labeled { .. }
                 | ExprKind::Match(..)
         )
     }

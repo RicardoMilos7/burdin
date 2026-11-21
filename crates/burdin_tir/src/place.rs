@@ -79,8 +79,8 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::LayoutOf { .. } => {}
         K::Local(_) => record(e, out),
         K::Field(base, _) | K::Deref(base) | K::PtrDeref(base) | K::DerefRef(base) => {
@@ -170,6 +170,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions_block(body, out);
         }
         K::Loop(body) => place_mentions_block(body, out),
+        K::Labeled(_, body) => place_mentions(body, out),
         K::ForRange { lo, hi, body, .. } => {
             place_mentions(lo, out);
             place_mentions(hi, out);

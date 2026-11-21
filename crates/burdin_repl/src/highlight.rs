@@ -147,6 +147,8 @@ fn class_of(tokens: &[burdin_syntax::token::Token], index: usize) -> Option<Clas
         TokenKind::Int(_) | TokenKind::Float(_) => Class::Number,
         TokenKind::Str(_) | TokenKind::Interp(_) | TokenKind::Char(_) => Class::Text,
         TokenKind::Reserved(_) => Class::Reserved,
+        // A loop label reads as a keyword, the way `break` does.
+        TokenKind::Label(_) => Class::Keyword,
         TokenKind::Ident(name) => {
             let next = tokens.get(index + 1).map(|t| &t.kind);
             let previous = index.checked_sub(1).map(|i| &tokens[i].kind);

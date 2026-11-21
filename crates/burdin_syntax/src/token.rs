@@ -5,6 +5,8 @@ use burdin_diag::Span;
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     Ident(String),
+    /// A loop label, `'name` (spec/grammar.md, section 1). The name is kept without the quote.
+    Label(String),
     /// Integer literal. The value is exact; whether it fits its type is checked later.
     Int(u128),
     /// Float literal, kept as written (without `_`).
@@ -145,6 +147,7 @@ impl TokenKind {
         use TokenKind::*;
         match self {
             Ident(name) => format!("identifier `{name}`"),
+            Label(name) => format!("loop label `'{name}`"),
             Int(_) => "integer literal".into(),
             Float(_) => "float literal".into(),
             Char(_) => "character literal".into(),
@@ -230,7 +233,7 @@ impl TokenKind {
             Gt => ">",
             Le => "<=",
             Ge => ">=",
-            Ident(_) | Int(_) | Float(_) | Char(_) | Str(_) | Interp(_) | Reserved(_) | Eof => "",
+            Ident(_) | Label(_) | Int(_) | Float(_) | Char(_) | Str(_) | Interp(_) | Reserved(_) | Eof => "",
         }
     }
 }

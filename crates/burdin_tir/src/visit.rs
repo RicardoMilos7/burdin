@@ -44,8 +44,8 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Local(_)
         | K::Const(_)
         | K::Closure { .. }
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
@@ -93,6 +93,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             v.expr(hi);
         }
         K::Block(b) | K::Loop(b) => v.block(b),
+        K::Labeled(_, body) => v.expr(body),
         K::If(c, then, other) => {
             v.expr(c);
             v.block(then);
@@ -180,8 +181,8 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Local(_)
         | K::Const(_)
         | K::Closure { .. }
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
@@ -229,6 +230,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
             v.expr(hi);
         }
         K::Block(b) | K::Loop(b) => v.block(b),
+        K::Labeled(_, body) => v.expr(body),
         K::If(c, then, other) => {
             v.expr(c);
             v.block(then);

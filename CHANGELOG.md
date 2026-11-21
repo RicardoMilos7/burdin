@@ -14,6 +14,15 @@ close-out checklist in `AGENTS.md`).
   integer cannot cross the C boundary (E0162), and `burdin bindgen --export` cannot spell one (E0263); `burdin
   bindgen` skips a C `__int128` function with a note. `tests/int128/` (21 programs) and two checks in
   `tests/check_bindgen.py` witness the rules.
+
+- Labeled loops (issue #275; `spec/grammar.md`, rule 8.9; `spec/memory-rules.md`, DR6 and CL8). A `while`, `loop`, or
+  `for` may carry a label, `'outer: for ...`, and `break 'outer` and `continue 'outer` leave or go on with it from
+  inside any loop nested in it; an unlabeled `break` or `continue` still names the innermost loop. A label no enclosing
+  loop has is E0002, a label that repeats an enclosing one is E0007, a label on anything but a loop is E0001, and a
+  labeled jump cannot leave a closure (E0002) or a `comptime for` body (E0220). A labeled jump drops the scopes it
+  leaves, innermost first. `tests/m02_basics/labeled_loops*.bd`, `labeled_loop_not_loop.bd`, and
+  `tests/m05_ownership/labeled_loop_moves.bd` cover it.
+
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.

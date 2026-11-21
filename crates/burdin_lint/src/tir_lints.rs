@@ -397,8 +397,8 @@ impl An<'_> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break
-            | K::Continue
+            | K::Break(_)
+            | K::Continue(_)
             | K::Return(None)
             | K::LayoutOf { .. } => {}
             K::Local(id) => {
@@ -514,6 +514,7 @@ impl An<'_> {
                     self.expr(o, false);
                 }
             }
+            K::Labeled(_, inner) => self.expr(inner, receiver_of_eager),
             K::While(c, body) => {
                 // The condition is evaluated on every iteration, so it belongs to the loop.
                 let start = self.bump();

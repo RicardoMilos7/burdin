@@ -327,7 +327,9 @@ temporary. `let _x = e` binds. The temporaries of a block's tail expression are 
 Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let_underscore`.
 
 **DR6 Early exits.** `return`, `break`, `continue`, and `?` drop every initialized value in the scopes being left, in reverse
-order, before control transfers. A returned value is computed before the drops run.
+order, before control transfers. A returned value is computed before the drops run. A labeled `break 'l` or `continue 'l`
+leaves every loop between it and the loop labeled `'l`, and drops the scopes of all of them, innermost first (issue #275).
+Tests: `m02_basics/labeled_loops` (the drops of a labeled `break` and of a labeled `continue`).
 Tests: `m05_ownership/drop_early_return`, `m09_stdlib/question_and_from`.
 
 **DR7 Partial and conditional moves.** Remaining fields of a partially moved owner are dropped at its scope end (in field order;
@@ -437,7 +439,8 @@ the call, so no other argument of that call may mention the closure place (EX1).
 the closure value.
 
 **CL8 Returns, moves, and drops inside a closure body.** `return` inside a closure body returns from the closure, not
-from the enclosing function. `break` and `continue` cannot cross a closure boundary (E0001). The closure body is
+from the enclosing function. `break` and `continue` cannot cross a closure boundary (E0001); a labeled one that names a loop
+outside the closure is E0002, because the label is not in scope inside it. The closure body is
 checked as its own function: its own parameters are owned and dropped at its end, and for a `FnOnce` closure the
 captured values that remain are dropped there (the call consumed the capture record). A `Fn`/`FnMut` value called
 where a weakened `FnOnce` type is expected (CL5) is consumed by that call as well: once the body returns, the record

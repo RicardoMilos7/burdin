@@ -299,9 +299,16 @@ impl Mapper<'_> {
             | ExprKind::InlineSnapshot(_)
             | ExprKind::Bool(_)
             | ExprKind::Unit
-            | ExprKind::SelfValue
-            | ExprKind::Break
-            | ExprKind::Continue => {}
+            | ExprKind::SelfValue => {}
+            ExprKind::Break(label) | ExprKind::Continue(label) => {
+                if let Some(label) = label {
+                    self.ident(label);
+                }
+            }
+            ExprKind::Labeled { label, body } => {
+                self.ident(label);
+                self.expr(body);
+            }
             ExprKind::Interp(parts) => self.parts(parts),
             ExprKind::Name { name, args } => {
                 self.ident(name);
