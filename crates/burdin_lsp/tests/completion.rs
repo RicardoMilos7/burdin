@@ -409,3 +409,39 @@ fn completion_offers_only_what_the_position_takes() {
     let value = offered_after(in_main("    let t = "), "let t = ", 8);
     assert!(contains(&value, &["n", "println", "Point", "twice"]), "{value:?}");
 }
+
+/// The `nested` fixture: a response read through member chains (issue #879).
+fn open_nested() -> Session {
+    let root = fixture("nested");
+    let mut client = Client::with(&[&root], default_caps(), Json::Null);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    let diagnostics = client.diagnostics(&uri, |_| true);
+    assert!(diagnostics.is_empty(), "{:?}", diagnostics.iter().map(Json::to_text).collect::<Vec<_>>());
+    Session { client, uri, text, version: 1 }
+}
+
+#[test]
+fn member_chains_offer_their_members_on_the_dot_that_starts_them() {
+    // Each line is typed after `let body = resp.body`, and the dot that ends it must offer these members.
+    let cases: [(&str, &[&str]); 6] = [
+        // One level: a local's fields and methods.
+        ("    body.", &["text", "read_to_string", "size"]),
+        ("    resp.", &["status", "body"]),
+        // Two levels: a field of a field.
+        ("    let text = resp.body.", &["text", "read_to_string", "size"]),
+        ("    let text = resp.body.rea", &["read_to_string"]),
+        // A chain after a method call.
+        ("    client.send(req).", &["status", "body"]),
+        ("    let text = client.send(req).body.", &["text", "read_to_string", "size"]),
+    ];
+    for (line, expected) in cases {
+        let mut s = open_nested();
+        let edited = s.text.replace("    let body = resp.body\n", &format!("    let body = resp.body\n{line}\n"));
+        s.edit(&edited);
+        let items = s.complete(&format!("{line}\n"), line.len());
+        for name in expected {
+            assert!(has(&items, name), "`{line}`: {name} missing: {:?}", labels(&items));
+        }
+        assert_eq!(s.client.shutdown(), 0);
+    }
+}

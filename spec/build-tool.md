@@ -103,6 +103,18 @@ is still missing.
   one-line summaries.
 - A command that has a target takes it as a positional argument, before any options and before `--`. `--` ends
   `burdin`'s options: `run` and `debug` pass what follows to the program, `fuzz` passes it to libFuzzer.
+- The target may be left out, and then it is the working directory: `burdin run` in a package runs it, exactly as
+  `burdin run .` does. `build`, `run`, `check`, `lint`, `fix`, `doc`, `debug`, `expand`, `bloat`, and `watch` take
+  it so; `ssr` and `refactor` take it after their first word. `test`, `bench`, `asm`, and `fuzz` take a name after
+  the target (a test filter, a function, a fuzz target), so their first word is the target only when it names a
+  path: a `.bd` file, a word with `/` or `\`, or an existing file or directory. Any other first word is the name,
+  and the target is `.`: `burdin test parse` runs the tests whose names contain `parse` in the working package.
+  `burdin watch` reads the options after its command word as that command's options.
+- Each command has a short alias, which the command accepts wherever its name is accepted and which help shows.
+  `burdin r app` is `burdin run app`. The aliases are: `b` build, `r` run, `t` test, `c` check, `n` new, `i` init,
+  `a` add, `f` fmt, `l` lint, `fx` fix, `d` doc, `bn` bench, `w` watch, `rp` repl, `dbg` debug, `fz` fuzz,
+  `cl` clean, `s` ssr, `rf` refactor, `xp` expand, `as` asm, `bl` bloat, `ex` explain, `pk` package, `v` vendor,
+  `bg` bindgen, and `h` help. `lsp`, `dap`, and `commands` have none.
 - Long options accept `--option value` and `--option=value`. A flag that takes no value rejects `--flag=value`.
   `-j4` is `-j 4`.
 

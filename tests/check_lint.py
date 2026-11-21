@@ -495,7 +495,7 @@ with harness.temporary_dir("burdin-lint-cli-") as work:
     expect_status("unknown lint", ["sample.bd", "-D", "no_such_lint", *COMMON], 2, "unknown lint")
     expect_status("unknown option", ["sample.bd", "--frobnicate"], 2, "usage")
     expect_status("--dry-run needs --fix", ["sample.bd", "--dry-run"], 2, "--fix")
-    expect_status("a missing target", [], 2)
+    expect_status("no target is the working directory", [], 1, "burdin.toml")
     expect_status("a missing file", ["nope.bd", *COMMON], 1, "cannot open")
     expect_status("--explain an unknown lint", ["--explain", "nope"], 2, "unknown lint")
 

@@ -522,9 +522,12 @@ check("could not check err_move.bd (1 error)" in output, "human output does not 
 output, status = driver("check", ["no-such-file.bd"], CHECK)
 check(status == 1 and "cannot open" in output, f"a missing target: exit {status}, output {output!r}")
 
+# Without a target the working directory is the target: outside a package it is an error of the package.
+output, status = driver("check", [], CHECK)
+check(status == 1 and "burdin.toml" in output, f"no target outside a package: exit {status}, output {output!r}")
+
 # Usage errors exit 2 with the usage; `--help` prints it and exits 0.
 for bad, reason in [
-    ([], "missing target file"),
     (["a.bd", "b.bd"], "unexpected argument `b.bd`"),
     (["--bogus", "a.bd"], "unknown option `--bogus`"),
     (["--release=yes", "a.bd"], "takes no value"),
@@ -535,7 +538,7 @@ for bad, reason in [
     check(status == 2, f"`burdin check {' '.join(bad)}` exited {status}, expected 2")
     check(reason in output and "usage:" in output, f"`burdin check {' '.join(bad)}` did not say: {reason}")
 output, status = driver("check", ["--help"], CHECK)
-check(status == 0 and "burdin check <file.bd | package directory>" in output, "`burdin check --help` is wrong")
+check(status == 0 and "burdin check [file.bd | package directory]" in output, "`burdin check --help` is wrong")
 
 fixture_count = (
     len(sources)

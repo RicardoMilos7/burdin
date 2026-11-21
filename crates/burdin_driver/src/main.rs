@@ -730,7 +730,7 @@ fn dap(args: &[String]) -> ExitCode {
 }
 
 fn driver_main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
     // The toolchain manager's proxy handles `toolchain` and `+toolchain` before it runs a compiler, so reaching here
     // means this compiler was run directly (`spec/toolchain.md` TC9).
     if let Some(first) = argv.first().filter(|a| *a == "toolchain" || a.starts_with('+')) {
@@ -744,6 +744,9 @@ fn driver_main() -> ExitCode {
         cli::Route::Exit(code) => return code,
         cli::Route::Command(command) => command,
     };
+    // From here on the command's name is its canonical one (`r` is `run`), and an omitted target is `.`.
+    argv[0] = command.clone();
+    let argv = cli::with_default_target(argv);
     let rest = &argv[1..];
     match command.as_str() {
         "fmt" => return fmt::run(rest),

@@ -30,7 +30,7 @@ pub(crate) fn route(argv: &[String]) -> Route {
             Route::Exit(ExitCode::SUCCESS)
         }
         // `burdin --help build` is `burdin help build`.
-        "help" | "-h" | "--help" => help(&argv[1..]),
+        "help" | "h" | "-h" | "--help" => help(&argv[1..]),
         flag @ ("-V" | "--version") => {
             let error = command().error(
                 clap::error::ErrorKind::UnknownArgument,
@@ -46,7 +46,7 @@ pub(crate) fn route(argv: &[String]) -> Route {
                 print_help(name);
                 return Route::Exit(ExitCode::SUCCESS);
             }
-            Route::Command(name.to_string())
+            Route::Command(canonical(name))
         }
         word => Route::Exit(unknown(word)),
     }
@@ -86,7 +86,16 @@ fn unknown(word: &str) -> ExitCode {
 }
 
 fn is_command(name: &str) -> bool {
-    name != "help" && command().get_subcommands().any(|c| c.get_name() == name)
+    name != "help"
+        && command().get_subcommands().any(|c| c.get_name() == name || c.get_all_aliases().any(|a| a == name))
+}
+
+/// The name of the command that `name` is, whether it is the name or an alias: `r` is `run`.
+pub(crate) fn canonical(name: &str) -> String {
+    command()
+        .get_subcommands()
+        .find(|c| c.get_name() == name || c.get_all_aliases().any(|a| a == name))
+        .map_or_else(|| name.to_string(), |c| c.get_name().to_string())
 }
 
 /// Whether `flag` (`--name` or `-n`) of command `name` takes a value; unknown flags take none.
@@ -102,6 +111,92 @@ pub(crate) fn option_takes_value(name: &str, flag: &str) -> bool {
         }
     };
     arg.is_some_and(|a| a.get_action().takes_values())
+}
+
+/// Commands whose first positional argument is the target. Left out, the target is the working directory.
+const TARGET_FIRST: &[&str] = &["build", "run", "check", "lint", "fix", "doc", "debug", "expand", "bloat"];
+
+/// Commands whose first positional argument is a target or the name that follows it: a test or bench filter, an
+/// assembly function, a fuzz target's name. The word is the target when it names a path; otherwise it is the name.
+const TARGET_OR_NAME: &[&str] = &["test", "bench", "asm", "fuzz"];
+
+/// The commands `burdin watch` runs, the first word of its arguments when one is given.
+const WATCHED: &[&str] = &["check", "build", "test", "run"];
+
+/// `argv` (the command's name first, canonical) with the default target added where the command line leaves the
+/// target out: `burdin run` is `burdin run .`, so a package runs from its own directory (`spec/build-tool.md`).
+pub(crate) fn with_default_target(mut argv: Vec<String>) -> Vec<String> {
+    let Some(name) = argv.first().cloned() else { return argv };
+    if let Some(index) = default_target_index(&name, &argv[1..]) {
+        argv.insert(index + 1, ".".to_string());
+    }
+    argv
+}
+
+/// Where the default target goes among `rest` (the arguments after the command's name): the index it is inserted
+/// before, or `None` when the command line has its target already.
+fn default_target_index(name: &str, rest: &[String]) -> Option<usize> {
+    let positions = positionals(name, rest);
+    if TARGET_FIRST.contains(&name) {
+        return positions.is_empty().then_some(0);
+    }
+    if TARGET_OR_NAME.contains(&name) {
+        return match positions.first() {
+            None => Some(0),
+            Some(&first) if is_path(&rest[first]) => None,
+            Some(&first) => Some(first),
+        };
+    }
+    match name {
+        // `burdin ssr <pattern> <target>` and `burdin refactor <refactoring> <target>`: one word is the first.
+        "ssr" | "refactor" => match positions.as_slice() {
+            [_] => Some(positions[0] + 1),
+            _ => None,
+        },
+        // `burdin watch [check|build|test|run] <target> [options]`: the options after the word belong to the
+        // command it runs, so they are read as that command's.
+        "watch" => {
+            let word = rest.first().filter(|w| WATCHED.contains(&w.as_str()));
+            let watched = word.map_or("check", String::as_str);
+            let positions = positionals(watched, rest);
+            let targets = if word.is_some() { positions.get(1..).unwrap_or(&[]) } else { &positions[..] };
+            targets.is_empty().then_some(usize::from(word.is_some()))
+        }
+        _ => None,
+    }
+}
+
+/// The indices in `rest` of its positional arguments for `name`: the words that are neither options nor the values
+/// of options that take one. The arguments after `--` belong to the program and are not counted.
+fn positionals(name: &str, rest: &[String]) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut is_value = false;
+    for (index, arg) in rest.iter().enumerate() {
+        if std::mem::take(&mut is_value) {
+            continue;
+        }
+        if arg == "--" {
+            break;
+        }
+        if arg.len() > 1 && arg.starts_with('-') {
+            // `--name value` takes the next word; `--name=value` and `-j4` carry their value.
+            is_value = !arg.contains('=') && option_takes_value(name, arg);
+        } else {
+            found.push(index);
+        }
+    }
+    found
+}
+
+/// Whether a word names a path rather than a name: a `.bd` file, a path with a separator, `.`, or an existing file
+/// or directory. Test filters, bench filters, function names, and fuzz target names are not paths.
+fn is_path(word: &str) -> bool {
+    word.ends_with(".bd")
+        || word.contains('/')
+        || word.contains('\\')
+        || word == "."
+        || word == ".."
+        || std::path::Path::new(word).exists()
 }
 
 /// The built subcommand `name` of the tree: its usage and help name it `burdin <name>`.
@@ -178,9 +273,40 @@ const OUTPUT: &str = "Output Options";
 const COMPILATION: &str = "Compilation Options";
 const SELECTION: &str = "Selection Options";
 
+/// The short name of each command, shown in help and accepted everywhere the name is: `burdin r` is `burdin run`.
+const ALIASES: &[(&str, &str)] = &[
+    ("build", "b"),
+    ("run", "r"),
+    ("test", "t"),
+    ("check", "c"),
+    ("new", "n"),
+    ("init", "i"),
+    ("add", "a"),
+    ("fmt", "f"),
+    ("lint", "l"),
+    ("fix", "fx"),
+    ("doc", "d"),
+    ("bench", "bn"),
+    ("watch", "w"),
+    ("repl", "rp"),
+    ("debug", "dbg"),
+    ("fuzz", "fz"),
+    ("clean", "cl"),
+    ("ssr", "s"),
+    ("refactor", "rf"),
+    ("expand", "xp"),
+    ("asm", "as"),
+    ("bloat", "bl"),
+    ("explain", "ex"),
+    ("package", "pk"),
+    ("vendor", "v"),
+    ("bindgen", "bg"),
+    ("help", "h"),
+];
+
 /// The whole command tree.
 pub(crate) fn command() -> Command {
-    Command::new("burdin")
+    let root = Command::new("burdin")
         .about("The Burdin compiler and toolchain")
         .override_usage("burdin [OPTIONS] [COMMAND]")
         .disable_version_flag(true)
@@ -232,7 +358,8 @@ pub(crate) fn command() -> Command {
             // About the tool itself.
             Command::new("commands").about("List every command, alphabetically").override_usage("burdin commands"),
             Command::new("help").about("Print the help of a command").override_usage("burdin help [<command>]"),
-        ])
+        ]);
+    ALIASES.iter().fold(root, |root, &(name, alias)| root.mut_subcommand(name, |c| c.visible_alias(alias)))
 }
 
 /// `burdin commands`: every command with its summary, alphabetically (the root help is ordered by use instead).
@@ -258,6 +385,11 @@ pub(crate) fn commands(rest: &[String]) -> ExitCode {
 
 fn target() -> Arg {
     Arg::new("target").value_name("file.bd | package directory").help("The source file or package directory")
+}
+
+/// A target that is the working directory when none is given: `burdin run` is `burdin run .` (`default_target`).
+fn target_or_here() -> Arg {
+    target().default_value(".").help("The source file or package directory (default: the working directory)")
 }
 
 fn flag(id: &'static str, help: &'static str) -> Arg {
@@ -386,10 +518,10 @@ fn build() -> Command {
         Command::new("build")
             .about("Compile a file or package into an executable")
             .override_usage(
-                "burdin build <file.bd | package directory | workspace root> [OPTIONS]
+                "burdin build [file.bd | package directory | workspace root] [OPTIONS]
        \n                 burdin build <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]",
             )
-            .arg(target().required(true))
+            .arg(target_or_here())
             .arg(Arg::new("output").short('o').value_name("output").help("Where to write the executable"))
             .args(member_selection())
             .args([
@@ -440,9 +572,9 @@ fn run() -> Command {
         Command::new("run")
             .about("Build a program and run it")
             .override_usage(
-                "burdin run <file.bd | package directory> [-p <member>] [OPTIONS] [-- <program arguments>...]",
+                "burdin run [file.bd | package directory] [-p <member>] [OPTIONS] [-- <program arguments>...]",
             )
-            .arg(target().required(true))
+            .arg(target_or_here())
             .args(member_selection())
             .arg(
                 Arg::new("program-args")
@@ -524,8 +656,8 @@ fn test() -> Command {
     with_diagnostics(
         Command::new("test")
             .about("Build and run the `test` blocks of a file or package")
-            .override_usage("burdin test <file.bd | package directory> [<filter>...] [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin test [file.bd | package directory] [<filter>...] [OPTIONS]")
+            .arg(target_or_here())
             .arg(filters("Run only tests whose full path (`module.test name`) contains any filter"))
             .args(selection("tests"))
             .args(
@@ -632,8 +764,8 @@ fn bench() -> Command {
     with_diagnostics(
         Command::new("bench")
             .about("Build and measure the `bench` blocks of a file or package")
-            .override_usage("burdin bench <file.bd | package directory> [<filter>...] [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin bench [file.bd | package directory] [<filter>...] [OPTIONS]")
+            .arg(target_or_here())
             .arg(filters("Measure only benches whose full path contains any filter"))
             .args(selection("benches"))
             .args([
@@ -689,8 +821,8 @@ fn check() -> Command {
     with_diagnostics(
         Command::new("check")
             .about("Type-check a program and run the memory checks, without generating code")
-            .override_usage("burdin check <file.bd | package directory> [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin check [file.bd | package directory] [OPTIONS]")
+            .arg(target_or_here())
             .args([
                 release("Check the way `burdin build --release` does"),
                 profile_option(),
@@ -767,11 +899,11 @@ fn lint() -> Command {
         Command::new("lint")
             .about("Report common mistakes and style issues, and fix them")
             .override_usage(
-                "burdin lint <file.bd | package directory> [OPTIONS]\n       \
+                "burdin lint [file.bd | package directory] [OPTIONS]\n       \
                  burdin lint --list\n       \
                  burdin lint --explain <lint>",
             )
-            .arg(target())
+            .arg(target_or_here())
             .args(
                 [
                     Arg::new("allow")
@@ -816,8 +948,8 @@ fn fix() -> Command {
     with_diagnostics(
         Command::new("fix")
             .about("Apply the machine-applicable fixes of the compiler and the linter across a package")
-            .override_usage("burdin fix <file.bd | package directory> [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin fix [file.bd | package directory] [OPTIONS]")
+            .arg(target_or_here())
             .args([
                 flag("dry-run", "Print the changes as a unified diff and write nothing"),
                 flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
@@ -835,13 +967,13 @@ fn ssr() -> Command {
     with_diagnostics(
         Command::new("ssr")
             .about("Structural search and replace: match a pattern written as Burdin code across a package")
-            .override_usage("burdin ssr '<pattern> [==>> <replacement>]' <file.bd | package directory> [OPTIONS]")
+            .override_usage("burdin ssr '<pattern> [==>> <replacement>]' [file.bd | package directory] [OPTIONS]")
             .arg(Arg::new("pattern").value_name("pattern").required(true).help(
                 "The pattern, and after `==>>` what to put in its place. `$name` is any expression; a type may be \
                  constrained after `where`: `$a.unwrap_or($b) where $a: Option<_>`. Without a replacement the matches \
                  are listed",
             ))
-            .arg(target().required(true))
+            .arg(target_or_here())
             .args([
                 flag("dry-run", "Print the changes as a unified diff and write nothing"),
                 flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
@@ -879,7 +1011,7 @@ fn refactor() -> Command {
             .arg(Arg::new("refactoring").value_name("refactoring").required(true).help(
                 "extract-variable, extract-function, inline-variable, inline-function, change-signature, or move-item",
             ))
-            .arg(target().required(true))
+            .arg(target_or_here())
             .args([
                 option("name", "name", "The name of the local or function an extraction creates"),
                 option("to", "module", "The module a moved item goes to (`move-item`)"),
@@ -904,10 +1036,10 @@ fn doc() -> Command {
         Command::new("doc")
             .about("Generate the documentation of a package")
             .override_usage(
-                "burdin doc <file.bd | package directory | workspace root> [OPTIONS]
+                "burdin doc [file.bd | package directory | workspace root] [OPTIONS]
        \n                 burdin doc <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]",
             )
-            .arg(target().required(true))
+            .arg(target_or_here())
             .args(member_selection())
             .args([
                 Arg::new("out").short('o').long("out").value_name("dir | file").help(
@@ -1056,8 +1188,8 @@ fn debug() -> Command {
     with_diagnostics(
         Command::new("debug")
             .about("Build a program with debug info and start a debugger on it")
-            .override_usage("burdin debug <file.bd | package directory> [OPTIONS] [-- <program arguments>...]")
-            .arg(target().required(true))
+            .override_usage("burdin debug [file.bd | package directory] [OPTIONS] [-- <program arguments>...]")
+            .arg(target_or_here())
             .arg(
                 Arg::new("program-args")
                     .value_name("program arguments")
@@ -1085,8 +1217,8 @@ fn expand() -> Command {
     with_diagnostics(
         Command::new("expand")
             .about("Print the source after comptime, derives, default arguments, and operators")
-            .override_usage("burdin expand <file.bd | package directory> [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin expand [file.bd | package directory] [OPTIONS]")
+            .arg(target_or_here())
             .args([
                 option(
                     "item",
@@ -1109,8 +1241,8 @@ fn asm() -> Command {
     with_diagnostics(
         Command::new("asm")
             .about("Print the assembly or LLVM IR of one function, with its source")
-            .override_usage("burdin asm <file.bd | package directory> [<function>] [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin asm [file.bd | package directory] [<function>] [OPTIONS]")
+            .arg(target_or_here())
             .arg(Arg::new("function").value_name("function").help(
                 "`module.name`, `Type.method`, or an instance such as `largest<i32>` (`::` is accepted for `.`); \
                  a generic function without type arguments lists its instances, and no function lists every \
@@ -1133,8 +1265,8 @@ fn bloat() -> Command {
     with_diagnostics(
         Command::new("bloat")
             .about("Report the size of each function, module, package, and generic in the executable")
-            .override_usage("burdin bloat <file.bd | package directory> [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin bloat [file.bd | package directory] [OPTIONS]")
+            .arg(target_or_here())
             .args([
                 flag("debug", "Measure the debug profile (the default is release)"),
                 option("top", "n", "List the n largest functions and generics (default: 20)"),
@@ -1209,7 +1341,7 @@ fn bindgen() -> Command {
 fn watch() -> Command {
     Command::new("watch")
         .about("Rerun check, build, test, or run whenever the sources change")
-        .override_usage("burdin watch [check|build|test|run] <file.bd | package directory> [OPTIONS]")
+        .override_usage("burdin watch [check|build|test|run] [file.bd | package directory] [OPTIONS]")
         .arg(
             Arg::new("args")
                 .value_name("command and options")
@@ -1278,7 +1410,7 @@ mod tests {
     #[test]
     fn a_usage_error_names_the_command_and_its_help() {
         let text = usage_error_text("check", "unknown option `--bogus`");
-        assert!(text.starts_with("error: unknown option `--bogus`\n\nusage: burdin check <file.bd"), "{text}");
+        assert!(text.starts_with("error: unknown option `--bogus`\n\nusage: burdin check [file.bd"), "{text}");
         assert!(text.ends_with("try `burdin check --help`."), "{text}");
     }
 
@@ -1289,5 +1421,98 @@ mod tests {
         assert!(is_command("check"));
         assert!(!is_command("help"));
         assert!(!is_command("chek"));
+    }
+
+    fn words(w: &[&str]) -> Vec<String> {
+        w.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_alias_is_a_short_name_of_its_command() {
+        let mut seen = std::collections::HashSet::new();
+        for &(name, alias) in ALIASES {
+            // `help` is routed by name before the command table is consulted, so `is_command` leaves it out.
+            if name != "help" {
+                assert!(is_command(name), "`{name}` is not a command");
+            }
+            assert!(is_command(alias) || alias == "h", "`{alias}` is not accepted");
+            assert_eq!(canonical(alias), name, "`{alias}` should be `{name}`");
+            assert!(seen.insert(alias), "`{alias}` is used twice");
+            assert!(command().find_subcommand(alias).is_none_or(|c| c.get_name() == name), "`{alias}` shadows a name");
+        }
+        assert_eq!(canonical("run"), "run");
+        assert_eq!(canonical("zz"), "zz");
+    }
+
+    #[test]
+    fn an_alias_routes_to_its_canonical_command() {
+        assert!(matches!(route(&words(&["r", "app"])), Route::Command(name) if name == "run"));
+        assert!(matches!(route(&words(&["t"])), Route::Command(name) if name == "test"));
+        assert!(matches!(route(&words(&["h"])), Route::Exit(_)));
+    }
+
+    #[test]
+    fn an_omitted_target_is_the_working_directory() {
+        let default = |w: &[&str]| with_default_target(words(w));
+        assert_eq!(default(&["run"]), words(&["run", "."]));
+        assert_eq!(default(&["run", "--release"]), words(&["run", ".", "--release"]));
+        assert_eq!(default(&["run", "--profile", "dev"]), words(&["run", ".", "--profile", "dev"]));
+        assert_eq!(default(&["run", "--profile=dev"]), words(&["run", ".", "--profile=dev"]));
+        assert_eq!(default(&["run", "--", "x"]), words(&["run", ".", "--", "x"]));
+        assert_eq!(default(&["run", "app"]), words(&["run", "app"]));
+        assert_eq!(default(&["run", ".", "--release"]), words(&["run", ".", "--release"]));
+        assert_eq!(default(&["build", "-j", "2"]), words(&["build", ".", "-j", "2"]));
+        assert_eq!(default(&["check"]), words(&["check", "."]));
+        assert_eq!(default(&["debug", "-g"]), words(&["debug", ".", "-g"]));
+        assert_eq!(default(&["fix"]), words(&["fix", "."]));
+        assert_eq!(default(&["expand", "--item", "f"]), words(&["expand", ".", "--item", "f"]));
+    }
+
+    #[test]
+    fn a_word_after_test_asm_or_fuzz_is_a_name_unless_it_is_a_path() {
+        let default = |w: &[&str]| with_default_target(words(w));
+        assert_eq!(default(&["test"]), words(&["test", "."]));
+        assert_eq!(default(&["test", "parse"]), words(&["test", ".", "parse"]));
+        assert_eq!(default(&["test", "parse", "lex"]), words(&["test", ".", "parse", "lex"]));
+        assert_eq!(default(&["test", "app.bd", "parse"]), words(&["test", "app.bd", "parse"]));
+        assert_eq!(default(&["test", "sub/app", "parse"]), words(&["test", "sub/app", "parse"]));
+        // `--filter` takes its value, so `x` is not a positional word; `y` is the first, and it is a name.
+        assert_eq!(default(&["test", "--filter", "x", "y"]), words(&["test", "--filter", "x", ".", "y"]));
+        assert_eq!(default(&["test", "--filter", "x", "app.bd"]), words(&["test", "--filter", "x", "app.bd"]));
+        assert_eq!(default(&["bench", "--list"]), words(&["bench", ".", "--list"]));
+        assert_eq!(default(&["asm", "main"]), words(&["asm", ".", "main"]));
+        assert_eq!(default(&["asm", "app.bd", "main"]), words(&["asm", "app.bd", "main"]));
+        assert_eq!(default(&["fuzz", "parse"]), words(&["fuzz", ".", "parse"]));
+        assert_eq!(default(&["fuzz", "app.bd", "parse"]), words(&["fuzz", "app.bd", "parse"]));
+    }
+
+    #[test]
+    fn ssr_and_refactor_take_the_target_after_their_first_word() {
+        let default = |w: &[&str]| with_default_target(words(w));
+        assert_eq!(default(&["ssr", "$a.unwrap()"]), words(&["ssr", "$a.unwrap()", "."]));
+        assert_eq!(default(&["ssr", "$a", "app.bd"]), words(&["ssr", "$a", "app.bd"]));
+        assert_eq!(
+            default(&["refactor", "extract-variable", "app.bd:1:2"]),
+            words(&["refactor", "extract-variable", "app.bd:1:2"])
+        );
+        assert_eq!(default(&["refactor", "inline-variable"]), words(&["refactor", "inline-variable", "."]));
+    }
+
+    #[test]
+    fn watch_reads_the_options_of_the_command_it_runs() {
+        let default = |w: &[&str]| with_default_target(words(w));
+        assert_eq!(default(&["watch"]), words(&["watch", "."]));
+        assert_eq!(default(&["watch", "--no-clear"]), words(&["watch", ".", "--no-clear"]));
+        assert_eq!(default(&["watch", "run"]), words(&["watch", "run", "."]));
+        assert_eq!(default(&["watch", "run", "app.bd"]), words(&["watch", "run", "app.bd"]));
+        assert_eq!(default(&["watch", "run", "--profile", "dev"]), words(&["watch", "run", ".", "--profile", "dev"]));
+        assert_eq!(default(&["watch", "test", "--filter", "x"]), words(&["watch", "test", ".", "--filter", "x"]));
+    }
+
+    #[test]
+    fn a_command_without_a_target_is_left_alone() {
+        assert_eq!(with_default_target(words(&["new", "app"])), words(&["new", "app"]));
+        assert_eq!(with_default_target(words(&["fmt"])), words(&["fmt"]));
+        assert_eq!(with_default_target(words(&["fuzz"])), words(&["fuzz", "."]));
     }
 }

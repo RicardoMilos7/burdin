@@ -1,0 +1,27 @@
+struct Body {
+    text: str
+}
+
+Body {
+    /// Reads the whole body.
+    fn read_to_string(self): Option<str> {
+        Some(self.text)
+    }
+}
+
+struct Response {
+    body: Body
+}
+
+Response {
+    fn read_to_string(self): Option<str> {
+        self.body.read_to_string()
+    }
+}
+
+fn main() {
+    let resp = Response { body: Body { text: "hi" } }
+    let body = resp.body.read_to_string() orelse return
+    let one = resp.read_to_string() orelse return
+    println("{body} {one}")
+}

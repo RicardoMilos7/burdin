@@ -168,14 +168,14 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
+  burdin build [file.bd | package directory] [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [-p <member>]... [--workspace [--exclude <member>]...] [--link-lib <name>]...
                [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
-  burdin run <file.bd | package directory> [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
+  burdin run [file.bd | package directory] [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
              [-p <member>]... [--workspace [--exclude <member>]...] [--comptime-steps <n>] [--sanitize <list>]
              [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
+  burdin test [file.bd | package directory] [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]...
               [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
@@ -532,7 +532,9 @@ $ head -1 hello.ll
 burdin run <target> [--release] [--link-lib <name>]... [diagnostics] [-- <program arguments>...]
 ```
 
-Compiles into a temporary directory and runs the program. The program's stdout and stderr pass through unchanged, and
+Compiles into a temporary directory and runs the program. The target may be left out: in a package directory,
+`burdin run` runs that package, as `burdin run .` does. `burdin r` is the same command (the aliases are in
+`spec/build-tool.md`, BT4). The program's stdout and stderr pass through unchanged, and
 the command exits with the program's exit status. On Unix a signal becomes `128 + signal`; Windows statuses are
 truncated to 8 bits, with a non-zero status kept non-zero. A compilation failure with diagnostics exits 1. Arguments
 after `--` become the program's command-line arguments after the program name; `env.args()` returns them with the

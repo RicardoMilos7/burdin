@@ -308,16 +308,21 @@ impl<'a> Resolver<'a> {
         // A member after a `.`.
         if prev_dot {
             let receiver = ix.tokens[ti - 2].clone();
+            // A receiver that is itself a member (`body` in `resp.body.read_to_string`) names a field, so no local or
+            // parameter that happens to share its name is its declaration (issue #880). Its type comes from the
+            // expression that holds it.
+            let receiver_is_member = ti >= 3 && ix.tokens[ti - 3].kind == Tk::Dot;
+            let value = !receiver_is_member && self.is_value(path, &receiver);
             match &receiver.kind {
                 Tk::Ident(r) => {
                     if let Some(file) = self.module_named(path, r)
-                        && !self.is_value(path, &receiver)
+                        && !value
                     {
                         return self
                             .find(&file, &name, |i| i.parent.is_none() && i.kind != Kind::Impl)
                             .filter(|s| s.def.path == file);
                     }
-                    if !self.is_value(path, &receiver)
+                    if !value
                         && let Some(owner) = self.find(path, r, |i| i.kind.is_type())
                         && let Some(m) = self.member(path, &owner.name, &name)
                     {
@@ -334,7 +339,7 @@ impl<'a> Resolver<'a> {
                 }
                 _ => {}
             }
-            if let Some(ty) = self.local_type(path, &receiver) {
+            if !receiver_is_member && let Some(ty) = self.local_type(path, &receiver) {
                 return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
             if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
@@ -346,6 +351,7 @@ impl<'a> Resolver<'a> {
             }
             // A parameter of the function, read from its signature when no analysis answers (`s: S` in `fn f(mut s: S)`).
             if let Tk::Ident(r) = &receiver.kind
+                && !receiver_is_member
                 && let Some(ty) = ix.parameter_type(receiver.lo, r)
             {
                 return self.member_of(path, &ix, receiver.lo, &ty, &name);
