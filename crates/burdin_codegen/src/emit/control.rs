@@ -229,7 +229,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         then: &'a tir::Block,
         other: Option<&'a tir::Expr>,
         ty: &Ty,
-        mode: Mode,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let c = self.expr_mode(cond, Mode::Use)?;
         let c = self.need_int(c, &Ty::Bool);
@@ -243,7 +242,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_conditional_branch(c, then_bb, else_bb).map_err(llvm_err)?;
 
         self.builder.position_at_end(then_bb);
-        let v = self.block(then, mode)?;
+        let v = self.block(then, Mode::Move)?;
         if let (Some(slot), Some(v)) = (result, v) {
             self.builder.build_store(slot, v).map_err(llvm_err)?;
         }
@@ -251,7 +250,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         self.builder.position_at_end(else_bb);
         if let Some(other) = other {
-            let v = self.expr_mode(other, mode)?;
+            let v = self.expr_mode(other, Mode::Move)?;
             if let (Some(slot), Some(v)) = (result, v) {
                 self.builder.build_store(slot, v).map_err(llvm_err)?;
             }
@@ -270,7 +269,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         scrutinee: &'a tir::Expr,
         arms: &'a [tir::Arm],
         ty: &Ty,
-        mode: Mode,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         // A place scrutinee is matched in place: moving bindings take parts out of it (MV8). A temporary is
         // spilled; it is dropped at the end of the statement unless an arm moves parts out of it (which the
@@ -338,7 +336,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(next).map_err(llvm_err)?;
                 self.builder.position_at_end(body_bb);
             }
-            let v = self.expr_mode(&arm.body, mode)?;
+            let v = self.expr_mode(&arm.body, Mode::Move)?;
             // The arm's bindings drop at the end of the arm (MV8).
             self.drop_scope(self.scopes.len() - 1)?;
             self.scopes.pop();

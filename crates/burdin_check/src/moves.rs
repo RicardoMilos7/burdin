@@ -981,8 +981,10 @@ impl<'a> Checker<'a> {
                 }
             }
             K::StringAsStr(inner) => self.expr(inner, Mode::Use),
+            // The value of a block, `if`, or `match` is an owned temporary whatever uses it, so its tail moves
+            // out even where the expression is only borrowed (`f({ s })`, `{ s }.len()`; spec/memory-rules.md, MV9).
             K::Block(b) => {
-                self.block(b, mode);
+                self.block(b, Mode::Move);
             }
             // A comptime expression uses only its own locals (spec/comptime.md, CT2), checked like any code.
             K::Comptime(inner) => self.expr(inner, mode),
@@ -1003,7 +1005,7 @@ impl<'a> Checker<'a> {
                 self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
-            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), mode),
+            K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref()),
             K::While(..)
             | K::Loop(_)
             | K::ForRangeValue { .. }
@@ -1058,7 +1060,7 @@ impl<'a> Checker<'a> {
                     if let Some(g) = &arm.guard {
                         self.expr(g, Mode::Use);
                     }
-                    self.expr(&arm.body, mode);
+                    self.expr(&arm.body, Mode::Move);
                     self.end_scope(arm.body.span, arm.body.ty != Ty::Never);
                     // A binding of the arm is dropped at the end of the arm (MV8).
                     if arm.body.ty != Ty::Never {
@@ -1216,16 +1218,16 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn if_expr(&mut self, cond: &tir::Expr, then: &tir::Block, other: Option<&tir::Expr>, mode: Mode) {
+    fn if_expr(&mut self, cond: &tir::Expr, then: &tir::Block, other: Option<&tir::Expr>) {
         self.expr(cond, Mode::Use);
         let entry = self.states.clone();
         self.conditional += 1;
-        let then_falls = self.block(then, mode);
+        let then_falls = self.block(then, Mode::Move);
         let then_state = self.states.clone();
         self.states = entry.clone();
         let else_falls = match other {
             Some(other) => {
-                self.expr(other, mode);
+                self.expr(other, Mode::Move);
                 other.ty != Ty::Never
             }
             None => true,
