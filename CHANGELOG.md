@@ -6,6 +6,10 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
+  each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
+  `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
+
 - Type checking continues past a syntax error (issue #786; `spec/check.md`, CK4). A file with a syntax error is not
   type checked, but every other module is, against the declarations the broken file did read. The follow-on errors of
   a declaration that did not parse (a use of a function, type, or method the broken file failed to declare) are left

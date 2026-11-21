@@ -77,6 +77,7 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         jobs,
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     }
 }
 

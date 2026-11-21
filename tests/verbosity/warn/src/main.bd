@@ -1,0 +1,21 @@
+// An extension whose receiver type already has a method of the same name is shadowed: the compiler warns
+// (EX4) and calls the method.
+
+struct Gadget {
+    n: i32,
+}
+
+Gadget {
+    fn label(self): String {
+        String.from("method")
+    }
+}
+
+fn Gadget.label(self): String {
+    String.from("extension")
+}
+
+fn main() {
+    let g = Gadget { n: 1 }
+    println(g.label())
+}

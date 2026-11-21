@@ -109,6 +109,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let FrontEnd { loaded, sources, program, diags, rust_libs, .. } =
         match front_end(&args.target, &options, &SourceOverrides::new()) {

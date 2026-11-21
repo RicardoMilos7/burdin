@@ -237,6 +237,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
+        verbose: false,
     };
     // `--doc` runs only the doc tests, so no `test` block is compiled.
     let mut compiled = Vec::new();
@@ -490,6 +491,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         jobs: 1,
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let compile_options = CompileOptions { link_libs: args.link_libs.as_slice(), ..options };
     let interp_options = burdin_comptime::Options {

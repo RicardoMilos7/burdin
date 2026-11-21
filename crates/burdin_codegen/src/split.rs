@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use inkwell::GlobalVisibility;
 use inkwell::context::Context;
@@ -159,9 +160,6 @@ fn prepare(module: &Module<'_>, units: usize) -> Plan {
     Plan { units, owners, small }
 }
 
-/// What compiling one unit gave: the cache key it used, if there is a cache, or the error.
-type UnitResult = Result<Option<String>, String>;
-
 /// The path of unit `index`'s object: `object` itself for the first, `<stem>.<index>.<ext>` for the others.
 pub(crate) fn unit_path(object: &Path, index: usize) -> PathBuf {
     if index == 0 {
@@ -175,8 +173,12 @@ pub(crate) fn unit_path(object: &Path, index: usize) -> PathBuf {
     object.with_file_name(name)
 }
 
+/// What one codegen unit leaves behind: whether it compiled, its cache key, and how long it took.
+type UnitResult = (Result<Option<String>, String>, Duration);
+
 /// Splits `module` into `units` units and writes one object per unit with `jobs` threads. Returns the objects in unit
-/// order. On failure the error of the first failing unit (in unit order) is returned.
+/// order, and how long each unit took in the same order. On failure the error of the first failing unit (in unit
+/// order) is returned.
 pub(crate) fn emit_units(
     module: &Module<'_>,
     units: usize,
@@ -184,7 +186,7 @@ pub(crate) fn emit_units(
     level: OptLevel,
     object: &Path,
     cache: Option<&ObjectCache>,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<(Vec<PathBuf>, Vec<Duration>), String> {
     let plan = prepare(module, units);
     let bitcode = module.write_bitcode_to_memory();
     let bitcode = bitcode.as_slice();
@@ -204,8 +206,10 @@ pub(crate) fn emit_units(
                         if index >= plan.units {
                             break;
                         }
+                        let started = Instant::now();
                         let result = emit_unit(bitcode, &plan, index, level, &paths[index], cache);
-                        results.lock().expect("a unit thread panicked")[index] = Some(result);
+                        let took = started.elapsed();
+                        results.lock().expect("a unit thread panicked")[index] = Some((result, took));
                     }
                 })
                 .map_err(|e| format!("cannot start a code generation thread: {e}"))?;
@@ -218,14 +222,17 @@ pub(crate) fn emit_units(
         }
         Ok(())
     })?;
+    let mut times = Vec::with_capacity(plan.units);
     let mut keys = HashSet::new();
-    for result in results.into_inner().expect("a unit thread panicked") {
-        keys.extend(result.unwrap_or_else(|| Err("a codegen unit was not compiled".to_string()))?);
+    for entry in results.into_inner().expect("a unit thread panicked") {
+        let (result, took) = entry.unwrap_or((Err("a codegen unit was not compiled".to_string()), Duration::ZERO));
+        keys.extend(result?);
+        times.push(took);
     }
     if let Some(cache) = cache {
         cache.prune(&keys);
     }
-    Ok(paths)
+    Ok((paths, times))
 }
 
 /// Compiles unit `index` from the whole module's `bitcode` into `path`. With a cache, the unit's object is fetched

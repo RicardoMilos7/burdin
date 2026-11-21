@@ -130,6 +130,29 @@ and `test` runs the same checked program's test dispatcher. `tests/check_cli.py`
 it, checks it, and tests it in one flow, and checks that the unknown-command and out-of-scope-command behavior of
 BT2 holds.
 
+## BT8. Quiet and verbose output
+
+`build`, `run`, and `check` take two flags for what they print besides their results (issue #799):
+
+- `-q`/`--quiet` prints only errors. Warnings and informational notes (such as `note: skipped` for a workspace member
+  with no `src/main.bd`) are left out, in every diagnostic format. Errors print as they do without the flag, and a
+  SARIF log is still written under `build` and `check`, holding only the errors. A result a command asks for is
+  unchanged: a program's output under `run`, and `check --print-instances` or `--explain-ownership`.
+- `-v`/`--verbose` prints, to standard error, `compiling <target>`, then each phase of the compilation with its
+  wall time, in this order: `dependencies` (the lockfile and git packages), `load` (the package and its modules),
+  `build scripts`, `parse and check` (parsing, name resolution, type checking, and the memory checks), and, for
+  `build` and `run` only, `codegen` followed by one `codegen unit <i> of <n>` line per unit, in unit order, and
+  `link`. `check` stops after `parse and check`. A fresh cached executable replaces `codegen` and `link` with
+  `phase cache: the executable is up to date, so codegen and link are skipped`. A failed compilation prints the
+  phases that finished, then its errors. The program's output and exit status are unchanged. The unit lines do not
+  depend on `-j`: the units are numbered by the split, not by the order their threads finish.
+- The two flags conflict (exit status 2). `-q` is valid only for `build`, `run`, and `check`; `-v` is also the test
+  and bench runners' flag for their own output, and `burdin fuzz` rejects it. The timings vary from run to run, so
+  the checks compare the phase names and the unit numbers, and golden text only for the quiet error output.
+
+The flags change only what is printed: `--error-limit`, `--color`, `--width`, and `--diagnostic-format` keep their
+meaning under both.
+
 ## Tests
 
 `tests/check_cli.py` checks:
@@ -141,3 +164,7 @@ BT2 holds.
 - every out-of-scope command in BT2 is rejected as unknown with exit status 2;
 - `burdin -V` and `burdin --version build` behave as BT4 says;
 - one fixture package goes through `build`, `run`, `check`, and `test` (BT7).
+
+`tests/check_verbosity.py` checks BT8 with the fixture packages under `tests/verbosity/`: the quiet output of a
+warning-only package and of a failing one (golden text under `tests/verbosity/golden/`), in every format; the phases
+and the codegen units of `-v` with `-j 1` and `-j 8`; the cached-executable line; and the usage errors.

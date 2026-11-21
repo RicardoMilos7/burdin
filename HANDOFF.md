@@ -2693,6 +2693,21 @@ What is left: snapshots are checked only in a compiled run (an interpreted test 
 skipped); `--interpret` runs `test` blocks only, not doc tests; the fuzzer's corpus is not shared across a workspace;
 and a sanitizer report in a test is attributed to the test, not to the line inside the library that caused it.
 
+## Quiet and verbose output (issue #799)
+
+`build`, `run`, and `check` take `-q`/`--quiet` (only errors: no warnings, no informational notes; the results are
+unchanged, and the SARIF log is still written with only its errors) and `-v`/`--verbose` (to standard error, the
+compilation's phases with their times in a fixed order, then each codegen unit in unit order). The decisions are
+BT8 in `spec/build-tool.md`. `burdin_codegen::emit_object_timed` reports each unit's time, and `emit_object` is the
+same call without the times. The phases are the driver's (`dependencies`, `load`, `build scripts`, `parse and check`,
+`codegen`, `link`): `parse and check` is one phase because the query library runs parsing and checking together.
+`tests/check_verbosity.py` runs the fixture packages in `tests/verbosity/` (golden quiet errors in
+`tests/verbosity/golden/`) and passes 60 checks in WSL, with `-j 1` and `-j 8` giving the same unit sequence.
+
+What is left: `-q` and `-v` are not on `test`, `bench`, or the other compiling commands; `-v` does not print the
+phases of the build scripts' own compilations; and the timing is wall time, so a phase that runs in parallel
+inside `parse and check` cannot be told apart.
+
 ## Type checking past a syntax error (issue #786)
 
 A file with a syntax error no longer stops the front end before checking. `burdin_query::Db::analyze` checks every

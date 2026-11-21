@@ -1,0 +1,93 @@
+fn main() {
+    let mut total: i64 = 0
+    total = total + f0(3)
+    total = total + f1(3)
+    total = total + f2(3)
+    total = total + f3(3)
+    total = total + f4(3)
+    total = total + f5(3)
+    total = total + f6(3)
+    total = total + f7(3)
+    println(total.to_string())
+}
+
+fn f0(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 1
+        k = k + 1
+    }
+    total
+}
+
+fn f1(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 2
+        k = k + 1
+    }
+    total
+}
+
+fn f2(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 3
+        k = k + 1
+    }
+    total
+}
+
+fn f3(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 4
+        k = k + 1
+    }
+    total
+}
+
+fn f4(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 5
+        k = k + 1
+    }
+    total
+}
+
+fn f5(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 6
+        k = k + 1
+    }
+    total
+}
+
+fn f6(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 7
+        k = k + 1
+    }
+    total
+}
+
+fn f7(n: i64): i64 {
+    let mut total: i64 = 0
+    let mut k: i64 = 0
+    while k < n {
+        total = total + k * 8
+        k = k + 1
+    }
+    total
+}
+

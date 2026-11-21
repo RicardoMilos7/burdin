@@ -342,6 +342,10 @@ jobs:
         if: matrix.part == 'tools-build'
         run: python3 tests/check_cli.py
 
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools-build'
+        run: python3 tests/check_verbosity.py
+
       - name: Check build profiles
         if: matrix.part == 'tools-build'
         run: python3 tests/check_profiles.py
@@ -802,6 +806,10 @@ jobs:
       - name: Check the command surface
         if: matrix.part == 'tools-build'
         run: python3 tests/check_cli.py
+
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools-build'
+        run: python3 tests/check_verbosity.py
 
       - name: Check build profiles
         if: matrix.part == 'tools-build'
@@ -1274,6 +1282,10 @@ jobs:
       - name: Check the command surface
         if: matrix.part == 'tools-build'
         run: python tests/check_cli.py
+
+      - name: Check quiet and verbose output
+        if: matrix.part == 'tools-build'
+        run: python tests/check_verbosity.py
 
       - name: Check build profiles
         if: matrix.part == 'tools-build'

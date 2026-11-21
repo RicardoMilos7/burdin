@@ -52,6 +52,7 @@ impl Default for Args {
                 color: ColorChoice::Auto,
                 width: None,
                 error_limit: None,
+                quiet: false,
             },
         }
     }
@@ -318,6 +319,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let built = match compile(&target, &dir.path, Some(&exe), &options) {
         Ok(built) => built,
