@@ -4,7 +4,6 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
-<<<<<<< HEAD
 **`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
@@ -25,7 +24,6 @@ with two `from` variants of different sources could not compile; both work now. 
 (E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
 from `char`, and `try_from` for other primitive types. Tests:
 `tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
-=======
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
 (`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
 quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
@@ -38,7 +36,6 @@ dropped only in the parser's error path (a label on a non-loop is E0001 and the 
 `tests/m02_basics/labeled_loops.bd` (runs), `labeled_loops_errors.bd`, `labeled_loop_not_loop.bd`, and
 `tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: `break` with a value (still
 "when wanted"), and a labeled block (`'a: { ... }`), which the grammar does not admit.
->>>>>>> origin/main
 
 **Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
 that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`
