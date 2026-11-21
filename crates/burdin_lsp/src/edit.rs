@@ -825,8 +825,12 @@ fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
 fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, dot: u32, out: &mut Completions) {
     let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return };
     let receiver = ix.tokens[ti].clone();
+    // A name after a `.` is a member of the value before it, so it is never a local, a module, or a type.
+    let member = dot_before(ix, ti);
 
-    if let Tk::Ident(name) = &receiver.kind {
+    if let Tk::Ident(name) = &receiver.kind
+        && !member
+    {
         // The answering analysis may be older than the text: its offsets are mapped.
         let is_value = Answering::of(r.p, path).is_some_and(|a| {
             a.old_offset(receiver.lo)
@@ -860,28 +864,146 @@ fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, 
         }
         return;
     }
-    let ty = Answering::of(r.p, path)
-        .and_then(|a| {
-            // A half-written member (`sq.` before the next line) may parse as part of a larger expression that does not
-            // type-check; the receiver's own declaration still says what it is.
-            a.type_at(path, receiver.lo)
-                .filter(|t| !t.contains("{error}") && !t.is_empty())
-                .or_else(|| a.local_before(path, receiver.ident()?, receiver.lo))
-        })
-        // With no analysis to answer, a parameter's declared type says what it is.
-        .or_else(|| ix.parameter_type(receiver.lo, receiver.ident()?));
+    let all = r.all_items();
+    let ty = receiver_type(Answering::of(r.p, path).as_ref(), ix, &all, path, ti);
     // A literal's spelling says its type when the analysis has not seen it yet.
     let ty = match (ty, literal_type(text, &receiver)) {
         (Some(ty), _) => ty,
         (None, Some(literal)) => literal.to_string(),
         (None, None) => return,
     };
-    let all = r.all_items();
     let base = base_type(&ty);
     match ix.bounds_of(receiver.lo, &base) {
         // A generic parameter (`s: S` with `S: Serializer`): the methods of its bounds.
         Some(bounds) => bound_members(&all, &bounds, out),
         None => value_members(&all, &base, out),
+    }
+}
+
+/// Whether a type the analysis reports can be used: an error type says nothing about the value.
+fn usable(ty: &str) -> bool {
+    !ty.is_empty() && !ty.contains("{error}")
+}
+
+/// The type of the value the expression ending at token `ti` has, for a member completion (LS12). The typed tree
+/// answers first, when it holds the expression and types it. Otherwise the chain is read from the declarations: the
+/// root's type (a local, a parameter, or `self`), then each field's declared type and each method's return type. So
+/// `resp.body.` and `client.send(req).` resolve while the member after the dot is still missing (issue #879).
+fn receiver_type(
+    a: Option<&Answering<'_>>,
+    ix: &FileIndex,
+    all: &[(String, Item)],
+    path: &str,
+    ti: usize,
+) -> Option<String> {
+    let tok = &ix.tokens[ti];
+    if let Some(ty) = a.and_then(|a| a.type_at(path, tok.lo)).filter(|t| usable(t)) {
+        return Some(ty);
+    }
+    match &tok.kind {
+        Tk::SelfValue => ix.self_owner(tok.lo),
+        // `resp.body`: the field's declared type, read from the value before the dot.
+        Tk::Ident(name) if dot_before(ix, ti) => {
+            let owner = base_type(&receiver_type(a, ix, all, path, ti.checked_sub(2)?)?);
+            field_type(all, &owner, name)
+        }
+        Tk::Ident(name) => a
+            .and_then(|a| a.local_before(path, name, tok.lo))
+            .filter(|t| usable(t))
+            .or_else(|| ix.parameter_type(tok.lo, name)),
+        // `client.send(req)` or `read(req)`: the return type of the method or function called.
+        Tk::RParen => {
+            let open = open_before(ix, ti)?;
+            let callee = ix.tokens.get(open.checked_sub(1)?)?.ident()?;
+            if open >= 3 && dot_before(ix, open - 1) {
+                let owner = base_type(&receiver_type(a, ix, all, path, open - 3)?);
+                method_return(all, &owner, callee)
+            } else {
+                function_return(all, callee)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether token `i` is a name a `.` touches on its left (`resp.body`, not a name on the next line after a `.`).
+fn dot_before(ix: &FileIndex, i: usize) -> bool {
+    i > 0 && ix.tokens[i - 1].kind == Tk::Dot && ix.tokens[i - 1].hi == ix.tokens[i].lo
+}
+
+/// The `(` matching the `)` at token `close`.
+fn open_before(ix: &FileIndex, close: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for i in (0..=close).rev() {
+        match ix.tokens[i].kind {
+            Tk::RParen => depth += 1,
+            Tk::LParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The declared type of a field of `owner` (`body: Body` gives `Body`).
+fn field_type(all: &[(String, Item)], owner: &str, name: &str) -> Option<String> {
+    let (_, field) =
+        all.iter().find(|(_, i)| i.kind == Kind::Field && i.owner.as_deref() == Some(owner) && i.name == name)?;
+    field.detail.split_once(':').map(|(_, ty)| ty.trim().to_string()).filter(|ty| usable(ty))
+}
+
+/// The return type of the method `name` of `owner`, read from its declaration.
+fn method_return(all: &[(String, Item)], owner: &str, name: &str) -> Option<String> {
+    let (_, method) = all.iter().find(|(_, i)| {
+        matches!(i.kind, Kind::Method | Kind::InterfaceMethod) && i.owner.as_deref() == Some(owner) && i.name == name
+    })?;
+    return_type_of(&method.detail, owner)
+}
+
+/// The return type of the function `name`, preferring the file's own over the standard library's.
+fn function_return(all: &[(String, Item)], name: &str) -> Option<String> {
+    let (_, function) = all
+        .iter()
+        .filter(|(_, i)| i.kind == Kind::Function && i.owner.is_none() && i.name == name)
+        .min_by_key(|(path, _)| path.starts_with("<std>/"))?;
+    return_type_of(&function.detail, "")
+}
+
+/// The return type a declaration names (`fn send(self, req: Request): Response` gives `Response`), with `Self` read
+/// as `owner`; `None` when it names none.
+fn return_type_of(detail: &str, owner: &str) -> Option<String> {
+    let rest = &detail[detail.find("fn ")? + 3..];
+    let (mut angles, mut parens, mut open) = (0i32, 0i32, false);
+    let mut after = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '<' if !open => angles += 1,
+            '>' if !open => angles -= 1,
+            '(' if !open && angles == 0 => {
+                open = true;
+                parens = 1;
+            }
+            '(' if open => parens += 1,
+            ')' if open => {
+                parens -= 1;
+                if parens == 0 {
+                    after = Some(&rest[i + 1..]);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let ty = after?.trim().strip_prefix(':')?.trim().trim_end_matches('{').trim();
+    let ty = ty.split(" where ").next().unwrap_or(ty).trim();
+    match ty {
+        "" => None,
+        "Self" => Some(owner.to_string()),
+        _ => Some(ty.to_string()),
     }
 }
 
