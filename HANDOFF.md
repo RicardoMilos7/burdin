@@ -4,6 +4,18 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Generic interfaces and their default methods (issue #390, 2026-11-22).** The generic-interface rules were already in
+place from milestone 13; what was left was a default method with its own type parameters called through a bound on a
+type parameter. `it.map(|x| ...).sum()` in `fn f<I: Iterator<i32>>`, and `m.pair(|v| ...)` for a user
+`interface Mapper<T> { fn pair<U, F: FnMut(T): U>(...) }`, left `U` open in the generic body, so the result type was
+wrong. `IfaceMethod` now records the method's own parameters and bounds (`declare.rs`), and `generic_bound_args`
+(`fncx/generic.rs`) infers them the way a concrete receiver does: closure hints, the `Fn` bound's return type, and the
+`Iterator` bound. A parameter nothing fixes is E0003 at the call. The rules are `spec/iterators.md` IT23 (`requires`
+lists with arguments, interface parameter bounds, arity), and the tests are `tests/m13_iterators/generic_*` and
+`generic_method_uninferred`, plus the unit test `a_bound_provides_its_generic_methods_with_the_arguments_substituted`.
+Not done: a closure whose body only says `Ok`/`Err` needs its return type written when it is passed through a bound,
+as it does on a concrete receiver. The `s3_http`/`s3_tls` package tests need `libssl-dev` in WSL to link.
+
 **`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`
 (`spec/grammar.md`, rule 8.10), so `let x = loop { break 42 }` binds `i32` and `break` with no value is `break ()`.
 The loop's type is the expected type when the context gives one, otherwise the type of the first break value, and

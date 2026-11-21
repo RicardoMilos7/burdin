@@ -1,0 +1,198 @@
+//@ run
+//> 3
+//> 3
+//> tag
+//> 2
+//> 4
+//> r
+//> 40
+//> 0
+//> 1
+//> 9
+//> 9
+//> x
+
+// Generic interfaces (issue #390): a `requires` list that names generic instances built from the interface's own
+// parameters, a bound on an interface parameter, a default method that uses a bound of its parameter, and generic
+// implementations for a type with parameters of its own.
+
+interface Store<T> {
+    fn get(self): T
+}
+
+interface Show {
+    fn show(self): str
+}
+
+// `Doubler<T>` requires `Store<T>`, so its default method may call `get` with the same `T`.
+interface Doubler<T> requires Store<T> {
+    fn get_twice(self): (T, T) {
+        (self.get(), self.get())
+    }
+}
+
+// `Labeled<T>` requires two things at once: a plain interface and a generic instance.
+interface Labeled<T> requires Show + Store<T> {
+    fn label(self): str {
+        self.show()
+    }
+}
+
+interface Keyed<K: Eq> {
+    fn key(self): K
+}
+
+// `Sorter<T: Ord>` is a bound on the parameter, usable in its default method.
+interface Sorter<T: Ord> {
+    fn first(self): T
+    fn ordered(self, other: T): (T, T) {
+        let a = self.first()
+        if a < other { (a, other) } else { (other, a) }
+    }
+}
+
+// Two parameters, and a default method that uses both.
+interface Combine<A, B> {
+    fn left(self): A
+    fn right(self): B
+    fn both(self): (A, B) {
+        (self.left(), self.right())
+    }
+}
+
+// A requirement on a generic instance whose argument is the interface's own parameter.
+interface Lookup<K> requires Store<K> {
+    fn find(self): K {
+        self.get()
+    }
+}
+
+struct Cell {
+    v: i32,
+}
+
+Cell: Store<i32> {
+    fn get(self): i32 {
+        self.v
+    }
+}
+
+Cell: Doubler<i32> {}
+
+struct Tag {
+    n: i32,
+}
+
+Tag: Show {
+    fn show(self): str {
+        "tag"
+    }
+}
+
+Tag: Store<i32> {
+    fn get(self): i32 {
+        self.n
+    }
+}
+
+Tag: Labeled<i32> {}
+
+struct Pair {
+    x: i32,
+}
+
+Pair: Combine<i32, str> {
+    fn left(self): i32 {
+        self.x
+    }
+    fn right(self): str {
+        "r"
+    }
+}
+
+struct Name {
+    s: String,
+}
+
+Name: Keyed<String> {
+    fn key(self): String {
+        self.s.clone()
+    }
+}
+
+struct Score {
+    n: i32,
+}
+
+Score: Sorter<i32> {
+    fn first(self): i32 {
+        self.n
+    }
+}
+
+// A generic type implements a generic interface for every instance of its parameter (`Holder<T>: Store<T>`).
+struct Holder<T> {
+    value: T,
+}
+
+Holder<T>: Store<T> {
+    fn get(self): T {
+        self.value
+    }
+}
+
+enum Maybe {
+    Some(i32),
+    Nothing,
+}
+
+Maybe: Store<i32> {
+    fn get(self): i32 {
+        match self {
+            Maybe.Some(n) => n,
+            Maybe.Nothing => 0,
+        }
+    }
+}
+
+Maybe: Lookup<i32> {}
+
+fn show_twice<T: Doubler<i32>>(t: T) {
+    let (a, b) = t.get_twice()
+    println(a.to_string())
+    println(b.to_string())
+}
+
+fn describe<T: Labeled<i32>>(t: T): str {
+    t.label()
+}
+
+fn total<T: Labeled<i32>>(t: T): i32 {
+    t.get() + 1
+}
+
+fn same<K: Eq, T: Keyed<K>>(a: T, b: T): bool {
+    a.key() == b.key()
+}
+
+fn find_twice<L: Lookup<i32>>(l: L): i32 {
+    l.find() + l.get()
+}
+
+fn main() {
+    show_twice(Cell { v: 3 })
+    println(describe(Tag { n: 1 }))
+    println(total(Tag { n: 1 }).to_string())
+    let (a, b) = Pair { x: 4 }.both()
+    println(a.to_string())
+    println(b)
+    println(find_twice(Maybe.Some(20)).to_string())
+    let boxed: any Store<i32> = Maybe.Nothing
+    println(boxed.get().to_string())
+    let (lo, hi) = Score { n: 9 }.ordered(1)
+    println(lo.to_string())
+    println(hi.to_string())
+    println(Holder { value: 9 }.get().to_string())
+    let x = same<String, Name>(Name { s: String.from("x") }, Name { s: String.from("x") })
+    println(if x { "x" } else { "no" })
+}

@@ -44,6 +44,10 @@ pub(crate) const BUILTIN_INTERFACES: &[&str] =
 /// The bounds of each type parameter in scope: `(name, bounds)`. A name may appear more than once.
 pub(crate) type Env = [(String, Vec<Bound>)];
 
+/// A method of a bound that has type parameters of its own (see `Globals::bound_method_generics`): the names of those
+/// parameters, their bounds, and the bound's own arguments for the interface's parameters.
+pub(crate) type BoundMethodGenerics = (Vec<String>, Vec<Vec<Bound>>, Vec<(String, Ty)>);
+
 pub(crate) struct IfaceMethod {
     pub name: String,
     /// Written with `Self` as `Ty::Param("Self")`.
@@ -53,6 +57,11 @@ pub(crate) struct IfaceMethod {
     pub is_unsafe: bool,
     /// A method with its own type parameters; its signature is compared only structurally.
     pub generic: bool,
+    /// The method's own type parameters (`fn pair<U, F: FnMut(T): U>` has `U` and `F`), in order.
+    pub params: Vec<String>,
+    /// The bounds of each of `params`, written with the interface's parameters as `Ty::Param`. A bound reached through
+    /// a type parameter's bound has them replaced by that bound's arguments (see `bound_method_generics`).
+    pub bounds: Vec<Vec<Bound>>,
 }
 
 pub(crate) struct InterfaceInfo {
@@ -1020,18 +1029,33 @@ impl Globals {
         None
     }
 
-    /// Whether the method `name` that the bounds of a type parameter provide has type parameters of its own
-    /// (`fn from_iter<I: Iterator<T>>(own it: I): Self`).
-    pub(crate) fn bound_method_generic(&self, recv: &Ty, name: &str, env: &Env) -> bool {
-        let Ty::Param(pname) = recv else { return false };
-        env.iter().filter(|(n, _)| n == &**pname).any(|(_, bounds)| {
-            bounds.iter().any(|bound| {
-                self.bound_closure(bound).into_iter().any(|b| match b {
-                    Bound::User(i, _) => self.interfaces[i].methods.iter().any(|m| m.name == name && m.generic),
-                    _ => false,
-                })
-            })
-        })
+    /// The own type parameters of the method `name` that the bounds of a type parameter provide, when it has any
+    /// (`fn from_iter<I: Iterator<T>>(own it: I): Self`, or the default `fn map<U, F: FnMut(T): U>` of `Iterator<T>`).
+    /// The result is the names, their bounds with the interface's parameters replaced by the bound's arguments, and
+    /// those replacements themselves, which a caller seeds its inference with. `None` for a method without its own
+    /// type parameters.
+    pub(crate) fn bound_method_generics(&self, recv: &Ty, name: &str, env: &Env) -> Option<BoundMethodGenerics> {
+        let Ty::Param(pname) = recv else { return None };
+        for (n, bounds) in env {
+            if n != &**pname {
+                continue;
+            }
+            for bound in bounds {
+                for b in self.bound_closure(bound) {
+                    let Bound::User(i, args) = b else { continue };
+                    let iface = &self.interfaces[i];
+                    let Some(m) = iface.methods.iter().find(|m| m.name == name) else { continue };
+                    if !m.generic {
+                        return None;
+                    }
+                    let subst: Vec<(String, Ty)> = iface.params.iter().cloned().zip(args.iter().cloned()).collect();
+                    let bounds =
+                        m.bounds.iter().map(|bs| bs.iter().map(|b| self.subst_bound(b, &subst)).collect()).collect();
+                    return Some((m.params.clone(), bounds, subst));
+                }
+            }
+        }
+        None
     }
 
     /// `Self`-free spelling of a type for names of instances: `Stack<i32>`.
@@ -1289,6 +1313,48 @@ mod tests {
         assert!(g.has_ord(&opt(i32_())));
         assert!(g.has_ord(&Ty::Result(Box::new(i32_()), Box::new(i32_()))));
         assert!(!g.has_ord(&list), "a list has no Ord");
+    }
+
+    #[test]
+    fn a_bound_provides_its_generic_methods_with_the_arguments_substituted() {
+        // `interface Mapper<T> { fn get(self): T; fn pair<U, F: Show<T>>(self, f: F): U }`, reached through `M: Mapper<i32>`.
+        let mut g = Globals::default();
+        let method = |name: &str, generic: bool, params: Vec<String>, bounds: Vec<Vec<Bound>>| IfaceMethod {
+            name: name.into(),
+            sig: Signature::placeholder(),
+            has_default: true,
+            is_unsafe: false,
+            generic,
+            params,
+            bounds,
+        };
+        g.interfaces.push(InterfaceInfo {
+            name: "Mapper".into(),
+            module: 0,
+            params: vec!["T".into()],
+            bounds: vec![Vec::new()],
+            requires: Vec::new(),
+            methods: vec![
+                method("get", false, Vec::new(), Vec::new()),
+                method(
+                    "pair",
+                    true,
+                    vec!["U".into(), "F".into()],
+                    vec![Vec::new(), vec![Bound::User(1, vec![param("T")])]],
+                ),
+            ],
+        });
+        let env: &[(String, Vec<Bound>)] = &[("M".to_string(), vec![Bound::User(0, vec![i32_()])])];
+
+        let (own, bounds, base) = g.bound_method_generics(&param("M"), "pair", env).expect("pair is generic");
+        assert_eq!(own, vec!["U".to_string(), "F".to_string()]);
+        assert_eq!(bounds, vec![Vec::new(), vec![Bound::User(1, vec![i32_()])]], "T is the bound's argument");
+        assert_eq!(base, vec![("T".to_string(), i32_())]);
+
+        // A method without type parameters of its own is not generic, and a name no bound provides is absent.
+        assert!(g.bound_method_generics(&param("M"), "get", env).is_none());
+        assert!(g.bound_method_generics(&param("M"), "missing", env).is_none());
+        assert!(g.bound_method_generics(&i32_(), "pair", env).is_none());
     }
 
     #[test]
