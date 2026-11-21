@@ -694,6 +694,16 @@ impl Diagnostics {
         self.list.iter().any(|d| d.severity == Severity::Warning)
     }
 
+    /// The number of errors in the list, whatever an error limit shows.
+    pub fn error_count(&self) -> usize {
+        self.list.iter().filter(|d| d.severity == Severity::Error).count()
+    }
+
+    /// The number of warnings in the list, whatever an error limit shows.
+    pub fn warning_count(&self) -> usize {
+        self.list.iter().filter(|d| d.severity == Severity::Warning).count()
+    }
+
     pub fn len(&self) -> usize {
         self.list.len()
     }

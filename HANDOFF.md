@@ -1,8 +1,19 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, and fiftieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, and fifty-first. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
+
+**Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
+that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`
+(`spec/check.md`, CK12; `spec/diagnostics.md`, DG6; `docs/diagnostic.schema.json`). It replaces the build's `summary`
+object for `check`, because a check's counts need the warnings apart from the errors (the build's `errors` counts both).
+`files` counts the source files read from disk (not the embedded standard library or generated modules); `elapsed_ms`
+is the whole run. The text trace of `--explain` is skipped in JSON so the summary stays the last line; the human, short,
+and SARIF formats are unchanged. Tests: `tests/check_check.py` (the `machine-readable result` section, with the golden
+`tests/check/golden/json_err_types.txt`) and the `the_check_summary_counts_each_severity_and_keeps_the_field_order` unit test in
+`crates/burdin_driver/src/main.rs`. Known and left alone: the build's `summary` and the human "(N errors)" line count
+warnings in a failing run (`Rendered::total` counts every diagnostic), so `errors` there is not only errors.
 
 **Explicit type arguments at calls (issue #847, 2026-11-20).** `f<T>(x)`, `m.f<T>(x)`, `x.m<T>(a)`, `Type.f<T>(a)`, and
 `Type<A>.f<T>(a)` now give a generic function, method, or associated function with type parameters of its own its type

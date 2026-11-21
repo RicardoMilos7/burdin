@@ -8,15 +8,17 @@
 //! step-by-step trace for a memory error (`--explain`).
 
 use crate::{
-    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
-    jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
+    CheckStats, CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, check_summary_json,
+    flag_without_value, front_end, jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings,
+    report_errors,
 };
-use burdin_diag::{Json, SourceMap, Span};
+use burdin_diag::{DiagnosticFormat, Json, SourceMap, Span};
 use burdin_query::{Convention, FunctionOwnership, OwnershipEventInfo, OwnershipEventKind};
 use burdin_tir::{Function, MOVED_DEREF, Program};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OwnershipFormat {
@@ -123,6 +125,7 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
+    let started = Instant::now();
     let args = match parse(argv) {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("check", &message),
@@ -160,9 +163,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(front) => front,
         Err(code) => return code,
     };
+    let stats = CheckStats { files: source_file_count(&front), started };
+    // The JSON format ends with the check summary (CK12), so nothing may follow it on standard error: the trace of
+    // `--explain` is text, and the JSON diagnostics already carry its rule ID, help, and related locations.
+    let json = args.diagnostics.format == DiagnosticFormat::Json;
     if front.diags.has_errors() {
-        report_errors("check", &args.target, &front.diags, &front.sources, &args.diagnostics);
-        if args.explain {
+        report_errors("check", &args.target, &front.diags, &front.sources, &args.diagnostics, Some(stats));
+        if args.explain && !json {
             explain_memory(&front);
         }
         if args.explain_ownership {
@@ -170,7 +177,10 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         }
         return ExitCode::from(1);
     }
-    print_warnings(&front.diags, &front.sources, &args.diagnostics, options.report_clean);
+    let shown = print_warnings(&front.diags, &front.sources, &args.diagnostics, options.report_clean);
+    if json {
+        eprint!("{}", check_summary_json(&front.diags, shown, args.diagnostics.error_limit, stats));
+    }
     if args.print_instances {
         let program = front.program.as_ref().expect("no errors means checking produced a program");
         let files = &front.files;
@@ -187,6 +197,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         show_ownership(&front, &args);
     }
     ExitCode::SUCCESS
+}
+
+/// The source files a check read: every module of every package on disk. The embedded standard library and a
+/// generated module (text the build script produced) are not files the package has, so they are not counted
+/// (`spec/check.md`, CK12).
+fn source_file_count(front: &FrontEnd) -> usize {
+    front.loaded.packages.iter().flat_map(|package| &package.modules).filter(|module| module.text.is_none()).count()
 }
 
 // ---- ownership events (--explain-ownership) -------------------------------------------------------------
