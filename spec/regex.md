@@ -120,7 +120,8 @@ A flag is set with `(?i)` (the rest of the enclosing group), scoped with `(?i:..
 
 ## RX7. Limits
 
-A repetition count is at most 1000. A pattern may nest groups 250 deep. The compiled program may have at most 100000
+A repetition count is at most 1000. A pattern may nest groups 100 deep: the parser recurses once per level, and 100 levels fit the 1 MB main-thread
+stack that Windows gives a program, with room to spare (a depth of 180 overflowed it). The compiled program may have at most 100000
 instructions; a pattern that exceeds it is rejected, which bounds the memory of a search regardless of the text. These
 are the limits behind `repetition count above 1000`, `nesting is too deep`, and `the compiled regex is too large`.
 

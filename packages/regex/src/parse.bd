@@ -9,7 +9,7 @@ use errors.RegexError
 /// The repetition count the pattern may use (RX7).
 const MAX_REPEAT: u32 = 1000
 /// The deepest nesting of groups the pattern may use (RX7).
-const MAX_DEPTH: usize = 250
+const MAX_DEPTH: usize = 100
 
 /// A zero-width test (RX5, RX14).
 enum Assertion: Copy, Clone, Eq, Debug {

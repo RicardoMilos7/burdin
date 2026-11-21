@@ -86,5 +86,5 @@ A reference to a missing or unset group is empty, and a `$` that starts none of 
 
 ## Limits
 
-A repetition count is at most 1000, groups nest at most 250 deep, and a compiled pattern has at most 100000
+A repetition count is at most 1000, groups nest at most 100 deep, and a compiled pattern has at most 100000
 instructions. These bound the memory of a search regardless of the text.

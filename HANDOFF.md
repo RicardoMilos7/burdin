@@ -1823,6 +1823,13 @@ in `Captures` by matching the clone first (`match self.names[i].clone() { Some(l
 `Regex.new` still copies its names with the direct form; the goldens exercise it and pass, but the compiler defect is
 unexplained and should be reproduced in a small program and fixed or filed before the direct form is relied on.
 
+CI found two more problems that the local runs did not show. The parser recurses once per group level, and a
+depth of 180 overflowed a 1 MB stack (the Windows main-thread default), so the nesting limit is 100 (RX7), not 250.
+On macOS the differential run died with `invalid memory access`; it did not reproduce on Linux, in debug or release,
+with freed memory poisoned (`MALLOC_PERTURB_`). The check now bisects a failing run to its first crashing row, so the
+next failure names the row. The package's `Regex.new` copies its names with the match-on-clone form that works around
+the `Option<String>` defect.
+
 Commands (run from WSL, where the driver is built): `python3 tests/check_regex.py` and `python3 tests/run_tests.py
 s3_regex`, with `BURDIN` pointing at the driver.
 

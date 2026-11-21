@@ -39,7 +39,10 @@ Regex {
         names.push(None)
         let mut i: usize = 0
         while i < parsed.names.len() {
-            names.push(parsed.names[i].clone())
+            match parsed.names[i].clone() {
+                Some(label) => names.push(Some(label)),
+                None => names.push(None),
+            }
             i = i + 1
         }
         let prog = compile(parsed)?

@@ -248,6 +248,30 @@ def read_cases():
     return rows
 
 
+def first_failing_row(binary: Path, scratch: Path, encoded):
+    """The number and the text of the first row whose prefix makes the runner fail, found by bisecting the prefixes.
+
+    None when the whole list runs. Bisection assumes the failure is caused by one row, which is how the package fails:
+    a crash on a given pattern or text, not a slow leak.
+    """
+
+    def fails(count: int) -> bool:
+        scratch.write_text("\n".join(encoded[:count]) + "\n", encoding="utf-8")
+        lines, _ = run_runner(binary, scratch)
+        return lines is None
+
+    if not fails(len(encoded)):
+        return None
+    low, high = 0, len(encoded)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if fails(middle):
+            high = middle
+        else:
+            low = middle
+    return high, encoded[high - 1]
+
+
 def run_runner(binary: Path, input_path: Path):
     """The runner's output lines for a TSV file, or None when it did not finish."""
     try:
@@ -326,7 +350,11 @@ with harness.temporary_dir("burdin-regex-") as work:
         started = time.monotonic()
         lines, failure = run_runner(binary, CASES)
         elapsed = time.monotonic() - started
-        check(lines is not None, f"the runner failed on cases.tsv: {failure[:300]}")
+        if lines is None:
+            data_rows = [line for line in CASES.read_text(encoding="utf-8").split("\n") if line and not line.startswith("#")]
+            found = first_failing_row(binary, work / "golden_prefix.tsv", data_rows)
+            where = f"row {found[0]}: {found[1].split(chr(9))[0]} {found[1][:120]!r}" if found else "no single row"
+            check(False, f"the runner failed on cases.tsv ({failure[:200]}); first at {where}")
         check(elapsed < TIME_BUDGET, f"the golden rows took {elapsed:.1f}s (budget {TIME_BUDGET:.0f}s)")
         if lines is not None:
             check(len(lines) == len(golden), f"the runner printed {len(lines)} lines for {len(golden)} rows")
@@ -343,7 +371,10 @@ with harness.temporary_dir("burdin-regex-") as work:
         input_path = work / "differential.tsv"
         input_path.write_text("\n".join(encode_row(row) for row, _ in rows) + "\n", encoding="utf-8")
         lines, failure = run_runner(binary, input_path)
-        check(lines is not None, f"the runner failed on the differential rows: {failure[:300]}")
+        if lines is None:
+            found = first_failing_row(binary, work / "prefix.tsv", [encode_row(row) for row, _ in rows])
+            where = f"row {found[0]}: {found[1][:200]}" if found else "no single row"
+            check(False, f"the runner failed on the differential rows ({failure[:200]}); first at {where}")
         if lines is not None:
             check(len(lines) == len(rows), f"the runner printed {len(lines)} lines for {len(rows)} differential rows")
             disagreements = 0
