@@ -10,39 +10,40 @@ impl Parser<'_> {
         let mut file = File::default();
         while !self.at_eof() {
             self.nl_stack.clear();
+            let start = self.pos;
             if self.at(&TokenKind::Use) || self.at_pub_use() {
                 let is_pub = self.at_pub_use();
                 match self.use_decl(is_pub) {
                     Ok(use_decl) => file.uses.push(use_decl),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_test_item() {
                 match self.test_decl() {
                     Ok(test) => file.tests.push(test),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_bench_item() {
                 match self.bench_decl() {
                     Ok(bench) => file.benches.push(bench),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_fuzz_item() {
                 match self.fuzz_decl() {
                     Ok(fuzz) => file.fuzzes.push(fuzz),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
-                Err(Reported) => self.recover_item(),
+                Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
             }
         }
         file.bodies = std::mem::take(&mut self.bodies);

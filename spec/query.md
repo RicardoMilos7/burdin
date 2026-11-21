@@ -83,8 +83,9 @@ syntax tree was updated by reparsing one body), `files_reused`, `bodies_checked`
 no edit parses and checks nothing; a body edit rechecks exactly that body and reparses the body, not the file; a body
 that grows moves the functions after it without checking them; a new error is reported at its new position and
 disappears when fixed; a cached diagnostic follows its function when an earlier body grows; a signature edit
-rechecks the callers; adding an item rechecks what can see it; and a syntax error reports and skips checking, and
-the fix costs one body.
+rechecks the callers; adding an item rechecks what can see it; and a syntax error is reported while the other modules
+are still checked, and the fix costs one body. A program with syntax errors is checked without the cache, and
+that check leaves the answers of the last checked program in place (`spec/check.md`, CK4).
 
 ## Reparsing one body
 
