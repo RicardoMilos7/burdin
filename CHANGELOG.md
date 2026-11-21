@@ -10,6 +10,13 @@ close-out checklist in `AGENTS.md`).
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
 
+- Type checking continues past a syntax error (issue #786; `spec/check.md`, CK4). A file with a syntax error is not
+  type checked, but every other module is, against the declarations the broken file did read. The follow-on errors of
+  a declaration that did not parse (a use of a function, type, or method the broken file failed to declare) are left
+  out, and a diagnostic in the broken file other than its syntax errors is not reported. `burdin check`, `build`, and
+  the language server share the rule (`crates/burdin_query/src/follow_on.rs`). `tests/check/err_syntax_declared.bd`,
+  `tests/check/packages/syntax_neighbors`, and `tests/check/packages/syntax_no_main` cover it.
+
 - The `http` official package (stage 3, issue #260, sub-issues #328, #329, #330; `spec/http-client.md`, HC1-HC16).
   `packages/http` is an HTTP/1.1 client over `std`'s `TcpStream`: URLs and relative references, requests, responses and
   headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
@@ -170,7 +177,6 @@ close-out checklist in `AGENTS.md`).
   replaces the proxies with a newer release's manager, and removes exactly what the installers and the manager
   created, including the startup-file line or user `PATH` entry. `tests/check_toolchain.py` checks it in every CI job.
   SHA-256 moved into the new `crates/burdin_sha256`, shared with the package resolver.
-
 
 - `burdin watch [check|build|test|run] <target>`, and `--watch` on those commands (issue #632, `spec/watch.md`): rerun
   the command whenever a source, `burdin.toml`, a path dependency, or a build input changes, with a debounce, clearing the
@@ -1537,7 +1543,6 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   the second-class rejections. The suite is 313 tests (311 in release).
 - Documentation: `spec/iterators.md` (new), `spec/memory-rules.md` section 7, `spec/stdlib.md`,
   `spec/stage1-subset.md`, `spec/e9000-audit.md`, `tests/README.md` decision 18, `CLAUDE.md`, and `HANDOFF.md`.
-
 
 ### Milestone 14 — formatting (issue #109, sub-issues #110-#116)
 

@@ -1,0 +1,5 @@
+packages/syntax_neighbors/src/main.bd:10:18: error[E0003]: expected `i32`, found `str`
+packages/syntax_neighbors/src/main.bd:14:13: error[E0002]: unknown name `missing`
+packages/syntax_neighbors/src/shapes.bd:13:30: error[E0001]: expected `)`, found `{`
+packages/syntax_neighbors/src/shapes.bd:25:10: error[E0001]: expected `:`, found identifier `i32`
+error: could not check packages/syntax_neighbors (4 errors)

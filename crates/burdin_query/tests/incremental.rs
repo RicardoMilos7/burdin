@@ -116,15 +116,17 @@ fn adding_an_item_rechecks_what_can_see_it() {
 }
 
 #[test]
-fn a_syntax_error_reports_and_skips_checking() {
+fn a_syntax_error_reports_and_still_checks_the_other_modules() {
     let mut db = open();
     db.analyze().unwrap();
     db.set_file("math.bd", &replace(MATH, "a + b", "a + "));
     let analysis = db.analyze().unwrap();
+    // The program is not returned, because the broken file's tree is partial (spec/check.md, CK4).
     assert!(analysis.program.is_none());
     assert!(render(&db, &analysis).contains("math.bd:"), "{}", render(&db, &analysis));
-    assert!(db.stats().bodies_checked.is_empty());
-    // Fixing it again costs one body.
+    // The other modules are checked too, without the cache: their answers of the partial program are not stored.
+    assert!(checked(&db).iter().any(|n| n == "main.main"), "{:?}", checked(&db));
+    // Fixing it again costs one body: the answers of the last good program were kept.
     db.set_file("math.bd", MATH);
     let analysis = db.analyze().unwrap();
     assert_eq!(render(&db, &analysis), "");
