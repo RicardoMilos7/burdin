@@ -73,3 +73,42 @@ f(c: log("third"), a: log("first"), b: log("second"))   // prints first, second,
 ("missing an argument for ..."), and a call with more positional arguments than parameters is E0004. A call
 that names an unknown parameter reports E0214 instead of the count error, because the name is the mistake to
 fix first.
+
+## Explicit type arguments (issue #847)
+
+A call may give a generic callee its type arguments at the call: `f<i32>(x)`, `json.from_str<Data>(text)`,
+`x.m<U>(a)`, and `Type.f<U>(a)`. The rules below are the meaning of that syntax, which [`grammar.md`](grammar.md)
+rule 8.2 and section 6 parse. The tests are `tests/m07_generics/explicit_type_args.bd`,
+`explicit_type_args_errors.bd`, `comparison_not_type_args.bd`, and `explicit_module_call/`.
+
+**TA1. Forms.** The list follows the callee's name and comes before the call's `(`. The callee is a bare function
+name (`f<T>(...)`, or an uppercase one, `F<T>(...)`), a module-qualified function (`m.f<T>(...)`), a method
+(`x.m<T>(...)`), or an associated function (`Type.f<T>(...)`, or `Type<A>.f<T>(...)` for a generic type written with
+its own arguments). The list holds types and const arguments, as in `grammar.md` section 4. A lowercase bare name
+takes a list only when a `(` follows its closing `>`; a member name takes one when a `.`, `(`, or `{` follows, as
+before.
+
+**TA2. Arity.** The list gives every type parameter of the callee, const parameters included, in declaration order.
+A partial list is not accepted. A list of another length is E0003 ("takes N type arguments, but M were given"), and
+a callee with no type parameters takes none (E0003, "takes no type arguments").
+
+**TA3. Meaning.** An explicit argument is the type of its parameter, and inference treats it as known: the arguments
+are checked against that instance, so an argument of another type is the ordinary mismatch (E0003), and each type is
+checked against the bounds of its parameter as usual (E0141). A const argument gives a const parameter its value
+(`const-generics.md`, CG2).
+
+**TA4. `impl` parameters.** A parameter written `impl I` adds a hidden type parameter that the call infers
+(`existentials.md`, AN4). A function with one takes no explicit type arguments (E0003), because the hidden parameter
+has no name to write.
+
+**TA5. Where the list applies.** It is accepted on a generic function of the program, on a module-qualified one, and
+on a method or associated function of the program that has type parameters of its own, called on a value or through
+a type. Every other callee refuses it with E0003 and still has its arguments checked: a function with no type
+parameters, a built-in function or method (`println`, `Some`, `it.collect`), a built-in static function (`env.args`,
+`process.exit`, `Heap.new`, `Shared.new`, `List.from`, `Map.from`, `CPtr.null`), a closure held in a local, a variant,
+and a method or associated function with no parameters of its own. The `is` and `downcast` methods of an `any` value
+keep their own rule (`existentials.md`, AN6).
+
+**TA6. The look-ahead.** Rule 8.2 reads `f(a < b, c > (d))` as the list `<b, c>` followed by `(`, because both halves
+are type syntax. A comparison written that way is parenthesized, `f((a < b), c > (d))`. Any other comparison that
+contains an operator, a string, or a keyword between its `<` and a later `>` stays a comparison.

@@ -76,8 +76,8 @@ Tests: `tests/check_workspace.py` (the virtual root under `check`).
 one is skipped with `note: skipped <name>: it has no src/main.bd` when the default or `--workspace` selected it, and is an
 error (exit 1) when `-p` named it. If nothing selected has an entry point, the command fails (exit 1) and says so. The
 output options that name one file (`-o`, `--emit-ir`, `--emit-deps`) need exactly one package to build, and are a usage
-error otherwise. Each executable is written under its own package's `target/burdin/<profile>/bin/`
-(`spec/target.md`, TG1). The profile is resolved from the target's manifest (`spec/profiles.md`): a workspace root
+error otherwise. Each executable is written under the workspace's shared `target/burdin/<profile>/bin/`
+(WS19). The profile is resolved from the target's manifest (`spec/profiles.md`): a workspace root
 declares the profiles its members build with, including `[profile.<name>.package.<member>]` overrides.
 Tests: `tests/check_workspace.py` (the skip note, the usage errors, the executables' places).
 
@@ -89,7 +89,7 @@ Tests: `tests/check_workspace.py`.
 **WS11. `burdin test`, `burdin bench`.** Run the selected members together, with one report, as `spec/test-runner.md`
 and `spec/bench.md` describe for a set of packages. A member that is a workspace root is an error (the selection never
 contains a nested root). Shared outputs of the run (the `--failed` record and the benchmark baselines) live under the
-workspace root's `target/`; a standalone package keeps them under its own.
+workspace root's `target/` (WS19); a standalone package keeps them under its own.
 Tests: `tests/check_workspace.py` (the test report, the `--failed` record location).
 
 **WS12. `burdin doc`.** Writes one site per selected package to that package's `target/doc` (the default when `-o` is
@@ -112,6 +112,20 @@ keeps its lockfile beside its manifest (PKG5-PKG6). The rules of `spec/packages.
 `burdin add`) apply to the whole graph unchanged. `burdin add` in a member edits that member's manifest and the workspace
 lockfile. Tests: `tests/check_workspace.py` (the lockfile at the root, `--locked` after a change), `resolve.rs` and
 `crates/burdin_pkg/tests/git.rs` (`a_workspace_locks_every_member`).
+
+## The target directory
+
+**WS19. One target directory per workspace.** The members of a workspace share the workspace root's `target/`, as they
+share its lockfile (WS14), whichever member a command runs in. The layout of `spec/target.md` (TG1) applies to it with two
+differences: `bin/`, `test/`, `test-failed.txt`, and the benchmark baselines sit directly in the shared
+`target/burdin/<profile>/` (a package name is unique, WS4, so the executables never collide), and the state that belongs
+to one package alone (a build script's `src/` and `build.key`, the Rust shims in `rust/` and `rust-src/`) moves to
+`target/burdin/<profile>/packages/<name>/`, so two members never overwrite each other's. The artifact cache and its
+fingerprints (TG3) work unchanged. A standalone package keeps `<package>/target/` exactly as TG1 describes, and no member
+keeps a `target/` of its own. `burdin clean` in a member removes the shared directory, as it is the member's target.
+Modules a build script generates under the shared directory are never documented, linted, or exported as the package's
+sources. Tests: `workspace.rs` (`members_share_the_root_target_and_keep_their_own_state_apart`),
+`tests/check_workspace.py` (the executables and the `--failed` record under the root, no member `target/`).
 
 ## Inheritance
 
@@ -157,5 +171,5 @@ belongs to (`spec/lsp.md`). Tests: `crates/burdin_lsp` (the folder discovery), `
 - A glob matches one path component at a time (`libs/*`), not `**`.
 - `burdin fix --migrate` cannot move an inherited edition (WS15); the edition is set on the root, and the migration of the
   workspace is not implemented.
-- Build outputs stay under each package's `target/burdin/` (`spec/target.md`, TG1), not under one workspace target
-  directory; each member has its own artifact cache.
+- `burdin doc` still writes each member's site to that member's own `target/doc` (WS12), not to the shared target
+  directory.

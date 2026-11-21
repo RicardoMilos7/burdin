@@ -1,0 +1,65 @@
+//@ compile-fail
+
+// Explicit type arguments that the language refuses (`spec/arguments.md`, TA2-TA5): a list of the wrong length, a
+// type argument on a callee that takes none (a plain function, a built-in, a built-in static, a method of the program
+// without its own parameters), a type that does not match its parameter (TA3), a bound the type does not meet (E0141),
+// and a callee with an `impl` parameter (TA4). Each refused call is reported on its line.
+
+interface Count {
+    fn count(self): i32
+}
+
+struct One {
+    n: i32,
+}
+
+One: Count {
+    fn count(self): i32 {
+        self.n
+    }
+}
+
+struct Holder {
+    n: i32,
+}
+
+Holder {
+    fn plain(self): i32 {
+        self.n
+    }
+
+    fn wrap<U>(self, own u: U): U {
+        u
+    }
+}
+
+fn id<T>(own x: T): T {
+    x
+}
+
+fn plain_fn(x: i32): i32 {
+    x
+}
+
+fn with_impl<T>(x: T, own y: impl Count): T {
+    x
+}
+
+fn show<T: Count>(own x: T): T {
+    x
+}
+
+fn main() {
+    let a = id<i32, i32>(5) //~ E0003
+    let b = plain_fn<i32>(1) //~ E0003
+    let x: i32 = 5
+    let c = id<i64>(x) //~ E0003
+    let d = println<i32>("x") //~ E0003
+    let h = Holder { n: 1 }
+    let e = h.plain<i32>() //~ E0003
+    let f = h.wrap<i32, i32>(1) //~ E0003
+    let g = with_impl<i32>(1, One { n: 2 }) //~ E0003
+    let i = show<i32>(1) //~ E0141
+    let j = env.args<i32>() //~ E0003
+    let k = Some<i32>(1) //~ E0003
+}

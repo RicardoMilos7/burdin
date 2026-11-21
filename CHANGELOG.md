@@ -9,6 +9,17 @@ close-out checklist in `AGENTS.md`).
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
+- Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
+  object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
+  optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing
+  and compiling it, so an edit to one function rebuilds only the units that contain it and a comment edit rebuilds
+  none; only the last build's objects are kept. Code generation stays whole-program and parallel by unit.
+  `tests/check_target.py` and the unit tests in `crates/burdin_codegen/src/cache.rs` cover it.
+- One target directory per workspace (stage 3, issue #240; `spec/workspaces.md`, WS19). The members of a workspace share
+  the root's `target/`: executables, test binaries, the `--failed` record, and the benchmark baselines sit in
+  `target/burdin/<profile>/`, and a member's build-script output and Rust shims move to
+  `target/burdin/<profile>/packages/<name>/` so members never overwrite each other. A standalone package keeps its own
+  `target/`. `tests/check_workspace.py` and a unit test in `workspace.rs` cover it.
 
 - Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
   `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an

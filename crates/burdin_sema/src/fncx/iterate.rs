@@ -99,7 +99,7 @@ impl FnCx<'_> {
         }
         let key = (iface, method, recv_ty.clone(), vec![item.clone()]);
         if let Some(info) = self.globals.builtin_method_templates.get(&key).cloned() {
-            return Some(self.generic_method_call(info, recv, &name.name, args, span, expect));
+            return Some(self.generic_method_call(info, recv, &name.name, &[], args, span, expect));
         }
         // The template is created on the next pass; still check the arguments so their own errors show now.
         for a in args {
@@ -425,7 +425,7 @@ impl FnCx<'_> {
         span: Span,
     ) -> tir::Expr {
         let name = ast::Ident { name: "iter_mut".to_string(), span: iter.span };
-        let iterator = self.method_call(iter, &name, &[], span, None);
+        let iterator = self.method_call(iter, &name, &[], &[], span, None);
         if iterator.ty == Ty::Error {
             // The iterable did not resolve; the body is still checked for its own errors.
             self.scopes.push(Default::default());
@@ -481,6 +481,6 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let name = ast::Ident { name: "iter".to_string(), span };
-        self.method_call(iter, &name, &[], span, None)
+        self.method_call(iter, &name, &[], &[], span, None)
     }
 }

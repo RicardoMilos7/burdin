@@ -1765,8 +1765,8 @@ Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_ex
 `std.iter` declares `FromIterator<T>` and `Iterator<T>.collect`; every collection takes the items of an iterator with
 `extend_iter` and an array with `from`. The rules, with IDs, are `iterators.md` IT16-IT22, and the decisions are:
 
-- **Naming the target.** The language has no explicit type arguments on a member call, so `it.collect()` takes its
-  target from the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a return type, a field. With no
+- **Naming the target.** A built-in method takes no explicit type arguments (`arguments.md`, TA5), so `it.collect()`
+  takes its target from the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a return type, a field. With no
   expected type it is E0003 ("cannot tell what `C` stands for"); a target that is not `FromIterator` for the items is
   E0141. A type can also be named on the call itself, `Set<i32>.from_iter(it)`.
 - **The protocol.** `FromIterator<T>` has one method, `from_iter<I: Iterator<T>>(own iter: I): Self`. A user type

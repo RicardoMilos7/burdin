@@ -262,7 +262,7 @@ fn packages_of(front: &FrontEnd) -> Vec<burdin_doc::PackageInput<'_>> {
     let mut first = 0usize;
     for (index, package) in front.loaded.packages.iter().enumerate() {
         let is_entry = index == front.loaded.entry_package;
-        let generated = package.dir.as_ref().map(|d| d.join("target"));
+        let generated = package.dir.as_ref().map(|d| burdin_query::workspace::target_dir(d));
         let mut modules = Vec::new();
         for (m, module) in package.modules.iter().enumerate() {
             let skip =

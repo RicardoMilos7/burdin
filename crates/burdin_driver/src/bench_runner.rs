@@ -170,8 +170,8 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     };
     // Baselines live under the entry package's target directory, or the workspace root's for members (WS11), so they
     // need a directory on disk.
-    let package_dir =
-        crate::test_runner::shared_dir(&workspace, args).map(|dir| dir.join("target").join("burdin").join("bench"));
+    let package_dir = crate::test_runner::shared_dir(&workspace, args)
+        .map(|dir| burdin_query::workspace::target_dir(&dir).join("burdin").join("bench"));
     if package_dir.is_none() && (args.baseline.is_some() || args.save_baseline.is_some()) {
         return crate::cli::usage_error(
             "bench",

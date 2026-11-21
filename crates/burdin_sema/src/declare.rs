@@ -345,6 +345,7 @@ impl<'t> Sema<'t> {
                                 decl: self.tpl.fns.len(),
                                 identity,
                                 recv: None,
+                                hidden: f.generics.iter().any(|g| g.hidden),
                             });
                             self.generic_fn_bounds.push((index, f, module));
                             self.tpl.fns.push(f);

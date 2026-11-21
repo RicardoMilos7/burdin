@@ -145,7 +145,7 @@ fn run_package(
 ) -> Result<Vec<String>, Failure> {
     let dir = package.dir.clone().expect("a build script belongs to a package with a directory");
     let script = dir.join(BUILD_SCRIPT);
-    let out = dir.join("target").join("burdin").join(&profile.dir);
+    let out = burdin_query::workspace::package_out_dir(&dir, &package.name, &profile.dir);
     let out_src = out.join("src");
     let key_path = out.join("build.key");
     let script_bytes = std::fs::read(&script)

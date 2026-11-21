@@ -15,20 +15,23 @@ use burdin_tir::{self as tir, AssertKind, Builtin, FloatTy, FuncId, IntTy, Metho
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
-            return self.method_call(recv, name, args, span, expect);
+            return self.method_call(recv, name, &[], args, span, expect);
         }
-        // `x.downcast<T>()`: type arguments on a member name (AN6).
+        // `x.m<T>(...)`, `module.f<T>(...)`, `Type.f<T>(...)`, and `x.downcast<T>()`: type arguments on a member name
+        // (`spec/arguments.md`, TA1; AN6 for `is` and `downcast`).
         if let ast::ExprKind::TypeArgs(base, type_args) = &callee.kind {
             if let ast::ExprKind::Field(recv, name) = &base.kind {
-                let recv = self.expr(recv, None);
-                return self.member_type_args_call(recv, name, type_args, args, span);
+                return self.method_call(recv, name, type_args, args, span, expect);
             }
-            self.diags.error(
-                Code::UNKNOWN_NAME,
-                span,
-                "type arguments on a call are only allowed on the methods `is` and `downcast`",
-            );
+            self.diags.error(Code::UNKNOWN_NAME, span, "type arguments on a call are only allowed on a named member");
             return self.args_then_error(args, span);
+        }
+        // A local is a closure value, not a generic function, so type arguments on its name are refused.
+        if let ast::ExprKind::Name { name: id, args: type_args } = &callee.kind
+            && !type_args.is_empty()
+            && self.lookup(&id.name).is_some()
+        {
+            return self.reject_type_args(&id.name, type_args, args, span);
         }
         // A bare name that resolves to a local, or to a variable captured from the enclosing function, is a
         // closure call; only a name with no value meaning is looked up as a function.
@@ -52,9 +55,12 @@ impl FnCx<'_> {
             }
         }
         let (params, ret, target) = match &callee.kind {
-            ast::ExprKind::Name { name: id, args: type_args }
-                if type_args.is_empty() && self.lookup(&id.name).is_none() =>
-            {
+            ast::ExprKind::Name { name: id, args: type_args } if self.lookup(&id.name).is_none() => {
+                // Only a generic function takes type arguments on its name (`f<T>(...)`).
+                let generic = matches!(self.globals.value(self.module, &id.name), Some(Global::Generic(_)));
+                if !type_args.is_empty() && !generic {
+                    return self.reject_type_args(&id.name, type_args, args, span);
+                }
                 match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
                         if let Some(rejected) = self.edition_gate(f, id, args, span) {
@@ -77,6 +83,9 @@ impl FnCx<'_> {
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
                     }
                     Some(Global::Generic(g)) => {
+                        if !type_args.is_empty() && self.compiler_generic(g) {
+                            return self.reject_type_args(&id.name, type_args, args, span);
+                        }
                         if self.globals.test_assert_eq == Some(g) {
                             return self.test_assert_eq_call(g, id, args, span, expect);
                         }
@@ -98,7 +107,7 @@ impl FnCx<'_> {
                         if args.len() > 2 && self.globals.assert_ne_gen == Some(g) {
                             return self.assert_compare_msg_call(args, span, AssertKind::Ne);
                         }
-                        return self.generic_call(g, id, args, span, expect);
+                        return self.generic_call(g, id, args, type_args, span, expect);
                     }
                     Some(Global::Extern(e)) => return self.extern_call(id, e, args, span),
                     Some(Global::Const(_)) => {
@@ -1043,14 +1052,93 @@ impl FnCx<'_> {
         error_expr(span)
     }
 
+    /// Reports explicit type arguments on a callee that takes none, then checks the arguments as usual (TA5).
+    pub(super) fn reject_type_args(
+        &mut self,
+        what: &str,
+        explicit: &[ast::Type],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        if let (Some(first), Some(last)) = (explicit.first(), explicit.last()) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                first.span.to(last.span),
+                format!("`{what}` takes no type arguments"),
+            );
+        }
+        self.args_then_error(args, span)
+    }
+
+    /// Whether `name` on a value of type `ty` (through references) is a method of the program that has type
+    /// parameters of its own. Only such a method, or an associated function like it, takes explicit type arguments.
+    pub(super) fn user_generic_method(&self, ty: &Ty, name: &str) -> bool {
+        let mut base = ty;
+        while let Ty::Ref { inner, .. } = base {
+            base = &**inner;
+        }
+        adt_key(base)
+            .and_then(|key| self.globals.methods.get(&(key, name.to_string())))
+            .is_some_and(|f| self.globals.method_templates.contains_key(f))
+    }
+
+    /// Whether `ty` (through references) is an `any` value or the dynamic `Error`, whose `is` and `downcast` take a
+    /// type argument (AN6).
+    pub(super) fn is_any_like(&self, ty: &Ty) -> bool {
+        let mut base = ty;
+        while let Ty::Ref { inner, .. } = base {
+            base = &**inner;
+        }
+        matches!(base, Ty::Any(_)) || self.globals.is_error_ty(base)
+    }
+
+    /// Whether `g` is one of the compiler-known assertion functions, which take no type arguments.
+    fn compiler_generic(&self, g: usize) -> bool {
+        [
+            self.globals.test_assert_eq,
+            self.globals.test_assert_ne,
+            self.globals.snapshot_gen,
+            self.globals.debug_assert_eq_gen,
+            self.globals.debug_assert_ne_gen,
+            self.globals.assert_eq_gen,
+            self.globals.assert_ne_gen,
+        ]
+        .contains(&Some(g))
+    }
+
+    /// Whether `recv.name` is one of the built-in static functions written as a path through a name that is not a
+    /// type (`env.args`, `process.exit`, `Heap.new`, `CPtr.null`, ...). They take no type arguments.
+    fn builtin_static(&self, recv: &ast::Expr, name: &ast::Ident) -> bool {
+        let ast::ExprKind::Name { name: id, args } = &recv.kind else { return false };
+        args.is_empty()
+            && self.lookup(&id.name).is_none()
+            && self.globals.value(self.module, &id.name).is_none()
+            && matches!(
+                (id.name.as_str(), name.name.as_str()),
+                ("env", "args")
+                    | ("process", "exit")
+                    | ("Heap", "new")
+                    | ("Heap", "new_in")
+                    | ("Shared", "new")
+                    | ("List", "from")
+                    | ("Map", "from")
+                    | ("CPtr", "null")
+            )
+    }
+
     pub(super) fn method_call(
         &mut self,
         recv: &ast::Expr,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        // The built-in static functions below take no type arguments (TA5).
+        if !explicit.is_empty() && self.builtin_static(recv, name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
+        }
         // The prelude modules: `env.args()` and `process.exit`.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
             && type_args.is_empty()
@@ -1107,20 +1195,24 @@ impl FnCx<'_> {
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
-                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span, expect),
-                PathTy::Template(g) => self.assoc_call_template(g, name, args, expect, span),
+                PathTy::Ty(ty) => self.assoc_call(&ty, name, explicit, args, span, expect),
+                PathTy::Template(g) => self.assoc_call_template(g, name, explicit, args, expect, span),
             };
         }
         // A module-qualified type: `sh.Square.new()`.
         if let Some(ty) = self.qualified_type(recv) {
-            return self.assoc_call(&ty, name, args, span, expect);
+            return self.assoc_call(&ty, name, explicit, args, span, expect);
         }
         // A module-qualified function: `math.add(...)`, `sh.area(...)`.
         if let Some((target, item)) = self.module_member(recv, name) {
-            return self.module_call(target, &item, args, span, expect);
+            return self.module_call(target, &item, explicit, args, span, expect);
         }
         let recv = self.expr(recv, None);
-        self.method_call_on(recv, name, args, span, expect)
+        // `x.is<T>()` and `x.downcast<T>()` on an `any` value (AN6) are compiler-known methods, not templates.
+        if !explicit.is_empty() && matches!(name.name.as_str(), "is" | "downcast") && self.is_any_like(&recv.ty) {
+            return self.member_type_args_call(recv, name, explicit, args, span);
+        }
+        self.method_call_on_with(recv, name, explicit, args, span, expect)
     }
 
     /// The type of `e` when it is a range argument to `get`: a range expression, or a local whose value is a
@@ -1184,8 +1276,25 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        self.method_call_on_with(recv, name, &[], args, span, expect)
+    }
+
+    /// `method_call_on` with the explicit type arguments of the call (`x.m<T>(...)`, TA1).
+    pub(super) fn method_call_on_with(
+        &mut self,
+        recv: tir::Expr,
+        name: &ast::Ident,
+        explicit: &[ast::Type],
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
+        }
+        // Only a method of the program with type parameters of its own takes explicit type arguments (TA5).
+        if !explicit.is_empty() && !self.user_generic_method(&recv.ty, &name.name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
         }
         // `x.clone()`: the deep copy the compiler derives (CP). It applies to the receiver as written, before
         // any auto-dereference, so cloning a shared reference clones the reference.
@@ -1230,7 +1339,7 @@ impl FnCx<'_> {
             self.check_unsafe_call(f, &name.name, name.span);
             // A method with its own type parameters is instantiated for the arguments this call infers.
             if let Some(info) = self.globals.method_templates.get(&f).cloned() {
-                return self.generic_method_call(info, recv, &name.name, args, span, expect);
+                return self.generic_method_call(info, recv, &name.name, explicit, args, span, expect);
             }
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
@@ -1553,12 +1662,17 @@ impl FnCx<'_> {
         &mut self,
         target: usize,
         item: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
         self.check_value_visibility(target, &item.name, item.span);
-        match self.globals.exported_value(target, &item.name) {
+        let value = self.globals.exported_value(target, &item.name);
+        if !explicit.is_empty() && matches!(value, Some(Global::Func(_) | Global::Extern(_) | Global::Const(_))) {
+            return self.reject_type_args(&item.name, explicit, args, span);
+        }
+        match value {
             Some(Global::Func(f)) => {
                 self.check_unsafe_call(f, &item.name, item.span);
                 let sig = &self.globals.sigs[f.0];
@@ -1568,7 +1682,7 @@ impl FnCx<'_> {
                 };
                 mk(tir::ExprKind::Call(f, checked), ret, span)
             }
-            Some(Global::Generic(g)) => self.generic_call(g, item, args, span, expect),
+            Some(Global::Generic(g)) => self.generic_call(g, item, args, explicit, span, expect),
             Some(Global::Extern(e)) => self.extern_call(item, e, args, span),
             Some(Global::Const(_)) => {
                 self.diags.error(
@@ -1864,6 +1978,7 @@ impl FnCx<'_> {
         &mut self,
         ty: &Ty,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
@@ -1874,6 +1989,10 @@ impl FnCx<'_> {
                 self.expr(&a.expr, None);
             }
             return error_expr(span);
+        }
+        // Only an associated function of the program with type parameters of its own takes type arguments (TA5).
+        if !explicit.is_empty() && !self.user_generic_method(ty, &name.name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
         }
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span, expect);
@@ -2134,7 +2253,7 @@ impl FnCx<'_> {
         if let Some(info) = self.globals.method_templates.get(&f).cloned()
             && !self.globals.sigs[f.0].has_self
         {
-            return self.generic_assoc_method_call(info, &name.name, args, None, span, expect);
+            return self.generic_assoc_method_call(info, &name.name, explicit, args, None, span, expect);
         }
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());

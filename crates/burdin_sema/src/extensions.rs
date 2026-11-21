@@ -96,6 +96,7 @@ impl<'t> Sema<'t> {
                 decl: self.tpl.fns.len(),
                 identity,
                 recv: Some(recv.clone()),
+                hidden: f.generics.iter().any(|g| g.hidden),
             });
             self.tpl.fns.push(f);
             (Some(identity), Some(index))

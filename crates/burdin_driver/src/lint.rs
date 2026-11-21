@@ -225,7 +225,7 @@ pub(crate) fn lint_once(
     let mut first = 0usize;
     for (index, package) in front.loaded.packages.iter().enumerate() {
         if index == front.loaded.entry_package {
-            let generated = package.dir.as_ref().map(|d| d.join("target"));
+            let generated = package.dir.as_ref().map(|d| burdin_query::workspace::target_dir(d));
             for (m, module) in package.modules.iter().enumerate() {
                 let outside = generated.as_ref().is_some_and(|g| module.file.starts_with(g));
                 if module.text.is_none() && !outside {

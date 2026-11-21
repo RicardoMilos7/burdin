@@ -87,7 +87,7 @@ fn entry_files(front: &FrontEnd) -> Vec<FileId> {
     let mut first = 0usize;
     for (index, package) in front.loaded.packages.iter().enumerate() {
         if index == front.loaded.entry_package {
-            let generated = package.dir.as_ref().map(|dir| dir.join("target"));
+            let generated = package.dir.as_ref().map(|dir| burdin_query::workspace::target_dir(dir));
             for (offset, module) in package.modules.iter().enumerate() {
                 let outside = generated.as_ref().is_some_and(|dir| module.file.starts_with(dir));
                 if module.text.is_none() && !outside {
