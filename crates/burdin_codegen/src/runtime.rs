@@ -134,6 +134,14 @@ const IPPROTO_TCP: i32 = 6;
 const TCP_NODELAY: i32 = libc::TCP_NODELAY;
 #[cfg(windows)]
 const TCP_NODELAY: i32 = 0x0001;
+/// `send`'s flag that turns a write to a peer that has gone away into `EPIPE` instead of a `SIGPIPE`, which would end
+/// the process. Linux has the flag (`0x4000`). Windows raises no signal, and macOS takes `SO_NOSIGPIPE` on the socket
+/// instead (`SO_NOSIGPIPE_OPTION`), so the flag is zero there. An accepted socket inherits the option from its
+/// listener on macOS.
+const MSG_NOSIGNAL: i32 = if cfg!(target_os = "linux") { 0x4000 } else { 0 };
+/// `SO_NOSIGPIPE`, the macOS socket option that does what `MSG_NOSIGNAL` does for one socket. The value is defined
+/// everywhere so the same function body can name it; only macOS sets it.
+const SO_NOSIGPIPE_OPTION: i32 = 0x1022;
 /// `ioctlsocket`'s "set non-blocking" request. Only Windows uses it; the value is defined everywhere so the
 /// same function body can name it.
 const FIONBIO: i32 = 0x8004_667e_u32 as i32;
@@ -8236,6 +8244,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     i32_ty.const_int(4, false).into(),
                 ],
             )?;
+            // macOS has no `MSG_NOSIGNAL`: a write to a closed peer must not raise `SIGPIPE` on this socket.
+            if cfg!(target_os = "macos") {
+                self.call(
+                    setsockopt,
+                    &[
+                        fd.into(),
+                        i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
+                        i32_ty.const_int(u64::from(SO_NOSIGPIPE_OPTION as u32), false).into(),
+                        one.into(),
+                        i32_ty.const_int(4, false).into(),
+                    ],
+                )?;
+            }
         }
         self.b.build_return(Some(&fd)).map_err(llvm_err)?;
 
@@ -8358,7 +8379,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.count_ty().fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
         );
         let raw = self
-            .call(send, &[fd.into(), data.into(), len.into(), i32_ty.const_zero().into()])?
+            .call(
+                send,
+                &[fd.into(), data.into(), len.into(), i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into()],
+            )?
             .expect("send returns a count")
             .into_int_value();
         let out = self.net_result(raw)?;
@@ -8410,7 +8434,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     fd.into(),
                     data.into(),
                     len.into(),
-                    i32_ty.const_zero().into(),
+                    i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into(),
                     sockaddr.into(),
                     i32_ty.const_int(SOCKADDR_SIZE, false).into(),
                 ],

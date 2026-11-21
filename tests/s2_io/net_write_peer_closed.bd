@@ -1,0 +1,96 @@
+//@ run
+//> closed before the write: failed
+//> closed while waiting: failed
+//> silent peer: timed out
+//> done
+
+// A write to a peer that has gone away returns an error: it neither ends the process with `SIGPIPE` nor waits on the
+// reactor forever (spec/io.md, IO5; issue #867). The first two cases close the peer before the write and while the
+// writer waits for room. The third case shuts the peer's write side and never reads, so the writer waits for room
+// until its timeout and reports `TimedOut`. The payload is larger than the socket buffers, so each write must wait.
+
+fn main() {
+    task.set_workers(2)
+    let mut data = List<u8>.new()
+    let mut i: usize = 0
+    while i < 16777216 {
+        data.push(7)
+        i = i + 1
+    }
+
+    // The peer closes before the write starts.
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (conn, _) = listener.accept().unwrap()
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.clone()).unwrap()
+            time.sleep(Duration.from_millis(100))
+            match client.write_all(data[0..data.len()]) {
+                Ok(_) => println("closed before the write: wrote everything"),
+                Err(failure) => match failure.kind() {
+                    IoErrorKind.TimedOut => println("closed before the write: timed out"),
+                    _ => println("closed before the write: failed"),
+                },
+            }
+            client.close().unwrap()
+        })
+    })
+
+    // The peer closes while the writer waits for room, with a write timeout that has not yet passed.
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (conn, _) = listener.accept().unwrap()
+            time.sleep(Duration.from_millis(300))
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.clone()).unwrap()
+            client.set_write_timeout(Some(Duration.from_millis(5000)))
+            match client.write_all(data[0..data.len()]) {
+                Ok(_) => println("closed while waiting: wrote everything"),
+                Err(failure) => match failure.kind() {
+                    IoErrorKind.TimedOut => println("closed while waiting: timed out"),
+                    _ => println("closed while waiting: failed"),
+                },
+            }
+            client.close().unwrap()
+        })
+    })
+
+    // The peer shuts its write side and never reads: the write's timeout ends the wait.
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (mut conn, _) = listener.accept().unwrap()
+            conn.shutdown_write().unwrap()
+            time.sleep(Duration.from_millis(1500))
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.clone()).unwrap()
+            client.set_write_timeout(Some(Duration.from_millis(300)))
+            match client.write_all(data[0..data.len()]) {
+                Ok(_) => println("silent peer: wrote everything"),
+                Err(failure) => match failure.kind() {
+                    IoErrorKind.TimedOut => println("silent peer: timed out"),
+                    _ => println("silent peer: failed"),
+                },
+            }
+            client.close().unwrap()
+        })
+    })
+    println("done")
+}
