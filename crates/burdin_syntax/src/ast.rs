@@ -20,6 +20,10 @@ pub struct File {
     pub benches: Vec<BenchDecl>,
     /// `fuzz` items (`spec/fuzz.md`, FZ1): declared by `burdin fuzz` and `burdin test` only.
     pub fuzzes: Vec<FuzzDecl>,
+    /// The source of every item the parser could not read, from its first token to the token recovery stopped at.
+    /// Such an item is not in the other fields, so a name it declares is missing from this tree; the query library
+    /// uses these regions to keep the follow-on errors of such a name out of the report (`spec/check.md`, CK4).
+    pub unparsed: Vec<Span>,
     /// The block of every function, method, and `test` body the file wrote, in source order. Code the compiler
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).

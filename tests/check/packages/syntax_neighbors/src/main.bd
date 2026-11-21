@@ -1,0 +1,15 @@
+use shapes.Circle
+use shapes.Square
+use shapes.area
+use shapes.scale
+
+// Uses of the two declarations that did not parse are follow-on errors, and are not reported. The mismatch and the
+// unknown name below have nothing to do with `shapes`, so they are reported.
+fn main() {
+    let c = Circle { radius: 2 }
+    let n: i32 = "text" //~ E0003
+    let s = scale(&c, 3)
+    let sq = Square { side: 4 }
+    println(area(&c).to_string())
+    println(missing.to_string()) //~ E0002
+}

@@ -2693,6 +2693,20 @@ What is left: snapshots are checked only in a compiled run (an interpreted test 
 skipped); `--interpret` runs `test` blocks only, not doc tests; the fuzzer's corpus is not shared across a workspace;
 and a sanitizer report in a test is attributed to the test, not to the line inside the library that caused it.
 
+## Type checking past a syntax error (issue #786)
+
+A file with a syntax error no longer stops the front end before checking. `burdin_query::Db::analyze` checks every
+module as before: a file with syntax errors keeps the items it parsed (`ast::File`) and a new `unparsed` list of the
+source regions of the items it could not read. The diagnostics of the broken file's own checks are dropped, and so is a
+diagnostic elsewhere that mentions a name one of those unreadable regions declares (`crates/burdin_query/src/follow_on.rs`,
+`spec/check.md` CK4). The program is not returned when a file has syntax errors, so the language server keeps its last
+good program, and compile-time evaluation still never runs on such a program. The check cache is off for such a run
+(`CheckCache::set_enabled`), and a run with the cache off keeps the entries of the last run (`CheckCache::begin`), so the
+fix after a syntax error still reuses the other packages' answers (the LSP workspace test pins this). Tests: `tests/check/err_syntax_declared.bd`,
+`tests/check/packages/syntax_neighbors`, `tests/check/packages/syntax_no_main`, the unit tests of `follow_on.rs`, and the
+parser's `unparsed` regions. Gap: the broken file's own checks are not reported at all, even for its parsed functions;
+reporting them would need the follow-on rule to know which parsed items refer to a dropped declaration.
+
 ## Starting the next session
 
 Open the folder and say something like:

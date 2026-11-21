@@ -13,14 +13,15 @@
 //! `type_check` lives in `burdin_sema` (`CheckCache`) because it shares the checker's private state; this crate
 //! owns everything around it.
 
+use crate::follow_on::{self, declared_names};
 use crate::package::{self, Workspace};
 use crate::reparse;
 use crate::stats::{Counters, RevisionStats};
-use burdin_diag::{Diagnostic, Diagnostics, FileId, SourceMap};
+use burdin_diag::{Diagnostic, Diagnostics, FileId, Severity, SourceMap};
 use burdin_sema::{CheckCache, Edit};
 use burdin_syntax::ast;
 use burdin_tir::Program;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -187,8 +188,8 @@ pub struct Analysis {
     /// Every diagnostic of parsing, checking, and compile-time evaluation, in the order the batch compiler reports
     /// them.
     pub diagnostics: Diagnostics,
-    /// The checked program. `None` when parsing failed: checking a tree with syntax errors would mostly report
-    /// follow-on errors.
+    /// The checked program. `None` when a file has syntax errors: its tree is partial, so the program is not handed
+    /// out, but the other modules are still checked and their diagnostics are reported (`spec/check.md`, CK4).
     pub program: Option<Program>,
     /// The revision this analysis is of.
     pub revision: u64,
@@ -546,9 +547,22 @@ impl Db {
             }
             diags.absorb(file_diags);
         }
-        if diags.has_errors() {
-            return Ok(Analysis { diagnostics: diags, program: None, revision: self.revision, files: self.paths() });
-        }
+        // A file with syntax errors is not type checked, but the other modules are, against the declarations its
+        // tree kept (`spec/check.md`, CK4). Everything checked from here on comes after the syntax errors, and the
+        // follow-on errors among it are dropped once the checks have run.
+        let syntax_errors = diags.has_errors();
+        let checked_from = diags.len();
+        let broken: Vec<FileId> = parsed
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.diags.iter().any(|d| d.severity == Severity::Error))
+            .map(|(slot, _)| FileId(slot as u32))
+            .collect();
+
+        // A program with syntax errors is checked without the cache. Its answers belong to a partial tree, so they
+        // must not replace the answers of the last checked program, which the next edit can still reuse.
+        let cache_wanted = !self.options.no_cache;
+        self.check_cache.set_enabled(cache_wanted && !syntax_errors);
 
         let packages: Vec<burdin_sema::Package> = self
             .layout
@@ -585,6 +599,7 @@ impl Db {
             &mut diags,
             &mut self.check_cache,
         );
+        self.check_cache.set_enabled(cache_wanted);
         let Some(mut program) = checked else { return Err(Cancelled) };
         let stats = self.check_cache.stats();
         self.counters.bodies_checked += stats.checked.len();
@@ -603,7 +618,19 @@ impl Db {
         diags.absorb(memory);
         self.poll()?;
 
-        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1).
+        // The checks of a file with syntax errors are not reported, and neither are the follow-on errors of the
+        // names such a file declares (`follow_on`, CK4). The syntax errors themselves are kept.
+        let names: BTreeSet<String> = broken
+            .iter()
+            .flat_map(|&file| {
+                let tree = &parsed[file.0 as usize];
+                declared_names(&tree.text, file, &tree.ast.unparsed)
+            })
+            .collect();
+        let mut diags = follow_on::retain_checked(diags, checked_from, &broken, &names, &self.sources);
+
+        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1). With syntax
+        // errors there is no such program: it is never evaluated, and it is not returned (its tree is partial).
         if !diags.has_errors() {
             let comptime = burdin_comptime::Options {
                 overflow_checks: self.options.overflow_checks,
@@ -619,7 +646,8 @@ impl Db {
         }
         drop(packages);
         self.check_cache.evict(self.budget.bodies);
-        Ok(Analysis { diagnostics: diags, program: Some(program), revision: self.revision, files: self.paths() })
+        let program = (!syntax_errors).then_some(program);
+        Ok(Analysis { diagnostics: diags, program, revision: self.revision, files: self.paths() })
     }
 
     /// The path of every file, in module order.

@@ -1,0 +1,26 @@
+// The `shapes` module has syntax errors. The declarations it did read are what `main` is checked against. Its own
+// checks are not reported until its syntax errors are fixed.
+
+struct Circle {
+    radius: i32,
+}
+
+fn area(c: &Circle): i32 {
+    c.radius * 2
+}
+
+// A header the parser cannot read, so `scale` is missing from the module's tree.
+fn scale(c: &Circle, by: i32 { //~ E0001
+    c.radius * by
+}
+
+// This function parses, but the module is not type checked: its mismatch is not reported.
+fn diameter(c: &Circle): i32 {
+    let q: i32 = "text"
+    c.radius
+}
+
+// A struct the parser cannot read, so `Square` is missing too.
+struct Square {
+    side i32, //~ E0001
+}

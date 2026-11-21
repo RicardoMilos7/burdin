@@ -1,0 +1,13 @@
+//% exit: 1
+
+// A function the parser cannot read is not declared, so its callers are not reported. The file has a syntax error,
+// so its own checks are not reported either: the mismatch in `main` is not reported.
+
+fn broken(n: i32 { //~ E0001
+    n * 2
+}
+
+fn main() {
+    let a = broken(1)
+    let b: i32 = "text"
+}
