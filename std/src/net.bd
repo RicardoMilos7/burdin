@@ -311,6 +311,21 @@ struct TcpStream {
 TcpStream {
     /// Connects to `host:port`, waiting until the connection is established or refused.
     fn connect(addr: str): Result<TcpStream, IoError> {
+        TcpStream.__connect(addr, 0)
+    }
+
+    /// Connects like `connect`, but gives up with `IoErrorKind.TimedOut` when the connection is not established
+    /// within `timeout`. The connection attempt is abandoned and its socket closed.
+    fn connect_timeout(addr: str, timeout: Duration): Result<TcpStream, IoError> {
+        let mut nanos = timeout.as_nanos()
+        if nanos == 0 {
+            nanos = 1
+        }
+        TcpStream.__connect(addr, nanos)
+    }
+
+    /// The connection attempt behind `connect` and `connect_timeout`; `timeout_nanos` 0 waits forever.
+    priv fn __connect(addr: str, timeout_nanos: u64): Result<TcpStream, IoError> {
         match __split_addr(addr) {
             Some((host, port)) => unsafe {
                 let fd = __net_socket(1)
@@ -327,7 +342,7 @@ TcpStream {
                     return Err(failure)
                 }
                 // In progress: wait until the socket is writable, then read the pending error.
-                match __wait_socket(fd, WRITABLE, 0, "connect", addr) {
+                match __wait_socket(fd, WRITABLE, __deadline(timeout_nanos), "connect", addr) {
                     Ok(()) => {}
                     Err(failure) => {
                         let _ = __net_close(fd)

@@ -1,0 +1,283 @@
+// Timeouts and retries against the scripted server (spec/http-client.md, HC13 and HC14).
+
+use http
+use support.{Script, Server, body_of, error_text, fetch, header_of, ok, quick_client, reply, request_line}
+
+/// A client that fails fast: one retry at most would be enough for the tests that expect no retry.
+fn client_with_read_timeout(millis: u64, retries: usize): http.Client {
+    let mut client = quick_client()
+    client.read_timeout = Some(Duration.from_millis(millis))
+    client.max_retries = retries
+    client
+}
+
+/// The server never answers: the read timeout ends the wait (HC13).
+fn read_timeout() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().sleep(400))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = client_with_read_timeout(60, 0)
+            match client.get(server.url("/").as_str()) {
+                Ok(_) => println("read timeout: a response arrived"),
+                Err(e) => println("read timeout: {} is_timeout={} connection_failure={}", e, e.is_timeout(), e.is_connection_failure()),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// The head arrives and the body stops: the same timeout applies to reading the body (HC13).
+fn body_timeout() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nab").sleep(400))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = client_with_read_timeout(60, 0)
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let status = response.status
+                    match response.text() {
+                        Ok(_) => println("body timeout: the body arrived"),
+                        Err(e) => println("body timeout: {} {} is_timeout={}", status, e, e.is_timeout()),
+                    }
+                }
+                Err(e) => println("body timeout: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// A server that keeps sending, slowly, is stopped by the total limit although no single wait is long (HC13).
+fn total_timeout() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new()
+            .read()
+            .write("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\n")
+            .sleep(120)
+            .write("ab")
+            .sleep(400),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = client_with_read_timeout(5000, 0)
+            client.total_timeout = Some(Duration.from_millis(200))
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    match response.text() {
+                        Ok(_) => println("total timeout: the body arrived"),
+                        Err(e) => println("total timeout: {}", e),
+                    }
+                }
+                Err(e) => println("total timeout: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// A port nobody listens on: the connection is refused, which is a connection failure but not a timeout.
+fn connect_refused() {
+    let port = {
+        let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+        listener.local_addr().unwrap().port()
+    }
+    let client = client_with_read_timeout(1000, 0)
+    let url = format("http://127.0.0.1:{}/", port)
+    match client.get(url.as_str()) {
+        Ok(_) => println("connect refused: connected"),
+        Err(e) => println(
+            "connect refused: {} is_timeout={} connection_failure={}",
+            e.to_string().replace(port.to_string().as_str(), "PORT"),
+            e.is_timeout(),
+            e.is_connection_failure(),
+        ),
+    }
+}
+
+/// A `GET` whose connection closes before any response byte is repeated on a new connection (HC14).
+fn get_retried() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().close())
+    scripts.push(Script.new().read().write(ok("second try").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = quick_client()
+            println("get retried: {}", fetch(client.clone(), server.url("/flaky").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("get retried: accepted {} and saw {} requests", server.accepted(), server.requests().len())
+}
+
+/// `POST` is not idempotent, so a closed connection is the answer, not a reason to send it again (HC14).
+fn post_not_retried() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = quick_client()
+            match client.post(server.url("/order").as_str(), "payload") {
+                Ok(_) => println("post not retried: a response arrived"),
+                Err(e) => println("post not retried: {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("post not retried: accepted {}", server.accepted())
+}
+
+/// `PUT` is idempotent: it is repeated, and the body goes again in full (HC14).
+fn put_retried() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().close())
+    scripts.push(Script.new().read().write(ok("stored").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = quick_client()
+            let request = http.Request.put(server.url("/doc").as_str()).unwrap().body_text("payload")
+            match client.send(request) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    println("put retried: {:?}", text)
+                }
+                Err(e) => println("put retried: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let again = server.request(1)
+    println("put retried: second request {} body={:?}", request_line(again.as_str()), body_of(again.as_str()))
+}
+
+/// The number of retries is bounded by `max_retries`.
+fn retries_exhausted() {
+    let budgets: [usize; 2] = [1, 2]
+    for retries in budgets {
+        let server = Server.start(retries + 1)
+        let mut scripts = List<Script>.new()
+        for _ in 0..retries + 1 {
+            scripts.push(Script.new().read().close())
+        }
+        task.scope(|s| {
+            s.spawn(|| server.serve(scripts))
+            s.spawn(|| {
+                let mut client = quick_client()
+                client.max_retries = retries
+                match client.get(server.url("/").as_str()) {
+                    Ok(_) => println("exhausted: a response arrived"),
+                    Err(e) => println("exhausted with max_retries={}: {} after {} connections", retries, e, server.accepted()),
+                }
+                client.close_idle()
+                server.settle()
+            })
+        })
+    }
+}
+
+/// A `503` is retried only when asked for, only for a safe method, and after its `Retry-After` (HC14).
+fn retry_503() {
+    let server = Server.start(4)
+    let mut scripts = List<Script>.new()
+    let busy = reply("503 Service Unavailable", "Retry-After: 0\r\n", "busy")
+    scripts.push(Script.new().read().write(busy.as_str()).read().write(ok("recovered").as_str()))
+    scripts.push(Script.new().read().write(busy.as_str()))
+    scripts.push(Script.new().read().write(busy.as_str()))
+    let twice = Script.new().read().write(busy.as_str())
+    scripts.push(twice.read().write(busy.as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = quick_client()
+            client.retry_on_503 = true
+            println("503 retried: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.retry_on_503 = false
+            println("503 not asked for: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.retry_on_503 = true
+            match client.post(server.url("/").as_str(), "x") {
+                Ok(response) => {
+                    let status = response.status
+                    println("503 for a POST: {}", status)
+                }
+                Err(e) => println("503 for a POST: error {}", e),
+            }
+            client.max_retries = 1
+            println("503 exhausted: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("503: saw {} requests", server.requests().len())
+}
+
+/// A request that timed out is a connection failure too, and a safe request is repeated (HC14).
+fn timeout_retried() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().sleep(300))
+    scripts.push(Script.new().read().write(ok("second try").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = client_with_read_timeout(60, 2)
+            println("timeout retried: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("timeout retried: accepted {}", server.accepted())
+}
+
+/// Once a byte of the response has arrived the request may have been acted on: it is never repeated (HC14).
+fn partial_head_not_retried() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Le").close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = quick_client()
+            println("partial head: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("partial head: accepted {}", server.accepted())
+}
+
+fn run() {
+    read_timeout()
+    body_timeout()
+    total_timeout()
+    connect_refused()
+    get_retried()
+    post_not_retried()
+    put_retried()
+    retries_exhausted()
+    retry_503()
+    timeout_retried()
+    partial_head_not_retried()
+}

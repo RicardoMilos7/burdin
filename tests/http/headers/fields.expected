@@ -1,0 +1,54 @@
+> add Content-Type: text/plain
+  ok len=1
+> add X-One: 1
+  ok len=2
+> add x-one: 2
+  ok len=3
+> get content-type
+  "text/plain"
+> get CONTENT-TYPE
+  "text/plain"
+> get missing
+  none
+> all X-ONE
+  ["1", "2"]
+> contains x-one
+  true
+> contains x-two
+  false
+> add X-Spaces:    padded value   
+  ok len=4
+> get X-Spaces
+  "padded value"
+> add Connection: keep-alive, Upgrade
+  ok len=5
+> token connection upgrade
+  true
+> token connection close
+  false
+> set x-one: replaced
+  ok len=4
+> all x-one
+  ["replaced"]
+> wire
+  "Content-Type: text/plain\r\nx-one: replaced\r\nX-Spaces: padded value\r\nConnection: keep-alive, Upgrade\r\n"
+> remove X-One
+  removed 1
+> remove X-One
+  removed 0
+> wire
+  "Content-Type: text/plain\r\nX-Spaces: padded value\r\nConnection: keep-alive, Upgrade\r\n"
+> add Bad Name: v
+  error: invalid header: the name "Bad Name" is not a valid field name
+> add : v
+  error: invalid header: the name "" is not a valid field name
+> add X-Bad: line\r\nInjected: yes
+  error: invalid header: the value of X-Bad has a control character
+> add X-Tab: a\tb
+  ok len=4
+> get X-Tab
+  "a\tb"
+> add X-Empty:
+  ok len=5
+> get X-Empty
+  ""

@@ -1,0 +1,30 @@
+# a response head, with the CRLFs written out (HC7, HC8)
+HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\n\r\n
+HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n
+HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n
+HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 5, 5\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 5 5\r\n\r\n
+HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999\r\n\r\n
+HTTP/1.1 200 OK\r\n\r\n
+HTTP/1.0 200 OK\r\n\r\n
+HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nContent-Length: 1\r\n\r\n
+HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 1\r\n\r\n
+HTTP/1.1 204 No Content\r\n\r\n
+HTTP/1.1 304 Not Modified\r\nContent-Length: 10\r\n\r\n
+HTTP/1.1 100 Continue\r\n\r\n
+HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n
+HTTP/1.1 200 OK\r\nX-Dup: a\r\nx-dup: b\r\n\r\n
+HTTP/1.1 200 OK\r\nSpaced:   value  \r\n\r\n
+HTTP/2 200 OK\r\n\r\n
+garbage\r\n\r\n
+HTTP/1.1 abc OK\r\n\r\n
+HTTP/1.1 99 Low\r\n\r\n
+HTTP/1.1 200 OK\r\nNo colon here\r\n\r\n
+HTTP/1.1 200 OK\r\n folded\r\n\r\n
+HTTP/1.1 200 OK\r\nBad Name: v\r\n\r\n
+HTTP/1.1 200 OK\nContent-Length: 1\n\n

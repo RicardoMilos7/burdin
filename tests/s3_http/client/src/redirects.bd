@@ -1,0 +1,334 @@
+// Redirects against the scripted server (spec/http-client.md, HC11 and HC12).
+
+use http
+use support.{Script, Server, body_of, error_text, fetch, header_of, ok, redirect, reply, request_line}
+
+/// The request line of the Nth recorded request, as a short `METHOD target`.
+fn short_line(server: Server, n: usize): String {
+    let raw = server.request(n)
+    let line = request_line(raw.as_str())
+    match line.find_str(" HTTP/") {
+        Some(at) => line.as_str()[0..at].to_string(),
+        None => line,
+    }
+}
+
+/// Each redirect status sends a `GET` on to the new URL (HC12).
+fn statuses_for_get() {
+    let names = ["301 Moved Permanently", "302 Found", "303 See Other", "307 Temporary Redirect", "308 Permanent Redirect"]
+    let server = Server.start(1)
+    let mut script = Script.new()
+    for name in names {
+        script = script.read().write(redirect(name, "/next").as_str()).read().write(ok("landed").as_str())
+    }
+    let mut scripts = List<Script>.new()
+    scripts.push(script)
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            for name in names {
+                match client.get(server.url("/start").as_str()) {
+                    Ok(response) => {
+                        let mut response = response
+                        let status = response.status
+                        let hops = response.redirects
+                        let url = server.mask(response.url.to_text().as_str())
+                        let text = response.text().unwrap()
+                        println("redirect {}: {} {:?} redirects={} url={}", name, status, text, hops, url)
+                    }
+                    Err(e) => println("redirect {}: error {}", name, e),
+                }
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("redirects shared one connection: accepted {}", server.accepted())
+    println("second request of the last: {}", short_line(server, 9))
+}
+
+/// What a redirect does to the method and the body: `POST` becomes `GET` on 301, 302, and 303 and loses its body; 307
+/// and 308 keep both; `HEAD` stays `HEAD`; `PUT` and `DELETE` change only on 303 (HC12).
+fn method_matrix() {
+    let cases = [
+        ("POST", "301 Moved Permanently"),
+        ("POST", "302 Found"),
+        ("POST", "303 See Other"),
+        ("POST", "307 Temporary Redirect"),
+        ("POST", "308 Permanent Redirect"),
+        ("PUT", "301 Moved Permanently"),
+        ("PUT", "303 See Other"),
+        ("PUT", "307 Temporary Redirect"),
+        ("DELETE", "303 See Other"),
+        ("HEAD", "303 See Other"),
+    ]
+    let server = Server.start(1)
+    let mut script = Script.new()
+    for (_, status) in cases {
+        script = script.read().write(redirect(status, "/next").as_str()).read().write(ok("").as_str())
+    }
+    let mut scripts = List<Script>.new()
+    scripts.push(script)
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            for (method, status) in cases {
+                let request = http.Request.new(http.Method.parse(method).unwrap(), server.url("/start").as_str())
+                    .unwrap()
+                    .header("Content-Type", "text/plain")
+                    .body_text("payload")
+                match client.send(request) {
+                    Ok(response) => {
+                        let mut response = response
+                        let _ = response.text()
+                    }
+                    Err(e) => println("redirect {} {}: error {}", method, status, e),
+                }
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    for n in 0..cases.len() {
+        let (method, status) = cases[n]
+        let first = server.request(n * 2)
+        let second = server.request(n * 2 + 1)
+        println(
+            "{} {} -> {} length={} type={} body={:?}",
+            method,
+            status.as_str()[0..3].to_string(),
+            short_line(server, n * 2 + 1),
+            header_of(second.as_str(), "content-length"),
+            header_of(second.as_str(), "content-type"),
+            body_of(second.as_str()),
+        )
+        let _ = first
+    }
+}
+
+/// Relative, absolute-path, scheme-relative, and query-only `Location` values (HC2).
+fn locations() {
+    let values = ["next", "../up", "/abs?q=1", "?only=query", "sub/../x", "//127.0.0.1:PORT/netpath"]
+    let server = Server.start(1)
+    let mut script = Script.new()
+    for value in values {
+        let location = value.replace("PORT", server.port.to_string().as_str())
+        script = script.read().write(redirect("302 Found", location.as_str()).as_str()).read().write(ok("").as_str())
+    }
+    let mut scripts = List<Script>.new()
+    scripts.push(script)
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            for value in values {
+                match client.get(server.url("/dir/page?old=1").as_str()) {
+                    Ok(response) => {
+                        let mut response = response
+                        let url = server.mask(response.url.to_text().as_str())
+                        let _ = response.text()
+                        println("location {} -> {}", value, url)
+                    }
+                    Err(e) => println("location {}: error {}", value, e),
+                }
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// More redirects than `max_redirects` is an error that names the limit (HC12).
+fn limit() {
+    let server = Server.start(1)
+    let mut script = Script.new()
+    for n in 1..5 {
+        script = script.read().write(redirect("302 Found", format("/{}", n).as_str()).as_str())
+    }
+    let mut scripts = List<Script>.new()
+    scripts.push(script)
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_redirects = 3
+            println("limit: {}", fetch(client.clone(), server.url("/0").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("limit: {} requests were made", server.requests().len())
+}
+
+/// A redirect back to a URL already visited is a loop, reported at once (HC12).
+fn loops() {
+    let server = Server.start(2)
+    let mut first = List<Script>.new()
+    first.push(Script.new().read().write(redirect("302 Found", "/b").as_str()).read().write(redirect("302 Found", "/a").as_str()))
+    first.push(Script.new().read().write(redirect("302 Found", "/x").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(first))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("loop: {}", server.mask(fetch(client.clone(), server.url("/a").as_str()).as_str()))
+            client.close_idle()
+            println("self loop: {}", server.mask(fetch(client.clone(), server.url("/x").as_str()).as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("loop made {} requests", server.requests().len())
+}
+
+/// Credentials are not sent to another origin, and the other headers are (HC12).
+fn cross_origin() {
+    let other = Server.start(1)
+    let mut other_scripts = List<Script>.new()
+    other_scripts.push(Script.new().read().write(ok("far").as_str()))
+    let home = Server.start(2)
+    let mut home_scripts = List<Script>.new()
+    home_scripts.push(Script.new().read().write(redirect("307", other.url("/landed").as_str()).as_str()))
+    home_scripts.push(Script.new().read().write(redirect("307", "/local").as_str()).read().write(ok("near").as_str()))
+    task.scope(|s| {
+        s.spawn(|| other.serve(other_scripts))
+        s.spawn(|| home.serve(home_scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            let away = http.Request.get(home.url("/start").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+                .header("Cookie", "session=1")
+                .header("Proxy-Authorization", "Basic abc")
+                .header("X-Custom", "kept")
+            match client.send(away) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    println("cross-origin: {:?}", text)
+                }
+                Err(e) => println("cross-origin: error {}", e),
+            }
+            let near = http.Request.get(home.url("/start").as_str())
+                .unwrap()
+                .header("Authorization", "Bearer secret")
+                .header("Cookie", "session=1")
+                .header("X-Custom", "kept")
+            match client.send(near) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    println("same-origin: {:?}", text)
+                }
+                Err(e) => println("same-origin: error {}", e),
+            }
+            client.close_idle()
+            other.settle()
+            home.settle()
+        })
+    })
+    let landed = other.request(0)
+    println(
+        "other origin got: {} authorization={} cookie={} proxy={} x-custom={}",
+        short_line(other, 0),
+        header_of(landed.as_str(), "authorization"),
+        header_of(landed.as_str(), "cookie"),
+        header_of(landed.as_str(), "proxy-authorization"),
+        header_of(landed.as_str(), "x-custom"),
+    )
+    let local = home.request(2)
+    println(
+        "same origin got: {} authorization={} cookie={} x-custom={}",
+        short_line(home, 2),
+        header_of(local.as_str(), "authorization"),
+        header_of(local.as_str(), "cookie"),
+        header_of(local.as_str(), "x-custom"),
+    )
+}
+
+/// `follow_redirects = false` and a redirect without a `Location` both return the response itself.
+fn not_followed() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(reply("302 Found", "Location: /elsewhere\r\n", "moved").as_str()))
+    scripts.push(Script.new().read().write(reply("302 Found", "", "no location").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.follow_redirects = false
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let status = response.status
+                    let location = response.header("location").unwrap()
+                    let is_redirect = response.is_redirect()
+                    let text = response.text().unwrap()
+                    println("not followed: {} location={} is_redirect={} body={:?}", status, location, is_redirect, text)
+                }
+                Err(e) => println("not followed: error {}", e),
+            }
+            client.close_idle()
+            let following = http.Client.new()
+            println("no location: {}", fetch(following.clone(), server.url("/").as_str()))
+            following.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// A `Location` the client cannot follow is an error, not a response.
+fn bad_locations() {
+    let server = Server.start(3)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(redirect("302 Found", "bad url").as_str()))
+    scripts.push(Script.new().read().write(redirect("302 Found", "ftp://example.test/").as_str()))
+    scripts.push(Script.new().read().write(redirect("302 Found", "https://127.0.0.1:1/secure").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("bad location: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("other scheme: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("to https: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+/// A redirect response with a body: the body is read away so the connection is used again.
+fn redirect_with_body() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new()
+            .read()
+            .write(reply("302 Found", "Location: /next\r\n", "this page has moved").as_str())
+            .read()
+            .write(ok("landed").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("redirect with body: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("redirect with body shared one connection: accepted {}", server.accepted())
+}
+
+fn run() {
+    statuses_for_get()
+    method_matrix()
+    locations()
+    limit()
+    loops()
+    cross_origin()
+    not_followed()
+    bad_locations()
+    redirect_with_body()
+}

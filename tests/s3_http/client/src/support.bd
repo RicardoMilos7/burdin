@@ -1,0 +1,369 @@
+// A scripted HTTP server for the client tests (spec/http-client.md).
+//
+// A `Server` listens on 127.0.0.1 and a port the system picks. The test hands it one `Script` per connection it
+// expects; connection number N, in the order the connections are accepted, plays script N. A script is a list of
+// steps: read a request, write bytes, sleep, close, or wait for the client to close. The server records every request it
+// reads, so a test can print what the client sent, and counts the connections it accepted, so a test can show that
+// two requests shared one connection.
+//
+// Nothing here depends on the network outside the machine, and no test depends on timing beyond a generous margin:
+// a step that waits does so to make the client's own timeout expire first.
+
+use http
+
+/// One thing the server does on a connection.
+enum Step: Clone {
+    /// Reads one request (its head, and its body when it has a `Content-Length`) and records it.
+    Read
+    /// Writes these bytes.
+    Write(String)
+    /// Waits this many milliseconds.
+    Sleep(u64)
+    /// Closes the connection now; the script ends.
+    Close
+    /// Waits until the client closes its end of the connection, and records that.
+    WaitClose
+}
+
+/// What the server does on one connection. The connection is closed when the steps run out.
+struct Script {
+    steps: List<Step>
+}
+
+Script {
+    fn new(): Script {
+        Script { steps: List<Step>.new() }
+    }
+
+    fn read(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Read)
+        script
+    }
+
+    fn write(own self, text: str): Script {
+        let mut script = self
+        script.steps.push(Step.Write(text.to_string()))
+        script
+    }
+
+    fn sleep(own self, millis: u64): Script {
+        let mut script = self
+        script.steps.push(Step.Sleep(millis))
+        script
+    }
+
+    fn close(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Close)
+        script
+    }
+
+    fn wait_close(own self): Script {
+        let mut script = self
+        script.steps.push(Step.WaitClose)
+        script
+    }
+}
+
+/// A complete response: the status line text (`200 OK`), extra header lines (each ending in CRLF), and a body whose
+/// `Content-Length` is added.
+fn reply(status: str, headers: str, body: str): String {
+    format("HTTP/1.1 {}\r\n{}Content-Length: {}\r\n\r\n{}", status, headers, body.len(), body)
+}
+
+/// `reply` with `200 OK` and no extra headers.
+fn ok(body: str): String {
+    reply("200 OK", "", body)
+}
+
+/// A redirect response to `location`.
+fn redirect(status: str, location: str): String {
+    reply(status, format("Location: {}\r\n", location), "")
+}
+
+struct Server {
+    listener: net.TcpListener
+    port: u16
+    /// How many connections the test expects.
+    total: usize
+    log: Mutex<List<String>>
+    accepts: AtomicUsize
+    finished: AtomicUsize
+    closed: AtomicUsize
+}
+
+Server {
+    /// Starts listening; `total` is how many connections the test makes.
+    fn start(total: usize): Server {
+        let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+        let port = listener.local_addr().unwrap().port()
+        Server {
+            listener: listener,
+            port: port,
+            total: total,
+            log: Mutex.new(List<String>.new()),
+            accepts: AtomicUsize.new(0),
+            finished: AtomicUsize.new(0),
+            closed: AtomicUsize.new(0),
+        }
+    }
+
+    /// `http://127.0.0.1:PORT` followed by `path`.
+    fn url(self, path: str): String {
+        format("http://127.0.0.1:{}{}", self.port, path)
+    }
+
+    /// `text` with this server's port number replaced by `PORT`, so output does not depend on the port.
+    fn mask(self, text: str): String {
+        text.replace(self.port.to_string().as_str(), "PORT")
+    }
+
+    /// Accepts `total` connections, one after another, and plays script N on connection N. Each connection gets its own
+    /// task, so a script that waits does not keep the next connection from being served. A task can only borrow what
+    /// outlives the scope, so the accepted connections reach the tasks through a channel made before it.
+    fn serve(self, scripts: List<Script>) {
+        let count = if scripts.len() < self.total { scripts.len() } else { self.total }
+        let work = Channel<(usize, net.TcpStream)>.bounded(1)
+        task.scope(|s| {
+            for _ in 0..count {
+                s.spawn(|| {
+                    match work.recv() {
+                        Some((index, conn)) => self.play(conn, scripts[index].steps.clone(), index),
+                        None => {}
+                    }
+                })
+            }
+            for index in 0..count {
+                let (conn, _) = self.listener.accept().unwrap()
+                let _ = self.accepts.fetch_add(1)
+                let _ = work.send((index, conn))
+            }
+        })
+    }
+
+    /// The server is done when it has played `total` scripts. A client that made fewer connections would leave the
+    /// server waiting in `accept`; this connects (and drops) as many times as it takes, so a test that went wrong ends.
+    fn settle(self) {
+        let mut spins: usize = 0
+        while self.finished.load() < self.total && spins < 3000 {
+            if self.accepts.load() < self.total {
+                match net.TcpStream.connect(format("127.0.0.1:{}", self.port).as_str()) {
+                    Ok(stream) => {
+                        let _ = stream.close()
+                    }
+                    Err(_) => {}
+                }
+            }
+            time.sleep(Duration.from_millis(2))
+            spins = spins + 1
+        }
+    }
+
+    /// Waits until `count` scripts have closed their connection with a `Close` step.
+    fn wait_closed(self, count: usize) {
+        let mut spins: usize = 0
+        while self.closed.load() < count && spins < 3000 {
+            time.sleep(Duration.from_millis(2))
+            spins = spins + 1
+        }
+    }
+
+    fn accepted(self): usize {
+        self.accepts.load()
+    }
+
+    /// Every recorded request, in the order they were read, each as `#connection raw-request`.
+    fn requests(self): List<String> {
+        self.log.lock(|list| {
+            let mut copy = List<String>.new()
+            for item in list.iter() {
+                copy.push(item.clone())
+            }
+            copy
+        })
+    }
+
+    /// The raw text of the Nth recorded request (from 0).
+    fn request(self, n: usize): String {
+        let all = self.requests()
+        if n < all.len() {
+            all[n].clone()
+        } else {
+            String.new()
+        }
+    }
+
+    priv fn record(self, own text: String) {
+        self.log.lock(|list| list.push(text))
+    }
+
+    /// Plays one script on one connection.
+    priv fn play(self, own conn: net.TcpStream, steps: List<Step>, index: usize) {
+        let mut conn = conn
+        // A client that gave up and closed its end leaves a write with nowhere to go; do not wait for it for long.
+        conn.set_write_timeout(Some(Duration.from_millis(300)))
+        let mut pending = List<u8>.new()
+        let mut open = true
+        let mut by_script = false
+        for step in steps.iter() {
+            if !open {
+                break
+            }
+            match step {
+                Step.Read => {
+                    match read_request(mut conn, mut pending) {
+                        Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
+                        None => self.record(format("#{}\n(no request)", index + 1)),
+                    }
+                }
+                Step.Write(text) => {
+                    let bytes = text.to_utf8()
+                    let _ = conn.write_all(bytes[0..bytes.len()])
+                }
+                Step.Sleep(millis) => time.sleep(Duration.from_millis(millis)),
+                Step.Close => {
+                    open = false
+                    by_script = true
+                }
+                Step.WaitClose => {
+                    let mut scratch = List<u8>.new()
+                    loop {
+                        match conn.read(mut scratch, 1024) {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(_) => break,
+                        }
+                    }
+                    self.record(format("#{}\n(client closed)", index + 1))
+                }
+            }
+        }
+        // Close before counting, so a test that waits for the count finds the connection already closed.
+        let _ = conn.close()
+        if by_script {
+            let _ = self.closed.fetch_add(1)
+        }
+        let _ = self.finished.fetch_add(1)
+    }
+}
+
+/// The bytes of `bytes` from `from` on.
+fn tail_of(bytes: List<u8>, from: usize): List<u8> {
+    let mut rest = List<u8>.new()
+    rest.extend_from_slice(bytes[from..bytes.len()])
+    rest
+}
+
+fn text_of(bytes: List<u8>, end: usize): String {
+    String.from_utf8_lossy(bytes[0..end])
+}
+
+/// Reads one request: up to the blank line, and then `Content-Length` more bytes. `pending` holds bytes already read
+/// from the socket and not used yet. `None` when the client closed first.
+fn read_request(mut conn: net.TcpStream, mut pending: List<u8>): Option<String> {
+    let mut end: usize = 0
+    loop {
+        match http.find_head_end(pending) {
+            Some(at) => {
+                end = at
+                break
+            }
+            None => {}
+        }
+        match conn.read(mut pending, 4096) {
+            Ok(0) => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    let head = text_of(pending, end)
+    let length = match u64.parse(header_of(head.as_str(), "content-length").as_str()) {
+        Ok(n) => n as usize,
+        Err(_) => 0,
+    }
+    while pending.len() < end + length {
+        match conn.read(mut pending, 4096) {
+            Ok(0) => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    let raw = text_of(pending, end + length)
+    let rest = tail_of(pending, end + length)
+    pending = rest
+    Some(raw)
+}
+
+// ----- looking into a recorded request --------------------------------------------------------------------------
+
+/// The request line of a recorded request (`#1\nGET / HTTP/1.1...`): without the `#N` line.
+fn request_line(recorded: str): String {
+    let lines = recorded.split("\r\n")
+    let first = lines[0].as_str()
+    match first.find('\n') {
+        Some(at) => first[at + 1..first.len()].to_string(),
+        None => first.to_string(),
+    }
+}
+
+/// The value of the header `name` in a recorded request, or `-` when it is absent.
+fn header_of(recorded: str, name: str): String {
+    let lines = recorded.split("\r\n")
+    let mut i: usize = 1
+    while i < lines.len() {
+        let line = lines[i].as_str()
+        match line.find(':') {
+            Some(colon) => {
+                if line[0..colon].eq_ignore_ascii_case(name) {
+                    return line[colon + 1..line.len()].trim().to_string()
+                }
+            }
+            None => {}
+        }
+        i = i + 1
+    }
+    "-".to_string()
+}
+
+/// The body of a recorded request.
+fn body_of(recorded: str): String {
+    match recorded.find_str("\r\n\r\n") {
+        Some(at) => recorded[at + 4..recorded.len()].to_string(),
+        None => String.new(),
+    }
+}
+
+// ----- helpers for the scenarios ---------------------------------------------------------------------------------
+
+/// The status and text of a response, or the failure, on one line.
+fn fetch(client: http.Client, url: str): String {
+    match client.get(url) {
+        Ok(response) => finish(response),
+        Err(e) => format("error: {}", e),
+    }
+}
+
+fn finish(own response: http.Response): String {
+    let mut response = response
+    let status = response.status
+    match response.text() {
+        Ok(text) => format("{} body={:?}", status, text),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// A client that retries quickly, so a test that fails a connection does not wait for the default backoff.
+fn quick_client(): http.Client {
+    let mut client = http.Client.new()
+    client.retry_backoff = Duration.from_millis(1)
+    client.max_backoff = Duration.from_millis(5)
+    client
+}
+
+fn error_text(result: Result<http.Response, http.HttpError>): String {
+    match result {
+        Ok(_) => "no error".to_string(),
+        Err(e) => e.to_string(),
+    }
+}

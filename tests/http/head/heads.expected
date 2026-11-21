@@ -1,0 +1,174 @@
+> HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\n\r\n
+  head ends at 64 of 64
+  HTTP/1.1 200 "OK" fields=2
+    Content-Length: 5
+    Content-Type: text/plain
+  keeps alive: true
+  framing for GET: 5 bytes
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n
+  head ends at 47 of 47
+  HTTP/1.1 200 "OK" fields=1
+    Transfer-Encoding: chunked
+  keeps alive: true
+  framing for GET: chunked
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n
+  head ends at 53 of 53
+  HTTP/1.1 200 "OK" fields=1
+    Transfer-Encoding: gzip, chunked
+  keeps alive: true
+  framing for GET: chunked
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n
+  head ends at 44 of 44
+  HTTP/1.1 200 "OK" fields=1
+    Transfer-Encoding: gzip
+  keeps alive: true
+  framing for GET: error malformed response: the Transfer-Encoding does not end in chunked
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n
+  head ends at 66 of 66
+  HTTP/1.1 200 "OK" fields=2
+    Content-Length: 5
+    Transfer-Encoding: chunked
+  keeps alive: true
+  framing for GET: error malformed response: the response has both Content-Length and Transfer-Encoding
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n
+  head ends at 57 of 57
+  HTTP/1.1 200 "OK" fields=2
+    Content-Length: 5
+    Content-Length: 5
+  keeps alive: true
+  framing for GET: 5 bytes
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 5, 5\r\n\r\n
+  head ends at 41 of 41
+  HTTP/1.1 200 "OK" fields=1
+    Content-Length: 5, 5
+  keeps alive: true
+  framing for GET: 5 bytes
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n
+  head ends at 57 of 57
+  HTTP/1.1 200 "OK" fields=2
+    Content-Length: 5
+    Content-Length: 6
+  keeps alive: true
+  framing for GET: error malformed response: the response has different Content-Length values
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\n
+  head ends at 39 of 39
+  HTTP/1.1 200 "OK" fields=1
+    Content-Length: +5
+  keeps alive: true
+  framing for GET: error malformed response: the Content-Length is not a number: "+5"
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 5 5\r\n\r\n
+  head ends at 40 of 40
+  HTTP/1.1 200 "OK" fields=1
+    Content-Length: 5 5
+  keeps alive: true
+  framing for GET: error malformed response: the Content-Length is not a number: "5 5"
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999\r\n\r\n
+  head ends at 57 of 57
+  HTTP/1.1 200 "OK" fields=1
+    Content-Length: 99999999999999999999
+  keeps alive: true
+  framing for GET: error malformed response: the Content-Length does not fit in 64 bits
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\n\r\n
+  head ends at 19 of 19
+  HTTP/1.1 200 "OK" fields=0
+  keeps alive: true
+  framing for GET: until close
+  framing for HEAD: no body
+> HTTP/1.0 200 OK\r\n\r\n
+  head ends at 19 of 19
+  HTTP/1.0 200 "OK" fields=0
+  keeps alive: false
+  framing for GET: until close
+  framing for HEAD: no body
+> HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nContent-Length: 1\r\n\r\n
+  head ends at 62 of 62
+  HTTP/1.0 200 "OK" fields=2
+    Connection: keep-alive
+    Content-Length: 1
+  keeps alive: true
+  framing for GET: 1 bytes
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 1\r\n\r\n
+  head ends at 57 of 57
+  HTTP/1.1 200 "OK" fields=2
+    Connection: close
+    Content-Length: 1
+  keeps alive: false
+  framing for GET: 1 bytes
+  framing for HEAD: no body
+> HTTP/1.1 204 No Content\r\n\r\n
+  head ends at 27 of 27
+  HTTP/1.1 204 "No Content" fields=0
+  keeps alive: true
+  framing for GET: no body
+  framing for HEAD: no body
+> HTTP/1.1 304 Not Modified\r\nContent-Length: 10\r\n\r\n
+  head ends at 49 of 49
+  HTTP/1.1 304 "Not Modified" fields=1
+    Content-Length: 10
+  keeps alive: true
+  framing for GET: no body
+  framing for HEAD: no body
+> HTTP/1.1 100 Continue\r\n\r\n
+  head ends at 25 of 25
+  HTTP/1.1 100 "Continue" fields=0
+  keeps alive: true
+  framing for GET: no body
+  framing for HEAD: no body
+> HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n
+  head ends at 35 of 35
+  HTTP/1.1 404 "" fields=1
+    Content-Length: 0
+  keeps alive: true
+  framing for GET: 0 bytes
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nX-Dup: a\r\nx-dup: b\r\n\r\n
+  head ends at 39 of 39
+  HTTP/1.1 200 "OK" fields=2
+    X-Dup: a
+    x-dup: b
+  keeps alive: true
+  framing for GET: until close
+  framing for HEAD: no body
+> HTTP/1.1 200 OK\r\nSpaced:   value  \r\n\r\n
+  head ends at 38 of 38
+  HTTP/1.1 200 "OK" fields=1
+    Spaced: value
+  keeps alive: true
+  framing for GET: until close
+  framing for HEAD: no body
+> HTTP/2 200 OK\r\n\r\n
+  head ends at 17 of 17
+  error: malformed response: the status line is not HTTP/1.x: "HTTP/2 200 OK"
+> garbage\r\n\r\n
+  head ends at 11 of 11
+  error: malformed response: the status line is not HTTP/1.x: "garbage"
+> HTTP/1.1 abc OK\r\n\r\n
+  head ends at 19 of 19
+  error: malformed response: the status code is not three digits
+> HTTP/1.1 99 Low\r\n\r\n
+  head ends at 19 of 19
+  error: malformed response: the status code is not three digits
+> HTTP/1.1 200 OK\r\nNo colon here\r\n\r\n
+  head ends at 34 of 34
+  error: malformed response: a header line has no colon: "No colon here"
+> HTTP/1.1 200 OK\r\n folded\r\n\r\n
+  head ends at 28 of 28
+  error: malformed response: a folded header line is not accepted
+> HTTP/1.1 200 OK\r\nBad Name: v\r\n\r\n
+  head ends at 32 of 32
+  error: malformed response: invalid header: the name "Bad Name" is not a valid field name
+> HTTP/1.1 200 OK\nContent-Length: 1\n\n
+  head is not complete
+  error: malformed response: the head is incomplete
