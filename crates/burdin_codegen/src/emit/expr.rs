@@ -224,7 +224,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::Loop(_) => self.loop_value(e, None)?,
             K::Labeled(label, inner) => self.loop_value(inner, Some(label.as_str()))?,
-            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty, mode)?,
+            K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, &e.ty)?,
             K::Break { label, value } => {
                 // The value is computed before the scopes are left, like a `return` value (DR6).
                 let v = match value {

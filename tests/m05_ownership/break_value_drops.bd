@@ -1,10 +1,13 @@
 //@ run
 //> 2
 //> after
+//> 3
+//> 3
 //> 1
 
 // The break value is computed before the scopes it leaves are dropped (spec/memory-rules.md, DR6): the loop body's
-// `inner` drops when the `break` leaves it, and the moved `local` survives as the loop's result.
+// `inner` drops when the `break` leaves it, and the moved `local` survives as the loop's result. The loop's value is
+// an owned temporary like a block's (MV9), so a borrowed use of it drops it exactly once.
 
 struct Noisy {
     id: i32
@@ -24,7 +27,15 @@ fn take(): Noisy {
     }
 }
 
+fn id_of(n: Noisy): i32 {
+    n.id
+}
+
 fn main() {
     let x = take()
     println("after")
+    // The read-only parameter borrows the loop's value, which is a temporary of this statement: it drops when the
+    // `let` finishes, then `n` prints.
+    let n = id_of(loop { break Noisy { id: 3 } })
+    println(n.to_string())
 }
