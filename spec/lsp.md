@@ -205,7 +205,10 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   method's receiver), whether or not the body parses. A value whose type is a generic parameter (`s: S`) offers the
   methods of the parameter's bounds (`S: Serializer` gives `serialize_bool`, `serialize_unit`, ...), read from the
   function's `<...>` list or `where` clause; with no analysis to answer, the parameter's declared type says what it is
-  (issue #852).
+  (issue #852). A member chain whose last member is still missing (`resp.body.`, `client.send(req).`) is typed from the
+  declarations when the typed tree does not hold its receiver (the analysis of the text with the dangling dot types it
+  `{error}`): the root's type (a local, a parameter, or `self`), then each field's declared type and each method's
+  return type, so the list appears on the keystroke that types the dot (issue #879).
 - **In a `use` path**, the modules and the public items below the path written so far, from the package and its
   dependencies (a dependency's `priv` items are left out).
 - **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a
@@ -261,8 +264,8 @@ takes parameters, with the `editor.action.triggerParameterHints` command so sign
 it takes none (a method's `self` does not count). The bare name is inserted when the next character is already `(`, in
 a `use` path, and when the client has no `snippetSupport`. `.` triggers completion.
 Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
-`members_after_a_type_name_a_literal_and_a_primitive`,
-`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
+`members_after_a_type_name_a_literal_and_a_primitive`, `member_chains_offer_their_members_on_the_dot_that_starts_them`
+(`fixtures/nested`), `builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
 `self_is_offered_only_as_the_first_parameter_of_a_method`, `snippets_follow_the_position_and_the_client`,
 `completing_a_function_inserts_the_call`, `derives_and_the_derivable_interfaces`,
 `self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`; the

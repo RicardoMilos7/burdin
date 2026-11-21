@@ -1,0 +1,44 @@
+/// A body of text.
+struct Body {
+    text: String
+}
+
+Body {
+    fn read_to_string(own self): String {
+        self.text
+    }
+
+    fn size(self): i32 {
+        0
+    }
+}
+
+/// A response: its status and its body.
+struct Response {
+    status: i32
+    body: Body
+}
+
+/// A request.
+struct Request {
+    url: String
+}
+
+/// A client.
+struct Client {
+    name: String
+}
+
+Client {
+    fn send(self, own req: Request): Response {
+        Response { status: 200, body: Body { text: req.url } }
+    }
+}
+
+fn main() {
+    let client = Client { name: String.from("c") }
+    let req = Request { url: String.from("u") }
+    let resp = client.send(req)
+    let body = resp.body
+    println("{body.read_to_string()}")
+}
