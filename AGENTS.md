@@ -176,7 +176,7 @@ docs/                     the user-facing error-code reference (checked against 
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
                           and known limitations, and the version/release policy (docs/releasing.md)
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-.github/workflows/        ci.yml (pull requests and main; each OS split into four parallel parts) and release.yml (tag, nightly schedule, or manual dry run)
+.github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
