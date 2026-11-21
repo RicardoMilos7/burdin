@@ -186,6 +186,27 @@ priv fn __remaining(deadline: u64): u64 {
     }
 }
 
+/// How long a write pauses after a wake that made no room before it waits again. On Windows, `WSAPoll` reports a
+/// peer's FIN as a hang-up at once for a write wait, even with a full send buffer, so without this pause a writer
+/// would wake and re-register in a tight loop (issue #867). The pause is short, so a real wake-up is at most this late.
+priv const WRITE_BACKOFF_NANOS: u64 = 10_000_000
+
+/// Pauses a writer for `WRITE_BACKOFF_NANOS`, or until its deadline if that comes sooner. A deadline that has already
+/// passed returns at once, and the next wait reports `TimedOut`.
+priv fn __write_backoff(deadline: u64) {
+    let mut nanos = WRITE_BACKOFF_NANOS
+    if deadline != 0 {
+        let remaining = __remaining(deadline)
+        if remaining == 0 {
+            return
+        }
+        if remaining < nanos {
+            nanos = remaining
+        }
+    }
+    let _ = __wait_io(-1, 0, nanos)
+}
+
 /// Waits for a socket event. `0` is ready, `1` timed out, and `-1` is a reactor failure.
 priv fn __wait_socket(fd: i64, events: i32, deadline: u64, op: str, addr: str): Result<(), IoError> {
     let remaining = __remaining(deadline)
@@ -472,6 +493,7 @@ TcpStream: Write {
     /// Writes a prefix of `data` and returns how many bytes the socket took.
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         let deadline = __deadline(self.write_timeout)
+        let mut waited = false
         loop {
             unsafe {
                 let n = __net_send(self.fd, data)
@@ -482,7 +504,12 @@ TcpStream: Write {
                     return Err(__net_failure("write", "the socket"))
                 }
             }
+            // A wake that made no room is followed by a short pause (issue #867).
+            if waited {
+                __write_backoff(deadline)
+            }
             __wait_socket(self.fd, WRITABLE, deadline, "write", "the socket")?
+            waited = true
         }
     }
 

@@ -676,6 +676,7 @@ impl<'a> Analyzer<'a> {
                 }
                 origin
             }
+            K::Labeled(_, inner) => self.expr(inner),
             K::While(cond, body) => {
                 self.expr(cond);
                 self.block(body);
@@ -779,7 +780,7 @@ impl<'a> Analyzer<'a> {
                 self.expr(r);
                 Origin::temp()
             }
-            K::Break | K::Continue => Origin::default(),
+            K::Break(_) | K::Continue(_) => Origin::default(),
         }
     }
 }

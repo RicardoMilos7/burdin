@@ -1,0 +1,40 @@
+//@ compile-fail
+
+// A labeled `break` or `continue` names an enclosing loop with that label. A label that no enclosing loop has is
+// E0002, and a label may not repeat the label of an enclosing loop (E0007). A closure starts with no loops, so it
+// cannot name one outside (E0002), and a labeled jump cannot leave the body of a `comptime for` (E0220).
+
+fn main() {
+    'outer: for i in 0..3 {
+        break 'missing //~ E0002
+    }
+    'lost: loop {
+        continue 'other //~ E0002
+    }
+    'same: loop {
+        'same: while false { //~ E0007
+            break 'same
+        }
+        break 'same
+    }
+    'captured: for i in 0..3 {
+        let f = || {
+            break 'captured //~ E0002
+        }
+        f()
+    }
+    'unrolled: for i in 0..3 {
+        comptime for j in 0..2 {
+            break 'unrolled //~ E0220
+        }
+        comptime for j in 0..2 {
+            continue 'unrolled //~ E0220
+        }
+    }
+    // A label of a loop inside the `comptime for` body is its own.
+    comptime for j in 0..2 {
+        'inner: while j < 0 {
+            break 'inner
+        }
+    }
+}

@@ -354,8 +354,8 @@ impl<'a> Checker<'a> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break
-            | K::Continue
+            | K::Break(_)
+            | K::Continue(_)
             | K::LayoutOf { .. } => {}
             K::Local(_) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) | K::Index(..) => {
                 let access = if mode == Mode::Move && !self.is_copy(&e.ty) { Access::Move } else { Access::Read };
@@ -555,6 +555,7 @@ impl<'a> Checker<'a> {
                 self.loop_block(body);
             }
             K::Loop(body) => self.loop_block(body),
+            K::Labeled(_, inner) => self.expr(inner, mode),
             K::ForRange { lo, hi, body, .. } => {
                 self.expr(lo, Mode::Use);
                 self.expr(hi, Mode::Use);
@@ -821,8 +822,8 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
         K::Field(base, _)
@@ -886,6 +887,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used_block(body, out);
         }
         K::Loop(body) => locals_used_block(body, out),
+        K::Labeled(_, inner) => locals_used(inner, out),
         K::ForRange { lo, hi, body, .. } => {
             locals_used(lo, out);
             locals_used(hi, out);
@@ -952,8 +954,8 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
         K::Field(base, _)
@@ -1021,6 +1023,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_block(body, stmt, last);
         }
         K::Loop(body) => uses_block(body, stmt, last),
+        K::Labeled(_, inner) => uses_expr(inner, stmt, last),
         K::ForRange { lo, hi, body, .. } => {
             uses_expr(lo, stmt, last);
             uses_expr(hi, stmt, last);

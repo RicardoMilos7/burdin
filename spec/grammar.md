@@ -61,6 +61,10 @@ immediately after a `.` token, a numeric literal is lexed as plain digits.
 
 **Char literals**: `'x'`, with escapes `\n \r \t \\ \' \0`. One Unicode scalar value.
 
+**Loop labels**: a quote, then an identifier, with no quote after the identifier, is a `LABEL` token (`'outer`). A quote
+that closes after one character or name is a character literal instead: `'a'` and `'_'` are chars, and `'a:` is a
+label (issue #275).
+
 **String literals**: `"..."` with escapes `\n \r \t \\ \" \0`, and raw newlines allowed inside. There is no interpolation in
 stage 0: `{` and `}` are ordinary characters.
 
@@ -88,7 +92,8 @@ There are no statement terminators. Each token records whether a line break come
 4. **Lists inside braces** (struct fields, enum variants, struct-literal fields, match arms) are separated by `,` or
    by a line break. A trailing separator is allowed. Interface methods and `extern` declarations follow one another
    with no separator, like top-level items. Lists inside `(...)`, `[...]` and `<...>` use commas only.
-5. `return` and `break` take a value only if one starts on the same line.
+5. `return` and `break` take a value only if one starts on the same line. A label after `break` or `continue` must start
+   on the same line too.
 
 ```
 let total = a +
@@ -352,8 +357,8 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
-              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue"
-              | InlineSnapshot ;
+              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" [ LABEL ] | "continue" [ LABEL ]
+              | LabeledExpr | InlineSnapshot ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 InlineSnapshot = "@" STRING ;                           (* no placeholders; only `assert_snapshot`'s second argument, E0172 (test-runner.md, SN4) *)
@@ -380,6 +385,7 @@ SelectBind    = "_" | [ "mut" ] IDENT ;
 LoopExpr      = "loop" Block ;
 WhileExpr     = "while" Expr Block ;
 ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)
+LabeledExpr   = LABEL ":" ( LoopExpr | WhileExpr | ForExpr ) ;   (* the label names the loop for `break LABEL` and `continue LABEL` (rule 8.9); any other body is E0001 *)
 ```
 
 A closure body is a single expression; a block is one of the expressions, so `|x| { ... }` is a closure whose body is
@@ -454,6 +460,11 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    the parameter the argument fills: no expression of the grammar starts with `IDENT ":"`, so the look-ahead is
    unambiguous. `f(x: 1)` is a named argument, while `f(P { x: 1 })` passes a struct literal and `f(a.b)` passes
    a path. The name is matched and checked in `burdin_sema` (`arguments.md`, AG4).
+9. **Loop labels** (`'outer: for ...`). `break 'outer` and `continue 'outer` name the nearest enclosing loop with that
+   label in the same function body: a closure starts with no loops, so it cannot name one outside it (E0002, the label
+   is not in scope there). A label no enclosing loop has is E0002, and a label that repeats the label of an enclosing
+   loop is E0007. An unlabeled `break` or `continue` still names the innermost loop, whatever its label. A label goes
+   only on a `while`, `loop`, or `for`; on any other expression it is E0001, and the expression is checked without it.
 
 ## 9. What the parser does not decide
 

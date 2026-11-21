@@ -95,6 +95,8 @@ struct SavedContext<'ctx, 'a> {
 }
 
 struct LoopTargets<'ctx> {
+    /// The label written before the loop, if any.
+    label: Option<String>,
     continue_bb: BasicBlock<'ctx>,
     break_bb: BasicBlock<'ctx>,
     /// The number of temporary frames open when the loop started; `break` and `continue` free the ones above.

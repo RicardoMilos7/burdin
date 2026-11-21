@@ -387,10 +387,14 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 
 ### When wanted
 
+<<<<<<< HEAD
 `TryFrom` and `try_from` have landed for user types and integer types (`spec/stdlib.md`, "Conversions", issue
 #274); the remaining items below are still wanted.
 
 `i128`/`u128`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
+=======
+`i128`/`u128`, `try_from`, `break` with a value, compound assignment, doc tests, `bench` blocks,
+>>>>>>> origin/main
 fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 

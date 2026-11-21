@@ -6,6 +6,7 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+<<<<<<< HEAD
 - `From` for the scalar pairs `as` converts exactly, and `v.into()`: `T.from(v)` and `as` use the same built-in
   conversion, and `into` converts to the type the context expects (`spec/stdlib.md`, "Numeric conversions"). `From<S>` is
   a bound: a generic function with `T: From<S>` can call `T.from(v)` and `v.into()`.
@@ -15,6 +16,15 @@ close-out checklist in `AGENTS.md`).
   several source types through `From` as well: a type with two `From` blocks of different sources was rejected with
   E0007, so an error enum with two `from` variants of different sources did not compile. `tests/m24_stdlib/try_from_*`
   covers the feature and its diagnostics.
+=======
+- Labeled loops (issue #275; `spec/grammar.md`, rule 8.9; `spec/memory-rules.md`, DR6 and CL8). A `while`, `loop`, or
+  `for` may carry a label, `'outer: for ...`, and `break 'outer` and `continue 'outer` leave or go on with it from
+  inside any loop nested in it; an unlabeled `break` or `continue` still names the innermost loop. A label no enclosing
+  loop has is E0002, a label that repeats an enclosing one is E0007, a label on anything but a loop is E0001, and a
+  labeled jump cannot leave a closure (E0002) or a `comptime for` body (E0220). A labeled jump drops the scopes it
+  leaves, innermost first. `tests/m02_basics/labeled_loops*.bd`, `labeled_loop_not_loop.bd`, and
+  `tests/m05_ownership/labeled_loop_moves.bd` cover it.
+>>>>>>> origin/main
 
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;

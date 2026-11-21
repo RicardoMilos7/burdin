@@ -72,3 +72,23 @@ fn main() {
         after_infinite_loop()
     }
 }
+
+// A labeled `break` from a nested loop leaves the labeled loop too, so the code after it runs; a loop whose only
+// exit is a `break` that names a loop outside it never completes (issue #275).
+fn after_labeled_break() {
+    'outer: loop {
+        loop {
+            break 'outer
+        }
+    }
+    println("reached")
+}
+
+fn after_labeled_infinite() {
+    'never: loop {
+        'inner: loop {
+            break 'inner
+        }
+    }
+    println("never") //~ L0009
+}
