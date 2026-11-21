@@ -511,7 +511,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
             Err(code) => return code,
         };
         if front.diags.has_errors() {
-            crate::report_errors("test", &target, &front.diags, &front.sources, &args.diagnostics);
+            crate::report_errors("test", &target, &front.diags, &front.sources, &args.diagnostics, None);
             return ExitCode::from(1);
         }
         let Some(program) = front.program else {

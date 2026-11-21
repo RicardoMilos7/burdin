@@ -1,0 +1,28 @@
+aes_key_7|invalid length: an AES key is 16, 24, or 32 bytes
+aes_ctr_iv_8|invalid nonce length: expected 16 bytes, got 8
+aes_cbc_iv_8|invalid nonce length: expected 16 bytes, got 8
+cbc_length|invalid length: a CBC ciphertext is a non-empty multiple of 16 bytes
+cbc_empty|invalid length: a CBC ciphertext is a non-empty multiple of 16 bytes
+cbc_padding|invalid padding
+gcm_nonce_8|invalid nonce length: expected 12 bytes, got 8
+gcm_short|invalid length: a sealed message is at least 16 bytes (the tag)
+gcm_tampered|authentication failed: the tag does not match
+chacha_key_31|invalid key length: expected 32 bytes, got 31
+chacha_nonce_13|invalid nonce length: expected 12 bytes, got 13
+chacha_aead_nonce_8|invalid nonce length: expected 12 bytes, got 8
+xchacha_nonce_12|invalid nonce length: expected 24 bytes, got 12
+chacha_open_short|invalid length: a sealed message is at least 16 bytes (the tag)
+chacha_open_tampered|authentication failed: the tag does not match
+poly1305_key_31|invalid key length: expected 32 bytes, got 31
+hkdf_too_long|invalid length: HKDF output longer than 255 times the digest size
+hkdf_longest|8160
+pbkdf2_zero|invalid input: PBKDF2 needs at least one iteration
+x25519_key_31|invalid key length: expected 32 bytes, got 31
+x25519_point_31|invalid length: an X25519 point is 32 bytes
+x25519_zero_point|invalid curve point
+x25519_public_31|invalid key length: expected 32 bytes, got 31
+ed25519_seed_31|invalid key length: expected 32 bytes, got 31
+ed25519_sign_seed_33|invalid key length: expected 32 bytes, got 33
+ed25519_verify_short_key|verify=false
+ed25519_verify_short_sig|verify=false
+ed25519_verify_zero_signature|verify=false

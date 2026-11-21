@@ -1236,7 +1236,7 @@ pub(crate) fn compile(
     let FrontEnd { loaded, files, sources, program, diags, script_inputs, rust_libs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
-        report_errors("compile", target, &diags, &sources, options.diagnostics);
+        report_errors("compile", target, &diags, &sources, options.diagnostics, None);
         return Err(ExitCode::from(1));
     }
     let mut program = program.expect("no errors means checking produced a program");
@@ -1502,14 +1502,24 @@ fn emit_program_cached(
     Ok(())
 }
 
+/// What `burdin check` adds to its JSON summary: the source files it read and the moment it started
+/// (`spec/check.md`, CK12).
+#[derive(Clone, Copy)]
+pub(crate) struct CheckStats {
+    pub(crate) files: usize,
+    pub(crate) started: std::time::Instant,
+}
+
 /// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
-/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error.
+/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error. `stats` is given by
+/// `burdin check`, whose JSON summary is the check summary (CK12) rather than the build's.
 pub(crate) fn report_errors(
     verb: &str,
     target: &Path,
     diags: &Diagnostics,
     sources: &SourceMap,
     diagnostics: &DiagnosticOptions,
+    stats: Option<CheckStats>,
 ) {
     let errors;
     let diags = if diagnostics.quiet {
@@ -1524,9 +1534,10 @@ pub(crate) fn report_errors(
     let total = rendered.total;
     let suffix = if total == 1 { "" } else { "s" };
     match options.format {
-        DiagnosticFormat::Json => {
-            eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
-        }
+        DiagnosticFormat::Json => match stats {
+            Some(stats) => eprint!("{}", check_summary_json(diags, rendered.shown, options.error_limit, stats)),
+            None => eprint!("{}", summary_json(total, rendered.shown, options.error_limit)),
+        },
         // A SARIF log is one document, so nothing may follow it.
         DiagnosticFormat::Sarif => {}
         _ => {
@@ -1546,13 +1557,13 @@ pub(crate) fn report_errors(
 
 /// Prints the warnings of a front end that found no errors; nothing when there are none. With `report_clean`, a
 /// SARIF log is written even when there is nothing to report, so a CI job always has a file to upload
-/// (`spec/diagnostics.md`, DG11).
+/// (`spec/diagnostics.md`, DG11). Returns how many diagnostics were printed, after the error limit.
 pub(crate) fn print_warnings(
     diags: &Diagnostics,
     sources: &SourceMap,
     diagnostics: &DiagnosticOptions,
     report_clean: bool,
-) {
+) -> usize {
     let render = render_options(diagnostics, std::io::stderr().is_terminal());
     let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
     if diagnostics.quiet {
@@ -1560,11 +1571,14 @@ pub(crate) fn print_warnings(
         if clean_log {
             eprint!("{}", errors_only(diags).render_with(sources, &render).text);
         }
-        return;
+        return 0;
     }
     if diags.has_warnings() || clean_log {
-        eprint!("{}", diags.render_with(sources, &render).text);
+        let rendered = diags.render_with(sources, &render);
+        eprint!("{}", rendered.text);
+        return rendered.shown;
     }
+    0
 }
 
 /// The errors among `diags`, in their order: what `-q` prints. The warnings are left out.
@@ -1693,6 +1707,21 @@ fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
     format!(
         "{{\"type\":\"summary\",\"version\":{},\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n",
         burdin_diag::JSON_VERSION
+    )
+}
+
+/// The last line of `burdin check --diagnostic-format=json`, printed on every run that reaches the checks, clean or
+/// not (`spec/check.md`, CK12): the error and warning counts, how many diagnostics were shown, the source files read,
+/// and the milliseconds the run took. `shown` and `limit` mean what they do in the build's summary.
+pub(crate) fn check_summary_json(diags: &Diagnostics, shown: usize, limit: Option<usize>, stats: CheckStats) -> String {
+    let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
+    let elapsed_ms = stats.started.elapsed().as_millis();
+    format!(
+        "{{\"type\":\"check-summary\",\"version\":{},\"errors\":{},\"warnings\":{},\"shown\":{shown},\"limit\":{limit},\"files\":{},\"elapsed_ms\":{elapsed_ms}}}\n",
+        burdin_diag::JSON_VERSION,
+        diags.error_count(),
+        diags.warning_count(),
+        stats.files,
     )
 }
 
@@ -2662,6 +2691,29 @@ mod tests {
     fn sarif_is_a_diagnostic_format() {
         assert_eq!(parse_format("sarif").unwrap(), DiagnosticFormat::Sarif);
         assert!(parse_format("xml").unwrap_err().contains("human, short, json, or sarif"));
+    }
+
+    #[test]
+    fn the_check_summary_counts_each_severity_and_keeps_the_field_order() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".to_string(), String::new());
+        let span = Span::new(file, 0, 0);
+        let mut diags = Diagnostics::default();
+        diags.error(burdin_diag::Code("E0003"), span, "one");
+        diags.error(burdin_diag::Code("E0003"), span, "two");
+        diags.warning(burdin_diag::Code("E0215"), span, "three");
+        let stats = CheckStats { files: 3, started: std::time::Instant::now() };
+        let line = check_summary_json(&diags, 2, Some(2), stats);
+        assert!(line.ends_with('\n'), "the summary is one line");
+        let prefix = format!(
+            "{{\"type\":\"check-summary\",\"version\":{},\"errors\":2,\"warnings\":1,\"shown\":2,\"limit\":2,\"files\":3,\"elapsed_ms\":",
+            burdin_diag::JSON_VERSION
+        );
+        assert!(line.starts_with(&prefix), "unexpected summary: {line}");
+        let elapsed = line[prefix.len()..].trim_end().trim_end_matches('}');
+        assert!(elapsed.parse::<u128>().is_ok(), "elapsed_ms is not a number: {elapsed:?}");
+        let clean = check_summary_json(&Diagnostics::default(), 0, None, stats);
+        assert!(clean.contains("\"limit\":null,\"files\":3,"), "a clean summary has no limit: {clean}");
     }
 
     #[test]

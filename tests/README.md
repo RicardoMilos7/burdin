@@ -49,6 +49,10 @@ tests/
                        `Serialize`/`Deserialize` derives (spec/serialization.md); `s3_serialize/json` and
                        `s3_serialize/toml` are the conformance cases of the `json` and `toml` packages, packages that
                        depend on them with `json = true` and `toml = true`
+  s3_http/             stage 3: the conformance case of the `http` package (`s3_http/client`, a package that depends on
+                       it with `http = true`), run against a scripted server in the same program (spec/http-client.md)
+  s3_crypto/           stage 3: the `crypto` package end to end (`s3_crypto/usage`, spec/crypto.md); its known-answer
+                       vectors are in `tests/crypto/` and run by `tests/check_crypto.py`
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by

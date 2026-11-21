@@ -1,0 +1,38 @@
+> GET http://example.test/ 
+  "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> GET http://example.test:8080/a?b=1 | Accept: text/html ; X-One: 1
+  "GET /a?b=1 HTTP/1.1\r\nHost: example.test:8080\r\nAccept: text/html\r\nX-One: 1\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "GET /a?b=1 HTTP/1.1\r\nHost: example.test:8080\r\nAccept: text/html\r\nX-One: 1\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> GET http://example.test/ | User-Agent: custom/1
+  "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: custom/1\r\n\r\n"
+  "GET / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: custom/1\r\nConnection: close\r\n\r\n"
+> GET http://example.test/ | Host: virtual.test
+  "GET / HTTP/1.1\r\nHost: virtual.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "GET / HTTP/1.1\r\nHost: virtual.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> POST http://example.test/items | Content-Type: text/plain | name=burdin
+  "POST /items HTTP/1.1\r\nHost: example.test\r\nContent-Type: text/plain\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 11\r\n\r\n"
+  "POST /items HTTP/1.1\r\nHost: example.test\r\nContent-Type: text/plain\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 11\r\nConnection: close\r\n\r\n"
+> POST http://example.test/empty
+  "POST /empty HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 0\r\n\r\n"
+  "POST /empty HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+> PUT http://example.test/doc | Content-Length: 99 ; Transfer-Encoding: chunked | stored
+  "PUT /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 6\r\n\r\n"
+  "PUT /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nContent-Length: 6\r\nConnection: close\r\n\r\n"
+> DELETE http://example.test/doc
+  "DELETE /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "DELETE /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> HEAD http://example.test/doc
+  "HEAD /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "HEAD /doc HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> GET http://example.test/ | Connection: keep-alive
+  "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: keep-alive\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: keep-alive\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+> GET http://example.test/a%20b?q=1
+  "GET /a%20b?q=1 HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "GET /a%20b?q=1 HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> BREW http://example.test/
+  "BREW / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\n\r\n"
+  "BREW / HTTP/1.1\r\nHost: example.test\r\nUser-Agent: burdin-http/0.1\r\nConnection: close\r\n\r\n"
+> GET ftp://example.test/
+  error: unsupported URL scheme 'ftp': only http is supported

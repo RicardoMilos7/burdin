@@ -1,0 +1,25 @@
+# framing | bytes per read | encoded body (HC8, HC9, HC10)
+length 5 | 100 | hello
+length 5 | 1 | hello
+length 5 | 2 | hello and more
+length 0 | 100 | 
+length 5 | 100 | hel
+until-close | 3 | until the end
+until-close | 100 | 
+chunked | 100 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+chunked | 1 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+chunked | 3 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+chunked | 100 | 0\r\n\r\n
+chunked | 100 | 5;ext=1\r\nhello\r\n0\r\n\r\n
+chunked | 100 | A\r\n0123456789\r\n0\r\n\r\n
+chunked | 100 | a\r\n0123456789\r\n0\r\n\r\n
+chunked | 100 | 3\r\nabc\r\n0\r\nSum: 3\r\nX-Two: 2\r\n\r\n
+chunked | 1 | 3\r\nabc\r\n0\r\nSum: 3\r\n\r\n
+chunked | 100 | zz\r\nhello\r\n0\r\n\r\n
+chunked | 100 | \r\n
+chunked | 100 | 5\r\nhelloXX0\r\n\r\n
+chunked | 100 | 5\r\nhel
+chunked | 100 | 5\r\nhello\r\n
+chunked | 100 | 5\r\nhello\r\n0\r\n
+chunked | 100 | FFFFFFFFFFFFFFFFF\r\n
+chunked | 100 | 3\r\nabc\r\n0\r\nbad trailer\r\n\r\n
