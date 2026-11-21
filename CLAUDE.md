@@ -262,7 +262,7 @@ docs/                     the user-facing error-code reference (checked by tests
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
-.github/workflows/        ci.yml (pull requests and main; each OS split into four parallel parts) and release.yml (tag, nightly schedule, or manual dry run)
+.github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, extension
                           methods, test runner, the query library, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts

@@ -3,14 +3,15 @@
 It does not compile anything. Usage: tests/check_ci.py
 
 This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #47):
-  * the linux, macos, and windows jobs, and every required step, are present;
+  * the linux, macos, and windows jobs are present, each split into many parallel matrix parts, and every
+    required step appears in each job;
   * Linux installs LLVM 21 from apt.llvm.org; macOS installs Homebrew's llvm@21 and points
     LLVM_SYS_211_PREFIX and PATH at it; Windows loads the MSVC environment, installs the official LLVM 21
     archive, and puts its DLL directory on PATH;
   * macOS runs on macos-latest (Apple Silicon) and Windows on windows-latest; every job checks the host target;
   * every job passes every milestone folder under tests/ (m01..., and the stage 2 folders s2_...) to the conformance
-    runner in both the debug and release profiles; the release step uses --release, and the runner skips tests
-    marked debug-only;
+    runner in both the debug and release profiles, whether the suite runs in one step or across several parts; the
+    release steps use --release, and the runner skips tests marked debug-only;
   * every job repeats the channel, shared-state, and I/O stress tests in both profiles (`--repeat`), because a lost
     wake-up or a race shows up in one run in many (issues #209, #220);
   * the Windows job also runs the suite with BURDIN_CC=cl;
@@ -18,7 +19,8 @@ This guards the invariants behind the CI jobs (issues #11, #12, #16, #17, #18, #
   * the Rust toolchain is pinned to an exact version with clippy and rustfmt, and CI installs and verifies
     that pin;
   * every job caches the cargo registry and target/ with a key built from the pinned toolchain and
-    Cargo.lock, and caches LLVM 21: the installed tree on Linux, the Homebrew bottle downloads on macOS;
+    Cargo.lock (all parts of one runner share it), and caches LLVM 21: the installed tree on Linux, the
+    Homebrew bottle downloads on macOS;
   * the compiler benchmarks exist and CI runs their smoke budgets;
   * every job runs the workspace unit tests and the front-end unit-test guard;
   * every job runs the checks for debug information, the code-generation optimizations, the build flags and
@@ -86,9 +88,10 @@ def require_command(job: str, block: str, command: str) -> None:
         add_problem(f"ci.yml: {job} job: missing step: {command}")
 
 
-def profile_conformance(block: str, profile: str) -> str:
+def profile_conformance(block: str, profile: str) -> list:
     # The BURDIN_CC step runs a subset, so it is never the full-suite step for either profile, and neither is
-    # the repeated stress step, which runs a few tests many times.
+    # the repeated stress step, which runs a few tests many times. The suite may be split across several
+    # parallel parts, so every matching step counts toward the coverage below.
     steps = [
         line
         for line in block.split("\n")
@@ -98,26 +101,26 @@ def profile_conformance(block: str, profile: str) -> str:
         and "--sanitize" not in line
     ]
     if profile == "release":
-        matching = [line for line in steps if "--release" in line]
-    else:
-        matching = [line for line in steps if "--release" not in line]
-    return matching[-1] if matching else ""
+        return [line for line in steps if "--release" in line]
+    return [line for line in steps if "--release" not in line]
 
 
 def check_conformance(job: str, block: str, profile: str) -> None:
     label = "release-profile" if profile == "release" else "debug-profile"
-    conformance = profile_conformance(block, profile)
-    if not conformance:
+    steps = profile_conformance(block, profile)
+    if not steps:
         add_problem(f"ci.yml: {job} job: no {label} conformance step (tests/run_tests.py)")
         return
+    conformance = "\n".join(steps)
+    covered = {word for line in steps for word in line.split()}
     for directory in sorted(harness.TESTS.glob("m[0-9]*_*")):
         if not directory.is_dir():
             continue
         name = directory.name.split("_", 1)[0]
-        if not re.search(rf"(^| ){re.escape(name)}( |$)", conformance):
+        if name not in covered:
             add_problem(f"ci.yml: {job} job: {label} conformance step omits {name} ({directory.name})")
     for directory in sorted(harness.TESTS.glob("s[0-9]_*")):
-        if directory.is_dir() and not re.search(rf"(^| ){re.escape(directory.name)}( |$)", conformance):
+        if directory.is_dir() and directory.name not in covered:
             add_problem(f"ci.yml: {job} job: {label} conformance step omits {directory.name}")
     for word in conformance.split():
         if re.match(r"m[0-9]*", word) and word.startswith("m"):
@@ -389,7 +392,7 @@ else:
         name = directory.name.split("_", 1)[0]
         if directory.is_dir() and not re.search(rf"(^| ){re.escape(name)}( |$)", asan_steps[0]):
             add_problem(f"ci.yml: linux job: the `--sanitize address` step omits {name}")
-if not re.search(r"if: matrix\.part == 'debug' && \(github\.event_name == 'schedule'", linux):
+if not re.search(r"if: matrix\.part == 'debug-1' && \(github\.event_name == 'schedule'", linux):
     add_problem("ci.yml: linux job: the `--sanitize address` step is not limited to the schedule")
 if "libclang-rt-21-dev" not in linux:
     add_problem("ci.yml: linux job: does not install libclang-rt-21-dev (the sanitizer runtimes)")

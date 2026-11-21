@@ -76,7 +76,7 @@ host lacks is a usage error that names the host and this table.
 `address`, `leak`, and `thread` link with clang and its compiler-rt runtimes (`libclang-rt-21-dev` on Debian and
 Ubuntu, included in Homebrew `llvm@21`); `undefined` is checks in the generated code and needs no runtime.
 `tests/check_sanitizers.py` runs one program per bug class from `tests/sanitize/` in every CI job, checking the reports
-where the host has the sanitizer and the usage error where it does not, and the scheduled `sanitize` part of the
+where the host has the sanitizer and the usage error where it does not, and the scheduled sanitizer step in the
 `linux` job runs m01-m24 under `--sanitize=address`. The Windows MSVC toolchain has an AddressSanitizer of its own,
 which Burdin does not use yet.
 
