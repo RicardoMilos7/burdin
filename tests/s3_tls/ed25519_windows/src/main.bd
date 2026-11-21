@@ -1,0 +1,25 @@
+//@ run
+//@ skip-platform: linux macos
+//> ed25519 key: loaded
+//> server ed25519: unsupported: Ed25519 private keys cannot be used by SChannel on Windows
+
+// Ed25519 on Windows (spec/tls.md, TLS1a): SChannel cannot import an Ed25519 private key, so the key still loads, as
+// bytes, but a server configuration that takes it is refused with `TlsError.Unsupported`. `tests/s3_tls/ed25519` checks
+// the same files on the OpenSSL backends, where the key is accepted. The certificate and key are copies of the fixtures
+// under `tests/s3_tls/conformance/src/certs`.
+
+use tls.{PrivateKey, ServerConfig}
+
+const ED25519: str = embed("certs/ed25519.pem")
+const ED25519_KEY: str = embed("certs/ed25519.key")
+
+fn main() {
+    match PrivateKey.from_pem(ED25519_KEY) {
+        Ok(_) => println("ed25519 key: loaded"),
+        Err(failure) => println("ed25519 key: {}", failure),
+    }
+    match ServerConfig.from_pem(ED25519, ED25519_KEY) {
+        Ok(_) => println("server ed25519: ok"),
+        Err(failure) => println("server ed25519: {}", failure),
+    }
+}

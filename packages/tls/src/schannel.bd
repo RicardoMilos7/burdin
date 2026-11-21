@@ -1,0 +1,2190 @@
+// Hand-written bindings to SChannel, Crypt32, and CNG, and the helpers over them: the Windows backend of the `tls`
+// package (spec/tls.md, TLS1 and TLS1a). Nothing here is safe: every call is `unsafe`, and the safe layer is the rest
+// of the package, which reaches this file only through `comptime if target.os() == target.Os.Windows`.
+//
+// SChannel, like OpenSSL's memory BIOs, never sees a socket: `InitializeSecurityContext`, `AcceptSecurityContext`,
+// `EncryptMessage`, and `DecryptMessage` work on byte buffers the caller owns, so the engine of `engine.bd` moves the
+// bytes. Every Windows type is declared by its C layout (`repr(C)`), and a handle is a `CPtr<u8>` or a `usize`. The
+// state of a connection and of a configuration lives in memory this file allocates with `calloc`, so the existing
+// `Engine` and configuration structs carry it in the pointer field that holds OpenSSL's object on the other platforms.
+
+use errors.TlsError
+
+// ----- constants (Windows SDK 10.0.26100.0: sspi.h, schannel.h, wincrypt.h, winerror.h) -------------------------------
+
+const SECPKG_CRED_INBOUND: u32 = 1
+const SECPKG_CRED_OUTBOUND: u32 = 2
+
+const SECBUFFER_EMPTY: u32 = 0
+const SECBUFFER_DATA: u32 = 1
+const SECBUFFER_TOKEN: u32 = 2
+const SECBUFFER_EXTRA: u32 = 5
+const SECBUFFER_STREAM_TRAILER: u32 = 6
+const SECBUFFER_STREAM_HEADER: u32 = 7
+const SECBUFFER_ALERT: u32 = 17
+const SECBUFFER_APPLICATION_PROTOCOLS: u32 = 18
+
+const SECPKG_ATTR_STREAM_SIZES: u32 = 4
+const SECPKG_ATTR_APPLICATION_PROTOCOL: u32 = 35
+const SECPKG_ATTR_REMOTE_CERT_CONTEXT: u32 = 0x53
+const SECPKG_ATTR_CONNECTION_INFO: u32 = 0x5a
+const SECPKG_ATTR_CIPHER_INFO: u32 = 0x64
+
+const SCH_CREDENTIALS_VERSION: u32 = 5
+const SCHANNEL_SHUTDOWN: u32 = 1
+const SCH_CRED_NO_SYSTEM_MAPPER: u32 = 0x2
+const SCH_CRED_MEMORY_STORE_CERT: u32 = 0x10000
+const SCH_CRED_MANUAL_CRED_VALIDATION: u32 = 0x8
+const SCH_CRED_NO_DEFAULT_CREDS: u32 = 0x10
+const SP_PROT_TLS1_2_SERVER: u32 = 0x400
+const SP_PROT_TLS1_2_CLIENT: u32 = 0x800
+const SP_PROT_TLS1_3_SERVER: u32 = 0x1000
+const SP_PROT_TLS1_3_CLIENT: u32 = 0x2000
+
+const ISC_REQ_MUTUAL_AUTH: u32 = 0x2
+const ISC_REQ_REPLAY_DETECT: u32 = 0x4
+const ISC_REQ_SEQUENCE_DETECT: u32 = 0x8
+const ISC_REQ_CONFIDENTIALITY: u32 = 0x10
+const ISC_REQ_USE_SUPPLIED_CREDS: u32 = 0x80
+const ISC_REQ_ALLOCATE_MEMORY: u32 = 0x100
+const ISC_REQ_EXTENDED_ERROR: u32 = 0x4000
+const ISC_REQ_STREAM: u32 = 0x8000
+const ISC_REQ_MANUAL_CRED_VALIDATION: u32 = 0x80000
+const ASC_REQ_MUTUAL_AUTH: u32 = 0x2
+const ASC_REQ_REPLAY_DETECT: u32 = 0x4
+const ASC_REQ_SEQUENCE_DETECT: u32 = 0x8
+const ASC_REQ_CONFIDENTIALITY: u32 = 0x10
+const ASC_REQ_ALLOCATE_MEMORY: u32 = 0x100
+const ASC_REQ_EXTENDED_ERROR: u32 = 0x8000
+const ASC_REQ_STREAM: u32 = 0x10000
+
+// SECURITY_STATUS values (winerror.h).
+const SEC_E_OK: u32 = 0
+const SEC_I_CONTINUE_NEEDED: u32 = 0x00090312
+const SEC_I_CONTEXT_EXPIRED: u32 = 0x00090317
+const SEC_I_INCOMPLETE_CREDENTIALS: u32 = 0x00090320
+const SEC_I_RENEGOTIATE: u32 = 0x00090321
+const SEC_E_INSUFFICIENT_MEMORY: u32 = 0x80090300
+const SEC_E_INVALID_TOKEN: u32 = 0x80090308
+const SEC_E_LOGON_DENIED: u32 = 0x8009030C
+const SEC_E_NO_CREDENTIALS: u32 = 0x8009030E
+const SEC_E_MESSAGE_ALTERED: u32 = 0x8009030F
+const SEC_E_INCOMPLETE_MESSAGE: u32 = 0x80090318
+const SEC_E_WRONG_PRINCIPAL: u32 = 0x80090322
+const SEC_E_UNTRUSTED_ROOT: u32 = 0x80090325
+const SEC_E_ILLEGAL_MESSAGE: u32 = 0x80090326
+const SEC_E_CERT_UNKNOWN: u32 = 0x80090327
+const SEC_E_CERT_EXPIRED: u32 = 0x80090328
+const SEC_E_DECRYPT_FAILURE: u32 = 0x80090330
+const SEC_E_ALGORITHM_MISMATCH: u32 = 0x80090331
+const SEC_E_APPLICATION_PROTOCOL_MISMATCH: u32 = 0x80090367
+const SEC_E_NO_AUTHENTICATING_AUTHORITY: u32 = 0x80090311
+const SEC_E_UNSUPPORTED_FUNCTION: u32 = 0x80090302
+const SEC_E_INTERNAL_ERROR: u32 = 0x80090304
+const SEC_E_UNKNOWN_CREDENTIALS: u32 = 0x8009030D
+const SEC_E_CONTEXT_EXPIRED: u32 = 0x80090317
+
+// Certificate verification results (winerror.h).
+const CERT_E_EXPIRED: u32 = 0x800B0101
+const CERT_E_VALIDITYPERIODNESTING: u32 = 0x800B0102
+const CERT_E_UNTRUSTEDROOT: u32 = 0x800B0109
+const CERT_E_CHAINING: u32 = 0x800B010A
+const CERT_E_WRONG_USAGE: u32 = 0x800B0110
+const CERT_E_CN_NO_MATCH: u32 = 0x800B010F
+const TRUST_E_CERT_SIGNATURE: u32 = 0x80096004
+const CERT_E_REVOKED: u32 = 0x800B010C
+const CERT_E_UNTRUSTEDTESTROOT: u32 = 0x800B010D
+
+const CERT_TRUST_IS_NOT_TIME_VALID: u32 = 0x1
+const CERT_TRUST_IS_NOT_SIGNATURE_VALID: u32 = 0x8
+const CERT_TRUST_IS_UNTRUSTED_ROOT: u32 = 0x20
+const CERT_TRUST_IS_PARTIAL_CHAIN: u32 = 0x10000
+const CERT_TRUST_IS_SELF_SIGNED: u32 = 0x8
+
+const X509_ASN_ENCODING: u32 = 1
+const CERT_STORE_ADD_ALWAYS: u32 = 4
+const CERT_KEY_PROV_INFO_PROP_ID: u32 = 2
+const NCRYPTBUFFER_PKCS_KEY_NAME: u32 = 45
+const NCRYPT_SILENT_FLAG: u32 = 0x40
+const CERT_SHA256_HASH_PROP_ID: u32 = 107
+const CERT_X500_NAME_STR: u32 = 3
+const CERT_NAME_STR_CRLF_FLAG: u32 = 0x08000000
+const CERT_NAME_STR_NO_PLUS_FLAG: u32 = 0x20000000
+const CERT_NAME_STR_REVERSE_FLAG: u32 = 0x02000000
+const AUTHTYPE_CLIENT: u32 = 1
+const AUTHTYPE_SERVER: u32 = 2
+
+const BCRYPT_PAD_PKCS1: u32 = 2
+
+// ----- the structs, by their C layout ---------------------------------------------------------------------------------
+
+/// `SecHandle` (`CredHandle`, `CtxtHandle`).
+struct SecHandle repr(C) {
+    lower: usize,
+    upper: usize,
+}
+
+struct SecBuffer repr(C) {
+    size: u32,
+    kind: u32,
+    data: CPtr<u8>,
+}
+
+struct SecBufferDesc repr(C) {
+    version: u32,
+    count: u32,
+    buffers: CPtr<SecBuffer>,
+}
+
+/// `TLS_PARAMETERS`: here only the protocols to refuse.
+struct TlsParameters repr(C) {
+    alpn_count: u32,
+    alpn_ids: CPtr<u8>,
+    disabled_protocols: u32,
+    disabled_crypto_count: u32,
+    disabled_crypto: CPtr<u8>,
+    flags: u32,
+}
+
+/// `SCH_CREDENTIALS`, the credential structure that enables TLS 1.3.
+struct SchCredentials repr(C) {
+    version: u32,
+    cred_format: u32,
+    count: u32,
+    certs: CPtr<CPtr<u8>>,
+    root_store: CPtr<u8>,
+    mappers: u32,
+    mapper_list: CPtr<u8>,
+    lifespan: u32,
+    flags: u32,
+    parameter_count: u32,
+    parameters: CPtr<TlsParameters>,
+}
+
+/// `CERT_CONTEXT`.
+struct CertContext repr(C) {
+    encoding: u32,
+    encoded: CPtr<u8>,
+    encoded_size: u32,
+    info: CPtr<CertInfo>,
+    store: CPtr<u8>,
+}
+
+/// `CRYPT_INTEGER_BLOB` and the other `{ cbData, pbData }` blobs.
+struct Blob repr(C) {
+    size: u32,
+    data: CPtr<u8>,
+}
+
+struct BitBlob repr(C) {
+    size: u32,
+    data: CPtr<u8>,
+    unused: u32,
+}
+
+struct AlgId repr(C) {
+    oid: CPtr<u8>,
+    params: Blob,
+}
+
+/// `CERT_PUBLIC_KEY_INFO`.
+struct PublicKeyInfo repr(C) {
+    algorithm: AlgId,
+    key: BitBlob,
+}
+
+/// `CERT_INFO`.
+struct CertInfo repr(C) {
+    version: u32,
+    serial: Blob,
+    signature: AlgId,
+    issuer: Blob,
+    not_before_low: u32,
+    not_before_high: u32,
+    not_after_low: u32,
+    not_after_high: u32,
+    subject: Blob,
+    key_info: PublicKeyInfo,
+}
+
+/// `CRYPT_KEY_PROV_INFO`: names the CNG key behind a certificate, which is how SChannel finds it.
+struct KeyProvInfo repr(C) {
+    container: CPtr<u16>,
+    provider: CPtr<u16>,
+    provider_type: u32,
+    flags: u32,
+    param_count: u32,
+    params: CPtr<u8>,
+    key_spec: u32,
+}
+
+struct FileTime repr(C) {
+    low: u32,
+    high: u32,
+}
+
+struct SystemTime repr(C) {
+    year: u16,
+    month: u16,
+    weekday: u16,
+    day: u16,
+    hour: u16,
+    minute: u16,
+    second: u16,
+    millis: u16,
+}
+
+struct ChainEngineConfig repr(C) {
+    size: u32,
+    restricted_root: CPtr<u8>,
+    restricted_trust: CPtr<u8>,
+    restricted_other: CPtr<u8>,
+    additional_count: u32,
+    additional: CPtr<CPtr<u8>>,
+    flags: u32,
+    url_timeout: u32,
+    max_cached: u32,
+    cycle_modulus: u32,
+    exclusive_root: CPtr<u8>,
+    exclusive_trusted: CPtr<u8>,
+    exclusive_flags: u32,
+}
+
+struct ChainPara repr(C) {
+    size: u32,
+    match_type: u32,
+    usage_count: u32,
+    usage_list: CPtr<u8>,
+}
+
+struct ChainPolicyPara repr(C) {
+    size: u32,
+    flags: u32,
+    extra: CPtr<u8>,
+}
+
+struct SslPolicyPara repr(C) {
+    size: u32,
+    auth_type: u32,
+    checks: u32,
+    server_name: CPtr<u16>,
+}
+
+struct ChainPolicyStatus repr(C) {
+    size: u32,
+    code: u32,
+    chain_index: i32,
+    element_index: i32,
+    extra: CPtr<u8>,
+}
+
+/// The start of `CERT_CHAIN_CONTEXT`.
+struct ChainContext repr(C) {
+    size: u32,
+    error_status: u32,
+    info_status: u32,
+    count: u32,
+    chains: CPtr<CPtr<SimpleChain>>,
+}
+
+/// The start of `CERT_SIMPLE_CHAIN`.
+struct SimpleChain repr(C) {
+    size: u32,
+    error_status: u32,
+    info_status: u32,
+    count: u32,
+    elements: CPtr<CPtr<ChainElement>>,
+}
+
+/// The start of `CERT_CHAIN_ELEMENT`.
+struct ChainElement repr(C) {
+    size: u32,
+    cert: CPtr<CertContext>,
+    error_status: u32,
+    info_status: u32,
+}
+
+struct StreamSizes repr(C) {
+    header: u32,
+    trailer: u32,
+    max_message: u32,
+    buffers: u32,
+    block_size: u32,
+}
+
+// ----- the C functions --------------------------------------------------------------------------------------------------
+
+extern "C" {
+    // The C runtime.
+    fn calloc(count: usize, size: usize): CPtr<u8>
+    fn realloc(pointer: CPtr<u8>, size: usize): CPtr<u8>
+    fn free(pointer: CPtr<u8>)
+    fn memcpy(dest: CPtr<u8>, source: CPtr<u8>, size: usize): CPtr<u8>
+    fn memmove(dest: CPtr<u8>, source: CPtr<u8>, size: usize): CPtr<u8>
+
+    // secur32.dll
+    fn AcquireCredentialsHandleA(
+        principal: CPtr<u8>,
+        package_name: CPtr<u8>,
+        usage: u32,
+        logon_id: CPtr<u8>,
+        auth_data: CPtr<u8>,
+        get_key: CPtr<u8>,
+        get_key_arg: CPtr<u8>,
+        credential: CPtr<SecHandle>,
+        expiry: CPtr<i64>,
+    ): u32
+    fn FreeCredentialsHandle(credential: CPtr<SecHandle>): u32
+    fn InitializeSecurityContextA(
+        credential: CPtr<SecHandle>,
+        context: CPtr<SecHandle>,
+        target: CPtr<u8>,
+        flags: u32,
+        reserved1: u32,
+        data_representation: u32,
+        input: CPtr<SecBufferDesc>,
+        reserved2: u32,
+        new_context: CPtr<SecHandle>,
+        output: CPtr<SecBufferDesc>,
+        attributes: CPtr<u32>,
+        expiry: CPtr<i64>,
+    ): u32
+    fn AcceptSecurityContext(
+        credential: CPtr<SecHandle>,
+        context: CPtr<SecHandle>,
+        input: CPtr<SecBufferDesc>,
+        flags: u32,
+        data_representation: u32,
+        new_context: CPtr<SecHandle>,
+        output: CPtr<SecBufferDesc>,
+        attributes: CPtr<u32>,
+        expiry: CPtr<i64>,
+    ): u32
+    fn DeleteSecurityContext(context: CPtr<SecHandle>): u32
+    fn QueryContextAttributesA(context: CPtr<SecHandle>, attribute: u32, buffer: CPtr<u8>): u32
+    fn ApplyControlToken(context: CPtr<SecHandle>, input: CPtr<SecBufferDesc>): u32
+    fn FreeContextBuffer(buffer: CPtr<u8>): u32
+    fn EncryptMessage(context: CPtr<SecHandle>, quality: u32, message: CPtr<SecBufferDesc>, sequence: u32): u32
+    fn DecryptMessage(context: CPtr<SecHandle>, message: CPtr<SecBufferDesc>, sequence: u32, quality: CPtr<u32>): u32
+
+    // crypt32.dll
+    fn CertCreateCertificateContext(encoding: u32, data: CPtr<u8>, size: u32): CPtr<CertContext>
+    fn CertFreeCertificateContext(cert: CPtr<CertContext>): i32
+    fn CertDuplicateCertificateContext(cert: CPtr<CertContext>): CPtr<CertContext>
+    fn CertOpenStore(provider: CPtr<u8>, encoding: u32, crypt_provider: usize, flags: u32, parameter: CPtr<u8>): CPtr<
+        u8,
+    >
+    fn CertCloseStore(store: CPtr<u8>, flags: u32): i32
+    fn CertAddCertificateContextToStore(
+        store: CPtr<u8>,
+        cert: CPtr<CertContext>,
+        disposition: u32,
+        out: CPtr<CPtr<CertContext>>,
+    ): i32
+    fn CertEnumCertificatesInStore(store: CPtr<u8>, previous: CPtr<CertContext>): CPtr<CertContext>
+    fn CertCreateCertificateChainEngine(config: CPtr<ChainEngineConfig>, engine: CPtr<CPtr<u8>>): i32
+    fn CertFreeCertificateChainEngine(engine: CPtr<u8>)
+    fn CertGetCertificateChain(
+        engine: CPtr<u8>,
+        cert: CPtr<CertContext>,
+        time: CPtr<u8>,
+        additional_store: CPtr<u8>,
+        para: CPtr<ChainPara>,
+        flags: u32,
+        reserved: CPtr<u8>,
+        chain: CPtr<CPtr<ChainContext>>,
+    ): i32
+    fn CertFreeCertificateChain(chain: CPtr<ChainContext>)
+    fn CertVerifyCertificateChainPolicy(
+        policy: usize,
+        chain: CPtr<ChainContext>,
+        para: CPtr<ChainPolicyPara>,
+        status: CPtr<ChainPolicyStatus>,
+    ): i32
+    fn CertSetCertificateContextProperty(cert: CPtr<CertContext>, property: u32, flags: u32, data: CPtr<u8>): i32
+    fn CertGetCertificateContextProperty(cert: CPtr<CertContext>, property: u32, data: CPtr<u8>, size: CPtr<u32>): i32
+    fn CertNameToStrA(encoding: u32, name: CPtr<Blob>, kind: u32, buffer: CPtr<u8>, size: u32): u32
+    fn CertVerifyTimeValidity(time: CPtr<u8>, info: CPtr<CertInfo>): i32
+    fn CryptImportPublicKeyInfoEx2(
+        encoding: u32,
+        info: CPtr<PublicKeyInfo>,
+        flags: u32,
+        aux: CPtr<u8>,
+        key: CPtr<CPtr<u8>>,
+    ): i32
+
+    // ncrypt.dll
+    fn NCryptOpenStorageProvider(provider: CPtr<usize>, name: CPtr<u16>, flags: u32): i32
+    fn NCryptImportKey(
+        provider: usize,
+        import_key: usize,
+        blob_type: CPtr<u16>,
+        parameters: CPtr<u8>,
+        key: CPtr<usize>,
+        data: CPtr<u8>,
+        size: u32,
+        flags: u32,
+    ): i32
+    fn NCryptFreeObject(handle: usize): i32
+    fn NCryptDeleteKey(key: usize, flags: u32): i32
+    fn NCryptSignHash(
+        key: usize,
+        padding: CPtr<u8>,
+        hash: CPtr<u8>,
+        hash_size: u32,
+        signature: CPtr<u8>,
+        signature_size: u32,
+        result_size: CPtr<u32>,
+        flags: u32,
+    ): i32
+
+    // bcrypt.dll
+    fn BCryptVerifySignature(
+        key: CPtr<u8>,
+        padding: CPtr<u8>,
+        hash: CPtr<u8>,
+        hash_size: u32,
+        signature: CPtr<u8>,
+        signature_size: u32,
+        flags: u32,
+    ): i32
+    fn BCryptDestroyKey(key: CPtr<u8>): i32
+    fn BCryptGenRandom(algorithm: usize, buffer: CPtr<u8>, size: u32, flags: u32): i32
+
+    // kernel32.dll
+    fn GetLastError(): u32
+    fn FileTimeToSystemTime(file_time: CPtr<FileTime>, system_time: CPtr<SystemTime>): i32
+}
+
+// ----- small helpers --------------------------------------------------------------------------------------------------
+
+/// `text` as UTF-16 with a terminating zero, for the `W` parameters of CNG and Crypt32.
+fn wide(text: str): List<u16> {
+    let mut out = List<u16>.new()
+    for c in text.chars() {
+        let value = c as u32
+        if value < 0x10000 {
+            out.push(value as u16)
+        } else {
+            let rest = value - 0x10000
+            out.push((0xD800 + (rest >> 10)) as u16)
+            out.push((0xDC00 + (rest & 0x3FF)) as u16)
+        }
+    }
+    out.push(0)
+    out
+}
+
+/// A pointer to the first byte of `data`, which must not be empty.
+unsafe fn bytes_at(data: [u8]): CPtr<u8> {
+    (&data[0]) as CPtr<u8>
+}
+
+/// A growable byte buffer in C memory. The engine keeps three per connection: the peer's bytes not yet consumed, the
+/// bytes waiting to be sent, and decrypted bytes not yet returned.
+struct Buf repr(C) {
+    data: CPtr<u8>,
+    len: usize,
+    cap: usize,
+}
+
+unsafe fn buf_reserve(buf: CPtr<Buf>, extra: usize): bool {
+    let need = (*buf).len + extra
+    if need <= (*buf).cap {
+        return true
+    }
+    let first: usize = 4096
+    let mut cap = if (*buf).cap == 0 { first } else { (*buf).cap }
+    while cap < need {
+        cap = cap * 2
+    }
+    let grown = realloc((*buf).data, cap)
+    if grown.is_null() {
+        return false
+    }
+    (*buf).data = grown
+    (*buf).cap = cap
+    true
+}
+
+/// Appends `count` bytes at `source`.
+unsafe fn buf_append(buf: CPtr<Buf>, source: CPtr<u8>, count: usize): bool {
+    if count == 0 {
+        return true
+    }
+    if !buf_reserve(buf, count) {
+        return false
+    }
+    let _ = memcpy((*buf).data + (*buf).len, source, count)
+    (*buf).len = (*buf).len + count
+    true
+}
+
+/// Drops the first `count` bytes.
+unsafe fn buf_consume(buf: CPtr<Buf>, count: usize) {
+    if count >= (*buf).len {
+        (*buf).len = 0
+        return
+    }
+    let _ = memmove((*buf).data, (*buf).data + count, (*buf).len - count)
+    (*buf).len = (*buf).len - count
+}
+
+/// Zeroes and frees the storage.
+unsafe fn buf_free(buf: CPtr<Buf>) {
+    if !(*buf).data.is_null() {
+        for i in 0..(*buf).cap {
+            *((*buf).data + i) = 0
+        }
+        free((*buf).data)
+    }
+    (*buf).data = CPtr.null()
+    (*buf).len = 0
+    (*buf).cap = 0
+}
+
+/// The bytes at `source` as a list.
+unsafe fn copy_bytes(source: CPtr<u8>, count: usize): List<u8> {
+    let mut out = List<u8>.new()
+    for i in 0..count {
+        out.push(*(source + i))
+    }
+    out
+}
+
+// ----- PEM and DER -----------------------------------------------------------------------------------------------------
+
+/// The decoded body of every `-----BEGIN <label>-----` block of `pem`, in order. A block whose body is not base64
+/// ends the scan, as OpenSSL's reader stops at the first block it cannot read.
+fn pem_blocks(pem: str, label: str): List<List<u8>> {
+    let begin = format("-----BEGIN {}-----", label)
+    let end = format("-----END {}-----", label)
+    let mut found = List<List<u8>>.new()
+    let mut at: usize = 0
+    loop {
+        let rest = pem[at..pem.len()]
+        let start = rest.find_str(begin.as_str())
+        if start.is_none() {
+            break
+        }
+        let body_from = start.unwrap() + begin.len()
+        let after = rest[body_from..rest.len()]
+        let stop = after.find_str(end.as_str())
+        if stop.is_none() {
+            break
+        }
+        let body = after[0..stop.unwrap()]
+        let mut clean = String.new()
+        for c in body.chars() {
+            if !c.is_whitespace() {
+                clean.push(c)
+            }
+        }
+        match base64_decode(clean.as_str()) {
+            Ok(bytes) => found.push(bytes),
+            Err(_) => break,
+        }
+        at = at + body_from + stop.unwrap() + end.len()
+    }
+    found
+}
+
+/// The tag, the offset of the content, and the content length of the DER element at `at`, or `None` when it is
+/// truncated or its length does not fit.
+fn der_element(data: [u8], at: usize): Option<(u8, usize, usize)> {
+    if at + 2 > data.len() {
+        return None
+    }
+    let tag = data[at]
+    let first = data[at + 1] as usize
+    if first < 128 {
+        if at + 2 + first > data.len() {
+            return None
+        }
+        return Some((tag, at + 2, first))
+    }
+    let count = first - 128
+    if count == 0 || count > 3 || at + 2 + count > data.len() {
+        return None
+    }
+    let mut length: usize = 0
+    for i in 0..count {
+        length = length * 256 + (data[at + 2 + i] as usize)
+    }
+    let start = at + 2 + count
+    if start + length > data.len() {
+        return None
+    }
+    Some((tag, start, length))
+}
+
+/// One DER element: `tag`, the length, and `content`.
+fn der_tlv(tag: u8, content: [u8]): List<u8> {
+    let mut out = List<u8>.new()
+    out.push(tag)
+    let n = content.len()
+    if n < 128 {
+        out.push(n as u8)
+    } else if n < 256 {
+        out.push(0x81)
+        out.push(n as u8)
+    } else if n < 65536 {
+        out.push(0x82)
+        out.push((n >> 8) as u8)
+        out.push((n & 0xFF) as u8)
+    } else {
+        out.push(0x83)
+        out.push((n >> 16) as u8)
+        out.push(((n >> 8) & 0xFF) as u8)
+        out.push((n & 0xFF) as u8)
+    }
+    out.extend_from_slice(content)
+    out
+}
+
+/// A PKCS#8 `PrivateKeyInfo` around `inner` (a PKCS#1 or SEC1 key) with the algorithm identifier `algorithm`.
+fn wrap_pkcs8(algorithm: [u8], inner: [u8]): List<u8> {
+    let mut body = List<u8>.new()
+    body.push(0x02)
+    body.push(0x01)
+    body.push(0x00)
+    body.extend_from_slice(algorithm)
+    let octets = der_tlv(0x04, inner)
+    body.extend_from_slice(octets[0..octets.len()])
+    der_tlv(0x30, body[0..body.len()])
+}
+
+/// The PKCS#8 form of a PKCS#1 `RSAPrivateKey`.
+fn rsa_to_pkcs8(rsa: [u8]): List<u8> {
+    // AlgorithmIdentifier { rsaEncryption (1.2.840.113549.1.1.1), NULL }
+    let algorithm = hex_decode("300d06092a864886f70d0101010500").unwrap()
+    wrap_pkcs8(algorithm[0..algorithm.len()], rsa)
+}
+
+/// The PKCS#8 form of a SEC1 `ECPrivateKey`, whose `[0]` parameters name the curve. `None` when the key does not name
+/// its curve.
+fn ec_to_pkcs8(sec1: [u8]): Option<List<u8>> {
+    let outer = der_element(sec1, 0)
+    if outer.is_none() {
+        return None
+    }
+    let outer = outer.unwrap()
+    if outer.0 != 0x30 {
+        return None
+    }
+    let mut at = outer.1
+    let end = outer.1 + outer.2
+    while at < end {
+        let item = der_element(sec1, at)
+        if item.is_none() {
+            return None
+        }
+        let item = item.unwrap()
+        if item.0 == 0xA0 {
+            // [0] { OBJECT IDENTIFIER curve }
+            let curve = sec1[item.1..(item.1 + item.2)]
+            let mut params = hex_decode("06072a8648ce3d0201").unwrap()
+            params.extend_from_slice(curve)
+            let algorithm = der_tlv(0x30, params[0..params.len()])
+            return Some(wrap_pkcs8(algorithm[0..algorithm.len()], sec1))
+        }
+        at = item.1 + item.2
+    }
+    None
+}
+
+// ----- certificates ---------------------------------------------------------------------------------------------------
+
+/// A certificate context made from its DER encoding, or null when the bytes are not a certificate. The caller owns it.
+unsafe fn cert_from_der(data: [u8]): CPtr<CertContext> {
+    CertCreateCertificateContext(X509_ASN_ENCODING, bytes_at(data), data.len() as u32)
+}
+
+/// Every certificate of a PEM text, in order, as certificate contexts the caller owns.
+unsafe fn certs_from_pem(pem: str): List<CPtr<CertContext>> {
+    let mut found = List<CPtr<CertContext>>.new()
+    let blocks = pem_blocks(pem, "CERTIFICATE")
+    for block in blocks.iter() {
+        if block.len() == 0 {
+            break
+        }
+        let cert = cert_from_der(block[0..block.len()])
+        if cert.is_null() {
+            break
+        }
+        found.push(cert)
+    }
+    found
+}
+
+/// The DER encoding of a certificate.
+unsafe fn cert_der(cert: CPtr<CertContext>): List<u8> {
+    copy_bytes((*cert).encoded, (*cert).encoded_size as usize)
+}
+
+/// A distinguished name in OpenSSL's one-line form: `/C=US/O=Example/CN=localhost`.
+unsafe fn dn_text(size: u32, data: CPtr<u8>): String {
+    let mut blob = Blob { size: size, data: data }
+    let flags = CERT_X500_NAME_STR | CERT_NAME_STR_CRLF_FLAG | CERT_NAME_STR_NO_PLUS_FLAG | CERT_NAME_STR_REVERSE_FLAG
+    let needed = CertNameToStrA(X509_ASN_ENCODING, &mut blob as CPtr<Blob>, flags, CPtr.null(), 0)
+    if needed <= 1 {
+        return String.new()
+    }
+    let mut buffer = List<u8>.new()
+    for _ in 0..(needed as usize) {
+        buffer.push(0)
+    }
+    let written = CertNameToStrA(
+        X509_ASN_ENCODING,
+        &mut blob as CPtr<Blob>,
+        flags,
+        (&mut buffer[0]) as CPtr<u8>,
+        needed,
+    )
+    if written <= 1 {
+        return String.new()
+    }
+    let text = String.from_utf8_lossy(buffer[0..((written - 1) as usize)])
+    let mut out = String.new()
+    out.push('/')
+    for c in text.chars() {
+        let value = c as u32
+        if value == 13 {
+            continue
+        }
+        if value == 10 {
+            out.push('/')
+        } else {
+            out.push(c)
+        }
+    }
+    out
+}
+
+unsafe fn cert_subject(cert: CPtr<CertContext>): String {
+    dn_text((*(*cert).info).subject.size, (*(*cert).info).subject.data)
+}
+
+unsafe fn cert_issuer(cert: CPtr<CertContext>): String {
+    dn_text((*(*cert).info).issuer.size, (*(*cert).info).issuer.data)
+}
+
+fn month_name(month: u16): str {
+    match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        else => "Dec",
+    }
+}
+
+/// A `FILETIME` as OpenSSL prints an `ASN1_TIME`: `Jan  1 00:00:00 2020 GMT`.
+unsafe fn filetime_text(low: u32, high: u32): String {
+    let mut file_time = FileTime { low: low, high: high }
+    let mut system = SystemTime { year: 0, month: 0, weekday: 0, day: 0, hour: 0, minute: 0, second: 0, millis: 0 }
+    if FileTimeToSystemTime(&mut file_time as CPtr<FileTime>, &mut system as CPtr<SystemTime>) == 0 {
+        return String.new()
+    }
+    format(
+        "{} {:2} {:02}:{:02}:{:02} {} GMT",
+        month_name(system.month),
+        system.day,
+        system.hour,
+        system.minute,
+        system.second,
+        system.year,
+    )
+}
+
+unsafe fn cert_not_before(cert: CPtr<CertContext>): String {
+    filetime_text((*(*cert).info).not_before_low, (*(*cert).info).not_before_high)
+}
+
+unsafe fn cert_not_after(cert: CPtr<CertContext>): String {
+    filetime_text((*(*cert).info).not_after_low, (*(*cert).info).not_after_high)
+}
+
+/// The SHA-256 of the DER encoding as 64 lower-case hex digits (Crypt32 keeps it as a property of the context).
+unsafe fn cert_fingerprint(cert: CPtr<CertContext>): String {
+    let mut digest = List<u8>.new()
+    for _ in 0..32 {
+        digest.push(0)
+    }
+    let mut size: u32 = 32
+    let status = CertGetCertificateContextProperty(
+        cert,
+        CERT_SHA256_HASH_PROP_ID,
+        (&mut digest[0]) as CPtr<u8>,
+        &mut size as CPtr<u32>,
+    )
+    if status == 0 {
+        return String.new()
+    }
+    digest.to_hex()
+}
+
+// ----- private keys ---------------------------------------------------------------------------------------------------
+
+/// What a `PrivateKey` owns on Windows: the PKCS#8 encoding of the key, in C memory. A configuration imports it into
+/// CNG when it is built, so a key may be dropped while a configuration that used it lives.
+struct KeyBlock repr(C) {
+    der: CPtr<u8>,
+    len: usize,
+}
+
+fn copy_slice(data: [u8]): List<u8> {
+    let mut out = List<u8>.new()
+    out.extend_from_slice(data)
+    out
+}
+
+/// The PKCS#8 encoding of a key given as DER in any of the three common forms: PKCS#8 as it is, a PKCS#1 RSA key, or a
+/// SEC1 EC key that names its curve. `None` when the bytes are none of them.
+fn key_to_pkcs8(der: [u8]): Option<List<u8>> {
+    let outer = der_element(der, 0)
+    if outer.is_none() {
+        return None
+    }
+    let outer = outer.unwrap()
+    if outer.0 != 0x30 || outer.1 + outer.2 != der.len() {
+        return None
+    }
+    let version = der_element(der, outer.1)
+    if version.is_none() {
+        return None
+    }
+    let version = version.unwrap()
+    if version.0 != 0x02 {
+        return None
+    }
+    let next = der_element(der, version.1 + version.2)
+    if next.is_none() {
+        return None
+    }
+    let next = next.unwrap()
+    if next.0 == 0x30 {
+        return Some(copy_slice(der))
+    }
+    if next.0 == 0x02 {
+        return Some(rsa_to_pkcs8(der))
+    }
+    if next.0 == 0x04 {
+        return ec_to_pkcs8(der)
+    }
+    None
+}
+
+/// Whether PKCS#8 `der` is an Ed25519 key (the algorithm identifier holds OID 1.3.101.112). CNG has no Ed25519
+/// signatures, so SChannel cannot use such a key.
+fn is_ed25519(der: [u8]): bool {
+    let mut at: usize = 0
+    while at + 5 <= der.len() {
+        if der[at] == 0x06 && der[at + 1] == 0x03 && der[at + 2] == 0x2B && der[at + 3] == 0x65 && der[at + 4] == 0x70 {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
+/// Imports PKCS#8 `der` into CNG. With a `name` (UTF-16, zero-terminated) the key is persisted in the user's key store
+/// under that name; with a null name it is ephemeral. Returns the provider and key handles, or `None` when CNG refuses
+/// the key. The caller frees both with `NCryptFreeObject` (or deletes a persisted key with `NCryptDeleteKey`).
+unsafe fn import_key(der: CPtr<u8>, len: usize, name: CPtr<u16>, name_units: usize): Option<(usize, usize)> {
+    let mut provider: usize = 0
+    let provider_name = wide("Microsoft Software Key Storage Provider")
+    if NCryptOpenStorageProvider(&mut provider as CPtr<usize>, (&provider_name[0]) as CPtr<u16>, 0) != 0 {
+        return None
+    }
+    let mut key: usize = 0
+    let blob_type = wide("PKCS8_PRIVATEKEY")
+    let mut name_buffer = SecBuffer {
+        size: (name_units * 2) as u32,
+        kind: NCRYPTBUFFER_PKCS_KEY_NAME,
+        data: name as CPtr<u8>,
+    }
+    let mut parameters = SecBufferDesc { version: 0, count: 1, buffers: &mut name_buffer as CPtr<SecBuffer> }
+    let list: CPtr<u8> = if name.is_null() { CPtr.null() } else { (&mut parameters) as CPtr<u8> }
+    let status = NCryptImportKey(
+        provider,
+        0,
+        (&blob_type[0]) as CPtr<u16>,
+        list,
+        &mut key as CPtr<usize>,
+        der,
+        len as u32,
+        0,
+    )
+    if status != 0 {
+        let _ = NCryptFreeObject(provider)
+        return None
+    }
+    Some((provider, key))
+}
+
+/// Whether `key` signs what `cert`'s public key verifies: a fixed digest is signed with the key (RSA PKCS#1 v1.5 with
+/// SHA-256, or ECDSA) and checked with the certificate's key. A key that does not belong to the certificate, or a
+/// certificate with a key type this does not know, fails.
+unsafe fn key_matches(cert: CPtr<CertContext>, key: usize): bool {
+    let mut info = PublicKeyInfo {
+        algorithm: AlgId {
+            oid: (*(*cert).info).key_info.algorithm.oid,
+            params: Blob {
+                size: (*(*cert).info).key_info.algorithm.params.size,
+                data: (*(*cert).info).key_info.algorithm.params.data,
+            },
+        },
+        key: BitBlob {
+            size: (*(*cert).info).key_info.key.size,
+            data: (*(*cert).info).key_info.key.data,
+            unused: (*(*cert).info).key_info.key.unused,
+        },
+    }
+    let mut public: CPtr<u8> = CPtr.null()
+    let imported = CryptImportPublicKeyInfoEx2(
+        X509_ASN_ENCODING,
+        &mut info as CPtr<PublicKeyInfo>,
+        0,
+        CPtr.null(),
+        &mut public as CPtr<CPtr<u8>>,
+    )
+    if imported == 0 {
+        return false
+    }
+    let mut digest = List<u8>.new()
+    for i in 0..32 {
+        digest.push((i * 7 + 1) as u8)
+    }
+    let digest_ptr = (&mut digest[0]) as CPtr<u8>
+    // `BCRYPT_PKCS1_PADDING_INFO { LPCWSTR pszAlgId }` for RSA; ECDSA takes none.
+    let sha256 = wide("SHA256")
+    let mut padding_alg: CPtr<u16> = (&sha256[0]) as CPtr<u16>
+    let oid = CStr.to_string(info.algorithm.oid as CPtr<CChar>)
+    let rsa = oid.as_str() == "1.2.840.113549.1.1.1"
+    let padding: CPtr<u8> = if rsa { (&mut padding_alg) as CPtr<u8> } else { CPtr.null() }
+    let flags: u32 = if rsa { BCRYPT_PAD_PKCS1 } else { 0 }
+    let mut needed: u32 = 0
+    let mut ok = false
+    let sized = NCryptSignHash(key, padding, digest_ptr, 32, CPtr.null(), 0, &mut needed as CPtr<u32>, flags)
+    if sized == 0 && needed > 0 {
+        let mut signature = List<u8>.new()
+        for _ in 0..(needed as usize) {
+            signature.push(0)
+        }
+        let signature_ptr = (&mut signature[0]) as CPtr<u8>
+        let mut written: u32 = 0
+        let signed = NCryptSignHash(
+            key,
+            padding,
+            digest_ptr,
+            32,
+            signature_ptr,
+            needed,
+            &mut written as CPtr<u32>,
+            flags,
+        )
+        if signed == 0 {
+            ok = BCryptVerifySignature(public, padding, digest_ptr, 32, signature_ptr, written, flags) == 0
+        }
+    }
+    let _ = BCryptDestroyKey(public)
+    ok
+}
+
+// partD marker
+
+// ----- configurations ---------------------------------------------------------------------------------------------------
+
+// How a client decides whether to trust the server's chain.
+/// The Windows root store (the default).
+const MODE_SYSTEM: u32 = 0
+/// Exactly the roots the program added.
+const MODE_ROOTS: u32 = 1
+/// Either the Windows root store or the roots the program added.
+const MODE_BOTH: u32 = 2
+/// No check (`insecure_skip_verify`).
+const MODE_SKIP: u32 = 3
+
+/// What a configuration is on Windows: the settings the builder methods change, and the Crypt32 and CNG objects they
+/// make. It is allocated with `calloc` and reached through the `ctx` pointer of `ClientConfig` and `ServerConfig`. A
+/// connection reads it only while its handshake runs.
+struct WinConfig repr(C) {
+    server: u32,
+    /// 0 is TLS 1.2 and 1 is TLS 1.3.
+    min_version: u32,
+    max_version: u32,
+    mode: u32,
+    /// A server that requires a client certificate.
+    require_client: u32,
+    /// The roots the program added, in a memory store, and a chain engine whose only trusted roots they are.
+    roots: CPtr<u8>,
+    engine: CPtr<u8>,
+    /// The certificate (and the intermediates around it) this side presents, with its CNG key attached.
+    chain_store: CPtr<u8>,
+    identity: CPtr<CertContext>,
+    provider: usize,
+    key: usize,
+    /// The ALPN protocols in wire form.
+    alpn: CPtr<u8>,
+    alpn_len: usize,
+}
+
+unsafe fn config_new(server: bool): CPtr<WinConfig> {
+    let cfg = calloc(1, WinConfig.size()) as CPtr<WinConfig>
+    if cfg.is_null() {
+        return cfg
+    }
+    (*cfg).server = if server { 1 } else { 0 }
+    (*cfg).min_version = 0
+    (*cfg).max_version = 1
+    (*cfg).mode = MODE_SYSTEM
+    cfg
+}
+
+unsafe fn config_free_identity(cfg: CPtr<WinConfig>) {
+    if !(*cfg).identity.is_null() {
+        let _ = CertFreeCertificateContext((*cfg).identity)
+        (*cfg).identity = CPtr.null()
+    }
+    if !(*cfg).chain_store.is_null() {
+        let _ = CertCloseStore((*cfg).chain_store, 0)
+        (*cfg).chain_store = CPtr.null()
+    }
+    if (*cfg).key != 0 {
+        // The key is persisted under a name of ours: delete it (this also frees the handle).
+        let _ = NCryptDeleteKey((*cfg).key, 0)
+        (*cfg).key = 0
+    }
+    if (*cfg).provider != 0 {
+        let _ = NCryptFreeObject((*cfg).provider)
+        (*cfg).provider = 0
+    }
+}
+
+unsafe fn config_free(cfg: CPtr<WinConfig>) {
+    if cfg.is_null() {
+        return
+    }
+    config_free_identity(cfg)
+    if !(*cfg).engine.is_null() {
+        CertFreeCertificateChainEngine((*cfg).engine)
+    }
+    if !(*cfg).roots.is_null() {
+        let _ = CertCloseStore((*cfg).roots, 0)
+    }
+    if !(*cfg).alpn.is_null() {
+        free((*cfg).alpn)
+    }
+    free(cfg as CPtr<u8>)
+}
+
+/// Sets the lowest (`lowest`) or highest allowed version. Returns false when that would leave no version.
+unsafe fn config_set_version(cfg: CPtr<WinConfig>, lowest: bool, version: u32): bool {
+    if lowest {
+        if version > (*cfg).max_version {
+            return false
+        }
+        (*cfg).min_version = version
+    } else {
+        if version < (*cfg).min_version {
+            return false
+        }
+        (*cfg).max_version = version
+    }
+    true
+}
+
+/// Makes the roots the configuration trusts: `roots` (certificate contexts), and the Windows store when `system`.
+/// Returns false when Crypt32 cannot build the store.
+unsafe fn config_set_trust(cfg: CPtr<WinConfig>, system: bool, roots: List<CPtr<CertContext>>): bool {
+    if !(*cfg).engine.is_null() {
+        CertFreeCertificateChainEngine((*cfg).engine)
+        (*cfg).engine = CPtr.null()
+    }
+    if !(*cfg).roots.is_null() {
+        let _ = CertCloseStore((*cfg).roots, 0)
+        (*cfg).roots = CPtr.null()
+    }
+    if system && roots.is_empty() {
+        (*cfg).mode = MODE_SYSTEM
+        return true
+    }
+    let store = CertOpenStore(2 as CPtr<u8>, 0, 0, 0, CPtr.null())
+    if store.is_null() {
+        return false
+    }
+    for i in 0..roots.len() {
+        let added = CertAddCertificateContextToStore(store, roots[i], CERT_STORE_ADD_ALWAYS, CPtr.null())
+        if added == 0 {
+            let _ = CertCloseStore(store, 0)
+            return false
+        }
+    }
+    let mut engine_config = ChainEngineConfig {
+        size: ChainEngineConfig.size() as u32,
+        restricted_root: CPtr.null(),
+        restricted_trust: CPtr.null(),
+        restricted_other: CPtr.null(),
+        additional_count: 0,
+        additional: CPtr.null(),
+        flags: 0,
+        url_timeout: 0,
+        max_cached: 0,
+        cycle_modulus: 0,
+        // The only roots this engine trusts. (`hRestrictedRoot` would only narrow the system's roots.)
+        exclusive_root: store,
+        exclusive_trusted: CPtr.null(),
+        exclusive_flags: 0,
+    }
+    let mut engine: CPtr<u8> = CPtr.null()
+    if CertCreateCertificateChainEngine(&mut engine_config as CPtr<ChainEngineConfig>, &mut engine as CPtr<CPtr<u8>>) ==
+        0 {
+        let _ = CertCloseStore(store, 0)
+        return false
+    }
+    (*cfg).roots = store
+    (*cfg).engine = engine
+    (*cfg).mode = if system { MODE_BOTH } else { MODE_ROOTS }
+    true
+}
+
+unsafe fn config_set_alpn(cfg: CPtr<WinConfig>, wire: [u8]): bool {
+    if !(*cfg).alpn.is_null() {
+        free((*cfg).alpn)
+        (*cfg).alpn = CPtr.null()
+        (*cfg).alpn_len = 0
+    }
+    if wire.len() == 0 {
+        return true
+    }
+    let copy = calloc(1, wire.len())
+    if copy.is_null() {
+        return false
+    }
+    let _ = memcpy(copy, bytes_at(wire), wire.len())
+    (*cfg).alpn = copy
+    (*cfg).alpn_len = wire.len()
+    true
+}
+
+/// Installs a certificate chain (leaf first, as certificate contexts) and the key behind `block`. The chain is copied
+/// into a store of its own. SChannel finds a certificate's private key by the key's name, so the key is imported into
+/// the user's CNG key store under a random name, the certificate is told that name, and the key is deleted again when
+/// the configuration is dropped. The pair is checked before it is accepted: `KeyMismatch`, or a `BadCertificate` or
+/// `BadKey` that says what failed.
+unsafe fn config_set_identity(
+    cfg: CPtr<WinConfig>,
+    chain: List<CPtr<CertContext>>,
+    block: CPtr<KeyBlock>,
+): Result<(), TlsError> {
+    if chain.is_empty() {
+        return Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
+    }
+    let mut random = List<u8>.new()
+    for _ in 0..16 {
+        random.push(0)
+    }
+    if BCryptGenRandom(0, (&mut random[0]) as CPtr<u8>, 16, 2) != 0 {
+        return Err(TlsError.BadKey("cannot make a name for the key".to_string()))
+    }
+    let name = wide(format("burdin-tls-{}", random.to_hex()).as_str())
+    let imported = import_key((*block).der, (*block).len, (&name[0]) as CPtr<u16>, name.len())
+    if imported.is_none() {
+        if is_ed25519(copy_bytes((*block).der, (*block).len)[0..(*block).len]) {
+            return Err(TlsError.Unsupported("Ed25519 private keys cannot be used by SChannel on Windows".to_string()))
+        }
+        return Err(TlsError.BadKey("the key cannot be used by the system".to_string()))
+    }
+    let (provider, key) = imported.unwrap()
+    if !key_matches(chain[0], key) {
+        let _ = NCryptDeleteKey(key, 0)
+        let _ = NCryptFreeObject(provider)
+        return Err(TlsError.KeyMismatch)
+    }
+    let store = CertOpenStore(2 as CPtr<u8>, 0, 0, 0, CPtr.null())
+    if store.is_null() {
+        let _ = NCryptDeleteKey(key, 0)
+        let _ = NCryptFreeObject(provider)
+        return Err(TlsError.BadCertificate("cannot make a certificate store".to_string()))
+    }
+    let mut leaf: CPtr<CertContext> = CPtr.null()
+    let mut at: usize = chain.len()
+    while at > 0 {
+        at = at - 1
+        let mut added: CPtr<CertContext> = CPtr.null()
+        let status = CertAddCertificateContextToStore(
+            store,
+            chain[at],
+            CERT_STORE_ADD_ALWAYS,
+            &mut added as CPtr<CPtr<CertContext>>,
+        )
+        if status == 0 {
+            let _ = CertCloseStore(store, 0)
+            let _ = NCryptDeleteKey(key, 0)
+            let _ = NCryptFreeObject(provider)
+            return Err(TlsError.BadCertificate("cannot use a certificate of the chain".to_string()))
+        }
+        if at == 0 {
+            leaf = added
+        } else {
+            let _ = CertFreeCertificateContext(added)
+        }
+    }
+    let provider_name = wide("Microsoft Software Key Storage Provider")
+    let mut info = KeyProvInfo {
+        container: (&name[0]) as CPtr<u16>,
+        provider: (&provider_name[0]) as CPtr<u16>,
+        provider_type: 0,
+        flags: NCRYPT_SILENT_FLAG,
+        param_count: 0,
+        params: CPtr.null(),
+        key_spec: 0,
+    }
+    let attached = CertSetCertificateContextProperty(leaf, CERT_KEY_PROV_INFO_PROP_ID, 0, (&mut info) as CPtr<u8>)
+    if attached == 0 {
+        let _ = CertFreeCertificateContext(leaf)
+        let _ = CertCloseStore(store, 0)
+        let _ = NCryptDeleteKey(key, 0)
+        let _ = NCryptFreeObject(provider)
+        return Err(TlsError.BadKey("the key cannot be attached to the certificate".to_string()))
+    }
+    config_free_identity(cfg)
+    (*cfg).chain_store = store
+    (*cfg).identity = leaf
+    (*cfg).provider = provider
+    (*cfg).key = key
+    Ok(())
+}
+
+// ----- verifying a peer's certificate ---------------------------------------------------------------------------------
+
+/// OpenSSL's text for what a failed verification found, for the chain below. `chain` is the chain Crypt32 built.
+unsafe fn chain_length(chain: CPtr<ChainContext>): u32 {
+    if (*chain).count == 0 {
+        return 0
+    }
+    let simple = *((*chain).chains)
+    (*simple).count
+}
+
+/// Builds the chain of `cert` with `engine` (null for the system's) and applies the SSL policy for `auth`
+/// (`AUTHTYPE_SERVER`, naming `host`, or `AUTHTYPE_CLIENT`). The messages are OpenSSL's, so a program sees the same
+/// text on every platform.
+unsafe fn check_chain(engine: CPtr<u8>, cert: CPtr<CertContext>, host: str, auth: u32): Result<(), TlsError> {
+    let mut para = ChainPara { size: ChainPara.size() as u32, match_type: 0, usage_count: 0, usage_list: CPtr.null() }
+    let mut chain: CPtr<ChainContext> = CPtr.null()
+    let built = CertGetCertificateChain(
+        engine,
+        cert,
+        CPtr.null(),
+        (*cert).store,
+        &mut para as CPtr<ChainPara>,
+        0,
+        CPtr.null(),
+        &mut chain as CPtr<CPtr<ChainContext>>,
+    )
+    if built == 0 {
+        return Err(TlsError.CertificateInvalid("unable to build the certificate chain".to_string()))
+    }
+    let name = wide(host)
+    let mut extra = SslPolicyPara {
+        size: SslPolicyPara.size() as u32,
+        auth_type: auth,
+        checks: 0,
+        server_name: if auth == AUTHTYPE_SERVER { (&name[0]) as CPtr<u16> } else { CPtr.null() },
+    }
+    let mut policy = ChainPolicyPara {
+        size: ChainPolicyPara.size() as u32,
+        flags: 0,
+        extra: (&mut extra) as CPtr<u8>,
+    }
+    let mut status = ChainPolicyStatus {
+        size: ChainPolicyStatus.size() as u32,
+        code: 0,
+        chain_index: 0,
+        element_index: 0,
+        extra: CPtr.null(),
+    }
+    let verified = CertVerifyCertificateChainPolicy(
+        4,
+        chain,
+        &mut policy as CPtr<ChainPolicyPara>,
+        &mut status as CPtr<ChainPolicyStatus>,
+    )
+    let elements = chain_length(chain)
+    let chain_status = (*chain).error_status
+    CertFreeCertificateChain(chain)
+    if verified == 0 {
+        return Err(TlsError.CertificateInvalid("unable to verify the certificate chain".to_string()))
+    }
+    let code = status.code
+    if code == 0 {
+        return Ok(())
+    }
+    if code == CERT_E_UNTRUSTEDROOT && (chain_status & CERT_TRUST_IS_PARTIAL_CHAIN) != 0 {
+        // The chain stops below a root nobody supplied: OpenSSL's "unable to get local issuer certificate".
+        return Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
+    }
+    if code == CERT_E_CN_NO_MATCH {
+        return Err(TlsError.HostnameMismatch(host.to_string()))
+    }
+    if code == CERT_E_EXPIRED {
+        // Before the first day of validity or after the last.
+        if CertVerifyTimeValidity(CPtr.null(), (*cert).info) < 0 {
+            return Err(TlsError.CertificateInvalid("certificate is not yet valid".to_string()))
+        }
+        return Err(TlsError.CertificateInvalid("certificate has expired".to_string()))
+    }
+    if code == CERT_E_UNTRUSTEDROOT {
+        if elements <= 1 {
+            return Err(TlsError.CertificateInvalid("self-signed certificate".to_string()))
+        }
+        return Err(TlsError.CertificateInvalid("self-signed certificate in certificate chain".to_string()))
+    }
+    if code == CERT_E_CHAINING {
+        return Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
+    }
+    if code == TRUST_E_CERT_SIGNATURE {
+        return Err(TlsError.CertificateInvalid("certificate signature failure".to_string()))
+    }
+    if code == CERT_E_WRONG_USAGE {
+        return Err(TlsError.CertificateInvalid("unsuitable certificate purpose".to_string()))
+    }
+    if code == CERT_E_REVOKED {
+        return Err(TlsError.CertificateInvalid("certificate revoked".to_string()))
+    }
+    Err(TlsError.CertificateInvalid(format("unable to verify the certificate (status 0x{:08x})", code)))
+}
+
+/// Checks the certificate a peer presented. A client (`auth` is `AUTHTYPE_SERVER`) follows its configuration's trust: the
+/// Windows store, the roots it added, or either; a server checking a client's certificate (`AUTHTYPE_CLIENT`) uses the
+/// roots it was given. With both kinds of root, a chain that verifies against either is accepted, and a failure is
+/// reported from the Windows store.
+unsafe fn verify_peer(cfg: CPtr<WinConfig>, cert: CPtr<CertContext>, host: str, auth: u32): Result<(), TlsError> {
+    let mode = (*cfg).mode
+    if mode == MODE_SYSTEM {
+        return check_chain(CPtr.null(), cert, host, auth)
+    }
+    if mode == MODE_ROOTS {
+        return check_chain((*cfg).engine, cert, host, auth)
+    }
+    // MODE_BOTH
+    match check_chain((*cfg).engine, cert, host, auth) {
+        Ok(()) => Ok(()),
+        Err(_) => check_chain(CPtr.null(), cert, host, auth),
+    }
+}
+
+// ----- a connection ---------------------------------------------------------------------------------------------------
+
+/// What `win_handshake`, `win_read`, and `win_write` ask the caller to do next. The engine turns these into its `Step`.
+const NEXT_DONE: u32 = 0
+const NEXT_DATA: u32 = 1
+const NEXT_NEED_INPUT: u32 = 2
+const NEXT_RETRY: u32 = 3
+const NEXT_EOF: u32 = 4
+
+/// One TLS connection on Windows, allocated with `calloc` and reached through the `ssl` pointer of `Engine`. The three
+/// `Buf`s are `bufs[0]` (the peer's bytes not yet consumed), `bufs[1]` (bytes waiting to be sent), and `bufs[2]`
+/// (decrypted bytes not yet returned). `handles[0]` is the credential and `handles[1]` the security context.
+/// `buffers` and `descs` are the argument blocks of the SSPI calls, kept here so their addresses are stable.
+struct WinConn repr(C) {
+    cfg: CPtr<WinConfig>,
+    server: u32,
+    skip: u32,
+    require_client: u32,
+    verify: u32,
+    have_cred: u32,
+    have_ctx: u32,
+    done: u32,
+    validated: u32,
+    use_supplied: u32,
+    shut: u32,
+    sni_done: u32,
+    renegotiating: u32,
+    header: u32,
+    trailer: u32,
+    max_message: u32,
+    record_cap: usize,
+    record: CPtr<u8>,
+    bufs: CPtr<Buf>,
+    handles: CPtr<SecHandle>,
+    buffers: CPtr<SecBuffer>,
+    descs: CPtr<SecBufferDesc>,
+}
+
+unsafe fn conn_free(c: CPtr<WinConn>) {
+    if c.is_null() {
+        return
+    }
+    if (*c).have_ctx != 0 {
+        let _ = DeleteSecurityContext((*c).handles + 1)
+    }
+    if (*c).have_cred != 0 {
+        let _ = FreeCredentialsHandle((*c).handles)
+    }
+    if !(*c).bufs.is_null() {
+        buf_free((*c).bufs)
+        buf_free((*c).bufs + 1)
+        buf_free((*c).bufs + 2)
+        free((*c).bufs as CPtr<u8>)
+    }
+    if !(*c).record.is_null() {
+        free((*c).record)
+    }
+    if !(*c).handles.is_null() {
+        free((*c).handles as CPtr<u8>)
+    }
+    if !(*c).buffers.is_null() {
+        free((*c).buffers as CPtr<u8>)
+    }
+    if !(*c).descs.is_null() {
+        free((*c).descs as CPtr<u8>)
+    }
+    free(c as CPtr<u8>)
+}
+
+/// A readable reason for a failed SChannel status.
+fn status_text(status: u32): String {
+    if status == SEC_E_ALGORITHM_MISMATCH {
+        return "no protocol version or cipher suite in common".to_string()
+    }
+    if status == SEC_E_ILLEGAL_MESSAGE || status == SEC_E_INVALID_TOKEN {
+        return "the peer sent a message that is not valid TLS".to_string()
+    }
+    if status == SEC_E_DECRYPT_FAILURE {
+        return "a record could not be decrypted".to_string()
+    }
+    if status == SEC_E_MESSAGE_ALTERED {
+        return "a record was altered".to_string()
+    }
+    if status == SEC_E_NO_CREDENTIALS || status == SEC_E_UNKNOWN_CREDENTIALS {
+        return "the certificate or its private key cannot be used".to_string()
+    }
+    if status == SEC_E_NO_AUTHENTICATING_AUTHORITY {
+        return "no authority could be reached".to_string()
+    }
+    if status == SEC_E_APPLICATION_PROTOCOL_MISMATCH {
+        return "no application protocol in common".to_string()
+    }
+    if status == SEC_E_CERT_UNKNOWN {
+        return "the peer rejected the certificate".to_string()
+    }
+    if status == SEC_E_CERT_EXPIRED {
+        return "the peer found a certificate expired".to_string()
+    }
+    if status == SEC_E_UNSUPPORTED_FUNCTION {
+        return "the request is not supported".to_string()
+    }
+    format("SChannel status 0x{:08x}", status)
+}
+
+/// A connection over `cfg`: a client or a server, with its credentials acquired. The configuration may be dropped
+/// afterwards only once the handshake is over (the stream finishes the handshake inside `connect` and `accept`).
+unsafe fn win_new(cfg: CPtr<WinConfig>, server: bool): Result<CPtr<WinConn>, TlsError> {
+    let c = calloc(1, WinConn.size()) as CPtr<WinConn>
+    if c.is_null() {
+        return Err(TlsError.Config("out of memory".to_string()))
+    }
+    (*c).cfg = cfg
+    (*c).server = if server { 1 } else { 0 }
+    (*c).skip = if !server && (*cfg).mode == MODE_SKIP { 1 } else { 0 }
+    (*c).require_client = (*cfg).require_client
+    (*c).bufs = calloc(3, Buf.size()) as CPtr<Buf>
+    (*c).handles = calloc(2, SecHandle.size()) as CPtr<SecHandle>
+    (*c).buffers = calloc(8, SecBuffer.size()) as CPtr<SecBuffer>
+    (*c).descs = calloc(2, SecBufferDesc.size()) as CPtr<SecBufferDesc>
+    if (*c).bufs.is_null() || (*c).handles.is_null() || (*c).buffers.is_null() || (*c).descs.is_null() {
+        conn_free(c)
+        return Err(TlsError.Config("out of memory".to_string()))
+    }
+    let lowest = (*cfg).min_version
+    let highest = (*cfg).max_version
+    let mut protocols: u32 = 0
+    if lowest == 0 {
+        protocols = protocols | (if server { SP_PROT_TLS1_2_SERVER } else { SP_PROT_TLS1_2_CLIENT })
+    }
+    if highest >= 1 {
+        protocols = protocols | (if server { SP_PROT_TLS1_3_SERVER } else { SP_PROT_TLS1_3_CLIENT })
+    }
+    let mut identity: CPtr<CertContext> = (*cfg).identity
+    let have_identity = !identity.is_null()
+    let mut flags: u32 = SCH_CRED_MANUAL_CRED_VALIDATION
+    if server {
+        flags = flags | SCH_CRED_NO_SYSTEM_MAPPER | SCH_CRED_MEMORY_STORE_CERT
+    } else if !have_identity {
+        flags = flags | SCH_CRED_NO_DEFAULT_CREDS
+    }
+    // `SCH_CREDENTIALS` names the protocols to refuse, so refuse every one that is not allowed.
+    let mut parameters = TlsParameters {
+        alpn_count: 0,
+        alpn_ids: CPtr.null(),
+        disabled_protocols: !protocols,
+        disabled_crypto_count: 0,
+        disabled_crypto: CPtr.null(),
+        flags: 0,
+    }
+    let mut cred = SchCredentials {
+        version: SCH_CREDENTIALS_VERSION,
+        cred_format: 0,
+        count: if have_identity { 1 } else { 0 },
+        certs: if have_identity { (&mut identity) as CPtr<CPtr<u8>> } else { CPtr.null() },
+        root_store: CPtr.null(),
+        mappers: 0,
+        mapper_list: CPtr.null(),
+        lifespan: 0,
+        flags: flags,
+        parameter_count: 1,
+        parameters: &mut parameters as CPtr<TlsParameters>,
+    }
+    let package_name = CString.from("Microsoft Unified Security Protocol Provider")
+    let mut expiry: i64 = 0
+    let status = AcquireCredentialsHandleA(
+        CPtr.null(),
+        package_name.as_ptr() as CPtr<u8>,
+        if server { SECPKG_CRED_INBOUND } else { SECPKG_CRED_OUTBOUND },
+        CPtr.null(),
+        (&mut cred) as CPtr<u8>,
+        CPtr.null(),
+        CPtr.null(),
+        (*c).handles,
+        &mut expiry as CPtr<i64>,
+    )
+    if status != SEC_E_OK {
+        conn_free(c)
+        return Err(TlsError.Config(format("cannot acquire the TLS credentials: {}", status_text(status))))
+    }
+    (*c).have_cred = 1
+    Ok(c)
+}
+
+unsafe fn win_free(c: CPtr<WinConn>) {
+    conn_free(c)
+}
+
+fn push_u32_le(mut out: List<u8>, value: u32) {
+    out.push((value & 0xFF) as u8)
+    out.push(((value >> 8) & 0xFF) as u8)
+    out.push(((value >> 16) & 0xFF) as u8)
+    out.push(((value >> 24) & 0xFF) as u8)
+}
+
+/// Puts bytes received from the peer into the input buffer.
+unsafe fn win_feed(c: CPtr<WinConn>, data: [u8]): bool {
+    if data.len() == 0 {
+        return true
+    }
+    buf_append((*c).bufs, bytes_at(data), data.len())
+}
+
+/// Appends every byte waiting to be sent to `out` (through `scratch`, a list at least `scratch.len()` long) and returns
+/// how many there were.
+unsafe fn win_drain(c: CPtr<WinConn>, mut out: List<u8>, mut scratch: List<u8>): usize {
+    let outbuf = (*c).bufs + 1
+    let mut total: usize = 0
+    while (*outbuf).len > 0 {
+        let chunk = if (*outbuf).len < scratch.len() { (*outbuf).len } else { scratch.len() }
+        let _ = memcpy((&mut scratch[0]) as CPtr<u8>, (*outbuf).data, chunk)
+        out.extend_from_slice(scratch[0..chunk])
+        buf_consume(outbuf, chunk)
+        total = total + chunk
+    }
+    total
+}
+
+/// The server name in the ClientHello at the start of the input buffer, once a whole record of it has arrived. Returns
+/// `None` while more bytes are needed or when there is no name; `sni_done` records that the hello was examined, so a
+/// later call does nothing.
+unsafe fn win_sni(c: CPtr<WinConn>): Option<String> {
+    if (*c).sni_done != 0 {
+        return None
+    }
+    let inbuf = (*c).bufs
+    if (*inbuf).len < 5 {
+        return None
+    }
+    if *((*inbuf).data) != 22 {
+        (*c).sni_done = 1
+        return None
+    }
+    let record = ((*((*inbuf).data + 3) as usize) << 8) | (*((*inbuf).data + 4) as usize)
+    if (*inbuf).len < 5 + record {
+        return None
+    }
+    (*c).sni_done = 1
+    let hello = copy_bytes((*inbuf).data + 5, record)
+    sni_from_hello(hello[0..hello.len()])
+}
+
+/// The host name of the `server_name` extension in a ClientHello handshake message (`data` starts at the message), or
+/// `None`.
+fn sni_from_hello(data: [u8]): Option<String> {
+    // Handshake header (type 1, length 3), client version (2), random (32).
+    if data.len() < 4 + 2 + 32 + 1 || data[0] != 1 {
+        return None
+    }
+    let mut at: usize = 4 + 2 + 32
+    // Session id, cipher suites, compression methods.
+    let session = data[at] as usize
+    at = at + 1 + session
+    if at + 2 > data.len() {
+        return None
+    }
+    let suites = ((data[at] as usize) << 8) | (data[at + 1] as usize)
+    at = at + 2 + suites
+    if at + 1 > data.len() {
+        return None
+    }
+    let compression = data[at] as usize
+    at = at + 1 + compression
+    if at + 2 > data.len() {
+        return None
+    }
+    let extensions = ((data[at] as usize) << 8) | (data[at + 1] as usize)
+    at = at + 2
+    let end = if at + extensions < data.len() { at + extensions } else { data.len() }
+    while at + 4 <= end {
+        let kind = ((data[at] as usize) << 8) | (data[at + 1] as usize)
+        let length = ((data[at + 2] as usize) << 8) | (data[at + 3] as usize)
+        at = at + 4
+        if at + length > end {
+            return None
+        }
+        if kind == 0 {
+            // server_name_list: length (2), then { name type (1), length (2), name }.
+            if length < 5 || data[at + 2] != 0 {
+                return None
+            }
+            let name_length = ((data[at + 3] as usize) << 8) | (data[at + 4] as usize)
+            if 5 + name_length > length {
+                return None
+            }
+            return Some(String.from_utf8_lossy(data[(at + 5)..(at + 5 + name_length)]))
+        }
+        at = at + length
+    }
+    None
+}
+
+/// Queries the stream sizes after the handshake and allocates the record buffer.
+unsafe fn win_finish(c: CPtr<WinConn>): Result<(), TlsError> {
+    let mut sizes = StreamSizes { header: 0, trailer: 0, max_message: 0, buffers: 0, block_size: 0 }
+    let status = QueryContextAttributesA(
+        (*c).handles + 1,
+        SECPKG_ATTR_STREAM_SIZES,
+        (&mut sizes) as CPtr<u8>,
+    )
+    if status != SEC_E_OK {
+        return Err(TlsError.Handshake(format("cannot read the record sizes: {}", status_text(status))))
+    }
+    (*c).header = sizes.header
+    (*c).trailer = sizes.trailer
+    (*c).max_message = sizes.max_message
+    let cap = (sizes.header + sizes.max_message + sizes.trailer) as usize
+    (*c).record = calloc(1, cap)
+    if (*c).record.is_null() {
+        return Err(TlsError.Handshake("out of memory".to_string()))
+    }
+    (*c).record_cap = cap
+    (*c).done = 1
+    // The configuration is only needed while the handshake runs; a connection may outlive it.
+    (*c).cfg = CPtr.null()
+    Ok(())
+}
+
+/// The peer's leaf certificate: a context the caller owns (free it with `CertFreeCertificateContext`), or null.
+unsafe fn win_peer_cert(c: CPtr<WinConn>): CPtr<CertContext> {
+    if (*c).have_ctx == 0 {
+        return CPtr.null()
+    }
+    let mut cert: CPtr<CertContext> = CPtr.null()
+    let status = QueryContextAttributesA(
+        (*c).handles + 1,
+        SECPKG_ATTR_REMOTE_CERT_CONTEXT,
+        (&mut cert) as CPtr<u8>,
+    )
+    if status != SEC_E_OK {
+        return CPtr.null()
+    }
+    cert
+}
+
+/// Appends the tokens SChannel produced (the output buffers at `first`) to the output buffer, and frees them.
+unsafe fn take_output(c: CPtr<WinConn>, first: usize, count: usize, keep: bool): bool {
+    let mut ok = true
+    for i in first..(first + count) {
+        let b = (*c).buffers + i
+        if !(*b).data.is_null() {
+            if keep && (*b).size > 0 {
+                if !buf_append((*c).bufs + 1, (*b).data, (*b).size as usize) {
+                    ok = false
+                }
+            }
+            let _ = FreeContextBuffer((*b).data)
+        }
+        (*b).data = CPtr.null()
+        (*b).size = 0
+    }
+    ok
+}
+
+/// Sets `buffers[index]`.
+unsafe fn set_buffer(c: CPtr<WinConn>, index: usize, kind: u32, data: CPtr<u8>, size: u32) {
+    let b = (*c).buffers + index
+    (*b).kind = kind
+    (*b).data = data
+    (*b).size = size
+}
+
+/// Sets `descs[index]` to describe `count` buffers from `buffers[first]`.
+unsafe fn set_desc(c: CPtr<WinConn>, index: usize, first: usize, count: u32) {
+    let d = (*c).descs + index
+    (*d).version = 0
+    (*d).count = count
+    (*d).buffers = (*c).buffers + first
+}
+
+/// A step of the handshake. `host` is the name a client verifies and sends as SNI (empty for a server). Returns what
+/// to do next, or the failure that ended the handshake.
+unsafe fn win_handshake(c: CPtr<WinConn>, host: str): Result<u32, TlsError> {
+    if (*c).done != 0 && (*c).renegotiating == 0 {
+        return Ok(NEXT_DONE)
+    }
+    let cfg = (*c).cfg
+    let server = (*c).server != 0
+    let inbuf = (*c).bufs
+    let first = (*c).have_ctx == 0
+    if (*inbuf).len == 0 && (server || !first) {
+        return Ok(NEXT_NEED_INPUT)
+    }
+    let skip = (*c).skip != 0
+    let target = CString.from(host)
+
+    // The input: the peer's bytes, or on a client's first call the ALPN list (and nothing else).
+    let mut alpn = List<u8>.new()
+    let mut in_count: u32 = 2
+    let mut in_desc = (*c).descs
+    if first && !server {
+        if (*cfg).alpn_len > 0 {
+            let wire_len = (*cfg).alpn_len
+            let lists = 4 + 2 + wire_len
+            push_u32_le(mut alpn, lists as u32)
+            push_u32_le(mut alpn, 2)
+            alpn.push((wire_len & 0xFF) as u8)
+            alpn.push(((wire_len >> 8) & 0xFF) as u8)
+            let wire = copy_bytes((*cfg).alpn, wire_len)
+            alpn.extend_from_slice(wire[0..wire_len])
+            set_buffer(c, 0, SECBUFFER_APPLICATION_PROTOCOLS, (&mut alpn[0]) as CPtr<u8>, alpn.len() as u32)
+            in_count = 1
+        } else {
+            in_desc = CPtr.null()
+        }
+    } else {
+        set_buffer(c, 0, SECBUFFER_TOKEN, (*inbuf).data, (*inbuf).len as u32)
+        set_buffer(c, 1, SECBUFFER_EMPTY, CPtr.null(), 0)
+    }
+    if !in_desc.is_null() {
+        set_desc(c, 0, 0, in_count)
+    }
+    set_buffer(c, 4, SECBUFFER_TOKEN, CPtr.null(), 0)
+    set_buffer(c, 5, SECBUFFER_ALERT, CPtr.null(), 0)
+    set_buffer(c, 6, SECBUFFER_EMPTY, CPtr.null(), 0)
+    set_desc(c, 1, 4, 3)
+
+    let mut attributes: u32 = 0
+    let mut expiry: i64 = 0
+    let context = (*c).handles + 1
+    let status = if server {
+        let mut flags =
+            ASC_REQ_SEQUENCE_DETECT |
+            ASC_REQ_REPLAY_DETECT |
+            ASC_REQ_CONFIDENTIALITY |
+            ASC_REQ_EXTENDED_ERROR |
+            ASC_REQ_ALLOCATE_MEMORY |
+            ASC_REQ_STREAM
+        if (*c).require_client != 0 {
+            flags = flags | ASC_REQ_MUTUAL_AUTH
+        }
+        AcceptSecurityContext(
+            (*c).handles,
+            if first { CPtr.null() } else { context },
+            in_desc,
+            flags,
+            0,
+            context,
+            (*c).descs + 1,
+            &mut attributes as CPtr<u32>,
+            &mut expiry as CPtr<i64>,
+        )
+    } else {
+        let mut flags =
+            ISC_REQ_SEQUENCE_DETECT |
+            ISC_REQ_REPLAY_DETECT |
+            ISC_REQ_CONFIDENTIALITY |
+            ISC_REQ_EXTENDED_ERROR |
+            ISC_REQ_ALLOCATE_MEMORY |
+            ISC_REQ_STREAM |
+            ISC_REQ_MANUAL_CRED_VALIDATION
+        if (*c).use_supplied != 0 {
+            flags = flags | ISC_REQ_USE_SUPPLIED_CREDS
+        }
+        InitializeSecurityContextA(
+            (*c).handles,
+            if first { CPtr.null() } else { context },
+            if host.len() > 0 { target.as_ptr() as CPtr<u8> } else { CPtr.null() },
+            flags,
+            0,
+            0,
+            in_desc,
+            0,
+            context,
+            (*c).descs + 1,
+            &mut attributes as CPtr<u32>,
+            &mut expiry as CPtr<i64>,
+        )
+    }
+    if (*context).lower != 0 || (*context).upper != 0 {
+        (*c).have_ctx = 1
+    }
+
+    if status == SEC_E_INCOMPLETE_MESSAGE {
+        let _ = take_output(c, 4, 3, false)
+        return Ok(NEXT_NEED_INPUT)
+    }
+    if status == SEC_I_INCOMPLETE_CREDENTIALS {
+        let _ = take_output(c, 4, 3, false)
+        if (*c).use_supplied != 0 {
+            return Err(TlsError.Handshake("the server requires a client certificate".to_string()))
+        }
+        // The server asked for a client certificate. The credentials hold the one configured (or none): present them.
+        (*c).use_supplied = 1
+        return Ok(NEXT_RETRY)
+    }
+    if status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED {
+        // An alert for the peer may be in the output; send it, then fail.
+        let sent = take_output(c, 4, 3, true)
+        if !sent {
+            return Err(TlsError.Handshake("out of memory".to_string()))
+        }
+        return Err(TlsError.Handshake(status_text(status)))
+    }
+
+    // The input the call consumed: the rest is in an EXTRA buffer.
+    let mut extra: usize = 0
+    if in_count == 2 && (*((*c).buffers + 1)).kind == SECBUFFER_EXTRA {
+        extra = (*((*c).buffers + 1)).size as usize
+    }
+    let consumed = if in_count == 2 { (*inbuf).len - extra } else { 0 }
+
+    // The peer's certificate is judged before anything more is sent, so a handshake it fails never completes.
+    if (*c).validated == 0 && !skip {
+        let cert = win_peer_cert(c)
+        if !cert.is_null() {
+            let outcome = if server {
+                verify_peer(cfg, cert, "", AUTHTYPE_CLIENT)
+            } else {
+                verify_peer(cfg, cert, host, AUTHTYPE_SERVER)
+            }
+            let _ = CertFreeCertificateContext(cert)
+            (*c).validated = 1
+            match outcome {
+                Ok(()) => {}
+                Err(failure) => {
+                    let _ = take_output(c, 4, 3, false)
+                    return Err(failure)
+                }
+            }
+        } else if status == SEC_E_OK && (!server || (*c).require_client != 0) {
+            let _ = take_output(c, 4, 3, false)
+            if server {
+                return Err(TlsError.Handshake("the client sent no certificate".to_string()))
+            }
+            return Err(TlsError.Handshake("the server sent no certificate".to_string()))
+        }
+    }
+    let sent = take_output(c, 4, 3, true)
+    if !sent {
+        return Err(TlsError.Handshake("out of memory".to_string()))
+    }
+    buf_consume(inbuf, consumed)
+
+    if status == SEC_E_OK {
+        if (*c).renegotiating != 0 {
+            (*c).renegotiating = 0
+            return Ok(NEXT_RETRY)
+        }
+        win_finish(c)?
+        return Ok(NEXT_DONE)
+    }
+    if (*inbuf).len > 0 {
+        return Ok(NEXT_RETRY)
+    }
+    Ok(NEXT_NEED_INPUT)
+}
+
+/// Decrypts one record. Plaintext goes to the third buffer and is handed out by `win_take`.
+unsafe fn win_read(
+    c: CPtr<WinConn>,
+    mut out: List<u8>,
+    mut scratch: List<u8>,
+    max: usize,
+): Result<(u32, usize), TlsError> {
+    let inbuf = (*c).bufs
+    let plain = (*c).bufs + 2
+    if (*c).renegotiating != 0 {
+        match win_handshake(c, "") {
+            Ok(next) => {
+                if next == NEXT_NEED_INPUT {
+                    return Ok((NEXT_NEED_INPUT, 0))
+                }
+                return Ok((NEXT_RETRY, 0))
+            }
+            Err(failure) => return Err(failure),
+        }
+    }
+    if (*plain).len == 0 {
+        if (*inbuf).len == 0 {
+            return Ok((NEXT_NEED_INPUT, 0))
+        }
+        set_buffer(c, 0, SECBUFFER_DATA, (*inbuf).data, (*inbuf).len as u32)
+        set_buffer(c, 1, SECBUFFER_EMPTY, CPtr.null(), 0)
+        set_buffer(c, 2, SECBUFFER_EMPTY, CPtr.null(), 0)
+        set_buffer(c, 3, SECBUFFER_EMPTY, CPtr.null(), 0)
+        set_desc(c, 0, 0, 4)
+        let status = DecryptMessage((*c).handles + 1, (*c).descs, 0, CPtr.null())
+        if status == SEC_E_INCOMPLETE_MESSAGE {
+            return Ok((NEXT_NEED_INPUT, 0))
+        }
+        if status == SEC_I_CONTEXT_EXPIRED {
+            buf_consume(inbuf, (*inbuf).len)
+            return Ok((NEXT_EOF, 0))
+        }
+        if status != SEC_E_OK && status != SEC_I_RENEGOTIATE {
+            return Err(TlsError.Protocol(status_text(status)))
+        }
+        // Where the record ends and what follows it.
+        let mut extra: usize = 0
+        let mut data: CPtr<u8> = CPtr.null()
+        let mut data_size: usize = 0
+        for i in 1..4 {
+            let b = (*c).buffers + i
+            if (*b).kind == SECBUFFER_DATA && data.is_null() {
+                data = (*b).data
+                data_size = (*b).size as usize
+            }
+            if (*b).kind == SECBUFFER_EXTRA {
+                extra = (*b).size as usize
+            }
+        }
+        if data_size > 0 {
+            if !buf_append(plain, data, data_size) {
+                return Err(TlsError.Protocol("out of memory".to_string()))
+            }
+        }
+        buf_consume(inbuf, (*inbuf).len - extra)
+        if status == SEC_I_RENEGOTIATE {
+            // A post-handshake message (a TLS 1.3 session ticket, say) that the security context wants to process as
+            // handshake input. A client does that; a server does not renegotiate.
+            if (*c).server != 0 {
+                return Err(TlsError.Protocol("the peer asked to renegotiate".to_string()))
+            }
+            (*c).renegotiating = 1
+            return Ok((NEXT_RETRY, 0))
+        }
+    }
+    if (*plain).len == 0 {
+        if (*inbuf).len > 0 {
+            return Ok((NEXT_RETRY, 0))
+        }
+        return Ok((NEXT_NEED_INPUT, 0))
+    }
+    let want = if max < scratch.len() { max } else { scratch.len() }
+    let n = if (*plain).len < want { (*plain).len } else { want }
+    let _ = memcpy((&mut scratch[0]) as CPtr<u8>, (*plain).data, n)
+    out.extend_from_slice(scratch[0..n])
+    buf_consume(plain, n)
+    Ok((NEXT_DATA, n))
+}
+
+/// Encrypts a prefix of `data` (one record at most) into the output buffer.
+unsafe fn win_write(c: CPtr<WinConn>, data: [u8]): Result<(u32, usize), TlsError> {
+    if (*c).done == 0 || (*c).record.is_null() {
+        return Err(TlsError.Closed)
+    }
+    let limit = (*c).max_message as usize
+    let n = if data.len() < limit { data.len() } else { limit }
+    if n == 0 {
+        return Ok((NEXT_DATA, 0))
+    }
+    let record = (*c).record
+    let header = (*c).header as usize
+    let trailer = (*c).trailer as usize
+    let _ = memcpy(record + header, bytes_at(data), n)
+    set_buffer(c, 0, SECBUFFER_STREAM_HEADER, record, header as u32)
+    set_buffer(c, 1, SECBUFFER_DATA, record + header, n as u32)
+    set_buffer(c, 2, SECBUFFER_STREAM_TRAILER, record + header + n, trailer as u32)
+    set_buffer(c, 3, SECBUFFER_EMPTY, CPtr.null(), 0)
+    set_desc(c, 0, 0, 4)
+    let status = EncryptMessage((*c).handles + 1, 0, (*c).descs, 0)
+    if status != SEC_E_OK {
+        return Err(TlsError.Protocol(status_text(status)))
+    }
+    let total = ((*((*c).buffers)).size + (*((*c).buffers + 1)).size + (*((*c).buffers + 2)).size) as usize
+    if !buf_append((*c).bufs + 1, record, total) {
+        return Err(TlsError.Protocol("out of memory".to_string()))
+    }
+    Ok((NEXT_DATA, n))
+}
+
+/// Queues a `close_notify` (once).
+unsafe fn win_shutdown(c: CPtr<WinConn>) {
+    if (*c).done == 0 || (*c).shut != 0 {
+        return
+    }
+    (*c).shut = 1
+    let mut token: u32 = SCHANNEL_SHUTDOWN
+    set_buffer(c, 0, SECBUFFER_TOKEN, (&mut token) as CPtr<u8>, 4)
+    set_desc(c, 0, 0, 1)
+    let context = (*c).handles + 1
+    if ApplyControlToken(context, (*c).descs) != SEC_E_OK {
+        return
+    }
+    set_buffer(c, 4, SECBUFFER_TOKEN, CPtr.null(), 0)
+    set_buffer(c, 5, SECBUFFER_ALERT, CPtr.null(), 0)
+    set_buffer(c, 6, SECBUFFER_EMPTY, CPtr.null(), 0)
+    set_desc(c, 1, 4, 3)
+    let mut attributes: u32 = 0
+    let mut expiry: i64 = 0
+    let status = if (*c).server != 0 {
+        AcceptSecurityContext(
+            (*c).handles,
+            context,
+            CPtr.null(),
+            ASC_REQ_SEQUENCE_DETECT |
+                ASC_REQ_REPLAY_DETECT |
+                ASC_REQ_CONFIDENTIALITY |
+                ASC_REQ_EXTENDED_ERROR |
+                ASC_REQ_ALLOCATE_MEMORY |
+                ASC_REQ_STREAM,
+            0,
+            context,
+            (*c).descs + 1,
+            &mut attributes as CPtr<u32>,
+            &mut expiry as CPtr<i64>,
+        )
+    } else {
+        InitializeSecurityContextA(
+            (*c).handles,
+            context,
+            CPtr.null(),
+            ISC_REQ_SEQUENCE_DETECT |
+                ISC_REQ_REPLAY_DETECT |
+                ISC_REQ_CONFIDENTIALITY |
+                ISC_REQ_EXTENDED_ERROR |
+                ISC_REQ_ALLOCATE_MEMORY |
+                ISC_REQ_STREAM,
+            0,
+            0,
+            CPtr.null(),
+            0,
+            context,
+            (*c).descs + 1,
+            &mut attributes as CPtr<u32>,
+            &mut expiry as CPtr<i64>,
+        )
+    }
+    let _ = status
+    let _ = take_output(c, 4, 3, true)
+}
+
+/// The protocol the peer chose by ALPN, if any.
+unsafe fn win_alpn(c: CPtr<WinConn>): Option<String> {
+    if (*c).have_ctx == 0 {
+        return None
+    }
+    let mut info = List<u8>.new()
+    for _ in 0..512 {
+        info.push(0)
+    }
+    let status = QueryContextAttributesA(
+        (*c).handles + 1,
+        SECPKG_ATTR_APPLICATION_PROTOCOL,
+        (&mut info[0]) as CPtr<u8>,
+    )
+    if status != SEC_E_OK {
+        return None
+    }
+    // { ProtoNegoStatus (4), ProtoNegoExt (4), ProtocolIdSize (1), ProtocolId }: status 1 is success.
+    let negotiated = (info[0] as u32) | ((info[1] as u32) << 8)
+    let size = info[8] as usize
+    if negotiated != 1 || size == 0 {
+        return None
+    }
+    Some(String.from_utf8_lossy(info[9..(9 + size)]))
+}
+
+/// `TLSv1.2` or `TLSv1.3`.
+unsafe fn win_version(c: CPtr<WinConn>): String {
+    if (*c).have_ctx == 0 {
+        return String.new()
+    }
+    let mut info = List<u8>.new()
+    for _ in 0..64 {
+        info.push(0)
+    }
+    let status = QueryContextAttributesA(
+        (*c).handles + 1,
+        SECPKG_ATTR_CONNECTION_INFO,
+        (&mut info[0]) as CPtr<u8>,
+    )
+    if status != SEC_E_OK {
+        return String.new()
+    }
+    let protocol = (info[0] as u32) | ((info[1] as u32) << 8) | ((info[2] as u32) << 16) | ((info[3] as u32) << 24)
+    if (protocol & (SP_PROT_TLS1_3_SERVER | SP_PROT_TLS1_3_CLIENT)) != 0 {
+        return "TLSv1.3".to_string()
+    }
+    if (protocol & (SP_PROT_TLS1_2_SERVER | SP_PROT_TLS1_2_CLIENT)) != 0 {
+        return "TLSv1.2".to_string()
+    }
+    String.new()
+}
+
+/// The negotiated cipher suite (`TLS_AES_256_GCM_SHA384`).
+unsafe fn win_cipher(c: CPtr<WinConn>): String {
+    if (*c).have_ctx == 0 {
+        return String.new()
+    }
+    let mut info = List<u8>.new()
+    for _ in 0..1024 {
+        info.push(0)
+    }
+    let status = QueryContextAttributesA(
+        (*c).handles + 1,
+        SECPKG_ATTR_CIPHER_INFO,
+        (&mut info[0]) as CPtr<u8>,
+    )
+    if status != SEC_E_OK {
+        return String.new()
+    }
+    // `szCipherSuite` is 64 UTF-16 units after four DWORDs.
+    let mut out = String.new()
+    for i in 0..(64 as usize) {
+        let low = info[16 + i * 2] as u32
+        let high = info[17 + i * 2] as u32
+        let unit = low | (high << 8)
+        if unit == 0 || unit > 127 {
+            break
+        }
+        out.push((unit as u8) as char)
+    }
+    out
+}

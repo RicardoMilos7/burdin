@@ -6,8 +6,6 @@ use tls.{Certificate, ClientConfig, PrivateKey, ServerConfig, TlsError, TlsVersi
 use support.{
     CHAIN,
     CLIENT,
-    ED25519,
-    ED25519_KEY,
     ENCRYPTED_KEY,
     EXPIRED,
     INTER,
@@ -100,7 +98,6 @@ fn run() {
     // Keys.
     show_key("ec key", PrivateKey.from_pem(SERVER_KEY))
     show_key("rsa key", PrivateKey.from_pem(RSA_KEY))
-    show_key("ed25519 key", PrivateKey.from_pem(ED25519_KEY))
     show_key("encrypted key", PrivateKey.from_pem(ENCRYPTED_KEY))
     show_key("empty key", PrivateKey.from_pem(""))
     show_key("plain text key", PrivateKey.from_pem("hello"))
@@ -116,10 +113,6 @@ fn run() {
     match ServerConfig.from_pem(RSA, RSA_KEY) {
         Ok(_) => println("server rsa: ok"),
         Err(failure) => println("server rsa: {}", failure),
-    }
-    match ServerConfig.from_pem(ED25519, ED25519_KEY) {
-        Ok(_) => println("server ed25519: ok"),
-        Err(failure) => println("server ed25519: {}", failure),
     }
     match ServerConfig.from_pem(CHAIN, RSA_KEY) {
         Ok(_) => println("server mismatched key: ok"),

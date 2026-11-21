@@ -18,7 +18,12 @@ What it checks:
   * the README's client and server examples type-check (`burdin check`);
   * `burdin add tls` writes `tls = true`, prints the official-package line, and pins the package in `burdin.lock`
     with `source = "official"` and the PKG7 checksum of its files;
-  * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
+  * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it;
+  * the `openssl` feature (TLS7): a program with `tls = { official = true, default-features = false }` builds with no
+    `-lssl` or `-lcrypto` on the linker's command line and reports `Unsupported` from its first TLS call, and the same
+    program with the default features links them and configures TLS. The link line is recorded by a wrapper given as
+    `BURDIN_CC`, so this part runs on Unix. On Windows the feature has no effect (TLS1a), and the Windows link is checked
+    by `tests/s3_tls/link_windows`.
 """
 
 import hashlib
@@ -102,7 +107,10 @@ def tool(*arguments, cwd=None):
 
 manifest_text = harness.read_text(PACKAGES / "tls" / "burdin.toml")
 check(re.search(r'^name = "tls"$', manifest_text, re.M) is not None, "packages/tls does not declare `name = \"tls\"`")
-check("[target.'cfg(unix)'.link]" in manifest_text and "[target.'cfg(windows)'.link]" in manifest_text, "packages/tls/burdin.toml has no [link] tables")
+check('openssl = ["dep:openssl_link"]' in manifest_text and 'default = ["openssl"]' in manifest_text, "packages/tls/burdin.toml does not declare the openssl feature on by default")
+link_manifest = harness.read_text(PACKAGES / "tls" / "openssl_link" / "burdin.toml")
+check("[target.'cfg(unix)'.link]" in link_manifest, "packages/tls/openssl_link/burdin.toml has no Unix [link] table")
+check("[target.'cfg(windows)'.link]" not in link_manifest, "packages/tls/openssl_link declares a Windows [link] table, but Windows links SChannel (TLS1)")
 for name in ("tls", "openssl", "errors", "certs", "config", "engine", "stream", "ffi"):
     check((PACKAGES / "tls" / "src" / f"{name}.bd").is_file(), f"packages/tls has no src/{name}.bd")
 readme = PACKAGES / "tls" / "README.md"
@@ -291,6 +299,66 @@ with harness.temporary_dir("burdin-tls-") as work:
     check(f'checksum = "{tree_checksum(official / "tls")}"' in lock, "burdin.lock does not pin the tls package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
+
+    # The `openssl` feature (TLS7). With it off, no OpenSSL library reaches the link and TLS reports `Unsupported`; with it
+    # on, the program links and configures TLS. The linker's arguments are recorded by a wrapper (Unix only).
+    optional_source = (
+        "use tls.{ClientConfig}\n"
+        "\n"
+        "fn main() {\n"
+        "    match ClientConfig.new() {\n"
+        '        Ok(_) => println("configured"),\n'
+        '        Err(failure) => println("{failure}"),\n'
+        "    }\n"
+        "}\n"
+    )
+    if harness.PLATFORM == "windows":
+        print("Windows: the linker wrapper check is skipped; the feature has no effect there (spec/tls.md, TLS1a)")
+    else:
+        # Records the arguments of each link, then runs the real C compiler driver.
+        wrapper = work / "link-wrapper.sh"
+        wrapper_lines = ["#!/bin/sh", 'printf "%s\\n" "$*" >> "$TLS_LINK_LOG"', 'exec cc "$@"']
+        write(wrapper, "\n".join(wrapper_lines) + "\n")
+        wrapper.chmod(0o755)
+        for name, manifest_tls, expect_ssl in (
+            ("tls_off", "{ official = true, default-features = false }", False),
+            ("tls_on", "true", True),
+        ):
+            project = work / name
+            write(
+                project / "burdin.toml",
+                f'[package]\nname = "{name}"\nversion = "0.1.0"\n\n[dependencies]\ntls = {manifest_tls}\n',
+            )
+            write(project / "src" / "main.bd", optional_source)
+            log = work / f"{name}.link.log"
+            env_link = dict(env, BURDIN_CC=str(wrapper), TLS_LINK_LOG=str(log))
+            built_link = harness.run([burdin, "build", "."], cwd=project, env=env_link)
+            check(built_link.returncode == 0, f"{name} did not build with tls {manifest_tls}: {err(built_link)[:400]}")
+            linked = log.read_text(encoding="utf-8") if log.is_file() else ""
+            check(bool(linked), f"{name}: the linker wrapper recorded no link")
+            if expect_ssl:
+                check(
+                    "-lssl" in linked and "-lcrypto" in linked,
+                    f"{name} with the openssl feature did not link libssl and libcrypto: {linked[:300]}",
+                )
+            else:
+                check(
+                    "-lssl" not in linked and "-lcrypto" not in linked,
+                    f"{name} without the openssl feature linked OpenSSL: {linked[:300]}",
+                )
+            binary_optional = harness.executable_in(project, name)
+            if binary_optional.is_file():
+                ran_optional = harness.run([binary_optional], cwd=project, env=env, timeout=60)
+                if expect_ssl:
+                    check(out(ran_optional) == "configured\n", f"{name} printed {out(ran_optional)!r}")
+                else:
+                    check(
+                        out(ran_optional)
+                        == "unsupported: no OpenSSL in this build: the `openssl` feature of the tls package is off\n",
+                        f"{name} printed {out(ran_optional)!r}",
+                    )
+            else:
+                check(False, f"`burdin build .` did not produce {name}")
 
     # `burdin add tls` in a package that does not declare it yet.
     adder = work / "adder"

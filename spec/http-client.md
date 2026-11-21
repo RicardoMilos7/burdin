@@ -3,7 +3,7 @@
 The `http` package (stage 3, issue #260, with #328 requests, responses, headers, and the body stream; #329 redirects,
 timeouts, and retries; #330 connection reuse and body framing; `packages/http`). The package is an ordinary official
 package (`spec/packages.md`, PKG15-PKG18) written in Burdin over `std`'s `TcpStream` (`spec/io.md`) and, for `https`,
-over the official `tls` package (`spec/tls.md`), which it declares as a dependency (`tls = true`). This page says what
+over the official `tls` package (`spec/tls.md`), which it declares as a dependency with its default features off and its own `tls` feature on by default (HC17). This page says what
 it sends, what it accepts, and which tests witness each rule. The rule IDs are HC1-HC17. The package documentation,
 `packages/http/README.md`, repeats the decisions for users.
 
@@ -229,7 +229,14 @@ Tests: `pooling.bd`: `unread_body` (the server sees the client close), `partial_
 
 ## HC17. `https`
 
-An `https` URL is sent over TLS provided by the `tls` package (`spec/tls.md`). The rules:
+An `https` URL is sent over TLS provided by the `tls` package (`spec/tls.md`). The `http` package declares `tls`
+with `default-features = false` and its own feature `tls = ["tls/openssl"]`, which is **on by default** (`default = ["tls"]`),
+as `reqwest` (`default-tls`) and `ureq` (`tls`) have TLS on by default. A program that writes
+`http = { official = true, default-features = false }` builds `http` without the feature: no OpenSSL is linked
+(`spec/tls.md`, TLS7), the plain `http` URLs work as before, and every `https` URL fails with
+`HttpError.Tls` whose message says TLS is not in this build. The rules below are for a build with the feature on.
+
+The rules:
 
 - **Opening.** The client connects TCP to the URL's host and port (443 unless the URL names one), then runs
   `TlsStream.connect` with the URL's host as the server name. That one value is the SNI and the name the certificate must

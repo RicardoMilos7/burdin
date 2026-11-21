@@ -2904,6 +2904,32 @@ fix after a syntax error still reuses the other packages' answers (the LSP works
 parser's `unparsed` regions. Gap: the broken file's own checks are not reported at all, even for its parsed functions;
 reporting them would need the follow-on rule to know which parsed items refer to a dropped declaration.
 
+## TLS on Windows and the optional OpenSSL (issue #878)
+
+Decided: the link of `libssl`/`libcrypto` is automatic on Windows and TLS is a feature on `http`, on by default. The
+`tls` package keeps `[features] default = ["openssl"]`; its OpenSSL libraries are named by an optional package
+`packages/tls/openssl_link` (PKG34: an inactive optional dependency adds no libraries), and every OpenSSL call of `tls`
+sits in a `comptime if features.openssl` branch (CT5) whose other branch is `TlsError.Unsupported`. `http` declares
+`tls = { official = true, default-features = false }` with `default = ["tls"]` and `tls = ["tls/openssl"]`, so
+`http = { official = true, default-features = false }` in a program links no OpenSSL. The table form `{ official = true,
+... }` is new (PKG15, `crates/burdin_query/src/package.rs`). The driver (`crates/burdin_driver/src/openssl.rs`) finds an
+OpenSSL 3 install on Windows (`OPENSSL_DIR`, `OPENSSL_ROOT_DIR`, the installer folders, vcpkg), passes its `lib` to the
+linker, copies its `libssl-3*.dll` and `libcrypto-3*.dll` beside the program, and reports a missing install with the
+steps. When none is found it downloads FireDaemon's OpenSSL 3.5.9 LTS ZIP (the SHA-256 is pinned in `openssl.rs`; a
+mismatch is deleted), unpacks it into `<burdin home>/cache/openssl/3.5.9`, and uses that copy from then on
+(`BURDIN_OPENSSL_NO_DOWNLOAD` turns this off; `BURDIN_OPENSSL_URL` names a mirror). Rules: `spec/tls.md` TLS7 and TLS7a, `spec/http-client.md` HC17, `spec/packages.md`
+PKG15. Checked: a codegen fact the change depends on: an extern function referenced only from an unreachable function is
+not linked, so the gate is enough. Tests: `cargo test -p burdin_query package`, `cargo test -p burdin_driver openssl`,
+`python3 tests/check_tls.py` (the feature off builds with no `-lssl`, on links it, on Unix via a `BURDIN_CC` wrapper),
+`python3 tests/check_http.py`, `python3 tests/check_features.py`, `python3 tests/check_packages.py`,
+`python3 tests/check_link.py`, `python3 tests/run_tests.py s3_tls s3_http`. Windows, by hand (no OpenSSL installed on the
+machine, `LIB` and `OPENSSL_DIR` empty, a plain shell): `burdin build` of `tests/s3_tls/link` downloaded the pinned ZIP,
+checked its SHA-256, unpacked it under `%APPDATA%\burdin\cache\openssl\3.5.9`, linked, and copied both DLLs; the program ran
+and reported OpenSSL 3; a rebuild with the cache found it with no download; `BURDIN_OPENSSL_NO_DOWNLOAD` and a missing
+mirror each stopped before the linker with their notes. The download is unit-tested through `file://` URLs on every host,
+and the unpack on Windows. Not verified in CI: the CI `windows` job still installs OpenSSL and sets `LIB` itself, so it
+never runs the download; and the Linux and macOS links are unchanged from the manifest-only rule (TLS7).
+
 ## Starting the next session
 
 Open the folder and say something like:

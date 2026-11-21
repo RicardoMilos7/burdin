@@ -1,0 +1,85 @@
+//@ run
+//@ skip-platform: windows
+//> ed25519 key: loaded
+//> server ed25519: ok
+//> ed25519 leaf: connected TLSv1.3 peer=/CN=localhost
+//> server: handshake ok version=TLSv1.3 sni=localhost peer=-
+
+// Ed25519 on the OpenSSL backends (spec/tls.md, TLS1a): the key loads, a server configuration takes the certificate
+// and key, and a client that trusts the test root connects to a server that presents the Ed25519 leaf. Windows cannot
+// use an Ed25519 key, and `tests/s3_tls/ed25519_windows` checks what it reports. The certificate and key are copies
+// of the fixtures under `tests/s3_tls/conformance/src/certs` (made by `tests/tls/regenerate.py`).
+
+use tls.{ClientConfig, PrivateKey, ServerConfig, TlsStream, TrustStore}
+
+const ROOT: str = embed("certs/root.pem")
+const ED25519: str = embed("certs/ed25519.pem")
+const ED25519_KEY: str = embed("certs/ed25519.key")
+
+fn main() {
+    task.set_workers(2)
+    match PrivateKey.from_pem(ED25519_KEY) {
+        Ok(_) => println("ed25519 key: loaded"),
+        Err(failure) => println("ed25519 key: {}", failure),
+    }
+    match ServerConfig.from_pem(ED25519, ED25519_KEY) {
+        Ok(_) => println("server ed25519: ok"),
+        Err(failure) => println("server ed25519: {}", failure),
+    }
+
+    let server = ServerConfig.from_pem(ED25519, ED25519_KEY).unwrap()
+    let mut trust = TrustStore.empty()
+    trust.add_pem(ROOT).unwrap()
+    let client = ClientConfig.with_trust(trust).unwrap()
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let log = Mutex.new(List<String>.new())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (tcp, _) = listener.accept().unwrap()
+            match TlsStream.accept(tcp, server) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    let name = match stream.server_name() {
+                        Some(text) => text,
+                        None => "-".to_string(),
+                    }
+                    let subject = match stream.peer_certificate() {
+                        Some(cert) => cert.subject(),
+                        None => "-".to_string(),
+                    }
+                    let version = stream.tls_version()
+                    log.lock(|list| list.push(format("server: handshake ok version={} sni={} peer={}", version, name, subject)))
+                    let mut chunk = List<u8>.new()
+                    let _ = stream.recv(mut chunk, 16)
+                }
+                Err(_) => log.lock(|list| list.push("server: handshake failed".to_string())),
+            }
+        })
+        s.spawn(|| {
+            let tcp = net.TcpStream.connect(format("127.0.0.1:{}", port).as_str()).unwrap()
+            match TlsStream.connect(tcp, "localhost", client) {
+                Ok(stream) => {
+                    let mut stream = stream
+                    let subject = match stream.peer_certificate() {
+                        Some(cert) => cert.subject(),
+                        None => "-".to_string(),
+                    }
+                    println("ed25519 leaf: connected {} peer={}", stream.tls_version(), subject)
+                    let _ = stream.close()
+                }
+                Err(failure) => println("ed25519 leaf: {}", failure),
+            }
+        })
+    })
+    let lines = log.lock(|list| {
+        let mut copy = List<String>.new()
+        for item in list.iter() {
+            copy.push(item.clone())
+        }
+        copy
+    })
+    for line in lines.iter() {
+        println("{}", line)
+    }
+}

@@ -11,31 +11,47 @@ landed TLS3-TLS6: certificates and keys, the client and server configurations, t
 > has had no audit. It keeps the verification defaults of OpenSSL on and offers no way around them except one loudly
 > named switch (TLS3), which proves it checks what it says it checks, not that it protects anything you care about.
 
-## TLS1. The backend: OpenSSL 3 (decision, issue #322)
+## TLS1. The backend per platform (decision, issues #322 and #878)
 
-TLS is provided by **OpenSSL 3** (`libssl` and `libcrypto`), reached through the C bridge. The package declares the
-functions it uses by hand in `packages/tls/src/openssl.bd` (an `extern "C"` block, `CPtr<T>` handles, and `unsafe` at
-every call); the safe layer is Burdin code on top of those declarations. The compiler gains no TLS code.
+TLS is provided by the operating system's TLS stack on each platform, reached through a hand-written binding and one
+engine interface (TLS2). The bindings declare the functions they use by hand, with `CPtr<T>` handles and `unsafe` at
+every call; the safe layer is Burdin code on top of them. The compiler gains no TLS code.
 
-Why a C library, and why this one:
+| Platform | Stack | Binding |
+| --- | --- | --- |
+| Windows | SChannel (`secur32.dll`), with Crypt32 for certificates and CNG (`ncrypt.dll`) for keys | `packages/tls/src/schannel.bd` |
+| Linux | the system's OpenSSL 3 (`libssl`, `libcrypto`) | `packages/tls/src/openssl.bd` |
+| macOS | OpenSSL 3 (Homebrew) until the Secure Transport backend lands | `packages/tls/src/openssl.bd` |
 
-- **Native TLS 1.3 is not a small job here.** It needs X.509 parsing, RSA and ECDSA signature verification (and the
-  `P-256`, `P-384`, and `Ed448`/`Ed25519` pieces around them), a path builder, name checking, a trust store, and a
-  revocation story. The `crypto` package (`spec/crypto.md`) has hashes, AEAD, X25519, and Ed25519, but not X.509, RSA,
-  or ECDSA; X.509 is its own issue (#559). Writing them is a long stretch of work whose only visible result is a less
-  reviewed copy of what every system already has.
-- **The platform stacks are three APIs.** SChannel (Windows), Secure Transport or Network.framework (macOS), and "the
-  system OpenSSL" (Linux) differ in their handshake model (pull, push, or callbacks), in their certificate objects,
-  and in what they let a program configure (a minimum version, ALPN, a custom trust anchor, a server certificate from
-  a PEM file). A wrapper over the three would be three wrappers and a matrix of behaviors.
-- **OpenSSL 3 is one API on all three platforms.** It is a system package on Linux (`libssl-dev`), `openssl@3` on
-  Homebrew for macOS, and a standard installation on Windows. It supports client and server, SNI, ALPN, certificate
-  and hostname verification, the system trust store, PEM and DER, and TLS 1.2 and 1.3.
+Windows uses the platform's own stack, not OpenSSL. The earlier choice of OpenSSL 3 on every platform (#322) needed a
+third-party library on Windows, which #878 made the driver download; SChannel ships with Windows and needs nothing
+installed. The stacks are different APIs (their handshake models, their certificate objects, and what a program may
+configure), so each backend carries its own implementation. The rules of TLS2 to TLS8 are the same on every platform,
+except where TLS1a names a difference. The package reports its stack through `tls.backend()`: `SChannel` on Windows, and
+on Linux and macOS the OpenSSL version text, which starts with `OpenSSL 3`.
 
-The cost is that the library must be present to link (TLS7), and a program that uses `tls` depends on a native library
-that Burdin's own packages otherwise avoid. A program that does not use `tls` links nothing new.
+The macOS Secure Transport backend is planned and not yet implemented; until it lands, macOS keeps OpenSSL 3. Native TLS
+written in Burdin is #884.
 
-Tests: `tests/s3_tls/link` (the package's bindings reach OpenSSL 3 and drive a connection object).
+Tests: `tests/s3_tls/conformance` runs on every platform (the same expected output); `tests/s3_tls/link_windows` checks
+that the Windows build reports the SChannel backend through `tls.backend()`.
+
+**TLS1a. Windows: where SChannel differs.** The rules below are the Windows exceptions to the rest of this page. Each one
+is either a behavior that matches the other platforms or a named limit with its `TlsError`.
+
+- The Windows build links `secur32`, `crypt32`, and `ncrypt` and no OpenSSL library; the `tls` package's `openssl_link`
+  dependency is declared for platforms other than Windows (PKG27), so the `openssl` feature has no effect on Windows.
+- The trust store of `ClientConfig.new()` is the Windows root store. A `TrustStore` with its own roots (`with_trust`,
+  `require_client_certificate`) verifies a chain against those roots only: the Windows root store is not consulted, as
+  with OpenSSL.
+- Protocol versions, ALPN, SNI, and hostname checks follow TLS3 and TLS8. Where SChannel cannot provide one of them,
+  that item is listed here with the error it returns.
+- Ed25519 private keys cannot be used by SChannel: CNG's key import rejects an Ed25519 PKCS#8 key. On Windows,
+  `ServerConfig.from_pem` and `ServerConfig.new` with an Ed25519 certificate and key return
+  `TlsError.Unsupported("Ed25519 private keys cannot be used by SChannel on Windows")`, whose text is
+  `unsupported: Ed25519 private keys cannot be used by SChannel on Windows`. `PrivateKey.from_pem` still loads an
+  Ed25519 key on Windows; the refusal comes when a configuration takes it. Linux and macOS support Ed25519 as before.
+  Checked by `tests/s3_tls/ed25519_windows` (Windows) and `tests/s3_tls/ed25519` (Linux and macOS).
 
 ## TLS2. The engine model: memory BIOs
 
@@ -244,24 +260,56 @@ package never swallows an error to retry as an insecure connection.
 
 Tests: `tests/s3_tls/conformance` prints a message or a variant for each failure above, produced by real failures.
 
-## TLS7. Linking and installing OpenSSL
+## TLS7. Linking, installing, and the optional OpenSSL
 
-The package's manifest declares its native libraries with a `[link]` table (`spec/packages.md`, PKG34); the compiler
-adds them to the link of every program that has `tls` in its graph, and to no other. On Linux and macOS they are `ssl` and
-`crypto`; on Windows they are `libssl` and `libcrypto` (the import libraries of OpenSSL's Windows builds).
+The native libraries are declared by a package of their own, `openssl_link` (`packages/tls/openssl_link`), which is an
+optional dependency of `tls`:
+
+```toml
+[dependencies]
+openssl_link = { path = "openssl_link", optional = true }
+
+[features]
+default = ["openssl"]
+openssl = ["dep:openssl_link"]
+```
+
+Its manifest holds the `[link]` table (PKG34): `ssl` and `crypto` on Unix. The package is declared only for platforms other
+than Windows (PKG27), since Windows links SChannel (TLS1). A
+package's libraries reach the link only when the package is in the active graph (PKG34), so the `openssl` feature decides
+whether a program links OpenSSL at all. The feature is on by default, as it is in the HTTP clients that make TLS a
+feature (`reqwest`'s `default-tls` and `ureq`'s `tls`, both on unless the user turns the default off).
+
+**The `openssl` feature is the only switch, and it is a compile-time one.** Every function of `tls` that calls an OpenSSL
+symbol is written as `comptime if features.openssl { ... } else { ... }` (CT5). With the feature on, the body is the
+real one. With it off, the body is a failure: a function that returns a `Result` returns `TlsError.Unsupported` ("no OpenSSL in this
+build: the `openssl` feature of the tls package is off"), and any other function returns an empty value (an empty string or list,
+`None`, zero, or nothing). The declarations and the safe types still compile, so a program's code is the same either way. A
+build with the feature off references no OpenSSL symbol, so it links and runs on a machine with no OpenSSL installed. The
+`http` package uses this (`spec/http-client.md`, HC17): its `tls` feature is on by default, and a program that writes
+`http = { official = true, default-features = false }` gets plain `http` with no OpenSSL link and `https` URLs fail with
+`HttpError.Tls`.
+
+Why a feature and not a link-time error: the link is what fails. A program that does not use `https` should not need
+OpenSSL installed, and a program that does should get OpenSSL's real libraries, not a stub.
 
 | Platform | What is installed | What the program needs |
 | --- | --- | --- |
 | Linux | `libssl-dev` (Debian and Ubuntu), `openssl-devel` (Fedora) | nothing: `-lssl -lcrypto` finds the system libraries |
 | macOS | `brew install openssl@3` | `LIBRARY_PATH=$(brew --prefix openssl@3)/lib` so the linker finds `libssl.dylib`; the dylibs are not in a default path |
-| Windows | an OpenSSL 3 build (the `OpenSSL-Win64` installers, `choco install openssl`, vcpkg) | the directory with `libssl.lib` and `libcrypto.lib` on `LIB`, and the DLLs' directory on `PATH` at run time |
+| Windows | nothing: the backend is SChannel, which ships with the system | nothing |
 
-The package has no `search` setting: a library in an unusual place is found through the linker's own variables
-(`LIBRARY_PATH` on Unix, `LIB` for MSVC) or `BURDIN_CC` flags, as for any `--link-lib`. A missing library is the
-linker's error, which names it; there is no fallback and no bundled copy. A program built against OpenSSL 3 runs only
-where a compatible `libssl.so.3`/`libssl.3.dylib`/`libssl-3-x64.dll` is present; the package targets the OpenSSL 3
-series (3.0 and later) and its stable ABI, and refuses at run time to start under an older one (`OpenSSL_version_num`
-below 3.0.0 is a `TlsError.Unsupported` from the first configuration, not undefined behavior).
+**Windows links no OpenSSL (TLS1).** The Windows backend is SChannel, so a program that uses `tls` on Windows links
+`secur32`, `crypt32`, and `ncrypt`, which ship with the system. The driver does not search for OpenSSL, does not copy
+OpenSSL DLLs, and does not download anything for `tls` on Windows. The OpenSSL discovery and download that #878 first
+added are withdrawn: the Windows backend no longer uses OpenSSL.
+
+**The package's other rules.** A library in an unusual place is found through the linker's variables (`LIBRARY_PATH` on
+Unix, `LIB` for MSVC) or `BURDIN_CC` flags, as for any `--link-lib`. A missing library on Unix is still the linker's own
+error, which names it. A program built against OpenSSL 3 runs only where a compatible `libssl.so.3`/`libssl.3.dylib`/
+`libssl-3-x64.dll` is present; the package targets the OpenSSL 3 series (3.0 and later) and its stable ABI, and refuses at
+run time to start under an older one (`OpenSSL_version_num` below 3.0.0 is a `TlsError.Unsupported` from the first
+configuration, not undefined behavior).
 
 Hand-written declarations replace a generated module because the subset is small, because the macros that matter
 (`SSL_set_tlsext_host_name`, `SSL_CTX_set_min_proto_version`) are not functions a header walker can bind, and because the
@@ -271,8 +319,12 @@ the installed `libssl` and `libcrypto` (`nm -D`; skipped where `nm` or a Unix li
 caught by CI for the functions no test happens to call. It does not compare parameter lists with the headers: OpenSSL
 declares many of these through macros, so a signature typo is caught only by a test that calls the function.
 
-Tests: `tests/s3_tls/link` (links against the system OpenSSL through the manifest alone and runs); the `[link]` table
-itself: `tests/check_link.py`.
+Tests: `tests/s3_tls/link` (Linux and macOS: links the system OpenSSL through the manifest alone and runs) and
+`tests/s3_tls/link_windows` (Windows: links SChannel through the manifest alone and reports it through `tls.backend()`);
+the `[link]` table itself: `tests/check_link.py`; the optional feature: `tests/check_tls.py` (a program with
+`tls = { official = true, default-features = false }` builds and runs with no `-lssl` or `-lcrypto` on the linker's
+command line, and its TLS calls report `Unsupported`). On Windows the feature has no effect (TLS1a), so that check runs on
+Unix only.
 
 ## TLS8. What is not provided
 

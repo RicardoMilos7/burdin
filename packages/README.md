@@ -22,7 +22,8 @@ Official packages today:
 - `yaml` — a safe YAML subset with anchors resolved (issue #258; `packages/yaml/README.md`).
 - `xml` — an XML reader and writer with namespaces and a small DOM (issue #259; `packages/xml/README.md`).
 - `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-origin connection reuse, and `https` over
-  `tls` (so a program that uses it links OpenSSL 3) (issues #260, #262; `packages/http/README.md`, `spec/http-client.md`).
+  `tls` (on by default, so a program that uses it links OpenSSL 3; `http = { official = true, default-features = false }`
+  leaves TLS out) (issues #260, #262, #878; `packages/http/README.md`, `spec/http-client.md`).
 - `crypto` — hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 in pure Burdin; an experiment,
   not a security claim (issue #266; `packages/crypto/README.md`, `spec/crypto.md`).
 

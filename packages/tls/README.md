@@ -1,6 +1,7 @@
 # tls
 
-TLS over OpenSSL 3 (issue #262; the behavior is `spec/tls.md`). Declare it in `burdin.toml` and `use tls`:
+TLS on the platform's own stack: SChannel on Windows, OpenSSL 3 on Linux and macOS (issues #262, #322, #878; the behavior
+is `spec/tls.md`). Declare it in `burdin.toml` and `use tls`:
 
 ```toml
 [dependencies]
@@ -17,16 +18,21 @@ Certificate, PrivateKey, TrustStore          loaded from PEM text, DER bytes, or
 ClientConfig, ServerConfig, TlsVersion       verification on by default; TLS 1.2 or later
 TlsStream                                    a Read and Write over a TcpStream; runs the handshake
 TlsError                                     every failure is a value, never a panic
+backend()                                    the TLS stack of this build, as text
 ```
 
 | Type | Functions |
 | --- | --- |
 | `Certificate` | `from_pem(str)`, `chain_from_pem(str)`, `from_der([u8])`, `load_pem_file(path)`, `load_chain_file(path)`; `to_der`, `subject`, `issuer`, `not_before`, `not_after`, `fingerprint` (SHA-256 hex), `duplicate` |
-| `PrivateKey` | `from_pem(str)`, `from_der([u8])`, `load_pem_file(path)`: RSA, ECDSA, Ed25519, unencrypted |
+| `PrivateKey` | `from_pem(str)`, `from_der([u8])`, `load_pem_file(path)`: RSA, ECDSA, Ed25519 (not usable by a server on Windows, `spec/tls.md`, TLS1a), unencrypted |
 | `TrustStore` | `system()`, `empty()`, `add(cert)`, `add_pem(str)`, `add_pem_file(path)`, `len()` |
 | `ClientConfig` | `new()` (system roots), `with_trust(store)`; `min_version`, `max_version`, `alpn`, `client_certificate(chain, key)`, `insecure_skip_verify()` |
 | `ServerConfig` | `new(chain, key)`, `from_pem(chain_pem, key_pem)`; `min_version`, `max_version`, `require_client_certificate(roots)` |
 | `TlsStream` | `connect(tcp, server_name, config)`, `accept(tcp, config)`; `recv(buf, max)`, `send(data)`, `send_all(data)`, `close()`, `abort()`; `tls_version`, `cipher`, `alpn_protocol`, `peer_certificate`, `server_name`; `set_read_timeout`, `set_write_timeout`; `Read` and `Write` |
+
+`tls.backend()` returns a `String` naming the stack the build uses: `SChannel` on Windows, and on Linux and macOS the
+text of the linked OpenSSL (it starts with `OpenSSL 3`, for example `OpenSSL 3.0.13 30 Jan 2024`). With the `openssl`
+feature off it is `none`.
 
 Verification is on by default and cannot be turned off by accident: a client checks the server's chain against its trust
 store and the certificate's names against the `server_name` it passes to `connect` (a DNS name, or an IP address matched
@@ -101,20 +107,36 @@ a Burdin function to C), encrypted private keys (a password callback), session r
 revocation checking, DTLS, and QUIC. A server speaks no ALPN, so `alpn_protocol()` is `None` against it. See
 `spec/tls.md`, TLS8.
 
-## Decision: OpenSSL 3, not native and not the platform stack
+## Decision: the platform's TLS stack
 
-Native TLS 1.3 needs X.509, RSA and ECDSA verification, and a trust store, which `crypto` does not have (X.509 is
-issue #559). SChannel, Secure Transport, and Linux's OpenSSL are three different APIs. OpenSSL 3 is one API on all
-three platforms and supports client and server, SNI, ALPN, verification, and PEM/DER. The engine uses memory BIOs, so
-OpenSSL never sees a socket and the Burdin side moves the bytes through `TcpStream` on the reactor (`spec/tls.md`,
-TLS2).
+Each platform uses its own TLS stack, reached through a hand-written binding (`spec/tls.md`, TLS1): SChannel on
+Windows, which ships with the system, and OpenSSL 3 on Linux and macOS (macOS moves to Secure Transport later). Native
+TLS written in Burdin is issue #884. It needs X.509, RSA and ECDSA verification, and a trust store, which `crypto` does
+not have (X.509 is issue #559).
 
 ## Installing OpenSSL
 
-| Platform | Install | Build setting |
-| --- | --- | --- |
-| Linux | `apt install libssl-dev` | none |
-| macOS | `brew install openssl@3` | `export LIBRARY_PATH="$(brew --prefix openssl@3)/lib"` |
-| Windows | an OpenSSL 3 build (installer, `choco install openssl`, vcpkg) | the folder with `libssl.lib` and `libcrypto.lib` on `LIB`, the DLL folder on `PATH` |
+Only Linux and macOS need OpenSSL. On Windows the package links SChannel and nothing has to be installed.
 
-A library in another place is found with the linker's own variables (`LIBRARY_PATH`, `LIB`) or `BURDIN_CC` flags.
+| Platform | Stack | Install | Build setting |
+| --- | --- | --- | --- |
+| Windows | SChannel | nothing | nothing |
+| Linux | OpenSSL 3 | `apt install libssl-dev` | none |
+| macOS | OpenSSL 3 | `brew install openssl@3` | `export LIBRARY_PATH="$(brew --prefix openssl@3)/lib"` |
+
+A library in another place is found with the linker's own variable (`LIBRARY_PATH` on Linux and macOS) or `BURDIN_CC`
+flags.
+
+## The `openssl` feature
+
+`tls` links OpenSSL through its `openssl` feature, which is on by default (`[features] default = ["openssl"]`). The
+feature only affects Linux and macOS: on Windows the package links SChannel whatever the feature says (`spec/tls.md`,
+TLS1a). A program that wants the package's types without linking OpenSSL turns the feature off:
+
+```toml
+[dependencies]
+tls = { official = true, default-features = false }
+```
+
+Then no OpenSSL library is linked, and each TLS call returns `TlsError.Unsupported` ("no OpenSSL in this build"), so the
+program still builds and runs. `spec/tls.md`, TLS7, has the rules and the tests.

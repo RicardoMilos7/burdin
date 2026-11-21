@@ -2,11 +2,17 @@
 name = "tls"
 version = "0.1.0"
 
-# OpenSSL 3 (spec/tls.md, TLS1). The libraries are found by the system linker: `libssl-dev` on Linux,
-# `brew install openssl@3` on macOS (with LIBRARY_PATH naming its lib directory), and an OpenSSL 3 installation
-# whose `lib` directory is on LIB on Windows, where the import libraries are `libssl.lib` and `libcrypto.lib`.
-[target.'cfg(unix)'.link]
-libs = ["ssl", "crypto"]
+# Windows uses SChannel, Crypt32, and CNG (spec/tls.md, TLS1): the system libraries below are linked there, and the
+# OpenSSL libraries are not. Everywhere else the OpenSSL 3 libraries are linked by the optional `openssl_link` package
+# (spec/tls.md, TLS7); its dependency is declared for platforms other than Windows (PKG27). The `openssl` feature is on
+# by default; a build that turns it off links no OpenSSL, and every TLS call reports `TlsError.Unsupported`. The feature
+# has no effect on Windows.
+[target.'cfg(not(windows))'.dependencies]
+openssl_link = { path = "openssl_link", optional = true }
 
 [target.'cfg(windows)'.link]
-libs = ["libssl", "libcrypto"]
+libs = ["secur32", "crypt32", "ncrypt", "bcrypt"]
+
+[features]
+default = ["openssl"]
+openssl = ["dep:openssl_link"]

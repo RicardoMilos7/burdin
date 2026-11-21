@@ -1,0 +1,12 @@
+[package]
+name = "openssl_link"
+version = "0.1.0"
+
+# OpenSSL 3 (spec/tls.md, TLS1 and TLS7). The libraries are found by the system linker: `libssl-dev` on Linux, and
+# `brew install openssl@3` on macOS (with LIBRARY_PATH naming its lib directory). Windows does not use this package: its
+# TLS backend is SChannel (TLS1), so `tls` declares this dependency for platforms other than Windows (PKG27).
+#
+# This package has no code of its own. It exists so that the libraries reach the link only when the `openssl` feature of
+# `tls` is on (PKG34: an inactive optional dependency contributes no libraries).
+[target.'cfg(unix)'.link]
+libs = ["ssl", "crypto"]

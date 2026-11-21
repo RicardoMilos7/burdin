@@ -2,5 +2,12 @@
 name = "http"
 version = "0.1.0"
 
+# `https` needs the `tls` package with its `openssl` feature (spec/http-client.md, HC17; spec/tls.md, TLS7). The feature
+# is on by default, as TLS is in the HTTP clients that make it a feature (reqwest's `default-tls`, ureq's `tls`). A
+# program that writes `http = { official = true, default-features = false }` links no OpenSSL.
 [dependencies]
-tls = true
+tls = { official = true, default-features = false }
+
+[features]
+default = ["tls"]
+tls = ["tls/openssl"]

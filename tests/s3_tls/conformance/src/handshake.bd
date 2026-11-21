@@ -8,8 +8,6 @@ use support.{
     CHAIN,
     CLIENT,
     CLIENT_KEY,
-    ED25519,
-    ED25519_KEY,
     EXPIRED,
     EXPIRED_KEY,
     Peer,
@@ -207,7 +205,6 @@ fn names_and_protocols() {
 
     // Other key types.
     attempt("rsa leaf", "localhost", client_config(), server_config(RSA, RSA_KEY), Behavior.Drain)
-    attempt("ed25519 leaf", "localhost", client_config(), server_config(ED25519, ED25519_KEY), Behavior.Drain)
 }
 
 fn verification() {
