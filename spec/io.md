@@ -163,7 +163,7 @@ once), `blocking_outside_extern`, `blocking_variadic` (E0290).
 ```
 struct SocketAddr                            // an IPv4 address and a port; parse, to_text, ip, port, octets
 struct TcpListener { fn bind(str), accept(): (TcpStream, SocketAddr), local_addr(), close() }
-struct TcpStream { fn connect(str), read, write, peer_addr, local_addr, set_read_timeout,
+struct TcpStream { fn connect(str), connect_timeout(str, Duration), read, write, peer_addr, local_addr, set_read_timeout,
                     set_write_timeout, set_nodelay, shutdown_read, shutdown_write, close }
 struct UdpSocket { fn bind(str), recv_from(): (usize, SocketAddr), send_to, local_addr, set_read_timeout, close }
 fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
@@ -178,7 +178,9 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
   system code in a thread-local slot that `__net_last_error()` reports. `std` loops on `-1`: it registers the
   descriptor with the reactor (`readable` or `writable`) and retries when it is woken.
 * `connect` is non-blocking; when it returns in progress, the task waits for writability and then reads `SO_ERROR`
-  (`__net_error`) to learn whether the connection was established or refused.
+  (`__net_error`) to learn whether the connection was established or refused. `connect_timeout(addr, timeout)` puts
+  a deadline on that wait: when it passes the attempt is abandoned, its socket is closed, and the call reports
+  `IoErrorKind.TimedOut`.
 * A read returns `Ok(0)` at the end of the stream (`recv` returning 0), which is what `Read.read_to_end` expects.
 * `TcpStream` implements `Read` and `Write`, so `read_exact`, `read_to_end`, `read_to_string`, `write_all`, `write_text`,
   and `write_line` come from `std.rw`.
@@ -245,6 +247,6 @@ Tests: `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog`.
 | IO2 | `s2_io/timer_parks_task`, `channel_watchdog`, `stress_connections` |
 | IO3 | `s2_io/file_fifo_offload` |
 | IO4 | `s2_io/blocking_parks_worker`, `blocking_two_tasks`, `blocking_outside_extern`, `blocking_variadic` |
-| IO5 | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_refused`, `net_scope_borrow`, `net_udp`, `stress_connections`, `net_borrow_conflict`, `net_view_channel` |
+| IO5 | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_connect_timeout`, `net_tcp_refused`, `net_scope_borrow`, `net_udp`, `stress_connections`, `net_borrow_conflict`, `net_view_channel` |
 | IO6 | `s2_io/net_lookup_host` |
 | IO7 | `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog` |

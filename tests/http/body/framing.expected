@@ -1,0 +1,75 @@
+> length 5 | 100 | hello
+  body="hello"
+  complete=true clean=true trailers=0
+> length 5 | 1 | hello
+  body="hello"
+  complete=true clean=true trailers=0
+> length 5 | 2 | hello and more
+  body="hello"
+  complete=true clean=false trailers=0
+> length 0 | 100 | 
+  body=""
+  complete=true clean=true trailers=0
+> length 5 | 100 | hel
+  body="hel"
+  error: the connection closed before the whole body arrived
+> until-close | 3 | until the end
+  body="until the end"
+  complete=true clean=false trailers=0
+> until-close | 100 | 
+  body=""
+  complete=true clean=false trailers=0
+> chunked | 100 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+  body="hello world"
+  complete=true clean=true trailers=0
+> chunked | 1 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+  body="hello world"
+  complete=true clean=true trailers=0
+> chunked | 3 | 5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+  body="hello world"
+  complete=true clean=true trailers=0
+> chunked | 100 | 0\r\n\r\n
+  body=""
+  complete=true clean=true trailers=0
+> chunked | 100 | 5;ext=1\r\nhello\r\n0\r\n\r\n
+  body="hello"
+  complete=true clean=true trailers=0
+> chunked | 100 | A\r\n0123456789\r\n0\r\n\r\n
+  body="0123456789"
+  complete=true clean=true trailers=0
+> chunked | 100 | a\r\n0123456789\r\n0\r\n\r\n
+  body="0123456789"
+  complete=true clean=true trailers=0
+> chunked | 100 | 3\r\nabc\r\n0\r\nSum: 3\r\nX-Two: 2\r\n\r\n
+  body="abc"
+  complete=true clean=true trailers=2
+    Sum: 3
+    X-Two: 2
+> chunked | 1 | 3\r\nabc\r\n0\r\nSum: 3\r\n\r\n
+  body="abc"
+  complete=true clean=true trailers=1
+    Sum: 3
+> chunked | 100 | zz\r\nhello\r\n0\r\n\r\n
+  body=""
+  error: malformed body: a chunk size is not hexadecimal: "zz"
+> chunked | 100 | \r\n
+  body=""
+  error: malformed body: a chunk size is missing
+> chunked | 100 | 5\r\nhelloXX0\r\n\r\n
+  body="hello"
+  error: malformed body: chunk data is not followed by CRLF
+> chunked | 100 | 5\r\nhel
+  body="hel"
+  error: the connection closed before the whole body arrived
+> chunked | 100 | 5\r\nhello\r\n
+  body="hello"
+  error: the connection closed before the whole body arrived
+> chunked | 100 | 5\r\nhello\r\n0\r\n
+  body="hello"
+  error: the connection closed before the whole body arrived
+> chunked | 100 | FFFFFFFFFFFFFFFFF\r\n
+  body=""
+  error: malformed body: a chunk size is too large
+> chunked | 100 | 3\r\nabc\r\n0\r\nbad trailer\r\n\r\n
+  body="abc"
+  error: malformed body: a trailer field has no colon

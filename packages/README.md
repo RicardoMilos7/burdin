@@ -21,6 +21,7 @@ Official packages today:
 - `csv` — a record-at-a-time CSV reader and writer (issue #257; `packages/csv/README.md`).
 - `yaml` — a safe YAML subset with anchors resolved (issue #258; `packages/yaml/README.md`).
 - `xml` — an XML reader and writer with namespaces and a small DOM (issue #259; `packages/xml/README.md`).
+- `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-host connection reuse (issue #260; `packages/http/README.md`).
 
 Later libraries are added here, one folder each, as they are written.
 

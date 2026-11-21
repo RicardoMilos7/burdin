@@ -1904,6 +1904,7 @@ struct TcpListener {
 
 struct TcpStream {
     fn connect(addr: str): Result<TcpStream, IoError>
+    fn connect_timeout(addr: str, timeout: Duration): Result<TcpStream, IoError>   // TimedOut after `timeout`
     fn peer_addr(self): Result<SocketAddr, IoError>
     fn local_addr(self): Result<SocketAddr, IoError>
     fn set_read_timeout(mut self, Option<Duration>)

@@ -1,0 +1,1975 @@
+// The HTTP/1.1 client package (spec/http-client.md; issues #260, #328, #329, #330).
+//
+// Four layers, each usable by itself:
+//   1. values: `Url` (parsing and reference resolution), `Method`, `Headers`, `Request`, and `HttpError`;
+//   2. the wire formats: the request head, the response head, and the body decoders (Content-Length, chunked, and
+//      close-delimited), which are pure functions over bytes and are tested without a socket;
+//   3. `Response`, whose `Body` is a `Read` over the connection: a body that is read to its end hands the connection
+//      back to the client's pool;
+//   4. `Client`: timeouts, redirects, retries of safe requests, and per-host connection reuse.
+//
+// There is no TLS in the standard library, so an `https` URL is parsed and then refused with
+// `HttpError.TlsUnsupported`; it never falls back to plain text. Nothing here panics on malformed input from the
+// network: a bad response is an `HttpError`.
+
+// The limits that keep a hostile peer from exhausting memory. A response head larger than `MAX_HEAD_BYTES`, with more
+// than `MAX_HEADERS` fields, or a chunk-size line longer than `MAX_LINE` is a malformed response.
+const MAX_HEAD_BYTES: usize = 65536
+const MAX_HEADERS: usize = 128
+const MAX_LINE: usize = 1024
+// How much one socket read asks for.
+const READ_CHUNK: usize = 8192
+// The most one `Client.send` follows, however the client is configured: the configured limit is clamped to this.
+const MAX_REDIRECT_LIMIT: usize = 64
+
+// ----- errors --------------------------------------------------------------------------------------------------
+
+/// Every way a request can fail. The variant says what kind of failure it was, so a caller can tell a timeout from a
+/// malformed response without parsing the message.
+error enum HttpError: Clone, Debug {
+    InvalidUrl(String)                       "invalid URL: {0}"
+    UnsupportedScheme(String)                "unsupported URL scheme '{0}': only http is supported"
+    TlsUnsupported(String)                   "https is not supported because there is no TLS in this build: {0}"
+    InvalidMethod(String)                    "invalid method: {0}"
+    InvalidHeader(String)                    "invalid header: {0}"
+    InvalidRequest(String)                   "invalid request: {0}"
+    Connect { addr: String, reason: String } "cannot connect to {addr}: {reason}"
+    Timeout { phase: String }                "timed out while {phase}"
+    Io { op: String, reason: String }        "I/O error while {op}: {reason}"
+    ConnectionClosed                         "the connection closed before a response was received"
+    BadResponse(String)                      "malformed response: {0}"
+    BadBody(String)                          "malformed body: {0}"
+    BodyTruncated                            "the connection closed before the whole body arrived"
+    BodyTooLarge { limit: usize }            "the response body is larger than {limit} bytes"
+    TooManyRedirects { limit: usize }        "too many redirects (the limit is {limit})"
+    RedirectLoop(String)                     "redirect loop: {0} was already visited"
+    BadRedirect(String)                      "invalid redirect: {0}"
+}
+
+HttpError {
+    /// Whether the request timed out (connecting, writing, or waiting for the response or the body).
+    fn is_timeout(self): bool {
+        match self {
+            HttpError.Timeout { phase: _ } => true,
+            else => false,
+        }
+    }
+
+    /// Whether the failure is one of the connection kind: the request never got a response and may not have been
+    /// seen by the server. These are the failures a safe request is retried after (HC15).
+    fn is_connection_failure(self): bool {
+        match self {
+            HttpError.Connect { addr: _, reason: _ } => true,
+            HttpError.Timeout { phase: _ } => true,
+            HttpError.Io { op: _, reason: _ } => true,
+            HttpError.ConnectionClosed => true,
+            else => false,
+        }
+    }
+}
+
+/// The error a failed socket call reports: a timeout is its own variant, everything else keeps the system's words.
+priv fn __io_failure(op: str, failure: IoError): HttpError {
+    match failure.kind() {
+        IoErrorKind.TimedOut => HttpError.Timeout { phase: op.to_string() },
+        other => HttpError.Io { op: op.to_string(), reason: other.to_string() },
+    }
+}
+
+priv fn __bad_url(reason: str, text: str): HttpError {
+    HttpError.InvalidUrl(format("{}: {}", reason, text))
+}
+
+// ----- characters ----------------------------------------------------------------------------------------------
+
+/// A byte that may appear in a token (RFC 9110, 5.6.2): a method or a header field name.
+priv fn __is_token_byte(b: u8): bool {
+    if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) {
+        return true
+    }
+    match b {
+        33 | 35 | 36 | 37 | 38 | 39 | 42 | 43 | 45 | 46 | 94 | 95 | 96 | 124 | 126 => true,
+        else => false,
+    }
+}
+
+priv fn __is_token(text: str): bool {
+    if text.len() == 0 {
+        return false
+    }
+    for b in text.bytes() {
+        if !__is_token_byte(b) {
+            return false
+        }
+    }
+    true
+}
+
+/// Whether `text` has a comma-separated element equal to `token`, ignoring case: how `Connection: close, TE` and
+/// `Transfer-Encoding: gzip, chunked` are read.
+priv fn __has_list_token(text: str, token: str): bool {
+    for piece in text.split_char(',') {
+        if piece.as_str().trim().eq_ignore_ascii_case(token) {
+            return true
+        }
+    }
+    false
+}
+
+// ----- methods -------------------------------------------------------------------------------------------------
+
+/// A request method. `Custom` holds any other valid method token; it is never treated as safe to repeat.
+enum Method: Clone, Eq, Debug {
+    Get
+    Head
+    Post
+    Put
+    Delete
+    Options
+    Patch
+    Trace
+    Custom(String)
+}
+
+Method {
+    /// Reads a method name. The standard names are matched exactly (methods are case-sensitive); any other token is
+    /// a `Custom` method.
+    fn parse(text: str): Result<Method, HttpError> {
+        match text {
+            "GET" => Ok(Method.Get),
+            "HEAD" => Ok(Method.Head),
+            "POST" => Ok(Method.Post),
+            "PUT" => Ok(Method.Put),
+            "DELETE" => Ok(Method.Delete),
+            "OPTIONS" => Ok(Method.Options),
+            "PATCH" => Ok(Method.Patch),
+            "TRACE" => Ok(Method.Trace),
+            else => {
+                if __is_token(text) {
+                    Ok(Method.Custom(text.to_string()))
+                } else {
+                    Err(HttpError.InvalidMethod(text.to_string()))
+                }
+            }
+        }
+    }
+
+    /// The method as written on the request line.
+    fn to_text(self): String {
+        match self {
+            Method.Get => "GET".to_string(),
+            Method.Head => "HEAD".to_string(),
+            Method.Post => "POST".to_string(),
+            Method.Put => "PUT".to_string(),
+            Method.Delete => "DELETE".to_string(),
+            Method.Options => "OPTIONS".to_string(),
+            Method.Patch => "PATCH".to_string(),
+            Method.Trace => "TRACE".to_string(),
+            Method.Custom(name) => name.clone(),
+        }
+    }
+
+    fn is_head(self): bool {
+        match self {
+            Method.Head => true,
+            else => false,
+        }
+    }
+
+    /// Whether repeating the request has the same effect as sending it once (RFC 9110, 9.2.2): the methods a client
+    /// may retry on its own. `POST`, `PATCH`, and every custom method are not idempotent.
+    fn is_idempotent(self): bool {
+        match self {
+            Method.Get => true,
+            Method.Head => true,
+            Method.Put => true,
+            Method.Delete => true,
+            Method.Options => true,
+            Method.Trace => true,
+            else => false,
+        }
+    }
+}
+
+Method: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.pad_plain(self.to_text().as_str())
+    }
+}
+
+// ----- headers -------------------------------------------------------------------------------------------------
+
+/// One header field.
+struct Header: Clone, Eq, Debug {
+    name: String
+    value: String
+}
+
+/// A list of header fields. Names compare without regard to case and keep the spelling they were added with; a name
+/// may appear more than once, and the fields keep the order they were added in.
+struct Headers: Clone, Debug {
+    items: List<Header>
+}
+
+Headers {
+    fn new(): Headers {
+        Headers { items: List<Header>.new() }
+    }
+
+    fn len(self): usize {
+        self.items.len()
+    }
+
+    fn is_empty(self): bool {
+        self.items.len() == 0
+    }
+
+    /// The name of field `index`, as it was added.
+    fn name_at(self, index: usize): String {
+        self.items[index].name.clone()
+    }
+
+    /// The value of field `index`.
+    fn value_at(self, index: usize): String {
+        self.items[index].value.clone()
+    }
+
+    /// Checks a field before it is stored: the name must be a token, and the value may hold no line break, no NUL,
+    /// and no other control character except a tab, so a value can never end its own field (CRLF injection, HC4).
+    /// A value is stored without its leading and trailing spaces and tabs.
+    priv fn check(name: str, value: str): Result<String, HttpError> {
+        if !__is_token(name) {
+            return Err(HttpError.InvalidHeader(format("the name {:?} is not a valid field name", name)))
+        }
+        for b in value.bytes() {
+            if (b < 32 && b != 9) || b == 127 {
+                return Err(HttpError.InvalidHeader(format("the value of {} has a control character", name)))
+            }
+        }
+        Ok(value.trim().to_string())
+    }
+
+    /// Appends a field, after any with the same name.
+    fn add(mut self, name: str, value: str): Result<(), HttpError> {
+        let clean = Headers.check(name, value)?
+        self.items.push(Header { name: name.to_string(), value: clean })
+        Ok(())
+    }
+
+    /// Makes `name` have exactly one field: the first one with that name takes the new value (and the spelling of the
+    /// name given here), the others are removed. A name that was not there is appended.
+    fn set(mut self, name: str, value: str): Result<(), HttpError> {
+        let clean = Headers.check(name, value)?
+        let mut first = true
+        let mut i: usize = 0
+        while i < self.items.len() {
+            if self.items[i].name.eq_ignore_ascii_case(name) {
+                if first {
+                    self.items[i] = Header { name: name.to_string(), value: clean.clone() }
+                    first = false
+                    i = i + 1
+                } else {
+                    let _ = self.items.remove(i)
+                }
+            } else {
+                i = i + 1
+            }
+        }
+        if first {
+            self.items.push(Header { name: name.to_string(), value: clean })
+        }
+        Ok(())
+    }
+
+    /// The value of the first field called `name`.
+    fn get(self, name: str): Option<String> {
+        for item in self.items.iter() {
+            if item.name.eq_ignore_ascii_case(name) {
+                return Some(item.value.clone())
+            }
+        }
+        None
+    }
+
+    /// The values of every field called `name`, in order.
+    fn get_all(self, name: str): List<String> {
+        let mut found = List<String>.new()
+        for item in self.items.iter() {
+            if item.name.eq_ignore_ascii_case(name) {
+                found.push(item.value.clone())
+            }
+        }
+        found
+    }
+
+    fn contains(self, name: str): bool {
+        for item in self.items.iter() {
+            if item.name.eq_ignore_ascii_case(name) {
+                return true
+            }
+        }
+        false
+    }
+
+    /// Removes every field called `name` and returns how many there were.
+    fn remove(mut self, name: str): usize {
+        let mut removed: usize = 0
+        let mut i: usize = 0
+        while i < self.items.len() {
+            if self.items[i].name.eq_ignore_ascii_case(name) {
+                let _ = self.items.remove(i)
+                removed = removed + 1
+            } else {
+                i = i + 1
+            }
+        }
+        removed
+    }
+
+    /// Whether some field called `name` lists `token` among its comma-separated elements, ignoring case:
+    /// `has_token("Connection", "close")`.
+    fn has_token(self, name: str, token: str): bool {
+        for item in self.items.iter() {
+            if item.name.eq_ignore_ascii_case(name) && __has_list_token(item.value.as_str(), token) {
+                return true
+            }
+        }
+        false
+    }
+
+    /// The fields as they go on the wire: `Name: value` and a CRLF for each.
+    fn to_wire(self): String {
+        let mut out = String.new()
+        for item in self.items.iter() {
+            out.push_str(item.name.as_str())
+            out.push_str(": ")
+            out.push_str(item.value.as_str())
+            out.push_str("\r\n")
+        }
+        out
+    }
+}
+
+// ----- URLs ----------------------------------------------------------------------------------------------------
+
+/// A parsed `http` or `https` URL. The scheme and host are lower case; the port is the explicit one or the scheme's
+/// default; the path always starts with `/`; the fragment is dropped (it is never sent).
+struct Url: Clone, Eq, Debug {
+    scheme: String
+    host: String
+    port: u16
+    path: String
+    query: Option<String>
+}
+
+/// Whether `text` is a scheme: a letter and then letters, digits, `+`, `-`, and `.`.
+priv fn __is_scheme(text: str): bool {
+    if text.len() == 0 {
+        return false
+    }
+    let mut first = true
+    for b in text.bytes() {
+        let letter = (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+        let other = (b >= 48 && b <= 57) || b == 43 || b == 45 || b == 46
+        if first && !letter {
+            return false
+        }
+        if !letter && !other {
+            return false
+        }
+        first = false
+    }
+    true
+}
+
+/// The URL with a user-visible fault, or `Ok` when every byte is printable ASCII: a space, a control character, or a
+/// non-ASCII byte must be percent-encoded, so none of them can reach a request line.
+priv fn __check_url_bytes(text: str): Result<(), HttpError> {
+    for b in text.bytes() {
+        if b <= 32 || b == 127 {
+            return Err(__bad_url("a space or control character must be percent-encoded", text))
+        }
+        if b >= 128 {
+            return Err(__bad_url("a non-ASCII character must be percent-encoded", text))
+        }
+    }
+    Ok(())
+}
+
+/// The path and query of the part of a URL that follows the authority (or of a reference), as `(path, query)`.
+priv fn __split_query(text: str): (String, Option<String>) {
+    match text.find('?') {
+        Some(at) => (text[0..at].to_string(), Some(text[at + 1..text.len()].to_string())),
+        None => (text.to_string(), None),
+    }
+}
+
+/// The URL text without its fragment.
+priv fn __without_fragment(text: str): str {
+    match text.find('#') {
+        Some(at) => text[0..at],
+        None => text,
+    }
+}
+
+/// RFC 3986, 5.2.4: the path with its `.` and `..` segments resolved. The path starts with `/`.
+priv fn __remove_dot_segments(path: str): String {
+    let segments = path.split_char('/')
+    let mut out = List<String>.new()
+    let last = segments.len() - 1
+    let mut i: usize = 0
+    while i < segments.len() {
+        let segment = segments[i].as_str()
+        if segment == "." {
+            if i == last {
+                out.push(String.new())
+            }
+        } else if segment == ".." {
+            if out.len() > 1 {
+                out.pop()
+            }
+            if i == last {
+                out.push(String.new())
+            }
+        } else {
+            out.push(segment.to_string())
+        }
+        i = i + 1
+    }
+    out.join("/")
+}
+
+Url {
+    /// Reads an absolute `http` or `https` URL (HC1). The userinfo (`user:password@`), an IPv6 literal, a space, a
+    /// control character, and a non-ASCII byte are rejected; an empty path becomes `/`.
+    fn parse(text: str): Result<Url, HttpError> {
+        __check_url_bytes(text)?
+        let whole = __without_fragment(text)
+        let sep = match whole.find_str("://") {
+            Some(at) => at,
+            None => return Err(__bad_url("the scheme is missing", text)),
+        }
+        let scheme = whole[0..sep].to_ascii_lowercase()
+        if !__is_scheme(scheme.as_str()) {
+            return Err(__bad_url("the scheme is not valid", text))
+        }
+        if scheme.as_str() != "http" && scheme.as_str() != "https" {
+            return Err(HttpError.UnsupportedScheme(scheme.clone()))
+        }
+        let rest = whole[sep + 3..whole.len()]
+        let mut authority_end = rest.len()
+        let mut k: usize = 0
+        let rest_bytes = rest.as_bytes()
+        while k < rest_bytes.len() {
+            if rest_bytes[k] == 47 || rest_bytes[k] == 63 {
+                authority_end = k
+                break
+            }
+            k = k + 1
+        }
+        let authority = rest[0..authority_end]
+        let tail = rest[authority_end..rest.len()]
+        if authority.find('@').is_some() {
+            return Err(__bad_url("a user name and password in the URL are not supported", text))
+        }
+        if authority.starts_with("[") {
+            return Err(__bad_url("IPv6 addresses are not supported", text))
+        }
+        let default_port: u16 = if scheme.as_str() == "https" { 443 } else { 80 }
+        let mut host_text = authority
+        let mut port = default_port
+        match authority.rfind(':') {
+            Some(colon) => {
+                host_text = authority[0..colon]
+                let digits = authority[colon + 1..authority.len()]
+                if digits.len() > 0 {
+                    port = Url.parse_port(digits, text)?
+                }
+            }
+            None => {}
+        }
+        if host_text.len() == 0 {
+            return Err(__bad_url("the host is missing", text))
+        }
+        for b in host_text.bytes() {
+            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 45 || b == 46 || b == 95
+            if !ok {
+                return Err(__bad_url("the host has a character a host name cannot have", text))
+            }
+        }
+        let (raw_path, query) = __split_query(tail)
+        let path = if raw_path.len() == 0 { "/".to_string() } else { raw_path }
+        Ok(Url { scheme: scheme, host: host_text.to_ascii_lowercase(), port: port, path: path, query: query })
+    }
+
+    priv fn parse_port(digits: str, text: str): Result<u16, HttpError> {
+        let mut value: u32 = 0
+        for b in digits.bytes() {
+            if b < 48 || b > 57 || value > 65535 {
+                return Err(__bad_url("the port is not a number from 1 to 65535", text))
+            }
+            value = value * 10 + ((b - 48) as u32)
+        }
+        if value == 0 || value > 65535 {
+            return Err(__bad_url("the port is not a number from 1 to 65535", text))
+        }
+        Ok(value as u16)
+    }
+
+    fn is_https(self): bool {
+        self.scheme.as_str() == "https"
+    }
+
+    fn default_port(self): u16 {
+        if self.is_https() { 443 } else { 80 }
+    }
+
+    /// `host`, or `host:port` when the port is not the scheme's default: the value of the `Host` header.
+    fn authority(self): String {
+        if self.port == self.default_port() {
+            self.host.clone()
+        } else {
+            format("{}:{}", self.host, self.port)
+        }
+    }
+
+    /// `host:port`, the address a connection is made to.
+    fn address(self): String {
+        format("{}:{}", self.host, self.port)
+    }
+
+    /// The path and query: the target of the request line.
+    fn target(self): String {
+        match self.query {
+            Some(q) => format("{}?{}", self.path, q),
+            None => self.path.clone(),
+        }
+    }
+
+    /// The scheme, host, and port: what two URLs share when a redirect stays on the same origin (HC12).
+    fn origin(self): String {
+        format("{}://{}:{}", self.scheme, self.host, self.port)
+    }
+
+    fn same_origin(self, other: Url): bool {
+        self.scheme.as_str() == other.scheme.as_str() && self.host.as_str() == other.host.as_str() && self.port == other.port
+    }
+
+    /// The URL as text. The default port is left out.
+    fn to_text(self): String {
+        format("{}://{}{}", self.scheme, self.authority(), self.target())
+    }
+
+    /// Resolves `reference` against this URL, as a browser resolves a `Location` header (HC2, RFC 3986, 5): an absolute
+    /// URL replaces this one, `//host/path` keeps the scheme, `/path` keeps the origin, `?query` keeps the path, and a
+    /// relative path replaces the last segment. The fragment is dropped. A reference with another scheme is an error.
+    fn join(self, reference: str): Result<Url, HttpError> {
+        __check_url_bytes(reference)?
+        let text = __without_fragment(reference)
+        if text.len() == 0 {
+            return Ok(self.clone())
+        }
+        match text.find(':') {
+            Some(colon) => {
+                let before_slash = match text.find('/') {
+                    Some(slash) => colon < slash,
+                    None => true,
+                }
+                let before_query = match text.find('?') {
+                    Some(q) => colon < q,
+                    None => true,
+                }
+                if before_slash && before_query && __is_scheme(text[0..colon]) {
+                    return Url.parse(text)
+                }
+            }
+            None => {}
+        }
+        if text.starts_with("//") {
+            return Url.parse(format("{}:{}", self.scheme, text).as_str())
+        }
+        let mut next = self.clone()
+        if text.starts_with("?") {
+            next.query = Some(text[1..text.len()].to_string())
+            return Ok(next)
+        }
+        let (raw_path, query) = __split_query(text)
+        next.query = query
+        if raw_path.starts_with("/") {
+            next.path = __remove_dot_segments(raw_path.as_str())
+        } else {
+            let directory = match self.path.rfind('/') {
+                Some(slash) => self.path[0..slash + 1].to_string(),
+                None => "/".to_string(),
+            }
+            next.path = __remove_dot_segments(format("{}{}", directory, raw_path).as_str())
+        }
+        Ok(next)
+    }
+}
+
+Url: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.pad_plain(self.to_text().as_str())
+    }
+}
+
+// ----- requests ------------------------------------------------------------------------------------------------
+
+/// A request: a method, a URL, headers, and a body that is held in memory. `Content-Length` is computed from the
+/// body when the request is sent, so a header of that name (and `Transfer-Encoding`) is ignored.
+struct Request: Clone {
+    method: Method
+    url: Url
+    headers: Headers
+    body: List<u8>
+    /// The first problem a builder call found (a bad header), reported when the request is sent.
+    problem: Option<HttpError>
+}
+
+Request {
+    /// A request with no headers and no body. The URL must be an absolute `http` or `https` URL.
+    fn new(own method: Method, url: str): Result<Request, HttpError> {
+        let parsed = Url.parse(url)?
+        Ok(Request { method: method, url: parsed, headers: Headers.new(), body: List<u8>.new(), problem: None })
+    }
+
+    fn get(url: str): Result<Request, HttpError> {
+        Request.new(Method.Get, url)
+    }
+
+    fn head(url: str): Result<Request, HttpError> {
+        Request.new(Method.Head, url)
+    }
+
+    fn post(url: str): Result<Request, HttpError> {
+        Request.new(Method.Post, url)
+    }
+
+    fn put(url: str): Result<Request, HttpError> {
+        Request.new(Method.Put, url)
+    }
+
+    fn delete(url: str): Result<Request, HttpError> {
+        Request.new(Method.Delete, url)
+    }
+
+    /// Adds a header field. An invalid name or value is remembered and reported by `Client.send`.
+    fn header(own self, name: str, value: str): Request {
+        let mut request = self
+        match request.headers.add(name, value) {
+            Ok(_) => {}
+            Err(e) => {
+                if request.problem.is_none() {
+                    request.problem = Some(e)
+                }
+            }
+        }
+        request
+    }
+
+    /// Sets the body to a copy of `data`.
+    fn body_bytes(own self, data: [u8]): Request {
+        let mut request = self
+        request.body = List<u8>.new()
+        request.body.extend_from_slice(data)
+        request
+    }
+
+    /// Sets the body to the UTF-8 bytes of `text`.
+    fn body_text(own self, text: str): Request {
+        let bytes = text.to_utf8()
+        self.body_bytes(bytes[0..bytes.len()])
+    }
+
+    /// The request head as it goes on the wire (HC6): the request line, `Host` (unless the caller set one), the
+    /// caller's fields in order, `User-Agent` (unless the caller set one), `Content-Length` when there is a body or
+    /// the method is `POST`, `PUT`, or `PATCH`, and `Connection: close` when `close` is true and the caller did not set
+    /// `Connection`. The blank line that ends the head is included.
+    fn to_wire_head(self, user_agent: str, close: bool): String {
+        let mut fields = self.headers.clone()
+        let _ = fields.remove("Content-Length")
+        let _ = fields.remove("Transfer-Encoding")
+        let mut out = format("{} {} HTTP/1.1\r\n", self.method.to_text(), self.url.target())
+        if !fields.contains("Host") {
+            out.push_str(format("Host: {}\r\n", self.url.authority()).as_str())
+        }
+        out.push_str(fields.to_wire().as_str())
+        if !fields.contains("User-Agent") {
+            out.push_str(format("User-Agent: {}\r\n", user_agent).as_str())
+        }
+        let needs_length = match self.method {
+            Method.Post => true,
+            Method.Put => true,
+            Method.Patch => true,
+            else => false,
+        }
+        if self.body.len() > 0 || needs_length {
+            out.push_str(format("Content-Length: {}\r\n", self.body.len()).as_str())
+        }
+        if close && !fields.contains("Connection") {
+            out.push_str("Connection: close\r\n")
+        }
+        out.push_str("\r\n")
+        out
+    }
+}
+
+// ----- the response head ---------------------------------------------------------------------------------------
+
+/// A parsed status line and header block.
+struct ResponseHead: Clone, Debug {
+    /// The minor version of `HTTP/1.x`: 0 or 1.
+    minor: u8
+    status: u16
+    reason: String
+    headers: Headers
+}
+
+priv fn __bad_response(reason: str): HttpError {
+    HttpError.BadResponse(reason.to_string())
+}
+
+/// The offset just after the first blank line (`CRLF CRLF`) of `buffer`, which is where the body starts, or `None`
+/// when the head is not complete yet.
+fn find_head_end(buffer: List<u8>): Option<usize> {
+    if buffer.len() < 4 {
+        return None
+    }
+    let mut i: usize = 3
+    while i < buffer.len() {
+        if buffer[i] == 10 && buffer[i - 1] == 13 && buffer[i - 2] == 10 && buffer[i - 3] == 13 {
+            return Some(i + 1)
+        }
+        i = i + 1
+    }
+    None
+}
+
+/// `parse_response_head` of the first `end` bytes of `buffer`.
+priv fn __head_of(buffer: List<u8>, end: usize): Result<ResponseHead, HttpError> {
+    parse_response_head(buffer[0..end])
+}
+
+/// The bytes of `buffer` from `from` on, as a new list.
+priv fn __tail_of(buffer: List<u8>, from: usize): List<u8> {
+    let mut rest = List<u8>.new()
+    rest.extend_from_slice(buffer[from..buffer.len()])
+    rest
+}
+
+/// Reads a response head (HC7): `HTTP/1.0` or `HTTP/1.1`, a three-digit status, an optional reason, and header fields
+/// that each end in CRLF. A bare line feed, a field that starts with a space or tab (an obsolete line fold), a field
+/// without a colon, a space before the colon, more than 128 fields, and a head that is not UTF-8 are errors. `head`
+/// is the bytes up to and including the blank line.
+fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
+    if head.len() > MAX_HEAD_BYTES {
+        return Err(__bad_response("the head is too large"))
+    }
+    let text = match str.from_utf8(head) {
+        Ok(t) => t,
+        Err(_) => return Err(__bad_response("the head is not valid UTF-8")),
+    }
+    let lines = text.split("\r\n")
+    // The text ends in CRLF CRLF, so the last two pieces are empty.
+    if lines.len() < 3 {
+        return Err(__bad_response("the head is incomplete"))
+    }
+    let status_line = lines[0].as_str()
+    if status_line.len() < 12 || !status_line.starts_with("HTTP/1.") {
+        return Err(__bad_response(format("the status line is not HTTP/1.x: {:?}", status_line).as_str()))
+    }
+    if status_line.find('\n').is_some() || status_line.find('\r').is_some() {
+        return Err(__bad_response("a line ends in a bare line feed or carriage return"))
+    }
+    let sb = status_line.as_bytes()
+    if sb[7] != 48 && sb[7] != 49 {
+        return Err(__bad_response("the HTTP version is not 1.0 or 1.1"))
+    }
+    if sb[8] != 32 {
+        return Err(__bad_response("the status line has no space after the version"))
+    }
+    let mut status: u16 = 0
+    let mut d: usize = 9
+    while d < 12 {
+        if sb[d] < 48 || sb[d] > 57 {
+            return Err(__bad_response("the status code is not three digits"))
+        }
+        status = status * 10 + ((sb[d] - 48) as u16)
+        d = d + 1
+    }
+    if status < 100 {
+        return Err(__bad_response("the status code is below 100"))
+    }
+    let mut reason = String.new()
+    if status_line.len() > 12 {
+        if sb[12] != 32 {
+            return Err(__bad_response("the status code is not three digits"))
+        }
+        reason = status_line[13..status_line.len()].to_string()
+    }
+    let mut headers = Headers.new()
+    let mut i: usize = 1
+    while i < lines.len() - 2 {
+        let line = lines[i].as_str()
+        if line.find('\n').is_some() || line.find('\r').is_some() {
+            return Err(__bad_response("a line ends in a bare line feed or carriage return"))
+        }
+        if line.len() == 0 {
+            return Err(__bad_response("the head has an empty line before its end"))
+        }
+        if line.starts_with(" ") || line.starts_with("\t") {
+            return Err(__bad_response("a folded header line is not accepted"))
+        }
+        let colon = match line.find(':') {
+            Some(c) => c,
+            None => return Err(__bad_response(format("a header line has no colon: {:?}", line).as_str())),
+        }
+        if headers.len() >= MAX_HEADERS {
+            return Err(__bad_response("the response has too many header fields"))
+        }
+        match headers.add(line[0..colon], line[colon + 1..line.len()]) {
+            Ok(_) => {}
+            Err(e) => return Err(__bad_response(e.to_string().as_str())),
+        }
+        i = i + 1
+    }
+    Ok(ResponseHead { minor: sb[7] - 48, status: status, reason: reason, headers: headers })
+}
+
+// ----- how a body is framed ------------------------------------------------------------------------------------
+
+/// How the end of a response body is known (HC8).
+enum Framing: Copy, Clone, Eq, Debug {
+    /// There is no body: the response to `HEAD`, a `1xx`, `204`, or `304`.
+    None
+    /// Exactly this many bytes.
+    Length(u64)
+    /// `Transfer-Encoding: chunked`.
+    Chunked
+    /// Everything up to the end of the connection.
+    UntilClose
+}
+
+/// The digits of a `Content-Length` value as a number; a sign, a space inside, an empty value, and a value that does
+/// not fit in 64 bits are errors.
+priv fn __parse_length(text: str): Result<u64, HttpError> {
+    if text.len() == 0 {
+        return Err(__bad_response("the Content-Length is empty"))
+    }
+    let mut value: u64 = 0
+    for b in text.bytes() {
+        if b < 48 || b > 57 {
+            return Err(__bad_response(format("the Content-Length is not a number: {:?}", text).as_str()))
+        }
+        let digit = (b - 48) as u64
+        if value > (18446744073709551615 - digit) / 10 {
+            return Err(__bad_response("the Content-Length does not fit in 64 bits"))
+        }
+        value = value * 10 + digit
+    }
+    Ok(value)
+}
+
+/// The framing of the response to a request with `method`, from its status and headers (RFC 9112, 6.3): no body for
+/// `HEAD`, `1xx`, `204`, and `304`; `chunked` when `Transfer-Encoding` ends in it; otherwise `Content-Length`, which may be
+/// repeated or listed with commas only when every value is the same; otherwise the rest of the connection. A
+/// `Transfer-Encoding` that does not end in `chunked`, a `Content-Length` together with a `Transfer-Encoding`, and
+/// disagreeing lengths are errors, because they are how requests and responses get smuggled.
+fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError> {
+    if method.is_head() || status < 200 || status == 204 || status == 304 {
+        return Ok(Framing.None)
+    }
+    let codings = headers.get_all("Transfer-Encoding")
+    if codings.len() > 0 {
+        if headers.contains("Content-Length") {
+            return Err(__bad_response("the response has both Content-Length and Transfer-Encoding"))
+        }
+        let all = codings.join(",")
+        let pieces = all.as_str().split_char(',')
+        let last = pieces[pieces.len() - 1].as_str().trim()
+        if !last.eq_ignore_ascii_case("chunked") {
+            return Err(__bad_response("the Transfer-Encoding does not end in chunked"))
+        }
+        return Ok(Framing.Chunked)
+    }
+    let lengths = headers.get_all("Content-Length")
+    if lengths.len() == 0 {
+        return Ok(Framing.UntilClose)
+    }
+    let mut agreed: Option<u64> = None
+    for field in lengths.iter() {
+        for piece in field.as_str().split_char(',') {
+            let n = __parse_length(piece.as_str().trim())?
+            match agreed {
+                Some(first) => {
+                    if first != n {
+                        return Err(__bad_response("the response has different Content-Length values"))
+                    }
+                }
+                None => agreed = Some(n),
+            }
+        }
+    }
+    Ok(Framing.Length(agreed.unwrap()))
+}
+
+/// Whether the connection may carry another request after this response (HC16): the response has no
+/// `Connection: close`, and an `HTTP/1.0` response asked for `keep-alive`.
+fn keeps_alive(minor: u8, headers: Headers): bool {
+    if headers.has_token("Connection", "close") {
+        return false
+    }
+    if minor == 0 {
+        return headers.has_token("Connection", "keep-alive")
+    }
+    true
+}
+
+// ----- the body reader -----------------------------------------------------------------------------------------
+
+// The states of a chunked body: waiting for a chunk-size line, inside the data of a chunk, waiting for the CRLF that
+// ends the data, reading the trailer fields, and finished.
+const CHUNK_SIZE: i32 = 0
+const CHUNK_DATA: i32 = 1
+const CHUNK_END: i32 = 2
+const CHUNK_TRAILERS: i32 = 3
+const CHUNK_DONE: i32 = 4
+
+/// Decodes a response body from `source` according to its framing (HC8 to HC10). `leftover` is what the head read
+/// already took from the socket past the blank line. It is generic over any `Read`, so the decoders are tested on
+/// in-memory bytes as well as on connections.
+struct BodyReader<R> {
+    source: R
+    framing: Framing
+    /// Bytes taken from `source` and not used yet are `buffer[start..]`.
+    buffer: List<u8>
+    start: usize
+    /// For `Length` the body bytes left; for `Chunked` the bytes left in the current chunk.
+    remaining: u64
+    state: i32
+    /// Set when the framing says the whole body, trailers included, has been read.
+    complete: bool
+    trailers: Headers
+    delivered: u64
+}
+
+BodyReader<R> where R: Read {
+    fn new(own source: R, framing: Framing, own leftover: List<u8>): BodyReader<R> {
+        let remaining = match framing {
+            Framing.Length(n) => n,
+            else => 0,
+        }
+        let done = match framing {
+            Framing.None => true,
+            Framing.Length(n) => n == 0,
+            else => false,
+        }
+        BodyReader {
+            source: source,
+            framing: framing,
+            buffer: leftover,
+            start: 0,
+            remaining: remaining,
+            state: CHUNK_SIZE,
+            complete: done,
+            trailers: Headers.new(),
+            delivered: 0,
+        }
+    }
+
+    /// Whether the whole body has been read. A close-delimited body is complete only once the end was seen.
+    fn is_complete(self): bool {
+        self.complete
+    }
+
+    /// Whether the body was read to its end with nothing left over, so the connection can carry another response
+    /// (HC16): a close-delimited body never is, and bytes that follow the body mean the peer sent more than it should.
+    fn is_clean(self): bool {
+        let delimited = match self.framing {
+            Framing.UntilClose => true,
+            else => false,
+        }
+        self.complete && !delimited && self.start >= self.buffer.len()
+    }
+
+    /// The trailer fields of a chunked body; empty until the last chunk has been read.
+    fn trailers(self): Headers {
+        self.trailers.clone()
+    }
+
+    /// How many body bytes `read_body` has returned.
+    fn delivered(self): u64 {
+        self.delivered
+    }
+
+    fn into_source(own self): R {
+        self.source
+    }
+
+    /// Takes more bytes from the source. Everything already used is dropped first, so the buffer stays as small as
+    /// the data in flight. Returns how many bytes arrived; 0 is the end of the source.
+    priv fn fill(mut self): Result<usize, HttpError> {
+        if self.start >= self.buffer.len() {
+            self.buffer.clear()
+            self.start = 0
+        }
+        match self.source.read(mut self.buffer, READ_CHUNK) {
+            Ok(n) => Ok(n),
+            Err(failure) => Err(__io_failure("reading the response body", failure)),
+        }
+    }
+
+    /// Moves up to `limit` unused bytes into `out`.
+    priv fn take(mut self, mut out: List<u8>, limit: usize): usize {
+        let available = self.buffer.len() - self.start
+        let n = if available < limit { available } else { limit }
+        out.extend_from_slice(self.buffer[self.start..self.start + n])
+        self.start = self.start + n
+        self.delivered = self.delivered + (n as u64)
+        n
+    }
+
+    /// The offset of the first line feed among the unused bytes.
+    priv fn find_newline(self): Option<usize> {
+        let mut i = self.start
+        while i < self.buffer.len() {
+            if self.buffer[i] == 10 {
+                return Some(i)
+            }
+            i = i + 1
+        }
+        None
+    }
+
+    /// The unused bytes before the line feed at `newline`, as text, without the CRLF; they are used up.
+    priv fn take_line(mut self, newline: usize): Result<String, HttpError> {
+        if newline == self.start || self.buffer[newline - 1] != 13 {
+            return Err(HttpError.BadBody("a line in the chunked body does not end in CRLF".to_string()))
+        }
+        let line = __text_of(self.buffer[self.start..newline - 1])
+        self.start = newline + 1
+        Ok(line)
+    }
+
+    /// Reads one line that ends in CRLF, without the CRLF. A bare line feed and a line longer than 1024 bytes are errors.
+    priv fn read_line(mut self): Result<String, HttpError> {
+        loop {
+            match self.find_newline() {
+                Some(newline) => return self.take_line(newline),
+                None => {}
+            }
+            if self.buffer.len() - self.start > MAX_LINE {
+                return Err(HttpError.BadBody("a line in the chunked body is too long".to_string()))
+            }
+            if self.fill()? == 0 {
+                return Err(HttpError.BodyTruncated)
+            }
+        }
+    }
+
+    /// Appends up to `max` body bytes to `out` and returns how many. `Ok(0)` is the end of the body (or `max` was 0).
+    fn read_body(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
+        if max == 0 {
+            return Ok(0)
+        }
+        match self.framing {
+            Framing.None => {
+                self.complete = true
+                Ok(0)
+            }
+            Framing.Length(_) => self.read_length(mut out, max),
+            Framing.Chunked => self.read_chunked(mut out, max),
+            Framing.UntilClose => self.read_until_close(mut out, max),
+        }
+    }
+
+    priv fn read_length(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
+        if self.remaining == 0 {
+            self.complete = true
+            return Ok(0)
+        }
+        let want = if (max as u64) < self.remaining { max } else { self.remaining as usize }
+        if self.start >= self.buffer.len() && self.fill()? == 0 {
+            return Err(HttpError.BodyTruncated)
+        }
+        let n = self.take(mut out, want)
+        self.remaining = self.remaining - (n as u64)
+        if self.remaining == 0 {
+            self.complete = true
+        }
+        Ok(n)
+    }
+
+    priv fn read_until_close(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
+        if self.start >= self.buffer.len() && self.fill()? == 0 {
+            self.complete = true
+            return Ok(0)
+        }
+        Ok(self.take(mut out, max))
+    }
+
+    priv fn read_chunked(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
+        loop {
+            if self.state == CHUNK_SIZE {
+                let line = self.read_line()?
+                let size = __parse_chunk_size(line.as_str())?
+                if size == 0 {
+                    self.state = CHUNK_TRAILERS
+                } else {
+                    self.remaining = size
+                    self.state = CHUNK_DATA
+                }
+            } else if self.state == CHUNK_DATA {
+                let want = if (max as u64) < self.remaining { max } else { self.remaining as usize }
+                if self.start >= self.buffer.len() && self.fill()? == 0 {
+                    return Err(HttpError.BodyTruncated)
+                }
+                let n = self.take(mut out, want)
+                self.remaining = self.remaining - (n as u64)
+                if self.remaining == 0 {
+                    self.state = CHUNK_END
+                }
+                return Ok(n)
+            } else if self.state == CHUNK_END {
+                let line = self.read_line()?
+                if line.len() != 0 {
+                    return Err(HttpError.BadBody("chunk data is not followed by CRLF".to_string()))
+                }
+                self.state = CHUNK_SIZE
+            } else if self.state == CHUNK_TRAILERS {
+                loop {
+                    let line = self.read_line()?
+                    if line.len() == 0 {
+                        break
+                    }
+                    if self.trailers.len() >= MAX_HEADERS {
+                        return Err(HttpError.BadBody("the trailer has too many fields".to_string()))
+                    }
+                    let colon = match line.find(':') {
+                        Some(c) => c,
+                        None => return Err(HttpError.BadBody("a trailer field has no colon".to_string())),
+                    }
+                    match self.trailers.add(line.as_str()[0..colon], line.as_str()[colon + 1..line.len()]) {
+                        Ok(_) => {}
+                        Err(e) => return Err(HttpError.BadBody(e.to_string())),
+                    }
+                }
+                self.state = CHUNK_DONE
+                self.complete = true
+                return Ok(0)
+            } else {
+                self.complete = true
+                return Ok(0)
+            }
+        }
+    }
+}
+
+/// The size in a chunk-size line: hexadecimal digits, then optionally `;` and extensions, which are ignored. An empty
+/// size, a non-hex digit, and more than 16 digits (a value that could not fit in 64 bits) are errors.
+priv fn __parse_chunk_size(line: str): Result<u64, HttpError> {
+    let size_text = match line.find(';') {
+        Some(at) => line[0..at],
+        None => line,
+    }
+    let digits = size_text.trim()
+    if digits.len() == 0 {
+        return Err(HttpError.BadBody("a chunk size is missing".to_string()))
+    }
+    if digits.len() > 16 {
+        return Err(HttpError.BadBody("a chunk size is too large".to_string()))
+    }
+    let mut value: u64 = 0
+    for c in digits.chars() {
+        match c.to_digit(16) {
+            Some(d) => value = value * 16 + (d as u64),
+            None => return Err(HttpError.BadBody(format("a chunk size is not hexadecimal: {:?}", digits))),
+        }
+    }
+    Ok(value)
+}
+
+/// Bytes as text; a byte that is not UTF-8 becomes U+FFFD.
+priv fn __text_of(bytes: [u8]): String {
+    String.from_utf8_lossy(bytes)
+}
+
+/// Maps a body failure to the `IoError` the `Read` interface can carry.
+priv fn __to_io(failure: HttpError): IoError {
+    match failure {
+        HttpError.Timeout { phase: _ } => IoError.Net {
+            op: "read".to_string(),
+            addr: "the response body".to_string(),
+            kind: IoErrorKind.TimedOut,
+            os_code: None,
+        },
+        HttpError.BodyTruncated => IoError.UnexpectedEof,
+        else => IoError.InvalidData,
+    }
+}
+
+BodyReader<R>: Read where R: Read {
+    /// `read_body` with the failure turned into an `IoError`: `UnexpectedEof` for a body cut short, `TimedOut` for a
+    /// timeout, and `InvalidData` for malformed framing.
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match self.read_body(mut buf, max) {
+            Ok(n) => Ok(n),
+            Err(failure) => Err(__to_io(failure)),
+        }
+    }
+}
+
+// ----- time limits ---------------------------------------------------------------------------------------------
+
+/// The time one `Client.send` may take in all (HC13): when it started and the total limit, if there is one. Every
+/// wait inside the call (connecting, writing, reading the head, reading the body) is cut to what is left.
+struct Budget: Copy, Clone {
+    started: Instant
+    total: Option<Duration>
+}
+
+Budget {
+    fn new(total: Option<Duration>): Budget {
+        Budget { started: Instant.now(), total: total }
+    }
+
+    /// Whether the total limit has passed.
+    fn expired(self): bool {
+        match self.total {
+            Some(limit) => self.started.elapsed() >= limit,
+            None => false,
+        }
+    }
+
+    /// The time left under the total limit, or `None` when there is no limit.
+    fn remaining(self): Option<Duration> {
+        match self.total {
+            Some(limit) => Some(limit.saturating_sub(self.started.elapsed())),
+            None => None,
+        }
+    }
+
+    /// The smaller of `limit` and the time left. The result is never zero, because a socket reads a zero timeout as "wait
+    /// forever": a spent budget gives one nanosecond, which times the next wait out at once.
+    fn limit(self, limit: Option<Duration>): Option<Duration> {
+        let capped = match self.remaining() {
+            Some(left) => match limit {
+                Some(l) => if l < left { Some(l) } else { Some(left) },
+                None => Some(left),
+            },
+            None => limit,
+        }
+        match capped {
+            Some(d) => if d.is_zero() { Some(Duration.from_nanos(1)) } else { Some(d) },
+            None => None,
+        }
+    }
+}
+
+// ----- connections and the pool --------------------------------------------------------------------------------
+
+/// An idle connection waiting in the pool, with the address it goes to and when it was put back.
+struct Idle {
+    key: String
+    stream: TcpStream
+    since: Instant
+}
+
+/// The pool all the clones of one `Client` share, and every response body that hands a connection back to it.
+type Pool = Shared<Mutex<List<Idle>>>
+
+/// A connection in use: the socket and what is needed to hand it back to the pool when a response has been read
+/// to its end.
+struct Conn {
+    stream: TcpStream
+    key: String
+    pool: Pool
+    max_idle: usize
+    read_timeout: Option<Duration>
+    budget: Budget
+    /// Whether the connection came out of the pool (HC15) rather than being opened for this request.
+    reused: bool
+    /// False once the response said `Connection: close` (or was `HTTP/1.0` without `keep-alive`).
+    keep_alive: bool
+}
+
+Conn {
+    /// Puts the connection back in the pool, unless the pool already holds `max_idle` connections to this address, in
+    /// which case it is closed.
+    fn release(own self) {
+        let me = self
+        if me.max_idle == 0 {
+            return
+        }
+        let limit = me.max_idle
+        let entry = Idle { key: me.key.clone(), stream: me.stream, since: Instant.now() }
+        me.pool.get().lock(|list| {
+            let mut count: usize = 0
+            for other in list.iter() {
+                if other.key.as_str() == entry.key.as_str() {
+                    count = count + 1
+                }
+            }
+            if count < limit {
+                list.push(entry)
+            }
+        })
+    }
+}
+
+Conn: Read {
+    /// Reads from the socket with the read timeout, cut to what is left of the total limit.
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        self.stream.set_read_timeout(self.budget.limit(self.read_timeout))
+        self.stream.read(mut buf, max)
+    }
+}
+
+/// Whether an idle connection is still usable: nothing may be waiting on it. A read that would block means a quiet,
+/// healthy connection; the end of the stream, an error, or stray bytes mean the server closed it (or sent something
+/// it should not have), so it is not used.
+priv fn __is_alive(mut stream: TcpStream): bool {
+    stream.set_read_timeout(Some(Duration.from_nanos(1)))
+    let mut scratch = List<u8>.new()
+    match stream.read(mut scratch, 1) {
+        Ok(_) => false,
+        Err(failure) => match failure.kind() {
+            IoErrorKind.TimedOut => true,
+            else => false,
+        },
+    }
+}
+
+// ----- responses -----------------------------------------------------------------------------------------------
+
+/// A response body: a `Read` over the connection that decodes the framing. When the body has been read to its end
+/// and the connection may be reused (HC16), the connection goes back to the pool by itself. A body that is dropped
+/// before its end closes the connection.
+struct Body {
+    reader: Option<BodyReader<Conn>>
+    trailers: Headers
+    /// The failure that ended the body early, if any; every later read reports it again.
+    failure: Option<HttpError>
+    /// The most `Response.bytes` and `Response.text` accept.
+    limit: usize
+}
+
+Body {
+    priv fn new(own reader: BodyReader<Conn>, limit: usize): Body {
+        let mut body = Body { reader: None, trailers: Headers.new(), failure: None, limit: limit }
+        if reader.is_complete() {
+            body.finish(reader)
+        } else {
+            body.reader = Some(reader)
+        }
+        body
+    }
+
+    /// The body is complete: keep its trailers and give the connection back if it can be used again.
+    priv fn finish(mut self, own reader: BodyReader<Conn>) {
+        self.trailers = reader.trailers()
+        let clean = reader.is_clean()
+        let conn = reader.into_source()
+        if clean && conn.keep_alive {
+            conn.release()
+        }
+    }
+
+    /// Whether the whole body has been read.
+    fn is_finished(self): bool {
+        self.reader.is_none() && self.failure.is_none()
+    }
+
+    /// The trailer fields of a chunked body (HC9); empty until the body has been read to its end.
+    fn trailers(self): Headers {
+        self.trailers.clone()
+    }
+
+    /// Appends up to `max` bytes of the decoded body to `buf`; `Ok(0)` is the end. A failure closes the connection and
+    /// is the result of every later call too.
+    fn read_http(mut self, mut buf: List<u8>, max: usize): Result<usize, HttpError> {
+        match self.failure.clone() {
+            Some(failure) => return Err(failure),
+            None => {}
+        }
+        let mut reader = match self.reader.take() {
+            Some(r) => r,
+            None => return Ok(0),
+        }
+        match reader.read_body(mut buf, max) {
+            Ok(n) => {
+                if reader.is_complete() {
+                    self.finish(reader)
+                } else {
+                    self.reader = Some(reader)
+                }
+                Ok(n)
+            }
+            Err(failure) => {
+                self.failure = Some(failure.clone())
+                Err(failure)
+            }
+        }
+    }
+
+    /// Reads the rest of the body into a list; more than the limit is `BodyTooLarge` and closes the connection.
+    fn bytes(mut self): Result<List<u8>, HttpError> {
+        let mut out = List<u8>.new()
+        loop {
+            let room = self.limit - out.len() + 1
+            let ask = if room < READ_CHUNK { room } else { READ_CHUNK }
+            let n = self.read_http(mut out, ask)?
+            if n == 0 {
+                return Ok(out)
+            }
+            if out.len() > self.limit {
+                let failure = HttpError.BodyTooLarge { limit: self.limit }
+                self.reader = None
+                self.failure = Some(failure.clone())
+                return Err(failure)
+            }
+        }
+    }
+
+    /// Reads and discards up to `limit` bytes, so a connection whose body is small can be reused. Returns whether
+    /// the end of the body was reached; a body longer than `limit` is left unread and its connection is closed.
+    fn discard(mut self, limit: usize): Result<bool, HttpError> {
+        let mut scratch = List<u8>.new()
+        let mut total: usize = 0
+        loop {
+            scratch.clear()
+            let n = self.read_http(mut scratch, READ_CHUNK)?
+            if n == 0 {
+                return Ok(true)
+            }
+            total = total + n
+            if total > limit {
+                self.reader = None
+                return Ok(false)
+            }
+        }
+    }
+}
+
+Body: Read {
+    /// `read_http` with the failure turned into an `IoError`: `UnexpectedEof` for a body cut short, `TimedOut` for a
+    /// timeout, and `InvalidData` for malformed framing.
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match self.read_http(mut buf, max) {
+            Ok(n) => Ok(n),
+            Err(failure) => Err(__to_io(failure)),
+        }
+    }
+}
+
+/// A response: the status line and headers, and a `Body` to read the rest from.
+struct Response {
+    status: u16
+    reason: String
+    /// The minor version of the `HTTP/1.x` the server answered with.
+    minor: u8
+    headers: Headers
+    /// The URL the response came from: the last one, when redirects were followed.
+    url: Url
+    /// How many redirects were followed to get here.
+    redirects: usize
+    body: Body
+}
+
+Response {
+    /// Whether the status is `2xx`.
+    fn is_success(self): bool {
+        self.status >= 200 && self.status < 300
+    }
+
+    /// Whether the status is one that points to another URL: `301`, `302`, `303`, `307`, or `308`.
+    fn is_redirect(self): bool {
+        self.status == 301 || self.status == 302 || self.status == 303 || self.status == 307 || self.status == 308
+    }
+
+    /// The value of the first header field called `name`.
+    fn header(self, name: str): Option<String> {
+        self.headers.get(name)
+    }
+
+    /// The trailer fields of a chunked body, once it has been read.
+    fn trailers(self): Headers {
+        self.body.trailers()
+    }
+
+    /// Reads the rest of the body (at most `Client.max_body` bytes).
+    fn bytes(mut self): Result<List<u8>, HttpError> {
+        self.body.bytes()
+    }
+
+    /// Reads the rest of the body as UTF-8 text. A body that is not UTF-8 is `BadBody`.
+    fn text(mut self): Result<String, HttpError> {
+        let bytes = self.body.bytes()?
+        match String.from_utf8(bytes) {
+            Ok(text) => Ok(text),
+            Err(_) => Err(HttpError.BadBody("the body is not valid UTF-8".to_string())),
+        }
+    }
+
+    /// Reads and discards the rest of the body, up to `limit` bytes, so the connection can be reused. Returns whether the
+    /// end was reached.
+    fn discard(mut self, limit: usize): Result<bool, HttpError> {
+        self.body.discard(limit)
+    }
+
+    /// Closes the connection without reading the rest of the body.
+    fn close(own self) {
+        let _ = self
+    }
+}
+
+// ----- the client ----------------------------------------------------------------------------------------------
+
+/// What a failed attempt knows, for deciding whether to repeat it (HC14, HC15).
+priv struct Failure {
+    cause: HttpError
+    /// Whether the connection came out of the pool, so a failure may only mean the server closed it while it was idle.
+    reused: bool
+    /// Whether any byte of the response arrived. A request that got a response is never repeated.
+    received: bool
+}
+
+/// An HTTP client: its settings are public fields, set after `Client.new()`. Clones of a client share one connection
+/// pool, so a client may be handed to several tasks.
+struct Client: Clone {
+    /// How long connecting may take. `None` waits as long as the system does.
+    connect_timeout: Option<Duration>
+    /// How long one read or write may wait for the peer. Also bounds waiting for the first byte of the response.
+    read_timeout: Option<Duration>
+    /// How long a whole `send` may take, redirects, retries, and the body included. `None` for no limit.
+    total_timeout: Option<Duration>
+    follow_redirects: bool
+    /// The most redirects one `send` follows; one more is `TooManyRedirects`.
+    max_redirects: usize
+    /// The most times a safe request is repeated after a connection failure (and, with `retry_on_503`, a `503`).
+    max_retries: usize
+    /// The wait before the first repeat; each repeat waits twice as long as the one before, up to `max_backoff`.
+    retry_backoff: Duration
+    max_backoff: Duration
+    /// Whether a `503` answer to a safe request is repeated, after the `Retry-After` it names (seconds, at most
+    /// `max_backoff`) or the backoff.
+    retry_on_503: bool
+    user_agent: String
+    /// How many idle connections to keep per host and port; 0 turns reuse off and sends `Connection: close`.
+    max_idle_per_host: usize
+    /// How long an idle connection may wait in the pool before it is no longer used.
+    idle_timeout: Duration
+    /// The most `Response.bytes` and `Response.text` read.
+    max_body: usize
+    pool: Pool
+}
+
+/// The most of a redirect or `503` response body that is read to free its connection.
+const DISCARD_LIMIT: usize = 65536
+
+/// Whether `status` is one a client follows (HC12).
+priv fn __is_redirect_status(status: u16): bool {
+    status == 301 || status == 302 || status == 303 || status == 307 || status == 308
+}
+
+Client {
+    /// A client with the defaults: 10 seconds to connect, 30 seconds per read, no total limit, up to 10 redirects, two
+    /// retries of safe requests with a 100 millisecond backoff, and up to 4 idle connections per host.
+    fn new(): Client {
+        Client {
+            connect_timeout: Some(Duration.from_secs(10)),
+            read_timeout: Some(Duration.from_secs(30)),
+            total_timeout: None,
+            follow_redirects: true,
+            max_redirects: 10,
+            max_retries: 2,
+            retry_backoff: Duration.from_millis(100),
+            max_backoff: Duration.from_secs(2),
+            retry_on_503: false,
+            user_agent: "burdin-http/0.1".to_string(),
+            max_idle_per_host: 4,
+            idle_timeout: Duration.from_secs(30),
+            max_body: 16777216,
+            pool: Shared.new(Mutex.new(List<Idle>.new())),
+        }
+    }
+
+    /// How many idle connections the pool holds, over all hosts.
+    fn idle_connections(self): usize {
+        self.pool.get().lock(|list| list.len())
+    }
+
+    /// Closes every idle connection.
+    fn close_idle(self) {
+        self.pool.get().lock(|list| list.clear())
+    }
+
+    fn get(self, url: str): Result<Response, HttpError> {
+        let request = Request.get(url)?
+        self.send(request)
+    }
+
+    fn head(self, url: str): Result<Response, HttpError> {
+        let request = Request.head(url)?
+        self.send(request)
+    }
+
+    fn delete(self, url: str): Result<Response, HttpError> {
+        let request = Request.delete(url)?
+        self.send(request)
+    }
+
+    /// `POST` with a text body.
+    fn post(self, url: str, body: str): Result<Response, HttpError> {
+        let request = Request.post(url)?.body_text(body)
+        self.send(request)
+    }
+
+    /// `PUT` with a text body.
+    fn put(self, url: str, body: str): Result<Response, HttpError> {
+        let request = Request.put(url)?.body_text(body)
+        self.send(request)
+    }
+
+    /// Sends a request and returns the response as soon as its head has arrived; the body is read from
+    /// `response.body`. Redirects are followed (HC12), a connection that fails before any response byte arrives is
+    /// retried for a safe method (HC14), and the connection comes from the pool when one is idle (HC15).
+    fn send(self, request: Request): Result<Response, HttpError> {
+        match request.problem.clone() {
+            Some(problem) => return Err(problem),
+            None => {}
+        }
+        let budget = Budget.new(self.total_timeout)
+        let limit = if self.max_redirects < MAX_REDIRECT_LIMIT { self.max_redirects } else { MAX_REDIRECT_LIMIT }
+        let mut hop = request.clone()
+        let mut visited = List<String>.new()
+        visited.push(hop.url.to_text())
+        let mut redirects: usize = 0
+        loop {
+            let mut response = self.exchange(hop, budget)?
+            response.redirects = redirects
+            if !self.follow_redirects || !__is_redirect_status(response.status) {
+                return Ok(response)
+            }
+            let location = match response.headers.get("Location") {
+                Some(value) => value,
+                None => return Ok(response),
+            }
+            let next_url = match response.url.join(location.as_str()) {
+                Ok(u) => u,
+                Err(e) => return Err(HttpError.BadRedirect(format("{}: {}", location, e))),
+            }
+            if redirects >= limit {
+                return Err(HttpError.TooManyRedirects { limit: self.max_redirects })
+            }
+            let next_text = next_url.to_text()
+            if visited.contains(next_text.clone()) {
+                return Err(HttpError.RedirectLoop(next_text))
+            }
+            visited.push(next_text)
+            let _ = response.discard(DISCARD_LIMIT)
+            hop = Client.redirected(hop, response.status, next_url)
+            redirects = redirects + 1
+        }
+    }
+
+    /// The request that follows a redirect (HC12). `303` turns everything but `HEAD` into a `GET`, and `301` and `302`
+    /// do that for a `POST`; the body and the headers that describe it are dropped then. `307` and `308` keep the
+    /// method and the body. When the new URL is on another origin, the credentials (`Authorization`,
+    /// `Cookie`, `Proxy-Authorization`) are not sent.
+    priv fn redirected(previous: Request, status: u16, own url: Url): Request {
+        let mut next = previous.clone()
+        let to_get = match previous.method {
+            Method.Head => false,
+            Method.Post => status == 301 || status == 302 || status == 303,
+            else => status == 303,
+        }
+        if to_get {
+            next.method = Method.Get
+            next.body = List<u8>.new()
+            let _ = next.headers.remove("Content-Type")
+            let _ = next.headers.remove("Content-Encoding")
+            let _ = next.headers.remove("Content-Language")
+        }
+        if !previous.url.same_origin(url.clone()) {
+            let _ = next.headers.remove("Authorization")
+            let _ = next.headers.remove("Cookie")
+            let _ = next.headers.remove("Proxy-Authorization")
+            let _ = next.headers.remove("Host")
+        }
+        next.url = url
+        next
+    }
+
+    /// The wait before repeat number `attempt` (0 for the first): the backoff doubled each time, at most `max_backoff`.
+    priv fn backoff(self, attempt: usize): Duration {
+        let mut delay = self.retry_backoff
+        let mut i: usize = 0
+        while i < attempt && delay < self.max_backoff {
+            delay = delay.times(2)
+            i = i + 1
+        }
+        if delay < self.max_backoff { delay } else { self.max_backoff }
+    }
+
+    /// The wait before repeating after a `503`: the seconds of its `Retry-After` when it has them, else the backoff,
+    /// and never more than `max_backoff`.
+    priv fn delay_after(self, attempt: usize, retry_after: Option<String>): Duration {
+        match retry_after {
+            Some(text) => {
+                match u64.parse(text.as_str().trim()) {
+                    Ok(seconds) => {
+                        if seconds > self.max_backoff.as_secs() {
+                            self.max_backoff
+                        } else {
+                            Duration.from_secs(seconds)
+                        }
+                    }
+                    Err(_) => self.backoff(attempt),
+                }
+            }
+            None => self.backoff(attempt),
+        }
+    }
+
+    /// Sends one request to one URL, repeating it when that is safe (HC14, HC15).
+    priv fn exchange(self, request: Request, budget: Budget): Result<Response, HttpError> {
+        let safe = request.method.is_idempotent()
+        let mut retries: usize = 0
+        let mut use_pool = self.max_idle_per_host > 0
+        loop {
+            if budget.expired() {
+                return Err(HttpError.Timeout { phase: "waiting for the response".to_string() })
+            }
+            match self.attempt(request.clone(), budget, use_pool) {
+                Ok(mut response) => {
+                    if self.retry_on_503 && safe && response.status == 503 && retries < self.max_retries {
+                        let delay = self.delay_after(retries, response.headers.get("Retry-After"))
+                        if self.fits(budget, delay) {
+                            let _ = response.discard(DISCARD_LIMIT)
+                            time.sleep(delay)
+                            retries = retries + 1
+                            continue
+                        }
+                    }
+                    return Ok(response)
+                }
+                Err(failure) => {
+                    if !safe || failure.received || !failure.cause.is_connection_failure() {
+                        return Err(failure.cause)
+                    }
+                    // A pooled connection that fails at once was probably closed by the server while idle: repeat on
+                    // a new connection without using up a retry.
+                    if failure.reused && !failure.cause.is_timeout() {
+                        use_pool = false
+                        continue
+                    }
+                    if retries >= self.max_retries {
+                        return Err(failure.cause)
+                    }
+                    let delay = self.backoff(retries)
+                    if !self.fits(budget, delay) {
+                        return Err(failure.cause)
+                    }
+                    time.sleep(delay)
+                    retries = retries + 1
+                }
+            }
+        }
+    }
+
+    /// Whether waiting `delay` still leaves time under the total limit.
+    priv fn fits(self, budget: Budget, delay: Duration): bool {
+        match budget.remaining() {
+            Some(left) => delay < left,
+            None => true,
+        }
+    }
+
+    /// Opens a connection, sends the request, and reads the response head.
+    priv fn attempt(self, request: Request, budget: Budget, use_pool: bool): Result<Response, Failure> {
+        let conn = match self.open(request.url.clone(), budget, use_pool) {
+            Ok(c) => c,
+            Err(e) => return Err(Failure { cause: e, reused: false, received: false }),
+        }
+        self.roundtrip(conn, request, budget)
+    }
+
+    /// An idle connection to the address, or a new one (HC15, HC13). An `https` URL is refused: there is no TLS.
+    priv fn open(self, url: Url, budget: Budget, use_pool: bool): Result<Conn, HttpError> {
+        if url.is_https() {
+            return Err(HttpError.TlsUnsupported(url.to_text()))
+        }
+        let key = url.address()
+        if use_pool {
+            let idle = self.checkout(key.as_str())
+            match idle {
+                Some(stream) => {
+                    return Ok(Conn {
+                        stream: stream,
+                        key: key.clone(),
+                        pool: self.pool.clone(),
+                        max_idle: self.max_idle_per_host,
+                        read_timeout: self.read_timeout,
+                        budget: budget,
+                        reused: true,
+                        keep_alive: true,
+                    })
+                }
+                None => {}
+            }
+        }
+        let opened = match budget.limit(self.connect_timeout) {
+            Some(limit) => TcpStream.connect_timeout(key.as_str(), limit),
+            None => TcpStream.connect(key.as_str()),
+        }
+        match opened {
+            Ok(stream) => {
+                let _ = stream.set_nodelay(true)
+                Ok(Conn {
+                    stream: stream,
+                    key: key.clone(),
+                    pool: self.pool.clone(),
+                    max_idle: self.max_idle_per_host,
+                    read_timeout: self.read_timeout,
+                    budget: budget,
+                    reused: false,
+                    keep_alive: true,
+                })
+            }
+            Err(failure) => match failure.kind() {
+                IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: format("connecting to {}", key.clone()) }),
+                other => Err(HttpError.Connect { addr: key.clone(), reason: other.to_string() }),
+            },
+        }
+    }
+
+    /// Takes the newest usable idle connection to `key` out of the pool. Connections idle for longer than
+    /// `idle_timeout` are dropped first, and so is any that the probe finds closed by the server.
+    priv fn checkout(self, key: str): Option<TcpStream> {
+        let max_age = self.idle_timeout
+        loop {
+            let wanted = key.to_string()
+            let found: Option<Idle> = self.pool.get().lock(|list| {
+                list.retain(|entry| entry.since.elapsed() < max_age)
+                let mut taken: Option<Idle> = None
+                let mut i = list.len()
+                while i > 0 && taken.is_none() {
+                    i = i - 1
+                    if list[i].key == wanted {
+                        taken = Some(list.remove(i))
+                    }
+                }
+                taken
+            })
+            match found {
+                None => return None,
+                Some(idle) => {
+                    let mut stream = idle.stream
+                    if __is_alive(mut stream) {
+                        return Some(stream)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes the request on `conn` and reads the response head; the rest is left to the response's body.
+    priv fn roundtrip(self, own conn: Conn, request: Request, budget: Budget): Result<Response, Failure> {
+        let mut conn = conn
+        let reused = conn.reused
+        let close = self.max_idle_per_host == 0
+        let mut wire = request.to_wire_head(self.user_agent.as_str(), close).to_utf8()
+        wire.extend_from_slice(request.body[0..request.body.len()])
+        conn.stream.set_write_timeout(budget.limit(self.read_timeout))
+        match conn.stream.write_all(wire[0..wire.len()]) {
+            Ok(_) => {}
+            Err(failure) => {
+                return Err(Failure { cause: __io_failure("sending the request", failure), reused: reused, received: false })
+            }
+        }
+        let mut buffer = List<u8>.new()
+        loop {
+            let head_end = find_head_end(buffer)
+            match head_end {
+                Some(end) => {
+                    let head = match __head_of(buffer, end) {
+                        Ok(h) => h,
+                        Err(e) => return Err(Failure { cause: e, reused: reused, received: true }),
+                    }
+                    let rest = __tail_of(buffer, end)
+                    if head.status == 101 {
+                        return Err(Failure {
+                            cause: HttpError.BadResponse("the server switched protocols".to_string()),
+                            reused: reused,
+                            received: true,
+                        })
+                    }
+                    if head.status < 200 {
+                        // An interim response (`100 Continue`): the real one follows it.
+                        buffer = rest
+                        continue
+                    }
+                    return self.finish_head(conn, head, rest, request, budget, reused)
+                }
+                None => {}
+            }
+            if buffer.len() > MAX_HEAD_BYTES {
+                return Err(Failure {
+                    cause: HttpError.BadResponse("the head is too large".to_string()),
+                    reused: reused,
+                    received: true,
+                })
+            }
+            conn.stream.set_read_timeout(budget.limit(self.read_timeout))
+            let received = buffer.len() > 0
+            match conn.stream.read(mut buffer, READ_CHUNK) {
+                Ok(0) => {
+                    let cause = if received {
+                        HttpError.BadResponse("the connection closed in the middle of the response head".to_string())
+                    } else {
+                        HttpError.ConnectionClosed
+                    }
+                    return Err(Failure { cause: cause, reused: reused, received: received })
+                }
+                Ok(_) => {}
+                Err(failure) => {
+                    return Err(Failure {
+                        cause: __io_failure("waiting for the response", failure),
+                        reused: reused,
+                        received: received,
+                    })
+                }
+            }
+        }
+    }
+
+    /// Builds the response from a complete head: how its body is framed, and whether the connection can be kept.
+    priv fn finish_head(
+        self,
+        own conn: Conn,
+        own head: ResponseHead,
+        own rest: List<u8>,
+        request: Request,
+        budget: Budget,
+        reused: bool,
+    ): Result<Response, Failure> {
+        let framing = match framing_of(request.method.clone(), head.status, head.headers.clone()) {
+            Ok(f) => f,
+            Err(e) => return Err(Failure { cause: e, reused: reused, received: true }),
+        }
+        let mut conn = conn
+        conn.keep_alive = keeps_alive(head.minor, head.headers.clone()) && !request.headers.has_token("Connection", "close")
+        let reader = BodyReader.new(conn, framing, rest)
+        Ok(Response {
+            status: head.status,
+            reason: head.reason,
+            minor: head.minor,
+            headers: head.headers,
+            url: request.url.clone(),
+            redirects: 0,
+            body: Body.new(reader, self.max_body),
+        })
+    }
+}

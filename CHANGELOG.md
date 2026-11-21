@@ -6,6 +6,16 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The `http` official package (stage 3, issue #260, sub-issues #328, #329, #330; `spec/http-client.md`, HC1-HC16).
+  `packages/http` is an HTTP/1.1 client over `std`'s `TcpStream`: URLs and relative references, requests, responses and
+  headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
+  limit), redirects with a limit, loop detection, and credential stripping across origins, connect, read, and total
+  timeouts, retries of safe requests with backoff, and per-host connection reuse with a staleness probe. `https` URLs
+  parse but fail with `HttpError.TlsUnsupported`: there is no TLS in `std`. `std` gains `TcpStream.connect_timeout`
+  (`spec/io.md`, IO5). `tests/http/` holds golden fixtures for the pure parts, `tests/s3_http/client` is the
+  conformance case against a scripted in-process server, and `tests/check_http.py` runs both and checks
+  `burdin add http` and the pin; CI runs it.
+
 - Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
   object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
   optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing

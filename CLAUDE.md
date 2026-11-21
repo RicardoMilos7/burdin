@@ -61,6 +61,8 @@ not updated and may disagree with the repository.
    serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
    path-aware errors, the derives, and the test format, `spec/toml.md` is the TOML 1.0.0 package: the subset it reads,
    the canonical form it writes, the framework mapping, the strict reader, and its errors with their locations,
+   `spec/http-client.md` is the `http` package: URLs, headers, requests, the body framings, redirects, timeouts, retries, and
+   connection reuse (and that `https` is not supported),
    `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,

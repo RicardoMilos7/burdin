@@ -1,0 +1,16 @@
+http://example.test/
+http://Example.TEST:8080/a/b?x=1
+http://127.0.0.1
+http://[::1]:80/p
+https://example.test/secure
+ftp://example.test/
+mailto:x
+http:///nohost
+http://host:99999/
+http://host:0/
+http://user:pw@host/
+http://host/a b
+http://host/a%20b?q=%41
+http://host?only=query
+http://host#frag
+example.test/path
