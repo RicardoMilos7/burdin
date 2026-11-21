@@ -1,0 +1,22 @@
+// The error every pattern the package rejects reports (spec/regex.md, RX3).
+
+/// A pattern that is not valid. `at` is the byte offset in the pattern of the token the error is about.
+error enum RegexError: Eq, Debug {
+    Syntax { at: usize, message: String } "invalid regex at byte {at}: {message}",
+}
+
+RegexError {
+    /// The byte offset in the pattern of the token the error is about.
+    fn offset(self): usize {
+        match self {
+            RegexError.Syntax { at, message } => at,
+        }
+    }
+
+    /// What is wrong, without the position.
+    fn reason(self): String {
+        match self {
+            RegexError.Syntax { at, message } => message.clone(),
+        }
+    }
+}

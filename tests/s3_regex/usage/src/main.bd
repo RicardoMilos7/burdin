@@ -1,0 +1,78 @@
+//@ run
+//> is_match: true
+//> find: 2024-05-17 at 3..13
+//> groups: 4
+//> year: 2024 month index: 2 era: none
+//> expanded: 17.05.2024
+//> num: 1 at 1..2
+//> num: 22 at 3..5
+//> num: 333 at 6..9
+//> empties: 5 for x* on abxd
+//> replaced: x at ann y at bo
+//> replacen: a#b#c3
+//> split: a|b|c
+//> splitn: a/b,c
+//> escaped: 1\+1=2\?
+//> no match: none
+//> error: invalid regex at byte 0: unclosed group
+//> offset: 0 reason: unclosed group
+//> pattern: (?i)^x\d+$
+//> lookaround: lookaround is not supported
+// The public surface of the `regex` package (spec/regex.md, RX9-RX13): matching, groups and names, iteration,
+// replacement templates, splitting, escaping, and the error values. The expected lines are the ones the spec's
+// semantics give; tests/check_regex.py checks the same behavior against Python's `re`.
+
+use regex.{Regex}
+
+fn main() {
+    let date = Regex.new("(?P<year>\\d{{4}})-(?P<month>\\d{{2}})-(?P<day>\\d{{2}})").unwrap()
+    println("is_match: {}", date.is_match("on 2024-05-17"))
+    match date.find("on 2024-05-17") {
+        Some(m) => println("find: {} at {}..{}", m.as_str(), m.start(), m.end()),
+        None => println("find: none"),
+    }
+    let caps = date.captures("2024-05-17").unwrap()
+    println("groups: {}", caps.len())
+    let year = caps.name("year").unwrap().as_str().to_string()
+    let month = date.group_index("month").unwrap()
+    let era = match caps.name("era") {
+        Some(m) => m.as_str().to_string(),
+        None => "none".to_string(),
+    }
+    println("year: {} month index: {} era: {}", year, month, era)
+    println("expanded: {}", caps.expand("$day.$month.$year"))
+
+    let numbers = Regex.new("\\d+").unwrap()
+    for m in numbers.find_all("a1b22c333") {
+        println("num: {} at {}..{}", m.as_str(), m.start(), m.end())
+    }
+    let empties = Regex.new("x*").unwrap().find_all("abxd")
+    println("empties: {} for x* on abxd", empties.len())
+
+    let names = Regex.new("(\\w+)@(\\w+)").unwrap()
+    println("replaced: {}", names.replace_all("ann@x bo@y", "$2 at $1"))
+    println("replacen: {}", Regex.new("\\d").unwrap().replacen("a1b2c3", 2, "#"))
+
+    let parts = Regex.new("\\s*,\\s*").unwrap().split("a , b,c")
+    println("split: {}", parts.join("|"))
+    let limited = Regex.new(",").unwrap().splitn("a,b,c", 2)
+    println("splitn: {}/{}", limited[0], limited[1])
+    println("escaped: {}", Regex.escape("1+1=2?"))
+
+    match Regex.new("\\d{{4}}-\\d{{2}}-\\d{{2}}").unwrap().find("no date here") {
+        Some(m) => println("find: {}", m.as_str()),
+        None => println("no match: none"),
+    }
+    match Regex.new("(a") {
+        Ok(_) => println("unexpected: accepted"),
+        Err(e) => {
+            println("error: {}", e.to_string())
+            println("offset: {} reason: {}", e.offset(), e.reason())
+        }
+    }
+    println("pattern: {}", Regex.new("(?i)^x\\d+$").unwrap().as_str())
+    match Regex.new("(?=a)") {
+        Ok(_) => println("unexpected: accepted"),
+        Err(e) => println("lookaround: {}", e.reason()),
+    }
+}

@@ -1,0 +1,176 @@
+// The compiler from the parse tree to the instructions the Pike VM runs (spec/regex.md, RX1, RX7).
+//
+// The program is a list of instructions where a `Split` names two successors (the first is preferred) and a `Jmp`
+// names one. Every pattern compiles to `Save(0)`, the body, `Save(1)`, and `Match`, so the slots of group 0 are the
+// whole match. A repetition is unrolled: `x{2,4}` is two copies of `x` and two optional copies.
+
+use classes.CharClass
+use parse.{Assertion, Node, Parsed}
+use errors.RegexError
+
+/// The most instructions a program may have (RX7).
+const MAX_INSTRUCTIONS: usize = 100000
+
+/// One instruction. A `Char` holds the lower-case character when its flag is set (RX6).
+enum Inst: Copy, Clone, Eq, Debug {
+    Char(char, bool)
+    Any(bool)
+    Class(usize)
+    Assert(Assertion)
+    Split(usize, usize)
+    Jmp(usize)
+    Save(usize)
+    Match
+}
+
+/// A compiled pattern: the instructions, the classes they index, and the number of capture slots (two per group,
+/// group 0 included).
+struct Program {
+    code: List<Inst>,
+    classes: List<CharClass>,
+    slots: usize,
+}
+
+struct Compiler {
+    nodes: List<Node>,
+    refs: List<usize>,
+    code: List<Inst>,
+}
+
+Compiler {
+    /// Emits the instructions of the node at `index`.
+    fn node(mut self, index: usize) {
+        let node = self.nodes[index]
+        match node {
+            Node.Empty => {}
+            Node.Char(c, fold) => self.code.push(Inst.Char(c, fold)),
+            Node.Any(dotall) => self.code.push(Inst.Any(dotall)),
+            Node.Class(k) => self.code.push(Inst.Class(k)),
+            Node.Assert(kind) => self.code.push(Inst.Assert(kind)),
+            Node.Capture(group, child) => {
+                self.code.push(Inst.Save(2 * group))
+                self.node(child)
+                self.code.push(Inst.Save(2 * group + 1))
+            }
+            Node.Seq(start, count) => {
+                let mut k: usize = 0
+                while k < count {
+                    let item = self.refs[start + k]
+                    self.node(item)
+                    k = k + 1
+                }
+            }
+            Node.Alt(start, count) => self.alternation(start, count),
+            Node.Repeat(child, min, max, greedy) => self.repeat(child, min, max, greedy),
+        }
+    }
+
+    /// `a|b|c`: each alternative after a split that prefers it, and a jump from its end to the end of the whole.
+    fn alternation(mut self, start: usize, count: usize) {
+        let mut jumps = List<usize>.new()
+        let mut k: usize = 0
+        while k < count {
+            let alternative = self.refs[start + k]
+            if k + 1 < count {
+                let split = self.code.len()
+                self.code.push(Inst.Split(0, 0))
+                self.node(alternative)
+                jumps.push(self.code.len())
+                self.code.push(Inst.Jmp(0))
+                let next = self.code.len()
+                self.code[split] = Inst.Split(split + 1, next)
+            } else {
+                self.node(alternative)
+            }
+            k = k + 1
+        }
+        let end = self.code.len()
+        let mut j: usize = 0
+        while j < jumps.len() {
+            self.code[jumps[j]] = Inst.Jmp(end)
+            j = j + 1
+        }
+    }
+
+    /// A repetition of `child` (RX2). The copies stop once the program passes the instruction limit, and the
+    /// compiler reports that after the whole program is built.
+    fn repeat(mut self, child: usize, min: u32, max: Option<u32>, greedy: bool) {
+        match max {
+            None => {
+                if min == 0 {
+                    // The star: the split prefers the body, which jumps back to the split.
+                    let split = self.code.len()
+                    self.code.push(Inst.Split(0, 0))
+                    self.node(child)
+                    self.code.push(Inst.Jmp(split))
+                    let exit = self.code.len()
+                    self.code[split] = if greedy {
+                        Inst.Split(split + 1, exit)
+                    } else {
+                        Inst.Split(exit, split + 1)
+                    }
+                } else {
+                    // The plus: `min - 1` copies, then the last copy loops back to itself.
+                    let mut i: u32 = 1
+                    while i < min && self.code.len() <= MAX_INSTRUCTIONS {
+                        self.node(child)
+                        i = i + 1
+                    }
+                    let top = self.code.len()
+                    self.node(child)
+                    let split = self.code.len()
+                    self.code.push(Inst.Split(0, 0))
+                    let exit = self.code.len()
+                    self.code[split] = if greedy {
+                        Inst.Split(top, exit)
+                    } else {
+                        Inst.Split(exit, top)
+                    }
+                }
+            }
+            Some(most) => {
+                let mut i: u32 = 0
+                while i < min && self.code.len() <= MAX_INSTRUCTIONS {
+                    self.node(child)
+                    i = i + 1
+                }
+                // Each optional copy starts with a split whose skip branch leaves the whole repetition.
+                let mut splits = List<usize>.new()
+                while i < most && self.code.len() <= MAX_INSTRUCTIONS {
+                    splits.push(self.code.len())
+                    self.code.push(Inst.Split(0, 0))
+                    self.node(child)
+                    i = i + 1
+                }
+                let exit = self.code.len()
+                let mut k: usize = 0
+                while k < splits.len() {
+                    let at = splits[k]
+                    self.code[at] = if greedy {
+                        Inst.Split(at + 1, exit)
+                    } else {
+                        Inst.Split(exit, at + 1)
+                    }
+                    k = k + 1
+                }
+            }
+        }
+    }
+}
+
+/// Compiles a parsed pattern (RX7). A program past the instruction limit is an error.
+fn compile(own parsed: Parsed): Result<Program, RegexError> {
+    let slots = 2 * (parsed.groups + 1)
+    let total = parsed.total
+    let root = parsed.root
+    let classes = parsed.classes
+    let mut compiler = Compiler { nodes: parsed.nodes, refs: parsed.refs, code: List<Inst>.new() }
+    compiler.code.push(Inst.Save(0))
+    compiler.node(root)
+    compiler.code.push(Inst.Save(1))
+    compiler.code.push(Inst.Match)
+    if compiler.code.len() > MAX_INSTRUCTIONS {
+        return Err(RegexError.Syntax { at: total, message: "the compiled regex is too large".to_string() })
+    }
+    Ok(Program { code: compiler.code, classes: classes, slots: slots })
+}

@@ -1,0 +1,851 @@
+// The pattern parser (spec/regex.md, RX2 to RX7): a pattern becomes a tree of `Node`s stored in an arena.
+//
+// A node refers to its children by index into `nodes`. A sequence or an alternation keeps the indices of its items
+// in `refs`, so a node is a plain copyable value and a long run of literals is never a deep chain of nodes.
+
+use classes.{CharClass, ClassItem, posix_items}
+use errors.RegexError
+
+/// The repetition count the pattern may use (RX7).
+const MAX_REPEAT: u32 = 1000
+/// The deepest nesting of groups the pattern may use (RX7).
+const MAX_DEPTH: usize = 250
+
+/// A zero-width test (RX5, RX14).
+enum Assertion: Copy, Clone, Eq, Debug {
+    TextStart
+    TextEnd
+    LineStart
+    LineEnd
+    WordBoundary
+    NotWordBoundary
+}
+
+/// One node of the tree. `Char` holds the lower-case form of the character when `fold` is set (RX6).
+enum Node: Copy, Clone, Eq, Debug {
+    Empty
+    Char(char, bool)
+    Any(bool)
+    Class(usize)
+    Assert(Assertion)
+    Capture(usize, usize)
+    Seq(usize, usize)
+    Alt(usize, usize)
+    Repeat(usize, u32, Option<u32>, bool)
+}
+
+/// A parsed pattern: the arena, the classes, the root, and the groups. `names[i]` names group `i + 1`.
+struct Parsed {
+    nodes: List<Node>,
+    refs: List<usize>,
+    classes: List<CharClass>,
+    root: usize,
+    groups: usize,
+    names: List<Option<String>>,
+    total: usize,
+}
+
+/// One item of a bracket class: a single character (which may start a range), or a set of items.
+enum ClassAtom {
+    Char(char)
+    Items(List<ClassItem>)
+}
+
+struct Parser {
+    chars: List<char>,
+    offsets: List<usize>,
+    total: usize,
+    pos: usize,
+    depth: usize,
+    nodes: List<Node>,
+    refs: List<usize>,
+    classes: List<CharClass>,
+    groups: usize,
+    names: List<Option<String>>,
+    icase: bool,
+    multi: bool,
+    dotall: bool,
+    verbose: bool,
+}
+
+Parser {
+    fn new(pattern: str): Parser {
+        let mut chars = List<char>.new()
+        let mut offsets = List<usize>.new()
+        for (offset, c) in pattern.char_indices() {
+            offsets.push(offset)
+            chars.push(c)
+        }
+        Parser {
+            chars: chars,
+            offsets: offsets,
+            total: pattern.len(),
+            pos: 0,
+            depth: 0,
+            nodes: List<Node>.new(),
+            refs: List<usize>.new(),
+            classes: List<CharClass>.new(),
+            groups: 0,
+            names: List<Option<String>>.new(),
+            icase: false,
+            multi: false,
+            dotall: false,
+            verbose: false,
+        }
+    }
+
+    fn at_end(self): bool {
+        self.pos >= self.chars.len()
+    }
+
+    fn peek(self): Option<char> {
+        if self.pos < self.chars.len() {
+            Some(self.chars[self.pos])
+        } else {
+            None
+        }
+    }
+
+    fn peek_at(self, ahead: usize): Option<char> {
+        let index = self.pos + ahead
+        if index < self.chars.len() {
+            Some(self.chars[index])
+        } else {
+            None
+        }
+    }
+
+    /// The byte offset of the current character, or the length of the pattern at its end.
+    fn offset(self): usize {
+        if self.pos < self.offsets.len() {
+            self.offsets[self.pos]
+        } else {
+            self.total
+        }
+    }
+
+    fn bump(mut self) {
+        self.pos = self.pos + 1
+    }
+
+    fn fail(self, at: usize, message: str): RegexError {
+        RegexError.Syntax { at: at, message: message.to_string() }
+    }
+
+    fn add(mut self, node: Node): usize {
+        self.nodes.push(node)
+        self.nodes.len() - 1
+    }
+
+    /// Stores the items of a sequence or an alternation and returns the node that names them.
+    fn sequence(mut self, items: List<usize>, alternation: bool): usize {
+        let start = self.refs.len()
+        let count = items.len()
+        let mut i: usize = 0
+        while i < count {
+            self.refs.push(items[i])
+            i = i + 1
+        }
+        if alternation {
+            self.add(Node.Alt(start, count))
+        } else {
+            self.add(Node.Seq(start, count))
+        }
+    }
+
+    /// A literal character, folded to lower case under `i` (RX6).
+    fn literal(self, c: char): Node {
+        if self.icase {
+            Node.Char(c.to_lowercase(), true)
+        } else {
+            Node.Char(c, false)
+        }
+    }
+
+    /// Skips white space and `#` comments under `x` (RX6).
+    fn skip_verbose(mut self) {
+        if !self.verbose {
+            return
+        }
+        loop {
+            match self.peek() {
+                Some(c) => {
+                    if c.is_whitespace() {
+                        self.bump()
+                    } else if c == '#' {
+                        loop {
+                            match self.peek() {
+                                None => break,
+                                Some(d) => {
+                                    self.bump()
+                                    if d == '\n' {
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        break
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Alternatives separated by `|`.
+    fn parse_alt(mut self): Result<usize, RegexError> {
+        let first = self.parse_concat()?
+        if self.peek() != Some('|') {
+            return Ok(first)
+        }
+        let mut items = List<usize>.new()
+        items.push(first)
+        while self.peek() == Some('|') {
+            self.bump()
+            let next = self.parse_concat()?
+            items.push(next)
+        }
+        Ok(self.sequence(items, true))
+    }
+
+    /// Repeated atoms up to a `|`, a `)`, or the end. An empty run is an `Empty` node.
+    fn parse_concat(mut self): Result<usize, RegexError> {
+        let mut items = List<usize>.new()
+        loop {
+            self.skip_verbose()
+            match self.peek() {
+                None => break,
+                Some('|') => break,
+                Some(')') => break,
+                _ => {}
+            }
+            let item = self.parse_repeat()?
+            items.push(item)
+        }
+        if items.is_empty() {
+            return Ok(self.add(Node.Empty))
+        }
+        if items.len() == 1 {
+            return Ok(items[0])
+        }
+        Ok(self.sequence(items, false))
+    }
+
+    /// An atom with at most one quantifier after it (RX2). A second quantifier is an error.
+    fn parse_repeat(mut self): Result<usize, RegexError> {
+        let atom = self.parse_atom()?
+        self.skip_verbose()
+        let quantifier_at = self.offset()
+        let bounds: Option<(u32, Option<u32>)> = match self.peek() {
+            Some('*') => {
+                self.bump()
+                Some((0, None))
+            }
+            Some('+') => {
+                self.bump()
+                Some((1, None))
+            }
+            Some('?') => {
+                self.bump()
+                Some((0, Some(1)))
+            }
+            Some('{') => Some(self.brace()?),
+            _ => None,
+        }
+        let (min, max) = match bounds {
+            Some(b) => b,
+            None => return Ok(atom),
+        }
+        if self.is_zero_width(atom) {
+            return Err(self.fail(quantifier_at, "nothing to repeat"))
+        }
+        let greedy = if self.peek() == Some('?') {
+            self.bump()
+            false
+        } else {
+            true
+        }
+        let node = self.add(Node.Repeat(atom, min, max, greedy))
+        self.skip_verbose()
+        match self.peek() {
+            Some('*') | Some('?') | Some('{') => Err(self.fail(self.offset(), "nothing to repeat")),
+            Some('+') => Err(self.fail(self.offset(), "possessive quantifiers are not supported")),
+            _ => Ok(node),
+        }
+    }
+
+    /// Whether `node` is one a quantifier may not apply to: an empty group, a flag group, or an assertion.
+    fn is_zero_width(self, node: usize): bool {
+        match self.nodes[node] {
+            Node.Empty => true,
+            Node.Assert(_) => true,
+            _ => false,
+        }
+    }
+
+    /// The bounds of `{n}`, `{n,}`, or `{n,m}` at the current `{` (RX2, RX7).
+    fn brace(mut self): Result<(u32, Option<u32>), RegexError> {
+        let at = self.offset()
+        self.bump()
+        let min = match self.number() {
+            Some(n) => n,
+            None => return Err(self.fail(at, "invalid repetition count")),
+        }
+        let mut max: Option<u32> = Some(min)
+        if self.peek() == Some(',') {
+            self.bump()
+            max = self.number()
+        }
+        if self.peek() != Some('}') {
+            return Err(self.fail(at, "invalid repetition count"))
+        }
+        self.bump()
+        if min > MAX_REPEAT {
+            return Err(self.fail(at, "repetition count above 1000"))
+        }
+        if let Some(m) = max {
+            if m > MAX_REPEAT {
+                return Err(self.fail(at, "repetition count above 1000"))
+            }
+            if m < min {
+                return Err(self.fail(at, "invalid repetition count"))
+            }
+        }
+        Ok((min, max))
+    }
+
+    /// The decimal number at the current position, if there is one. A count past 100000 stops growing, which is
+    /// still past the limit.
+    fn number(mut self): Option<u32> {
+        let mut value: u32 = 0
+        let mut saw_digit = false
+        loop {
+            match self.peek() {
+                Some(c) => match c.to_digit(10) {
+                    Some(d) => {
+                        saw_digit = true
+                        if value < 100000 {
+                            value = value * 10 + d
+                        }
+                        self.bump()
+                    }
+                    None => break,
+                },
+                None => break,
+            }
+        }
+        if saw_digit {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// One atom: a group, a class, an escape, an anchor, `.`, or a literal (RX2).
+    fn parse_atom(mut self): Result<usize, RegexError> {
+        let c = match self.peek() {
+            Some(c) => c,
+            None => return Ok(self.add(Node.Empty)),
+        }
+        match c {
+            '(' => self.parse_group(),
+            '[' => self.parse_class(),
+            '\\' => self.parse_escape(),
+            '.' => {
+                self.bump()
+                let dotall = self.dotall
+                Ok(self.add(Node.Any(dotall)))
+            }
+            '^' => {
+                self.bump()
+                let kind = if self.multi {
+                    Assertion.LineStart
+                } else {
+                    Assertion.TextStart
+                }
+                Ok(self.add(Node.Assert(kind)))
+            }
+            '$' => {
+                self.bump()
+                let kind = if self.multi {
+                    Assertion.LineEnd
+                } else {
+                    Assertion.TextEnd
+                }
+                Ok(self.add(Node.Assert(kind)))
+            }
+            '*' | '+' | '?' | '{' => Err(self.fail(self.offset(), "nothing to repeat")),
+            _ => {
+                self.bump()
+                let node = self.literal(c)
+                Ok(self.add(node))
+            }
+        }
+    }
+
+    /// A group after its `(`: a capture, a named capture, a non-capturing group, or a flag setting (RX2, RX6).
+    fn parse_group(mut self): Result<usize, RegexError> {
+        let open = self.offset()
+        self.bump()
+        let icase = self.icase
+        let multi = self.multi
+        let dotall = self.dotall
+        let verbose = self.verbose
+        // A plain `(` and a named group capture; the `(?` forms other than the names do not.
+        let mut capture = true
+        let mut name: Option<String> = None
+        if self.peek() == Some('?') {
+            self.bump()
+            capture = false
+            let at = self.offset()
+            let letter = match self.peek() {
+                Some(c) => c.is_ascii_alphabetic(),
+                None => false,
+            }
+            match self.peek() {
+                Some(':') => {
+                    self.bump()
+                }
+                Some('P') => {
+                    if self.peek_at(1) == Some('=') {
+                        return Err(self.fail(open, "backreferences are not supported"))
+                    }
+                    self.bump()
+                    name = Some(self.group_name(open)?)
+                    capture = true
+                }
+                Some('<') => {
+                    if self.peek_at(1) == Some('=') || self.peek_at(1) == Some('!') {
+                        return Err(self.fail(open, "lookaround is not supported"))
+                    }
+                    name = Some(self.group_name(open)?)
+                    capture = true
+                }
+                Some('=') | Some('!') => return Err(self.fail(open, "lookaround is not supported")),
+                Some('>') => return Err(self.fail(open, "atomic groups are not supported")),
+                Some('i') | Some('m') | Some('s') | Some('x') | Some('-') => {
+                    let scoped = self.flags(open)?
+                    if !scoped {
+                        return Ok(self.add(Node.Empty))
+                    }
+                }
+                _ => {
+                    if letter {
+                        return Err(self.fail(at, "unknown group flag"))
+                    }
+                    return Err(self.fail(at, "unknown group syntax"))
+                }
+            }
+        }
+        let mut index: usize = 0
+        if capture {
+            self.groups = self.groups + 1
+            index = self.groups
+            self.names.push(name)
+        }
+        let body = self.body(open)?
+        self.icase = icase
+        self.multi = multi
+        self.dotall = dotall
+        self.verbose = verbose
+        if index == 0 {
+            Ok(body)
+        } else {
+            Ok(self.add(Node.Capture(index, body)))
+        }
+    }
+
+    /// The body of a group: the alternatives up to the closing `)`, with the nesting checked (RX7).
+    fn body(mut self, open: usize): Result<usize, RegexError> {
+        self.depth = self.depth + 1
+        if self.depth > MAX_DEPTH {
+            return Err(self.fail(open, "nesting is too deep"))
+        }
+        let node = self.parse_alt()?
+        if self.peek() != Some(')') {
+            return Err(self.fail(open, "unclosed group"))
+        }
+        self.bump()
+        self.depth = self.depth - 1
+        Ok(node)
+    }
+
+    /// The name of a named group: `<name>` at the current `<`, with the `>` consumed.
+    fn group_name(mut self, open: usize): Result<String, RegexError> {
+        if self.peek() != Some('<') {
+            return Err(self.fail(open, "invalid group name"))
+        }
+        self.bump()
+        let mut name = String.new()
+        loop {
+            match self.peek() {
+                None => return Err(self.fail(open, "unclosed group")),
+                Some('>') => {
+                    self.bump()
+                    break
+                }
+                Some(c) => {
+                    if !(c.is_ascii_alphanumeric() || c == '_') {
+                        return Err(self.fail(self.offset(), "invalid group name"))
+                    }
+                    name.push(c)
+                    self.bump()
+                }
+            }
+        }
+        let letters = name.to_char_list()
+        if letters.is_empty() || letters[0].is_ascii_digit() {
+            return Err(self.fail(open, "invalid group name"))
+        }
+        let mut i: usize = 0
+        while i < self.names.len() {
+            if self.names[i] == Some(name.clone()) {
+                return Err(self.fail(open, "duplicate group name"))
+            }
+            i = i + 1
+        }
+        Ok(name)
+    }
+
+    /// The flags after `(?` up to `)` or `:` (RX6), applied to the parser. Returns true for `:`, which opens a group.
+    fn flags(mut self, open: usize): Result<bool, RegexError> {
+        let mut on = true
+        loop {
+            let at = self.offset()
+            match self.peek() {
+                None => return Err(self.fail(open, "unclosed group")),
+                Some(')') => {
+                    self.bump()
+                    return Ok(false)
+                }
+                Some(':') => {
+                    self.bump()
+                    return Ok(true)
+                }
+                Some('i') => {
+                    self.icase = on
+                }
+                Some('m') => {
+                    self.multi = on
+                }
+                Some('s') => {
+                    self.dotall = on
+                }
+                Some('x') => {
+                    self.verbose = on
+                }
+                Some('-') => {
+                    if !on {
+                        return Err(self.fail(at, "unknown group flag"))
+                    }
+                    on = false
+                }
+                _ => return Err(self.fail(at, "unknown group flag")),
+            }
+            self.bump()
+        }
+    }
+
+    /// An escape outside a class (RX2).
+    fn parse_escape(mut self): Result<usize, RegexError> {
+        let at = self.offset()
+        self.bump()
+        let c = match self.peek() {
+            Some(c) => c,
+            None => return Err(self.fail(at, "trailing backslash")),
+        }
+        self.bump()
+        match c {
+            'b' => Ok(self.add(Node.Assert(Assertion.WordBoundary))),
+            'B' => Ok(self.add(Node.Assert(Assertion.NotWordBoundary))),
+            'A' => Ok(self.add(Node.Assert(Assertion.TextStart))),
+            'z' => Ok(self.add(Node.Assert(Assertion.TextEnd))),
+            'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' => {
+                let item = self.class_escape(at, c)?
+                let mut class = CharClass.new(false, self.icase)
+                class.items.push(item)
+                let index = self.classes.len()
+                self.classes.push(class)
+                Ok(self.add(Node.Class(index)))
+            }
+            _ => {
+                let ch = self.escape_char(at, c)?
+                let node = self.literal(ch)
+                Ok(self.add(node))
+            }
+        }
+    }
+
+    /// The item of a class escape whose letter `c` was just read (`d`, `W`, `p{L}`, ...).
+    fn class_escape(mut self, at: usize, c: char): Result<ClassItem, RegexError> {
+        match c {
+            'd' => Ok(ClassItem.Digit(false)),
+            'D' => Ok(ClassItem.Digit(true)),
+            'w' => Ok(ClassItem.Word(false)),
+            'W' => Ok(ClassItem.Word(true)),
+            's' => Ok(ClassItem.Space(false)),
+            'S' => Ok(ClassItem.Space(true)),
+            _ => {
+                let negated = c == 'P'
+                let name = self.property_name(at)?
+                match name.as_str() {
+                    "L" => Ok(ClassItem.Letter(negated)),
+                    "Lu" => Ok(ClassItem.Upper(negated)),
+                    "Ll" => Ok(ClassItem.Lower(negated)),
+                    "N" => Ok(ClassItem.Number(negated)),
+                    "White_Space" => Ok(ClassItem.Space(negated)),
+                    _ => Err(self.fail(at, "unknown Unicode property")),
+                }
+            }
+        }
+    }
+
+    /// The name of a `\p` property: `{Name}`, or the one letter after the `p`.
+    fn property_name(mut self, at: usize): Result<String, RegexError> {
+        let mut name = String.new()
+        if self.peek() == Some('{') {
+            self.bump()
+            loop {
+                match self.peek() {
+                    None => return Err(self.fail(at, "unknown Unicode property")),
+                    Some('}') => {
+                        self.bump()
+                        break
+                    }
+                    Some(c) => {
+                        name.push(c)
+                        self.bump()
+                    }
+                }
+            }
+        } else {
+            match self.peek() {
+                Some(c) => {
+                    name.push(c)
+                    self.bump()
+                }
+                None => return Err(self.fail(at, "unknown Unicode property")),
+            }
+        }
+        Ok(name)
+    }
+
+    /// The character an escape stands for, after its letter `c` was read: `\n`, `\x41`, or punctuation (RX2).
+    fn escape_char(mut self, at: usize, c: char): Result<char, RegexError> {
+        match c {
+            'n' => Ok(code_char(10)),
+            't' => Ok(code_char(9)),
+            'r' => Ok(code_char(13)),
+            'f' => Ok(code_char(12)),
+            'v' => Ok(code_char(11)),
+            'a' => Ok(code_char(7)),
+            'x' => self.hex_escape(at),
+            _ => {
+                if c.is_ascii_digit() || c == 'k' {
+                    return Err(self.fail(at, "backreferences are not supported"))
+                }
+                if c.is_ascii_alphabetic() {
+                    return Err(self.fail(at, "unknown escape sequence"))
+                }
+                Ok(c)
+            }
+        }
+    }
+
+    /// The code point of `\xHH` or `\x{H...}`, after the `x` (RX2).
+    fn hex_escape(mut self, at: usize): Result<char, RegexError> {
+        let mut value: u32 = 0
+        if self.peek() == Some('{') {
+            self.bump()
+            let mut digits = 0
+            loop {
+                match self.peek() {
+                    None => return Err(self.fail(at, "invalid hex escape")),
+                    Some('}') => {
+                        self.bump()
+                        break
+                    }
+                    Some(h) => match h.to_digit(16) {
+                        Some(d) => {
+                            value = value * 16 + d
+                            digits = digits + 1
+                            if value > 1114111 || digits > 8 {
+                                return Err(self.fail(at, "invalid hex escape"))
+                            }
+                            self.bump()
+                        }
+                        None => return Err(self.fail(at, "invalid hex escape")),
+                    },
+                }
+            }
+            if digits == 0 {
+                return Err(self.fail(at, "invalid hex escape"))
+            }
+        } else {
+            let mut digits = 0
+            while digits < 2 {
+                match self.peek() {
+                    Some(h) => match h.to_digit(16) {
+                        Some(d) => {
+                            value = value * 16 + d
+                            self.bump()
+                        }
+                        None => return Err(self.fail(at, "invalid hex escape")),
+                    },
+                    None => return Err(self.fail(at, "invalid hex escape")),
+                }
+                digits = digits + 1
+            }
+        }
+        match value.to_char() {
+            Some(ch) => Ok(ch),
+            None => Err(self.fail(at, "invalid hex escape")),
+        }
+    }
+
+    /// A bracket class from its `[` to its `]` (RX5).
+    fn parse_class(mut self): Result<usize, RegexError> {
+        let open = self.offset()
+        self.bump()
+        let mut negated = false
+        if self.peek() == Some('^') {
+            self.bump()
+            negated = true
+        }
+        let mut class = CharClass.new(negated, self.icase)
+        let mut first = true
+        loop {
+            if self.peek() == Some(']') && !first {
+                self.bump()
+                break
+            }
+            if self.at_end() {
+                return Err(self.fail(open, "unclosed character class"))
+            }
+            first = false
+            let at = self.offset()
+            let atom = self.class_atom(at)?
+            match atom {
+                ClassAtom.Items(items) => class.items.append(items),
+                ClassAtom.Char(lo) => {
+                    let is_range = self.peek() == Some('-') && self.peek_at(1).is_some() && self.peek_at(1) != Some(']')
+                    if is_range {
+                        let dash = self.offset()
+                        self.bump()
+                        let hi_at = self.offset()
+                        match self.class_atom(hi_at)? {
+                            ClassAtom.Char(hi) => {
+                                if hi < lo {
+                                    return Err(self.fail(at, "invalid class range"))
+                                }
+                                class.items.push(ClassItem.Range(lo as u32, hi as u32))
+                            }
+                            ClassAtom.Items(_) => return Err(self.fail(dash, "invalid class range")),
+                        }
+                    } else {
+                        class.items.push(ClassItem.Range(lo as u32, lo as u32))
+                    }
+                }
+            }
+        }
+        let index = self.classes.len()
+        self.classes.push(class)
+        Ok(self.add(Node.Class(index)))
+    }
+
+    /// One item of a class: a POSIX set, a class escape, an escaped character, or a plain character.
+    fn class_atom(mut self, at: usize): Result<ClassAtom, RegexError> {
+        if self.peek() == Some('[') && self.peek_at(1) == Some(':') {
+            if let Some(end) = self.posix_end() {
+                return self.posix(at, end)
+            }
+        }
+        let c = match self.peek() {
+            Some(c) => c,
+            None => return Err(self.fail(at, "unclosed character class")),
+        }
+        self.bump()
+        if c != '\\' {
+            return Ok(ClassAtom.Char(c))
+        }
+        let letter = match self.peek() {
+            Some(letter) => letter,
+            None => return Err(self.fail(at, "trailing backslash")),
+        }
+        self.bump()
+        match letter {
+            'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' => {
+                let mut items = List<ClassItem>.new()
+                items.push(self.class_escape(at, letter)?)
+                Ok(ClassAtom.Items(items))
+            }
+            _ => Ok(ClassAtom.Char(self.escape_char(at, letter)?)),
+        }
+    }
+
+    /// The position after `:]` when the text at `[:` is a POSIX class name, with an optional `^`. Otherwise None, and
+    /// the `[` is a literal character.
+    fn posix_end(self): Option<usize> {
+        let mut k = self.pos + 2
+        if k < self.chars.len() && self.chars[k] == '^' {
+            k = k + 1
+        }
+        let start = k
+        while k < self.chars.len() && self.chars[k].is_ascii_alphabetic() {
+            k = k + 1
+        }
+        if k > start && k + 1 < self.chars.len() && self.chars[k] == ':' && self.chars[k + 1] == ']' {
+            Some(k + 2)
+        } else {
+            None
+        }
+    }
+
+    /// The POSIX class from the current `[:` to `end` (RX5).
+    fn posix(mut self, at: usize, end: usize): Result<ClassAtom, RegexError> {
+        self.bump()
+        self.bump()
+        let mut negated = false
+        if self.peek() == Some('^') {
+            self.bump()
+            negated = true
+        }
+        let mut name = String.new()
+        while self.pos + 2 < end {
+            name.push(self.chars[self.pos])
+            self.bump()
+        }
+        self.pos = end
+        match posix_items(name.as_str(), negated) {
+            Some(items) => Ok(ClassAtom.Items(items)),
+            None => Err(self.fail(at, "unknown POSIX class")),
+        }
+    }
+}
+
+/// The character with code point `code`. The callers pass only the ASCII control codes they name, which are valid.
+fn code_char(code: u32): char {
+    match code.to_char() {
+        Some(c) => c,
+        None => '\0',
+    }
+}
+
+/// Parses `pattern` into a tree (RX2 to RX7), or reports the first error.
+fn parse(pattern: str): Result<Parsed, RegexError> {
+    let mut parser = Parser.new(pattern)
+    let root = parser.parse_alt()?
+    if !parser.at_end() {
+        return Err(parser.fail(parser.offset(), "unopened group"))
+    }
+    Ok(Parsed {
+        nodes: parser.nodes,
+        refs: parser.refs,
+        classes: parser.classes,
+        root: root,
+        groups: parser.groups,
+        names: parser.names,
+        total: pattern.len(),
+    })
+}
