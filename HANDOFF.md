@@ -148,6 +148,14 @@ still reports "unknown module" with no hint. Tests: `tests/check_features.py` (b
 `tests/check_watch.py` (the pass-through), the loader's unit tests, and
 `crates/burdin_pkg/src/resolve.rs` (`the_lockfile_pins_the_potential_graph`).
 
+**Issue #341's verification (2026-11-22).** `tests/check_features.py` now also proves that a dev-dependency's code is in
+the test executable and absent from the `build` executable (its positive control is the test executable), and that a
+workspace member's dev-dependency reaches its test through `-p`, with `--offline` and `--locked` on a path-only
+workspace. It passes on Linux (WSL, the debug driver: 61 checks) and on Windows (the installed `stable` driver,
+0.1.2, from the toolchain directory; `BURDIN` must name the driver, not the proxy, because the test's temporary
+`BURDIN_HOME` holds no toolchain). The issue's "examples" are not a Burdin target yet (`--example` is issue #355), so
+dev-dependencies are checked against the test, bench, fuzz, and `check --tests` builds that exist.
+
 **The build tool's command surface and profiles (issues #338 and #339, 2026-11-20).** `spec/build-tool.md` records
 every command, the Cargo commands that are planned but not copied (with their issue), what is deliberately left out,
 the command-line and environment rules, and the exit statuses; `tests/check_cli.py` checks the golden command list,

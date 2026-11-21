@@ -24,7 +24,10 @@ What it checks:
   * `burdin.lock` pins the potential graph (optional, dev, and every target's dependencies, and what a dev-dependency
     reaches), `--locked` accepts it, and features and the command leave it unchanged (PKG33);
   * a source module named `features` conflicts with the generated one, and a package with neither features nor an
-    optional dependency has no such module (PKG32).
+    optional dependency has no such module (PKG32);
+  * a workspace member's dev-dependency reaches its test through `-p`, and `--offline` and `--locked` build a
+    path-only workspace (PKG24, PKG26, WS19);
+  * a dev-dependency's code is in the test executable and not in the executable of `build` (PKG26, issue #341).
 """
 
 import os
@@ -528,6 +531,81 @@ winonly = { path = "../winonly" }
             harness.read_text(lockapp / "burdin.lock") == golden,
             f"`burdin {' '.join(arguments)}` changed the lockfile",
         )
+
+    # --- A test-only dependency is not linked into a normal build (issue #341, PKG26) ----------------------------
+    # The dependency returns a string only the test uses. Its bytes must be in the test executable (the positive
+    # control) and absent from the executable of `build`, which never loads the dependency.
+    sentinel = b"dev-only-sentinel-7531"
+    package(
+        work,
+        "sentinelkit",
+        '[package]\nname = "sentinelkit"\n',
+        {"sentinelkit.bd": 'fn label(): str {\n    "dev-only-sentinel-7531"\n}\n'},
+    )
+    linked = package(
+        work,
+        "linked",
+        '[package]\nname = "linked"\n\n[dev-dependencies]\nsentinelkit = { path = "../sentinelkit" }\n',
+        {
+            "main.bd": 'fn main() {\n    println("normal")\n}\n\n'
+            'test "the sentinel" {\n    assert_eq(sentinelkit.label(), "dev-only-sentinel-7531")?\n}\n'
+        },
+    )
+    built_normal = run_in(linked, "build", ".")
+    check(built_normal.returncode == 0, f"`build` of a package with a dev-dependency failed: {err(built_normal)[:300]}")
+    suffix = ".exe" if PLATFORM == "windows" else ""
+    normal_exe = linked / "target" / "burdin" / "debug" / "bin" / f"linked{suffix}"
+    check(normal_exe.is_file(), f"`build` wrote no executable at {normal_exe}")
+    check(
+        normal_exe.is_file() and sentinel not in normal_exe.read_bytes(),
+        "a test-only dependency's code is linked into the executable of a normal build",
+    )
+    tested_linked = run_in(linked, "test", ".")
+    check(
+        tested_linked.returncode == 0 and "1 passed, 0 failed" in out(tested_linked),
+        f"`test` did not reach the dev-dependency: {out(tested_linked)!r} {err(tested_linked)[:300]}",
+    )
+    test_exe = linked / "target" / "burdin" / "debug" / "test" / f"linked{suffix}"
+    check(
+        test_exe.is_file() and sentinel in test_exe.read_bytes(),
+        "positive control: the test executable does not contain the dev-dependency's string",
+    )
+
+    # --- A workspace member's dev-dependency, and --offline (PKG24, PKG26; WS19) ---------------------------------
+    # The dev-dependency lives outside the workspace, reached by a relative path from the member.
+    package(work, "wsdev", '[package]\nname = "wsdev"\n', {"wsdev.bd": "fn answer(): i32 {\n    3\n}\n"})
+    wsroot = work / "wsroot"
+    write(wsroot / "burdin.toml", '[workspace]\nmembers = ["apps/*"]\n')
+    package(
+        wsroot / "apps",
+        "wsapp",
+        '[package]\nname = "wsapp"\n\n[dev-dependencies]\nwsdev = { path = "../../../wsdev" }\n',
+        {
+            "main.bd": 'fn main() {\n    println("workspace")\n}\n\n'
+            'test "the workspace kit" {\n    assert_eq(wsdev.answer(), 3)?\n}\n'
+        },
+    )
+    ws_built = run_in(wsroot, "build", ".", "-p", "wsapp")
+    check(ws_built.returncode == 0, f"`build -p wsapp` of a workspace member failed: {err(ws_built)[:300]}")
+    ws_tested = run_in(wsroot, "test", ".", "-p", "wsapp")
+    check(
+        ws_tested.returncode == 0 and "1 passed, 0 failed" in out(ws_tested),
+        f"`test -p wsapp` did not reach its dev-dependency: {out(ws_tested)!r} {err(ws_tested)[:300]}",
+    )
+    ws_checked = run_in(wsroot / "apps" / "wsapp", "check", ".", "--tests")
+    check(ws_checked.returncode == 0, f"`check --tests` in a workspace member failed: {err(ws_checked)[:300]}")
+    ws_ran = run_in(wsroot, "run", ".", "-p", "wsapp")
+    check(
+        ws_ran.returncode == 0 and out(ws_ran) == "workspace\n",
+        f"`run -p wsapp` of a workspace member with a dev-dependency failed: {err(ws_ran)[:300]}",
+    )
+    for arguments in (["build", ".", "-p", "wsapp", "--offline"], ["test", ".", "-p", "wsapp", "--offline", "--locked"]):
+        result = run_in(wsroot, *arguments)
+        check(
+            result.returncode == 0,
+            f"`burdin {' '.join(arguments)}` failed on a path-only workspace: {err(result)[:300]}",
+        )
+    check(not (wsroot / "apps" / "wsapp" / "burdin.lock").exists(), "a workspace member wrote its own lockfile")
 
 print(f"Checked dependency tables, features, and targets ({checks} checks)")
 
