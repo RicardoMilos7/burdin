@@ -752,6 +752,7 @@ fn driver_main() -> ExitCode {
         "bloat" => return bloat::run(rest),
         "expand" => return expand::run(rest),
         "explain" => return explain(rest),
+        "commands" => return cli::commands(rest),
         "bindgen" => return bindgen::run(rest),
         "lint" => return lint::run(rest),
         "fix" => return fix::run(rest),

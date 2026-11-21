@@ -8,7 +8,8 @@ are `tests/check_cli.py`.
 ## BT1. The command list
 
 A command is in scope when `burdin <command>` is listed by `burdin --help` and has a `burdin <command> --help` page.
-The complete list:
+The complete list (`burdin --help` shows it in this order's spirit: the commands used every day first, the specialized
+ones last; `burdin commands` lists every command alphabetically):
 
 | Command | What it does | Specification |
 | --- | --- | --- |
@@ -40,6 +41,7 @@ The complete list:
 | `explain` | print the reference entry for an error code | `docs/error-codes.md` |
 | `lsp` | run the language server on standard input and output | `spec/lsp.md` |
 | `dap` | run the debug adapter on standard input and output | `spec/debug.md` |
+| `commands` | list every command with its summary, alphabetically | this page |
 | `help` | print the help of a command | this page |
 
 The `burdin` **proxy** (`spec/toolchain.md`) adds `toolchain` and `+<toolchain>` before it runs a compiler. A
@@ -89,7 +91,7 @@ is still missing.
 
 ## BT4. The command line
 
-- `burdin` with no arguments, `burdin --help`, and `burdin help` print the command list and exit 0.
+- `burdin` with no arguments, `burdin --help`, and `burdin help` print the command list and exit 0. The list is ordered by use: build, run, test, and check first, then package setup, code tidying, measuring, refactoring and inspection, and packaging, bindings, and editor tooling last. `burdin commands` prints the same commands alphabetically and takes no arguments.
 - `burdin help <command>` and `burdin <command> --help` print the command's page and exit 0 (`burdin help help`, like
   `burdin help`, prints the command list). `--help` or `-h` after `--` belongs to the program being run, not to
   `burdin`.

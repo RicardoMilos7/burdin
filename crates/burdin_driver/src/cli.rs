@@ -193,37 +193,65 @@ pub(crate) fn command() -> Command {
                 .help("Print version info and exit"),
         )
         .after_help(ROOT_AFTER_HELP)
+        // The order is the help's order: the commands used every day first, the specialized ones last (BT1).
         .subcommands([
+            // Every day: write, build, run, and check a program.
             build(),
             run(),
             test(),
-            bench(),
-            fuzz(),
             check(),
-            fmt(),
-            lint(),
-            fix(),
-            ssr(),
-            refactor(),
-            doc(),
+            // Start and manage a package.
             new(),
             init(),
             add(),
-            clean(),
-            package(),
-            vendor(),
-            repl(),
+            // Keep the code tidy.
+            fmt(),
+            lint(),
+            fix(),
+            doc(),
+            // Measure, iterate, and explore.
+            bench(),
             watch(),
+            repl(),
             debug(),
+            fuzz(),
+            clean(),
+            // Refactor and inspect.
+            ssr(),
+            refactor(),
             expand(),
             asm(),
             bloat(),
             explain(),
+            // Packaging, bindings, and editor tooling.
+            package(),
+            vendor(),
             bindgen(),
             lsp(),
             dap(),
+            // About the tool itself.
+            Command::new("commands").about("List every command, alphabetically").override_usage("burdin commands"),
             Command::new("help").about("Print the help of a command").override_usage("burdin help [<command>]"),
         ])
+}
+
+/// `burdin commands`: every command with its summary, alphabetically (the root help is ordered by use instead).
+pub(crate) fn commands(rest: &[String]) -> ExitCode {
+    if let Some(extra) = rest.first() {
+        return usage_error("commands", &format!("`burdin commands` takes no arguments, got `{extra}`"));
+    }
+    let mut root = command();
+    root.build();
+    let mut all: Vec<(String, String)> = root
+        .get_subcommands()
+        .map(|c| (c.get_name().to_string(), c.get_about().map(|a| a.to_string()).unwrap_or_default()))
+        .collect();
+    all.sort();
+    let width = all.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    for (name, about) in all {
+        println!("{name:<width$}  {about}");
+    }
+    ExitCode::SUCCESS
 }
 
 // --- Shared arguments ---------------------------------------------------------------------------------------------

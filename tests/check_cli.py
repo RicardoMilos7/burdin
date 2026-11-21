@@ -36,31 +36,32 @@ COMMANDS = [
     "build",
     "run",
     "test",
-    "bench",
-    "fuzz",
     "check",
-    "fmt",
-    "lint",
-    "fix",
-    "ssr",
-    "refactor",
-    "doc",
     "new",
     "init",
     "add",
-    "clean",
-    "package",
-    "vendor",
-    "repl",
+    "fmt",
+    "lint",
+    "fix",
+    "doc",
+    "bench",
     "watch",
+    "repl",
     "debug",
+    "fuzz",
+    "clean",
+    "ssr",
+    "refactor",
     "expand",
     "asm",
     "bloat",
     "explain",
+    "package",
+    "vendor",
     "bindgen",
     "lsp",
     "dap",
+    "commands",
     "help",
 ]
 
@@ -89,31 +90,32 @@ Commands:
   build     Compile a file or package into an executable
   run       Build a program and run it
   test      Build and run the `test` blocks of a file or package
-  bench     Build and measure the `bench` blocks of a file or package
-  fuzz      Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it
   check     Type-check a program and run the memory checks, without generating code
-  fmt       Format source files
-  lint      Report common mistakes and style issues, and fix them
-  fix       Apply the machine-applicable fixes of the compiler and the linter across a package
-  ssr       Structural search and replace: match a pattern written as Burdin code across a package
-  refactor  Refactor code: extract, inline, change a signature, or move an item
-  doc       Generate the documentation of a package
   new       Create a new package
   init      Create a package in an existing directory
   add       Add a path, git, or official dependency to burdin.toml
-  clean     Remove a package's build output, and with --cache its caches
-  package   Write the package's reproducible archive to target/package
-  vendor    Copy the git dependencies into vendor/ for offline builds
-  repl      Start an interactive session
+  fmt       Format source files
+  lint      Report common mistakes and style issues, and fix them
+  fix       Apply the machine-applicable fixes of the compiler and the linter across a package
+  doc       Generate the documentation of a package
+  bench     Build and measure the `bench` blocks of a file or package
   watch     Rerun check, build, test, or run whenever the sources change
+  repl      Start an interactive session
   debug     Build a program with debug info and start a debugger on it
+  fuzz      Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it
+  clean     Remove a package's build output, and with --cache its caches
+  ssr       Structural search and replace: match a pattern written as Burdin code across a package
+  refactor  Refactor code: extract, inline, change a signature, or move an item
   expand    Print the source after comptime, derives, default arguments, and operators
   asm       Print the assembly or LLVM IR of one function, with its source
   bloat     Report the size of each function, module, package, and generic in the executable
   explain   Print the reference entry for an error code
+  package   Write the package's reproducible archive to target/package
+  vendor    Copy the git dependencies into vendor/ for offline builds
   bindgen   Generate bindings: a module from a C header or Rust crate, or a C header for a package
   lsp       Run the language server on standard input and output
   dap       Run the debug adapter on standard input and output
+  commands  List every command, alphabetically
   help      Print the help of a command
 
 Options:
@@ -177,6 +179,13 @@ for command in COMMANDS:
         f"usage: burdin {command}" in stdout(page).lower(),
         f"`burdin {command} --help` does not name the command's usage:\n{stdout(page)[:300]}",
     )
+
+# `burdin commands` lists every command alphabetically, with its summary.
+listing = run("commands")
+check(listing.returncode == 0, f"`burdin commands` failed: {stderr(listing)[:300]}")
+names = [line.split()[0] for line in stdout(listing).splitlines() if line.strip()]
+check(names == sorted(COMMANDS), f"`burdin commands` lists {names}, expected {sorted(COMMANDS)}")
+check(run("commands", "extra").returncode == 2, "`burdin commands extra` is not a usage error")
 
 # A representative page is golden, so a change to the page format is visible.
 new_help = run("help", "new")
