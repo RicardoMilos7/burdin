@@ -78,6 +78,32 @@ fn hover_shows_the_callee_of_an_incomplete_call() {
     assert_eq!(client.shutdown(), 0);
 }
 
+/// Hover on a method called through a nested receiver (issue #880; `spec/lsp.md` LS11): `resp.body.read_to_string()`
+/// shows the method's signature, as a one-level call does, while the receivers keep their types.
+#[test]
+fn hover_on_a_method_of_a_nested_receiver_shows_its_signature() {
+    let root = fixture("nested");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let hover = |client: &mut Client, needle: &str, delta: usize| -> String {
+        let result = client.call("textDocument/hover", client.at(&uri, &text, needle, 0, delta));
+        assert!(!result.is_null(), "no hover at `{needle}` + {delta}");
+        result.at(&["contents", "value"]).as_str().unwrap().to_string()
+    };
+    let nested = "let body = resp.body.read_to_string()";
+    let method = hover(&mut client, nested, "let body = resp.body.".len());
+    assert!(method.contains("fn read_to_string(self): Option<str>"), "{method}");
+    assert!(method.contains("Reads the whole body."), "{method}");
+    let receiver = hover(&mut client, nested, "let body = ".len());
+    assert!(receiver.contains("Response"), "{receiver}");
+    let field = hover(&mut client, nested, "let body = resp.".len());
+    assert!(field.contains("body: Body"), "{field}");
+    let one = hover(&mut client, "let one = resp.read_to_string()", "let one = resp.".len());
+    assert!(one.contains("fn read_to_string(self): Option<str>"), "{one}");
+    assert_eq!(client.shutdown(), 0);
+}
+
 fn labels(result: &Json) -> Vec<String> {
     let items = if result.get("items").is_null() { result.as_array() } else { result.get("items").as_array() };
     items.iter().map(|i| i.get("label").as_str().unwrap().to_string()).collect()
