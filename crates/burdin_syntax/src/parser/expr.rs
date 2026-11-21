@@ -406,9 +406,21 @@ impl Parser<'_> {
             TokenKind::If => self.if_expr(),
             TokenKind::While => {
                 self.bump();
+                let let_pattern = if self.eat(&TokenKind::Let) {
+                    let pattern = self.pattern()?;
+                    self.expect(&TokenKind::Eq)?;
+                    Some(pattern)
+                } else {
+                    None
+                };
                 let cond = self.expr_r(Restriction::NoStructLiteral)?;
                 let body = self.block()?;
-                Ok(Expr { span: start.to(body.span), kind: ExprKind::While { cond: Box::new(cond), body } })
+                let span = start.to(body.span);
+                let kind = match let_pattern {
+                    Some(pattern) => ExprKind::WhileLet { pattern, scrutinee: Box::new(cond), body },
+                    None => ExprKind::While { cond: Box::new(cond), body },
+                };
+                Ok(Expr { span, kind })
             }
             TokenKind::Loop => {
                 self.bump();
@@ -453,7 +465,10 @@ impl Parser<'_> {
                 let label = Ident { name, span: start };
                 self.expect(&TokenKind::Colon)?;
                 let body = self.primary(r)?;
-                if matches!(body.kind, ExprKind::While { .. } | ExprKind::Loop(_) | ExprKind::For { .. }) {
+                if matches!(
+                    body.kind,
+                    ExprKind::While { .. } | ExprKind::WhileLet { .. } | ExprKind::Loop(_) | ExprKind::For { .. }
+                ) {
                     Ok(Expr { span: start.to(body.span), kind: ExprKind::Labeled { label, body: Box::new(body) } })
                 } else {
                     // The label is dropped and the expression parsed on, so the rest of the file is still checked.

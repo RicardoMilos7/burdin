@@ -79,7 +79,7 @@ Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `move_heap_
 parameter, anything behind a reference, an element of a collection) is E0101.
 Test: `m06_conventions/move_out_of_readonly_param`.
 
-**MV8 Matching.** The scrutinee of `match`, `if let`, and `let ... else` is a place or a temporary.
+**MV8 Matching.** The scrutinee of `match`, `if let`, `while let`, and `let ... else` is a place or a temporary.
 If it is an owned place (an owned local, an `own` parameter) or a temporary, bindings in the arm that bind non-Copy parts move
 those parts out (the scrutinee becomes partially moved or moved) and Copy parts are copied. If it is a borrowed place (a read-only
 parameter, a `mut` parameter, behind a reference), bindings are views of the parts: read-only for a read-only place,
@@ -255,7 +255,8 @@ declared in the same block or in an enclosing block. It may not derive from a te
 end of the statement that created it, or from a local of an inner block, which is dropped before the binding
 escapes. Violation: E0123, reported at the stored value. Bindings of a `match`, `if let`, or `for` pattern are
 not subject to RT5: their scrutinee's temporaries live until the end of the same statement, and the binding lives
-no longer than the arm or loop body.
+no longer than the arm or loop body. The same holds for a `while let` pattern: each pass evaluates the scrutinee
+again, and its bindings and temporaries end with that pass (`spec/grammar.md`, rule 8.11).
 Tests: `m06_conventions/view_lifetime_ok`, `view_of_earlier_local_ok`;
 errors: `view_outlives_temporary`, `view_outlives_inner_local`, `view_outlives_string` (all in `m06_conventions`,
 E0123).

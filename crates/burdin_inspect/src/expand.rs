@@ -1193,6 +1193,10 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             out.push(cond);
             block_children(body, out);
         }
+        K::WhileLet { scrutinee, body, .. } => {
+            out.push(scrutinee);
+            block_children(body, out);
+        }
         K::For { iter, body, .. } => {
             out.push(iter);
             block_children(body, out);

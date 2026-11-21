@@ -6,6 +6,9 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #487: `while let pattern = value { ... }`, the `while` form of `if let`. It repeats its body while the value
+  matches, evaluates the value again on every pass, binds the pattern in the body only, and takes no `else`; a label
+  names it, and a `break` with a value is E0003. Rules: `spec/grammar.md` rule 8.11, `spec/memory-rules.md` MV8 and RT5.
 - Issue #878: on Windows the `tls` package uses SChannel, the system's own TLS stack, so Windows needs no OpenSSL
   install and the driver downloads nothing. Linux and macOS still link the system's OpenSSL 3. The `tls` package has an
   `openssl` feature and `http` a `tls` feature, both on by default, so `http = { official = true, default-features = false }`

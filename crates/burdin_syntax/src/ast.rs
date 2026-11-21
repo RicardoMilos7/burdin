@@ -520,6 +520,13 @@ pub enum ExprKind {
         cond: Box<Expr>,
         body: Block,
     },
+    /// `while let pattern = scrutinee { body }`: a `while` that repeats while the scrutinee matches the pattern
+    /// (`spec/grammar.md`, rule 8.11). The pattern binds in the body only, as with `if let`.
+    WhileLet {
+        pattern: Pattern,
+        scrutinee: Box<Expr>,
+        body: Block,
+    },
     Loop(Block),
     For {
         pattern: Pattern,
@@ -716,6 +723,7 @@ impl Expr {
                 | ExprKind::If { .. }
                 | ExprKind::IfLet { .. }
                 | ExprKind::While { .. }
+                | ExprKind::WhileLet { .. }
                 | ExprKind::Loop(_)
                 | ExprKind::For { .. }
                 | ExprKind::Labeled { .. }

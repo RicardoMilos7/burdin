@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A `while let` runs its pattern again on every pass, so a pattern that moves a non-Copy payload out of an owned local
+// moves that local again on the next pass (E0104, `spec/memory-rules.md`, MV8). A body that reassigns the local before
+// the next pass makes that pass valid again, as the second loop shows.
+
+fn consume(text: String) {
+    println(text)
+}
+
+fn main() {
+    let name: Option<String> = Some("ann".to_string())
+    while let Some(s) = name { //~ E0104
+        consume(s)
+    }
+
+    let mut again = Some("bo".to_string())
+    while let Some(s) = again {
+        consume(s)
+        again = None
+    }
+}

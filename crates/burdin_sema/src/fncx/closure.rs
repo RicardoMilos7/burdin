@@ -865,6 +865,13 @@ impl FreeNames {
                 self.expr(cond);
                 self.block(body);
             }
+            K::WhileLet { pattern, scrutinee, body } => {
+                self.expr(scrutinee);
+                self.scopes.push(Vec::new());
+                self.bind(pattern);
+                self.block_body(body);
+                self.scopes.pop();
+            }
             K::For { pattern, iter, body, .. } => {
                 self.expr(iter);
                 self.scopes.push(Vec::new());
@@ -1015,6 +1022,7 @@ fn contains_return(e: &ast::Expr) -> bool {
         }
         K::Labeled { body, .. } => contains_return(body),
         K::While { cond, body } => contains_return(cond) || block_has_return(body),
+        K::WhileLet { scrutinee, body, .. } => contains_return(scrutinee) || block_has_return(body),
         K::For { iter, body, .. } => contains_return(iter) || block_has_return(body),
         K::Comptime(inner) => contains_return(inner),
         K::ComptimeAssert(cond, message) => contains_return(cond) || message.as_deref().is_some_and(contains_return),

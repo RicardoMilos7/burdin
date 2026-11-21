@@ -328,6 +328,13 @@ impl Visit for Resolver {
                     self.expr(o);
                 }
             }
+            ExprKind::WhileLet { pattern, scrutinee, body } => {
+                self.expr(scrutinee);
+                self.scopes.push(HashMap::new());
+                self.bind_pattern(pattern);
+                self.block(body);
+                self.scopes.pop();
+            }
             ExprKind::For { pattern, iter, body, .. } => {
                 self.expr(iter);
                 self.scopes.push(HashMap::new());

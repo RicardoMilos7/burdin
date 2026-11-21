@@ -4,6 +4,19 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`while let` (issue #487, 2026-11-22).** `while let pattern = value { ... }` is the `while` form of `if let`
+(`spec/grammar.md`, rule 8.11). `WhileExpr` takes the same `Cond` as `if`, and the parser builds
+`ExprKind::WhileLet` for a `let` head. Sema lowers it in `while_let` (`fncx/control.rs`) to a TIR `Loop` whose body
+is `match value { pattern => body, _ => break }`, so the value is evaluated again on each pass and the pattern binds
+only in the body, as `if let` does. The loop's scope is a `while`'s, so `break value` is E0003 and a label names it.
+The move, borrow, origin, codegen, and comptime passes need no change: they see the same loop and match that
+`loop { match ... }` gives, and the scrutinee temporary is dropped at the end of each pass. The formatter (`exprs.rs`,
+`while`) and the walkers, the lints, the refactoring tree, and `burdin expand` each handle the new node. Tests:
+`tests/m02_basics/while_let.bd` (runs), `while_let_errors.bd`, `while_let_else.bd`, `tests/m05_ownership/while_let_moves.bd`
+(runs; drops per pass), `while_let_moves_errors.bd` (E0104), and `tests/fmt/while_let.*` (the formatter golden).
+Gaps: an irrefutable pattern (`while let x = e`) is accepted and runs until a `break`, with no lint; SSR matches a
+`while let` (and an `if let`) on its scrutinee and body without comparing the pattern, as it already did for `if let`.
+
 **`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`
 (`spec/grammar.md`, rule 8.10), so `let x = loop { break 42 }` binds `i32` and `break` with no value is `break ()`.
 The loop's type is the expected type when the context gives one, otherwise the type of the first break value, and
