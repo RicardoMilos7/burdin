@@ -478,7 +478,8 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
     bindings are visible only in the body and are dropped at the end of each pass, and the scrutinee follows the
     `if let` rules (`spec/memory-rules.md`, MV8). The loop ends when the value does not match, so it takes no `else`
     (E0001). It is a `while` for rules 8.9 and 8.10: a label names it, and a `break` with a value is E0003. An
-    irrefutable pattern is accepted and the loop then ends only by a `break`. Witnesses: `tests/m02_basics/while_let.bd`
+    pattern that always matches is E0003, because the loop would never end (`let ... else` refuses its `else` on such a
+    pattern for the same reason). Witnesses: `tests/m02_basics/while_let.bd`
     (runs), `while_let_errors.bd` and `while_let_else.bd` (codes and lines), `tests/m05_ownership/while_let_moves.bd`
     (runs, drops per pass), and `while_let_moves_errors.bd` (a moved scrutinee is E0104).
 

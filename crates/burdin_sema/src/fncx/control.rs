@@ -131,6 +131,15 @@ impl FnCx<'_> {
         let owned = self.owns_scrutinee(&scrutinee);
         self.scopes.push(HashMap::new());
         let pat = self.pattern(pattern, &scrutinee.ty, owned);
+        // A pattern that always matches never ends the loop, so it is refused. `let ... else` refuses an `else` on
+        // such a pattern the same way.
+        if self.exhaustive(&scrutinee.ty, &[&pat]) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                pattern.span,
+                "this pattern always matches, so `while let` never ends; use `while` or `loop` instead",
+            );
+        }
         let (then, _) = self.block(body, None);
         self.scopes.pop();
         self.loops.pop();

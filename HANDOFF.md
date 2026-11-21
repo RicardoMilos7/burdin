@@ -14,7 +14,7 @@ The move, borrow, origin, codegen, and comptime passes need no change: they see 
 `while`) and the walkers, the lints, the refactoring tree, and `burdin expand` each handle the new node. Tests:
 `tests/m02_basics/while_let.bd` (runs), `while_let_errors.bd`, `while_let_else.bd`, `tests/m05_ownership/while_let_moves.bd`
 (runs; drops per pass), `while_let_moves_errors.bd` (E0104), and `tests/fmt/while_let.*` (the formatter golden).
-Gaps: an irrefutable pattern (`while let x = e`) is accepted and runs until a `break`, with no lint; SSR matches a
+A pattern that always matches (`while let x = e`) is E0003, since it never ends the loop. Gap: SSR matches a
 `while let` (and an `if let`) on its scrutinee and body without comparing the pattern, as it already did for `if let`.
 
 **`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`

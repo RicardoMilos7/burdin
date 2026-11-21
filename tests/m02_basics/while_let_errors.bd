@@ -2,7 +2,7 @@
 
 // `while let` is a `while` (`spec/grammar.md`, rule 8.11). Its bindings are visible in its body only, so a name bound
 // by its pattern is unknown after the loop (E0002). A `while` gives back `()`, so a `break` with a value is E0003, and
-// a labeled one too. A pattern that does not fit the value is E0003.
+// a labeled one too. A pattern that does not fit the value is E0003, and so is one that always matches.
 
 fn maybe(n: i32): Option<i32> {
     if n > 0 { Some(n) } else { None }
@@ -20,6 +20,15 @@ fn main() {
     }
 
     while let Ok(x) = maybe(n) { //~ E0003
+        n = n - 1
+    }
+
+    // A pattern that always matches would never end the loop, so it is refused, as `let ... else` refuses an `else`
+    // on one (E0003).
+    while let total = maybe(n) { //~ E0003
+        n = n - 1
+    }
+    while let _ = maybe(n) { //~ E0003
         n = n - 1
     }
 
