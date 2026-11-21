@@ -554,8 +554,12 @@ now (debug and release on Linux). Still open, for Windows: a probe of `WSAPoll` 
 full send buffer) shows the socket reporting `POLLHUP` at once for a `POLLWRNORM`-only request, with no room to write.
 `reactor_iocp.ll` claims any nonzero `revents`, so the writer wakes, its `send` gets `WSAEWOULDBLOCK`, and it waits
 again: a spin rather than a sleep. That does not account for a hang that survives a write timeout, so the reported
-hang needs a Windows run to reproduce. Fixing the spin is a design choice: `WSAPoll` keeps returning at once for such a
-socket, so either those entries need a short fallback re-poll, or the Windows wait moves to `WSAEventSelect`.
+hang needs a Windows run to reproduce. The fix taken is a pause rather than a change to the reactor: `TcpStream.write`
+now sleeps 10 ms (`WRITE_BACKOFF_NANOS`, capped by the deadline) after a wake that made no room, so a half-closed peer
+costs one wake per 10 ms instead of a tight loop. `WSAPoll` still returns at once for such a socket, so the reactor
+itself is not idle while one is parked; a fallback re-poll or `WSAEventSelect` would remove that, and is the next step
+if the pause is not enough. `s2_io/net_write_waits_for_room` covers the wake-up path on every platform. Whether the spin
+is gone is confirmed only by the Windows CI run, not by a measurement.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component
