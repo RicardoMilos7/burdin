@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A label goes only on a `while`, a `loop`, or a `for` (spec/grammar.md, rule 8.5): a block is not a loop (E0001).
+
+fn main() {
+    'block: { //~ E0001
+        println("not a loop")
+    }
+    'value: 5 //~ E0001
+}

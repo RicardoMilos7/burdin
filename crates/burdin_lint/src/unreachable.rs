@@ -70,7 +70,7 @@ impl Finder<'_> {
 
     fn diverges(&self, e: &Expr) -> bool {
         match &e.kind {
-            ExprKind::Return(_) | ExprKind::Break | ExprKind::Continue => true,
+            ExprKind::Return(_) | ExprKind::Break(_) | ExprKind::Continue(_) => true,
             ExprKind::Call(callee, _) => self.never_returns(callee),
             ExprKind::Block(b) | ExprKind::UnsafeBlock(b) => self.block_diverges(b),
             ExprKind::If { then_block, else_expr: Some(other), .. }
@@ -78,7 +78,11 @@ impl Finder<'_> {
                 self.block_diverges(then_block) && self.diverges(other)
             }
             ExprKind::Match(_, arms) => !arms.is_empty() && arms.iter().all(|a| self.diverges(&a.body)),
-            ExprKind::Loop(b) => !contains_break(b),
+            ExprKind::Loop(b) => !contains_break(b, None),
+            ExprKind::Labeled { label, body } => match &body.kind {
+                ExprKind::Loop(b) => !contains_break(b, Some(&label.name)),
+                _ => self.diverges(body),
+            },
             _ => false,
         }
     }
@@ -98,18 +102,30 @@ impl Finder<'_> {
 }
 
 /// Whether a `break` leaves this loop body: a `break` inside a nested loop or a closure leaves that one instead.
-fn contains_break(body: &Block) -> bool {
-    struct Breaks(bool);
-    impl Visit for Breaks {
+/// Whether a loop's body has a `break` that leaves the loop: an unlabeled one outside any nested loop, or one that
+/// names the loop by `label`, from anywhere in the body.
+fn contains_break(body: &Block, label: Option<&str>) -> bool {
+    struct Breaks<'l> {
+        label: Option<&'l str>,
+        nested: usize,
+        found: bool,
+    }
+    impl Visit for Breaks<'_> {
         fn expr(&mut self, e: &Expr) {
             match &e.kind {
-                ExprKind::Break => self.0 = true,
-                ExprKind::Loop(_) | ExprKind::While { .. } | ExprKind::For { .. } | ExprKind::Closure { .. } => {}
+                ExprKind::Break(None) if self.nested == 0 => self.found = true,
+                ExprKind::Break(Some(name)) if Some(name.name.as_str()) == self.label => self.found = true,
+                ExprKind::Loop(_) | ExprKind::While { .. } | ExprKind::For { .. } => {
+                    self.nested += 1;
+                    walk_expr(self, e);
+                    self.nested -= 1;
+                }
+                ExprKind::Closure { .. } => {}
                 _ => walk_expr(self, e),
             }
         }
     }
-    let mut breaks = Breaks(false);
+    let mut breaks = Breaks { label, nested: 0, found: false };
     breaks.block(body);
-    breaks.0
+    breaks.found
 }

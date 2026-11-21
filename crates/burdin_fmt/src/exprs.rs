@@ -497,7 +497,22 @@ impl Fmt<'_> {
                 }
                 Ok(Ex::plain(kw))
             }
-            TokenKind::Break | TokenKind::Continue => Ok(Ex::plain(self.tok_doc())),
+            TokenKind::Break | TokenKind::Continue => {
+                let kw = self.tok_doc();
+                // A label on the same line names the loop the jump leaves or goes on with.
+                if !self.nl() && matches!(self.kind(), TokenKind::Label(_)) {
+                    let label = self.tok_doc();
+                    return Ok(Ex::plain(concat(vec![kw, space(), label])));
+                }
+                Ok(Ex::plain(kw))
+            }
+            // `'label: loop`, `'label: while`, or `'label: for`: the label, its colon, and the loop.
+            TokenKind::Label(_) => {
+                let label = self.tok_doc();
+                let colon = self.take(&TokenKind::Colon)?;
+                let body = self.primary(r)?;
+                Ok(Ex { block_like: body.block_like, ..Ex::plain(concat(vec![label, colon, space(), body.doc])) })
+            }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
             _ => Err(self.error("expected an expression")),

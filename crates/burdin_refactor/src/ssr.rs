@@ -176,10 +176,13 @@ impl Pattern {
             (ExprKind::Char(a), ExprKind::Char(b)) => a == b,
             (ExprKind::Str(a), ExprKind::Str(b)) => a == b,
             (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
-            (ExprKind::Unit, ExprKind::Unit)
-            | (ExprKind::SelfValue, ExprKind::SelfValue)
-            | (ExprKind::Break, ExprKind::Break)
-            | (ExprKind::Continue, ExprKind::Continue) => true,
+            (ExprKind::Unit, ExprKind::Unit) | (ExprKind::SelfValue, ExprKind::SelfValue) => true,
+            (ExprKind::Break(a), ExprKind::Break(b)) | (ExprKind::Continue(a), ExprKind::Continue(b)) => {
+                a.as_ref().map(|l| &l.name) == b.as_ref().map(|l| &l.name)
+            }
+            (ExprKind::Labeled { label: a, body: x }, ExprKind::Labeled { label: b, body: y }) => {
+                a.name == b.name && self.matches(cx, x, y, bound)
+            }
             (ExprKind::Name { name: a, args: at }, ExprKind::Name { name: b, args: bt }) => {
                 at.is_empty() && bt.is_empty() && cx.name_matches(&a.name, &b.name, e)
             }

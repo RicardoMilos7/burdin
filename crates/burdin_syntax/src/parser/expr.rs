@@ -437,11 +437,26 @@ impl Parser<'_> {
             }
             TokenKind::Break => {
                 self.bump();
-                lit(ExprKind::Break)
+                let label = self.break_label();
+                Ok(Expr { kind: ExprKind::Break(label), span: start.to(self.prev_span()) })
             }
             TokenKind::Continue => {
                 self.bump();
-                lit(ExprKind::Continue)
+                let label = self.break_label();
+                Ok(Expr { kind: ExprKind::Continue(label), span: start.to(self.prev_span()) })
+            }
+            TokenKind::Label(name) => {
+                self.bump();
+                let label = Ident { name, span: start };
+                self.expect(&TokenKind::Colon)?;
+                let body = self.primary(r)?;
+                if matches!(body.kind, ExprKind::While { .. } | ExprKind::Loop(_) | ExprKind::For { .. }) {
+                    Ok(Expr { span: start.to(body.span), kind: ExprKind::Labeled { label, body: Box::new(body) } })
+                } else {
+                    // The label is dropped and the expression parsed on, so the rest of the file is still checked.
+                    self.error_at(body.span, "a loop label must name a `while`, `loop`, or `for` loop".into());
+                    Ok(body)
+                }
             }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
@@ -451,6 +466,16 @@ impl Parser<'_> {
             }
             _ => Err(self.unexpected("an expression")),
         }
+    }
+
+    /// The label after `break` or `continue`, if one is written on the same line (`break 'outer`).
+    fn break_label(&mut self) -> Option<Ident> {
+        if self.nl() {
+            return None;
+        }
+        let TokenKind::Label(name) = self.kind().clone() else { return None };
+        let span = self.bump().span;
+        Some(Ident { name, span })
     }
 
     pub(super) fn at_struct_literal(&self, r: Restriction) -> bool {

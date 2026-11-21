@@ -117,6 +117,8 @@ impl LocalState {
 
 #[derive(Clone)]
 struct LoopInfo {
+    /// The label written before the loop, if any: the name a labeled `break` or `continue` gives.
+    label: Option<String>,
     /// Locals that were already in scope when the loop started, in scope order.
     outer: Vec<LocalId>,
     /// States of the paths leaving through `break`.
@@ -623,6 +625,138 @@ impl<'a> Checker<'a> {
 
     // ----- expressions -----------------------------------------------------
 
+    /// Opens a loop: the locals in scope now are the loop's outer locals, whose moves in the body the back edge
+    /// checks (MV3).
+    fn open_loop(&mut self, label: Option<&str>) {
+        let outer = self.outer_locals();
+        self.loops.push(LoopInfo { label: label.map(str::to_string), outer, exits: Vec::new(), moves: HashMap::new() });
+    }
+
+    /// A loop, with the label written before it, if any. Its body is checked once, with the back edge (MV3) and
+    /// the exits of every `break` that leaves it.
+    fn loop_expr(&mut self, e: &tir::Expr, label: Option<&str>) {
+        use tir::ExprKind as K;
+        match &e.kind {
+            K::While(cond, body) => {
+                // The condition runs before the first iteration and again after every iteration; analyzing it
+                // inside the loop makes a move in it visible at the back edge (MV3).
+                self.open_loop(label);
+                self.expr(cond, Mode::Use);
+                let after_cond = self.states.clone();
+                let body_falls = self.block(body, Mode::Use);
+                self.finish_loop(after_cond, body_falls);
+            }
+            K::Loop(body) => {
+                let entry = self.states.clone();
+                self.open_loop(label);
+                let body_falls = self.block(body, Mode::Use);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForRangeValue { var, range, body } => {
+                self.expr(range, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                if let Some(var) = var {
+                    self.scopes.last_mut().expect("a scope is open").push(*var);
+                }
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForRange { var, lo, hi, body, .. } => {
+                self.expr(lo, Mode::Use);
+                self.expr(hi, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                if let Some(var) = var {
+                    self.scopes.last_mut().expect("a scope is open").push(*var);
+                }
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForArray { pat, array, body } => {
+                self.expr(array, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                let Ty::Array(elem, _) = &array.ty else {
+                    // A type error already reported; the body still gets checked.
+                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, array.span);
+                    let body_falls = self.block(body, Mode::Use);
+                    self.end_scope(body.close, body_falls);
+                    self.finish_loop(entry, body_falls);
+                    return;
+                };
+                let elem = (**elem).clone();
+                self.bind_pattern(pat, &elem, &mut Vec::new(), None, array.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForSlice { pat, slice, body } => {
+                self.expr(slice, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                let Ty::Slice(elem) = &slice.ty else {
+                    // A type error already reported; the body still gets checked.
+                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, slice.span);
+                    let body_falls = self.block(body, Mode::Use);
+                    self.end_scope(body.close, body_falls);
+                    self.finish_loop(entry, body_falls);
+                    return;
+                };
+                let elem = (**elem).clone();
+                self.bind_pattern(pat, &elem, &mut Vec::new(), None, slice.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForList { pat, list, body } => {
+                self.expr(list, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                let elem = match &list.ty {
+                    Ty::List(elem, _) => (**elem).clone(),
+                    _ => Ty::Error,
+                };
+                self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForMap { pat, map, body } => {
+                self.expr(map, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                let pair = match &map.ty {
+                    Ty::Map(k, v, _) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
+                    _ => Ty::Error,
+                };
+                self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            K::ForChars { pat, string, body } => {
+                self.expr(string, Mode::Use);
+                let entry = self.states.clone();
+                self.open_loop(label);
+                self.scopes.push(Vec::new());
+                self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
+                let body_falls = self.block(body, Mode::Use);
+                self.end_scope(body.close, body_falls);
+                self.finish_loop(entry, body_falls);
+            }
+            _ => unreachable!("loop_expr is called with a loop"),
+        }
+    }
+
     fn expr(&mut self, e: &tir::Expr, mode: Mode) {
         use tir::ExprKind as K;
         match &e.kind {
@@ -858,7 +992,7 @@ impl<'a> Checker<'a> {
                 self.expr(iter, Mode::Move);
                 let entry = self.states.clone();
                 let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
+                self.loops.push(LoopInfo { label: None, outer, exits: Vec::new(), moves: HashMap::new() });
                 self.scopes.push(Vec::new());
                 let elem = match &iter.ty {
                     Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => (**t).clone(),
@@ -870,131 +1004,16 @@ impl<'a> Checker<'a> {
                 self.finish_loop(entry, body_falls);
             }
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref(), mode),
-            K::While(cond, body) => {
-                // The condition runs before the first iteration and again after every iteration; analyzing it
-                // inside the loop makes a move in it visible at the back edge (MV3).
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.expr(cond, Mode::Use);
-                let after_cond = self.states.clone();
-                let body_falls = self.block(body, Mode::Use);
-                self.finish_loop(after_cond, body_falls);
-            }
-            K::Loop(body) => {
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                let body_falls = self.block(body, Mode::Use);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForRangeValue { var, range, body } => {
-                self.expr(range, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                if let Some(var) = var {
-                    self.scopes.last_mut().expect("a scope is open").push(*var);
-                }
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForRange { var, lo, hi, body, .. } => {
-                self.expr(lo, Mode::Use);
-                self.expr(hi, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                if let Some(var) = var {
-                    self.scopes.last_mut().expect("a scope is open").push(*var);
-                }
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForArray { pat, array, body } => {
-                self.expr(array, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                let Ty::Array(elem, _) = &array.ty else {
-                    // A type error already reported; the body still gets checked.
-                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, array.span);
-                    let body_falls = self.block(body, Mode::Use);
-                    self.end_scope(body.close, body_falls);
-                    self.finish_loop(entry, body_falls);
-                    return;
-                };
-                let elem = (**elem).clone();
-                self.bind_pattern(pat, &elem, &mut Vec::new(), None, array.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForSlice { pat, slice, body } => {
-                self.expr(slice, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                let Ty::Slice(elem) = &slice.ty else {
-                    // A type error already reported; the body still gets checked.
-                    self.bind_pattern(pat, &Ty::Error, &mut Vec::new(), None, slice.span);
-                    let body_falls = self.block(body, Mode::Use);
-                    self.end_scope(body.close, body_falls);
-                    self.finish_loop(entry, body_falls);
-                    return;
-                };
-                let elem = (**elem).clone();
-                self.bind_pattern(pat, &elem, &mut Vec::new(), None, slice.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForList { pat, list, body } => {
-                self.expr(list, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                let elem = match &list.ty {
-                    Ty::List(elem, _) => (**elem).clone(),
-                    _ => Ty::Error,
-                };
-                self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForMap { pat, map, body } => {
-                self.expr(map, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                let pair = match &map.ty {
-                    Ty::Map(k, v, _) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
-                    _ => Ty::Error,
-                };
-                self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForChars { pat, string, body } => {
-                self.expr(string, Mode::Use);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
+            K::While(..)
+            | K::Loop(_)
+            | K::ForRangeValue { .. }
+            | K::ForRange { .. }
+            | K::ForArray { .. }
+            | K::ForSlice { .. }
+            | K::ForList { .. }
+            | K::ForMap { .. }
+            | K::ForChars { .. } => self.loop_expr(e, None),
+            K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str())),
             K::Match(scrutinee, arms) => {
                 self.expr(scrutinee, Mode::Use);
                 let entry = self.states.clone();
@@ -1062,15 +1081,17 @@ impl<'a> Checker<'a> {
                 }
                 self.states = result.unwrap_or(entry);
             }
-            K::Break => {
+            K::Break(label) => {
                 let state = self.states.clone();
-                if let Some(lp) = self.loops.last_mut() {
-                    lp.exits.push(state);
+                if let Some(index) = self.loop_index(label.as_deref()) {
+                    self.loops[index].exits.push(state);
                 }
                 self.observe_exits();
             }
-            K::Continue => {
-                self.check_loop_moves();
+            K::Continue(label) => {
+                if let Some(index) = self.loop_index(label.as_deref()) {
+                    self.check_loop_moves(index);
+                }
                 self.observe_exits();
             }
             K::Return(value) => {
@@ -1234,7 +1255,8 @@ impl<'a> Checker<'a> {
     /// the body always leaves through `break`, `continue`, or `return`, so there is no back edge to check.
     fn finish_loop(&mut self, base: Vec<LocalState>, body_falls: bool) {
         if body_falls {
-            self.check_loop_moves();
+            let innermost = self.loops.len() - 1;
+            self.check_loop_moves(innermost);
         }
         let lp = self.loops.pop().expect("a loop is open");
         let mut after = base;
@@ -1251,8 +1273,19 @@ impl<'a> Checker<'a> {
         self.states = after;
     }
 
-    fn check_loop_moves(&mut self) {
-        let Some(lp) = self.loops.last() else { return };
+    /// The index of the loop an unlabeled `break` or `continue` names (the innermost), or of the loop with the
+    /// given label. `None` when there is no such loop open, which sema has already reported.
+    fn loop_index(&self, label: Option<&str>) -> Option<usize> {
+        match label {
+            None => self.loops.len().checked_sub(1),
+            Some(name) => self.loops.iter().rposition(|lp| lp.label.as_deref() == Some(name)),
+        }
+    }
+
+    /// Reports a move in the body of loop `index` of a value it moved in an earlier iteration (MV3), checked at the
+    /// back edge: where the body falls through, or where a `continue` goes on with the loop.
+    fn check_loop_moves(&mut self, index: usize) {
+        let lp = &self.loops[index];
         let mut reports: Vec<(Vec<usize>, Span)> = Vec::new();
         for ((local, path), span) in &lp.moves {
             if self.states[*local].get(path) != Status::Init {

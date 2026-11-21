@@ -559,8 +559,8 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Break(_)
+        | K::Continue(_)
         | K::LayoutOf { .. } => {}
         K::Local(_) => moved_place(e, globals, usage),
         // The base may be a call: a user `Index`/`IndexMut` is lowered to one, and the call's conventions decide
@@ -687,6 +687,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             walk_block(body, captures, globals, usage);
         }
         K::Loop(body) => walk_block(body, captures, globals, usage),
+        K::Labeled(_, inner) => walk(inner, captures, globals, usage, mode),
         K::ForRange { lo, hi, body, .. } => {
             walk(lo, captures, globals, usage, Mode::Use);
             walk(hi, captures, globals, usage, Mode::Use);
@@ -829,8 +830,8 @@ impl FreeNames {
             | K::Str(_)
             | K::InlineSnapshot(_)
             | K::Bool(_)
-            | K::Break
-            | K::Continue => {}
+            | K::Break(_)
+            | K::Continue(_) => {}
             K::Interp(parts) => {
                 for part in parts {
                     if let ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) = part {
@@ -851,6 +852,7 @@ impl FreeNames {
                     self.expr(other);
                 }
             }
+            K::Labeled { body, .. } => self.expr(body),
             K::While { cond, body } => {
                 self.expr(cond);
                 self.block(body);
@@ -990,8 +992,8 @@ fn contains_return(e: &ast::Expr) -> bool {
         | K::Bool(_)
         | K::Name { .. }
         | K::SelfValue
-        | K::Break
-        | K::Continue => false,
+        | K::Break(_)
+        | K::Continue(_) => false,
         K::Interp(parts) => parts.iter().any(|part| {
             matches!(part, ast::InterpPart::Hole(ast::Hole { arg: ast::HoleArg::Expr(e), .. }) if contains_return(e))
         }),
@@ -1003,6 +1005,7 @@ fn contains_return(e: &ast::Expr) -> bool {
         K::If { cond, then_block, else_expr } => {
             contains_return(cond) || block_has_return(then_block) || else_expr.as_deref().is_some_and(contains_return)
         }
+        K::Labeled { body, .. } => contains_return(body),
         K::While { cond, body } => contains_return(cond) || block_has_return(body),
         K::For { iter, body, .. } => contains_return(iter) || block_has_return(body),
         K::Comptime(inner) => contains_return(inner),

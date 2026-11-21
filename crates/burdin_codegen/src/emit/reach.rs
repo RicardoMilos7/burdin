@@ -166,6 +166,7 @@ impl Walker<'_> {
                 self.block(body);
             }
             K::Loop(body) => self.block(body),
+            K::Labeled(_, inner) => self.expr(inner),
             K::ForRange { lo, hi, body, .. } => {
                 self.expr(lo);
                 self.expr(hi);
@@ -245,8 +246,8 @@ impl Walker<'_> {
             | K::Str(_)
             | K::Local(_)
             | K::Const(_)
-            | K::Break
-            | K::Continue
+            | K::Break(_)
+            | K::Continue(_)
             | K::None
             | K::Return(None)
             | K::LayoutOf { .. } => {}
