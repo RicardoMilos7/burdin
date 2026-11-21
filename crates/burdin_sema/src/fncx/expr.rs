@@ -2,7 +2,7 @@
 
 use super::conversion::lossless_from;
 use super::operators::can_cast;
-use super::{FnCx, LoopScope, error_expr, mk};
+use super::{FnCx, error_expr, mk};
 use crate::types::compatible;
 use burdin_diag::Code;
 use burdin_syntax::ast;
@@ -71,27 +71,15 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Block(b), ty, span)
             }
             K::If { cond, then_block, else_expr } => self.if_expr(cond, then_block, else_expr.as_deref(), expect, span),
-            K::While { cond, body } => {
-                let cond = self.expr(cond, Some(&Ty::Bool));
-                let cond = self.expect_ty(cond, &Ty::Bool);
-                self.loops.push(LoopScope::loop_body());
-                let (body, _) = self.block(body, None);
-                self.loops.pop();
-                mk(tir::ExprKind::While(Box::new(cond), body), Ty::Unit, span)
-            }
-            K::Loop(body) => {
-                self.loops.push(LoopScope::loop_body());
-                let (body, _) = self.block(body, None);
-                let has_break = self.loops.pop().is_some_and(|scope| scope.has_break);
-                mk(tir::ExprKind::Loop(body), if has_break { Ty::Unit } else { Ty::Never }, span)
-            }
+            K::While { cond, body } => self.while_expr(cond, body, None, span),
+            K::Loop(body) => self.loop_expr(body, None, expect, span),
             K::Labeled { label, body } => self.labeled_loop(label, body, expect, span),
-            K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, span),
+            K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, None, span),
             K::Comptime(inner) => self.comptime_expr(inner, expect, span),
             K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),
-            K::Break(label) => self.jump(label.as_ref(), true, span),
-            K::Continue(label) => self.jump(label.as_ref(), false, span),
+            K::Break { label, value } => self.jump(label.as_ref(), true, value.as_deref(), span),
+            K::Continue(label) => self.jump(label.as_ref(), false, None, span),
             K::Return(value) => {
                 let ret = self.ret.clone();
                 let value = match value {

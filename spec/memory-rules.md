@@ -327,7 +327,8 @@ temporary. `let _x = e` binds. The temporaries of a block's tail expression are 
 Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let_underscore`.
 
 **DR6 Early exits.** `return`, `break`, `continue`, and `?` drop every initialized value in the scopes being left, in reverse
-order, before control transfers. A returned value is computed before the drops run. A labeled `break 'l` or `continue 'l`
+order, before control transfers. A returned value is computed before the drops run, and so is a `break` value (which
+the loop then gives back). A labeled `break 'l` or `continue 'l`
 leaves every loop between it and the loop labeled `'l`, and drops the scopes of all of them, innermost first (issue #275).
 Tests: `m02_basics/labeled_loops` (the drops of a labeled `break` and of a labeled `continue`).
 Tests: `m05_ownership/drop_early_return`, `m09_stdlib/question_and_from`.

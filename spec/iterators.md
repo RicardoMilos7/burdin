@@ -85,7 +85,8 @@ loop {
 
 so the stage 0 semantics carry over: the loop binding lives for one iteration, `break` and `continue` target the
 loop, items and the body's bindings drop each iteration, and the pattern must match every item (E0006;
-`memory-rules.md` IT2). `__iter` is a compiler-made name.
+`memory-rules.md` IT2). `__iter` is a compiler-made name. A label on the `for` goes on this generated `loop`
+(the node `break 'label` and `continue 'label` target), not on the surrounding `let`/block.
 
 A literal range (`for 2 in 0..4`) still uses the stage 0 lowering when its pattern is a binding or `_`; any other
 pattern matches through `(lo..hi).iter()`, so it gets the protocol's item type and exhaustiveness rule. A stored

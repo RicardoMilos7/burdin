@@ -4,6 +4,27 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`
+(`spec/grammar.md`, rule 8.10), so `let x = loop { break 42 }` binds `i32` and `break` with no value is `break ()`.
+The loop's type is the expected type when the context gives one, otherwise the type of the first break value, and
+`!` when nothing breaks out; every break of one loop must give the same type. A `while` or `for` can end by its
+condition or its items, so it always gives back `()` and `break 1` there is E0003 (a value-less `break` is still the
+ordinary `break ()`). A labeled `break` carries its value to the loop it names, which must be a `loop` when it
+carries a value. The value is computed before the scopes the jump leaves are dropped, like a returned value (DR6).
+Implementation: the AST and TIR `Break` carry an optional value; sema's `LoopScope` now holds the loop kind and its
+break type (the old two-entry label scope is gone, because the label and the loop are one construct), and
+`break_value` in `fncx/control.rs` checks each break against it; codegen allocates the loop's result slot in
+`loop_value` and stores a break value into it in the `K::Break` arm; the comptime interpreter's `Unwind::Break`
+carries the value and `Step` (renamed `LoopStep`) returns it to `K::Loop`. The origin analysis joins a break
+value's origin into the loop it leaves, so a view of a loop-body local is still E0123/E0122 (RT2, RT5) when it
+escapes as the loop's value. Tests: `tests/m02_basics/break_value.bd`, `break_value_errors.bd`,
+`tests/m05_ownership/break_value_moves.bd`, `break_value_drops.bd`,
+`tests/m06_conventions/break_value_view.bd`. **Fixed on the way:** a labeled `for` that lowers to the iteration protocol
+(`'a: for x in xs.into_iter()`) used to wrap the generated `Block` in `Labeled`, which codegen and the move
+checker reject as "not a loop"; `with_label` now puts the label on the generated `loop` (`spec/iterators.md`, the
+lowering paragraph), and `labeled_loops.bd` covers a labeled `break` and `continue` that name such a `for`
+themselves.
+
 **128-bit integers (issue #273, 2026-11-21).** `i128` and `u128` are implemented; the rules are `spec/int128.md`
 (I128-1 to I128-13), and each rule names the tests that witness it. The representation: every integer is carried as an
 `i128` in the typed tree and comptime; a `u128` above `i128::MAX` is its bit pattern, and ordering uses
@@ -51,8 +72,8 @@ the unlabeled ones name) and checks each jump's target (`jump` and `labeled_loop
 checker (`loop_expr`, `loop_index`, `LoopInfo.label`), and the lints take the label into account. Decided: the label is
 dropped only in the parser's error path (a label on a non-loop is E0001 and the expression is kept). Tests:
 `tests/m02_basics/labeled_loops.bd` (runs), `labeled_loops_errors.bd`, `labeled_loop_not_loop.bd`, and
-`tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: `break` with a value (still
-"when wanted"), and a labeled block (`'a: { ... }`), which the grammar does not admit.
+`tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: a labeled block
+(`'a: { ... }`), which the grammar does not admit. (`break` with a value landed in issue #276, above.)
 
 **Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
 that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`

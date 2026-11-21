@@ -93,7 +93,7 @@ There are no statement terminators. Each token records whether a line break come
    by a line break. A trailing separator is allowed. Interface methods and `extern` declarations follow one another
    with no separator, like top-level items. Lists inside `(...)`, `[...]` and `<...>` use commas only.
 5. `return` and `break` take a value only if one starts on the same line. A label after `break` or `continue` must start
-   on the same line too.
+   on the same line too; a value after the label follows the same rule.
 
 ```
 let total = a +
@@ -357,8 +357,8 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
-              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" [ LABEL ] | "continue" [ LABEL ]
-              | LabeledExpr | InlineSnapshot ;
+              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" [ LABEL ] [ Expr ]
+              | "continue" [ LABEL ] | LabeledExpr | InlineSnapshot ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 InlineSnapshot = "@" STRING ;                           (* no placeholders; only `assert_snapshot`'s second argument, E0172 (test-runner.md, SN4) *)
@@ -465,6 +465,14 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    is not in scope there). A label no enclosing loop has is E0002, and a label that repeats the label of an enclosing
    loop is E0007. An unlabeled `break` or `continue` still names the innermost loop, whatever its label. A label goes
    only on a `while`, `loop`, or `for`; on any other expression it is E0001, and the expression is checked without it.
+10. **Break values** (`let x = loop { break 42 }`). A `loop` gives back the value of its `break`s; `break` with no
+    value is `break ()`. Its type is the expected type when the context gives one, otherwise the type of the first
+    `break` value, and `!` when nothing breaks out of it. Every `break` of one loop must give the same type. A
+    `while` or `for` can end by its condition or its items running out, so it always gives back `()` and takes no
+    value: `break 1` in a `while` or `for` is E0003, while a value-less `break` there is the ordinary `break ()`.
+    A labeled `break` carries its value to the loop it names, which must be a `loop` when it carries a value. A
+    `break`'s value is computed before the scopes it leaves are dropped, like a `return` value
+    (`spec/memory-rules.md`, DR6).
 
 ## 9. What the parser does not decide
 

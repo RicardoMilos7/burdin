@@ -39,20 +39,49 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// One entry on the stack of open loops while a body is checked. A loop with a label has two entries: the label's
-/// (`label` set, `is_loop` false), which the labeled `break`s and `continue`s name, and the loop's own, which the
-/// unlabeled ones name. `has_break` records whether a `break` leaves the entry's loop.
-#[derive(Default)]
+/// Which kind of loop a [`LoopScope`] is: only a `loop` takes a `break` value, because a `while` or `for` can end
+/// normally and gives back `()`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Loop,
+    While,
+    For,
+}
+
+/// One entry on the stack of open loops while a body is checked. A loop with a label carries that label, which the
+/// labeled `break`s and `continue`s name; the unlabeled ones name the innermost loop. `has_break` records whether a
+/// `break` leaves the loop, and `break_ty` is the type its `break` values must have: `()` for a `while`/`for`, the
+/// expected type of the `loop` when it is known, or `None` until the first break of a `loop` with no expected type.
 struct LoopScope {
     label: Option<String>,
-    is_loop: bool,
+    kind: LoopKind,
+    break_ty: Option<Ty>,
     has_break: bool,
 }
 
 impl LoopScope {
-    /// The entry of a loop body, which has no label of its own.
-    fn loop_body() -> Self {
-        LoopScope { label: None, is_loop: true, has_break: false }
+    /// The entry of a `loop`, which may take a `break` value of `expect`'s type.
+    fn loop_body(label: Option<&ast::Ident>, expect: Option<&Ty>) -> Self {
+        LoopScope {
+            label: label.map(|label| label.name.clone()),
+            kind: LoopKind::Loop,
+            break_ty: expect.cloned(),
+            has_break: false,
+        }
+    }
+
+    /// The entry of a `while`, which always gives back `()`.
+    fn while_body(label: Option<&ast::Ident>) -> Self {
+        LoopScope::unit_loop(label, LoopKind::While)
+    }
+
+    /// The entry of a `for` (or a `comptime for`), which always gives back `()`.
+    fn for_body(label: Option<&ast::Ident>) -> Self {
+        LoopScope::unit_loop(label, LoopKind::For)
+    }
+
+    fn unit_loop(label: Option<&ast::Ident>, kind: LoopKind) -> Self {
+        LoopScope { label: label.map(|label| label.name.clone()), kind, break_ty: Some(Ty::Unit), has_break: false }
     }
 }
 

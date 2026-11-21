@@ -109,9 +109,13 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
-        | K::Break(_)
         | K::Continue(_)
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                v.expr(value);
+            }
+        }
         K::Labeled { body, .. } => v.expr(body),
         K::Interp(parts) => walk_interp(v, parts),
         K::Name { args, .. } => args.iter().for_each(|a| v.ty(a)),

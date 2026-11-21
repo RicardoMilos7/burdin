@@ -300,7 +300,15 @@ impl Mapper<'_> {
             | ExprKind::Bool(_)
             | ExprKind::Unit
             | ExprKind::SelfValue => {}
-            ExprKind::Break(label) | ExprKind::Continue(label) => {
+            ExprKind::Break { label, value } => {
+                if let Some(label) = label {
+                    self.ident(label);
+                }
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
+            ExprKind::Continue(label) => {
                 if let Some(label) = label {
                     self.ident(label);
                 }

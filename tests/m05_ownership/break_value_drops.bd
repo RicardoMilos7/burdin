@@ -1,0 +1,30 @@
+//@ run
+//> 2
+//> after
+//> 1
+
+// The break value is computed before the scopes it leaves are dropped (spec/memory-rules.md, DR6): the loop body's
+// `inner` drops when the `break` leaves it, and the moved `local` survives as the loop's result.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+fn take(): Noisy {
+    let local = Noisy { id: 1 }
+    loop {
+        let inner = Noisy { id: 2 }
+        break local
+    }
+}
+
+fn main() {
+    let x = take()
+    println("after")
+}

@@ -6,6 +6,16 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- `break` with a value (issue #276; `spec/grammar.md`, rule 8.10). A `loop` gives back the value of its `break`, so
+  `let x = loop { break 42 }` binds `i32`; `break` with no value is `break ()`. The loop's type is the expected type
+  when the context gives one, otherwise the type of the first break value, and `!` when nothing breaks out; every
+  break of one loop must agree. A `while` or `for` can end by its condition or its items, so it always gives back
+  `()` and `break 1` there is E0003. A labeled `break` carries its value to the loop it names. The value is computed
+  before the scopes the jump leaves are dropped, and its view origin joins the loop's result, so a view of a
+  loop-body local is still E0123/E0122. `tests/m02_basics/break_value*.bd`,
+  `tests/m05_ownership/break_value_*.bd`, and `tests/m06_conventions/break_value_view.bd` cover it. Also fixes a labeled `for` that lowers to the iteration protocol:
+  the label now goes on the generated `loop` rather than on the generated block, so `break 'a`/`continue 'a` by the
+  name of such a `for` work (issue #275 follow-up).
 - 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
   16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
   `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating

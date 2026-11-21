@@ -246,11 +246,15 @@ impl Walker<'_> {
             | K::Str(_)
             | K::Local(_)
             | K::Const(_)
-            | K::Break(_)
             | K::Continue(_)
             | K::None
             | K::Return(None)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
         }
     }
 }
