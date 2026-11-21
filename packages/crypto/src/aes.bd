@@ -1,0 +1,997 @@
+// AES (FIPS 197) with the CBC, CTR, and GCM modes (NIST SP 800-38A and 800-38D), in pure Burdin.
+//
+// This is a straightforward byte-oriented AES. It looks up the S-box by secret-dependent index, so on a CPU with
+// data caches it can leak the key to a local attacker who shares the cache (the classic AES cache-timing attack).
+// For a secret that matters against that attacker use ChaCha20-Poly1305, which has no table lookups.
+
+use errors.CryptoError
+use util.constant_time_eq
+
+const AES_SBOX: [u8; 256] = [
+    0x63,
+    0x7c,
+    0x77,
+    0x7b,
+    0xf2,
+    0x6b,
+    0x6f,
+    0xc5,
+    0x30,
+    0x01,
+    0x67,
+    0x2b,
+    0xfe,
+    0xd7,
+    0xab,
+    0x76,
+    0xca,
+    0x82,
+    0xc9,
+    0x7d,
+    0xfa,
+    0x59,
+    0x47,
+    0xf0,
+    0xad,
+    0xd4,
+    0xa2,
+    0xaf,
+    0x9c,
+    0xa4,
+    0x72,
+    0xc0,
+    0xb7,
+    0xfd,
+    0x93,
+    0x26,
+    0x36,
+    0x3f,
+    0xf7,
+    0xcc,
+    0x34,
+    0xa5,
+    0xe5,
+    0xf1,
+    0x71,
+    0xd8,
+    0x31,
+    0x15,
+    0x04,
+    0xc7,
+    0x23,
+    0xc3,
+    0x18,
+    0x96,
+    0x05,
+    0x9a,
+    0x07,
+    0x12,
+    0x80,
+    0xe2,
+    0xeb,
+    0x27,
+    0xb2,
+    0x75,
+    0x09,
+    0x83,
+    0x2c,
+    0x1a,
+    0x1b,
+    0x6e,
+    0x5a,
+    0xa0,
+    0x52,
+    0x3b,
+    0xd6,
+    0xb3,
+    0x29,
+    0xe3,
+    0x2f,
+    0x84,
+    0x53,
+    0xd1,
+    0x00,
+    0xed,
+    0x20,
+    0xfc,
+    0xb1,
+    0x5b,
+    0x6a,
+    0xcb,
+    0xbe,
+    0x39,
+    0x4a,
+    0x4c,
+    0x58,
+    0xcf,
+    0xd0,
+    0xef,
+    0xaa,
+    0xfb,
+    0x43,
+    0x4d,
+    0x33,
+    0x85,
+    0x45,
+    0xf9,
+    0x02,
+    0x7f,
+    0x50,
+    0x3c,
+    0x9f,
+    0xa8,
+    0x51,
+    0xa3,
+    0x40,
+    0x8f,
+    0x92,
+    0x9d,
+    0x38,
+    0xf5,
+    0xbc,
+    0xb6,
+    0xda,
+    0x21,
+    0x10,
+    0xff,
+    0xf3,
+    0xd2,
+    0xcd,
+    0x0c,
+    0x13,
+    0xec,
+    0x5f,
+    0x97,
+    0x44,
+    0x17,
+    0xc4,
+    0xa7,
+    0x7e,
+    0x3d,
+    0x64,
+    0x5d,
+    0x19,
+    0x73,
+    0x60,
+    0x81,
+    0x4f,
+    0xdc,
+    0x22,
+    0x2a,
+    0x90,
+    0x88,
+    0x46,
+    0xee,
+    0xb8,
+    0x14,
+    0xde,
+    0x5e,
+    0x0b,
+    0xdb,
+    0xe0,
+    0x32,
+    0x3a,
+    0x0a,
+    0x49,
+    0x06,
+    0x24,
+    0x5c,
+    0xc2,
+    0xd3,
+    0xac,
+    0x62,
+    0x91,
+    0x95,
+    0xe4,
+    0x79,
+    0xe7,
+    0xc8,
+    0x37,
+    0x6d,
+    0x8d,
+    0xd5,
+    0x4e,
+    0xa9,
+    0x6c,
+    0x56,
+    0xf4,
+    0xea,
+    0x65,
+    0x7a,
+    0xae,
+    0x08,
+    0xba,
+    0x78,
+    0x25,
+    0x2e,
+    0x1c,
+    0xa6,
+    0xb4,
+    0xc6,
+    0xe8,
+    0xdd,
+    0x74,
+    0x1f,
+    0x4b,
+    0xbd,
+    0x8b,
+    0x8a,
+    0x70,
+    0x3e,
+    0xb5,
+    0x66,
+    0x48,
+    0x03,
+    0xf6,
+    0x0e,
+    0x61,
+    0x35,
+    0x57,
+    0xb9,
+    0x86,
+    0xc1,
+    0x1d,
+    0x9e,
+    0xe1,
+    0xf8,
+    0x98,
+    0x11,
+    0x69,
+    0xd9,
+    0x8e,
+    0x94,
+    0x9b,
+    0x1e,
+    0x87,
+    0xe9,
+    0xce,
+    0x55,
+    0x28,
+    0xdf,
+    0x8c,
+    0xa1,
+    0x89,
+    0x0d,
+    0xbf,
+    0xe6,
+    0x42,
+    0x68,
+    0x41,
+    0x99,
+    0x2d,
+    0x0f,
+    0xb0,
+    0x54,
+    0xbb,
+    0x16,
+]
+
+const AES_INV_SBOX: [u8; 256] = [
+    0x52,
+    0x09,
+    0x6a,
+    0xd5,
+    0x30,
+    0x36,
+    0xa5,
+    0x38,
+    0xbf,
+    0x40,
+    0xa3,
+    0x9e,
+    0x81,
+    0xf3,
+    0xd7,
+    0xfb,
+    0x7c,
+    0xe3,
+    0x39,
+    0x82,
+    0x9b,
+    0x2f,
+    0xff,
+    0x87,
+    0x34,
+    0x8e,
+    0x43,
+    0x44,
+    0xc4,
+    0xde,
+    0xe9,
+    0xcb,
+    0x54,
+    0x7b,
+    0x94,
+    0x32,
+    0xa6,
+    0xc2,
+    0x23,
+    0x3d,
+    0xee,
+    0x4c,
+    0x95,
+    0x0b,
+    0x42,
+    0xfa,
+    0xc3,
+    0x4e,
+    0x08,
+    0x2e,
+    0xa1,
+    0x66,
+    0x28,
+    0xd9,
+    0x24,
+    0xb2,
+    0x76,
+    0x5b,
+    0xa2,
+    0x49,
+    0x6d,
+    0x8b,
+    0xd1,
+    0x25,
+    0x72,
+    0xf8,
+    0xf6,
+    0x64,
+    0x86,
+    0x68,
+    0x98,
+    0x16,
+    0xd4,
+    0xa4,
+    0x5c,
+    0xcc,
+    0x5d,
+    0x65,
+    0xb6,
+    0x92,
+    0x6c,
+    0x70,
+    0x48,
+    0x50,
+    0xfd,
+    0xed,
+    0xb9,
+    0xda,
+    0x5e,
+    0x15,
+    0x46,
+    0x57,
+    0xa7,
+    0x8d,
+    0x9d,
+    0x84,
+    0x90,
+    0xd8,
+    0xab,
+    0x00,
+    0x8c,
+    0xbc,
+    0xd3,
+    0x0a,
+    0xf7,
+    0xe4,
+    0x58,
+    0x05,
+    0xb8,
+    0xb3,
+    0x45,
+    0x06,
+    0xd0,
+    0x2c,
+    0x1e,
+    0x8f,
+    0xca,
+    0x3f,
+    0x0f,
+    0x02,
+    0xc1,
+    0xaf,
+    0xbd,
+    0x03,
+    0x01,
+    0x13,
+    0x8a,
+    0x6b,
+    0x3a,
+    0x91,
+    0x11,
+    0x41,
+    0x4f,
+    0x67,
+    0xdc,
+    0xea,
+    0x97,
+    0xf2,
+    0xcf,
+    0xce,
+    0xf0,
+    0xb4,
+    0xe6,
+    0x73,
+    0x96,
+    0xac,
+    0x74,
+    0x22,
+    0xe7,
+    0xad,
+    0x35,
+    0x85,
+    0xe2,
+    0xf9,
+    0x37,
+    0xe8,
+    0x1c,
+    0x75,
+    0xdf,
+    0x6e,
+    0x47,
+    0xf1,
+    0x1a,
+    0x71,
+    0x1d,
+    0x29,
+    0xc5,
+    0x89,
+    0x6f,
+    0xb7,
+    0x62,
+    0x0e,
+    0xaa,
+    0x18,
+    0xbe,
+    0x1b,
+    0xfc,
+    0x56,
+    0x3e,
+    0x4b,
+    0xc6,
+    0xd2,
+    0x79,
+    0x20,
+    0x9a,
+    0xdb,
+    0xc0,
+    0xfe,
+    0x78,
+    0xcd,
+    0x5a,
+    0xf4,
+    0x1f,
+    0xdd,
+    0xa8,
+    0x33,
+    0x88,
+    0x07,
+    0xc7,
+    0x31,
+    0xb1,
+    0x12,
+    0x10,
+    0x59,
+    0x27,
+    0x80,
+    0xec,
+    0x5f,
+    0x60,
+    0x51,
+    0x7f,
+    0xa9,
+    0x19,
+    0xb5,
+    0x4a,
+    0x0d,
+    0x2d,
+    0xe5,
+    0x7a,
+    0x9f,
+    0x93,
+    0xc9,
+    0x9c,
+    0xef,
+    0xa0,
+    0xe0,
+    0x3b,
+    0x4d,
+    0xae,
+    0x2a,
+    0xf5,
+    0xb0,
+    0xc8,
+    0xeb,
+    0xbb,
+    0x3c,
+    0x83,
+    0x53,
+    0x99,
+    0x61,
+    0x17,
+    0x2b,
+    0x04,
+    0x7e,
+    0xba,
+    0x77,
+    0xd6,
+    0x26,
+    0xe1,
+    0x69,
+    0x14,
+    0x63,
+    0x55,
+    0x21,
+    0x0c,
+    0x7d,
+]
+
+const GCM_ONE: [u8; 4] = [0, 0, 0, 1]
+const GCM_TWO: [u8; 4] = [0, 0, 0, 2]
+const AES_RCON: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+
+fn xtime(a: u8): u8 {
+    let doubled = (a << 1) as u8
+    if (a & 0x80) != 0 {
+        return doubled ^ 0x1b
+    }
+    doubled
+}
+
+fn gmul(a: u8, b: u8): u8 {
+    let mut x = a
+    let mut y = b
+    let mut r: u8 = 0
+    let mut i: usize = 0
+    while i < 8 {
+        if (y & 1) != 0 {
+            r = r ^ x
+        }
+        x = xtime(x)
+        y = y >> 1
+        i = i + 1
+    }
+    r
+}
+
+/// An AES key schedule for a 128-, 192-, or 256-bit key.
+struct Aes {
+    rk: List<u8>,
+    rounds: usize,
+}
+
+Aes {
+    /// Expands a 16-, 24-, or 32-byte key.
+    fn new(key: [u8]): Result<Aes, CryptoError> {
+        if key.len() != 16 && key.len() != 24 && key.len() != 32 {
+            return Err(CryptoError.InvalidLength { what: "an AES key is 16, 24, or 32 bytes".to_string() })
+        }
+        let nk = key.len() / 4
+        let rounds = nk + 6
+        let total = 4 * (rounds + 1)
+        let mut w = List<u8>.new()
+        w.extend_from_slice(key)
+        let mut i: usize = nk
+        while i < total {
+            let mut t0 = w[(i - 1) * 4]
+            let mut t1 = w[(i - 1) * 4 + 1]
+            let mut t2 = w[(i - 1) * 4 + 2]
+            let mut t3 = w[(i - 1) * 4 + 3]
+            if i % nk == 0 {
+                let r0 = AES_SBOX[t1 as usize] ^ AES_RCON[i / nk - 1]
+                let r1 = AES_SBOX[t2 as usize]
+                let r2 = AES_SBOX[t3 as usize]
+                let r3 = AES_SBOX[t0 as usize]
+                t0 = r0
+                t1 = r1
+                t2 = r2
+                t3 = r3
+            } else if nk > 6 && i % nk == 4 {
+                t0 = AES_SBOX[t0 as usize]
+                t1 = AES_SBOX[t1 as usize]
+                t2 = AES_SBOX[t2 as usize]
+                t3 = AES_SBOX[t3 as usize]
+            }
+            let p0 = w[(i - nk) * 4] ^ t0
+            let p1 = w[(i - nk) * 4 + 1] ^ t1
+            let p2 = w[(i - nk) * 4 + 2] ^ t2
+            let p3 = w[(i - nk) * 4 + 3] ^ t3
+            w.push(p0)
+            w.push(p1)
+            w.push(p2)
+            w.push(p3)
+            i = i + 1
+        }
+        Ok(Aes { rk: w, rounds: rounds })
+    }
+
+    fn add_round_key(self, mut s: [u8; 16], round: usize) {
+        let mut i: usize = 0
+        while i < 16 {
+            s[i] = s[i] ^ self.rk[round * 16 + i]
+            i = i + 1
+        }
+    }
+
+    /// Encrypts one 16-byte block.
+    fn encrypt_block(self, block: [u8]): List<u8> {
+        let mut s: [u8; 16] = [0; 16]
+        let mut i: usize = 0
+        while i < 16 {
+            s[i] = block[i]
+            i = i + 1
+        }
+        self.encrypt_state(mut s)
+        let mut out = List<u8>.new()
+        i = 0
+        while i < 16 {
+            out.push(s[i])
+            i = i + 1
+        }
+        out
+    }
+
+    fn encrypt_state(self, mut s: [u8; 16]) {
+        self.add_round_key(mut s, 0)
+        let mut round: usize = 1
+        while round <= self.rounds {
+            let mut i: usize = 0
+            while i < 16 {
+                s[i] = AES_SBOX[s[i] as usize]
+                i = i + 1
+            }
+            // ShiftRows
+            let t = s
+            let mut c: usize = 0
+            while c < 4 {
+                let mut r: usize = 1
+                while r < 4 {
+                    s[c * 4 + r] = t[((c + r) % 4) * 4 + r]
+                    r = r + 1
+                }
+                c = c + 1
+            }
+            if round < self.rounds {
+                // MixColumns
+                c = 0
+                while c < 4 {
+                    let a0 = s[c * 4]
+                    let a1 = s[c * 4 + 1]
+                    let a2 = s[c * 4 + 2]
+                    let a3 = s[c * 4 + 3]
+                    s[c * 4] = xtime(a0) ^ (xtime(a1) ^ a1) ^ a2 ^ a3
+                    s[c * 4 + 1] = a0 ^ xtime(a1) ^ (xtime(a2) ^ a2) ^ a3
+                    s[c * 4 + 2] = a0 ^ a1 ^ xtime(a2) ^ (xtime(a3) ^ a3)
+                    s[c * 4 + 3] = (xtime(a0) ^ a0) ^ a1 ^ a2 ^ xtime(a3)
+                    c = c + 1
+                }
+            }
+            self.add_round_key(mut s, round)
+            round = round + 1
+        }
+    }
+
+    /// Decrypts one 16-byte block.
+    fn decrypt_block(self, block: [u8]): List<u8> {
+        let mut s: [u8; 16] = [0; 16]
+        let mut i: usize = 0
+        while i < 16 {
+            s[i] = block[i]
+            i = i + 1
+        }
+        self.add_round_key(mut s, self.rounds)
+        let mut round: usize = self.rounds
+        while round >= 1 {
+            // InvShiftRows
+            let t = s
+            let mut c: usize = 0
+            while c < 4 {
+                let mut r: usize = 1
+                while r < 4 {
+                    s[((c + r) % 4) * 4 + r] = t[c * 4 + r]
+                    r = r + 1
+                }
+                c = c + 1
+            }
+            i = 0
+            while i < 16 {
+                s[i] = AES_INV_SBOX[s[i] as usize]
+                i = i + 1
+            }
+            self.add_round_key(mut s, round - 1)
+            if round > 1 {
+                // InvMixColumns
+                c = 0
+                while c < 4 {
+                    let a0 = s[c * 4]
+                    let a1 = s[c * 4 + 1]
+                    let a2 = s[c * 4 + 2]
+                    let a3 = s[c * 4 + 3]
+                    s[c * 4] = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9)
+                    s[c * 4 + 1] = gmul(a0, 9) ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13)
+                    s[c * 4 + 2] = gmul(a0, 13) ^ gmul(a1, 9) ^ gmul(a2, 14) ^ gmul(a3, 11)
+                    s[c * 4 + 3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9) ^ gmul(a3, 14)
+                    c = c + 1
+                }
+            }
+            round = round - 1
+        }
+        let mut out = List<u8>.new()
+        i = 0
+        while i < 16 {
+            out.push(s[i])
+            i = i + 1
+        }
+        out
+    }
+}
+
+// ----- CTR ----------------------------------------------------------------------------------------------------
+
+fn increment_be(mut counter: List<u8>, from: usize) {
+    // Adds one to the big-endian number in counter[from..], wrapping at its width.
+    let mut i = counter.len()
+    while i > from {
+        i = i - 1
+        counter[i] = counter[i].wrapping_add(1)
+        if counter[i] != 0 {
+            break
+        }
+    }
+}
+
+/// AES-CTR (SP 800-38A): XORs `data` with the keystream of a 16-byte initial counter block, incremented as a
+/// big-endian 128-bit number. Encryption and decryption are the same call. CTR does not authenticate: pair it with
+/// a MAC, or use `aes_gcm_seal`.
+fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
+    let aes = Aes.new(key)?
+    if iv.len() != 16 {
+        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+    }
+    let mut counter = iv.to_list()
+    let mut out = List<u8>.new()
+    let mut pos: usize = 0
+    while pos < data.len() {
+        let input = counter.clone()
+        let stream = aes.encrypt_block(input.as_slice())
+        let mut i: usize = 0
+        while i < 16 && pos + i < data.len() {
+            out.push(data[pos + i] ^ stream[i])
+            i = i + 1
+        }
+        increment_be(mut counter, 0)
+        pos = pos + 16
+    }
+    Ok(out)
+}
+
+// ----- CBC ----------------------------------------------------------------------------------------------------
+
+/// AES-CBC with PKCS#7 padding. The result is the ciphertext, a multiple of 16 bytes, longer than `plaintext`.
+/// CBC does not authenticate: a decryptor that reveals padding errors is a padding oracle, so MAC the ciphertext
+/// (encrypt-then-MAC) or use `aes_gcm_seal`.
+fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
+    let aes = Aes.new(key)?
+    if iv.len() != 16 {
+        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+    }
+    let mut padded = plaintext.to_list()
+    let pad = 16 - plaintext.len() % 16
+    let mut i: usize = 0
+    while i < pad {
+        padded.push(pad as u8)
+        i = i + 1
+    }
+    let mut previous = iv.to_list()
+    let mut out = List<u8>.new()
+    let mut pos: usize = 0
+    while pos < padded.len() {
+        let mut block = List<u8>.new()
+        i = 0
+        while i < 16 {
+            block.push(padded[pos + i] ^ previous[i])
+            i = i + 1
+        }
+        previous = aes.encrypt_block(block.as_slice())
+        out.extend_from_slice(previous.as_slice())
+        pos = pos + 16
+    }
+    Ok(out)
+}
+
+/// Decrypts `aes_cbc_encrypt` output and removes the padding; bad padding is `InvalidPadding`.
+fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, CryptoError> {
+    let aes = Aes.new(key)?
+    if iv.len() != 16 {
+        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+    }
+    if ciphertext.len() == 0 || ciphertext.len() % 16 != 0 {
+        return Err(
+            CryptoError.InvalidLength { what: "a CBC ciphertext is a non-empty multiple of 16 bytes".to_string() },
+        )
+    }
+    let mut previous = iv.to_list()
+    let mut out = List<u8>.new()
+    let mut pos: usize = 0
+    while pos < ciphertext.len() {
+        let block = ciphertext[pos..pos + 16]
+        let plain = aes.decrypt_block(block)
+        let mut i: usize = 0
+        while i < 16 {
+            out.push(plain[i] ^ previous[i])
+            i = i + 1
+        }
+        previous = block.to_list()
+        pos = pos + 16
+    }
+    let pad = out[out.len() - 1] as usize
+    if pad == 0 || pad > 16 || pad > out.len() {
+        return Err(CryptoError.InvalidPadding)
+    }
+    let mut bad: u8 = 0
+    let mut i: usize = 0
+    while i < pad {
+        bad = bad | (out[out.len() - 1 - i] ^ (pad as u8))
+        i = i + 1
+    }
+    if bad != 0 {
+        return Err(CryptoError.InvalidPadding)
+    }
+    let keep = out.len() - pad
+    out.truncate(keep)
+    Ok(out)
+}
+
+// ----- GCM ----------------------------------------------------------------------------------------------------
+
+fn be64(data: [u8], at: usize): u64 {
+    let mut v: u64 = 0
+    let mut i: usize = 0
+    while i < 8 {
+        v = (v << 8) | (data[at + i] as u64)
+        i = i + 1
+    }
+    v
+}
+
+fn push_be64(mut out: List<u8>, v: u64) {
+    let mut i: u32 = 8
+    while i > 0 {
+        i = i - 1
+        out.push((v >> (i * 8)) as u8)
+    }
+}
+
+/// Multiplies two elements of GF(2^128) as GCM defines (bit-reflected), without secret-dependent branches.
+fn ghash_mul(xh: u64, xl: u64, yh: u64, yl: u64): (u64, u64) {
+    let mut zh: u64 = 0
+    let mut zl: u64 = 0
+    let mut vh = yh
+    let mut vl = yl
+    let mut i: u32 = 0
+    while i < 128 {
+        let mut bit: u64 = 0
+        if i < 64 {
+            let sh: u32 = 63 - i
+            bit = (xh >> sh) & 1
+        } else {
+            let sh: u32 = 127 - i
+            bit = (xl >> sh) & 1
+        }
+        let m = (0 as u64).wrapping_sub(bit)
+        zh = zh ^ (vh & m)
+        zl = zl ^ (vl & m)
+        let lsb = vl & 1
+        vl = (vl >> 1) | (vh << 63)
+        vh = vh >> 1
+        vh = vh ^ (0xe100000000000000 & (0 as u64).wrapping_sub(lsb))
+        i = i + 1
+    }
+    (zh, zl)
+}
+
+fn ghash(hh: u64, hl: u64, aad: [u8], ciphertext: [u8]): (u64, u64) {
+    let mut yh: u64 = 0
+    let mut yl: u64 = 0
+    let mut part: usize = 0
+    while part < 2 {
+        let data = if part == 0 { aad } else { ciphertext }
+        let mut pos: usize = 0
+        while pos < data.len() {
+            let mut block = List<u8>.new()
+            let mut i: usize = 0
+            while i < 16 {
+                if pos + i < data.len() {
+                    block.push(data[pos + i])
+                } else {
+                    block.push(0)
+                }
+                i = i + 1
+            }
+            yh = yh ^ be64(block.as_slice(), 0)
+            yl = yl ^ be64(block.as_slice(), 8)
+            let product = ghash_mul(yh, yl, hh, hl)
+            yh = product.0
+            yl = product.1
+            pos = pos + 16
+        }
+        part = part + 1
+    }
+    yh = yh ^ ((aad.len() as u64) * 8)
+    yl = yl ^ ((ciphertext.len() as u64) * 8)
+    // The length block is (len(aad) in bits) || (len(ciphertext) in bits), each 64-bit big-endian: aad bits are the
+    // high half, ciphertext bits the low half.
+    let product = ghash_mul(yh, yl, hh, hl)
+    product
+}
+
+fn gcm_tag(aes: Aes, nonce: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
+    let zero: [u8; 16] = [0; 16]
+    let h = aes.encrypt_block(zero[0..16])
+    let hh = be64(h.as_slice(), 0)
+    let hl = be64(h.as_slice(), 8)
+    let mut j0 = nonce.to_list()
+    j0.extend_from_slice(GCM_ONE[0..4])
+    let mask = aes.encrypt_block(j0.as_slice())
+    let s = ghash(hh, hl, aad, ciphertext)
+    let mut sb = List<u8>.new()
+    push_be64(mut sb, s.0)
+    push_be64(mut sb, s.1)
+    let mut tag = List<u8>.new()
+    let mut i: usize = 0
+    while i < 16 {
+        tag.push(sb[i] ^ mask[i])
+        i = i + 1
+    }
+    tag
+}
+
+fn gcm_crypt(aes: Aes, nonce: [u8], data: [u8]): List<u8> {
+    let mut counter = nonce.to_list()
+    counter.extend_from_slice(GCM_TWO[0..4])
+    let mut out = List<u8>.new()
+    let mut pos: usize = 0
+    while pos < data.len() {
+        let input = counter.clone()
+        let stream = aes.encrypt_block(input.as_slice())
+        let mut i: usize = 0
+        while i < 16 && pos + i < data.len() {
+            out.push(data[pos + i] ^ stream[i])
+            i = i + 1
+        }
+        increment_be(mut counter, 12)
+        pos = pos + 16
+    }
+    out
+}
+
+/// AES-GCM (SP 800-38D) with a 12-byte nonce and a 16-byte tag: encrypts `plaintext` and authenticates it together
+/// with `aad`. The result is the ciphertext followed by the tag. Never reuse a (key, nonce) pair: that breaks both
+/// confidentiality and authenticity.
+fn aes_gcm_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
+    let aes = Aes.new(key)?
+    if nonce.len() != 12 {
+        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+    }
+    let mut sealed = gcm_crypt(aes, nonce, plaintext)
+    let tag = gcm_tag(aes, nonce, aad, sealed.as_slice())
+    sealed.extend_from_slice(tag.as_slice())
+    Ok(sealed)
+}
+
+/// Verifies and decrypts `aes_gcm_seal` output; a wrong tag is `AuthenticationFailed` and no plaintext is released.
+fn aes_gcm_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
+    let aes = Aes.new(key)?
+    if nonce.len() != 12 {
+        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+    }
+    if sealed.len() < 16 {
+        return Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
+    }
+    let split = sealed.len() - 16
+    let ciphertext = sealed[0..split]
+    let expected = gcm_tag(aes, nonce, aad, ciphertext)
+    if !constant_time_eq(expected.as_slice(), sealed[split..sealed.len()]) {
+        return Err(CryptoError.AuthenticationFailed)
+    }
+    Ok(gcm_crypt(aes, nonce, ciphertext))
+}

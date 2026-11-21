@@ -18,7 +18,10 @@ What it checks (spec/check.md has the rules, CK1-CK8):
   * no code generation and no linking: a clean check succeeds with a linker that does not exist, writes no file,
     and rejects the options that only a build has (`-o`, `--emit-ir`, `--link-lib`);
   * `--release`, `--tests`, `--comptime-steps`, the machine-readable output (JSON and SARIF), and the command line
-    (usage errors exit 2, a missing target exits 1, `--help` exits 0).
+    (usage errors exit 2, a missing target exits 1, `--help` exits 0);
+  * the JSON result (CK12): every line validates against docs/diagnostic.schema.json, the last line is the check
+    summary with its counts, `files`, and `elapsed_ms` (masked in the golden), a clean program prints the summary
+    alone, `--explain` adds no text trace, and the human format is unchanged.
 
 Fixture directives are comment lines at the top of a `.bd` file:
     //% args: --comptime-steps 1000      extra command line arguments
@@ -34,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import harness
+import jsonschema_lite
 import run_tests
 
 problems = []
@@ -349,17 +353,135 @@ with harness.temporary_dir("burdin-check-") as work:
 output, status = driver("check", [*COMMON, "--release", "ok_program.bd"], CHECK)
 check(status == 0 and output == "", f"`--release` on a clean program: exit {status}, output {output!r}")
 
-# Machine-readable output: one JSON object per diagnostic, then the summary line, like `burdin build`.
-output, status = driver("check", ["--diagnostic-format=json", "err_types.bd"], CHECK)
-lines = [line for line in output.split("\n") if line]
-check(status == 1 and len(lines) == 5, f"json output: exit {status}, {len(lines)} lines, expected 5")
+# ----- the machine-readable result (spec/check.md, CK12; issue #787) ------------------------------------------
+
+SUMMARY_KEYS = ["type", "version", "errors", "warnings", "shown", "limit", "files", "elapsed_ms"]
+SCHEMA = json.loads(harness.read_text(harness.ROOT / "docs" / "diagnostic.schema.json"))
+
+
+def elapsed_masked(output: str) -> str:
+    """The output with the one field that differs between runs replaced, so the whole output can be a golden."""
+    return re.sub(r'"elapsed_ms":[0-9]+', '"elapsed_ms":0', output)
+
+
+def json_objects(name: str, output: str):
+    """Every line of a JSON stream, parsed; each line must be JSON and must validate against the schema (DG7)."""
+    objects = []
+    for line in output.split("\n"):
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            add_problem(f"{name}: a line is not JSON: {line[:200]!r}")
+            continue
+        problems_found = jsonschema_lite.validate(obj, SCHEMA)
+        check(not problems_found, f"{name}: a line does not match the schema: {problems_found[:3]}\n{line}")
+        objects.append(obj)
+    return objects
+
+
+def check_summary(name: str, output: str, want: dict):
+    """The last line is the one check summary, with the documented fields in order and the counts `want` gives."""
+    objects = json_objects(name, output)
+    summaries = [obj for obj in objects if obj.get("type") == "check-summary"]
+    check(len(summaries) == 1, f"{name}: {len(summaries)} check summaries, expected one")
+    if not objects or objects[-1].get("type") != "check-summary":
+        add_problem(f"{name}: the check summary is not the last line:\n{output}")
+        return None
+    summary = objects[-1]
+    check(list(summary) == SUMMARY_KEYS, f"{name}: the summary's fields are {list(summary)}")
+    for key, value in want.items():
+        check(summary.get(key) == value, f"{name}: {key} is {summary.get(key)!r}, expected {value!r}")
+    check(
+        isinstance(summary.get("elapsed_ms"), int) and summary["elapsed_ms"] >= 0,
+        f"{name}: elapsed_ms is {summary.get('elapsed_ms')!r}",
+    )
+    return objects
+
+
+# A clean program: the summary alone, and exit 0.
+output, status = driver("check", ["--diagnostic-format=json", "ok_program.bd"], CHECK)
+check(status == 0, f"json, clean program: exit {status}, expected 0")
 check(
-    all(line.startswith('{"type":"diagnostic"') for line in lines[:4]),
-    "json output: the first four lines are not diagnostics",
+    check_summary("json, clean program", output, {"errors": 0, "warnings": 0, "shown": 0, "limit": None, "files": 1})
+    is not None
+    and len([line for line in output.split("\n") if line]) == 1,
+    "json, clean program: the output is not the summary alone",
 )
+
+# A warning does not fail the check: it is one diagnostic, the summary counts it, and the exit status is 0.
+output, status = driver("check", ["--diagnostic-format=json", "ok_warning.bd"], CHECK)
+check(status == 0, f"json, warning-only program: exit {status}, expected 0")
+objects = check_summary("json, warning-only program", output, {"errors": 0, "warnings": 1, "shown": 1, "limit": None, "files": 1})
+if objects is not None:
+    check(
+        [obj.get("severity") for obj in objects[:-1]] == ["warning"],
+        "json, warning-only program: the diagnostic is not one warning",
+    )
+
+# Four errors in one file: four diagnostic lines, then the summary with the counts; the exit status is 1.
+output, status = driver("check", ["--diagnostic-format=json", "err_types.bd"], CHECK)
+check(status == 1, f"json, failing program: exit {status}, expected 1")
+objects = check_summary("json, failing program", output, {"errors": 4, "warnings": 0, "shown": 4, "limit": None, "files": 1})
+if objects is not None:
+    check(
+        [obj.get("type") for obj in objects] == ["diagnostic"] * 4 + ["check-summary"],
+        "json, failing program: the lines are not four diagnostics and the summary",
+    )
+    check(
+        all(obj.get("severity") == "error" for obj in objects[:-1]),
+        "json, failing program: a diagnostic is not an error",
+    )
+compare_golden("json_err_types", elapsed_masked(output))
+
+# `--error-limit` hides diagnostics, not counts: the summary still counts all four, and says how many were shown.
+output, status = driver("check", ["--diagnostic-format=json", "--error-limit", "2", "err_types.bd"], CHECK)
+check(status == 1, f"json, --error-limit: exit {status}, expected 1")
+check_summary("json, --error-limit", output, {"errors": 4, "warnings": 0, "shown": 2, "limit": 2, "files": 1})
+
+# A package: `files` counts each module on disk, two here.
+package = CHECK / "packages" / "two_errors"
+output, status = driver("check", ["--diagnostic-format=json", package.relative_to(CHECK).as_posix()], CHECK)
+check(status == 1, f"json, package: exit {status}, expected 1")
+package_files = len(list((package / "src").rglob("*.bd")))
 check(
-    lines[-1] == '{"type":"summary","version":1,"errors":4,"shown":4,"limit":null}',
-    f"json output: the last line is {lines[-1] if lines else None!r}",
+    check_summary("json, package", output, {"errors": 2, "warnings": 0, "shown": 2, "limit": None, "files": package_files})
+    is not None,
+    "json, package: the summary is wrong",
+)
+
+# `--explain` prints a text trace, which would break the JSON lines: in JSON the trace is left out.
+output, status = driver("check", ["--diagnostic-format=json", "--explain", "explain/E0100.bd"], CHECK)
+check(status == 1 and "trace for" not in output, "json, --explain: a text trace was printed")
+check_summary("json, --explain", output, {"errors": 1, "warnings": 0, "shown": 1, "limit": None, "files": 1})
+
+# The human format is unchanged: a warning prints as before, and no summary line appears.
+output, status = driver("check", ["--no-color", "ok_warning.bd"], CHECK)
+check(status == 0 and "warning[E0215]" in output, "human, warning-only program: the warning is not printed")
+check("check-summary" not in output and "could not check" not in output, "human output has a summary")
+
+# A failure before the checks is a plain line: no JSON at all.
+output, status = driver("check", ["--diagnostic-format=json", "no-such-file.bd"], CHECK)
+check(status == 1 and "cannot open" in output, f"json, a missing target: exit {status}, output {output!r}")
+check(not any(line.startswith("{") for line in output.split("\n")), "json, a missing target: a JSON line was printed")
+
+# The schema describes the summary: a summary missing a field, or with an extra one, is rejected.
+valid = {"type": "check-summary", "version": 1, "errors": 0, "warnings": 0, "shown": 0, "limit": None, "files": 1, "elapsed_ms": 0}
+check(not jsonschema_lite.validate(valid, SCHEMA), "the schema rejects a valid check summary")
+for name, broken in {
+    "a check summary without files": {k: v for k, v in valid.items() if k != "files"},
+    "a check summary with an extra field": {**valid, "surprise": 1},
+    "a check summary with a negative time": {**valid, "elapsed_ms": -1},
+}.items():
+    check(bool(jsonschema_lite.validate(broken, SCHEMA)), f"the schema accepts {name}")
+
+# The documented contract names the summary and its exit statuses.
+check(
+    '"check-summary"' in harness.read_text(harness.ROOT / "docs" / "diagnostics.md")
+    and "check-summary" in harness.read_text(harness.ROOT / "README.md")
+    and "CK12" in harness.read_text(harness.ROOT / "spec" / "check.md"),
+    "the docs do not describe the check summary",
 )
 
 # `--error-limit` caps what is shown and says so; the exit status is still 1.

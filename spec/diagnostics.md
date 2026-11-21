@@ -58,12 +58,15 @@ edit today.
 Tests: `check_diagnostics.py` (`multi.bd json`: the `mut ` insertion; the schema requires one edit or more),
 `json_represents_spanless_notes_deletions_and_machine_fixes`.
 
-**DG6. Versions and summaries.** Every object has `"version": 1`, the diagnostics and the two summary objects. The summary
+**DG6. Versions and summaries.** Every object has `"version": 1`, the diagnostics and the summary objects. The summary
 of a failed `build`, `run`, or `test` is `{"type":"summary","version":1,"errors":N,"shown":M,"limit":L|null}`, and
-`burdin lint` ends with `{"type":"lint-summary","version":1,"warnings":W,"errors":E}`. Adding a field keeps the version;
+`burdin lint` ends with `{"type":"lint-summary","version":1,"warnings":W,"errors":E}`. `burdin check` ends with
+`{"type":"check-summary","version":1,"errors":E,"warnings":W,"shown":M,"limit":L|null,"files":F,"elapsed_ms":T}` on every
+run that reaches the checks, clean or not (`spec/check.md`, CK12). Adding a field keeps the version;
 removing or renaming one, or changing what it means or the unit it counts in, raises it, and the page documents both
 versions. A reader ignores fields it does not know.
-Tests: `check_diagnostics.py` (`json format`, `lint json`), the schema.
+Tests: `check_diagnostics.py` (`json format`, `lint json`), the schema, and `tests/check_check.py` (the check summary,
+CK12: the clean, warning-only, failing, package, and `--error-limit` runs).
 
 **DG7. The schema is the contract.** [`docs/diagnostic.schema.json`](../docs/diagnostic.schema.json) describes every object
 the format prints and rejects an object with a field it does not list, so a change to the output cannot pass unnoticed:

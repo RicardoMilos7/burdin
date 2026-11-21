@@ -1,0 +1,171 @@
+//@ run
+//> sha256: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+//> sha3-256: 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532
+//> incremental: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+//> hmac: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+//> verified: true
+//> hkdf: 3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865
+//> pbkdf2: 4b007901b765489abead49d926f721d065a429c1
+//> sealed: 30 bytes
+//> opened: attack at dawn
+//> tampered: authentication failed: the tag does not match
+//> gcm: attack at dawn
+//> xchacha: hi
+//> alice public: 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a
+//> shared: 4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742
+//> agree: true
+//> public: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+//> signature: e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+//> valid: true
+//> other message: false
+//> short key: invalid key length: expected 32 bytes, got 31
+//> point: invalid curve point
+//> random: 48 bytes
+
+// The `crypto` package end to end (issue #266): a hash, a MAC, a key derivation, authenticated encryption, a key
+// agreement, a signature, and the errors, through the public surface only. The known-answer vectors are in
+// tests/crypto and are checked by tests/check_crypto.py; this case shows the calls a program makes.
+
+use crypto.{
+    CryptoError,
+    HashAlg,
+    Sha256,
+    aes_gcm_open,
+    aes_gcm_seal,
+    chacha20_poly1305_open,
+    chacha20_poly1305_seal,
+    constant_time_eq,
+    ed25519_public_key,
+    ed25519_sign,
+    ed25519_verify,
+    hkdf,
+    hmac,
+    hmac_verify,
+    pbkdf2,
+    random_bytes,
+    sha256,
+    sha3_256,
+    x25519,
+    x25519_public_key,
+    xchacha20_poly1305_open,
+    xchacha20_poly1305_seal,
+}
+
+fn filled(n: usize, start: u8): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < n {
+        out.push(start.wrapping_add(i as u8))
+        i = i + 1
+    }
+    out
+}
+
+fn main() {
+    // hashes: one shot and incremental give the same digest
+    println("sha256: {}", sha256("abc".as_bytes()).to_hex())
+    println("sha3-256: {}", sha3_256("abc".as_bytes()).to_hex())
+    let mut hasher = Sha256.new()
+    hasher.update("a".as_bytes())
+    hasher.update("bc".as_bytes())
+    println("incremental: {}", hasher.finish().to_hex())
+
+    // HMAC (RFC 4231 test case 2)
+    let tag = hmac(HashAlg.Sha256, "Jefe".as_bytes(), "what do ya want for nothing?".as_bytes())
+    println("hmac: {}", tag.to_hex())
+    println(
+        "verified: {}",
+        hmac_verify(HashAlg.Sha256, "Jefe".as_bytes(), "what do ya want for nothing?".as_bytes(), tag.as_slice()),
+    )
+
+    // key derivation: HKDF (RFC 5869 test case 1) and PBKDF2 (RFC 6070)
+    let mut flat = List<u8>.new()
+    let mut i: usize = 0
+    while i < 22 {
+        flat.push(0x0b)
+        i = i + 1
+    }
+    let okm = hkdf(HashAlg.Sha256, filled(13, 0).as_slice(), flat.as_slice(), filled(10, 0xf0).as_slice(), 42).unwrap()
+    println("hkdf: {}", okm.to_hex())
+    let dk = pbkdf2(HashAlg.Sha1, "password".as_bytes(), "salt".as_bytes(), 4096, 20).unwrap()
+    println("pbkdf2: {}", dk.to_hex())
+
+    // authenticated encryption: seal, open, and a tampered message
+    let key = filled(32, 1)
+    let nonce = filled(12, 100)
+    let sealed = chacha20_poly1305_seal(
+        key.as_slice(),
+        nonce.as_slice(),
+        "header".as_bytes(),
+        "attack at dawn".as_bytes(),
+    ).unwrap()
+    println("sealed: {} bytes", sealed.len())
+    let opened = chacha20_poly1305_open(
+        key.as_slice(),
+        nonce.as_slice(),
+        "header".as_bytes(),
+        sealed.as_slice(),
+    ).unwrap()
+    println("opened: {}", from_utf8(opened.as_slice()).unwrap())
+    let mut tampered = sealed.clone()
+    tampered[0] = tampered[0] ^ 1
+    match chacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), tampered.as_slice()) {
+        Ok(_) => println("tampered: accepted"),
+        Err(e) => println("tampered: {}", e),
+    }
+    let gcm = aes_gcm_seal(key.as_slice(), nonce.as_slice(), "".as_bytes(), "attack at dawn".as_bytes()).unwrap()
+    println(
+        "gcm: {}",
+        from_utf8(
+            aes_gcm_open(key.as_slice(), nonce.as_slice(), "".as_bytes(), gcm.as_slice()).unwrap().as_slice(),
+        ).unwrap(),
+    )
+    let long_nonce = filled(24, 7)
+    let xs = xchacha20_poly1305_seal(key.as_slice(), long_nonce.as_slice(), "".as_bytes(), "hi".as_bytes()).unwrap()
+    println(
+        "xchacha: {}",
+        from_utf8(
+            xchacha20_poly1305_open(key.as_slice(), long_nonce.as_slice(), "".as_bytes(), xs.as_slice())
+                .unwrap()
+                .as_slice(),
+        ).unwrap(),
+    )
+
+    // key agreement (RFC 7748 section 6.1): both sides reach the same secret
+    let alice = hex_decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a").unwrap()
+    let bob = hex_decode("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb").unwrap()
+    let alice_pub = x25519_public_key(alice.as_slice()).unwrap()
+    let bob_pub = x25519_public_key(bob.as_slice()).unwrap()
+    println("alice public: {}", alice_pub.to_hex())
+    println("shared: {}", x25519(alice.as_slice(), bob_pub.as_slice()).unwrap().to_hex())
+    println(
+        "agree: {}",
+        constant_time_eq(
+            x25519(alice.as_slice(), bob_pub.as_slice()).unwrap().as_slice(),
+            x25519(bob.as_slice(), alice_pub.as_slice()).unwrap().as_slice(),
+        ),
+    )
+
+    // signatures (RFC 8032 section 7.1, test 1: the empty message)
+    let seed = hex_decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60").unwrap()
+    let public = ed25519_public_key(seed.as_slice()).unwrap()
+    let signature = ed25519_sign(seed.as_slice(), "".as_bytes()).unwrap()
+    println("public: {}", public.to_hex())
+    println("signature: {}", signature.to_hex())
+    println("valid: {}", ed25519_verify(public.as_slice(), "".as_bytes(), signature.as_slice()))
+    println("other message: {}", ed25519_verify(public.as_slice(), "x".as_bytes(), signature.as_slice()))
+
+    // errors are values, not crashes
+    match chacha20_poly1305_seal(filled(31, 0).as_slice(), nonce.as_slice(), "".as_bytes(), "".as_bytes()) {
+        Ok(_) => println("short key: accepted"),
+        Err(e) => println("short key: {}", e),
+    }
+    let zero_point = hex_decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
+    match x25519(alice.as_slice(), zero_point.as_slice()) {
+        Ok(_) => println("point: ok"),
+        Err(e) => println("point: {}", e),
+    }
+
+    // random bytes come from the operating system
+    println("random: {} bytes", random_bytes(48).len())
+}

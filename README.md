@@ -319,17 +319,31 @@ A target is either a single `.bd` file, compiled as a one-module package, or a d
 
 `burdin check <target>` runs the front end of `burdin build` (build scripts, parsing, name resolution and type checking, the
 move and borrow checks, and compile-time evaluation) and stops before code generation: it needs no linker, writes no
-file, and prints the same diagnostics in the same formats as a build. A clean check prints nothing and exits 0; errors exit
+file, and prints the same diagnostics in the same formats as a build. A clean human-format check prints nothing and exits 0; errors exit
 1 and end with `error: could not check <target> (N errors)`. `--tests` also checks the package's `test` blocks and accepts
 a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
 feedback. `--explain-ownership` prints each function's source with margin annotations for the moves, copies, borrows,
 drops, drop flags, argument conventions, and derived clones the checks recorded (`--fn` selects one function and
 `--format json` lists the events with spans), and `--explain` traces each memory error from the value's declaration to
-the failing use, with its rule ID and suggested fix. `burdin check <target> --print-instances [--format json]` also
+the failing use, with its rule ID and suggested fix (text formats only; the JSON diagnostics carry the same facts). `burdin check <target> --print-instances [--format json]` also
 prints every generic instance the program created and the call that required it
 ([`spec/inspect.md`](spec/inspect.md), INS12-INS15). [`spec/check.md`](spec/check.md) is the specification and
 `tests/check_check.py` checks it: the fixtures under `tests/check/`, and the whole conformance suite, whose
 `compile-fail` programs must report exactly their markers and whose other programs must be accepted.
+
+**Machine-readable result.** `burdin check <target> --diagnostic-format json` prints one JSON object per diagnostic
+(fields in [`docs/diagnostics.md`](docs/diagnostics.md), schema [`docs/diagnostic.schema.json`](docs/diagnostic.schema.json))
+and always ends with the check summary, clean or not:
+
+```
+{"type":"check-summary","version":1,"errors":0,"warnings":0,"shown":0,"limit":null,"files":1,"elapsed_ms":612}
+```
+
+`errors` and `warnings` count each severity; `shown` and `limit` are the `--error-limit` figures; `files` is the number of
+source files read from disk (the embedded standard library is not counted); `elapsed_ms` is the run's time in
+milliseconds and differs between runs. The exit status is `0` when there are no errors (warnings allowed), `1` when
+there are errors or the package cannot be read, and `2` for a usage error. A failure before the checks prints a plain
+`error:` line and no summary. The human format is unchanged. [`spec/check.md`](spec/check.md) CK12 is the contract.
 
 `burdin expand <target> [--item <path>] [--instances]` prints Burdin source for the program after compile-time evaluation,
 `comptime if` and `comptime for` unrolling, user derives, default and named arguments, and operators: the text of each
