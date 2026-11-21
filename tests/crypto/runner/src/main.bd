@@ -1,0 +1,528 @@
+// The known-answer runner behind tests/check_crypto.py (issue #266): `cryptokat <mode> <fixture>`.
+//
+// A fixture line is `name|field|field|...`, every field lowercase hex (`-` is empty, `x<count>:<hex>` repeats a
+// chunk) except where the mode says otherwise. The last field is the expected value. For each line the runner prints
+// `name: ok` or `name: FAIL ...`, then `cases=N failures=M`.
+
+use crypto.{
+    Aes,
+    CryptoError,
+    HashAlg,
+    Md5,
+    Poly1305,
+    Sha1,
+    Sha256,
+    Sha3,
+    Sha512,
+    aes_cbc_decrypt,
+    aes_cbc_encrypt,
+    aes_ctr_xor,
+    aes_gcm_open,
+    aes_gcm_seal,
+    chacha20_poly1305_open,
+    chacha20_poly1305_seal,
+    chacha20_xor,
+    constant_time_eq,
+    ed25519_public_key,
+    ed25519_sign,
+    ed25519_verify,
+    hchacha20,
+    hkdf,
+    hmac,
+    hmac_verify,
+    pbkdf2,
+    poly1305,
+    sha3_224,
+    sha3_256,
+    sha3_384,
+    sha3_512,
+    shake128,
+    shake256,
+    x25519,
+    x25519_public_key,
+    xchacha20_poly1305_open,
+    xchacha20_poly1305_seal,
+}
+
+fn tag(name: str, suffix: str): String {
+    let mut s = name.to_string()
+    s.push_str(suffix)
+    s
+}
+
+struct Tally {
+    cases: i32,
+    failures: i32,
+}
+
+Tally {
+    fn check(mut self, name: str, ok: bool, detail: str) {
+        self.cases = self.cases + 1
+        if ok {
+            println("{}: ok", name)
+        } else {
+            self.failures = self.failures + 1
+            println("{}: FAIL {}", name, detail)
+        }
+    }
+
+    fn same(mut self, name: str, got: List<u8>, want: List<u8>) {
+        let ok = constant_time_eq(got.as_slice(), want.as_slice())
+        let detail = format("got {} want {}", got.to_hex(), want.to_hex())
+        self.check(name, ok, detail.as_str())
+    }
+}
+
+fn field(text: str): List<u8> {
+    if text == "-" {
+        return List<u8>.new()
+    }
+    if text.starts_with("x") {
+        match text.find(':') {
+            Some(colon) => {
+                let count = usize.parse(text[1..colon]).unwrap()
+                let chunk = hex_decode(text[colon + 1..text.len()]).unwrap()
+                let mut out = List<u8>.new()
+                let mut i: usize = 0
+                while i < count {
+                    out.extend_from_slice(chunk.as_slice())
+                    i = i + 1
+                }
+                return out
+            }
+            None => {}
+        }
+    }
+    hex_decode(text).unwrap()
+}
+
+fn algorithm(name: str): HashAlg {
+    match name {
+        "md5" => HashAlg.Md5,
+        "sha1" => HashAlg.Sha1,
+        "sha224" => HashAlg.Sha224,
+        "sha256" => HashAlg.Sha256,
+        "sha384" => HashAlg.Sha384,
+        "sha512" => HashAlg.Sha512,
+        "sha3_224" => HashAlg.Sha3_224,
+        "sha3_256" => HashAlg.Sha3_256,
+        "sha3_384" => HashAlg.Sha3_384,
+        "sha3_512" => HashAlg.Sha3_512,
+        _ => panic("unknown hash {name}"),
+    }
+}
+
+// Hashes `msg` in pieces of `chunk` bytes with the incremental hasher, to compare with the one-shot digest.
+fn incremental(name: str, msg: [u8], chunk: usize): List<u8> {
+    let mut md5 = Md5.new()
+    let mut sha1 = Sha1.new()
+    let mut s256 = Sha256.new()
+    let mut s224 = Sha256.new224()
+    let mut s512 = Sha512.new()
+    let mut s384 = Sha512.new384()
+    let mut s3_224 = Sha3.new224()
+    let mut s3_256 = Sha3.new256()
+    let mut s3_384 = Sha3.new384()
+    let mut s3_512 = Sha3.new512()
+    let mut pos: usize = 0
+    while pos < msg.len() {
+        let mut end = pos + chunk
+        if end > msg.len() {
+            end = msg.len()
+        }
+        let piece = msg[pos..end]
+        match name {
+            "md5" => md5.update(piece),
+            "sha1" => sha1.update(piece),
+            "sha224" => s224.update(piece),
+            "sha256" => s256.update(piece),
+            "sha384" => s384.update(piece),
+            "sha512" => s512.update(piece),
+            "sha3_224" => s3_224.update(piece),
+            "sha3_256" => s3_256.update(piece),
+            "sha3_384" => s3_384.update(piece),
+            _ => s3_512.update(piece),
+        }
+        pos = end
+    }
+    match name {
+        "md5" => md5.finish(),
+        "sha1" => sha1.finish(),
+        "sha224" => s224.finish(),
+        "sha256" => s256.finish(),
+        "sha384" => s384.finish(),
+        "sha512" => s512.finish(),
+        "sha3_224" => s3_224.finish(),
+        "sha3_256" => s3_256.finish(),
+        "sha3_384" => s3_384.finish(),
+        _ => s3_512.finish(),
+    }
+}
+
+fn run_hash(mut t: Tally, p: List<String>) {
+    let msg = field(p[2].as_str())
+    let want = field(p[3].as_str())
+    let alg = algorithm(p[1].as_str())
+    t.same(p[0].as_str(), alg.digest(msg.as_slice()), want.clone())
+    t.same(
+        tag(p[0].as_str(), " (one byte at a time)").as_str(),
+        incremental(p[1].as_str(), msg.as_slice(), 1),
+        want.clone(),
+    )
+    t.same(tag(p[0].as_str(), " (7-byte pieces)").as_str(), incremental(p[1].as_str(), msg.as_slice(), 7), want.clone())
+    t.same(tag(p[0].as_str(), " (whole)").as_str(), incremental(p[1].as_str(), msg.as_slice(), 100000), want)
+}
+
+fn run_shake(mut t: Tally, p: List<String>) {
+    let parts = p[1].split(":")
+    let out_len = usize.parse(parts[1].as_str()).unwrap()
+    let msg = field(p[2].as_str())
+    let got = if parts[0].as_str() == "shake128" {
+        shake128(msg.as_slice(), out_len)
+    } else {
+        shake256(msg.as_slice(), out_len)
+    }
+    t.same(p[0].as_str(), got, field(p[3].as_str()))
+}
+
+fn run_hmac(mut t: Tally, p: List<String>) {
+    let alg = algorithm(p[1].as_str())
+    let key = field(p[2].as_str())
+    let msg = field(p[3].as_str())
+    let want = field(p[4].as_str())
+    t.same(p[0].as_str(), hmac(alg, key.as_slice(), msg.as_slice()), want.clone())
+    t.check(
+        tag(p[0].as_str(), " (verify)").as_str(),
+        hmac_verify(alg, key.as_slice(), msg.as_slice(), want.as_slice()),
+        "the right tag did not verify",
+    )
+    let mut bad = want.clone()
+    bad[0] = bad[0] ^ 1
+    t.check(
+        tag(p[0].as_str(), " (reject)").as_str(),
+        !hmac_verify(alg, key.as_slice(), msg.as_slice(), bad.as_slice()),
+        "a wrong tag verified",
+    )
+}
+
+fn run_hkdf(mut t: Tally, p: List<String>) {
+    let alg = algorithm(p[1].as_str())
+    let length = usize.parse(p[5].as_str()).unwrap()
+    let got = hkdf(
+        alg,
+        field(p[2].as_str()).as_slice(),
+        field(p[3].as_str()).as_slice(),
+        field(p[4].as_str()).as_slice(),
+        length,
+    )
+    t.same(p[0].as_str(), got.unwrap(), field(p[6].as_str()))
+}
+
+fn run_pbkdf2(mut t: Tally, p: List<String>) {
+    let alg = algorithm(p[1].as_str())
+    let iterations = u32.parse(p[4].as_str()).unwrap()
+    let length = usize.parse(p[5].as_str()).unwrap()
+    let got = pbkdf2(alg, field(p[2].as_str()).as_slice(), field(p[3].as_str()).as_slice(), iterations, length)
+    t.same(p[0].as_str(), got.unwrap(), field(p[6].as_str()))
+}
+
+fn run_chacha20(mut t: Tally, p: List<String>) {
+    let counter = u32.parse(p[3].as_str()).unwrap()
+    let data = field(p[4].as_str())
+    let got = chacha20_xor(field(p[1].as_str()).as_slice(), field(p[2].as_str()).as_slice(), counter, data.as_slice())
+    let out = got.unwrap()
+    t.same(p[0].as_str(), out.clone(), field(p[5].as_str()))
+    let back = chacha20_xor(field(p[1].as_str()).as_slice(), field(p[2].as_str()).as_slice(), counter, out.as_slice())
+    t.same(tag(p[0].as_str(), " (decrypt)").as_str(), back.unwrap(), data)
+}
+
+fn run_hchacha20(mut t: Tally, p: List<String>) {
+    let got = hchacha20(field(p[1].as_str()).as_slice(), field(p[2].as_str()).as_slice())
+    t.same(p[0].as_str(), got.unwrap(), field(p[3].as_str()))
+}
+
+fn run_poly1305(mut t: Tally, p: List<String>) {
+    let key = field(p[1].as_str())
+    let msg = field(p[2].as_str())
+    let want = field(p[3].as_str())
+    t.same(p[0].as_str(), poly1305(key.as_slice(), msg.as_slice()).unwrap(), want.clone())
+    // the incremental form, in odd pieces
+    let mut mac = Poly1305.new(key.as_slice()).unwrap()
+    let mut pos: usize = 0
+    while pos < msg.len() {
+        let mut end = pos + 5
+        if end > msg.len() {
+            end = msg.len()
+        }
+        mac.update(msg.as_slice()[pos..end])
+        pos = end
+    }
+    t.same(tag(p[0].as_str(), " (5-byte pieces)").as_str(), mac.finish(), want)
+}
+
+fn seal(alg: str, key: [u8], nonce: [u8], aad: [u8], plain: [u8]): List<u8> {
+    match alg {
+        "chacha20poly1305" => chacha20_poly1305_seal(key, nonce, aad, plain).unwrap(),
+        "xchacha20poly1305" => xchacha20_poly1305_seal(key, nonce, aad, plain).unwrap(),
+        _ => aes_gcm_seal(key, nonce, aad, plain).unwrap(),
+    }
+}
+
+fn open(alg: str, key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
+    match alg {
+        "chacha20poly1305" => chacha20_poly1305_open(key, nonce, aad, sealed),
+        "xchacha20poly1305" => xchacha20_poly1305_open(key, nonce, aad, sealed),
+        _ => aes_gcm_open(key, nonce, aad, sealed),
+    }
+}
+
+fn run_aead(mut t: Tally, p: List<String>) {
+    let alg = p[1].as_str()
+    let key = field(p[2].as_str())
+    let nonce = field(p[3].as_str())
+    let aad = field(p[4].as_str())
+    let plain = field(p[5].as_str())
+    let want = field(p[6].as_str())
+    let name = p[0].as_str()
+    let sealed = seal(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), plain.as_slice())
+    t.same(name, sealed, want.clone())
+    match open(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), want.as_slice()) {
+        Ok(back) => t.same(tag(name, " (open)").as_str(), back, plain),
+        Err(e) => t.check(tag(name, " (open)").as_str(), false, e.to_string()),
+    }
+    let mut flipped = want.clone()
+    flipped[0] = flipped[0] ^ 1
+    t.check(
+        tag(name, " (flipped ciphertext)").as_str(),
+        open(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), flipped.as_slice()).is_err(),
+        "a changed message was accepted",
+    )
+    let mut flipped_tag = want.clone()
+    let last = flipped_tag.len() - 1
+    flipped_tag[last] = flipped_tag[last] ^ 0x80
+    t.check(
+        tag(name, " (flipped tag)").as_str(),
+        open(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), flipped_tag.as_slice()).is_err(),
+        "a changed tag was accepted",
+    )
+    let mut other_aad = aad.clone()
+    other_aad.push(0)
+    t.check(
+        tag(name, " (other aad)").as_str(),
+        open(alg, key.as_slice(), nonce.as_slice(), other_aad.as_slice(), want.as_slice()).is_err(),
+        "different associated data was accepted",
+    )
+    let short = want.as_slice()[0..15]
+    t.check(
+        tag(name, " (truncated)").as_str(),
+        open(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), short).is_err(),
+        "a message shorter than the tag was accepted",
+    )
+}
+
+fn run_aes_ecb(mut t: Tally, p: List<String>) {
+    let aes = Aes.new(field(p[2].as_str()).as_slice()).unwrap()
+    let block = field(p[4].as_str())
+    let enc = aes.encrypt_block(block.as_slice())
+    t.same(p[0].as_str(), enc.clone(), field(p[5].as_str()))
+    t.same(tag(p[0].as_str(), " (decrypt)").as_str(), aes.decrypt_block(enc.as_slice()), block)
+}
+
+fn run_aes_ctr(mut t: Tally, p: List<String>) {
+    let key = field(p[2].as_str())
+    let iv = field(p[3].as_str())
+    let plain = field(p[4].as_str())
+    let out = aes_ctr_xor(key.as_slice(), iv.as_slice(), plain.as_slice()).unwrap()
+    t.same(p[0].as_str(), out.clone(), field(p[5].as_str()))
+    t.same(
+        tag(p[0].as_str(), " (decrypt)").as_str(),
+        aes_ctr_xor(key.as_slice(), iv.as_slice(), out.as_slice()).unwrap(),
+        plain,
+    )
+}
+
+fn run_aes_cbc(mut t: Tally, p: List<String>) {
+    let key = field(p[2].as_str())
+    let iv = field(p[3].as_str())
+    let plain = field(p[4].as_str())
+    let want = field(p[5].as_str())
+    t.same(p[0].as_str(), aes_cbc_encrypt(key.as_slice(), iv.as_slice(), plain.as_slice()).unwrap(), want.clone())
+    t.same(
+        tag(p[0].as_str(), " (decrypt)").as_str(),
+        aes_cbc_decrypt(key.as_slice(), iv.as_slice(), want.as_slice()).unwrap(),
+        plain,
+    )
+}
+
+fn run_x25519_dh(mut t: Tally, p: List<String>) {
+    let got = x25519(field(p[1].as_str()).as_slice(), field(p[2].as_str()).as_slice())
+    t.same(p[0].as_str(), got.unwrap(), field(p[3].as_str()))
+}
+
+fn run_x25519_public(mut t: Tally, p: List<String>) {
+    let got = x25519_public_key(field(p[1].as_str()).as_slice())
+    t.same(p[0].as_str(), got.unwrap(), field(p[2].as_str()))
+}
+
+fn run_ed25519(mut t: Tally, p: List<String>) {
+    let seed = field(p[1].as_str())
+    let public = field(p[2].as_str())
+    let msg = field(p[3].as_str())
+    let sig = field(p[4].as_str())
+    let name = p[0].as_str()
+    t.same(tag(name, " (public key)").as_str(), ed25519_public_key(seed.as_slice()).unwrap(), public.clone())
+    t.same(name, ed25519_sign(seed.as_slice(), msg.as_slice()).unwrap(), sig.clone())
+    t.check(
+        tag(name, " (verify)").as_str(),
+        ed25519_verify(public.as_slice(), msg.as_slice(), sig.as_slice()),
+        "a valid signature did not verify",
+    )
+    let mut bad_sig = sig.clone()
+    bad_sig[3] = bad_sig[3] ^ 4
+    t.check(
+        tag(name, " (bad signature)").as_str(),
+        !ed25519_verify(public.as_slice(), msg.as_slice(), bad_sig.as_slice()),
+        "a changed signature verified",
+    )
+    let mut bad_msg = msg.clone()
+    bad_msg.push(7)
+    t.check(
+        tag(name, " (bad message)").as_str(),
+        !ed25519_verify(public.as_slice(), bad_msg.as_slice(), sig.as_slice()),
+        "a changed message verified",
+    )
+    let mut bad_scalar = sig.clone()
+    bad_scalar[63] = bad_scalar[63] | 0xf0
+    t.check(
+        tag(name, " (non-canonical scalar)").as_str(),
+        !ed25519_verify(public.as_slice(), msg.as_slice(), bad_scalar.as_slice()),
+        "a scalar at or above the group order verified",
+    )
+}
+
+fn zeros(n: usize): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < n {
+        out.push(0)
+        i = i + 1
+    }
+    out
+}
+
+fn message(result: Result<List<u8>, CryptoError>): String {
+    match result {
+        Ok(_) => "ok".to_string(),
+        Err(e) => e.to_string(),
+    }
+}
+
+// The message each failing call reports, by scenario name.
+fn scenario(name: str): String {
+    let key16 = zeros(16)
+    let key32 = zeros(32)
+    let iv16 = zeros(16)
+    let nonce12 = zeros(12)
+    let nothing = List<u8>.new()
+    match name {
+        "aes_key_7" => match Aes.new(zeros(7).as_slice()) {
+            Ok(_) => "ok".to_string(),
+            Err(e) => e.to_string(),
+        }
+        "aes_ctr_iv_8" => message(aes_ctr_xor(key16.as_slice(), zeros(8).as_slice(), nothing.as_slice())),
+        "aes_cbc_iv_8" => message(aes_cbc_encrypt(key16.as_slice(), zeros(8).as_slice(), nothing.as_slice())),
+        "cbc_length" => message(aes_cbc_decrypt(key16.as_slice(), iv16.as_slice(), zeros(15).as_slice())),
+        "cbc_empty" => message(aes_cbc_decrypt(key16.as_slice(), iv16.as_slice(), nothing.as_slice())),
+        "cbc_padding" => message(aes_cbc_decrypt(key16.as_slice(), iv16.as_slice(), zeros(16).as_slice())),
+        "gcm_nonce_8" => message(
+            aes_gcm_seal(key16.as_slice(), zeros(8).as_slice(), nothing.as_slice(), nothing.as_slice()),
+        ),
+        "gcm_short" => message(
+            aes_gcm_open(key16.as_slice(), nonce12.as_slice(), nothing.as_slice(), zeros(10).as_slice()),
+        ),
+        "gcm_tampered" => message(
+            aes_gcm_open(key16.as_slice(), nonce12.as_slice(), nothing.as_slice(), zeros(16).as_slice()),
+        ),
+        "chacha_key_31" => message(chacha20_xor(zeros(31).as_slice(), nonce12.as_slice(), 0, nothing.as_slice())),
+        "chacha_nonce_13" => message(chacha20_xor(key32.as_slice(), zeros(13).as_slice(), 0, nothing.as_slice())),
+        "chacha_aead_nonce_8" => message(
+            chacha20_poly1305_seal(key32.as_slice(), zeros(8).as_slice(), nothing.as_slice(), nothing.as_slice()),
+        ),
+        "xchacha_nonce_12" => message(
+            xchacha20_poly1305_seal(key32.as_slice(), nonce12.as_slice(), nothing.as_slice(), nothing.as_slice()),
+        ),
+        "chacha_open_short" => message(
+            chacha20_poly1305_open(key32.as_slice(), nonce12.as_slice(), nothing.as_slice(), zeros(15).as_slice()),
+        ),
+        "chacha_open_tampered" => message(
+            chacha20_poly1305_open(key32.as_slice(), nonce12.as_slice(), nothing.as_slice(), zeros(16).as_slice()),
+        ),
+        "poly1305_key_31" => message(poly1305(zeros(31).as_slice(), nothing.as_slice())),
+        "hkdf_too_long" => message(
+            hkdf(HashAlg.Sha256, nothing.as_slice(), key16.as_slice(), nothing.as_slice(), 8161),
+        ),
+        "hkdf_longest" => format(
+            "{}",
+            hkdf(HashAlg.Sha256, nothing.as_slice(), key16.as_slice(), nothing.as_slice(), 8160).unwrap().len(),
+        ),
+        "pbkdf2_zero" => message(pbkdf2(HashAlg.Sha256, key16.as_slice(), key16.as_slice(), 0, 16)),
+        "x25519_key_31" => message(x25519(zeros(31).as_slice(), key32.as_slice())),
+        "x25519_point_31" => message(x25519(key32.as_slice(), zeros(31).as_slice())),
+        "x25519_zero_point" => message(x25519(key32.as_slice(), key32.as_slice())),
+        "x25519_public_31" => message(x25519_public_key(zeros(31).as_slice())),
+        "ed25519_seed_31" => message(ed25519_public_key(zeros(31).as_slice())),
+        "ed25519_sign_seed_33" => message(ed25519_sign(zeros(33).as_slice(), nothing.as_slice())),
+        "ed25519_verify_short_key" => format(
+            "verify={}",
+            ed25519_verify(zeros(31).as_slice(), nothing.as_slice(), zeros(64).as_slice()),
+        ),
+        "ed25519_verify_short_sig" => format(
+            "verify={}",
+            ed25519_verify(key32.as_slice(), nothing.as_slice(), zeros(63).as_slice()),
+        ),
+        "ed25519_verify_zero_signature" => format(
+            "verify={}",
+            ed25519_verify(key32.as_slice(), nothing.as_slice(), zeros(64).as_slice()),
+        ),
+        _ => panic("unknown scenario {name}"),
+    }
+}
+
+fn run_errors(mut t: Tally, p: List<String>) {
+    let got = scenario(p[0].as_str())
+    t.check(p[0].as_str(), got.as_str() == p[1].as_str(), format("got {:?} want {:?}", got, p[1]).as_str())
+}
+
+fn main() {
+    let args = env.args()
+    let mode = args[1]
+    let text = read_to_string(args[2].as_str()).unwrap()
+    let mut t = Tally { cases: 0, failures: 0 }
+    for line in text.lines() {
+        let trimmed = line.trim()
+        if trimmed.len() == 0 {
+            continue
+        }
+        let p = trimmed.split("|")
+        match mode.as_str() {
+            "hash" => run_hash(mut t, p),
+            "shake" => run_shake(mut t, p),
+            "hmac" => run_hmac(mut t, p),
+            "hkdf" => run_hkdf(mut t, p),
+            "pbkdf2" => run_pbkdf2(mut t, p),
+            "chacha20" => run_chacha20(mut t, p),
+            "hchacha20" => run_hchacha20(mut t, p),
+            "poly1305" => run_poly1305(mut t, p),
+            "aead" => run_aead(mut t, p),
+            "aes_ecb" => run_aes_ecb(mut t, p),
+            "aes_ctr" => run_aes_ctr(mut t, p),
+            "aes_cbc" => run_aes_cbc(mut t, p),
+            "x25519_dh" => run_x25519_dh(mut t, p),
+            "x25519_public" => run_x25519_public(mut t, p),
+            "ed25519" => run_ed25519(mut t, p),
+            "errors" => run_errors(mut t, p),
+            _ => panic("unknown mode {mode}"),
+        }
+    }
+    println("cases={} failures={}", t.cases, t.failures)
+}

@@ -1,0 +1,181 @@
+//@ run
+//> == requests, responses, and headers (HC4 to HC7)
+//> get_basic: 200 OK content-type=text/plain x-one=["1", "2"] fields=4 body="hello"
+//> get_basic sent: GET /greet?name=burdin HTTP/1.1 host=127.0.0.1:PORT agent=burdin-http/0.1 length=-
+//> post_body: 201 Created body="stored"
+//> post_body sent: POST /items HTTP/1.1 length=11 type=text/plain token=abc body="name=burdin"
+//> post_empty: POST /empty HTTP/1.1 length=0
+//> overrides: agent=tester/1 host=example.test
+//> bad header value: invalid header: the value of X-Bad has a control character
+//> bad header name: invalid header: the name "X Bad" is not a valid field name
+//> bad header was never sent: accepted 0 connections
+//> status 404: 404 is_success=false body="nope"
+//> status 204: 204 body=""
+//> status 304: 304 body=""
+//> statuses shared one connection: accepted 1
+//> head: 200 body="" next="after head"
+//> head shared one connection: accepted 1
+//> stream: chunk 3 chunk 3 chunk 2 end
+//> stream shared one connection: accepted 1
+//> https: error: https is not supported because there is no TLS in this build: https://127.0.0.1:PORT/
+//> https made no connection: accepted 0
+//> scheme: error: unsupported URL scheme 'ftp': only http is supported
+//> userinfo: error: invalid URL: a user name and password in the URL are not supported: http://user:pw@127.0.0.1/
+//> == response bodies (HC8 to HC10)
+//> chunked: body="hello world" trailer=sum-11 complete=true
+//> chunked shared one connection: accepted 1
+//> close-delimited: body="until the end"
+//> close-delimited used two connections: accepted 2
+//> truncated: the connection closed before the whole body arrived
+//> truncated stream: unexpected end of input after 4 bytes
+//> chunk size: malformed body: a chunk size is not hexadecimal: "zz"
+//> chunk crlf: malformed body: chunk data is not followed by CRLF
+//> chunk cut: the connection closed before the whole body arrived
+//> both lengths: error: malformed response: the response has both Content-Length and Transfer-Encoding
+//> two lengths: error: malformed response: the response has different Content-Length values
+//> other coding: error: malformed response: the Transfer-Encoding does not end in chunked
+//> interim: 200 body="final"
+//> garbage head: error: malformed response: the status line is not HTTP/1.x: "garbage"
+//> folded head: error: malformed response: a folded header line is not accepted
+//> body limit: the response body is larger than 4 bytes
+//> body limit later: the response body is larger than 4 bytes
+//> == redirects (HC11, HC12)
+//> redirect 301 Moved Permanently: 200 "landed" redirects=1 url=http://127.0.0.1:PORT/next
+//> redirect 302 Found: 200 "landed" redirects=1 url=http://127.0.0.1:PORT/next
+//> redirect 303 See Other: 200 "landed" redirects=1 url=http://127.0.0.1:PORT/next
+//> redirect 307 Temporary Redirect: 200 "landed" redirects=1 url=http://127.0.0.1:PORT/next
+//> redirect 308 Permanent Redirect: 200 "landed" redirects=1 url=http://127.0.0.1:PORT/next
+//> redirects shared one connection: accepted 1
+//> second request of the last: GET /next
+//> POST 301 -> GET /next length=- type=- body=""
+//> POST 302 -> GET /next length=- type=- body=""
+//> POST 303 -> GET /next length=- type=- body=""
+//> POST 307 -> POST /next length=7 type=text/plain body="payload"
+//> POST 308 -> POST /next length=7 type=text/plain body="payload"
+//> PUT 301 -> PUT /next length=7 type=text/plain body="payload"
+//> PUT 303 -> GET /next length=- type=- body=""
+//> PUT 307 -> PUT /next length=7 type=text/plain body="payload"
+//> DELETE 303 -> GET /next length=- type=- body=""
+//> HEAD 303 -> HEAD /next length=7 type=text/plain body="payload"
+//> location next -> http://127.0.0.1:PORT/dir/next
+//> location ../up -> http://127.0.0.1:PORT/up
+//> location /abs?q=1 -> http://127.0.0.1:PORT/abs?q=1
+//> location ?only=query -> http://127.0.0.1:PORT/dir/page?only=query
+//> location sub/../x -> http://127.0.0.1:PORT/dir/x
+//> location //127.0.0.1:PORT/netpath -> http://127.0.0.1:PORT/netpath
+//> limit: error: too many redirects (the limit is 3)
+//> limit: 4 requests were made
+//> loop: error: redirect loop: http://127.0.0.1:PORT/a was already visited
+//> self loop: error: redirect loop: http://127.0.0.1:PORT/x was already visited
+//> loop made 3 requests
+//> cross-origin: "far"
+//> same-origin: "near"
+//> other origin got: GET /landed authorization=- cookie=- proxy=- x-custom=kept
+//> same origin got: GET /local authorization=Bearer secret cookie=session=1 x-custom=kept
+//> not followed: 302 location=/elsewhere is_redirect=true body="moved"
+//> no location: 302 body="no location"
+//> bad location: error: invalid redirect: bad url: invalid URL: a space or control character must be percent-encoded: bad url
+//> other scheme: error: invalid redirect: ftp://example.test/: unsupported URL scheme 'ftp': only http is supported
+//> to https: error: https is not supported because there is no TLS in this build: https://127.0.0.1:1/secure
+//> redirect with body: 200 body="landed"
+//> redirect with body shared one connection: accepted 1
+//> == timeouts and retries (HC13, HC14)
+//> read timeout: timed out while waiting for the response is_timeout=true connection_failure=true
+//> body timeout: 200 timed out while reading the response body is_timeout=true
+//> total timeout: timed out while reading the response body
+//> connect refused: cannot connect to 127.0.0.1:PORT: connection refused is_timeout=false connection_failure=true
+//> get retried: 200 body="second try"
+//> get retried: accepted 2 and saw 2 requests
+//> post not retried: the connection closed before a response was received
+//> post not retried: accepted 1
+//> put retried: "stored"
+//> put retried: second request PUT /doc HTTP/1.1 body="payload"
+//> exhausted with max_retries=1: the connection closed before a response was received after 2 connections
+//> exhausted with max_retries=2: the connection closed before a response was received after 3 connections
+//> 503 retried: 200 body="recovered"
+//> 503 not asked for: 503 body="busy"
+//> 503 for a POST: 503
+//> 503 exhausted: 503 body="busy"
+//> 503: saw 6 requests
+//> timeout retried: 200 body="second try"
+//> timeout retried: accepted 2
+//> partial head: error: malformed response: the connection closed in the middle of the response head
+//> partial head: accepted 1
+//> == connection reuse (HC15, HC16)
+//> reuse: 200 body="one"
+//> idle after the first: 1
+//> reuse: 200 body="two"
+//> reuse: 200 body="three"
+//> idle after three: 1
+//> idle after close_idle: 0
+//> reuse: accepted 1
+//> unread: 200 closed without reading the body
+//> unread: next 200 body="fresh"
+//> unread: accepted 2 and the server saw the client close: true
+//> partial: read 3 bytes, discarded the rest: true
+//> partial: next 200 body="next"
+//> partial: accepted 1
+//> server close: 200 body="one"
+//> server close: 200 body="two"
+//> server close: accepted 2
+//> request close: idle 0
+//> request close: accepted 2
+//> http/1.0: 200 body="one"
+//> http/1.0: 200 body="two"
+//> http/1.0: accepted 2
+//> http/1.0 keep-alive: 200 body="one"
+//> http/1.0 keep-alive: 200 body="two"
+//> http/1.0 keep-alive: accepted 1
+//> per host: 200 body="a1"
+//> per host: 200 body="b1"
+//> per host: 200 body="a2"
+//> per host: 200 body="b2"
+//> per host: idle 2
+//> per host: accepted 1 and 1
+//> max idle: first read "one", idle 1
+//> max idle: second read "two", idle 1
+//> max idle: accepted 2
+//> no pool: 200 body="one"
+//> no pool: 200 body="two"
+//> no pool: idle 0
+//> no pool: accepted 2 connection=close
+//> stale: 200 body="one"
+//> stale: 200 body="two"
+//> stale: accepted 2 and saw 2 requests
+//> race get: 200 body="one"
+//> race get: 200 body="two"
+//> race post: first "three"
+//> race post: second the connection closed before a response was received
+//> race: accepted 3
+//> idle timeout: 200 body="one"
+//> idle timeout: 200 body="two"
+//> idle timeout: accepted 2
+//> clones: 200 body="one"
+//> clones: 200 body="two" idle 1
+//> clones: accepted 1
+
+use basics
+use pooling
+use redirects
+use retries
+
+fn main() {
+    task.set_workers(4)
+    let args = env.args()
+    let only = if args.len() > 1 { args[1].clone() } else { String.new() }
+    if only.is_empty() || only.as_str() == "basics" {
+        basics.run()
+    }
+    if only.is_empty() || only.as_str() == "redirects" {
+        println("== redirects (HC11, HC12)")
+        redirects.run()
+    }
+    if only.is_empty() || only.as_str() == "retries" {
+        println("== timeouts and retries (HC13, HC14)")
+        retries.run()
+    }
+    if only.is_empty() || only.as_str() == "pooling" {
+        println("== connection reuse (HC15, HC16)")
+        pooling.run()
+    }
+}

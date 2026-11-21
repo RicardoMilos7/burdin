@@ -1,0 +1,153 @@
+// HMAC (RFC 2104), HKDF (RFC 5869), and PBKDF2 (RFC 8018) over any `HashAlg`.
+
+use hash.HashAlg
+
+use errors.CryptoError
+use util.constant_time_eq
+
+fn hmac_pads(alg: HashAlg, key: [u8]): (List<u8>, List<u8>) {
+    let block = alg.block_len()
+    let mut k = List<u8>.new()
+    if key.len() > block {
+        k = alg.digest(key)
+    } else {
+        k.extend_from_slice(key)
+    }
+    while k.len() < block {
+        k.push(0)
+    }
+    let mut ipad = List<u8>.new()
+    let mut opad = List<u8>.new()
+    let mut i: usize = 0
+    while i < block {
+        ipad.push(k[i] ^ 0x36)
+        opad.push(k[i] ^ 0x5c)
+        i = i + 1
+    }
+    (ipad, opad)
+}
+
+fn hmac_with_pads(alg: HashAlg, ipad: [u8], opad: [u8], data: [u8]): List<u8> {
+    let mut inner = ipad.to_list()
+    inner.extend_from_slice(data)
+    let digest = alg.digest(inner.as_slice())
+    let mut outer = opad.to_list()
+    outer.extend_from_slice(digest.as_slice())
+    alg.digest(outer.as_slice())
+}
+
+/// The HMAC of `data` under `key`.
+fn hmac(alg: HashAlg, key: [u8], data: [u8]): List<u8> {
+    let (ipad, opad) = hmac_pads(alg, key)
+    hmac_with_pads(alg, ipad.as_slice(), opad.as_slice(), data)
+}
+
+/// Whether `tag` is the HMAC of `data` under `key`, compared in constant time.
+fn hmac_verify(alg: HashAlg, key: [u8], data: [u8], tag: [u8]): bool {
+    let expected = hmac(alg, key, data)
+    constant_time_eq(expected.as_slice(), tag)
+}
+
+/// An incremental HMAC. It keeps the message until `finish`.
+struct Hmac {
+    alg: HashAlg,
+    opad: List<u8>,
+    data: List<u8>,
+}
+
+Hmac {
+    fn new(alg: HashAlg, key: [u8]): Hmac {
+        let (ipad, opad) = hmac_pads(alg, key)
+        Hmac { alg: alg, opad: opad, data: ipad }
+    }
+
+    /// Adds more of the message.
+    fn update(mut self, data: [u8]) {
+        self.data.extend_from_slice(data)
+    }
+
+    /// The tag. The `Hmac` must not be used afterwards.
+    fn finish(mut self): List<u8> {
+        let digest = self.alg.digest(self.data.as_slice())
+        let mut outer = self.opad.clone()
+        outer.extend_from_slice(digest.as_slice())
+        self.alg.digest(outer.as_slice())
+    }
+}
+
+/// HKDF-Extract: a pseudorandom key from input keying material. An empty `salt` means a string of zeros.
+fn hkdf_extract(alg: HashAlg, salt: [u8], ikm: [u8]): List<u8> {
+    if salt.len() == 0 {
+        let mut zeros = List<u8>.new()
+        while zeros.len() < alg.output_len() {
+            zeros.push(0)
+        }
+        return hmac(alg, zeros.as_slice(), ikm)
+    }
+    hmac(alg, salt, ikm)
+}
+
+/// HKDF-Expand: `length` bytes of output keying material from a pseudorandom key. `length` is at most 255 times
+/// the digest size.
+fn hkdf_expand(alg: HashAlg, prk: [u8], info: [u8], length: usize): Result<List<u8>, CryptoError> {
+    let hash_len = alg.output_len()
+    if length > 255 * hash_len {
+        return Err(CryptoError.InvalidLength { what: "HKDF output longer than 255 times the digest size".to_string() })
+    }
+    let (ipad, opad) = hmac_pads(alg, prk)
+    let mut out = List<u8>.new()
+    let mut previous = List<u8>.new()
+    let mut counter: u8 = 1
+    while out.len() < length {
+        let mut block = previous.clone()
+        block.extend_from_slice(info)
+        block.push(counter)
+        previous = hmac_with_pads(alg, ipad.as_slice(), opad.as_slice(), block.as_slice())
+        out.extend_from_slice(previous.as_slice())
+        counter = counter.wrapping_add(1)
+    }
+    out.truncate(length)
+    Ok(out)
+}
+
+/// HKDF (extract, then expand).
+fn hkdf(alg: HashAlg, salt: [u8], ikm: [u8], info: [u8], length: usize): Result<List<u8>, CryptoError> {
+    let prk = hkdf_extract(alg, salt, ikm)
+    hkdf_expand(alg, prk.as_slice(), info, length)
+}
+
+/// PBKDF2: `length` bytes derived from `password` and `salt` with `iterations` rounds of HMAC. `iterations` must be
+/// at least 1; use at least 600,000 rounds of HMAC-SHA-256 for new password hashes (OWASP, 2023), far more than a
+/// debug build of this package does quickly.
+fn pbkdf2(alg: HashAlg, password: [u8], salt: [u8], iterations: u32, length: usize): Result<List<u8>, CryptoError> {
+    if iterations == 0 {
+        return Err(CryptoError.InvalidInput { what: "PBKDF2 needs at least one iteration".to_string() })
+    }
+    let (ipad, opad) = hmac_pads(alg, password)
+    let mut out = List<u8>.new()
+    let mut block_index: u32 = 1
+    while out.len() < length {
+        let mut seed = salt.to_list()
+        seed.push((block_index >> 24) as u8)
+        seed.push((block_index >> 16) as u8)
+        seed.push((block_index >> 8) as u8)
+        seed.push(block_index as u8)
+        let mut u = hmac_with_pads(alg, ipad.as_slice(), opad.as_slice(), seed.as_slice())
+        let mut t = u.clone()
+        let mut round: u32 = 1
+        while round < iterations {
+            let input = u.clone()
+            u = hmac_with_pads(alg, ipad.as_slice(), opad.as_slice(), input.as_slice())
+            let mut i: usize = 0
+            while i < t.len() {
+                t[i] = t[i] ^ u[i]
+                i = i + 1
+            }
+            round = round + 1
+        }
+        out.extend_from_slice(t.as_slice())
+        block_index = block_index + 1
+    }
+    out.truncate(length)
+    Ok(out)
+}

@@ -1,0 +1,39 @@
+> http://example.test/
+  scheme=http host=example.test port=80 path=/ query=none authority=example.test target=/ origin=http://example.test:80
+  text=http://example.test/
+> http://Example.TEST:8080/a/b?x=1
+  scheme=http host=example.test port=8080 path=/a/b query="x=1" authority=example.test:8080 target=/a/b?x=1 origin=http://example.test:8080
+  text=http://example.test:8080/a/b?x=1
+> http://127.0.0.1
+  scheme=http host=127.0.0.1 port=80 path=/ query=none authority=127.0.0.1 target=/ origin=http://127.0.0.1:80
+  text=http://127.0.0.1/
+> http://[::1]:80/p
+  error: invalid URL: IPv6 addresses are not supported: http://[::1]:80/p
+> https://example.test/secure
+  scheme=https host=example.test port=443 path=/secure query=none authority=example.test target=/secure origin=https://example.test:443
+  text=https://example.test/secure
+> ftp://example.test/
+  error: unsupported URL scheme 'ftp': only http is supported
+> mailto:x
+  error: invalid URL: the scheme is missing: mailto:x
+> http:///nohost
+  error: invalid URL: the host is missing: http:///nohost
+> http://host:99999/
+  error: invalid URL: the port is not a number from 1 to 65535: http://host:99999/
+> http://host:0/
+  error: invalid URL: the port is not a number from 1 to 65535: http://host:0/
+> http://user:pw@host/
+  error: invalid URL: a user name and password in the URL are not supported: http://user:pw@host/
+> http://host/a b
+  error: invalid URL: a space or control character must be percent-encoded: http://host/a b
+> http://host/a%20b?q=%41
+  scheme=http host=host port=80 path=/a%20b query="q=%41" authority=host target=/a%20b?q=%41 origin=http://host:80
+  text=http://host/a%20b?q=%41
+> http://host?only=query
+  scheme=http host=host port=80 path=/ query="only=query" authority=host target=/?only=query origin=http://host:80
+  text=http://host/?only=query
+> http://host#frag
+  scheme=http host=host port=80 path=/ query=none authority=host target=/ origin=http://host:80
+  text=http://host/
+> example.test/path
+  error: invalid URL: the scheme is missing: example.test/path

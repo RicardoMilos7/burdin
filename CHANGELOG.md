@@ -6,6 +6,26 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- The `http` official package (stage 3, issue #260, sub-issues #328, #329, #330; `spec/http-client.md`, HC1-HC16).
+  `packages/http` is an HTTP/1.1 client over `std`'s `TcpStream`: URLs and relative references, requests, responses and
+  headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
+  limit), redirects with a limit, loop detection, and credential stripping across origins, connect, read, and total
+  timeouts, retries of safe requests with backoff, and per-host connection reuse with a staleness probe. `https` URLs
+  parse but fail with `HttpError.TlsUnsupported`: there is no TLS in `std`. `std` gains `TcpStream.connect_timeout`
+  (`spec/io.md`, IO5). `tests/http/` holds golden fixtures for the pure parts, `tests/s3_http/client` is the
+  conformance case against a scripted in-process server, and `tests/check_http.py` runs both and checks
+  `burdin add http` and the pin; CI runs it.
+- The `crypto` official package (stage 3, issue #266; `spec/crypto.md`, CR1-CR14). Pure Burdin, no C library: the
+  hashes SHA-224/256/384/512, SHA3-224/256/384/512, SHAKE128/256, SHA-1, and MD5 (the last two documented as broken),
+  each one-shot and incremental; HMAC, HKDF, and PBKDF2 over any of them; ChaCha20, XChaCha20, Poly1305, and the
+  ChaCha20-Poly1305 and XChaCha20-Poly1305 AEADs; AES-128/192/256 with CTR, CBC (PKCS#7), and GCM; X25519; Ed25519
+  signing and verification; and `constant_time_eq` and `random_bytes` (from the OS entropy source). Failures are
+  `CryptoError` values or `false`, never panics, and the package and its docs say plainly that it is an experiment, not
+  a security claim (AES uses a secret-indexed S-box and is not cache-timing safe). `tests/crypto/` holds about 500
+  known-answer vectors (published RFC/FIPS/NIST vectors, asserted by `tests/crypto/regenerate.py`, plus vectors from
+  OpenSSL) and the error messages; `tests/check_crypto.py` runs them through `tests/crypto/runner` and checks
+  `burdin add crypto` and the official pin; `tests/s3_crypto/usage` is the conformance case, and CI runs the check.
+
 - Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
   object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
   optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing

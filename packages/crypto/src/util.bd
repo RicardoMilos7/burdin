@@ -1,0 +1,47 @@
+// Small helpers: constant-time comparison, wiping, XOR, and random bytes from the OS.
+
+/// Compares two byte strings without stopping at the first difference, so the time does not reveal where they
+/// differ. Different lengths are unequal at once (a length is not a secret here).
+fn constant_time_eq(a: [u8], b: [u8]): bool {
+    if a.len() != b.len() {
+        return false
+    }
+    let mut diff: u8 = 0
+    let mut i: usize = 0
+    while i < a.len() {
+        diff = diff | (a[i] ^ b[i])
+        i = i + 1
+    }
+    diff == 0
+}
+
+/// Overwrites `buf` with zeros. The compiler may remove dead stores, so this is hygiene, not a guarantee.
+fn wipe(mut buf: [u8]) {
+    buf.fill(0)
+}
+
+/// The bytes of `a` XORed with the bytes of `b`; the shorter length wins.
+fn xor_bytes(a: [u8], b: [u8]): List<u8> {
+    let mut out = List<u8>.new()
+    let mut i: usize = 0
+    while i < a.len() && i < b.len() {
+        out.push(a[i] ^ b[i])
+        i = i + 1
+    }
+    out
+}
+
+/// `count` random bytes from the OS entropy source (`getentropy` on Unix, `rand_s` on Windows), suitable for keys,
+/// nonces, and salts. It panics if the system has no entropy source.
+fn random_bytes(count: usize): List<u8> {
+    let mut out = List<u8>.new()
+    while out.len() < count {
+        let word = random_seed()
+        let mut k: u32 = 0
+        while k < 8 && out.len() < count {
+            out.push((word >> (k * 8)) as u8)
+            k = k + 1
+        }
+    }
+    out
+}
