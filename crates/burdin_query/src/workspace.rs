@@ -64,6 +64,27 @@ pub fn lock_dir(dir: &Path) -> Result<PathBuf, String> {
     Ok(root_of(dir)?.unwrap_or_else(|| dir.to_path_buf()))
 }
 
+/// The target directory of the package in `dir` (WS19): the workspace root's `target` for a member, `dir`'s own for a
+/// standalone package. A workspace that cannot be read is treated as standalone; the loader reports its error.
+pub fn target_dir(dir: &Path) -> PathBuf {
+    match root_of(dir) {
+        Ok(Some(root)) => root.join("target"),
+        _ => dir.join("target"),
+    }
+}
+
+/// Where the package `name` in `dir` keeps its own build state for `profile` (the build script's output and key, the
+/// Rust shims): `<package>/target/burdin/<profile>` for a standalone package, and
+/// `<root>/target/burdin/<profile>/packages/<name>` for a member, so members sharing one target directory never
+/// overwrite each other's state (WS19).
+pub fn package_out_dir(dir: &Path, name: &str, profile: &str) -> PathBuf {
+    let out = target_dir(dir).join("burdin").join(profile);
+    match root_of(dir) {
+        Ok(Some(_)) => out.join("packages").join(name),
+        _ => out,
+    }
+}
+
 /// The layout of the workspace the package in `dir` belongs to, or `None` for a standalone package.
 pub fn layout_of(dir: &Path) -> Result<Option<Layout>, String> {
     match root_of(dir)? {
@@ -299,6 +320,29 @@ mod tests {
 
     fn package(name: &str) -> String {
         format!("[package]\nname = \"{name}\"\n")
+    }
+
+    #[test]
+    fn members_share_the_root_target_and_keep_their_own_state_apart() {
+        let dir = TempDir::new("target");
+        dir.write(
+            "burdin.toml",
+            "[workspace]
+members = [\"apps/*\"]
+",
+        );
+        dir.write("apps/a/burdin.toml", &package("a"));
+        dir.write("apps/b/burdin.toml", &package("b"));
+        dir.write("alone/burdin.toml", &package("alone"));
+        let a = dir.0.join("apps").join("a");
+        assert_eq!(target_dir(&a), dir.0.join("target"));
+        assert_eq!(target_dir(&dir.0.join("apps").join("b")), dir.0.join("target"));
+        assert_eq!(package_out_dir(&a, "a", "debug"), dir.0.join("target/burdin/debug/packages/a"));
+        assert_ne!(package_out_dir(&a, "a", "debug"), package_out_dir(&dir.0.join("apps/b"), "b", "debug"));
+        // A package outside the workspace keeps its own layout (TG1).
+        let alone = dir.0.join("alone");
+        assert_eq!(target_dir(&alone), alone.join("target"));
+        assert_eq!(package_out_dir(&alone, "alone", "release"), alone.join("target/burdin/release"));
     }
 
     #[test]

@@ -122,6 +122,17 @@ up: a type that recurses through `List<Self>` (`struct Node { kind: i32, childre
 overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
 instead. The defect belongs to the compiler, not to the package.
 
+**Object cache (issue #243, 2026-11-20).** `spec/target.md` TG11-TG16. Each codegen unit's object is kept under
+`target/burdin/<profile>/objects/<kind>/<key>.o`, where the key hashes the compiler identity, the optimization level, the
+triple, and the unit's bitcode taken just before the optimizer runs (`crates/burdin_codegen/src/cache.rs`, used by
+`split.rs` and the single-unit path of `emit_object`). A unit whose module is unchanged is copied from the cache and
+skips the optimizer and backend; an edit to one function recompiles only the units that define or inline it, and a
+comment edit reuses every object. After a build only that build's objects stay. The parallel model is unchanged:
+whole-program lowering on one thread, functions cut into units, units compiled in parallel; the decision is recorded in
+`spec/target.md`. Only cacheable builds (TG2) use it. Not done: an edit that moves a unit boundary rebuilds the
+neighbours, and a unit-per-module split that would keep keys stable across such edits is not attempted. Tests:
+`tests/check_target.py` (the object-cache section, `BURDIN_CODEGEN_UNITS=3`) and the unit tests in `cache.rs`.
+
 **Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
 package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
 Rust-shim, and failed-test entries) and the artifact cache. A build of a package directory publishes its linked
@@ -440,8 +451,10 @@ and share their record and baselines under the root's `target/`, doc writes a si
 selected members' directories. Outside a workspace the flags behave as before. `tests/check_workspace.py` proves the
 behavior black-box (46 checks) and every CI job runs it; the parser, membership, selection, and workspace-lockfile rules
 have unit tests. The decisions are `spec/workspaces.md` WS1-WS18. Not done: `--offline`, multi-line arrays in a
-manifest, `**` in a member pattern, moving an inherited edition with `burdin fix --migrate`, and one workspace target
-directory (outputs stay under each package's `target/`).
+manifest, `**` in a member pattern, and moving an inherited edition with `burdin fix --migrate`. The forty-eighth session
+closed issue #240 with the one missing piece, a shared target directory (WS19): members build into the root's `target/`,
+and a member's build-script and Rust-shim state sits in `target/burdin/<profile>/packages/<name>/`. `burdin doc` still
+writes per-member `target/doc`.
 
 The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
 pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load
@@ -1253,7 +1266,7 @@ What is left: sema and the memory checks are still sequential. The typed tree us
 `Rc<FnSig>`), so it is not `Send`; checking function bodies on several threads needs `Arc` there (or interned
 names) and a sema whose shared state is read-only while bodies are checked. That is the next big win for small
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
-packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
+packages one after another. Build timing reports (#472) remain open; cached objects landed in issue #243 (below).
 
 ## The fifty-third session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 

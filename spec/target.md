@@ -19,7 +19,7 @@ is `debug` or `release`. Its entries are:
 - `rust/<crate>/`: the Rust crates' shims (`spec/rust-interop.md`, RI8);
 - `test-failed.txt`: the record of failed tests that `--failed` reads (`spec/test-runner.md`).
 
-The benchmark baselines are the one exception: `target/burdin/bench/` is not per profile (`spec/bench.md`). Each kind of
+Inside a workspace the members share the root's `target/` (`spec/workspaces.md`, WS19). The benchmark baselines are the one exception: `target/burdin/bench/` is not per profile (`spec/bench.md`). Each kind of
 artifact has its own directory, so the program and the test binary of one package never overwrite each other. There is
 no `--target` option, so the directories are the only per-target split. Other entries under `target/` are not a
 contract. A new package's `.gitignore` lists `/target/` (`burdin new`).
@@ -115,11 +115,60 @@ front end, which always runs), the diagnostic options, the program's arguments, 
 are checked out into the Burdin home and their files are sources, so the lockfile adds no input of its own.
 Tests: `tests/check_target.py` (a build with a broken `BURDIN_CC` still hits).
 
+## The object cache
+
+Issue #243. The artifact cache above skips code generation when nothing changed. The object cache makes a build that
+did change cheaper: each codegen unit's object file (`crates/burdin_codegen/src/split.rs`, issue #334) is kept under
+a hash of its module, so only the units whose code changed are optimized and compiled again. The linker still runs
+whenever the artifact cache misses. The decision on the parallel code generation model is that it stays as it is:
+code generation is whole-program (the typed tree is lowered to one LLVM module on one thread), the module is cut into
+units by function, and the units are compiled in parallel on `-j` threads. The object cache sits on top of that split;
+it does not change it.
+
+**TG11. Where.** A cacheable build (TG2) keeps the objects of its units in `<package>/target/burdin/<profile>/objects/<kind>/`
+(`kind` is `bin` or `test`, as in TG1), one file per unit named `<key>.o` (`<key>.obj` with MSVC), where `<key>` is
+the 64-hex-digit hash of TG12. A build that is not cacheable never reads or writes it. So `-g`, `--emit`, `--pgo-use`,
+bench, fuzz, one-file targets, and every build that always uses one unit for its own reasons (`--lto`, `--sanitize`,
+`--pgo-generate`) do not use it.
+Tests: `tests/check_target.py` (the layout; a debug build writes no objects).
+
+**TG12. The key.** The key hashes, in order: the format (`burdin-object-v1`), the compiler's identity (TG3's
+`compiler` line), the optimization level, the target triple, and the unit's module as LLVM bitcode, taken after the
+unit has been cut out of the whole module and before the optimizer runs. That module is the whole input of the
+optimizer and the backend, so equal keys give equal objects. It contains the unit's own functions, a declaration of
+everything another unit owns, and in a release build the small functions of other units that may be inlined; it also
+carries the panic messages' file names and line numbers. Hashes are of contents, never of modification times.
+Settings that change the code (debug assertions, overflow checks, per-package overrides) are already in the module, and
+the linker and the thread count are not inputs (TG8).
+Tests: `tests/check_target.py` (an edit that does not change the generated code reuses every object).
+
+**TG13. A hit.** The unit's object is copied from the cache to where the unit's object would have been written, and the
+optimizer and the backend do not run for that unit. The cached file is not rewritten. A build whose units all hit writes
+the same executable as one that compiled them.
+Tests: `tests/check_target.py` (a trailing comment keeps every object's name, bytes, and modification time; the program
+prints what it printed).
+
+**TG14. A miss.** The unit is compiled and its object is stored under its key: written to a temporary name in the cache
+directory and renamed, so an interrupted build or two builds at once never leave a half-written object under a key. A
+cache that cannot be created or written is a miss, never a failed build.
+
+**TG15. What a change rebuilds.** An edit to one function changes the module of the unit that owns it, and of any unit
+that inlined it in a release build; every other unit's key is the same, so only those units are compiled. The split is
+by contiguous runs of functions balanced by instruction count (`split.rs`), so an edit that changes a function's size
+enough to move a unit boundary, and one that changes the number of units, also rebuilds the neighbouring units. After a
+build the cache keeps exactly the objects that build used and removes the others, as TG7 keeps one executable: going
+back to an earlier source compiles again.
+Tests: `tests/check_target.py` (an edit to one function keeps the objects of other units, and the objects of the
+earlier build are gone).
+
+**TG16. Comptime.** Comptime results are not cached themselves (CT14): the front end always runs and its results are
+in the module, so a comptime result that changes changes the key of the units it reaches.
+
 ## Notes
 
 **TG9. Dependencies share no build output.** Git dependencies are shared through the Burdin home's checkouts (PKG3 in
 `spec/packages.md`). Code generation is whole-program, so no dependency has an object file of its own to share, and
-the build cache is per package. The per-package build script cache (BS5) and the Rust shims (RI8) are unchanged. A
+the build cache is per package. The object cache is per package too. The per-package build script cache (BS5) and the Rust shims (RI8) are unchanged. A
 cache of per-dependency objects is not built; it would need code generation that is separate per package.
 
 **TG10. Concurrent builds.** Two builds of one package may run at once. Each stages under its own process id, and the

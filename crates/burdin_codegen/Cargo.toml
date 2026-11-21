@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 burdin_diag.workspace = true
+burdin_sha256.workspace = true
 burdin_tir.workspace = true
 inkwell.workspace = true
 libc.workspace = true

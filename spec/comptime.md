@@ -207,7 +207,7 @@ the `Ok`/`Err` outcome it produces is compared with the compiled test's (`spec/t
 
 Because comptime is pure (CT9) and bounded (CT11), its results are a function of the source files, the target, and
 the profile, so a build cache may key them on those inputs. The compiler does not cache comptime results across
-builds yet; a later stage that adds cached object files can rely on this rule.
+builds; the object cache (`spec/target.md`, TG16) keys on the generated code, which already holds them.
 
 ## CT15. `embed`
 

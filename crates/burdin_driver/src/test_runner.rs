@@ -432,7 +432,7 @@ fn default_timeout(args: &Args) -> Option<Duration> {
 fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
     let dir = shared_dir(workspace, args)?;
     let profile = &args.profile.dir;
-    Some(dir.join("target").join("burdin").join(profile).join("test-failed.txt"))
+    Some(burdin_query::workspace::target_dir(&dir).join("burdin").join(profile).join("test-failed.txt"))
 }
 
 /// The packages a run loads: the build of the target, or, for a selection of workspace members (WS11), the members

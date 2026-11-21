@@ -54,6 +54,7 @@ name = "burdin_codegen"
 version = "0.1.1"
 dependencies = [
  "burdin_diag",
+ "burdin_sha256",
  "burdin_tir",
  "inkwell",
  "libc",
@@ -105,6 +106,7 @@ dependencies = [
  "burdin_refactor",
  "burdin_repl",
  "burdin_rustgen",
+ "burdin_sha256",
  "burdin_syntax",
  "burdin_tir",
  "clap",
