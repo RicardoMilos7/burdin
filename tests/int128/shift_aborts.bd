@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: attempt to shift with overflow
+//> before
+
+// A shift by the bit width (128) or more panics in every profile (spec/int128.md, I128-4).
+
+fn main() {
+    let v: u128 = 1
+    let s: u32 = 128
+    println("before")
+    println((v << s).to_string())
+    println("after")
+}

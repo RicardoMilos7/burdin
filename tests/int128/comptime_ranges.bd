@@ -1,0 +1,73 @@
+//@ run
+//> 4
+//> 340282366920938463463374607431768211455
+//> true
+//> 4
+//> 170141183460469231731687303715884105728
+
+// Compile-time evaluation of `u128` values and ranges above `i128::MAX`: the bounds of a range are compared in their own
+// type, so the loops run in order and stop at the top of the type (spec/int128.md, I128-8).
+
+const COUNT: u128 = comptime {
+    let lo: u128 = 170141183460469231731687303715884105726;
+    let hi: u128 = 170141183460469231731687303715884105729;
+    let mut n: u128 = 0;
+    for i in lo..=hi {
+        n = n + 1;
+    };
+    n
+}
+
+const LAST: u128 = comptime {
+    let lo: u128 = 340282366920938463463374607431768211450;
+    let hi: u128 = 340282366920938463463374607431768211455;
+    let mut last: u128 = 0;
+    for i in lo..=hi {
+        last = i;
+    };
+    last
+}
+
+const ORDERED: bool = comptime {
+    let lo: u128 = 170141183460469231731687303715884105726;
+    let hi: u128 = 170141183460469231731687303715884105729;
+    let mut ok = true;
+    let mut prev: u128 = 0;
+    let mut first = true;
+    let r = lo..=hi;
+    for i in r {
+        if !first && i <= prev {
+            ok = false;
+        };
+        first = false;
+        prev = i;
+    };
+    ok
+}
+
+const ITER_COUNT: u128 = comptime {
+    let lo: u128 = 170141183460469231731687303715884105726;
+    let hi: u128 = 170141183460469231731687303715884105730;
+    let mut n: u128 = 0;
+    let mut it = (lo..hi).iter();
+    loop {
+        match it.next() {
+            Some(x) => n = n + 1,
+            None => break,
+        }
+    };
+    n
+}
+
+const TOP: u128 = comptime {
+    let one: u128 = 1;
+    one << 127
+}
+
+fn main() {
+    println(COUNT.to_string())
+    println(LAST.to_string())
+    println(ORDERED.to_string())
+    println(ITER_COUNT.to_string())
+    println(TOP.to_string())
+}

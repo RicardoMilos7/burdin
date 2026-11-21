@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
+  16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
+  `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating
+  from floats), ordering, ranges and iterators at compile time and at run time, patterns and exhaustiveness, hashing,
+  and `List`/`Map`/`Set` all accept them. Division needs no compiler runtime library (MSVC has none). A 128-bit
+  integer cannot cross the C boundary (E0162), and `burdin bindgen --export` cannot spell one (E0263); `burdin
+  bindgen` skips a C `__int128` function with a note. `tests/int128/` (21 programs) and two checks in
+  `tests/check_bindgen.py` witness the rules.
 - `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
   each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
   `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.

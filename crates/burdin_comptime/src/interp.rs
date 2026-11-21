@@ -462,17 +462,17 @@ impl<'p, 'c> Interp<'p, 'c> {
                 }
             },
             K::ForRange { var, lo, hi, inclusive, body } => {
+                let ity = key_ty(&lo.ty);
                 let lo = self.eval(lo, Mode::Use)?.int();
                 let hi = self.eval(hi, Mode::Use)?.int();
-                let end = if *inclusive { hi } else { hi - 1 };
-                self.int_loop(*var, lo, end, body)?;
+                self.int_loop(*var, (lo, hi, *inclusive, ity), body)?;
                 Value::Unit
             }
             K::ForRangeValue { var, range, body } => {
+                let ity = key_ty(&range.ty);
                 let (lo, hi) = range_bounds(&self.eval(range, Mode::Use)?);
                 let inclusive = matches!(range.ty, Ty::Range(_, true));
-                let end = if inclusive { hi } else { hi - 1 };
-                self.int_loop(*var, lo, end, body)?;
+                self.int_loop(*var, (lo, hi, inclusive, ity), body)?;
                 Value::Unit
             }
             K::ForArray { pat, array: src, body }
@@ -680,12 +680,20 @@ impl<'p, 'c> Interp<'p, 'c> {
         })
     }
 
-    fn int_loop(&mut self, var: Option<tir::LocalId>, lo: i128, end: i128, body: &'p Block) -> R<()> {
-        let mut i = lo;
-        while i <= end {
+    /// A counted loop over `lo..hi` (or `lo..=hi`). The bounds are compared as order keys of their type, so a `u128`
+    /// range above `i128::MAX` runs in order, and the counter stops at the top of the type instead of overflowing
+    /// (`spec/int128.md`, I128-8).
+    fn int_loop(
+        &mut self,
+        var: Option<tir::LocalId>,
+        (lo, hi, inclusive, ity): (i128, i128, bool, Option<burdin_tir::IntTy>),
+        body: &'p Block,
+    ) -> R<()> {
+        let (mut i, end) = (to_key(ity, lo), to_key(ity, hi));
+        while if inclusive { i <= end } else { i < end } {
             let mark = self.frame().scope.len();
             if let Some(var) = var {
-                self.frame().slots[var.0] = Slot::Val(Value::Int(i));
+                self.frame().slots[var.0] = Slot::Val(Value::Int(to_key(ity, i)));
             }
             let r = self.block(body, Mode::Use);
             self.end_scope(mark, body_span(body))?;
@@ -694,7 +702,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 Err(Unwind::Break) => break,
                 Err(u) => return Err(u),
             }
-            i += 1;
+            match i.checked_add(1) {
+                Some(next) => i = next,
+                None => break,
+            }
         }
         Ok(())
     }
@@ -1235,6 +1246,21 @@ pub(crate) fn impure(what: &str, span: Span) -> Unwind {
 
 fn depth(span: Span) -> Unwind {
     Fault::Budget(format!("compile-time evaluation nested more than {MAX_DEPTH} calls"), span).into()
+}
+
+/// The integer type of a value, or of the elements of a range or range iterator; `None` for any other type.
+pub(crate) fn key_ty(ty: &Ty) -> Option<burdin_tir::IntTy> {
+    match ty {
+        Ty::Int(i) => Some(*i),
+        Ty::Range(inner, _) | Ty::RangeIter(inner, _) => key_ty(inner),
+        _ => None,
+    }
+}
+
+/// Maps an integer carrier to its order key, or a key back to the carrier: `IntTy::key` is its own inverse. A range
+/// iterator keeps its bounds as keys, so `u128` values above `i128::MAX` compare in order (`spec/int128.md`, I128-8).
+pub(crate) fn to_key(ity: Option<burdin_tir::IntTy>, v: i128) -> i128 {
+    ity.map_or(v, |t| t.key(v))
 }
 
 pub(crate) fn range_bounds(v: &Value) -> (i128, i128) {

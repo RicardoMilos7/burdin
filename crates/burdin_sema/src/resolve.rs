@@ -461,9 +461,13 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
 /// Whether a type has the same representation in Burdin and in C: integers, floats, and raw pointers. A Burdin
 /// `bool` is a one-bit value, while C `_Bool` is a one-byte integer, so it is passed as `u8` instead. Aggregates
 /// cross the C ABI through `CPtr<T>` only: the platform by-value ABI coercions (packing a small struct into a
-/// register, `sret`, and so on) are not implemented (issues #73 and #490).
+/// register, `sret`, and so on) are not implemented (issues #73 and #490). A 128-bit integer does not cross either: C
+/// has no 128-bit integer type that every platform declares (`spec/int128.md`, I128-9).
 pub(crate) fn is_c_abi_value(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::CPtr(_) | Ty::Unit | Ty::Never | Ty::Error)
+    match ty {
+        Ty::Int(i) => i.bits() <= 64,
+        _ => matches!(ty, Ty::Float(_) | Ty::CPtr(_) | Ty::Unit | Ty::Never | Ty::Error),
+    }
 }
 
 /// The E0162 text for a type that cannot cross the C ABI.
@@ -472,6 +476,9 @@ pub(crate) fn c_abi_rejection(ty: &Ty, direction: &str) -> String {
         Ty::Bool => {
             format!("`bool` cannot be {direction}; C `_Bool` is a one-byte integer, so declare it `u8` (0 or 1)")
         }
+        Ty::Int(_) => format!(
+            "`{ty}` cannot be {direction}; C has no 128-bit integer type that every platform declares, so pass it through `CPtr<{ty}>`"
+        ),
         Ty::Struct(_) | Ty::Enum(_) | Ty::Tuple(_) | Ty::Array(..) => {
             format!("`{ty}` cannot be {direction} by value; an aggregate crosses the C ABI through `CPtr<{ty}>`")
         }

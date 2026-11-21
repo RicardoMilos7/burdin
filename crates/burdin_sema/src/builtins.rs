@@ -398,11 +398,13 @@ pub(crate) fn int_ty(name: &str) -> Option<IntTy> {
         "i16" => IntTy::I16,
         "i32" => IntTy::I32,
         "i64" => IntTy::I64,
+        "i128" => IntTy::I128,
         "isize" => IntTy::Isize,
         "u8" => IntTy::U8,
         "u16" => IntTy::U16,
         "u32" => IntTy::U32,
         "u64" => IntTy::U64,
+        "u128" => IntTy::U128,
         "usize" => IntTy::Usize,
         _ => return None,
     })

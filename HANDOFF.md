@@ -4,6 +4,23 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**128-bit integers (issue #273, 2026-11-21).** `i128` and `u128` are implemented; the rules are `spec/int128.md`
+(I128-1 to I128-13), and each rule names the tests that witness it. The representation: every integer is carried as an
+`i128` in the typed tree and comptime; a `u128` above `i128::MAX` is its bit pattern, and ordering uses
+`IntTy::key` (the top bit flipped). Division and remainder use the runtime's own routine (`sdivrem128`/`udivrem128`), so
+no `__divti3` is linked (MSVC has none). Overflow checks are the existing debug-only checks; `MIN / -1` wraps in release.
+Comptime and run-time ranges and range iterators compare in key space (`to_key`/`key_ty` in
+`crates/burdin_comptime/src/interp.rs`), so a `u128` range straddling `2^127` runs in order and stops at the top of the type.
+Decisions: a literal above `u128::MAX` is a lexer E0008, so its file is not type checked (CK4) and the other diagnostics
+of that file are suppressed; I left that behavior as it is. `-1` for an unsigned type stays E0003. Not covered (no test
+claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit operations, and the high-half hashing
+(not observable from program output). Verification: `tests/int128/` (21 programs, all passing in debug and release);
+`tests/check_bindgen.py` (81 checks, including the E0263 export case and the `__int128` skip); the full suite in debug
+(1135 passed, 0 failed, 4 skipped) and release (1122 passed, 0 failed, 17 skipped); `cargo test --workspace` (898 passed,
+0 failed); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `check_tests.py`, `check_ci.py`,
+`gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
+earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
+
 **Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
 that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`
 (`spec/check.md`, CK12; `spec/diagnostics.md`, DG6; `docs/diagnostic.schema.json`). It replaces the build's `summary`

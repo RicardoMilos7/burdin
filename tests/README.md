@@ -766,8 +766,9 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   are not implemented until stage 1 (issue #481). `m09_stdlib/option_result_basics.bd`.
 - **Only `wrapping_*` and `checked_*` exist.** The design also lists `saturating_*` and `overflowing_*`; the stage 0
   subset narrows the set. `m02_basics/casts_and_numeric_methods.bd`.
-- **No `i128`/`u128` (deviation).** Stage 0 stops at `i64`/`u64`, as the stage 0 subset says; the design lists all of
-  them. No test uses the wider types.
+- **128-bit integers arrived after stage 0 (issue #273).** Stage 0 stops at `i64`/`u64`, as the stage 0 subset says.
+  `i128` and `u128` are now implemented; the rules are in `spec/int128.md` (I128-1 to I128-13), and `tests/int128/`
+  and the two checks in `tests/check_bindgen.py` witness them.
 - **File I/O is binary-safe.** No newline translation on Windows and no UTF-8 normalization. Decision 10;
   `m09_stdlib/file_io.bd`, `file_io_binary.bd`.
 - **`env.args()` puts the program name first.** The design names `std.env.args()` but not its contents. Decision 7;

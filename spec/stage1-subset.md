@@ -323,7 +323,7 @@ easier with them:
 - `burdin doc`, `add`, the language server, the lockfile, multiple-package workspaces, and the package registry.
   (`burdin fmt` and `lint` have landed; `burdin bindgen` is `spec/bindgen.md`.)
 - Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend,
-  fallible allocation, and `i128`/`u128`.
+  fallible allocation. (`i128`/`u128` landed with issue #273; `spec/int128.md`.)
 - Self-hosting. The compiler stays in Rust (decided).
 
 ## Later stages (roadmap)
@@ -387,7 +387,7 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 
 ### When wanted
 
-`i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
+`try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
 fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 

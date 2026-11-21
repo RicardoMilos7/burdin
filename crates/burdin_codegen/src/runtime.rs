@@ -285,6 +285,14 @@ pub(crate) struct Runtime<'ctx> {
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
     pub i64_to_string: FunctionValue<'ctx>,
+    /// `(v: i128, out: *String)` and `(v: u128, out: *String)`: the decimal text of a 128-bit integer
+    /// (`spec/int128.md`, I128-5).
+    pub i128_to_string: FunctionValue<'ctx>,
+    pub u128_to_string: FunctionValue<'ctx>,
+    /// `(n: i128, d: i128, rem: *i128) -> i128` and the unsigned `(n: u128, d: u128, rem: *u128) -> u128`: the
+    /// quotient, with the remainder stored to `rem`. The divisor is not 0 (the caller checks it).
+    pub sdivrem128: FunctionValue<'ctx>,
+    pub udivrem128: FunctionValue<'ctx>,
     /// `(v: f64, prec: i32, single: bool, out: *String)`: the text of a float, fixed with `prec` digits after the
     /// point, or (`prec < 0`) the shortest scientific text that reads back as the same number.
     pub f64_to_string: FunctionValue<'ctx>,
@@ -1308,6 +1316,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         wsa.set_linkage(Linkage::Internal);
         let clock = self.clock()?;
         self.net_functions(string_push_str, string_push_char)?;
+        let udivrem128 = self.divrem128(false)?;
+        let sdivrem128 = self.divrem128(true)?;
+        let i128_to_string = self.int128_to_string(&h, udivrem128, true)?;
+        let u128_to_string = self.int128_to_string(&h, udivrem128, false)?;
         Ok(Runtime {
             print: self.print(&h)?,
             flush: self.module.get_function("burdin_rt_flush_locked").expect("the locked flush exists"),
@@ -1329,6 +1341,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             untrack,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
+            i128_to_string,
+            u128_to_string,
+            sdivrem128,
+            udivrem128,
             f64_to_string: self.f64_to_string(&h)?,
             u64_to_string: self.int_to_string(&h, false)?,
             char_to_string: self.char_to_string(&h)?,
@@ -3505,6 +3521,182 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         }
         let len = self.distance(start, end)?;
         self.call(h.alloc_string, &[Self::ptr_param(f, 1).into(), start.into(), len.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `divrem(n, d, rem) -> quotient` for 128-bit integers (`signed` for `i128`, else `u128`): the quotient, with
+    /// the remainder stored to `rem`. The division is shift and subtract, one quotient bit at a time, so the module
+    /// needs no `__udivti3` from a compiler runtime, which the MSVC link does not have (`spec/int128.md`, I128-3).
+    fn divrem128(&mut self, signed: bool) -> GenResult<FunctionValue<'ctx>> {
+        let unsigned = self.divrem128_unsigned()?;
+        if !signed {
+            return Ok(unsigned);
+        }
+        // The signed routine divides the magnitudes. The quotient is negative when the signs differ, and the
+        // remainder takes the sign of the dividend.
+        let i128_ty = self.cx.i128_type();
+        let f = self.function(
+            "burdin_rt_sdivrem128",
+            i128_ty.fn_type(&[i128_ty.into(), i128_ty.into(), self.ptr_ty.into()], false),
+        );
+        let (n, d, rem) = (Self::int_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let zero = i128_ty.const_zero();
+        let neg_n = self.b.build_int_compare(IntPredicate::SLT, n, zero, "").map_err(llvm_err)?;
+        let neg_d = self.b.build_int_compare(IntPredicate::SLT, d, zero, "").map_err(llvm_err)?;
+        let minus_n = self.b.build_int_sub(zero, n, "").map_err(llvm_err)?;
+        let minus_d = self.b.build_int_sub(zero, d, "").map_err(llvm_err)?;
+        let abs_n = self.b.build_select(neg_n, minus_n, n, "").map_err(llvm_err)?.into_int_value();
+        let abs_d = self.b.build_select(neg_d, minus_d, d, "").map_err(llvm_err)?.into_int_value();
+        let rem_slot = self.b.build_alloca(i128_ty, "rem").map_err(llvm_err)?;
+        let q = self
+            .call(unsigned, &[abs_n.into(), abs_d.into(), rem_slot.into()])?
+            .expect("divrem returns a quotient")
+            .into_int_value();
+        let r = self.b.build_load(i128_ty, rem_slot, "").map_err(llvm_err)?.into_int_value();
+        let signs_differ = self.b.build_xor(neg_n, neg_d, "").map_err(llvm_err)?;
+        let minus_q = self.b.build_int_sub(zero, q, "").map_err(llvm_err)?;
+        let quotient = self.b.build_select(signs_differ, minus_q, q, "").map_err(llvm_err)?;
+        let minus_r = self.b.build_int_sub(zero, r, "").map_err(llvm_err)?;
+        let remainder = self.b.build_select(neg_n, minus_r, r, "").map_err(llvm_err)?;
+        self.b.build_store(rem, remainder).map_err(llvm_err)?;
+        self.b.build_return(Some(&quotient)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The unsigned routine behind `divrem128`: `udivrem(n, d, rem) -> n / d`, with `n % d` stored to `rem`.
+    fn divrem128_unsigned(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i128_ty = self.cx.i128_type();
+        let i64_ty = self.i64();
+        let i32_ty = self.i32();
+        let f = self.function(
+            "burdin_rt_udivrem128",
+            i128_ty.fn_type(&[i128_ty.into(), i128_ty.into(), self.ptr_ty.into()], false),
+        );
+        let (n, d, rem) = (Self::int_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let small = self.block(f, "small");
+        let wide = self.block(f, "wide");
+        let lp = self.block(f, "bit");
+        let done = self.block(f, "done");
+        // Both operands below 2^64: one 64-bit division does it.
+        let high = self.b.build_or(n, d, "").map_err(llvm_err)?;
+        let high = self.b.build_right_shift(high, i128_ty.const_int(64, false), false, "").map_err(llvm_err)?;
+        let fits = self.b.build_int_compare(IntPredicate::EQ, high, i128_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(fits, small, wide).map_err(llvm_err)?;
+
+        self.b.position_at_end(small);
+        let n64 = self.b.build_int_truncate(n, i64_ty, "").map_err(llvm_err)?;
+        let d64 = self.b.build_int_truncate(d, i64_ty, "").map_err(llvm_err)?;
+        let q64 = self.b.build_int_unsigned_div(n64, d64, "").map_err(llvm_err)?;
+        let r64 = self.b.build_int_unsigned_rem(n64, d64, "").map_err(llvm_err)?;
+        let q_small = self.b.build_int_z_extend(q64, i128_ty, "").map_err(llvm_err)?;
+        let r_small = self.b.build_int_z_extend(r64, i128_ty, "").map_err(llvm_err)?;
+        self.b.build_store(rem, r_small).map_err(llvm_err)?;
+        self.b.build_return(Some(&q_small)).map_err(llvm_err)?;
+
+        // The long division, from the top bit of `n` down. The next bit joins the remainder, and the quotient
+        // gets a 1 bit when the remainder reaches `d`. The shifted remainder can need 129 bits: the bit that the
+        // shift loses is kept as `carry`, and then the wrapped subtraction is still the exact result, because
+        // the true result is below `d`.
+        self.b.position_at_end(wide);
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let left = self.b.build_phi(i32_ty, "left").map_err(llvm_err)?;
+        let q = self.b.build_phi(i128_ty, "q").map_err(llvm_err)?;
+        let r = self.b.build_phi(i128_ty, "r").map_err(llvm_err)?;
+        let left_v = left.as_basic_value().into_int_value();
+        let q_v = q.as_basic_value().into_int_value();
+        let r_v = r.as_basic_value().into_int_value();
+        let bit_index = self.b.build_int_sub(left_v, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let index = self.b.build_int_z_extend(bit_index, i128_ty, "").map_err(llvm_err)?;
+        let shifted_n = self.b.build_right_shift(n, index, false, "").map_err(llvm_err)?;
+        let bit = self.b.build_and(shifted_n, i128_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let carry = self.b.build_right_shift(r_v, i128_ty.const_int(127, false), false, "").map_err(llvm_err)?;
+        let carried = self.b.build_int_compare(IntPredicate::NE, carry, i128_ty.const_zero(), "").map_err(llvm_err)?;
+        let r_shifted = self.b.build_left_shift(r_v, i128_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let r_next = self.b.build_or(r_shifted, bit, "").map_err(llvm_err)?;
+        let reaches = self.b.build_int_compare(IntPredicate::UGE, r_next, d, "").map_err(llvm_err)?;
+        let ge = self.b.build_or(carried, reaches, "").map_err(llvm_err)?;
+        let minus_d = self.b.build_int_sub(r_next, d, "").map_err(llvm_err)?;
+        let r_out = self.b.build_select(ge, minus_d, r_next, "").map_err(llvm_err)?.into_int_value();
+        let bit_value = self.b.build_left_shift(i128_ty.const_int(1, false), index, "").map_err(llvm_err)?;
+        let added = self.b.build_select(ge, bit_value, i128_ty.const_zero(), "").map_err(llvm_err)?.into_int_value();
+        let q_out = self.b.build_or(q_v, added, "").map_err(llvm_err)?;
+        let more = self.b.build_int_compare(IntPredicate::NE, bit_index, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, lp, done).map_err(llvm_err)?;
+        left.add_incoming(&[(&i32_ty.const_int(128, false), wide), (&bit_index, lp)]);
+        q.add_incoming(&[(&i128_ty.const_zero(), wide), (&q_out, lp)]);
+        r.add_incoming(&[(&i128_ty.const_zero(), wide), (&r_out, lp)]);
+
+        self.b.position_at_end(done);
+        self.b.build_store(rem, r_out).map_err(llvm_err)?;
+        self.b.build_return(Some(&q_out)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `int128_to_string(v, out)` for `i128` (`signed`) or `u128`: the decimal digits, written backwards into a
+    /// 40-byte buffer (39 digits and a sign), then copied into a fresh `String`.
+    fn int128_to_string(
+        &mut self,
+        h: &Helpers<'ctx>,
+        udivrem: FunctionValue<'ctx>,
+        signed: bool,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let i128_ty = self.cx.i128_type();
+        let void = self.cx.void_type();
+        let name = if signed { "burdin_rt_i128_to_string" } else { "burdin_rt_u128_to_string" };
+        let f = self.function(name, void.fn_type(&[i128_ty.into(), self.ptr_ty.into()], false));
+        let buf = self.buffer(40)?;
+        let end = self.offset(buf, self.usize_ty.const_int(40, false))?;
+        let v = Self::int_param(f, 0);
+        let zero = i128_ty.const_zero();
+        let (neg, magnitude) = if signed {
+            let neg = self.b.build_int_compare(IntPredicate::SLT, v, zero, "").map_err(llvm_err)?;
+            let minus_v = self.b.build_int_sub(zero, v, "").map_err(llvm_err)?;
+            (neg, self.b.build_select(neg, minus_v, v, "").map_err(llvm_err)?.into_int_value())
+        } else {
+            (self.cx.bool_type().const_zero(), v)
+        };
+        let rem_slot = self.b.build_alloca(i128_ty, "rem").map_err(llvm_err)?;
+        let entry = self.b.get_insert_block().expect("positioned");
+        let lp = self.block(f, "digit");
+        let sign_store = self.block(f, "sign");
+        let finish = self.block(f, "finish");
+        let copy = self.block(f, "copy");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(lp);
+        let cur = self.b.build_phi(i128_ty, "cur").map_err(llvm_err)?;
+        let at = self.b.build_phi(self.ptr_ty, "at").map_err(llvm_err)?;
+        let cur_v = cur.as_basic_value().into_int_value();
+        let quotient = self
+            .call(udivrem, &[cur_v.into(), i128_ty.const_int(10, false).into(), rem_slot.into()])?
+            .expect("divrem returns a quotient")
+            .into_int_value();
+        let digit = self.b.build_load(i128_ty, rem_slot, "").map_err(llvm_err)?.into_int_value();
+        let digit = self.b.build_int_truncate(digit, self.i8(), "").map_err(llvm_err)?;
+        let ch = self.b.build_int_add(digit, self.i8().const_int(u64::from(b'0'), false), "").map_err(llvm_err)?;
+        let slot = self.offset(at.as_basic_value().into_pointer_value(), self.usize_ty.const_all_ones())?;
+        self.b.build_store(slot, ch).map_err(llvm_err)?;
+        let more = self.b.build_int_compare(IntPredicate::NE, quotient, zero, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, lp, finish).map_err(llvm_err)?;
+        cur.add_incoming(&[(&magnitude, entry), (&quotient, lp)]);
+        at.add_incoming(&[(&end, entry), (&slot, lp)]);
+
+        // `slot` is the most significant digit. There is room for the sign before it: 39 digits at most.
+        self.b.position_at_end(finish);
+        let sign_at = self.offset(slot, self.usize_ty.const_all_ones())?;
+        self.b.build_conditional_branch(neg, sign_store, copy).map_err(llvm_err)?;
+        self.b.position_at_end(sign_store);
+        self.b.build_store(sign_at, self.i8().const_int(u64::from(b'-'), false)).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let start = self.b.build_phi(self.ptr_ty, "start").map_err(llvm_err)?;
+        start.add_incoming(&[(&slot, finish), (&sign_at, sign_store)]);
+        let start_v = start.as_basic_value().into_pointer_value();
+        let len = self.distance(start_v, end)?;
+        self.call(h.alloc_string, &[Self::ptr_param(f, 1).into(), start_v.into(), len.into()])?;
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }

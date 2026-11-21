@@ -115,8 +115,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Unit => None,
             K::Bool(b) => Some(self.cx.bool_type().const_int(u64::from(*b), false).into()),
             K::Int(v) => match &e.ty {
-                // Truncating to 64 bits keeps the two's complement bits of a negative value.
-                Ty::Int(i) => Some(self.int_ty(*i).const_int(*v as u64, false).into()),
+                Ty::Int(i) => Some(super::types::int_const(self.int_ty(*i), *v).into()),
                 _ => None,
             },
             K::Float(v) => match &e.ty {

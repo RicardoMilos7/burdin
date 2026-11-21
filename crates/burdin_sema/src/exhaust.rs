@@ -147,28 +147,39 @@ fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &TypeDefs) -> Option<Vec<Ctor>>
             (0..n).all(|i| has(Ctor::Variant(i))).then(|| (0..n).map(Ctor::Variant).collect())
         }
         Ty::Int(_) | Ty::Char => {
+            // The sweep works on keys, which sort like the values (`IntTy::key`: `u128` bit patterns are not in
+            // order as they are). A segment starts at the domain's start, at a range's start, or just after a
+            // range's end, and it runs to the next start or to the domain's end. Keys are never added to past
+            // the domain's end, so the top of `i128` needs no wider arithmetic.
+            let key = |v: i128| match ty {
+                Ty::Int(i) => i.key(v),
+                _ => v,
+            };
             let (min, max) = match ty {
-                Ty::Int(i) => (i.min(), i.max()),
+                Ty::Int(i) => (i.key(i.min()), i.key(i.max())),
                 _ => (0, 0x10FFFF),
             };
             let ranges: Vec<(i128, i128)> = heads
                 .iter()
-                .filter_map(|c| if let Ctor::Range(lo, hi) = c { Some((*lo, *hi)) } else { None })
+                .filter_map(|c| if let Ctor::Range(lo, hi) = c { Some((key(*lo), key(*hi))) } else { None })
                 .collect();
-            let mut points = vec![min, max + 1];
+            let mut starts = vec![min];
             for (lo, hi) in &ranges {
-                points.push((*lo).clamp(min, max + 1));
-                points.push((hi + 1).clamp(min, max + 1));
+                starts.push((*lo).clamp(min, max));
+                if *hi < max {
+                    starts.push(hi + 1);
+                }
             }
-            points.sort_unstable();
-            points.dedup();
+            starts.sort_unstable();
+            starts.dedup();
             let mut segments = Vec::new();
-            for w in points.windows(2) {
-                let (lo, hi) = (w[0], w[1] - 1);
+            for (k, &lo) in starts.iter().enumerate() {
+                let hi = starts.get(k + 1).map_or(max, |next| next - 1);
                 if !ranges.iter().any(|(a, b)| *a <= lo && hi <= *b) {
                     return None;
                 }
-                segments.push(Ctor::Range(lo, hi));
+                // `key` is its own inverse, so the segment is in the value space again.
+                segments.push(Ctor::Range(key(lo), key(hi)));
             }
             Some(segments)
         }

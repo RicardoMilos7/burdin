@@ -66,11 +66,13 @@ pub enum IntTy {
     I16,
     I32,
     I64,
+    I128,
     Isize,
     U8,
     U16,
     U32,
     U64,
+    U128,
     Usize,
 }
 
@@ -79,7 +81,7 @@ pub const POINTER_BITS: u32 = 64;
 
 impl IntTy {
     pub fn signed(self) -> bool {
-        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::Isize)
+        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::I128 | IntTy::Isize)
     }
 
     pub fn bits(self) -> u32 {
@@ -88,16 +90,37 @@ impl IntTy {
             IntTy::I16 | IntTy::U16 => 16,
             IntTy::I32 | IntTy::U32 => 32,
             IntTy::I64 | IntTy::U64 => 64,
+            IntTy::I128 | IntTy::U128 => 128,
             IntTy::Isize | IntTy::Usize => POINTER_BITS,
         }
     }
 
+    /// The least value of the type, as a value (`spec/int128.md`, I128-1). `u128` values above `i128::MAX` are
+    /// carried as their two's complement bit pattern, so `u128`'s least value is 0 and its greatest is `-1`.
     pub fn min(self) -> i128 {
-        if self.signed() { -(1i128 << (self.bits() - 1)) } else { 0 }
+        match self {
+            IntTy::I128 => i128::MIN,
+            _ if self.signed() => -(1i128 << (self.bits() - 1)),
+            _ => 0,
+        }
     }
 
+    /// The greatest value of the type. For `u128` this is the bit pattern of `u128::MAX`, which is `-1` (see
+    /// [`IntTy::min`]); callers that compare values of `u128` use [`IntTy::key`].
     pub fn max(self) -> i128 {
-        if self.signed() { (1i128 << (self.bits() - 1)) - 1 } else { (1i128 << self.bits()) - 1 }
+        match self {
+            IntTy::I128 => i128::MAX,
+            IntTy::U128 => -1,
+            _ if self.signed() => (1i128 << (self.bits() - 1)) - 1,
+            _ => (1i128 << self.bits()) - 1,
+        }
+    }
+
+    /// A value's position in the type's order, as an `i128` that sorts the same way. It is the value itself for
+    /// every type except `u128`, whose bit patterns sort wrongly as signed numbers: flipping the sign bit maps
+    /// `0..=u128::MAX` onto `i128::MIN..=i128::MAX` in order. The mapping is its own inverse.
+    pub fn key(self, v: i128) -> i128 {
+        if self == IntTy::U128 { v ^ i128::MIN } else { v }
     }
 
     pub fn name(self) -> &'static str {
@@ -106,11 +129,13 @@ impl IntTy {
             IntTy::I16 => "i16",
             IntTy::I32 => "i32",
             IntTy::I64 => "i64",
+            IntTy::I128 => "i128",
             IntTy::Isize => "isize",
             IntTy::U8 => "u8",
             IntTy::U16 => "u16",
             IntTy::U32 => "u32",
             IntTy::U64 => "u64",
+            IntTy::U128 => "u128",
             IntTy::Usize => "usize",
         }
     }
@@ -428,6 +453,18 @@ mod tests {
         assert_eq!(IntTy::Isize.bits(), POINTER_BITS);
         assert_eq!(IntTy::Usize.bits(), 64);
         assert_eq!(IntTy::Usize.max(), u64::MAX as i128);
+        // The 128-bit types: `u128::MAX` is the bit pattern `-1`, and `key` keeps the order of the values.
+        assert_eq!(IntTy::I128.bits(), 128);
+        assert_eq!(IntTy::I128.min(), i128::MIN);
+        assert_eq!(IntTy::I128.max(), i128::MAX);
+        assert_eq!(IntTy::U128.min(), 0);
+        assert_eq!(IntTy::U128.max(), -1);
+        assert_eq!(IntTy::U128.key(IntTy::U128.min()), i128::MIN);
+        assert_eq!(IntTy::U128.key(IntTy::U128.max()), i128::MAX);
+        assert!(IntTy::U128.key(1) < IntTy::U128.key(-1));
+        assert_eq!(IntTy::U128.key(IntTy::U128.key(12345)), 12345);
+        assert_eq!(IntTy::I128.key(-7), -7);
+        assert_eq!(IntTy::I128.name(), "i128");
         assert!(IntTy::Isize.signed());
         assert!(!IntTy::Usize.signed());
         assert_eq!(IntTy::I32.name(), "i32");

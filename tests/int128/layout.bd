@@ -1,0 +1,21 @@
+//@ run
+//> 16
+//> 16
+//> 48
+//> 16
+
+// `i128` and `u128` are 16 bytes with 16-byte alignment, and a `repr(C)` struct that holds one follows the C layout
+// (spec/int128.md, I128-1).
+
+struct Wide repr(C) {
+    tag: u8
+    value: u128
+    small: i64
+}
+
+fn main() {
+    println(i128.size().to_string())
+    println(u128.align().to_string())
+    println(Wide.size().to_string())
+    println(Wide.align().to_string())
+}

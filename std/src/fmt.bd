@@ -319,6 +319,86 @@ priv fn __fmt_u64(v: u64, mut f: Formatter) {
     __emit_int(false, v, mut f)
 }
 
+// The 128-bit integers (spec/int128.md, I128-5). They have their own digits, because the 64-bit routines take a
+// 64-bit magnitude; the sign and the radix rules are the same.
+
+priv fn __int_digits128(mag: u128, radix: i32): String {
+    let upper = radix == 17
+    let mut base: u128 = 10
+    if radix == 17 {
+        base = 16
+    } else {
+        base = radix as u128
+    }
+    let mut reversed: List<char> = List<char>.new()
+    let mut rest = mag
+    if rest == 0 {
+        reversed.push('0')
+    }
+    while rest > 0 {
+        let d = (rest % base) as u8
+        rest = rest / base
+        if d < 10 {
+            reversed.push((48 + d) as char)
+        } else if upper {
+            reversed.push((55 + d) as char)
+        } else {
+            reversed.push((87 + d) as char)
+        }
+    }
+    let mut out = String.new()
+    let mut i = reversed.len()
+    while i > 0 {
+        i = i - 1
+        out.push(reversed[i])
+    }
+    out
+}
+
+priv fn __emit_int128(negative: bool, mag: u128, mut f: Formatter) {
+    let body = __int_digits128(mag, f.radix)
+    let mut sign = ""
+    if negative {
+        sign = "-"
+    } else if f.plus {
+        sign = "+"
+    }
+    let mut prefix = ""
+    if f.alt {
+        if f.radix == 16 || f.radix == 17 {
+            prefix = "0x"
+        } else if f.radix == 2 {
+            prefix = "0b"
+        } else if f.radix == 8 {
+            prefix = "0o"
+        }
+    }
+    f.pad_number(sign, prefix, body)
+}
+
+/// A signed 128-bit integer. In a radix other than ten a negative value shows its two's complement in `bits` bits.
+priv fn __fmt_i128(v: i128, bits: i32, mut f: Formatter) {
+    if f.radix == 10 {
+        let negative = v < 0
+        let mut mag: u128 = v as u128
+        if negative {
+            mag = (0 - (v + 1)) as u128 + 1
+        }
+        __emit_int128(negative, mag, mut f)
+    } else {
+        let mut mag = v as u128
+        if bits < 128 {
+            let one: u128 = 1
+            mag = mag & ((one << (bits as u128)) - 1)
+        }
+        __emit_int128(false, mag, mut f)
+    }
+}
+
+priv fn __fmt_u128(v: u128, mut f: Formatter) {
+    __emit_int128(false, v, mut f)
+}
+
 // ----- floats -----------------------------------------------------------------------------------------------
 
 /// The digits of a finite, non-negative float in positional notation: the shortest text that reads back as the
