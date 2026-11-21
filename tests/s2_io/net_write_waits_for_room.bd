@@ -1,0 +1,42 @@
+//@ run
+//> wrote everything
+//> peer read 4194304 bytes
+//> done
+
+// A write with no timeout waits while the peer shuts its write side and does not read. When the peer finally reads,
+// the waiting write must wake and finish, and every byte must arrive. The payload is larger than the socket buffers, so
+// the write has to wait (spec/io.md, IO5; issue #867). On Windows the wait also covers the hang-up that `WSAPoll`
+// reports for a half-closed peer, which the write must pause over rather than spin on.
+
+fn main() {
+    task.set_workers(2)
+    let mut data = List<u8>.new()
+    let mut i: usize = 0
+    while i < 4194304 {
+        data.push(7)
+        i = i + 1
+    }
+
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let mut target = "127.0.0.1:".to_string()
+    target.push_str(port.to_string().as_str())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (mut conn, _) = listener.accept().unwrap()
+            conn.shutdown_write().unwrap()
+            time.sleep(Duration.from_millis(300))
+            let mut got = List<u8>.new()
+            let n = conn.read_to_end(mut got).unwrap()
+            println("peer read {} bytes", n)
+            conn.close().unwrap()
+        })
+        s.spawn(|| {
+            let mut client = net.TcpStream.connect(target.clone()).unwrap()
+            client.write_all(data[0..data.len()]).unwrap()
+            println("wrote everything")
+            client.close().unwrap()
+        })
+    })
+    println("done")
+}
