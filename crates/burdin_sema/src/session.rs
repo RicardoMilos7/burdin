@@ -167,6 +167,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) fuzzes: Vec<tir::FuzzEntry>,
     /// Record the source locations of dynamic-error conversions (a debug build; `spec/errors.md`, ERR7).
     pub(crate) traces: bool,
+    /// Whether the generic-instance limit was already reported, so the passes after it do not repeat the error.
+    pub(crate) instance_limit_reported: bool,
     /// Where the paths, lines, and columns of trace frames come from.
     pub(crate) sources: &'t SourceMap,
 }
@@ -249,6 +251,7 @@ impl<'t> Sema<'t> {
             benches: Vec::new(),
             fuzzes: Vec::new(),
             traces,
+            instance_limit_reported: false,
             sources,
         }
     }
@@ -319,8 +322,12 @@ impl<'t> Sema<'t> {
             }
         };
         diags.absorb(alloc_diags);
-        diags.absorb(sig_diags);
-        diags.absorb(body_diags);
+        // At the instance limit the instances that were never allocated are `Error` types, and the errors the
+        // passes found follow from that; the limit is the one error worth reporting.
+        if !self.instance_limit_reported {
+            diags.absorb(sig_diags);
+            diags.absorb(body_diags);
+        }
         Some(checked)
     }
 
