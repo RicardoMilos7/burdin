@@ -1437,6 +1437,7 @@ impl FnCx<'_> {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{recv_ty}`", name.name));
             return self.args_then_error(args, span);
         };
+        let ret = self.fallible_method_ret(&m, ret);
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
             // A mutating method writes through its receiver. The receiver is a mutable place, or a slice view
             // over one: `xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`
@@ -1845,16 +1846,23 @@ impl FnCx<'_> {
 
     /// `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n`
     /// elements. The allocator-free form exists only for the default layout, like `new` (`spec/allocators.md`,
-    /// AL4).
+    /// AL4). The `try_` forms return `Result<List<T>, AllocError>` instead of panicking (AL11).
     fn list_with_capacity(
         &mut self,
         elem: &Ty,
         written: &burdin_tir::Alloc,
         with_alloc: bool,
+        fallible: bool,
         args: &[ast::Arg],
         span: Span,
     ) -> tir::Expr {
-        let name = if with_alloc { "List.with_capacity_in" } else { "List.with_capacity" };
+        let name = match (with_alloc, fallible) {
+            (false, false) => "List.with_capacity",
+            (true, false) => "List.with_capacity_in",
+            (false, true) => "List.try_with_capacity",
+            (true, true) => "List.try_with_capacity_in",
+        };
+        let in_form = if fallible { "List.try_with_capacity_in(n, alloc)" } else { "List.with_capacity_in(n, alloc)" };
         self.reject_named_args(name, args);
         let wanted = if with_alloc { 2 } else { 1 };
         if args.len() != wanted {
@@ -1876,14 +1884,18 @@ impl FnCx<'_> {
                     Code::MISSING_ALLOCATOR,
                     span,
                     format!(
-                        "a `{}` stores an allocator, so it is made with `List.with_capacity_in(n, alloc)`",
+                        "a `{}` stores an allocator, so it is made with `{in_form}`",
                         Ty::List(Box::new(elem.clone()), written.clone())
                     ),
                 );
                 return error_expr(span);
             }
-            let ty = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
-            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), ty, span);
+            let list = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
+            if fallible {
+                let ty = self.alloc_result_ty(list);
+                return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacity, vec![size]), ty, span);
+            }
+            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), list, span);
         }
         let value = self.expr(&args[1].expr, None);
         if value.ty == Ty::Error {
@@ -1904,8 +1916,30 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         }
-        let ty = Ty::List(Box::new(elem.clone()), alloc);
-        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), ty, span)
+        let list = Ty::List(Box::new(elem.clone()), alloc);
+        if fallible {
+            let ty = self.alloc_result_ty(list);
+            return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacityIn, vec![size, value]), ty, span);
+        }
+        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), list, span)
+    }
+
+    /// `Result<ok, AllocError>`: the type a fallible allocation returns (`spec/allocators.md`, AL11). `AllocError`
+    /// is the standard library's error enum; without it the error is `Ty::Error`, which suppresses later errors.
+    pub(super) fn alloc_result_ty(&self, ok: Ty) -> Ty {
+        Ty::Result(Box::new(ok), Box::new(self.globals.alloc_error_ty.clone().unwrap_or(Ty::Error)))
+    }
+
+    /// The type of a fallible method with the standard library's `AllocError` in place of the placeholder the
+    /// method table gives (`builtins::alloc_result_placeholder`). Every other method keeps its type.
+    fn fallible_method_ret(&self, m: &Method, ret: Ty) -> Ty {
+        match (m, ret) {
+            (
+                Method::ListTryReserve | Method::ListTryReserveExact | Method::MapTryReserve | Method::StringTryReserve,
+                Ty::Result(ok, _),
+            ) => self.alloc_result_ty(*ok),
+            (_, ret) => ret,
+        }
     }
 
     /// `Map<K, V>.new_in(alloc)`.
@@ -2166,7 +2200,13 @@ impl FnCx<'_> {
                 let elem = (**elem).clone();
                 let written = written_alloc.clone();
                 let with_alloc = name.name == "with_capacity_in";
-                return self.list_with_capacity(&elem, &written, with_alloc, args, span);
+                return self.list_with_capacity(&elem, &written, with_alloc, false, args, span);
+            }
+            if name.name == "try_with_capacity" || name.name == "try_with_capacity_in" {
+                let elem = (**elem).clone();
+                let written = written_alloc.clone();
+                let with_alloc = name.name == "try_with_capacity_in";
+                return self.list_with_capacity(&elem, &written, with_alloc, true, args, span);
             }
         }
         if let Ty::Map(key, value, written_alloc) = ty {
@@ -2189,12 +2229,14 @@ impl FnCx<'_> {
                 let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
                 return self.map_new_in(&key, &value, &written, args, span);
             }
-            if name.name == "with_capacity" {
+            if name.name == "with_capacity" || name.name == "try_with_capacity" {
+                let fallible = name.name == "try_with_capacity";
+                let reserve = if fallible { "try_reserve" } else { "reserve" };
                 if !written_alloc.is_global() {
                     self.diags.error(
                         Code::MISSING_ALLOCATOR,
                         span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `reserve`"),
+                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `{reserve}`"),
                     );
                     return error_expr(span);
                 }
@@ -2202,6 +2244,10 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &params, args, None, span) else {
                     return error_expr(span);
                 };
+                if fallible {
+                    let result = self.alloc_result_ty(ty.clone());
+                    return mk(tir::ExprKind::Builtin(Builtin::MapTryWithCapacity, checked), result, span);
+                }
                 return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
             }
         }
@@ -2295,6 +2341,13 @@ impl FnCx<'_> {
                     return error_expr(span);
                 };
                 return mk(tir::ExprKind::Builtin(Builtin::StringWithCapacity, checked), sig.ret, span);
+            }
+            if name.name == "try_with_capacity" {
+                let sig = builtin_sig(Builtin::StringTryWithCapacity, self.globals);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::StringTryWithCapacity, checked), sig.ret, span);
             }
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,

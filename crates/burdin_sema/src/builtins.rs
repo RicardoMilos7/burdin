@@ -71,6 +71,8 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__alloc" => Builtin::RawAlloc,
         "__realloc" => Builtin::RawRealloc,
         "__dealloc" => Builtin::RawDealloc,
+        "__try_alloc" => Builtin::RawTryAlloc,
+        "__try_realloc" => Builtin::RawTryRealloc,
         "__view_as_text" => Builtin::ViewAsText,
         _ => {
             return RtOp::ALL
@@ -271,9 +273,15 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             Some(Ty::Enum(_)) => globals.io_error_kind_ty.clone().unwrap(),
             _ => Ty::Unit,
         },
-        Builtin::RawAlloc | Builtin::RawRealloc => Ty::CPtr(Box::new(Ty::Int(IntTy::U8))),
+        Builtin::RawAlloc | Builtin::RawRealloc | Builtin::RawTryAlloc | Builtin::RawTryRealloc => {
+            Ty::CPtr(Box::new(Ty::Int(IntTy::U8)))
+        }
         Builtin::FloatFromBits(ft) => Ty::Float(ft),
         Builtin::StringWithCapacity => Ty::String,
+        // `String.try_with_capacity(n)` (`spec/allocators.md`, AL11): the error is the standard library's `AllocError`.
+        Builtin::StringTryWithCapacity => {
+            Ty::Result(Box::new(Ty::String), Box::new(globals.alloc_error_ty.clone().unwrap_or(Ty::Error)))
+        }
         _ => Ty::Unit,
     };
     let params = match b {
@@ -330,7 +338,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         }
         Builtin::SetCurrentDirBytes => vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))],
         Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
-        Builtin::StringWithCapacity => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
+        Builtin::StringWithCapacity | Builtin::StringTryWithCapacity => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
         Builtin::FileOpen => {
@@ -364,8 +372,10 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::ReadToString | Builtin::RunCommand | Builtin::DnsLookup => vec![ParamSig::plain(Ty::Str)],
         Builtin::IoErrorKind => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
         Builtin::ProcessExit => vec![ParamSig::plain(Ty::Int(IntTy::I32))],
-        Builtin::RawAlloc => vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))],
-        Builtin::RawRealloc => vec![
+        Builtin::RawAlloc | Builtin::RawTryAlloc => {
+            vec![ParamSig::plain(Ty::Int(IntTy::Usize)), ParamSig::plain(Ty::Int(IntTy::Usize))]
+        }
+        Builtin::RawRealloc | Builtin::RawTryRealloc => vec![
             ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::U8)))),
             ParamSig::plain(Ty::Int(IntTy::Usize)),
             ParamSig::plain(Ty::Int(IntTy::Usize)),
@@ -445,6 +455,12 @@ fn lookup_key(k: &Ty) -> Ty {
     if *k == Ty::String { Ty::Str } else { k.clone() }
 }
 
+/// The result type of a fallible method before the checker knows the standard library's error type. The method
+/// table cannot reach `Globals`, so `fncx::call` replaces the error with [`Globals::alloc_error_ty`].
+pub(crate) fn alloc_result_placeholder() -> Ty {
+    Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Error))
+}
+
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
 /// receiver, and its result. `None` when `recv` has no such method.
 pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
@@ -500,6 +516,14 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("is_empty", Ty::List(_, _)) => (Method::ListIsEmpty, vec![], Ty::Bool),
         ("reserve", Ty::List(_, _)) => (Method::ListReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
         ("reserve_exact", Ty::List(_, _)) => (Method::ListReserveExact, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        // The fallible reservations return `Result<(), AllocError>`; the error type is the standard library's, which
+        // the checker fills in after the lookup (`fncx::call`, `alloc_result`).
+        ("try_reserve", Ty::List(_, _)) => {
+            (Method::ListTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+        }
+        ("try_reserve_exact", Ty::List(_, _)) => {
+            (Method::ListTryReserveExact, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+        }
         ("shrink_to_fit", Ty::List(_, _)) => (Method::ListShrinkToFit, vec![], Ty::Unit),
         ("swap", Ty::List(_, _)) => {
             (Method::ListSwap, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize))], Ty::Unit)
@@ -569,6 +593,9 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
         }
         ("reserve", Ty::Map(..)) => (Method::MapReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("try_reserve", Ty::Map(..)) => {
+            (Method::MapTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+        }
         ("shrink_to_fit", Ty::Map(..)) => (Method::MapShrinkToFit, vec![], Ty::Unit),
         // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
         ("entry", Ty::Map(k, v, alloc)) => {
@@ -652,6 +679,9 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         // The buffer operations of `String` (`spec/stdlib.md`, "String capacity and editing").
         ("capacity", Ty::String) => (Method::StringCapacity, vec![], Ty::Int(IntTy::Usize)),
         ("reserve", Ty::String) => (Method::StringReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("try_reserve", Ty::String) => {
+            (Method::StringTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+        }
         ("shrink_to_fit", Ty::String) => (Method::StringShrinkToFit, vec![], Ty::Unit),
         ("insert_str", Ty::String) => {
             (Method::StringInsertStr, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)], Ty::Unit)

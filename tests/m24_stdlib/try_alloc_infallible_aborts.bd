@@ -1,0 +1,13 @@
+//@ run-abort
+//> before
+//@ stderr: out of memory
+
+// The infallible `with_capacity` keeps its contract: when the default heap cannot give the buffer, the program
+// panics with `out of memory` (spec/allocators.md, AL11). The `try_` form is the one that reports it instead.
+
+fn main() {
+    println("before")
+    let n: usize = 1152921504606846976
+    let xs = List<i64>.with_capacity(n)
+    println(xs.len().to_string())
+}

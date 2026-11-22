@@ -682,6 +682,8 @@ fn invariant(e: &Expr, allocates: &mut bool) -> bool {
                 | Builtin::HeapNew
                 | Builtin::ListWithCapacity
                 | Builtin::MapWithCapacity
+                | Builtin::ListTryWithCapacity
+                | Builtin::MapTryWithCapacity
                 | Builtin::CStringFrom => Some(true),
                 _ => None,
             };

@@ -278,6 +278,8 @@ pub(crate) struct Globals {
     /// The standard library's error types for its own primitives (`spec/errors.md`, ERR10-ERR11).
     pub(crate) io_error_kind_ty: Option<Ty>,
     pub(crate) parse_int_error_ty: Option<Ty>,
+    /// `std.AllocError`, the error of a fallible allocation (`spec/allocators.md`, AL11).
+    pub(crate) alloc_error_ty: Option<Ty>,
     /// `std.TryFromIntError`, the error of `T.try_from(v)` for an integer `T` (spec/stdlib.md, "Conversions").
     pub(crate) try_from_int_error_ty: Option<Ty>,
     /// The generic method template each registered generic method stands for.
