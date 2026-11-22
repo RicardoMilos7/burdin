@@ -445,6 +445,14 @@ fn profile_option() -> Arg {
     )
 }
 
+/// `-O<n>`: the optimization level of one invocation, written `-O2` or `-O 2` (`spec/profiles.md`, BP4).
+fn opt_level() -> Arg {
+    Arg::new("opt-level")
+        .short('O')
+        .value_name("n")
+        .help("Optimize at level n, from 0 to 3, instead of the profile's opt-level (-O2 is -O 2)")
+}
+
 fn debug_info() -> Arg {
     Arg::new("debug-info")
         .short('g')
@@ -527,6 +535,7 @@ fn build() -> Command {
             .args([
                 release("Build with optimizations"),
                 profile_option(),
+                opt_level(),
                 debug_info(),
                 locked(),
                 features_option(),
@@ -586,6 +595,7 @@ fn run() -> Command {
             .args([
                 release("Build with optimizations"),
                 profile_option(),
+                opt_level(),
                 debug_info(),
                 locked(),
                 features_option(),
@@ -698,6 +708,7 @@ fn test() -> Command {
                 [
                     release("Build the tests with optimizations"),
                     profile_option(),
+                    opt_level(),
                     debug_info(),
                     locked(),
                     features_option(),
@@ -739,6 +750,7 @@ fn fuzz() -> Command {
                 [
                     release("Build the target with optimizations"),
                     profile_option(),
+                    opt_level(),
                     debug_info(),
                     locked(),
                     features_option(),
@@ -802,6 +814,7 @@ fn bench() -> Command {
                 [
                     release("Build with optimizations (the same as --profile release)"),
                     profile_option(),
+                    opt_level(),
                     debug_info(),
                     locked(),
                     features_option(),
@@ -826,6 +839,7 @@ fn check() -> Command {
             .args([
                 release("Check the way `burdin build --release` does"),
                 profile_option(),
+                opt_level(),
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
@@ -1203,6 +1217,7 @@ fn debug() -> Command {
                 flag("break-on-panic", "Start with a breakpoint on the panic hook, before the panic prints"),
                 release("Debug an optimized build"),
                 profile_option(),
+                opt_level(),
                 compile_jobs(),
             ])
             .after_help(

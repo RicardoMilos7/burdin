@@ -31,7 +31,8 @@ not updated and may disagree with the repository.
    generate`, the text it produces, the order of generation, and what stops it), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
-   `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
+   `Drop` on a generic type, and the built-in interfaces on one, `spec/associated-types.md` is associated types
+   (`type Name`, `type Name = Ty`, projections, monomorphization, and object safety), `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
    is the behavior of `burdin test`, `spec/bench.md` is the behavior of `burdin bench` (bench items, the harness,
    statistics, baselines, `black_box`, and the profiler hook), `spec/fuzz.md` is the behavior of `burdin fuzz`

@@ -240,6 +240,11 @@ code; do not invent them inside the implementation.
    list. Write down whether `next` consumes, mutates, or borrows the iterator and how a lazy chain stays
    second-class.
 
+   **Update (issue #393).** Associated types are now implemented as a general language feature
+   (`spec/associated-types.md`, AT1-AT6: `type Name`, `type Name = Ty`, the three projection forms, object safety).
+   The `Iterator<T>`/`Iterable<T>` protocol is unchanged: it stays generic, and `Iterator<T>` is not rewritten with
+   an `Item` associated type.
+
 3. **`any` and `impl` — settled with milestone 15.** The decision is `spec/existentials.md` AN1-AN12: the value is
    boxed, object safety is AN2, `impl Interface` in a parameter is a hidden generic, and `is`/`downcast` are the
    downcast spelling. Dynamic `Error` in milestone 16 builds on it.

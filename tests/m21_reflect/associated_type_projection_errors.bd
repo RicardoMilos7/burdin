@@ -1,0 +1,52 @@
+//@ compile-fail
+
+// A projection that no interface can answer is E0145; a qualified projection on a type with no implementation is
+// E0141; an unqualified projection two interfaces would answer is E0145 (name the interface); an interface with an
+// associated type is not object-safe, so `any` on it is E0202. See spec/associated-types.md, AT3 and AT5.
+
+interface Container {
+    type Item
+    fn get(self): Self.Item
+}
+
+interface A {
+    type Item
+    fn a(self): i32
+}
+
+interface B {
+    type Item
+    fn b(self): i32
+}
+
+struct Sq {
+    n: i32
+}
+
+// No interface implemented for `Sq` declares an associated type named `Missing`.
+fn bad(a: Sq): Sq.Missing { 0 } //~ E0145
+
+// `Sq` does not implement `Container`.
+fn none(a: Sq): <Sq as Container>.Item { 0 } //~ E0141
+
+struct S {
+    n: i32
+}
+
+S: A {
+    type Item = i32
+    fn a(self): i32 { self.n }
+}
+
+S: B {
+    type Item = bool
+    fn b(self): i32 { self.n }
+}
+
+// Both `A` and `B` give `S` an `Item`, so the shorthand cannot choose one.
+fn ambiguous(s: S): S.Item { 0 } //~ E0145
+
+// A vtable cannot answer an associated type question, so the interface is not object-safe.
+fn takes(x: any Container) {} //~ E0202
+
+fn main() {}

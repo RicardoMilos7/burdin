@@ -307,6 +307,21 @@ pub enum Ty {
     /// A type parameter of a generic function or type, only while its body is checked against its bounds. Such
     /// code never reaches code generation: instantiations replace the parameter with a concrete type.
     Param(Rc<str>),
+    /// An unresolved associated type projection, `Self.Name` or `<T as Interface>.Name`, while a signature or a
+    /// body is checked symbolically (`spec/associated-types.md`, AT3). It is opaque: resolution substitutes the
+    /// implementation's binding as soon as the self type is known, so no projection reaches the typed tree of a
+    /// concrete function or code generation.
+    Projection {
+        self_ty: Box<Ty>,
+        /// The index of the interface in the program's interface table.
+        iface: usize,
+        /// The interface's display name, such as `Container` or `Container<i32>`.
+        iface_name: Rc<str>,
+        /// The interface's type arguments. Used for identity and display only.
+        args: Vec<Ty>,
+        /// The associated type's name.
+        name: Rc<str>,
+    },
     /// A const generic argument: the value `Matrix<f64, 2, 3>` gives `R` and `C`. Values from `1 << 100` up are
     /// expressions over const parameters that sema has not folded yet, only seen while a generic body is checked
     /// (`spec/const-generics.md`). It has no run-time representation.
@@ -428,6 +443,20 @@ impl fmt::Display for Ty {
             Ty::Struct(a) | Ty::Enum(a) => f.write_str(&a.name),
             Ty::Never => f.write_str("!"),
             Ty::Param(name) => f.write_str(name),
+            Ty::Projection { self_ty, iface_name, args, name, .. } => {
+                write!(f, "<{self_ty} as {iface_name}")?;
+                if !args.is_empty() {
+                    f.write_str("<")?;
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{a}")?;
+                    }
+                    f.write_str(">")?;
+                }
+                write!(f, ">.{name}")
+            }
             Ty::Const(v) if *v >= 1 << 100 => f.write_str("_"),
             Ty::Const(v) => write!(f, "{v}"),
             Ty::Error => f.write_str("{error}"),
@@ -564,6 +593,26 @@ mod tests {
             (Ty::Enum(AdtRef { id: 0, name: "E".into(), second_class: false }), "E"),
             (Ty::Never, "!"),
             (Ty::Param("T".into()), "T"),
+            (
+                Ty::Projection {
+                    self_ty: Box::new(Ty::Param("T".into())),
+                    iface: 0,
+                    iface_name: "Container".into(),
+                    args: Vec::new(),
+                    name: "Item".into(),
+                },
+                "<T as Container>.Item",
+            ),
+            (
+                Ty::Projection {
+                    self_ty: Box::new(i32_.clone()),
+                    iface: 0,
+                    iface_name: "Container".into(),
+                    args: vec![i32_.clone()],
+                    name: "Item".into(),
+                },
+                "<i32 as Container<i32>>.Item",
+            ),
             (Ty::Error, "{error}"),
         ];
         for (ty, want) in cases {

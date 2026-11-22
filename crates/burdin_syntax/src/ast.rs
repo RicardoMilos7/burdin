@@ -258,7 +258,27 @@ pub struct InterfaceDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub requires: Vec<Type>,
+    /// `type Name` entries: the associated types every implementation must bind
+    /// (`spec/associated-types.md`, AT1).
+    pub associated: Vec<AssocTypeDecl>,
     pub methods: Vec<InterfaceFn>,
+    pub span: Span,
+}
+
+/// `type Name` in an interface body: the name of an associated type. Stage 1 gives it no bound and no default
+/// (`spec/associated-types.md`, AT1).
+#[derive(Debug, Clone)]
+pub struct AssocTypeDecl {
+    pub name: Ident,
+    pub span: Span,
+}
+
+/// `type Name = Ty` in an impl block: the type an implementation binds the interface's associated type to
+/// (`spec/associated-types.md`, AT2).
+#[derive(Debug, Clone)]
+pub struct AssocBinding {
+    pub name: Ident,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -279,6 +299,9 @@ pub struct ImplBlock {
     pub ty: Type,
     pub interface: Option<Type>,
     pub where_clause: Vec<WherePred>,
+    /// `type Name = Ty`: the associated type bindings of an interface implementation
+    /// (`spec/associated-types.md`, AT2).
+    pub assoc: Vec<AssocBinding>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
@@ -387,6 +410,10 @@ pub enum TypeKind {
         ret: Option<Box<Type>>,
     },
     SelfType,
+    /// `Self.Name` or `<T as Interface>.Name`: a projection onto an interface's associated type
+    /// (`spec/associated-types.md`, AT3). The shorthand `T.Name`, where `T` is a type parameter or a type path,
+    /// is parsed as a [`TypeKind::Path`] and reinterpreted as a projection in `burdin_sema`.
+    Projection(Box<ProjectionType>),
     Unit,
     Tuple(Vec<Type>),
     Array(Box<Type>, Box<Expr>),
@@ -400,6 +427,16 @@ pub enum TypeKind {
         ty: Box<Type>,
     },
     Never,
+}
+
+/// The payload of [`TypeKind::Projection`], boxed so a type stays small.
+#[derive(Debug, Clone)]
+pub struct ProjectionType {
+    /// The type the projection starts from (`Self`, or the left of `as`).
+    pub self_ty: Box<Type>,
+    /// The interface after `as`, when the projection is qualified.
+    pub iface: Option<Box<Type>>,
+    pub name: Ident,
 }
 
 #[derive(Debug, Clone)]

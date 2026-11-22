@@ -399,6 +399,21 @@ impl Fmt<'_> {
             let blank_before = self.blank_before();
             let lead = self.start_of_line();
             let mut parts = vec![lead];
+            // An associated type: `type Name` in an interface, `type Name = Ty` in an implementation
+            // (`spec/associated-types.md`, AT1-AT2).
+            if self.at(&TokenKind::Type) {
+                parts.push(self.tok_doc());
+                parts.push(space());
+                parts.push(self.ident()?);
+                if self.at(&TokenKind::Eq) {
+                    parts.push(space());
+                    parts.push(self.tok_doc());
+                    parts.push(space());
+                    parts.push(self.ty()?);
+                }
+                members.push(Member { doc: concat(parts), after: Doc::Nil, blank_before });
+                continue;
+            }
             if self.at(&TokenKind::Priv) {
                 parts.push(self.tok_doc());
                 parts.push(space());

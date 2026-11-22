@@ -360,7 +360,8 @@ fn container(p: &Program, base: (u64, u64), alloc: &Alloc) -> (u64, u64) {
 /// The size and alignment of a type's runtime value, or `None` for a type without one.
 fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
     Some(match ty {
-        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) => return None,
+        // A projection is resolved before code generation, so it never has a runtime value.
+        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => return None,
         Ty::Bool => (1, 1),
         Ty::Char => (4, 4),
         Ty::Int(i) => {

@@ -112,6 +112,10 @@ impl<'t> Sema<'t> {
             ImplKind::User(i) => Some((*i, self.resolve_iface_args(*i, iface_seg, &[], &[], module, imp.span, diags))),
             _ => None,
         };
+        // Only `Type: Interface` has associated types to bind (`spec/associated-types.md`, AT2).
+        if !matches!(&kind, ImplKind::Inherent | ImplKind::User(_)) {
+            reject_assoc_bindings(imp, diags);
+        }
         match kind {
             ImplKind::Builtin => builtin_by_hand(imp.span, diags),
             ImplKind::From => self.register_conversion_impl(imp, module, &self_ty, key, iface_seg, "from", diags),
@@ -123,6 +127,8 @@ impl<'t> Sema<'t> {
                 let iface_args = iface.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
                 if let Some((i, args)) = iface {
                     check_missing_methods(&self.globals, imp, i, diags);
+                    let assoc = self.resolve_assoc_bindings(imp, Some(i), diags);
+                    let impl_index = self.globals.impls.len();
                     self.globals.impls.push(ImplInfo {
                         head: Head::Plain(key),
                         iface: i,
@@ -130,8 +136,21 @@ impl<'t> Sema<'t> {
                         params: Vec::new(),
                         args: Vec::new(),
                         wheres: Vec::new(),
+                        assoc,
                         span: imp.span,
                     });
+                    self.pending_assoc.push(crate::session::PendingAssoc {
+                        index: impl_index,
+                        decl: imp,
+                        generic: None,
+                        self_ty: Some(self_ty.clone()),
+                        subst: Vec::new(),
+                        bounds: Vec::new(),
+                        module,
+                    });
+                } else {
+                    // An inherent impl has no interface to bind associated types for.
+                    reject_assoc_bindings(imp, diags);
                 }
                 let iface = kind.user_interface().map(|i| (i, iface_args));
                 self.register_methods(imp, module, iface, &self_ty, MethodScope::plain(), diags);
@@ -377,31 +396,50 @@ impl<'t> Sema<'t> {
         self.globals.check_adt_bounds(g, &written, imp.ty.span, diags);
         let plain = crate::impl_match::is_plain_pattern(&pattern);
         if matches!(kind, ImplKind::Builtin) {
+            reject_assoc_bindings(imp, diags);
             builtin_by_hand(imp.span, diags);
             return;
         }
         // A `Drop` implementation covers every instance: the drop glue of one instance cannot differ from the
         // type's others (`spec/impls.md`, IM7).
-        if matches!(kind, ImplKind::Drop) && (!plain || !imp.where_clause.is_empty()) {
-            diags.error(
-                Code::INVALID_DROP_IMPL,
-                imp.span,
-                "a `Drop` implementation covers every instance of its type, so it cannot name specific type \
-                 arguments or have a `where` clause",
-            );
-            return;
+        if matches!(kind, ImplKind::Drop) {
+            reject_assoc_bindings(imp, diags);
+            if !plain || !imp.where_clause.is_empty() {
+                diags.error(
+                    Code::INVALID_DROP_IMPL,
+                    imp.span,
+                    "a `Drop` implementation covers every instance of its type, so it cannot name specific type \
+                     arguments or have a `where` clause",
+                );
+                return;
+            }
         }
         let wheres = self.impl_wheres(imp, module, &params, diags);
+        // The bounds the impl's names keep while its associated bindings are resolved: the bounds of the type's
+        // arguments they matched, and the impl's own `where` clause (`spec/associated-types.md`, AT2).
+        let mut assoc_bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+        for (written, bs) in pattern.iter().zip(&adt_bounds) {
+            if let Ty::Param(n) = written
+                && !assoc_bounds.iter().any(|(m, _)| m == &**n)
+            {
+                assoc_bounds.push((n.to_string(), bs.clone()));
+            }
+        }
+        assoc_bounds.extend(wheres.iter().cloned());
         let iface = kind.user_interface();
         let iface_args = match iface {
             Some(i) => {
                 check_missing_methods(&self.globals, imp, i, diags);
                 let args = self.resolve_iface_args(i, iface_seg, &subst, &wheres, module, imp.span, diags);
+                // The binding of each associated type, filled in once the instance whose arguments are the
+                // impl's pattern exists (`re_resolve_pending_assoc`).
+                let assoc = self.resolve_assoc_bindings(imp, Some(i), diags);
                 // The later of two overlapping impls is left out, so its methods do not also clash with the
                 // earlier one's on the instances both apply to.
                 if self.check_impl_overlap(g, i, &pattern, &args, imp.span, diags) {
                     return;
                 }
+                let impl_index = self.globals.impls.len();
                 self.globals.impls.push(ImplInfo {
                     head: Head::Generic(g),
                     iface: i,
@@ -409,11 +447,30 @@ impl<'t> Sema<'t> {
                     params: params.clone(),
                     args: pattern.clone(),
                     wheres: wheres.clone(),
+                    assoc,
                     span: imp.span,
+                });
+                // The instance whose arguments are the pattern may not exist yet; resolve the bindings again once
+                // it does, so `Self` in a binding means that instance (`spec/associated-types.md`, AT2).
+                self.pending_assoc.push(crate::session::PendingAssoc {
+                    index: impl_index,
+                    decl: imp,
+                    generic: Some((g, pattern.clone())),
+                    self_ty: None,
+                    subst: subst.clone(),
+                    bounds: assoc_bounds.clone(),
+                    module,
                 });
                 args
             }
-            None => Vec::new(),
+            None => {
+                // An inherent block (or a conversion) has no interface to bind associated types for; a `Drop`
+                // block was already checked above.
+                if !matches!(kind, ImplKind::Drop) {
+                    reject_assoc_bindings(imp, diags);
+                }
+                Vec::new()
+            }
         };
         // The instance an impl on specific arguments is checked on: the one whose arguments are its pattern. It is
         // symbolic when the pattern has names left (`Pair<i32, B>`), and its methods' bodies are checked there.
@@ -432,6 +489,58 @@ impl<'t> Sema<'t> {
             iface_args,
             is_drop,
         });
+    }
+
+    /// Validates the `type Name = Ty` entries of an impl block (`spec/associated-types.md`, AT2) and returns the
+    /// bindings it keeps, in the order written. The types are filled in by `re_resolve_pending_assoc` once the
+    /// impl's instance exists.
+    fn resolve_assoc_bindings(
+        &self,
+        imp: &ast::ImplBlock,
+        iface: Option<usize>,
+        diags: &mut Diagnostics,
+    ) -> Vec<(String, Ty)> {
+        let Some(iface) = iface else {
+            reject_assoc_bindings(imp, diags);
+            return Vec::new();
+        };
+        let declared = self.globals.interfaces[iface].assoc.clone();
+        let iface_name = self.globals.interfaces[iface].name.clone();
+        let mut out: Vec<(String, Ty)> = Vec::new();
+        for b in &imp.assoc {
+            if !declared.iter().any(|n| n == &b.name.name) {
+                let declared_text = if declared.is_empty() {
+                    "it declares no associated types".to_string()
+                } else {
+                    format!("it declares `{}`", declared.join("`, `"))
+                };
+                diags.error(
+                    Code::ASSOC_BINDING,
+                    b.span,
+                    format!("interface `{iface_name}` has no associated type `{}`: {declared_text}", b.name.name),
+                );
+                continue;
+            }
+            if out.iter().any(|(n, _)| n == &b.name.name) {
+                diags.error(
+                    Code::DUPLICATE_NAME,
+                    b.span,
+                    format!("associated type `{}` is bound more than once; the first binding is used", b.name.name),
+                );
+                continue;
+            }
+            out.push((b.name.name.clone(), Ty::Error));
+        }
+        for name in &declared {
+            if !out.iter().any(|(n, _)| n == name) {
+                diags.error(
+                    Code::ASSOC_BINDING,
+                    imp.span,
+                    format!("this implementation of `{iface_name}` is missing the associated type `{name}`"),
+                );
+            }
+        }
+        out
     }
 
     /// The type alias an impl block's type is written through, if it is one.
@@ -705,6 +814,18 @@ impl<'t> Sema<'t> {
             true => self.globals.enums[key.1].drop_method = Some(id),
         }
         self.drop_checks.push((id, m.span));
+    }
+}
+
+/// E0144: an impl block with no interface has no associated type to bind (`spec/associated-types.md`, AT2).
+fn reject_assoc_bindings(imp: &ast::ImplBlock, diags: &mut Diagnostics) {
+    for b in &imp.assoc {
+        diags.error(
+            Code::ASSOC_BINDING,
+            b.span,
+            "an impl block with no interface cannot bind an associated type; add `: Interface` to the block or \
+             remove the `type` entry",
+        );
     }
 }
 

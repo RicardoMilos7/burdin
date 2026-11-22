@@ -86,6 +86,12 @@ pub fn walk_type<V: Visit + ?Sized>(v: &mut V, t: &Type) {
             v.expr(len);
         }
         TypeKind::Const(e) => v.expr(e),
+        TypeKind::Projection(p) => {
+            v.ty(&p.self_ty);
+            if let Some(iface) = &p.iface {
+                v.ty(iface);
+            }
+        }
         TypeKind::SelfType | TypeKind::Unit | TypeKind::Never => {}
     }
 }
