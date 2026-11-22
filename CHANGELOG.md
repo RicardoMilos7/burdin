@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #280: declaration generation in comptime. A module-scope `comptime generate { ... }` block is evaluated at
+  compile time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations it
+  holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its
+  names are not hygienic, as derives are, and errors in generated code are reported at the block. Other item kinds,
+  a generator that fails, and `comptime generate` outside module scope are E0242, E0222/E0224/E0225, and E0243.
+  Rules: `spec/generate.md` GN1-GN10; tests `tests/generate/`; decision 34 in `tests/README.md`.
 - Fallible allocation (issue #278; `spec/allocators.md`, AL11). `std` declares `AllocError` with `CapacityOverflow` and
   `OutOfMemory`. The `try_` forms return `Result<_, AllocError>`: `List<T>.try_with_capacity`, `try_with_capacity_in`,
   `try_reserve`, and `try_reserve_exact`; `Map<K, V>.try_with_capacity` and `try_reserve`; and `String.try_with_capacity`

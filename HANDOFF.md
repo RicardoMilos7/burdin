@@ -4,6 +4,35 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Declaration generation in comptime (issue #280, 2026-11-22).** A module-scope `comptime generate { ... }` block is
+evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
+`fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
+text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
+hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
+parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
+`fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
+`crates/burdin_query/src/db.rs` (`generate`, `sema_packages`, `reached_functions`); the text parser is
+`crates/burdin_syntax/src/generate.rs`; the comptime entry point is `burdin_comptime::run_generator`; the check cache
+keys a module on its generated text (`Module.generated`, GN8). Tests: `tests/generate/` (17 programs), `tests/fmt/generate.*`,
+`crates/burdin_query/tests/generate.rs`, and parser unit tests in `burdin_syntax`. Verified: `tests/run_tests.py generate`
+passes in debug (the 3 extra `m22` build fixtures match the filter), the full debug suite passes (1228 passed, 0 failed,
+6 skipped), `cargo test --workspace` (927 passed), `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`,
+and `check_tests`, `check_e9000`, `check_unit_tests`, `check_ci`, `check_fmt`, `check_error_docs`, `check_docs`, and
+`check_check` all pass. In this WSL VM the five `s3_tls`/`s3_http` OpenSSL tests need unversioned `libssl.so` and
+`libcrypto.so` symlinks, which the VM lacks; they pass with them under `LIBRARY_PATH`.
+
+**Gaps, and choices the author may revisit.** (1) Generation stops at a failing generator (GN7), so the rest of the
+program is not checked in that run; a generator's own errors are reported. Step 2 still runs the other generators so
+each failure is reported, but this is a judgment call. (2) A generator's reach set follows calls, `any` boxing, and
+closures; a `Drop` impl a generator reaches only implicitly is not counted in step 1. (3) A diagnostic inside generated
+code is followed by a note naming the declarations; `Diagnostics::absorb` merges two errors with the same code and span,
+so two same-code errors in one block can show as one. (4) An internal error in generation uses E0224's code; it is
+unreachable in practice but should get its own code. (5) Generated declarations are not in any file, so `burdin fmt`,
+`burdin lint`, `burdin doc`, and `burdin expand` show only the block, and the language server lists the generator as
+`comptime generate N`. (6) Still out: generated constants, impl blocks, interfaces, and derives; generation from
+function bodies (E0243); hygiene; generators that read generated names.
+
 **Associated types (issue #393, 2026-11-22).** An interface may declare `type Name` (`spec/associated-types.md`,
 AT1-AT6); a `Type: Interface` block binds each one exactly once (`type Name = Ty`), and a projection reads it back
 as `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The parser gives `InterfaceDecl` an `associated` list and

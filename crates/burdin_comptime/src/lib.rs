@@ -180,6 +180,47 @@ pub fn evaluate(program: &mut Program, opts: Options, diags: &mut Diagnostics) {
     }
 }
 
+/// Runs the function of one `comptime generate` block, which takes no arguments and returns a `String`, and returns
+/// the text it produced (`spec/generate.md`, GN3). The function runs under the compile-time rules and has a step
+/// budget of its own (GN10). A panic (E0222), an impure operation (E0224), or the exhausted budget (E0225) is
+/// reported to `diags` at `at`, the block, and the result is `None`.
+pub fn run_generator(
+    program: &Program,
+    func: FuncId,
+    opts: Options,
+    at: Span,
+    diags: &mut Diagnostics,
+) -> Option<String> {
+    let mut consts: Vec<ConstState> = program.consts.iter().map(|_| ConstState::Pending).collect();
+    let result = {
+        let mut it = Interp::new(program, &mut consts, opts.steps, opts.overflow_checks, opts.debug_assertions);
+        it.call_root(func, at)
+    };
+    let before = diags.len();
+    match result {
+        Ok(value) => match value.deref() {
+            Value::String(bytes) => return Some(String::from_utf8_lossy(&bytes).into_owned()),
+            Value::Str(bytes) => return Some(String::from_utf8_lossy(&bytes).into_owned()),
+            other => {
+                diags.error(
+                    Code::COMPTIME_IMPURE,
+                    at,
+                    internal_message(&format!("a `comptime generate` block returned {other:?}, not a `String`")),
+                );
+            }
+        },
+        Err(fault) => report(program, diags, fault, at, "the `comptime generate` block"),
+    }
+    if diags.len() == before {
+        diags.error(
+            Code::COMPTIME_IMPURE,
+            at,
+            internal_message("a `comptime generate` block failed without a reported error"),
+        );
+    }
+    None
+}
+
 /// Runs the body of every `[differential]` test at compile time and records its `Ok`/`Err` outcome in the test
 /// entry, for the runner to compare with the compiled run (`spec/test-runner.md`). The body must be one the
 /// interpreter can execute: an impure operation (CT9), a panic (CT10), or an exhausted budget (CT11) is reported at

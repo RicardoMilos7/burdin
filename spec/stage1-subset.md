@@ -327,6 +327,8 @@ easier with them:
   preemption, and `Send`.
 - `burdin doc`, `add`, the language server, the lockfile, multiple-package workspaces, and the package registry.
   (`burdin fmt` and `lint` have landed; `burdin bindgen` is `spec/bindgen.md`.)
+- Doc tests, `bench` blocks, a custom debug backend, fallible allocation. (Declaration generation in comptime landed
+  with issue #280: `spec/generate.md`.) (`i128`/`u128` landed with issue #273; `spec/int128.md`.)
 - Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend.
   (`i128`/`u128` landed with issue #273; `spec/int128.md`. Fallible allocation landed with issue #278;
   `spec/allocators.md`, AL11.)
@@ -399,6 +401,7 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 
 `i128`/`u128` have landed too (issue #273, `spec/int128.md`), and so has `break` with a value (issue #276,
 `spec/grammar.md` rule 8.10). The remaining items are compound assignment, doc tests, `bench` blocks,
+fallible allocation, compiler-inserted preemption checks, a MIR (decision 6), `Set`/`Deque` if they
 compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 

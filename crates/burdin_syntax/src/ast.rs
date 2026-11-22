@@ -28,6 +28,23 @@ pub struct File {
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
     pub bodies: Vec<Span>,
+    /// The module-scope `comptime generate` blocks, in source order (`spec/generate.md`, GN2). Each one is also a
+    /// function in `items`, so every later stage sees an ordinary declaration; this list is how the front end finds
+    /// the generators.
+    pub generators: Vec<Generator>,
+}
+
+/// A `comptime generate { ... }` item: parsed as a private function with no parameters that returns `String`, whose
+/// body is the block (`spec/generate.md`, GN2).
+#[derive(Debug, Clone)]
+pub struct Generator {
+    /// The name of the function the block is, which no written name can equal (`comptime generate 1`).
+    pub name: String,
+    /// The whole item, from `comptime` to the block's closing brace: where the function is.
+    pub span: Span,
+    /// The two keywords, `comptime generate`: the span every token of the generated text carries, and where an
+    /// error of the generator or of its text is reported (GN6, GN7).
+    pub keyword: Span,
 }
 
 /// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters

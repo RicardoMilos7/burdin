@@ -47,6 +47,7 @@ impl Parser<'_> {
             }
         }
         file.bodies = std::mem::take(&mut self.bodies);
+        file.generators = std::mem::take(&mut self.generators);
         file
     }
 
@@ -114,6 +115,7 @@ impl Parser<'_> {
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
+            TokenKind::Comptime if !is_priv && self.at_generate() => Ok(Some(Item::Fn(self.generate_item(start)?))),
             TokenKind::Comptime if !is_priv => Ok(Some(Item::Const(self.comptime_assert_item(start)?))),
             TokenKind::Extern => Ok(Some(self.extern_item(is_priv, start)?)),
             TokenKind::Reserved(word) if word == "derive" => Ok(Some(Item::Derive(self.derive_decl(is_priv, start)?))),
@@ -444,6 +446,10 @@ impl Parser<'_> {
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.unexpected("`}`"));
+            }
+            if self.at_generate() {
+                self.misplaced_generate()?;
+                continue;
             }
             // `type Name = Type`: the binding of an interface's associated type
             // (`spec/associated-types.md`, AT2).
@@ -857,6 +863,61 @@ impl Parser<'_> {
         let name = Ident { name: format!("comptime assert {}", self.comptime_asserts), span: start };
         let ty = Type { kind: TypeKind::Unit, span: start };
         Ok(ConstDecl { is_priv: true, name, ty, span: start.to(value.span), value })
+    }
+
+    /// At `comptime generate {`: `generate` is a keyword only right after `comptime`, so it stays an ordinary
+    /// identifier everywhere else (`spec/generate.md`, GN2).
+    pub(super) fn at_generate(&self) -> bool {
+        self.at(&TokenKind::Comptime)
+            && matches!(self.nth_kind(1), TokenKind::Ident(name) if name == "generate")
+            && self.nth_kind(2) == &TokenKind::LBrace
+    }
+
+    /// `comptime generate { ... }` at module scope. It is a private function named `comptime generate N` (a name no
+    /// written name can equal) with no parameters, the return type `String`, and the block as its body, so the
+    /// checker and the memory checks treat it like any function (`spec/generate.md`, GN2). The block is not in
+    /// `bodies`: an edit inside it is an edit to the declarations, because what it generates changes them.
+    fn generate_item(&mut self, start: Span) -> PResult<FnDecl> {
+        self.expect(&TokenKind::Comptime)?;
+        let keyword = start.to(self.bump().span);
+        let body = self.block()?;
+        let span = start.to(body.span);
+        let name = format!("comptime generate {}", self.generators.len() + 1);
+        self.generators.push(Generator { name: name.clone(), span, keyword });
+        let string = Type {
+            kind: TypeKind::Path(vec![PathSegment {
+                name: Ident { name: "String".to_string(), span: keyword },
+                args: Vec::new(),
+            }]),
+            span: keyword,
+        };
+        Ok(FnDecl {
+            is_priv: true,
+            is_unsafe: false,
+            is_blocking: false,
+            name: Ident { name, span: keyword },
+            generics: Vec::new(),
+            params: Vec::new(),
+            is_vararg: false,
+            ret: Some(string),
+            where_clause: Vec::new(),
+            body,
+            span,
+        })
+    }
+
+    /// A `comptime generate` block anywhere but module scope: E0243 at the `comptime` keyword. The block is parsed
+    /// and returned so the rest of the file is read as written (`spec/generate.md`, GN2).
+    pub(super) fn misplaced_generate(&mut self) -> PResult<Block> {
+        let span = self.span();
+        self.diags.error(
+            Code::GENERATE_SCOPE,
+            span,
+            "`comptime generate` is allowed only at module scope, not in a function, an impl block, or an expression (spec/generate.md, GN2)",
+        );
+        self.bump();
+        self.bump();
+        self.block()
     }
 
     pub(super) fn param(&mut self) -> PResult<Param> {

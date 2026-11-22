@@ -1,0 +1,14 @@
+//@ run
+//> 0
+//> 7
+
+// A generated enum and a match over it (spec/generate.md, GN4).
+
+comptime generate {
+    String.from("enum Shape {{\n    Dot\n    Line(i32)\n}}\n\nfn length(s: Shape): i32 {{\n    match s {{\n        Shape.Dot => 0,\n        Shape.Line(n) => n,\n    }}\n}}\n")
+}
+
+fn main() {
+    println(format("{}", length(Shape.Dot)))
+    println(format("{}", length(Shape.Line(7))))
+}

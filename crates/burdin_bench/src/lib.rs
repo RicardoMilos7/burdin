@@ -177,7 +177,12 @@ pub fn check(generated: &Generated) -> (Program, Diagnostics) {
         deps: Vec::new(),
         root_module: Some(0),
         official: Vec::new(),
-        modules: vec![burdin_sema::Module { file: generated.file, path: Vec::new(), ast: &generated.ast }],
+        modules: vec![burdin_sema::Module {
+            file: generated.file,
+            path: Vec::new(),
+            ast: &generated.ast,
+            generated: "",
+        }],
     }];
     let mut diags = Diagnostics::default();
     // The generated programs have no standard library and record no trace frames.

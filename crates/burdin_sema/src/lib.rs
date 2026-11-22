@@ -59,6 +59,10 @@ pub struct Module<'a> {
     /// The path inside the package's `src`, for example `["geometry", "shapes"]`.
     pub path: Vec<String>,
     pub ast: &'a ast::File,
+    /// The text the module's `comptime generate` blocks produced, whose declarations `ast` already holds
+    /// (`spec/generate.md`, GN3). The declarations' spans all point at the blocks, so the check cache could not tell
+    /// two different texts apart; it keys on this text instead (GN8). Empty for a module with no generator.
+    pub generated: &'a str,
 }
 
 /// A language edition (`docs/releasing.md`, "Editions and migrations"; `spec/fix.md`, FX10): the meaning of the
