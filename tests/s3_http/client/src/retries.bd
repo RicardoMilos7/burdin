@@ -217,6 +217,9 @@ fn retry_503() {
             client.retry_on_503 = false
             println("503 not asked for: {}", fetch(client.clone(), server.url("/").as_str()))
             client.retry_on_503 = true
+            // The last request's connection is pooled, and its server script has ended, so the server closes it. A POST
+            // written on it can meet that close and is not repeated (HC15), so the POST gets a new connection here.
+            client.close_idle()
             match client.post(server.url("/").as_str(), "x") {
                 Ok(response) => {
                     let status = response.status

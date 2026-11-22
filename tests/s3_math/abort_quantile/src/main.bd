@@ -1,0 +1,14 @@
+//@ run-abort
+//> before
+//@ stderr: quantile: p must be between 0 and 1
+
+// A bad argument is a programming error: the call panics with a message that names the function (spec/math.md, MA9).
+
+use math.quantile
+
+fn main() {
+    println("before")
+    let xs = [1.0, 2.0, 3.0]
+    println("{}", quantile(xs[0..3], 1.5).unwrap())
+    println("after")
+}

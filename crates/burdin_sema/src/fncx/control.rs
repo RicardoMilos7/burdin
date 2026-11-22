@@ -60,6 +60,9 @@ impl FnCx<'_> {
         match &body.kind {
             ast::ExprKind::Loop(b) => self.loop_expr(b, Some(label), expect, span),
             ast::ExprKind::While { cond, body: b } => self.while_expr(cond, b, Some(label), span),
+            ast::ExprKind::WhileLet { pattern, scrutinee, body: b } => {
+                self.while_let(pattern, scrutinee, b, Some(label), span)
+            }
             ast::ExprKind::For { pattern, iter, mutable, body: b } => {
                 self.for_expr(pattern, iter, *mutable, b, Some(label), span)
             }
@@ -107,6 +110,48 @@ impl FnCx<'_> {
         let (body, _) = self.block(body, None);
         self.loops.pop();
         Self::with_label(label, mk(tir::ExprKind::While(Box::new(cond), body), Ty::Unit, span))
+    }
+
+    /// `while let pattern = value { ... }`: a `while` that repeats while the value matches the pattern. It is lowered
+    /// to a `loop` whose body matches the value once per pass, with a catch-all arm that breaks, so the pattern binds
+    /// in the body only, as in `if let`, and the value is evaluated again on every pass. The loop's scope is a
+    /// `while`'s, so a `break` with a value is E0003 (`spec/grammar.md`, rule 8.11).
+    pub(super) fn while_let(
+        &mut self,
+        pattern: &ast::Pattern,
+        scrutinee: &ast::Expr,
+        body: &ast::Block,
+        label: Option<&ast::Ident>,
+        span: Span,
+    ) -> tir::Expr {
+        self.loops.push(LoopScope::while_body(label));
+        let value = self.expr(scrutinee, None);
+        let (scrutinee, owned_temp) =
+            if pattern_has_binding(pattern) { self.own_scrutinee_temp(value) } else { (value, None) };
+        let owned = self.owns_scrutinee(&scrutinee);
+        self.scopes.push(HashMap::new());
+        let pat = self.pattern(pattern, &scrutinee.ty, owned);
+        // A pattern that always matches never ends the loop, so it is refused. `let ... else` refuses an `else` on
+        // such a pattern the same way.
+        if self.exhaustive(&scrutinee.ty, &[&pat]) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                pattern.span,
+                "this pattern always matches, so `while let` never ends; use `while` or `loop` instead",
+            );
+        }
+        let (then, _) = self.block(body, None);
+        self.scopes.pop();
+        self.loops.pop();
+        let then = mk(tir::ExprKind::Block(then), Ty::Unit, body.span);
+        // The catch-all arm leaves the loop. It is unlabeled, so it names this loop, the innermost one.
+        let leave = mk(tir::ExprKind::Break { label: None, value: None }, Ty::Never, span);
+        let arms =
+            vec![tir::Arm { pat, guard: None, body: then }, tir::Arm { pat: Pat::Wild, guard: None, body: leave }];
+        let matched = mk(tir::ExprKind::Match(Box::new(scrutinee), arms), Ty::Unit, span);
+        let matched = self.wrap_scrutinee(matched, owned_temp, span);
+        let pass = tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)), close: span };
+        Self::with_label(label, mk(tir::ExprKind::Loop(pass), Ty::Unit, span))
     }
 
     /// `break` or `continue`, with or without a label. An unlabeled one names the innermost loop; a labeled one

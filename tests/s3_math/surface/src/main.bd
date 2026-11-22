@@ -1,0 +1,127 @@
+//@ run
+//> len 3 get -2 norm_squared 14
+//> neg -1 2 -3
+//> map -4 6
+//> scale 1.5
+//> approx true false
+//> index_mut 10 original 1
+//> angle 1.570796
+//> set 7 rows 2
+//> mul_vector 8 7
+//> scale 6 neg -7
+//> frobenius 8.660254
+//> identity 1 cols 2
+//> sum 14 difference 0
+//> dyn shape 2 3 false
+//> dyn get 5
+//> transpose 3 5
+//> scaled trace 6
+//> dyn mul_vector 4
+//> dyn neg -1
+//> dyn sum 2 difference 0 cols 3
+//> minimum 1 maximum 3
+//> sum 3.5
+//> sample std 1.527525
+//> bisect endpoint 0
+//> simpson odd 4
+//> gamma 1.772454 -3.544908
+//> lerp end 3
+//> lcm zero 0 factorial zero 1
+//> prime false true
+//> binomial 1
+
+// Every public member of the `math` package at least once (issue #268; spec/math.md MA5-MA8): the members the usage
+// case does not call, with values small enough to check by hand. The known answers of the algorithms are in tests/math.
+
+use math.{
+    DynMatrix,
+    Matrix,
+    Vector,
+    binomial,
+    bisect,
+    factorial,
+    gamma,
+    is_prime,
+    lcm,
+    lerp,
+    maximum,
+    minimum,
+    sample_std_dev,
+    simpson,
+    sum,
+}
+
+fn round6(x: f64): f64 {
+    (x * 1000000.0).round() / 1000000.0
+}
+
+fn list_of(values: [f64]): List<f64> {
+    let mut out = List<f64>.new()
+    for v in values {
+        out.push(v)
+    }
+    out
+}
+
+fn main() {
+    // Vector.
+    let v: Vector<3> = Vector.from_array([1.0, -2.0, 3.0])
+    println("len {} get {} norm_squared {}", v.len(), v.get(1), v.norm_squared())
+    let w = -v
+    println("neg {} {} {}", w[0], w[1], w[2])
+    let doubled = v.map(|x: f64| x * 2.0)
+    println("map {} {}", doubled[1], doubled[2])
+    println("scale {}", v.scale(0.5)[2])
+    let zero: Vector<3> = Vector.zero()
+    println("approx {} {}", v.approx_eq(v + zero, 0.0), v.approx_eq(w, 0.5))
+    let mut copy = v
+    copy[0] = 10.0
+    println("index_mut {} original {}", copy[0], v[0])
+    let x_axis: Vector<2> = Vector.from_array([1.0, 0.0])
+    let y_axis: Vector<2> = Vector.from_array([0.0, 2.0])
+    println("angle {}", round6(x_axis.angle(y_axis).unwrap()))
+
+    // Matrix, fixed size.
+    let mut f: Matrix<2, 2> = Matrix.from_array([1.0, 2.0, 3.0, 4.0])
+    f.set(0, 1, 7.0)
+    println("set {} rows {}", f.get(0, 1), f.rows())
+    let ones: Vector<2> = Vector.from_array([1.0, 1.0])
+    let product = f.mul_vector(ones)
+    println("mul_vector {} {}", product[0], product[1])
+    println("scale {} neg {}", f.scale(2.0).get(1, 0), (-f).get(0, 1))
+    println("frobenius {}", round6(f.frobenius_norm()))
+    let id: Matrix<2, 2> = Matrix.identity()
+    println("identity {} cols {}", id.get(0, 0), f.cols())
+    println("sum {} difference {}", (f + f).get(0, 1), (f - f).frobenius_norm())
+
+    // DynMatrix.
+    let mut d = DynMatrix.zeros(2, 3)
+    d.set(1, 2, 5.0)
+    println("dyn shape {} {} {}", d.rows(), d.cols(), d.is_square())
+    println("dyn get {}", d.get(1, 2))
+    let flipped = d.transpose()
+    println("transpose {} {}", flipped.rows(), flipped.get(2, 1))
+    let scaled = DynMatrix.identity(3).scale(2.0)
+    println("scaled trace {}", scaled.trace())
+    let moved = DynMatrix.identity(2).mul_vector([3.0, 4.0][0..2])
+    println("dyn mul_vector {}", moved[1])
+    println("dyn neg {}", (-DynMatrix.identity(2)).get(0, 0))
+    let dsum = DynMatrix.identity(2) + DynMatrix.identity(2)
+    let ddiff = DynMatrix.identity(2) - DynMatrix.identity(2)
+    println("dyn sum {} difference {} cols {}", dsum.get(1, 1), ddiff.trace(), d.cols())
+
+    // Statistics: a NaN is skipped by minimum and maximum.
+    let nan = f64.NAN
+    println("minimum {} maximum {}", minimum([nan, 3.0, 1.0][0..3]).unwrap(), maximum([nan, 3.0][0..2]).unwrap())
+    println("sum {}", sum([1.0, 2.5][0..2]))
+    println("sample std {}", round6(sample_std_dev([1.0, 2.0, 4.0][0..3]).unwrap()))
+
+    // Scalars and integers.
+    println("bisect endpoint {}", bisect(|x: f64| x, 0.0, 1.0, 1e-9).unwrap())
+    println("simpson odd {}", round6(simpson(|x: f64| x * x * x, 0.0, 2.0, 3)))
+    println("gamma {} {}", round6(gamma(0.5)), round6(gamma(-0.5)))
+    println("lerp end {}", lerp(1.0, 3.0, 1.0))
+    println("lcm zero {} factorial zero {}", lcm(0, 5).unwrap(), factorial(0).unwrap())
+    println("prime {} {}", is_prime(1), is_prime(2))
+    println("binomial {}", binomial(10, 10).unwrap())
+}

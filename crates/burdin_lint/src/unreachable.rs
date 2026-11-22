@@ -125,7 +125,7 @@ fn contains_break(body: &Block, label: Option<&str>) -> bool {
                         walk_expr(self, value);
                     }
                 }
-                ExprKind::Loop(_) | ExprKind::While { .. } | ExprKind::For { .. } => {
+                ExprKind::Loop(_) | ExprKind::While { .. } | ExprKind::WhileLet { .. } | ExprKind::For { .. } => {
                     self.nested += 1;
                     walk_expr(self, e);
                     self.nested -= 1;

@@ -1,0 +1,15 @@
+//@ run-abort
+//> before
+//@ stderr: covariance: the slices differ in length
+
+// Two slices of different lengths have no covariance: a programming error that panics (spec/math.md, MA5, MA9).
+
+use math.covariance
+
+fn main() {
+    println("before")
+    let xs = [1.0, 2.0, 3.0]
+    let ys = [1.0, 2.0]
+    println("{}", covariance(xs[0..3], ys[0..2]).unwrap())
+    println("after")
+}

@@ -16,6 +16,9 @@ close-out checklist in `AGENTS.md`).
   function, a method, and an interface method, as it already was for a type and an impl block. Rules:
   `spec/arguments.md` GM1-GM6; tests `tests/m07_generics/generic_methods`, `generic_methods_errors`, and
   `duplicate_type_parameter`.
+- Issue #487: `while let pattern = value { ... }`, the `while` form of `if let`. It repeats its body while the value
+  matches, evaluates the value again on every pass, binds the pattern in the body only, and takes no `else`; a label
+  names it, and a `break` with a value is E0003. Rules: `spec/grammar.md` rule 8.11, `spec/memory-rules.md` MV8 and RT5.
 - The `regex` official package (stage 3, issue #264; `spec/regex.md`, RX1-RX14): a Pike VM with leftmost-first matches, named
   groups, the flags `i m s x`, Unicode and POSIX classes, replacement templates, splitting, and escaping, all over byte offsets.
   Backreferences, lookaround, atomic groups, and possessive quantifiers are errors, not emulations, so every search runs in
@@ -30,6 +33,15 @@ close-out checklist in `AGENTS.md`).
 - Completion after the `.` of a member chain (`resp.body.`, `client.send(req).`) offers the members on that keystroke
   instead of an empty list, because the receiver's type is read from the declarations along the chain (issue #879;
   `spec/lsp.md` LS12).
+- The `math` official package (stage 3, issue #268; `spec/math.md`, MA1-MA12). Over `f64`, in pure Burdin: integer number
+  theory on `u64` (`gcd`, `lcm`, `mod_pow`, `is_prime` exact for every `u64`, `factorial`, `binomial`; an overflow is
+  `None`); `lerp`, `approx_eq`, `poly_eval`, `gamma`, `ln_gamma`, and the closure-taking `bisect` and `simpson`;
+  statistics over a slice (`mean`, the variances, `median`, `quantile`, `covariance`, `correlation`, and more); `Vector<N>`
+  with `cross` for `Vector<3>`; and two matrices, `Matrix<R, C>` (fixed size, inline, its product's shape checked by the
+  compiler) and `DynMatrix` (heap-backed), sharing one LU with partial pivoting. A bad argument panics with a message that
+  names the function; an absent answer is `None`. `tests/math/` holds about 2,400 known-answer cases generated with exact
+  arithmetic (`tests/math/regenerate.py`) and run by `tests/check_math.py`; `tests/s3_math/` is the conformance suite,
+  with an end-to-end usage case, a surface case, a compile-fail case for mismatched shapes, and one abort case per panic.
 
 ## 0.1.2 — 2026-11-21
 

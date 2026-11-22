@@ -1,0 +1,825 @@
+// The known-answer runner behind tests/check_math.py (issue #268): `mathkat <mode> <fixture>`.
+//
+// A fixture line is `name|op|fields...|expected` (tests/math/regenerate.py says what each op takes). The modes are
+// `num` (num.kat), `float` (scalar.kat and gamma.kat), `stats` (stats.kat), `vector` (vector.kat), `fixed` (matrix.kat,
+// the fixed-size matrices), and `dyn` (linalg.kat, the heap-backed ones). A float is compared with a relative tolerance:
+// 1e-12 for the formulas, 1e-9 for the elimination of a matrix. For each line the runner prints `name: ok` or
+// `name: FAIL got ..., want ...`, then `cases=N failures=M`.
+
+use math.{
+    approx_eq,
+    binomial,
+    correlation,
+    covariance,
+    DynMatrix,
+    factorial,
+    gamma,
+    gcd,
+    is_prime,
+    lcm,
+    ln_gamma,
+    lerp,
+    Matrix,
+    maximum,
+    mean,
+    median,
+    minimum,
+    mod_pow,
+    poly_eval,
+    quantile,
+    sample_std_dev,
+    sample_variance,
+    std_dev,
+    sum,
+    variance,
+    Vector,
+}
+
+struct Tally {
+    cases: i32,
+    failures: i32,
+}
+
+Tally {
+    fn check(mut self, name: str, ok: bool, detail: str) {
+        self.cases = self.cases + 1
+        if ok {
+            println("{}: ok", name)
+        } else {
+            self.failures = self.failures + 1
+            println("{}: FAIL {}", name, detail)
+        }
+    }
+}
+
+/// A matrix read from a fixture: `rows` by `cols`, row-major.
+struct Mat {
+    rows: usize,
+    cols: usize,
+    data: List<f64>,
+}
+
+/// A float from a fixture. `nan`, `inf`, and `-inf` are the non-finite values.
+fn float_of(text: str): f64 {
+    if text == "nan" {
+        return f64.NAN
+    }
+    if text == "inf" {
+        return f64.INFINITY
+    }
+    if text == "-inf" {
+        return f64.NEG_INFINITY
+    }
+    f64.parse(text).unwrap()
+}
+
+/// Whether `got` is within `tolerance` of `want`, relative to `want` (absolute below 1 for a zero `want`).
+fn close(got: f64, want: f64, tolerance: f64): bool {
+    if want.is_nan() {
+        return got.is_nan()
+    }
+    if want.is_infinite() || got.is_infinite() {
+        return got == want
+    }
+    let scale = if want.abs() > 0.0 { want.abs() } else { 1.0 }
+    (got - want).abs() <= tolerance * scale
+}
+
+/// The floats of a comma-separated list; `-` is the empty list.
+fn list_of(text: str): List<f64> {
+    let mut out = List<f64>.new()
+    if text == "-" {
+        return out
+    }
+    let parts = text.split(",")
+    let mut i: usize = 0
+    while i < parts.len() {
+        out.push(float_of(parts[i].as_str()))
+        i = i + 1
+    }
+    out
+}
+
+/// A matrix written as `RxC:v1,v2,...`.
+fn mat_of(text: str): Mat {
+    let halves = text.split(":")
+    let dims = halves[0].split("x")
+    Mat {
+        rows: usize.parse(dims[0].as_str()).unwrap(),
+        cols: usize.parse(dims[1].as_str()).unwrap(),
+        data: list_of(halves[1].as_str()),
+    }
+}
+
+fn show_list(values: List<f64>): String {
+    let mut out = String.new()
+    let mut i: usize = 0
+    while i < values.len() {
+        if i > 0 {
+            out.push(',')
+        }
+        out.push_str(values[i].to_string().as_str())
+        i = i + 1
+    }
+    out
+}
+
+fn lists_close(got: List<f64>, want: List<f64>, tolerance: f64): bool {
+    if got.len() != want.len() {
+        return false
+    }
+    let mut i: usize = 0
+    while i < got.len() {
+        if !close(got[i], want[i], tolerance) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+fn float_check(mut t: Tally, name: str, got: f64, want: str, tolerance: f64) {
+    t.check(name, close(got, float_of(want), tolerance), format("got {}, want {}", got, want))
+}
+
+fn option_check(mut t: Tally, name: str, got: Option<f64>, want: str, tolerance: f64) {
+    match got {
+        Some(v) => {
+            if want == "none" {
+                t.check(name, false, format("got {}, want none", v))
+            } else {
+                t.check(name, close(v, float_of(want), tolerance), format("got {}, want {}", v, want))
+            }
+        }
+        None => {
+            t.check(name, want == "none", format("got none, want {}", want))
+        }
+    }
+}
+
+fn list_check(mut t: Tally, name: str, got: List<f64>, want: str, tolerance: f64) {
+    if want == "none" {
+        t.check(name, false, format("got {}, want none", show_list(got)))
+    } else {
+        let expected = list_of(want)
+        t.check(name, lists_close(got, expected, tolerance), format("got {}, want {}", show_list(got), want))
+    }
+}
+
+fn option_list_check(mut t: Tally, name: str, got: Option<List<f64>>, want: str, tolerance: f64) {
+    match got {
+        Some(values) => {
+            list_check(mut t, name, values, want, tolerance)
+        }
+        None => {
+            t.check(name, want == "none", format("got none, want {}", want))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// num.kat: integers.
+
+fn show_opt_u64(value: Option<u64>): String {
+    match value {
+        Some(v) => v.to_string(),
+        None => String.from("none"),
+    }
+}
+
+fn run_num(mut t: Tally, p: List<String>) {
+    let name = p[0].as_str()
+    let op = p[1].as_str()
+    let want = p[p.len() - 1].as_str()
+    if op == "gcd" {
+        let got = gcd(u64.parse(p[2].as_str()).unwrap(), u64.parse(p[3].as_str()).unwrap())
+        t.check(name, got.to_string().as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "lcm" {
+        let got = show_opt_u64(lcm(u64.parse(p[2].as_str()).unwrap(), u64.parse(p[3].as_str()).unwrap()))
+        t.check(name, got.as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "modpow" {
+        let got = mod_pow(
+            u64.parse(p[2].as_str()).unwrap(),
+            u64.parse(p[3].as_str()).unwrap(),
+            u64.parse(p[4].as_str()).unwrap(),
+        )
+        t.check(name, got.to_string().as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "isprime" {
+        let got = is_prime(u64.parse(p[2].as_str()).unwrap())
+        t.check(name, got.to_string().as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "factorial" {
+        let got = show_opt_u64(factorial(u64.parse(p[2].as_str()).unwrap()))
+        t.check(name, got.as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "binomial" {
+        let got = show_opt_u64(binomial(u64.parse(p[2].as_str()).unwrap(), u64.parse(p[3].as_str()).unwrap()))
+        t.check(name, got.as_str() == want, format("got {}, want {}", got, want))
+    } else {
+        panic("num.kat: unknown operation")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// scalar.kat and gamma.kat: floats.
+
+fn run_float(mut t: Tally, p: List<String>) {
+    let name = p[0].as_str()
+    let op = p[1].as_str()
+    let want = p[p.len() - 1].as_str()
+    if op == "lerp" {
+        let got = lerp(float_of(p[2].as_str()), float_of(p[3].as_str()), float_of(p[4].as_str()))
+        float_check(mut t, name, got, want, 1e-12)
+    } else if op == "approx" {
+        let got = approx_eq(
+            float_of(p[2].as_str()),
+            float_of(p[3].as_str()),
+            float_of(p[4].as_str()),
+            float_of(p[5].as_str()),
+        )
+        t.check(name, got.to_string().as_str() == want, format("got {}, want {}", got, want))
+    } else if op == "poly" {
+        let coefficients = list_of(p[2].as_str())
+        let got = poly_eval(coefficients.as_slice(), float_of(p[3].as_str()))
+        float_check(mut t, name, got, want, 1e-12)
+    } else if op == "gamma" {
+        float_check(mut t, name, gamma(float_of(p[2].as_str())), want, 1e-12)
+    } else if op == "lngamma" {
+        float_check(mut t, name, ln_gamma(float_of(p[2].as_str())), want, 1e-12)
+    } else {
+        panic("scalar.kat: unknown operation")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// stats.kat: statistics over slices.
+
+fn run_stats(mut t: Tally, p: List<String>) {
+    let name = p[0].as_str()
+    let op = p[1].as_str()
+    let xs = list_of(p[2].as_str())
+    let ys = list_of(p[3].as_str())
+    let want = p[5].as_str()
+    if op == "sum" {
+        float_check(mut t, name, sum(xs.as_slice()), want, 1e-12)
+    } else if op == "mean" {
+        option_check(mut t, name, mean(xs.as_slice()), want, 1e-12)
+    } else if op == "variance" {
+        option_check(mut t, name, variance(xs.as_slice()), want, 1e-12)
+    } else if op == "sample_variance" {
+        option_check(mut t, name, sample_variance(xs.as_slice()), want, 1e-12)
+    } else if op == "std_dev" {
+        option_check(mut t, name, std_dev(xs.as_slice()), want, 1e-12)
+    } else if op == "sample_std_dev" {
+        option_check(mut t, name, sample_std_dev(xs.as_slice()), want, 1e-12)
+    } else if op == "minimum" {
+        option_check(mut t, name, minimum(xs.as_slice()), want, 1e-12)
+    } else if op == "maximum" {
+        option_check(mut t, name, maximum(xs.as_slice()), want, 1e-12)
+    } else if op == "median" {
+        option_check(mut t, name, median(xs.as_slice()), want, 1e-12)
+    } else if op == "quantile" {
+        option_check(mut t, name, quantile(xs.as_slice(), float_of(p[4].as_str())), want, 1e-12)
+    } else if op == "covariance" {
+        option_check(mut t, name, covariance(xs.as_slice(), ys.as_slice()), want, 1e-12)
+    } else if op == "correlation" {
+        option_check(mut t, name, correlation(xs.as_slice(), ys.as_slice()), want, 1e-12)
+    } else {
+        panic("stats.kat: unknown operation")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// vector.kat: vectors of two, three, and four components.
+
+fn vec2(v: List<f64>): Vector<2> {
+    Vector { data: [v[0], v[1]] }
+}
+
+fn vec3(v: List<f64>): Vector<3> {
+    Vector { data: [v[0], v[1], v[2]] }
+}
+
+fn vec4(v: List<f64>): Vector<4> {
+    Vector { data: [v[0], v[1], v[2], v[3]] }
+}
+
+/// The components of a vector, in order.
+fn components<const N: usize>(v: Vector<N>): List<f64> {
+    let mut out = List<f64>.new()
+    for i in 0..N {
+        out.push(v.data[i])
+    }
+    out
+}
+
+fn vector_dot(a: List<f64>, b: List<f64>): f64 {
+    if a.len() == 2 {
+        vec2(a).dot(vec2(b))
+    } else if a.len() == 3 {
+        vec3(a).dot(vec3(b))
+    } else {
+        vec4(a).dot(vec4(b))
+    }
+}
+
+fn vector_norm_squared(a: List<f64>): f64 {
+    if a.len() == 2 {
+        vec2(a).norm_squared()
+    } else if a.len() == 3 {
+        vec3(a).norm_squared()
+    } else {
+        vec4(a).norm_squared()
+    }
+}
+
+fn vector_norm(a: List<f64>): f64 {
+    if a.len() == 2 {
+        vec2(a).norm()
+    } else if a.len() == 3 {
+        vec3(a).norm()
+    } else {
+        vec4(a).norm()
+    }
+}
+
+fn vector_distance(a: List<f64>, b: List<f64>): f64 {
+    if a.len() == 2 {
+        vec2(a).distance(vec2(b))
+    } else if a.len() == 3 {
+        vec3(a).distance(vec3(b))
+    } else {
+        vec4(a).distance(vec4(b))
+    }
+}
+
+fn vector_angle(a: List<f64>, b: List<f64>): Option<f64> {
+    if a.len() == 2 {
+        vec2(a).angle(vec2(b))
+    } else if a.len() == 3 {
+        vec3(a).angle(vec3(b))
+    } else {
+        vec4(a).angle(vec4(b))
+    }
+}
+
+fn vector_normalized(a: List<f64>): Option<List<f64>> {
+    if a.len() == 2 {
+        match vec2(a).normalized() {
+            Some(v) => Some(components(v)),
+            None => None,
+        }
+    } else if a.len() == 3 {
+        match vec3(a).normalized() {
+            Some(v) => Some(components(v)),
+            None => None,
+        }
+    } else {
+        match vec4(a).normalized() {
+            Some(v) => Some(components(v)),
+            None => None,
+        }
+    }
+}
+
+fn vector_add(a: List<f64>, b: List<f64>): List<f64> {
+    if a.len() == 2 {
+        components(vec2(a) + vec2(b))
+    } else if a.len() == 3 {
+        components(vec3(a) + vec3(b))
+    } else {
+        components(vec4(a) + vec4(b))
+    }
+}
+
+fn vector_sub(a: List<f64>, b: List<f64>): List<f64> {
+    if a.len() == 2 {
+        components(vec2(a) - vec2(b))
+    } else if a.len() == 3 {
+        components(vec3(a) - vec3(b))
+    } else {
+        components(vec4(a) - vec4(b))
+    }
+}
+
+fn vector_scale(a: List<f64>, k: f64): List<f64> {
+    if a.len() == 2 {
+        components(vec2(a).scale(k))
+    } else if a.len() == 3 {
+        components(vec3(a).scale(k))
+    } else {
+        components(vec4(a).scale(k))
+    }
+}
+
+fn run_vector(mut t: Tally, p: List<String>) {
+    let name = p[0].as_str()
+    let op = p[1].as_str()
+    let a = list_of(p[2].as_str())
+    let b = list_of(p[3].as_str())
+    let want = p[4].as_str()
+    if op == "dot" {
+        float_check(mut t, name, vector_dot(a, b), want, 1e-12)
+    } else if op == "norm_squared" {
+        float_check(mut t, name, vector_norm_squared(a), want, 1e-12)
+    } else if op == "norm" {
+        float_check(mut t, name, vector_norm(a), want, 1e-12)
+    } else if op == "distance" {
+        float_check(mut t, name, vector_distance(a, b), want, 1e-12)
+    } else if op == "angle" {
+        option_check(mut t, name, vector_angle(a, b), want, 1e-12)
+    } else if op == "normalized" {
+        option_list_check(mut t, name, vector_normalized(a), want, 1e-12)
+    } else if op == "add" {
+        list_check(mut t, name, vector_add(a, b), want, 1e-12)
+    } else if op == "sub" {
+        list_check(mut t, name, vector_sub(a, b), want, 1e-12)
+    } else if op == "scale" {
+        list_check(mut t, name, vector_scale(a, float_of(p[3].as_str())), want, 1e-12)
+    } else if op == "cross" {
+        let got = components(vec3(a).cross(vec3(b)))
+        list_check(mut t, name, got, want, 1e-12)
+    } else {
+        panic("vector.kat: unknown operation")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// matrix.kat and linalg.kat: matrices. `fixed` selects the fixed-size type for the shapes the fixtures use; otherwise
+// the heap-backed `DynMatrix` runs them.
+
+/// A fixed-size matrix from a `Mat` of the shape `R` by `C`. The caller has checked the shape.
+fn to_fixed<const R: usize, const C: usize>(m: Mat): Matrix<R, C> {
+    let mut out: Matrix<R, C> = Matrix { data: [0.0; R * C] }
+    for i in 0..R * C {
+        out.data[i] = m.data[i]
+    }
+    out
+}
+
+/// A `Mat` from a fixed-size matrix.
+fn mat_of_fixed<const R: usize, const C: usize>(m: Matrix<R, C>): Mat {
+    let mut data = List<f64>.new()
+    for i in 0..R * C {
+        data.push(m.data[i])
+    }
+    Mat { rows: R, cols: C, data: data }
+}
+
+fn copy_of(values: List<f64>): List<f64> {
+    let mut out = List<f64>.new()
+    let mut i: usize = 0
+    while i < values.len() {
+        out.push(values[i])
+        i = i + 1
+    }
+    out
+}
+
+fn dyn_of(m: Mat): DynMatrix {
+    DynMatrix.from_list(m.rows, m.cols, copy_of(m.data))
+}
+
+fn mat_of_dyn(d: DynMatrix): Mat {
+    let mut data = List<f64>.new()
+    for r in 0..d.rows() {
+        for c in 0..d.cols() {
+            data.push(d.get(r, c))
+        }
+    }
+    Mat { rows: d.rows(), cols: d.cols(), data: data }
+}
+
+fn fixed_transpose(a: Mat): Mat {
+    if a.rows == 2 && a.cols == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        return mat_of_fixed(x.transpose())
+    }
+    if a.rows == 2 && a.cols == 3 {
+        let x: Matrix<2, 3> = to_fixed(a)
+        return mat_of_fixed(x.transpose())
+    }
+    if a.rows == 3 && a.cols == 2 {
+        let x: Matrix<3, 2> = to_fixed(a)
+        return mat_of_fixed(x.transpose())
+    }
+    if a.rows == 3 && a.cols == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        return mat_of_fixed(x.transpose())
+    }
+    if a.rows == 4 && a.cols == 4 {
+        let x: Matrix<4, 4> = to_fixed(a)
+        return mat_of_fixed(x.transpose())
+    }
+    panic("fixed: no shape for transpose")
+}
+
+fn fixed_times(a: Mat, b: Mat): Mat {
+    if a.rows == 2 && a.cols == 2 && b.cols == 1 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 1> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 2 && a.cols == 2 && b.cols == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 2> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 3 && a.cols == 3 && b.cols == 1 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 1> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 3 && a.cols == 3 && b.cols == 2 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 2> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 4 && a.cols == 4 && b.cols == 1 {
+        let x: Matrix<4, 4> = to_fixed(a)
+        let y: Matrix<4, 1> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 2 && a.cols == 3 && b.cols == 2 {
+        let x: Matrix<2, 3> = to_fixed(a)
+        let y: Matrix<3, 2> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    if a.rows == 3 && a.cols == 2 && b.cols == 3 {
+        let x: Matrix<3, 2> = to_fixed(a)
+        let y: Matrix<2, 3> = to_fixed(b)
+        return mat_of_fixed(x.times(y))
+    }
+    panic("fixed: no shape for times")
+}
+
+fn fixed_add(a: Mat, b: Mat): Mat {
+    if a.rows == 2 && a.cols == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 2> = to_fixed(b)
+        return mat_of_fixed(x + y)
+    }
+    if a.rows == 3 && a.cols == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 3> = to_fixed(b)
+        return mat_of_fixed(x + y)
+    }
+    panic("fixed: no shape for add")
+}
+
+fn fixed_sub(a: Mat, b: Mat): Mat {
+    if a.rows == 2 && a.cols == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 2> = to_fixed(b)
+        return mat_of_fixed(x - y)
+    }
+    if a.rows == 3 && a.cols == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 3> = to_fixed(b)
+        return mat_of_fixed(x - y)
+    }
+    panic("fixed: no shape for sub")
+}
+
+fn fixed_trace(a: Mat): f64 {
+    if a.rows == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        return x.trace()
+    }
+    if a.rows == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        return x.trace()
+    }
+    let x: Matrix<4, 4> = to_fixed(a)
+    x.trace()
+}
+
+fn fixed_det(a: Mat): f64 {
+    if a.rows == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        return x.det()
+    }
+    if a.rows == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        return x.det()
+    }
+    let x: Matrix<4, 4> = to_fixed(a)
+    x.det()
+}
+
+fn fixed_inverse(a: Mat): Option<Mat> {
+    if a.rows == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        return match x.inverse() {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    if a.rows == 3 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        return match x.inverse() {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    let x: Matrix<4, 4> = to_fixed(a)
+    match x.inverse() {
+        Some(m) => Some(mat_of_fixed(m)),
+        None => None,
+    }
+}
+
+fn fixed_solve(a: Mat, b: Mat): Option<Mat> {
+    if a.rows == 2 && b.cols == 1 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 1> = to_fixed(b)
+        return match x.solve(y) {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    if a.rows == 2 && b.cols == 2 {
+        let x: Matrix<2, 2> = to_fixed(a)
+        let y: Matrix<2, 2> = to_fixed(b)
+        return match x.solve(y) {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    if a.rows == 3 && b.cols == 1 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 1> = to_fixed(b)
+        return match x.solve(y) {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    if a.rows == 3 && b.cols == 2 {
+        let x: Matrix<3, 3> = to_fixed(a)
+        let y: Matrix<3, 2> = to_fixed(b)
+        return match x.solve(y) {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    if a.rows == 4 && b.cols == 1 {
+        let x: Matrix<4, 4> = to_fixed(a)
+        let y: Matrix<4, 1> = to_fixed(b)
+        return match x.solve(y) {
+            Some(m) => Some(mat_of_fixed(m)),
+            None => None,
+        }
+    }
+    panic("fixed: no shape for solve")
+}
+
+fn dyn_option_mat(value: Option<DynMatrix>): Option<Mat> {
+    match value {
+        Some(d) => Some(mat_of_dyn(d)),
+        None => None,
+    }
+}
+
+/// The same operations as the fixed-size functions, by the heap-backed matrix.
+fn run_op_transpose(fixed: bool, a: Mat): Mat {
+    if fixed {
+        fixed_transpose(a)
+    } else {
+        mat_of_dyn(dyn_of(a).transpose())
+    }
+}
+
+fn run_op_times(fixed: bool, a: Mat, b: Mat): Mat {
+    if fixed {
+        fixed_times(a, b)
+    } else {
+        mat_of_dyn(dyn_of(a).times(dyn_of(b)))
+    }
+}
+
+fn run_op_add(fixed: bool, a: Mat, b: Mat): Mat {
+    if fixed {
+        fixed_add(a, b)
+    } else {
+        mat_of_dyn(dyn_of(a) + dyn_of(b))
+    }
+}
+
+fn run_op_sub(fixed: bool, a: Mat, b: Mat): Mat {
+    if fixed {
+        fixed_sub(a, b)
+    } else {
+        mat_of_dyn(dyn_of(a) - dyn_of(b))
+    }
+}
+
+fn run_op_trace(fixed: bool, a: Mat): f64 {
+    if fixed {
+        fixed_trace(a)
+    } else {
+        dyn_of(a).trace()
+    }
+}
+
+fn run_op_det(fixed: bool, a: Mat): f64 {
+    if fixed {
+        fixed_det(a)
+    } else {
+        dyn_of(a).det()
+    }
+}
+
+fn run_op_inverse(fixed: bool, a: Mat): Option<Mat> {
+    if fixed {
+        fixed_inverse(a)
+    } else {
+        dyn_option_mat(dyn_of(a).inverse())
+    }
+}
+
+fn run_op_solve(fixed: bool, a: Mat, b: Mat): Option<Mat> {
+    if fixed {
+        fixed_solve(a, b)
+    } else {
+        dyn_option_mat(dyn_of(a).solve(dyn_of(b)))
+    }
+}
+
+/// Whether a matrix result has the shape and the values of `want`.
+fn mat_check(mut t: Tally, name: str, got: Mat, want: str) {
+    let expected = mat_of(want)
+    let same_shape = got.rows == expected.rows && got.cols == expected.cols
+    let ok = same_shape && lists_close(got.data, expected.data, 1e-9)
+    t.check(name, ok, format("got {}x{}:{}, want {}", got.rows, got.cols, show_list(got.data), want))
+}
+
+fn opt_mat_check(mut t: Tally, name: str, got: Option<Mat>, want: str) {
+    match got {
+        Some(m) => {
+            if want == "none" {
+                t.check(name, false, format("got {}x{}:{}, want none", m.rows, m.cols, show_list(m.data)))
+            } else {
+                mat_check(mut t, name, m, want)
+            }
+        }
+        None => {
+            t.check(name, want == "none", format("got none, want {}", want))
+        }
+    }
+}
+
+fn run_matrix(mut t: Tally, p: List<String>, fixed: bool) {
+    let name = p[0].as_str()
+    let op = p[1].as_str()
+    let a = mat_of(p[2].as_str())
+    let want = p[p.len() - 1].as_str()
+    if op == "transpose" {
+        mat_check(mut t, name, run_op_transpose(fixed, a), want)
+    } else if op == "times" {
+        mat_check(mut t, name, run_op_times(fixed, a, mat_of(p[3].as_str())), want)
+    } else if op == "add" {
+        mat_check(mut t, name, run_op_add(fixed, a, mat_of(p[3].as_str())), want)
+    } else if op == "sub" {
+        mat_check(mut t, name, run_op_sub(fixed, a, mat_of(p[3].as_str())), want)
+    } else if op == "trace" {
+        float_check(mut t, name, run_op_trace(fixed, a), want, 1e-9)
+    } else if op == "det" {
+        float_check(mut t, name, run_op_det(fixed, a), want, 1e-9)
+    } else if op == "inverse" {
+        opt_mat_check(mut t, name, run_op_inverse(fixed, a), want)
+    } else if op == "solve" {
+        opt_mat_check(mut t, name, run_op_solve(fixed, a, mat_of(p[3].as_str())), want)
+    } else {
+        panic("matrix fixture: unknown operation")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+fn main() {
+    let args = env.args()
+    let mode = args[1].as_str()
+    let text = read_to_string(args[2].as_str()).unwrap()
+    let mut t = Tally { cases: 0, failures: 0 }
+    for line in text.lines() {
+        let trimmed = line.trim()
+        if trimmed.len() == 0 || trimmed.starts_with("#") {
+            continue
+        }
+        let p = trimmed.split("|")
+        if mode == "num" {
+            run_num(mut t, p)
+        } else if mode == "float" {
+            run_float(mut t, p)
+        } else if mode == "stats" {
+            run_stats(mut t, p)
+        } else if mode == "vector" {
+            run_vector(mut t, p)
+        } else if mode == "fixed" {
+            run_matrix(mut t, p, true)
+        } else if mode == "dyn" {
+            run_matrix(mut t, p, false)
+        } else {
+            panic("mathkat: unknown mode")
+        }
+    }
+    println("cases={} failures={}", t.cases, t.failures)
+}

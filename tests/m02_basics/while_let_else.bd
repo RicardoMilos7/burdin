@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// `while let` ends when its value stops matching, so it takes no `else` (`spec/grammar.md`, rule 8.11). The `else`
+// after its body is a syntax error.
+
+fn maybe(n: i32): Option<i32> {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn main() {
+    let mut n = 2
+    while let Some(v) = maybe(n) {
+        n = n - 1
+    } else { //~ E0001
+        n = 0
+    }
+}
