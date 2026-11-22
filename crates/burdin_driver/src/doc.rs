@@ -3,7 +3,7 @@
 //! syntax trees with `burdin_doc`, and writes a static HTML site, a JSON document, or a coverage report.
 
 use crate::{
-    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
+    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, TempDir, flag_without_value, front_end,
     jobs_or_default, option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
 };
 use burdin_diag::{DiagnosticFormat, Severity};
@@ -23,6 +23,8 @@ enum Format {
 
 struct DocArgs {
     target: PathBuf,
+    /// `--std`: document the standard library the compiler carries; there is no target.
+    std: bool,
     out: Option<PathBuf>,
     format: Format,
     private: bool,
@@ -37,6 +39,7 @@ struct DocArgs {
 fn parse(argv: &[String]) -> Result<DocArgs, String> {
     let mut args = DocArgs {
         target: PathBuf::new(),
+        std: false,
         out: None,
         format: Format::Html,
         private: false,
@@ -65,6 +68,7 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
                 };
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
+            "--std" => args.std = flag_without_value(a, inline)?,
             "--private" => args.private = flag_without_value(a, inline)?,
             "--coverage" => args.coverage = flag_without_value(a, inline)?,
             "--deny-warnings" => args.deny_warnings = flag_without_value(a, inline)?,
@@ -99,7 +103,16 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
             _ => return Err(format!("unexpected argument `{a}`")),
         }
     }
-    args.target = target.ok_or("missing target file")?;
+    if args.std {
+        if let Some(target) = target {
+            return Err(format!(
+                "`--std` documents the standard library and takes no target, got `{}`",
+                target.display()
+            ));
+        }
+    } else {
+        args.target = target.ok_or("missing target file")?;
+    }
     if args.coverage && args.out.is_some() {
         return Err("`--coverage` prints a report and does not take `-o`".to_string());
     }
@@ -135,7 +148,30 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         sanitize: Default::default(),
         fuzz_target: None,
     };
-    let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
+    // The standard library is documented through an empty program that loads it beside itself: the compiler's own
+    // copy is the package, and there is no other way to name it. The directory lives as long as the front end.
+    let (_scratch, target, shown) = if args.std {
+        let scratch = match TempDir::new() {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!("error: cannot create a temporary directory: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let file = scratch.path.join("std_doc.bd");
+        if let Err(e) = std::fs::write(
+            &file,
+            "// The program `burdin doc --std` loads the standard library beside.
+",
+        ) {
+            eprintln!("error: cannot write {}: {e}", file.display());
+            return ExitCode::from(2);
+        }
+        (Some(scratch), file, "the standard library".to_string())
+    } else {
+        (None, args.target.clone(), args.target.display().to_string())
+    };
+    let front = match front_end(&target, &options, &SourceOverrides::new()) {
         Ok(f) => f,
         Err(code) => return code,
     };
@@ -145,16 +181,19 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         eprint!("{}", rendered.text);
         let errors = front.diags.iter().filter(|d| d.severity == Severity::Error).count();
         let s = if errors == 1 { "" } else { "s" };
-        eprintln!("error: could not check {} ({errors} error{s}); fix them before documenting", args.target.display());
+        eprintln!("error: could not check {shown} ({errors} error{s}); fix them before documenting");
         return ExitCode::from(1);
     }
     let packages = packages_of(&front);
-    let input = burdin_doc::Input {
-        sources: &front.sources,
-        packages,
-        entry: front.loaded.entry_package,
-        private: args.private,
+    let entry = if args.std {
+        packages
+            .iter()
+            .position(|p| p.name == "std" && p.is_std)
+            .expect("the compiler always carries the standard library")
+    } else {
+        front.loaded.entry_package
     };
+    let input = burdin_doc::Input { sources: &front.sources, packages, entry, private: args.private };
     if args.coverage {
         let (rows, missing) = burdin_doc::coverage(&input);
         print!("{}", burdin_doc::render_coverage(input.packages[input.entry].name, &rows, &missing));
@@ -183,7 +222,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
             }
         }
         Format::Html => {
-            let out = args.out.clone().unwrap_or_else(|| default_out(&args.target));
+            let out = args.out.clone().unwrap_or_else(|| default_out(&args));
             let pages = burdin_doc::html::render(&api);
             match write_site(&out, &pages) {
                 Ok(()) => eprintln!("doc: wrote {} files to {}", pages.len(), out.display()),
@@ -204,8 +243,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `<package>/target/doc` for a package directory, `target/doc` beside the file for a single file.
-fn default_out(target: &Path) -> PathBuf {
+/// `<package>/target/doc` for a package directory, `target/doc` beside the file for a single file, and
+/// `target/doc/std` in the working directory for `--std`.
+fn default_out(args: &DocArgs) -> PathBuf {
+    if args.std {
+        return PathBuf::from("target").join("doc").join("std");
+    }
+    let target = &args.target;
     let base =
         if target.is_dir() { target.to_path_buf() } else { target.parent().map(Path::to_path_buf).unwrap_or_default() };
     base.join("target").join("doc")
@@ -227,9 +271,12 @@ fn packages_of(front: &FrontEnd) -> Vec<burdin_doc::PackageInput<'_>> {
                 continue;
             }
             let (file, ast) = &front.parsed[first + m];
+            let file_name = module.file.file_name().map(PathBuf::from).unwrap_or_else(|| module.file.clone());
             let relative = match &package.dir {
                 Some(dir) => module.file.strip_prefix(dir).unwrap_or(&module.file).to_path_buf(),
-                None => module.file.file_name().map(PathBuf::from).unwrap_or_else(|| module.file.clone()),
+                // The compiler's own copy of the standard library: its files sit in `std/src/`.
+                None if module.text.is_some() => Path::new("src").join(file_name),
+                None => file_name,
             };
             let is_root = match package.root_module {
                 Some(root) => root == m,

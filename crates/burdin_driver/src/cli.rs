@@ -834,14 +834,16 @@ fn doc() -> Command {
     with_diagnostics(
         Command::new("doc")
             .about("Generate the documentation of a package")
-            .override_usage("burdin doc <file.bd | package directory> [OPTIONS]")
-            .arg(target().required(true))
+            .override_usage("burdin doc (<file.bd | package directory> | --std) [OPTIONS]")
+            .arg(target().required_unless_present("std"))
             .args([
                 Arg::new("out").short('o').long("out").value_name("dir | file").help(
-                    "Where to write: a directory for html (default: <package>/target/doc), a file for json \
-                     (default: standard output)",
+                    "Where to write: a directory for html (default: <package>/target/doc, or target/doc/std with \
+                     --std), a file for json (default: standard output)",
                 ),
                 option("output-format", "html|json", "A static site (default: html) or the documented API as JSON"),
+                flag("std", "Document the standard library the compiler carries, instead of a target")
+                    .conflicts_with("target"),
                 flag("private", "Document `priv` items, fields, and methods too"),
                 flag("coverage", "Print how much of the public interface is documented, per module"),
                 flag("deny-warnings", "Exit with status 1 when a doc comment has a broken link"),

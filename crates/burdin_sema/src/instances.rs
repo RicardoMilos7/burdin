@@ -227,17 +227,23 @@ impl<'t> Sema<'t> {
 
     /// Allocates what the last pass asked for. Returns whether anything was allocated, which means the pass has to
     /// be repeated.
+    ///
+    /// At the instance limit it reports the error once and allocates nothing more. What it already allocated still
+    /// counts as allocated (the result is `true`), so the next pass resolves those instances before any body is
+    /// checked against them; the requests it drops come back as `Error` types, which add no diagnostics of their own.
     pub(crate) fn drain(&mut self, file: FileId, diags: &mut Diagnostics) -> bool {
         let requests = std::mem::take(&mut *self.globals.requests.borrow_mut());
         let mut any = false;
         for r in requests {
             if self.fn_items.len() + self.globals.structs.len() + self.globals.enums.len() > MAX_ITEMS {
-                diags.error(
-                    Code::UNSUPPORTED, // e9000: instances-limit
-                    nowhere(file),
-                    "too many generic instantiations; a generic type or function may instantiate itself without end",
-                );
-                return false;
+                if !std::mem::replace(&mut self.instance_limit_reported, true) {
+                    diags.error(
+                        Code::UNSUPPORTED, // e9000: instances-limit
+                        nowhere(file),
+                        "too many generic instantiations; a generic type or function may instantiate itself without end",
+                    );
+                }
+                return any;
             }
             match r {
                 Request::Adt(template, args) => {
