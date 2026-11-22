@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: attempt to shift with overflow
+//> start
+
+// A shift by the bit width or more panics in a debug build, as the binary shift does (spec/compound-assignment.md, CA2).
+
+fn main() {
+    println("start")
+    let amount = 40
+    let mut x: i32 = 1
+    x <<= amount
+    println("{x}")
+}

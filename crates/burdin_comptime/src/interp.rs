@@ -278,6 +278,11 @@ impl<'p, 'c> Interp<'p, 'c> {
             return Err(impure(&format!("dereferencing a `CPtr<{pointee}>`"), span));
         };
         let addr = self.eval(ptr, Mode::Use)?.int();
+        self.ptr_read(addr, scalar, pointee, span)
+    }
+
+    /// The value of type `pointee` stored at `addr`, read with the checks of `ptr_deref`.
+    fn ptr_read(&mut self, addr: i128, scalar: crate::memory::Scalar, pointee: &Ty, span: Span) -> R<Value> {
         let n = self.mem.read(addr, scalar, span).map_err(Unwind::Fault)?;
         Ok(match pointee {
             Ty::Bool => Value::Bool(n != 0),
@@ -473,6 +478,23 @@ impl<'p, 'c> Interp<'p, 'c> {
                     None => Value::Unit,
                 };
                 return Err(Unwind::Return(v));
+            }
+            K::CompoundAssign(op, lhs, rhs) => {
+                // The value is evaluated first, then the place once, as for `=` (spec/compound-assignment.md, CA2).
+                let v = self.eval(rhs, Mode::Use)?;
+                if let K::PtrDeref(ptr) = &lhs.kind {
+                    let addr = self.eval(ptr, Mode::Use)?.int();
+                    let scalar = crate::memory::scalar(&lhs.ty).expect("checked: a compound operand is a scalar");
+                    let old = self.ptr_read(addr, scalar, &lhs.ty, span)?;
+                    let new = self.binary_values(*op, &lhs.ty, old, v, &rhs.ty, span)?;
+                    self.ptr_write(addr, &lhs.ty, new, span)?;
+                    return Ok(Value::Unit);
+                }
+                let p = self.eval_place(lhs)?;
+                let old = self.place_mut(&p, span)?.clone();
+                let new = self.binary_values(*op, &lhs.ty, old, v, &rhs.ty, span)?;
+                *self.place_mut(&p, span)? = new;
+                Value::Unit
             }
             K::Assign(lhs, rhs) => {
                 if let K::PtrDeref(ptr) = &lhs.kind {

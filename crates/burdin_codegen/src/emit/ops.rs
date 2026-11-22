@@ -98,11 +98,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let v = self.builder.build_int_compare(pred, order, zero, "").map_err(llvm_err)?;
             return Ok(Some(v.into()));
         }
+        self.arith_values(op, operand_ty, lv, rv, &r.ty, span)
+    }
+
+    /// The value of an arithmetic, bitwise, or comparison operator on two operands that are already evaluated: the
+    /// left operand has `operand_ty` and the right one `r_ty`. The binary operators and compound assignment
+    /// (`spec/compound-assignment.md`, CA2) share it, so both give the same overflow and division behavior.
+    pub(super) fn arith_values(
+        &mut self,
+        op: BinOp,
+        operand_ty: &Ty,
+        lv: Option<BasicValueEnum<'ctx>>,
+        rv: Option<BasicValueEnum<'ctx>>,
+        r_ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         if self.llvm_ty(operand_ty).is_none() {
             return Ok(None);
         }
         let lv = self.need(lv, operand_ty);
-        let rv = self.need(rv, &r.ty);
+        let rv = self.need(rv, r_ty);
         let b = &self.builder;
         let v: BasicValueEnum<'ctx> = match operand_ty {
             Ty::Float(_) => {

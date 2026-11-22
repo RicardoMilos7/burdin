@@ -36,6 +36,25 @@ const LEVEL_OR: u8 = 4;
 const LEVEL_AND: u8 = 5;
 const LEVEL_CMP: u8 = 6;
 
+/// Whether the token is a compound assignment operator (`+=`, `<<=`, ...), which lays out like `=`
+/// (`spec/compound-assignment.md`, CA1).
+fn is_compound_assign(kind: &TokenKind) -> bool {
+    use TokenKind as T;
+    matches!(
+        kind,
+        T::PlusEq
+            | T::MinusEq
+            | T::StarEq
+            | T::SlashEq
+            | T::PercentEq
+            | T::AmpEq
+            | T::PipeEq
+            | T::CaretEq
+            | T::ShlEq
+            | T::ShrEq
+    )
+}
+
 /// One link of a postfix chain: `.name`, `(args)`, `[index]`, `?`.
 struct Seg {
     doc: D,
@@ -62,7 +81,7 @@ impl Fmt<'_> {
 
     pub fn expr_r(&mut self, r: Restriction) -> R<Ex> {
         let lhs = self.orelse(r)?;
-        if self.at(&TokenKind::Eq) && !self.nl() {
+        if (self.at(&TokenKind::Eq) || is_compound_assign(self.kind())) && !self.nl() {
             let eq = self.tok_doc();
             let rhs = self.expr_r(r)?;
             let doc = concat(vec![lhs.doc, space(), eq, self.after_operator(rhs)]);

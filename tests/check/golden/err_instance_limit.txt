@@ -1,0 +1,2 @@
+err_instance_limit.bd:1:1: error[E9000]: too many generic instantiations; a generic type or function may instantiate itself without end
+error: could not check err_instance_limit.bd (1 error)

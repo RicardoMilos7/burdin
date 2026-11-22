@@ -1,0 +1,28 @@
+//@ run
+//> 8
+//> 24
+//> 5
+
+// Compound assignment through a raw C pointer: the place is the pointee, read and written once
+// (spec/compound-assignment.md, CA2). The pointer arithmetic is the one of `tests/m08_modules/cptr_operations.bd`.
+
+extern "C" {
+    fn malloc(size: CSize): CPtr<CVoid>
+    fn free(p: CPtr<CVoid>)
+}
+
+fn main() {
+    unsafe {
+        let raw = malloc(8)
+        let p = raw as CPtr<i32>
+        *p = 7
+        *p += 1
+        println((*p).to_string())
+        *(p + 1) = 4
+        *(p + 1) *= 6
+        println((*(p + 1)).to_string())
+        *p -= 3
+        println((*p).to_string())
+        free(raw)
+    }
+}

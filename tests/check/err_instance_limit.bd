@@ -1,0 +1,49 @@
+// The instance limit is reported once, at the start of the file. //~ E9000
+// It is an error, not a crash: `Chain`'s provided methods wrap `Self` in a struct that is a `Chain` too, so every
+// wrapper has three more, without end. Instances were still unresolved when the limit stopped the allocation, and the
+// next body that built a struct literal of one indexed a field list that was empty (issue #910).
+//% exit: 1
+//% stderr: too many generic instantiations
+
+struct A<I> {
+    inner: I
+}
+
+struct B<I> {
+    inner: I
+}
+
+struct C<I> {
+    inner: I
+}
+
+interface Chain {
+    fn a(own self): A<Self> {
+        A { inner: self }
+    }
+
+    fn b(own self): B<Self> {
+        B { inner: self }
+    }
+
+    fn c(own self): C<Self> {
+        C { inner: self }
+    }
+}
+
+A<I>: Chain where I: Chain {}
+
+B<I>: Chain where I: Chain {}
+
+C<I>: Chain where I: Chain {}
+
+struct Seed {
+    n: i32
+}
+
+Seed: Chain {}
+
+fn main() {
+    let x = Seed { n: 1 }.a()
+    println("{x.inner.n}")
+}

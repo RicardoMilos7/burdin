@@ -113,7 +113,7 @@ are recorded in `spec/operators.md` OP1-OP13 (the decisions that the operator in
 interfaces declared in `std.ops`, with same-type operands and no mixed types; that the built-in operators and the
 `Eq`/`Ord` derives always win; that `PartialEq`/`PartialOrd` are new interfaces rather than the derive-only `Eq` and
 `Ord`; that `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; and that
-compound assignment and shifts are not overloadable). The existing diagnostics E0141 (a missing operator or index
+compound assignment and shifts are not overloadable; issue #277 later made compound assignment take the operator's interface, `spec/compound-assignment.md` CA5). The existing diagnostics E0141 (a missing operator or index
 implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
 (wrong operand types) cover the new rejections; no new error code was needed.
 
@@ -308,7 +308,7 @@ code; do not invent them inside the implementation.
    `Eq`/`Ord`, so every stage 0 derive keeps its exact behavior. `Index<T>`/`IndexMut<T>` name the element type,
    take a `usize`, and return `&T`/`&mut T`, which makes `x[i]` a place; a write selects `index_mut` and requires a
    mutable receiver. A literal never adopts a user type (`v + 1` is E0003). Compound assignment and the shift
-   operators are not overloadable. The rules are `spec/operators.md` OP1-OP13 and the tests are
+   operators were not overloadable at this milestone (issue #277 changed compound assignment, CA5). The rules are `spec/operators.md` OP1-OP13 and the tests are
    `tests/m19_operators/`.
 
 9. **Extension methods — settled with milestone 18.** An extension `fn Type.name(self, ...)` is visible in its
@@ -400,6 +400,10 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 (`spec/allocators.md`, AL11, issue #278); the remaining items below are still wanted.
 
 `i128`/`u128` have landed too (issue #273, `spec/int128.md`), and so has `break` with a value (issue #276,
+`spec/grammar.md` rule 8.10), and compound assignment has landed for the built-in types (issue #277,
+`spec/compound-assignment.md`). The remaining items are doc tests, `bench` blocks, fallible allocation,
+compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
+slip past stage 1, and a package registry. Compound assignment on a user type (issue #277) takes the operator from its interface, as `a = a op b`.
 `spec/grammar.md` rule 8.10). The remaining items are compound assignment, doc tests, `bench` blocks,
 fallible allocation, compiler-inserted preemption checks, a MIR (decision 6), `Set`/`Deque` if they
 compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they

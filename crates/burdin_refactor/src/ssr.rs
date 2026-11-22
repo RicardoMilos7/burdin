@@ -202,6 +202,11 @@ impl Pattern {
                 a == b && self.matches(cx, x, p, bound) && self.matches(cx, y, q, bound)
             }
             (ExprKind::Unary(a, x), ExprKind::Unary(b, y)) => a == b && self.matches(cx, x, y, bound),
+            (ExprKind::CompoundAssign(a, ..), ExprKind::CompoundAssign(b, ..)) if a == b => {
+                let (x, y) = two(&pattern.kind);
+                let (p, q) = two(&e.kind);
+                self.matches(cx, x, p, bound) && self.matches(cx, y, q, bound)
+            }
             (ExprKind::Assign(..), ExprKind::Assign(..))
             | (ExprKind::OrElse(..), ExprKind::OrElse(..))
             | (ExprKind::Index(..), ExprKind::Index(..))
@@ -328,6 +333,7 @@ fn dotted(e: &Expr) -> Option<String> {
 fn two(kind: &ExprKind) -> (&Expr, &Expr) {
     match kind {
         ExprKind::Assign(a, b)
+        | ExprKind::CompoundAssign(_, a, b)
         | ExprKind::OrElse(a, b)
         | ExprKind::Index(a, b)
         | ExprKind::ArrayRepeat(a, b)

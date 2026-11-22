@@ -136,6 +136,10 @@ pub(crate) fn with_default_target(mut argv: Vec<String>) -> Vec<String> {
 /// Where the default target goes among `rest` (the arguments after the command's name): the index it is inserted
 /// before, or `None` when the command line has its target already.
 fn default_target_index(name: &str, rest: &[String]) -> Option<usize> {
+    // `burdin doc --std` documents the standard library the compiler carries and takes no target (`spec/doc.md`, DC24).
+    if name == "doc" && rest.iter().any(|a| a == "--std") {
+        return None;
+    }
     let positions = positionals(name, rest);
     if TARGET_FIRST.contains(&name) {
         return positions.is_empty().then_some(0);
@@ -1051,16 +1055,19 @@ fn doc() -> Command {
             .about("Generate the documentation of a package")
             .override_usage(
                 "burdin doc [file.bd | package directory | workspace root] [OPTIONS]
-       \n                 burdin doc <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]",
+       \n                 burdin doc <workspace root> -p <member>... | --workspace [--exclude <member>]... [OPTIONS]
+       \n                 burdin doc --std [OPTIONS]",
             )
             .arg(target_or_here())
             .args(member_selection())
             .args([
                 Arg::new("out").short('o').long("out").value_name("dir | file").help(
-                    "Where to write: a directory for html (default: <package>/target/doc), a file for json \
-                     (default: standard output)",
+                    "Where to write: a directory for html (default: <package>/target/doc, or target/doc/std with \
+                     --std), a file for json (default: standard output)",
                 ),
                 option("output-format", "html|json", "A static site (default: html) or the documented API as JSON"),
+                flag("std", "Document the standard library the compiler carries, instead of a target")
+                    .conflicts_with("target"),
                 flag("private", "Document `priv` items, fields, and methods too"),
                 flag("coverage", "Print how much of the public interface is documented, per module"),
                 flag("deny-warnings", "Exit with status 1 when a doc comment has a broken link"),
@@ -1529,5 +1536,9 @@ mod tests {
         assert_eq!(with_default_target(words(&["new", "app"])), words(&["new", "app"]));
         assert_eq!(with_default_target(words(&["fmt"])), words(&["fmt"]));
         assert_eq!(with_default_target(words(&["fuzz"])), words(&["fuzz", "."]));
+        // `doc --std` takes no target; plain `doc` still defaults to the working directory.
+        assert_eq!(with_default_target(words(&["doc", "--std"])), words(&["doc", "--std"]));
+        assert_eq!(with_default_target(words(&["doc", "--std", "-o", "out"])), words(&["doc", "--std", "-o", "out"]));
+        assert_eq!(with_default_target(words(&["doc"])), words(&["doc", "."]));
     }
 }

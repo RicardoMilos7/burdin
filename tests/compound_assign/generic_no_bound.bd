@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// Without the `Add` bound the type parameter has no `+`, so `x += y` is E0141 (spec/compound-assignment.md, CA5).
+
+fn bump<T>(mut x: T, y: T): T {
+    x += y //~ E0141
+    x
+}
+
+fn main() {
+    println("done")
+}

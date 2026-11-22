@@ -199,6 +199,7 @@ usage:
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
              [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
   burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
+  burdin doc --std [the same options]
   burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
                [--break-on-panic] [--release | --profile <name>] [-j <n>] [diagnostics] [-- <program arguments>...]
   burdin explain [<error code>]
@@ -823,7 +824,11 @@ that names a `priv` item is `D0002`. [`spec/doc.md`](spec/doc.md) is the specifi
 ```
 burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
            [--coverage] [--deny-warnings] [diagnostics]
+burdin doc --std [the same options]
 ```
+
+`--std` documents the standard library the compiler carries, in place of a target (the standard library is built into
+the compiler, so it is not documented as an ordinary package).
 
 The HTML site documents the public interface: by default `priv` items, fields, and methods are left out and `--private`
 shows them, marked. A type's page lists its fields and variants, its methods, the operators it implements written as

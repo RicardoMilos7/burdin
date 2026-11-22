@@ -1,0 +1,26 @@
+//@ run
+//> true
+//> false
+//> 3
+
+// The float operators, and the bitwise operators on `bool` (spec/compound-assignment.md, CA2 and CA3).
+
+fn main() {
+    let mut f = 7.5
+    f += 0.5
+    f -= 1.0
+    f *= 2.0
+    f /= 4.0
+    f %= 1.0
+    println("{f == 0.5}")
+
+    let mut ok = true
+    ok &= false
+    ok |= true
+    ok ^= true
+    println("{ok}")
+
+    let mut count: u32 = 0
+    count += 3
+    println("{count}")
+}

@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A raw C pointer is not a number, so `p += n` is E0003 (inside `unsafe`, where the pointer may be used at all); the
+// binary form `p = p + n` is the pointer offset (spec/compound-assignment.md, CA3).
+
+fn bump(mut p: CPtr<i32>, n: usize) {
+    unsafe {
+        p += n //~ E0003
+    }
+}
+
+fn main() {
+    println("done")
+}

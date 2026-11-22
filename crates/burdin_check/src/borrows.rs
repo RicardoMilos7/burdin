@@ -647,6 +647,10 @@ impl<'a> Checker<'a> {
                 }
                 self.access_place(place, Access::Write);
             }
+            K::CompoundAssign(_, place, value) => {
+                self.expr(value, Mode::Use);
+                self.access_place(place, Access::Write);
+            }
             K::Binary(_, l, r) => {
                 self.expr(l, Mode::Use);
                 self.expr(r, Mode::Use);
@@ -874,7 +878,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(callee, out);
             args.iter().for_each(|x| locals_used(x, out));
         }
-        K::Binary(_, l, r) | K::Assign(l, r) => {
+        K::Binary(_, l, r) | K::Assign(l, r) | K::CompoundAssign(_, l, r) => {
             locals_used(l, out);
             locals_used(r, out);
         }
@@ -1014,7 +1018,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(callee, stmt, last);
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
-        K::Binary(_, l, r) | K::Assign(l, r) => {
+        K::Binary(_, l, r) | K::Assign(l, r) | K::CompoundAssign(_, l, r) => {
             uses_expr(l, stmt, last);
             uses_expr(r, stmt, last);
         }

@@ -116,6 +116,10 @@ for label, args in [
     ("an unknown format", [str(GEOMETRY), "--output-format", "pdf"]),
     ("--coverage with -o", [str(GEOMETRY), "--coverage", "-o", "x"]),
     ("--output-format without a value", [str(GEOMETRY), "--output-format"]),
+    ("--std with a target", ["--std", str(GEOMETRY)]),
+    ("--std with -p", ["--std", "-p", "geometry"]),
+    ("--std with --workspace", ["--std", "--workspace"]),
+    ("--std with -o and --coverage", ["--std", "--coverage", "-o", "x"]),
 ]:
     out, err, status = doc(args)
     check(status == 2, f"cli: {label}: expected exit status 2, got {status}: {err.strip()[:300]}")
@@ -417,6 +421,56 @@ check(lint_missing != [] and lint_missing == coverage_missing, f"coverage: the l
 out, err, status = doc([str(DOC / "links" / "broken.bd"), "--coverage", *COMMON])
 check("main" not in out, "coverage: `main` is not a public item to document")
 check("broken  7/7 (100%)" in out, f"coverage: a one-file target's module is the package: {out.strip()[:300]}")
+
+# --- The standard library (DC24) --------------------------------------------------------------------------------------
+
+with harness.temporary_dir("burdin-doc-std-") as work:
+    site = work / "site"
+    out, err, status = doc(["--std", "-o", str(site), *COMMON])
+    check(status == 0, f"std: expected exit status 0, got {status}: {err.strip()[:400]}")
+    check("warning" not in err and "error" not in err, f"std: the standard library has no doc diagnostics: {err.strip()[:400]}")
+    check(out == "", f"std: nothing goes to standard output, got {out[:100]!r}")
+    files = site_files(site)
+    check(f"doc: wrote {len(files)} files to" in err, f"std: unexpected summary: {err.strip()[:300]}")
+    overview = page(site, "index.html")
+    check("<h1>Package <span class=\"name\">std</span></h1>" in overview, "std: the overview names the package `std`")
+    for module in ("iter", "fs", "io", "list", "deque"):
+        check(f'href="{module}/index.html"' in overview, f"std: the overview lists the module `{module}`")
+        check(f"{module}/index.html" in files, f"std: the module page {module}/index.html is written")
+    check("deque/struct.Deque.html" in files and "iter/interface.Iterator.html" in files, "std: item pages are written")
+    deque = page(site, "deque/struct.Deque.html")
+    check("<h1>" in deque and "Deque" in deque and 'id="method.push_back"' in deque, "std: the Deque page lists its methods")
+    iterator = page(site, "iter/interface.Iterator.html")
+    check('id="method.peekable"' in iterator and "peekable(own self)" in iterator, "std: `peekable` is on the Iterator page")
+    index = page(site, "search-index.js")
+    check('"u":"fs/index.html"' in index and '"n":"peekable"' in index, "std: the search index names the modules and methods")
+    check_site_integrity(site, "std site", allow_external=True)
+    # No broken links in the standard library's own doc comments: a warning would fail the run.
+    out, err, status = doc(["--std", "-o", str(work / "strict"), "--deny-warnings", *COMMON])
+    check(status == 0, f"std: --deny-warnings passes: {status} {err.strip()[:300]}")
+
+    # JSON: the same package, its files named as the standard library's own (`src/<module>.bd`).
+    out, err, status = doc(["--std", "--output-format", "json", *COMMON])
+    check(status == 0, f"std json: expected exit status 0, got {status}: {err.strip()[:300]}")
+    try:
+        data = json.loads(out)
+    except ValueError as e:
+        add_problem(f"std json: the output is not valid JSON: {e}")
+        data = None
+    if data is not None:
+        check(data["package"] == "std" and data["format_version"] == 1, f"std json: header {data['package']}")
+        modules = {m["name"]: m for m in data["modules"]}
+        check({"iter", "fs", "io", "list", "deque", "std"} <= set(modules), f"std json: the modules are {sorted(modules)}")
+        check(modules["iter"]["file"] == "src/iter.bd", f"std json: the module's file is {modules['iter']['file']}")
+        check([m["name"] for m in data["modules"] if m["root"]] == ["std"], "std json: `std` is the root module")
+        iterator = {i["name"]: i for i in modules["iter"]["items"]}["Iterator"]
+        check("peekable" in [m["name"] for m in iterator["methods"]], "std json: `peekable` is a method of Iterator")
+    # `--coverage` reports on the standard library too.
+    out, err, status = doc(["--std", "--coverage", *COMMON])
+    check(status == 0 and "documentation coverage of std" in out, f"std coverage: {status} {out.strip()[:200]} {err.strip()[:200]}")
+    # With no `-o` the site goes to `target/doc/std` in the working directory.
+    out, err, status = doc(["--std", *COMMON], cwd=work)
+    check(status == 0 and (work / "target" / "doc" / "std" / "index.html").is_file(), f"std: default location: {status} {err.strip()[:200]}")
 
 # --- Markup stays text ------------------------------------------------------------------------------------------------
 

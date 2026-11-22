@@ -1,6 +1,6 @@
 # `burdin doc`
 
-Documentation generated from doc comments (stage 3; issues #234, #467, #468, #469, #656, #657, and #658). `burdin doc`
+Documentation generated from doc comments (stage 3; issues #234, #467, #468, #469, #656, #657, #658, and #910). `burdin doc`
 builds the documented API of a package from its source and writes it as a static HTML site, as JSON, or as a coverage
 report. This file is the exact behavior, with a rule ID for each point and the tests that cover it.
 
@@ -209,6 +209,7 @@ Tests: `tests/lint/docs/`, `tests/check_lint.py`.
 burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
            [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
 burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
+burdin doc --std [the same options]
 ```
 
 **DC21b. Members.** In a manifest-level workspace (`spec/workspaces.md`, WS12), `-p`, `--workspace`, and `--exclude`
@@ -233,3 +234,14 @@ goes to standard output, or to the file `-o` names; `-o` is a file here, not a d
 but the report and does not take `-o`.
 Tests: `check_doc.py` (the output directory section: refusal, an empty directory, stale removal, the default location,
 a single file, JSON to a file).
+
+**DC24. The standard library.** `burdin doc --std` documents the standard library this compiler carries, in place of
+a target: the package `std`, its modules, and their public interface, by the same rules as any package (DC5-DC21). The
+standard library is built into the compiler, so `burdin doc std/` cannot do this: it would load the folder as a second
+package beside the built-in one. The other options are unchanged. A module's file is named as in the repository
+(`src/iter.bd`). With no `-o` the site goes to `target/doc/std` in the working directory. `--std` with a target, or
+with `-p`, `--workspace`, or `--exclude` (DC21b), is a usage error (status 2). The standard library's own doc comments
+have no broken links, so `--deny-warnings` passes.
+Tests: `check_doc.py` (the standard library section: the overview and its modules, the `Deque` and `Iterator` pages,
+`peekable`, the search index, site integrity, `--deny-warnings`, the JSON, `--coverage`, the default location; the
+command line section: `--std` with a target, with `-p`, with `--workspace`, and with `-o` and `--coverage`).

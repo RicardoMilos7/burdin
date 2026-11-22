@@ -217,7 +217,7 @@ impl Walker<'_> {
             | K::Some(inner)
             | K::Ok(inner)
             | K::Err(inner) => self.expr(inner),
-            K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+            K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }
