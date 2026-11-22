@@ -8,10 +8,10 @@ close-out checklist in `AGENTS.md`).
 
 - Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
   integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
-  binary operator's overflow and division rules in both profiles. A user type on the left is E0001 for now: whether
-  `a += b` goes through `Add` or a new interface is an open decision, so the overloaded form is not implemented yet.
-  Rules: `spec/compound-assignment.md` CA1-CA6; tests `tests/compound_assign/`, `tests/fmt/compound_assign`, and the
-  parser unit tests in `burdin_syntax`.
+  binary operator's overflow and division rules in both profiles. On a user type or a type parameter, `a op= b` is
+  `a = a op b` through the operator's interface (`Add` for `+=`, and so on), so no new interface is needed; a missing
+  one is E0141. The place is evaluated twice on a user type, a known gap. Rules: `spec/compound-assignment.md` CA1-CA6;
+  tests `tests/compound_assign/`, `tests/fmt/compound_assign`, and the parser unit tests in `burdin_syntax`.
 - Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
   type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
   each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,

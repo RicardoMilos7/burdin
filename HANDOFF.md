@@ -16,11 +16,11 @@ zero panics, and a shift amount out of range panics in debug. Implementation: th
 (`compound_assign` in `emit/place.rs`, sharing `arith_values` with the binary operators in `emit/ops.rs`), and the
 comptime interpreter (`binary_values` in `prims.rs`, shared with the binary operators) each handle the new node. The
 formatter, the linter, the refactoring engine, and `burdin expand` know the operator too.
-**Open decision, not implemented:** a user type on the left is E0001. The issue asks for the overloaded form too (`a += b`
-on a type with `Add`), but `spec/operators.md` OP1 says compound assignment is not overloadable, so the two disagree and
-the compiler does not pick one. The choices are (a) `a += b` means `a = a + b` through the existing `Add` interface (no
-new interface), (b) new `AddAssign`-style interfaces, or (c) keep it rejected. Changing OP1 and the E0001 test
-(`tests/m19_operators/compound_assignment.bd`) is the first step of whichever is chosen. Tests:
+**User types (choice a, CA5).** On a user type or a type parameter, `a op= b` means `a = a op b` through the operator's
+existing interface (`Add` for `+=`, and so on); no new interface. A missing interface is E0141 naming `+=`, and shifts on
+a user type are E0003. The operator borrows its operands, so the value is not moved. Known gap: the place is evaluated
+twice on a user type, unlike the built-in form (CA2), so an index with side effects runs twice; removing that needs the
+place's address to be kept. Tests:
 `tests/compound_assign/` (run, abort, compile-fail, comptime, raw pointer, and the release wrap), `tests/fmt/compound_assign`
 (the formatter golden), the parser unit tests `a_compound_assignment_takes_its_operator_and_stops_at_a_line_break` and
 `a_shift_assignment_closes_nested_generic_arguments`, and the lexer's punctuation test. Decision 34 in `tests/README.md`.

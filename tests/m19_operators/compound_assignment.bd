@@ -1,7 +1,7 @@
 //@ compile-fail
 
-// Compound assignment on a user type is not decided yet (issue #277), so it is E0001 (spec/compound-assignment.md, CA5).
-// The built-in forms are in tests/compound_assign/.
+// A user type without the operator's interface has no `+=`: the compound form is `a = a + a`, which needs `Add`, so it is
+// E0141 (spec/compound-assignment.md, CA5). The built-in forms are in tests/compound_assign/.
 
 struct Counter {
     n: i32
@@ -9,5 +9,5 @@ struct Counter {
 
 fn main() {
     let mut a = Counter { n: 1 }
-    a += a //~ E0001
+    a += a //~ E0141
 }

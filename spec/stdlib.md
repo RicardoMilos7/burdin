@@ -521,7 +521,8 @@ interface IndexMut<T> { fn index_mut(mut self, i: usize): &mut T }
 ```
 
 The built-in operators and the `Eq`/`Ord` derives always win over an implementation, both operands have the same
-type, and `&&`, `||`, `=`, compound assignment, and the shifts are not overloadable. `Index` names the element type
+type, and `&&`, `||`, `=`, and the shifts are not overloadable. A compound assignment (`a += b`) on a user type is `a = a + b`
+through `Add` and the other operator interfaces (`spec/compound-assignment.md`, CA5). `Index` names the element type
 and returns a reference; `IndexMut` is selected when the indexed place is written. The exact resolution, the
 diagnostics, and the ownership rules are in [`operators.md`](operators.md).
 

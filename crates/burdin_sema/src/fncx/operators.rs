@@ -23,9 +23,10 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
     }
 
-    /// `place op= value` on a built-in type (`spec/compound-assignment.md`). The place and the value are checked as the
+    /// `place op= value` (`spec/compound-assignment.md`). On a built-in type the place and the value are checked as the
     /// binary operator checks its operands (CA3): a shift takes an integer of any type, and the other operators take
-    /// the place's type. A place of a user type is E0001 until the overloaded form is decided (CA5).
+    /// the place's type. On a user type or a type parameter it is `place = place op value` through the operator's
+    /// interface (CA5).
     pub(super) fn compound_assign(
         &mut self,
         op: ast::BinOp,
@@ -48,25 +49,25 @@ impl FnCx<'_> {
         if place.ty == Ty::Error {
             return error_expr(span);
         }
+        if !shift && matches!(place.ty, Ty::Struct(_) | Ty::Enum(_) | Ty::Param(_)) {
+            // `a op= b` is `a = a op b` (CA5): the operator is checked as the binary form checks it, so a missing
+            // interface is E0141 and names `op=`. The operator borrows its operands and returns a new value.
+            let value = self.binary_checked(op, place.clone(), rhs, span, &op_text);
+            if value.ty == Ty::Error {
+                return error_expr(span);
+            }
+            let value = self.expect_ty(value, &place.ty);
+            self.check_assign_target(&place, lhs.span, &op_text);
+            return mk(tir::ExprKind::Assign(Box::new(place), Box::new(value)), Ty::Unit, span);
+        }
         let allowed = match op {
             B::Add | B::Sub | B::Mul | B::Div | B::Rem => place.ty.is_numeric(),
             B::BitAnd | B::BitOr | B::BitXor => matches!(place.ty, Ty::Int(_) | Ty::Bool),
             _ => matches!(place.ty, Ty::Int(_)),
         };
         if !allowed {
-            match &place.ty {
-                // A user type may have an operator of its own, which is not decided (issue #277, CA5).
-                Ty::Struct(_) | Ty::Enum(_) | Ty::Param(_) => {
-                    self.diags.error(
-                        Code::SYNTAX,
-                        lhs.span,
-                        format!("`{op_text}` on `{}` is not part of the language yet (issue #277)", place.ty),
-                    );
-                }
-                ty => {
-                    self.diags.error(Code::TYPE_MISMATCH, lhs.span, format!("`{op_text}` cannot be applied to `{ty}`"));
-                }
-            }
+            // Shifts are integer-only on every type (OP1), so a user type here is E0003 too.
+            self.diags.error(Code::TYPE_MISMATCH, lhs.span, format!("`{op_text}` cannot be applied to `{}`", place.ty));
             return error_expr(span);
         }
         if shift && !matches!(rhs.ty, Ty::Int(_) | Ty::Error | Ty::Never) {
