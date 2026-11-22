@@ -232,6 +232,14 @@ interpreter takes the same two flags. `tests/check_profiles.py` proves the obser
 path. Not done: `opt-level` `s`/`z`, `panic = "unwind"`, per-package `opt-level`, and per-package flags in the
 comptime interpreter.
 
+**Optimization level flags (issue #289).** `-O0` to `-O3` (and `-O <n>`) on the commands that take `--profile` replace
+the profile's `opt-level` for one invocation; `[profile.<name>] opt-level` in `burdin.toml` is the level that profile
+builds with. The level changes only the LLVM pipeline and the target machine. The checks are decided by the profile
+alone (`overflow-checks`, `debug-assertions`), at every level: `release` and `bench` turn them off, and a profile that
+wants them in an optimized build sets them. Rules: `spec/profiles.md` BP4 and BP5; tests in
+`tests/check_profiles.py` and the `profile.rs` unit tests. Not done: `-O` on `repl`, `asm`, and `bloat` (they keep
+`--debug`/`--release`).
+
 **Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
 end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
 or a directory; a directory is hashed recursively over every file under it, so a file added, removed, renamed, or

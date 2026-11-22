@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #289: `-O0`, `-O1`, `-O2`, and `-O3` (or `-O <n>`) on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and
+  `debug` replace the profile's `opt-level` for one invocation, and `burdin.toml`'s `[profile.<name>] opt-level` sets
+  the level a profile builds with. The level changes the optimizer only: `overflow-checks` and `debug-assertions`
+  stay as the profile sets them, so `dev -O3` keeps its overflow checks and `--release -O0` still wraps. A level
+  outside 0 to 3, a bare `-O`, and two levels on one command are usage errors. Rules: `spec/profiles.md`, BP4 and BP5;
+  tests `tests/check_profiles.py` (the `-O` IR comparisons, the checks, and the usage errors) and the unit tests in
+  `crates/burdin_driver/src/profile.rs`.
 - Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
   type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
   each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,
