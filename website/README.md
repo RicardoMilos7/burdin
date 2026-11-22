@@ -47,6 +47,25 @@ It runs three kinds of check:
 The checker runs every check, prints each failing block with the compiler's messages, and exits with a non-zero status
 if any check failed.
 
+## Publishing
+
+CI publishes the site to GitHub Pages (`.github/workflows/website.yml`): a push to `main` builds the compiler, generates
+the API reference with it, checks every example in the docs, builds the site, checks its links, and deploys. A pull
+request that touches the site runs the same build and checks without deploying.
+
+GitHub Pages serves a project site from `/<repo>/`, so the workflow sets `BURDIN_SITE_BASE=/burdin/` and the last build
+step (`bun run build:pages`, which runs `scripts/apply-base.mjs`) adds that prefix to any absolute link the Markdown
+processor left alone. A local build keeps the root:
+
+```console
+$ bun run build              # served from /
+$ BURDIN_SITE_BASE=/burdin/ bun run build:pages   # the shape Pages publishes
+$ bun run check:links        # every internal link leads to a file or an id
+```
+
+`BURDIN_SITE_URL` (default `https://ricardomilos7.github.io`) sets the site address; with a custom domain, set it and
+build without a base.
+
 ## The API reference
 
 The API pages are not written by hand: `burdin doc` generates one site per official package in `../packages/`, and

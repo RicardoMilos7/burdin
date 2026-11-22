@@ -4,6 +4,11 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { ironDark, ironLight } from './src/styles/code-themes.mjs';
 
+// Where the site is published. GitHub Pages serves a project site from /<repo>/, so the deploy workflow sets
+// BURDIN_SITE_BASE=/burdin/; a local build (and a custom domain later) keeps the root.
+const base = process.env.BURDIN_SITE_BASE || '/';
+const site = process.env.BURDIN_SITE_URL || 'https://ricardomilos7.github.io';
+
 // The highlighter reads the same TextMate grammar as the VS Code extension, so the site and the
 // editor color Burdin code the same way. The grammar is named `burdin` (`bd` is an alias).
 const burdinGrammar = JSON.parse(
@@ -17,6 +22,8 @@ const repo = 'https://github.com/RicardoMilos7/burdin';
 export default defineConfig({
 	// The dev toolbar adds a script and a dozen modules to every page in development.
 	devToolbar: { enabled: false },
+	site,
+	base,
 	markdown: {
 		shikiConfig: {
 			langs: [burdinGrammar],

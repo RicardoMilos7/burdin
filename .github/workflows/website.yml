@@ -1,0 +1,154 @@
+name: Website
+
+# Builds the website in `website/`, checks it against the compiler built from this tree, and publishes it to
+# GitHub Pages. A pull request that touches the site is built and checked but never deployed; a push to main is
+# published, so the API reference the site carries always matches the standard library and packages beside it.
+# The compiler is built here for the same reason: `burdin doc` produces the API pages, and `bun run check:examples`
+# compiles and runs every program on the site.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'editors/vscode/syntaxes/**'
+      - 'packages/**'
+      - 'std/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+# A new push to a pull request cancels the run for the commit it replaces; runs on main are never cancelled, so a
+# publish is never interrupted half-way.
+concurrency:
+  group: website-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      LLVM_SYS_211_PREFIX: /usr/lib/llvm-21
+      # GitHub Pages serves a project site from /<repo>/; astro.config.mjs reads this as the base path.
+      BURDIN_SITE_BASE: /${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      # The caches are keyed the same way as CI's, so a run here reuses what a compiler run already installed.
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      - name: Cache LLVM 21
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/burdin/llvm-21
+          key: ${{ runner.os }}-llvm-21-v4
+
+      - name: Install LLVM 21
+        run: |
+          cache=~/.cache/burdin/llvm-21
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
+          if [ "${{ steps.cache-llvm.outputs.cache-hit }}" = "true" ]; then
+            sudo rm -rf /usr/lib/llvm-21
+            sudo cp -a "$cache/llvm-21" /usr/lib/llvm-21
+            if [ -d "$cache/root" ]; then
+              sudo cp -a "$cache/root/." /
+            fi
+            bash .github/scripts/retry.sh sudo apt-get update
+            bash .github/scripts/retry.sh sudo apt-get install -y lld libzstd-dev zlib1g-dev libssl-dev
+          else
+            bash .github/scripts/retry.sh sudo apt-get update
+            wget -q https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            bash .github/scripts/retry.sh sudo ./llvm.sh 21
+            bash .github/scripts/retry.sh sudo apt-get install -y llvm-21-dev libclang-21-dev libclang-rt-21-dev libpolly-21-dev lld libzstd-dev zlib1g-dev libssl-dev
+            mkdir -p "$cache/root"
+            sudo cp -a /usr/lib/llvm-21 "$cache/llvm-21"
+            for extra in /usr/include/llvm-21 /usr/include/llvm-c-21; do
+              if [ -e "$extra" ]; then sudo cp -a --parents "$extra" "$cache/root"; fi
+            done
+            for link in /usr/lib/llvm-21/lib/libLLVM*.so* /usr/lib/llvm-21/lib/libclang-cpp*.so* \
+                        /usr/lib/llvm-21/lib/libclang*.so*; do
+              if [ -L "$link" ]; then readlink -f "$link"; fi
+            done | sort -u | while read -r target; do
+              case "$target" in
+                "" | /usr/lib/llvm-21/*) ;;
+                *) sudo cp -a --parents "$target" "$cache/root" ;;
+              esac
+            done
+          fi
+
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Build the compiler
+        run: cargo build
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install the site's dependencies
+        working-directory: website
+        run: bun install --frozen-lockfile
+
+      # `burdin doc` writes the API reference for the standard library and every official package into
+      # website/public/api (ignored by git). The compiler is the one built above, and the packages beside it are
+      # this tree's.
+      - name: Generate the API reference
+        working-directory: website
+        env:
+          BURDIN: ${{ github.workspace }}/target/debug/burdin
+          BURDIN_PACKAGES: ${{ github.workspace }}/packages
+        run: bun run api-docs
+
+      # Every example is compiled and run, and every Burdin block in the docs is checked, against this compiler.
+      - name: Check the examples and doc blocks
+        working-directory: website
+        env:
+          BURDIN: ${{ github.workspace }}/target/debug/burdin
+        run: bun run check:examples
+
+      # The base path goes on at the end, so the pages are written for /<repo>/ (`scripts/apply-base.mjs`).
+      - name: Build the site
+        working-directory: website
+        run: |
+          bun run build
+          node scripts/apply-base.mjs
+
+      - name: Check the links
+        working-directory: website
+        run: node scripts/check-links.mjs
+
+      - name: Upload the site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

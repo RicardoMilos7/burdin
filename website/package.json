@@ -10,7 +10,9 @@
     "preview": "astro preview",
     "check:examples": "node scripts/check-examples.mjs",
     "api-docs": "node scripts/build-api-docs.mjs",
-    "astro": "astro"
+    "astro": "astro",
+    "build:pages": "astro build && node scripts/apply-base.mjs",
+    "check:links": "node scripts/check-links.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "0.43.1",

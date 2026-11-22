@@ -1,27 +1,32 @@
+---
+// Links follow the site's base path (GitHub Pages serves the site under /<repo>/).
+const base = import.meta.env.BASE_URL;
+---
+
 <section class="section" aria-labelledby="coming-title">
 	<h2 id="coming-title">Coming from another language?</h2>
 	<p class="intro">Each guide puts the same program side by side in your language and in Burdin.</p>
 	<ul class="langs">
 		<li>
-			<a href="/coming-from/rust/">
+			<a href={`${base}coming-from/rust/`}>
 				<span class="name">Rust</span>
 				<span class="note">Ownership without lifetime annotations, and the Option and Result you already know.</span>
 			</a>
 		</li>
 		<li>
-			<a href="/coming-from/go/">
+			<a href={`${base}coming-from/go/`}>
 				<span class="name">Go</span>
 				<span class="note">Small structs and interfaces, with errors as values and no collector.</span>
 			</a>
 		</li>
 		<li>
-			<a href="/coming-from/python/">
+			<a href={`${base}coming-from/python/`}>
 				<span class="name">Python</span>
 				<span class="note">Interpolated strings and for loops, with every type checked before the program runs.</span>
 			</a>
 		</li>
 		<li>
-			<a href="/coming-from/c-and-cpp/">
+			<a href={`${base}coming-from/c-and-cpp/`}>
 				<span class="name">C and C++</span>
 				<span class="note">Value semantics, destructors as Drop, and no raw pointers in ordinary code.</span>
 			</a>
