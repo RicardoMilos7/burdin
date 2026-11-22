@@ -194,8 +194,9 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
   `s2_io/net_write_peer_closed` covers a peer closed before the write, a peer closed during the wait, and a silent
   peer under a write timeout (issue #867).
 * A write whose wait woke but made no room pauses for 10 ms (or until its deadline, if sooner) before it waits again.
-  Windows reports a half-closed peer as a hang-up at once, even with a full send buffer, so without the pause a writer
-  would wake and re-register in a tight loop. The pause adds at most 10 ms to a real wake-up. `s2_io/net_write_waits_for_room`
+  Windows reports a half-closed peer as a hang-up at once, even with a full send buffer (a `WSAPoll` probe confirms it),
+  so without the pause a writer could wake and re-register in a tight loop. Measured runs of the writer did not spin,
+  so the pause is a guard. The pause adds at most 10 ms to a real wake-up. `s2_io/net_write_waits_for_room`
   covers a write with no timeout that waits on a peer which shuts its write side and reads later: it must finish, with
   every byte delivered.
 * Dropping a socket closes it; `close(own self)` does the same and reports a failure. `TcpListener`/`TcpStream`/

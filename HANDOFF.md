@@ -714,16 +714,17 @@ Issue #867 (a write to a closed peer). Fixed on Linux: a write to a peer that ha
 `SIGPIPE` (exit 141), because `send` passed no `MSG_NOSIGNAL`. `send` and `sendto` now pass `MSG_NOSIGNAL` on Linux, and
 a macOS socket sets `SO_NOSIGPIPE` at creation. `tests/s2_io/net_write_peer_closed` covers a peer closed before the
 write, a peer closed during the wait, and a silent peer under a write timeout; it exits 141 on the old runtime and passes
-now (debug and release on Linux). Still open, for Windows: a probe of `WSAPoll` (PowerShell, a half-closed peer with a
-full send buffer) shows the socket reporting `POLLHUP` at once for a `POLLWRNORM`-only request, with no room to write.
-`reactor_iocp.ll` claims any nonzero `revents`, so the writer wakes, its `send` gets `WSAEWOULDBLOCK`, and it waits
-again: a spin rather than a sleep. That does not account for a hang that survives a write timeout, so the reported
-hang needs a Windows run to reproduce. The fix taken is a pause rather than a change to the reactor: `TcpStream.write`
-now sleeps 10 ms (`WRITE_BACKOFF_NANOS`, capped by the deadline) after a wake that made no room, so a half-closed peer
-costs one wake per 10 ms instead of a tight loop. `WSAPoll` still returns at once for such a socket, so the reactor
-itself is not idle while one is parked; a fallback re-poll or `WSAEventSelect` would remove that, and is the next step
-if the pause is not enough. `s2_io/net_write_waits_for_room` covers the wake-up path on every platform. Whether the spin
-is gone is confirmed only by the Windows CI run, not by a measurement.
+now (debug and release on Linux). On Windows the hang did not reproduce. Scenarios run on a local x86-64 build did not
+hang: a peer closed before the write, closed while the writer waited (five rounds), shut its write side and never read
+(with and without a write timeout), and a writer on the main thread. Every write returned `failed` or `timed out`
+promptly. `tests/s2_io` passed 23 of 23 on Windows with HEAD (one test skipped on Windows), and
+`net_write_peer_closed` and `net_write_waits_for_room` passed 10 times in a row. The OS side of the earlier suspicion
+is real: a `WSAPoll` probe on a socket whose peer shut its write side, with a full send buffer, returns at once with
+`POLLHUP` (`revents` 0x2) for a `POLLWRNORM`-only request. But the Burdin programs did not spin: the half-closed case
+used 0.02 s of CPU over a 4 s wait with the compiler as of `7db57e4` (before the #867 commits, no pause), so the
+reactor path that turns that `POLLHUP` into a wake does not, in these programs, become a tight loop. The 10 ms pause in
+`TcpStream.write` (`WRITE_BACKOFF_NANOS`, capped by the deadline) is therefore a guard against an unobserved spin.
+`s2_io/net_write_waits_for_room` covers the wake-up path on every platform.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component
