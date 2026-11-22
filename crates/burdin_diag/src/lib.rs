@@ -208,6 +208,12 @@ impl Code {
     pub const ORPHAN_RULE: Code = Code("E0142");
     /// Two implementations of one interface for one type that apply to a common instance.
     pub const OVERLAPPING_IMPLS: Code = Code("E0143");
+    /// An interface implementation's associated type bindings are wrong: a missing binding, a name the interface
+    /// does not declare, or a binding in a block with no interface.
+    pub const ASSOC_BINDING: Code = Code("E0144");
+    /// An associated type projection that cannot be resolved: no interface declares that associated type, or more
+    /// than one does and none is named.
+    pub const ASSOC_PROJECTION: Code = Code("E0145");
     pub const PRIVATE_ITEM: Code = Code("E0150");
     pub const QUESTION_OUTSIDE: Code = Code("E0160");
     pub const UNSAFE_REQUIRED: Code = Code("E0161");

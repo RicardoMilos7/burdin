@@ -4,6 +4,30 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Associated types (issue #393, 2026-11-22).** An interface may declare `type Name` (`spec/associated-types.md`,
+AT1-AT6); a `Type: Interface` block binds each one exactly once (`type Name = Ty`), and a projection reads it back
+as `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The parser gives `InterfaceDecl` an `associated` list and
+`ImplBlock` an `assoc` list, and adds `TypeKind::Projection` (`Self.Name` and `<T as Interface>.Name`); `T.Name`
+stays a two-segment type path and is reinterpreted in sema when its prefix is not a module. `InterfaceInfo::assoc`
+holds the declared names and `ImplInfo::assoc` the resolved bindings; `resolve_type_bounded` (with the bounds of the
+type parameters in scope) resolves a projection through the bound environment for `Ty::Param` and through
+`Globals::impls` for any other type, producing the new opaque `Ty::Projection` in symbolic code. `subst_ty`
+substitutes and normalizes it through the implementation's binding, so `check_impl_signatures` compares an
+interface's `Self.Item` with an implementation after `Self` is substituted, and monomorphization replaces it before
+code generation (the backend crates treat it as having no runtime value). A missing, unknown, duplicate, or
+interface-less binding is E0144/E0007; a projection no interface can answer, or that two answer, is E0145; an
+interface with an associated type makes `any I` E0202. `Iterator<T>` stays generic (the m13 decision is unchanged).
+Errors: E0144 and E0145 are registered in `tests/README.md` and have `docs/error-codes.md` sections. Tests:
+`tests/m21_reflect/associated_types.bd`, `associated_types_errors.bd`, and `associated_type_projection_errors.bd`;
+unit tests for the projection display and symbolic substitution. `burdin fmt` understands `type Name`,
+`type Name = Ty`, `Self.Name`, and `<T as I>.Name`, and the span mapper visits the new lists. Verification:
+`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, `python3 tests/run_tests.py`
+(1184 passed, 5 failed, 6 skipped), `python3 tests/run_tests.py --release` (1171 passed, 5 failed, 19 skipped),
+`python3 tests/check_fmt.py`, `python3 tests/check_error_docs.py`, `python3 tests/check_tests.py`,
+`python3 tests/check_unit_tests.py`, `python3 tests/check_e9000.py`, and `python3 tests/check_docs.py`. The five
+failures are the `s3_http`/`s3_tls` cases, which fail to link in this WSL image because the OpenSSL development
+symlinks (`libssl.so`, `libcrypto.so`) are absent; they are unrelated to this change.
+
 **Method-level type parameters (issue #391, 2026-11-22).** A method, associated function, or extension method
 declares parameters of its own after its name (`fn zip<U>(own self, own u: U): (A, U)`), with inline `const`
 parameters and bounds, and `where` for its own parameters. The decisions: the impl block's parameters stay in scope

@@ -182,6 +182,10 @@ fn type_text(t: &Type) -> String {
             }
         }
         TypeKind::SelfType => "Self".to_string(),
+        TypeKind::Projection(p) => match &p.iface {
+            Some(iface) => format!("<{} as {}>.{}", type_text(&p.self_ty), type_text(iface), p.name.name),
+            None => format!("{}.{}", type_text(&p.self_ty), p.name.name),
+        },
         TypeKind::Any(inner) => format!("any {}", type_text(inner)),
         TypeKind::Impl(inner) => format!("impl {}", type_text(inner)),
         TypeKind::Fn { .. } => "Fn(..)".to_string(),

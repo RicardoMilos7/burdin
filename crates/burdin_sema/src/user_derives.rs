@@ -151,6 +151,7 @@ fn generated_impl(
         ty: path(&type_name.name, args),
         interface: Some(iface.clone()),
         where_clause,
+        assoc: Vec::new(),
         methods,
         span: at,
     }

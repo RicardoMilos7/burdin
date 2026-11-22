@@ -234,6 +234,7 @@ mod tests {
             params: vec!["T".into()],
             bounds: vec![Vec::new()],
             requires: Vec::new(),
+            assoc: Vec::new(),
             methods: Vec::new(),
         });
         g
@@ -338,6 +339,7 @@ mod tests {
             params: vec!["T".into()],
             bounds: vec![Vec::new()],
             requires: Vec::new(),
+            assoc: Vec::new(),
             methods: Vec::new(),
         });
         let env: &[(String, Vec<Bound>)] = &[("I".into(), vec![Bound::User(0, vec![i32_()])])];
