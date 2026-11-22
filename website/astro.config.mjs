@@ -98,6 +98,7 @@ export default defineConfig({
 						'guide/ownership',
 						'guide/errors',
 						'guide/generics-and-interfaces',
+						'guide/comptime',
 						'guide/closures-and-iterators',
 						'guide/collections',
 						'guide/concurrency',
