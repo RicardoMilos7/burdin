@@ -1,0 +1,14 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: overflow
+//> before
+
+// Integer overflow in a compound assignment panics in a debug build, as the binary form does (spec/compound-assignment.md,
+// CA2 and spec/operators.md OP12).
+
+fn main() {
+    println("before")
+    let mut big: i32 = 2147483647
+    big += 1
+    println("{big}")
+}

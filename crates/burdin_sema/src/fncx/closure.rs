@@ -738,7 +738,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
                 walk(v, captures, globals, usage, Mode::Move);
             }
         }
-        K::Assign(place, value) => {
+        K::Assign(place, value) | K::CompoundAssign(_, place, value) => {
             walk(value, captures, globals, usage, Mode::Move);
             mutated_place(place, usage);
             walk(place, captures, globals, usage, Mode::Use);
@@ -891,7 +891,7 @@ impl FreeNames {
                     self.expr(v);
                 }
             }
-            K::Assign(a, b) | K::Binary(_, a, b) | K::OrElse(a, b) => {
+            K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::OrElse(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }
@@ -1026,7 +1026,9 @@ fn contains_return(e: &ast::Expr) -> bool {
         K::For { iter, body, .. } => contains_return(iter) || block_has_return(body),
         K::Comptime(inner) => contains_return(inner),
         K::ComptimeAssert(cond, message) => contains_return(cond) || message.as_deref().is_some_and(contains_return),
-        K::Assign(a, b) | K::Binary(_, a, b) | K::OrElse(a, b) => contains_return(a) || contains_return(b),
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::OrElse(a, b) => {
+            contains_return(a) || contains_return(b)
+        }
         K::Unary(_, a) | K::Cast(a, _) | K::Try(a) | K::Field(a, _) | K::TupleField(a, _, _) => contains_return(a),
         K::Range { lo, hi, .. } => contains_return(lo) || contains_return(hi),
         K::Call(callee, args) => contains_return(callee) || args.iter().any(|a| contains_return(&a.expr)),

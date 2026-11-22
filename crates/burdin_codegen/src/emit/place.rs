@@ -44,6 +44,25 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// `place op= value` on a built-in type (`spec/compound-assignment.md`, CA2). The value is evaluated first, then the
+    /// place's address once; the place is read, the operator applied with the binary operator's rules, and the result
+    /// stored. A built-in place has no drop, so no drop flag is touched.
+    pub(super) fn compound_assign(
+        &mut self,
+        op: tir::BinOp,
+        place: &'a tir::Expr,
+        value: &'a tir::Expr,
+        span: burdin_diag::Span,
+    ) -> GenResult<()> {
+        let v = self.expr_mode(value, Mode::Use)?;
+        let Some(ptr) = self.place_ptr(place)? else { return Ok(()) };
+        let Some(t) = self.llvm_ty(&place.ty) else { return Ok(()) };
+        let old = self.builder.build_load(t, ptr, "").map_err(llvm_err)?;
+        let Some(new) = self.arith_values(op, &place.ty, Some(old), v, &value.ty, span)? else { return Ok(()) };
+        self.builder.build_store(ptr, new).map_err(llvm_err)?;
+        Ok(())
+    }
+
     /// Whether `index` is a loop variable known to stay in `0..base.len()` while the current loop body runs.
     fn index_in_bounds(&self, base: &tir::Expr, index: &tir::Expr) -> bool {
         let (tir::ExprKind::Local(index), tir::ExprKind::Local(collection)) = (&index.kind, &base.kind) else {

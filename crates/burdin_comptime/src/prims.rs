@@ -1681,6 +1681,14 @@ impl<'p> Interp<'p, '_> {
         let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
         let a = self.eval(l, Mode::Use)?.deref();
         let b = self.eval(r, Mode::Use)?.deref();
+        self.binary_values(op, &ty, a, b, &r.ty, span)
+    }
+
+    /// The value of a binary operator on two evaluated operands: the left one has type `ty` and the right one `r_ty`.
+    /// Compound assignment shares it with the binary operators, so both follow the same overflow and division rules
+    /// (`spec/compound-assignment.md`, CA6).
+    pub(crate) fn binary_values(&mut self, op: BinOp, ty: &Ty, a: Value, b: Value, r_ty: &Ty, span: Span) -> R<Value> {
+        let ty = ty.clone();
         let cmp = |o: Ordering| match op {
             BinOp::Eq => o == Ordering::Equal,
             BinOp::Ne => o != Ordering::Equal,
@@ -1714,7 +1722,7 @@ impl<'p> Interp<'p, '_> {
                 BinOp::Ne => Value::Bool(x != y),
                 // `p + n` and `p - n` move by `n` elements; `p - q` is the distance in elements (as compiled).
                 BinOp::Add => Value::Int(x.wrapping_add(y.wrapping_mul(size))),
-                BinOp::Sub => match &r.ty {
+                BinOp::Sub => match r_ty {
                     Ty::CPtr(_) => Value::Int(if size == 0 { 0 } else { x.wrapping_sub(y) / size }),
                     _ => Value::Int(x.wrapping_sub(y.wrapping_mul(size))),
                 },

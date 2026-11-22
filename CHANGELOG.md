@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
+  integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
+  binary operator's overflow and division rules in both profiles. On a user type or a type parameter, `a op= b` is
+  `a = a op b` through the operator's interface (`Add` for `+=`, and so on), so no new interface is needed; a missing
+  one is E0141. The place is evaluated twice on a user type, a known gap. Rules: `spec/compound-assignment.md` CA1-CA6;
+  tests `tests/compound_assign/`, `tests/fmt/compound_assign`, and the parser unit tests in `burdin_syntax`.
 - Issue #280: declaration generation in comptime. A module-scope `comptime generate { ... }` block is evaluated at
   compile time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations it
   holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its

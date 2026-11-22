@@ -19,26 +19,88 @@ impl FnCx<'_> {
         self.write_place = saved;
         let rhs = self.expr(rhs, Some(&place.ty));
         let rhs = self.expect_ty(rhs, &place.ty);
-        if place.ty != Ty::Error {
-            if !is_place_expr(&place) {
-                self.diags.error(
-                    Code::IMMUTABLE,
-                    lhs.span,
-                    "the left side of `=` is not a variable or an element of one",
-                );
-            } else if !self.place_mutable(&place) {
-                let name = place_root(&place).map(|root| self.locals[root.0].name.clone());
-                let whose = name.unwrap_or_else(|| "this place".to_string());
-                let fix = self.mut_binding_fix(&place);
-                let d = self.diags.error(
-                    Code::IMMUTABLE,
-                    lhs.span,
-                    format!("cannot assign to `{whose}`: it is not mutable"),
-                );
-                Self::attach_mut_fix(fix, d);
-            }
-        }
+        self.check_assign_target(&place, lhs.span, "=");
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
+    }
+
+    /// `place op= value` (`spec/compound-assignment.md`). On a built-in type the place and the value are checked as the
+    /// binary operator checks its operands (CA3): a shift takes an integer of any type, and the other operators take
+    /// the place's type. On a user type or a type parameter it is `place = place op value` through the operator's
+    /// interface (CA5).
+    pub(super) fn compound_assign(
+        &mut self,
+        op: ast::BinOp,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        span: Span,
+    ) -> tir::Expr {
+        use ast::BinOp as B;
+        let op_text = format!("{}=", op_text(op));
+        let saved = self.write_place;
+        self.write_place = true;
+        let place = self.expr(lhs, None);
+        self.write_place = saved;
+        let shift = matches!(op, B::Shl | B::Shr);
+        let rhs = if shift {
+            self.expr(rhs, if place.ty.is_int() { Some(&place.ty) } else { None })
+        } else {
+            self.expr(rhs, Some(&place.ty))
+        };
+        if place.ty == Ty::Error {
+            return error_expr(span);
+        }
+        if !shift && matches!(place.ty, Ty::Struct(_) | Ty::Enum(_) | Ty::Param(_)) {
+            // `a op= b` is `a = a op b` (CA5): the operator is checked as the binary form checks it, so a missing
+            // interface is E0141 and names `op=`. The operator borrows its operands and returns a new value.
+            let value = self.binary_checked(op, place.clone(), rhs, span, &op_text);
+            if value.ty == Ty::Error {
+                return error_expr(span);
+            }
+            let value = self.expect_ty(value, &place.ty);
+            self.check_assign_target(&place, lhs.span, &op_text);
+            return mk(tir::ExprKind::Assign(Box::new(place), Box::new(value)), Ty::Unit, span);
+        }
+        let allowed = match op {
+            B::Add | B::Sub | B::Mul | B::Div | B::Rem => place.ty.is_numeric(),
+            B::BitAnd | B::BitOr | B::BitXor => matches!(place.ty, Ty::Int(_) | Ty::Bool),
+            _ => matches!(place.ty, Ty::Int(_)),
+        };
+        if !allowed {
+            // Shifts are integer-only on every type (OP1), so a user type here is E0003 too.
+            self.diags.error(Code::TYPE_MISMATCH, lhs.span, format!("`{op_text}` cannot be applied to `{}`", place.ty));
+            return error_expr(span);
+        }
+        if shift && !matches!(rhs.ty, Ty::Int(_) | Ty::Error | Ty::Never) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                rhs.span,
+                format!("`{op_text}` needs integer operands, found `{}`", rhs.ty),
+            );
+        }
+        let rhs = if shift { rhs } else { self.expect_ty(rhs, &place.ty) };
+        self.check_assign_target(&place, lhs.span, &op_text);
+        mk(tir::ExprKind::CompoundAssign(bin_op(op), Box::new(place), Box::new(rhs)), Ty::Unit, span)
+    }
+
+    /// Reports E0005 unless `place` is a mutable place that `op` can write (`spec/operators.md`, OP10 for `=`).
+    fn check_assign_target(&mut self, place: &tir::Expr, lhs_span: Span, op: &str) {
+        if place.ty == Ty::Error {
+            return;
+        }
+        if !is_place_expr(place) {
+            self.diags.error(
+                Code::IMMUTABLE,
+                lhs_span,
+                format!("the left side of `{op}` is not a variable or an element of one"),
+            );
+        } else if !self.place_mutable(place) {
+            let name = place_root(place).map(|root| self.locals[root.0].name.clone());
+            let whose = name.unwrap_or_else(|| "this place".to_string());
+            let fix = self.mut_binding_fix(place);
+            let d =
+                self.diags.error(Code::IMMUTABLE, lhs_span, format!("cannot assign to `{whose}`: it is not mutable"));
+            Self::attach_mut_fix(fix, d);
+        }
     }
 
     /// Checks two operands that must have the same type. A literal on the left takes its type from the right.

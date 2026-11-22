@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A line break before a compound operator ends the statement, as it does before `=` (spec/compound-assignment.md,
+// CA1). The operator then starts a statement of its own, which is a syntax error.
+
+fn main() {
+    let mut n = 1
+    n
+    += 1 //~ E0001
+    println("{n}")
+}

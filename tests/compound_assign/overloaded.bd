@@ -1,0 +1,31 @@
+//@ run
+//> 150
+//> 300
+//> 5
+//> 305
+
+// On a user type, `a op= b` is `a = a op b` through the operator's interface (spec/compound-assignment.md, CA5).
+// The operator borrows both operands, so `extra` is not moved and stays usable, and `m += m` passes the same value
+// twice.
+
+struct Money {
+    cents: i64
+}
+
+Money: Add {
+    fn add(self, other: Money): Money {
+        Money { cents: self.cents + other.cents }
+    }
+}
+
+fn main() {
+    let mut m = Money { cents: 100 }
+    m += Money { cents: 50 }
+    println("{m.cents}")
+    m += m
+    println("{m.cents}")
+    let extra = Money { cents: 5 }
+    m += extra
+    println("{extra.cents}")
+    println("{m.cents}")
+}

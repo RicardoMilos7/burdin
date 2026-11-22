@@ -489,8 +489,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `x[i]` is a place; a write (assignment, `&mut x[i]`, `mut x[i]`, or an index inside a written place) selects
     `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
-    non-`Copy` element out is E0101. Compound assignment and the shifts are not overloadable; `&&`, `||`, and `=`
-    remain non-overloadable.
+    non-`Copy` element out is E0101. The shifts are not overloadable, and `&&`, `||`, and `=` remain non-overloadable.
+    Compound assignment on a user type takes its operator from the interface (issue #277, CA5; decision 34).
     `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
 
 25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
@@ -604,6 +604,12 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
     `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
     `m18_extension/method_type_params`.
+34. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
+    and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
+    On a user type or a type parameter, `a op= b` is `a = a op b` through the operator's interface (`Add` for `+=`,
+    and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
+    place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
+    `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
 34. **Declaration generation (first slice).** A module-scope `comptime generate { ... }` block is evaluated at compile
     time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations the text
     holds to its module. The mechanism is source text, parsed like a derive body, not typed item values. Generated

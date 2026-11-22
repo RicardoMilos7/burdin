@@ -78,7 +78,9 @@ pub fn variable(engine: &mut Engine<'_>, path: &str, lo: u32, hi: u32, name: &st
     // A place that is written, or borrowed exclusively, is not a value to name.
     if let Some(parent) = tree::parent_of(&function.body, lo, hi) {
         match &parent.kind {
-            ExprKind::Assign(lhs, _) if lhs.span.lo == lo && lhs.span.hi == hi => {
+            ExprKind::Assign(lhs, _) | ExprKind::CompoundAssign(_, lhs, _)
+                if lhs.span.lo == lo && lhs.span.hi == hi =>
+            {
                 return refuse("the selection is assigned to; extract the value on the right instead");
             }
             ExprKind::Unary(ast::UnOp::RefMut, x) if x.span.lo == lo && x.span.hi == hi => {

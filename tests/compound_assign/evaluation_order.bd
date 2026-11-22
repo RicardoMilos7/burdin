@@ -1,0 +1,53 @@
+//@ run
+//> value 7
+//> place 2
+//> again 3
+//> 5
+//> 6
+//> 7
+//> 1
+//> 2
+
+// `place op= value` evaluates the value before the place, as `=` does, and it computes the place's address once
+// (spec/compound-assignment.md, CA2). The index expressions below print when they run, or advance a cursor.
+
+struct Cursor {
+    n: usize
+}
+
+fn index(label: str, i: usize): usize {
+    println("{label} {i}")
+    i
+}
+
+fn amount(label: str, x: i32): i32 {
+    println("{label} {x}")
+    x
+}
+
+fn next(c: &mut Cursor): usize {
+    let i = c.n
+    c.n = c.n + 1
+    i
+}
+
+fn main() {
+    let mut xs = [0, 0, 0, 0]
+
+    // The value is evaluated first, so its line comes before the place's.
+    xs[index("place", 2)] += amount("value", 7)
+
+    // The index expression runs exactly once, although the operator reads and then writes the element.
+    xs[index("again", 3)] += 1
+
+    // A cursor that advances on each use: each statement uses a different element.
+    let mut c = Cursor { n: 0 }
+    xs[next(&mut c)] += 5
+    xs[next(&mut c)] += 6
+
+    println("{xs[0]}")
+    println("{xs[1]}")
+    println("{xs[2]}")
+    println("{xs[3]}")
+    println("{c.n}")
+}

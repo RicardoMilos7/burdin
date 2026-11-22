@@ -282,6 +282,11 @@ impl Visit for Resolver {
                 }
                 self.expr(value);
             }
+            // A compound assignment reads its variable as well as writing it, so the variable is used.
+            ExprKind::CompoundAssign(_, target, value) => {
+                self.expr(target);
+                self.expr(value);
+            }
             ExprKind::StructLit(_, fields) => {
                 for f in fields {
                     match &f.value {

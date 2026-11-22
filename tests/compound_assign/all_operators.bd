@@ -1,0 +1,81 @@
+//@ run
+//> 1
+//> 13
+//> 4
+//> 10
+//> true
+//> 12
+//> 6
+//> 4
+//> 3
+//> 0
+//> 0
+//> 128
+
+// Every compound operator on the built-in integers, on a local, a field, an element of an array and of a `List`, and
+// through a `&mut` parameter (spec/compound-assignment.md, CA1 and CA2). The type annotation `List<List<i32>>=` splits
+// its `>>=` token where the generic arguments end (CA1).
+
+struct Acc {
+    n: i32,
+    f: f64
+}
+
+fn bump(r: &mut i32) {
+    *r += 2
+}
+
+fn main() {
+    // Locals: each operator in turn.
+    let mut a = 10
+    a += 5
+    a -= 3
+    a *= 2
+    a /= 5
+    a %= 3
+    println("{a}")
+    let mut bits = 12
+    bits &= 10
+    bits |= 3
+    bits ^= 6
+    println("{bits}")
+    let mut s = 1
+    s <<= 4
+    s >>= 2
+    println("{s}")
+
+    // A field of a struct.
+    let mut acc = Acc { n: 7, f: 1.5 }
+    acc.n += 3
+    acc.f *= 4.0
+    println("{acc.n}")
+    println("{acc.f == 6.0}")
+
+    // Elements of an array and of a `List`. The value may read the same collection.
+    let mut xs = [1, 2, 3]
+    xs[1] += 10
+    xs[2] *= xs[0] + 1
+    println("{xs[1]}")
+    println("{xs[2]}")
+    let mut v = List<i32>.new()
+    v.push(5)
+    v[0] -= 1
+    println("{v[0]}")
+
+    // Through a `&mut` parameter.
+    let mut n = 1
+    bump(&mut n)
+    println("{n}")
+
+    // A type annotation whose `>>=` closes two generic argument lists.
+    let grid: List<List<i32>>= List<List<i32>>.new()
+    println("{grid.len()}")
+
+    // A zero bit pattern and a shift of the top bit of a `u8`, in the same program.
+    let mut z = 1
+    z -= 1
+    println("{z}")
+    let mut top: u8 = 1
+    top <<= 7
+    println("{top}")
+}

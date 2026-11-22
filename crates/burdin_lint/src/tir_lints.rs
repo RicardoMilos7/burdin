@@ -488,7 +488,7 @@ impl An<'_> {
                     self.mark_mut(place);
                 }
             }
-            K::Assign(target, value) => {
+            K::Assign(target, value) | K::CompoundAssign(_, target, value) => {
                 self.expr(value, false);
                 self.expr(target, false);
                 self.mark_mut(target);

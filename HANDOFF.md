@@ -4,6 +4,31 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Compound assignment (issue #277, 2026-11-22).** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the
+built-in integers, floats, and `bool` (`spec/compound-assignment.md`, CA1-CA6). The value is evaluated first, then the
+place's address once, then the place is read, the operator applied, and the result stored, so `v[next()] += 1` calls
+`next` once. The operator has the binary operator's rules: overflow wraps in release and panics in debug, division by
+zero panics, and a shift amount out of range panics in debug. Implementation: the ten operators are tokens
+(`crates/burdin_syntax/src/token.rs`, `lexer.rs`), the parser builds `ExprKind::CompoundAssign` in `parser/expr.rs`
+(a line break before it ends the statement; `>>=` splits inside generic arguments), and the typed tree has
+`ExprKind::CompoundAssign`. Sema checks it in `compound_assign` (`fncx/operators.rs`), sharing the place checks with
+`=` (`check_assign_target`). The move, borrow, and origin checkers, the closure capture analysis, codegen
+(`compound_assign` in `emit/place.rs`, sharing `arith_values` with the binary operators in `emit/ops.rs`), and the
+comptime interpreter (`binary_values` in `prims.rs`, shared with the binary operators) each handle the new node. The
+formatter, the linter, the refactoring engine, and `burdin expand` know the operator too.
+**User types (choice a, CA5).** On a user type or a type parameter, `a op= b` means `a = a op b` through the operator's
+existing interface (`Add` for `+=`, and so on); no new interface. A missing interface is E0141 naming `+=`, and shifts on
+a user type are E0003. The operator borrows its operands, so the value is not moved. Known gap: the place is evaluated
+twice on a user type, unlike the built-in form (CA2), so an index with side effects runs twice; removing that needs the
+place's address to be kept. Tests:
+`tests/compound_assign/` (run, abort, compile-fail, comptime, raw pointer, and the release wrap), `tests/fmt/compound_assign`
+(the formatter golden), the parser unit tests `a_compound_assignment_takes_its_operator_and_stops_at_a_line_break` and
+`a_shift_assignment_closes_nested_generic_arguments`, and the lexer's punctuation test. Decision 34 in `tests/README.md`.
+Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 failed, 7 skipped) and release (1213 passed,
+0 failed, 20 skipped), with `LIBRARY_PATH` pointing at unversioned OpenSSL symlinks on this VM; `cargo test --workspace`
+(919 passed, 0 failed); `cargo clippy --all-targets -- -D warnings` (clean after one collapsible-`if` fix); `cargo fmt
+--all --check`; `check_tests.py`, `check_e9000.py`, `check_unit_tests.py`, `check_ci.py`, `check_error_docs.py`, and
+`check_fmt.py` (427 checks).
 **Declaration generation in comptime (issue #280, 2026-11-22).** A module-scope `comptime generate { ... }` block is
 evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
 `fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source

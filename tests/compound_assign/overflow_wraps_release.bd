@@ -1,0 +1,11 @@
+//@ run
+//@ release-only
+//> -2147483648
+
+// In a release build the same overflow wraps, as the binary form does (spec/compound-assignment.md, CA2).
+
+fn main() {
+    let mut big: i32 = 2147483647
+    big += 1
+    println("{big}")
+}

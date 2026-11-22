@@ -330,7 +330,8 @@ Nested items inside blocks are not allowed in stage 0.
 
 ```
 Expr          = AssignExpr ;
-AssignExpr    = OrElseExpr [ "=" AssignExpr ] ;         (* right associative; the left side must be a place *)
+AssignExpr    = OrElseExpr [ AssignOp AssignExpr ] ;    (* right associative; the left side must be a place *)
+AssignOp      = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 OrElseExpr    = RangeExpr { "orelse" RangeExpr } ;
 RangeExpr     = OrExpr [ ( ".." | "..=" ) OrExpr ] ;
 (* then the binary levels below, loosest to tightest *)
@@ -340,7 +341,7 @@ Precedence from loosest to tightest:
 
 | Level | Operators | Notes |
 | --- | --- | --- |
-| 1 | `=` | right associative; statement-like, result is `()` |
+| 1 | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | right associative; statement-like, result is `()`; a compound operator is `spec/compound-assignment.md` (CA1) |
 | 2 | `orelse` | left associative |
 | 3 | `..` `..=` | not associative |
 | 4 | `\|\|` | |

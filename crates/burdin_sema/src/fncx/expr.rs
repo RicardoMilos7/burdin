@@ -98,6 +98,7 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Return(value), Ty::Never, span)
             }
             K::Assign(lhs, rhs) => self.assign(lhs, rhs, span),
+            K::CompoundAssign(op, lhs, rhs) => self.compound_assign(*op, lhs, rhs, span),
             K::Binary(op, l, r) => self.binary(*op, l, r, expect, span),
             K::Unary(op, operand) => self.unary(*op, operand, expect, span),
             K::Cast(operand, ty) => {

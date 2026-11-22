@@ -1,0 +1,23 @@
+//@ compile-fail
+
+// A user type's compound assignment needs a mutable place, the operator's operand type, and an integer-only shift
+// (spec/compound-assignment.md, CA4 and CA5).
+
+struct Cell {
+    n: i64
+}
+
+Cell: Add {
+    fn add(self, other: Cell): Cell {
+        Cell { n: self.n + other.n }
+    }
+}
+
+fn main() {
+    let c = Cell { n: 1 }
+    c += Cell { n: 2 } //~ E0005
+    let mut d = Cell { n: 1 }
+    d <<= Cell { n: 2 } //~ E0003
+    d += 5 //~ E0003
+    println("{d.n}")
+}

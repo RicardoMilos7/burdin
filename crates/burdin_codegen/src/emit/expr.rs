@@ -283,6 +283,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.assign(place, v)?;
                 None
             }
+            K::CompoundAssign(op, place, value) => {
+                self.compound_assign(*op, place, value, e.span)?;
+                None
+            }
             K::Binary(op, l, r) => self.binary(*op, l, r, e.span)?,
             K::Unary(op, operand) => {
                 let v = self.expr_mode(operand, Mode::Use)?;
