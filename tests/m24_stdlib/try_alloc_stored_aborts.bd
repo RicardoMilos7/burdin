@@ -1,0 +1,13 @@
+//@ run-abort
+//> before
+//@ stderr: out of memory
+
+// A container with a stored allocator cannot go on without its buffer, so an infallible `with_capacity_in` whose
+// arena refuses the block panics with `out of memory` (spec/allocators.md, AL11).
+
+fn main() {
+    println("before")
+    let n: usize = 1152921504606846976
+    let xs = List<i64>.with_capacity_in(n, Arena.new())
+    println(xs.len().to_string())
+}

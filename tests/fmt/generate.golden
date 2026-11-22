@@ -1,0 +1,18 @@
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+comptime generate {
+    let mut out = String.new()
+    comptime for field in Point.fields {
+        out.push_str(field.name)
+    }
+    out
+}
+
+comptime generate {}
+
+fn main() {
+    println("x")
+}

@@ -59,6 +59,47 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(call.try_as_basic_value().basic().expect("realloc returns a pointer").into_pointer_value())
     }
 
+    /// An allocation from the default allocator that returns null when the system has no block to give, instead of
+    /// panicking (`spec/allocators.md`, AL11). It records `span` for a leak report like [`Codegen::global_alloc`].
+    pub(super) fn global_try_alloc(
+        &mut self,
+        size: IntValue<'ctx>,
+        span: Option<Span>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let saved = self.current_span;
+        if span.is_some() {
+            self.current_span = span;
+        }
+        let (site, len) = self.site();
+        let call = self
+            .builder
+            .build_call(self.rt.try_alloc, &[size.into(), site.into(), len.into()], "try.alloc")
+            .map_err(llvm_err)?;
+        self.current_span = saved;
+        Ok(call.try_as_basic_value().basic().expect("try_alloc returns a pointer").into_pointer_value())
+    }
+
+    /// A reallocation from the default allocator that returns null when it fails; the old block is still valid
+    /// then (`spec/allocators.md`, AL11).
+    pub(super) fn global_try_realloc(
+        &mut self,
+        ptr: PointerValue<'ctx>,
+        size: IntValue<'ctx>,
+        span: Option<Span>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        let saved = self.current_span;
+        if span.is_some() {
+            self.current_span = span;
+        }
+        let (site, len) = self.site();
+        let call = self
+            .builder
+            .build_call(self.rt.try_realloc, &[ptr.into(), size.into(), site.into(), len.into()], "try.realloc")
+            .map_err(llvm_err)?;
+        self.current_span = saved;
+        Ok(call.try_as_basic_value().basic().expect("try_realloc returns a pointer").into_pointer_value())
+    }
+
     /// Frees a default-allocator allocation.
     pub(super) fn global_dealloc(&mut self, ptr: PointerValue<'ctx>) -> GenResult<()> {
         self.builder.build_call(self.rt.free, &[ptr.into()], "").map_err(llvm_err)?;
@@ -143,7 +184,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
-    /// Allocates `size` bytes for a container whose allocator is `alloc`, stored at `addr` when it has one.
+    /// Allocates `size` bytes for a container whose allocator is `alloc`, stored at `addr` when it has one. The
+    /// allocation cannot fail: a block the allocator refuses is the program's out-of-memory panic.
     pub(super) fn alloc_in(
         &mut self,
         alloc: &Alloc,
@@ -156,12 +198,61 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Alloc::Global => self.global_alloc(size, span),
             Alloc::Value(ty) => {
                 let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
+                let p = self.stored_alloc(ty, addr, size, align)?;
+                self.check_allocated(p, span)?;
+                Ok(p)
+            }
+        }
+    }
+
+    /// Allocates `size` bytes like [`Codegen::alloc_in`], but a null pointer means the allocator had no block to give
+    /// and the caller decides what that means (`spec/allocators.md`, AL11).
+    pub(super) fn try_alloc_in(
+        &mut self,
+        alloc: &Alloc,
+        addr: Option<PointerValue<'ctx>>,
+        size: IntValue<'ctx>,
+        align: u64,
+        span: Option<Span>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        match alloc {
+            Alloc::Global => self.global_try_alloc(size, span),
+            Alloc::Value(ty) => {
+                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
                 self.stored_alloc(ty, addr, size, align)
             }
         }
     }
 
-    /// Resizes a buffer allocated by [`Codegen::alloc_in`].
+    /// Panics with the out-of-memory message unless `p` is a block. An allocator that returns null has refused the
+    /// request, and an infallible container operation cannot go on without the block.
+    fn check_allocated(&mut self, p: PointerValue<'ctx>, span: Option<Span>) -> GenResult<()> {
+        let ok = self.builder.build_is_not_null(p, "").map_err(llvm_err)?;
+        let pass = self.new_block("alloc.ok");
+        let fail = self.new_block("alloc.oom");
+        self.builder.build_conditional_branch(ok, pass, fail).map_err(llvm_err)?;
+        self.builder.position_at_end(fail);
+        let message = self.str_literal(b"out of memory");
+        let ptr = message.get_field_at_index(0).expect("str has a pointer");
+        let len = message.get_field_at_index(1).expect("str has a length");
+        match span.or(self.current_span) {
+            Some(at) => self.emit_panic(ptr, len, at)?,
+            None => {
+                // No source location (the glue of a container's copy): the message alone is printed, as the panic
+                // function does not print the location.
+                let zero = self.cx.i32_type().const_zero();
+                let null = self.ptr_ty().const_null();
+                let no_file = self.usize_ty.const_zero();
+                let args = [ptr.into(), len.into(), null.into(), no_file.into(), zero.into(), zero.into()];
+                self.builder.build_call(self.rt.panic, &args, "").map_err(llvm_err)?;
+                self.builder.build_unreachable().map_err(llvm_err)?;
+            }
+        }
+        self.builder.position_at_end(pass);
+        Ok(())
+    }
+
+    /// Resizes a buffer allocated by [`Codegen::alloc_in`]; a refused resize is the out-of-memory panic.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn realloc_in(
         &mut self,
@@ -175,6 +266,30 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<PointerValue<'ctx>> {
         match alloc {
             Alloc::Global => self.global_realloc(ptr, new_size, span),
+            Alloc::Value(ty) => {
+                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
+                let p = self.stored_realloc(ty, addr, ptr, old_size, new_size, align)?;
+                self.check_allocated(p, span)?;
+                Ok(p)
+            }
+        }
+    }
+
+    /// Resizes a buffer like [`Codegen::realloc_in`], but a null pointer means the allocator refused and the old
+    /// buffer is still valid (`spec/allocators.md`, AL11).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn try_realloc_in(
+        &mut self,
+        alloc: &Alloc,
+        addr: Option<PointerValue<'ctx>>,
+        ptr: PointerValue<'ctx>,
+        old_size: IntValue<'ctx>,
+        new_size: IntValue<'ctx>,
+        align: u64,
+        span: Option<Span>,
+    ) -> GenResult<PointerValue<'ctx>> {
+        match alloc {
+            Alloc::Global => self.global_try_realloc(ptr, new_size, span),
             Alloc::Value(ty) => {
                 let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
                 self.stored_realloc(ty, addr, ptr, old_size, new_size, align)

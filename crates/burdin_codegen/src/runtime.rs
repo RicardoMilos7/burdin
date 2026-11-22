@@ -320,6 +320,12 @@ pub(crate) struct Runtime<'ctx> {
     pub cstring_clone: FunctionValue<'ctx>,
     /// `(ptr, bytes: usize, site, site_len: usize) -> ptr`: resizes an allocation, panicking when it fails.
     pub realloc: FunctionValue<'ctx>,
+    /// `(bytes: usize, site, site_len: usize) -> ptr`: `alloc`, but a null pointer when it fails instead of a panic
+    /// (`spec/allocators.md`, AL11).
+    pub try_alloc: FunctionValue<'ctx>,
+    /// `(ptr, bytes, site, site_len) -> ptr`: `realloc`, but a null pointer when it fails. The block it was given
+    /// is still valid then (AL11).
+    pub try_realloc: FunctionValue<'ctx>,
     /// `(s: *String, c: i32)`: appends one UTF-8 code point.
     pub string_push_char: FunctionValue<'ctx>,
     /// `(ptr, len, ptr2, len2) -> i1`: byte equality.
@@ -1278,7 +1284,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let h0 = self.base_helpers()?;
         let alloc = self.heap_alloc(&h0)?;
         let free = self.heap_free(&h0)?;
-        let realloc = self.heap_realloc(&h0, alloc, free)?;
+        let realloc = self.heap_realloc(&h0, alloc, free, false)?;
+        let try_alloc = self.heap_alloc_fn("burdin_rt_try_alloc", &h0, true)?;
+        let try_realloc = self.heap_realloc(&h0, try_alloc, free, true)?;
         self.fn_alloc = Some(alloc);
         self.fn_free = Some(free);
         self.fn_realloc = Some(realloc);
@@ -1362,6 +1370,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
             cstring_clone: self.cstring_clone(&h, cstring_from)?,
             realloc,
+            try_alloc,
+            try_realloc,
             string_push_char,
             str_eq: self.str_eq()?,
             str_cmp: self.str_cmp()?,
@@ -1556,6 +1566,30 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         args: &[BasicMetadataValueEnum<'ctx>],
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         Ok(self.b.build_call(f, args, "").map_err(llvm_err)?.try_as_basic_value().basic())
+    }
+
+    /// A call to libc's `malloc` or `realloc`. LLVM knows these as allocators and may delete an allocation whose only
+    /// uses are a null check and a `free`, which folds the null check away: a refused request would then look like a
+    /// success and an infallible allocation would not panic (`spec/allocators.md`, AL11). The result is passed to
+    /// [`Gen::escape_pointer`], so the allocation is kept.
+    fn call_libc_alloc(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let site = self.b.build_call(f, args, "").map_err(llvm_err)?;
+        let p = site.try_as_basic_value().basic().expect("malloc and realloc return a pointer").into_pointer_value();
+        self.escape_pointer(p)?;
+        Ok(Some(p.into()))
+    }
+
+    /// Hands `p` to an empty inline assembly block that may read and write memory. LLVM cannot see what the block does
+    /// with the pointer, so it keeps the code that produced `p` and the null check on it.
+    fn escape_pointer(&self, p: PointerValue<'ctx>) -> GenResult<()> {
+        let ty = self.cx.void_type().fn_type(&[self.ptr_ty.into()], false);
+        let asm = self.cx.create_inline_asm(ty, String::new(), "r,~{memory}".to_string(), true, false, None, false);
+        self.b.build_indirect_call(ty, asm, &[p.into()], "").map_err(llvm_err)?;
+        Ok(())
     }
 
     /// `ptr + offset` bytes.
@@ -3050,10 +3084,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     /// box, or a `String`, or a panic. In a test build the checking allocator records the block and its source
     /// site, so `free` can detect a double free and the test can report a leak (`spec/allocators.md`, AL9).
     fn heap_alloc(&mut self, h: &BaseHelpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        self.heap_alloc_fn("burdin_rt_alloc", h, false)
+    }
+
+    /// The allocation under `name`. A `fallible` one returns null when the system has no block to give, and its
+    /// caller decides; the other one panics with `panic: out of memory`.
+    fn heap_alloc_fn(&mut self, name: &str, h: &BaseHelpers<'ctx>, fallible: bool) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i64());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
-        let f =
-            self.function("burdin_rt_alloc", ptr_ty.fn_type(&[usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let f = self.function(name, ptr_ty.fn_type(&[usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
         let (size, site, site_len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
         let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
         let size =
@@ -3071,7 +3110,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let done = self.block(f, "done");
         self.b.build_conditional_branch(wrap, oom, take).map_err(llvm_err)?;
         self.b.position_at_end(take);
-        let p = self.call(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let p = self.call_libc_alloc(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
         let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(null, oom, init).map_err(llvm_err)?;
 
@@ -3099,10 +3138,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         };
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(oom);
-        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
-        self.call(h.print_backtrace, &[])?;
-        self.call(h.die, &[])?;
-        self.b.build_unreachable().map_err(llvm_err)?;
+        if fallible {
+            self.b.build_return(Some(&ptr_ty.const_null())).map_err(llvm_err)?;
+        } else {
+            self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+            self.call(h.print_backtrace, &[])?;
+            self.call(h.die, &[])?;
+            self.b.build_unreachable().map_err(llvm_err)?;
+        }
         self.b.position_at_end(done);
         self.b.build_return(Some(&data)).map_err(llvm_err)?;
         Ok(f)
@@ -3265,20 +3308,22 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `realloc(ptr, size, site, site_len) -> ptr`: resizes an allocation, panicking when it fails. In a test
-    /// build the new block is recorded and the old one released through the checking allocator.
+    /// `realloc(ptr, size, site, site_len) -> ptr`: resizes an allocation, panicking when it fails. A `fallible`
+    /// one (`burdin_rt_try_realloc`, `spec/allocators.md`, AL11) returns null instead, and the block it was given
+    /// stays valid. In a test build the new block is recorded and the old one released through the checking
+    /// allocator; `alloc` is the allocation that makes the new block (the fallible one for `fallible`).
     fn heap_realloc(
         &mut self,
         h: &BaseHelpers<'ctx>,
         alloc: FunctionValue<'ctx>,
         free: FunctionValue<'ctx>,
+        fallible: bool,
     ) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
         let libc_realloc = libc(self.module, "realloc", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
-        let f = self.function(
-            "burdin_rt_realloc",
-            ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false),
-        );
+        let name = if fallible { "burdin_rt_try_realloc" } else { "burdin_rt_realloc" };
+        let f = self
+            .function(name, ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
         let (ptr, size, site, site_len) =
             (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
         let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
@@ -3286,7 +3331,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.b.build_select(zero, usize_ty.const_int(1, false), size, "").map_err(llvm_err)?.into_int_value();
         if !self.checking {
             let p = self
-                .call(libc_realloc, &[ptr.into(), size.into()])?
+                .call_libc_alloc(libc_realloc, &[ptr.into(), size.into()])?
                 .expect("realloc returns a pointer")
                 .into_pointer_value();
             let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
@@ -3294,17 +3339,23 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let done = self.block(f, "done");
             self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
             self.b.position_at_end(oom);
-            self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
-            self.call(h.print_backtrace, &[])?;
-            self.call(h.die, &[])?;
-            self.b.build_unreachable().map_err(llvm_err)?;
+            if fallible {
+                self.b.build_return(Some(&ptr_ty.const_null())).map_err(llvm_err)?;
+            } else {
+                self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+                self.call(h.print_backtrace, &[])?;
+                self.call(h.die, &[])?;
+                self.b.build_unreachable().map_err(llvm_err)?;
+            }
             self.b.position_at_end(done);
             self.b.build_return(Some(&p)).map_err(llvm_err)?;
             return Ok(f);
         }
-        // The checking path: a fresh tracked block, a copy of the smaller size, and a tracked free of the old.
+        // The checking path: a fresh tracked block, a copy of the smaller size, and a tracked free of the old. A
+        // refused new block leaves the old one valid and not freed.
         let fresh = self.block(f, "fresh");
         let grow = self.block(f, "grow");
+        let copy = self.block(f, "copy");
         let done = self.block(f, "done");
         let null = self.b.build_is_null(ptr, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(null, fresh, grow).map_err(llvm_err)?;
@@ -3326,6 +3377,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .call(alloc, &[size.into(), site.into(), site_len.into()])?
             .expect("alloc returns a pointer")
             .into_pointer_value();
+        // A fallible allocation can refuse the new block; the old one then stays as it was.
+        let refused = if fallible { Some(self.block(f, "refused")) } else { None };
+        match refused {
+            Some(refused) => {
+                let none = self.b.build_is_null(newp2, "").map_err(llvm_err)?;
+                self.b.build_conditional_branch(none, refused, copy).map_err(llvm_err)?;
+            }
+            None => {
+                self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+            }
+        }
+
+        self.b.position_at_end(copy);
         let take = self
             .b
             .build_select(self.b.build_int_compare(IntPredicate::ULT, old, size, "").map_err(llvm_err)?, old, size, "")
@@ -3333,12 +3397,25 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .into_int_value();
         self.b.build_memcpy(newp2, 1, ptr, 1, take).map_err(|e| format!("LLVM builder error: {e}"))?;
         self.call(free, &[ptr.into()])?;
-        let grow_end = self.b.get_insert_block().expect("positioned");
+        let copy_end = self.b.get_insert_block().expect("positioned");
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        let null_ptr = ptr_ty.const_null();
+        let refused_end = match refused {
+            Some(refused) => {
+                self.b.position_at_end(refused);
+                self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+                Some(refused)
+            }
+            None => None,
+        };
 
         self.b.position_at_end(done);
         let out = self.b.build_phi(ptr_ty, "realloc.out").map_err(llvm_err)?;
-        out.add_incoming(&[(&newp, fresh_end), (&newp2, grow_end)]);
+        match refused_end {
+            Some(refused) => out.add_incoming(&[(&newp, fresh_end), (&newp2, copy_end), (&null_ptr, refused)]),
+            None => out.add_incoming(&[(&newp, fresh_end), (&newp2, copy_end)]),
+        }
         self.b.build_return(Some(&out.as_basic_value())).map_err(llvm_err)?;
         Ok(f)
     }

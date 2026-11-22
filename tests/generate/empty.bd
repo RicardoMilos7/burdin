@@ -1,0 +1,12 @@
+//@ run
+//> still here
+
+// A generator whose text is empty declares nothing (spec/generate.md, GN4).
+
+comptime generate {
+    String.new()
+}
+
+fn main() {
+    println("still here")
+}

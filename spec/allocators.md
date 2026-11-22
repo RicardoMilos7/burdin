@@ -50,8 +50,9 @@ allocator in place.
 * `deallocate` receives exactly the pointer, size, and alignment of a live block from the same allocator. Freeing
   a block twice, or with the wrong values, is a bug; in a test build the checking allocator catches it (AL9).
 
-`Global` is a zero-sized struct in `std.alloc`. Its methods call the compiler's unsafe primitives `__alloc`,
-`__realloc`, and `__dealloc`, which reach the C heap (`malloc`/`realloc`/`free`) in an ordinary build and the
+`Global` is a zero-sized struct in `std.alloc`. Its methods call the compiler's unsafe primitives `__try_alloc` and
+`__try_realloc`, which return null when the heap refuses (AL11), together with `__dealloc`; `__alloc` and
+`__realloc` are the panicking forms. They reach the C heap (`malloc`/`realloc`/`free`) in an ordinary build and the
 checking allocator in a `burdin test` build. A program may implement `Allocator` for its own type with an
 ordinary impl block; the compiler does not verify the pointer arithmetic inside it, which is why those bodies
 use `unsafe`. A user allocator that reaches the OS heap by its own `extern` calls is outside the checking
@@ -236,6 +237,48 @@ outside the evaluator, so a `comptime` block that calls them is rejected
 (`comptime_allocation_is_impure.bd`). A `Shared<T>` is modeled as the value it holds, so a pure expression may
 create, clone, and read one (`shared_comptime.bd`); the model is transient and a value whose type contains a
 `Shared` is not materializable into the program (`E0221`).
+
+## AL11. Fallible allocation
+
+An allocation can be refused: the C heap has no block to give, or the requested count cannot be addressed at all.
+The infallible operations panic on a refusal, and the `try_` operations report it as a value. Both share one rule
+set, and the error type is `AllocError`.
+
+- **AL11.1 (the error type).** `std` declares `AllocError` as an error enum with two variants, in this order:
+  `CapacityOverflow` ("capacity overflow") and `OutOfMemory` ("out of memory"). `Eq` and `Debug` are derived, and
+  `Display` prints the message. `CapacityOverflow` means the request names more elements, or more bytes, than a
+  `usize` holds, or that the length plus the requested additional elements wraps. `OutOfMemory` means the request
+  is addressable but the allocator had no block to give.
+- **AL11.2 (the `Allocator` contract).** `allocate` and `reallocate` (AL2) return a null pointer when they have no
+  block to give. `reallocate` then leaves the old block valid. `Global` gets its blocks from `__try_alloc` and
+  `__try_realloc`, which return null where `__alloc` and `__realloc` would panic. `Arena.allocate` returns null, and
+  changes nothing, when the request cannot be rounded to eight bytes or the block it needs cannot be had.
+- **AL11.3 (infallible operations).** A container operation without `try_` panics with `out of memory` when its
+  buffer is refused: the default heap through the runtime's allocation, and a stored allocator when its `allocate`
+  or `reallocate` returns null (the program's `out of memory` panic, written to stderr, and an abort). An infallible
+  operation never returns an error.
+- **AL11.4 (the `try_` operations).** Each returns `Result` with `AllocError` as the error:
+  - `List<T>.try_with_capacity(n)` and `List<T>.try_with_capacity_in(n, alloc)`: `Result<List<T>, AllocError>`.
+    A failed call that took a stored allocator releases it.
+  - `xs.try_reserve(n)` and `xs.try_reserve_exact(n)` on a `List`: `Result<(), AllocError>`. `try_reserve` grows the
+    capacity the way `reserve` does, and `try_reserve_exact` asks for exactly `len + n`.
+  - `Map<K, V>.try_with_capacity(n)` and `m.try_reserve(n)`, with the same shapes.
+  - `String.try_with_capacity(n)` and `s.try_reserve(n)`.
+
+  A `try_` operation changes the container only when it returns `Ok`. A failed reserve leaves the length, the
+  elements, and the capacity as they were.
+- **AL11.5 (capacity overflow).** For a list, the request overflows when `n` elements of `T` take more bytes than a
+  `usize` holds. For a map, it overflows when `len + n` wraps, when the slot count passes the map limit of 2^62, or
+  when the table's bytes do not fit. For a string, it overflows only when `len + n` wraps. Every other refusal is
+  `OutOfMemory`.
+- **AL11.6 (scope).** The fallible forms are the ones above. `Heap`, `Deque`, `Shared<T>`, and the other containers
+  keep their infallible growth for now, and a program that needs them to survive out-of-memory must not use them
+  for the allocation that might fail.
+- **AL11.7 (compile time).** The compile-time interpreter (AL10) does not model capacity, so a `try_` operation
+  in a `comptime` expression succeeds, and the overflow and out-of-memory refusals are not reproduced there.
+
+Tests: `m24_stdlib/try_alloc_list`, `try_alloc_out_of_memory`, `try_alloc_reserve`, `try_alloc_map_string`,
+`try_alloc_arena`, `try_alloc_infallible_aborts`, `try_alloc_stored_aborts`, and `try_alloc_test_no_leak`.
 
 ## The error codes
 

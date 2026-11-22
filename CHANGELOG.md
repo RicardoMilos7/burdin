@@ -12,6 +12,21 @@ close-out checklist in `AGENTS.md`).
   `a = a op b` through the operator's interface (`Add` for `+=`, and so on), so no new interface is needed; a missing
   one is E0141. The place is evaluated twice on a user type, a known gap. Rules: `spec/compound-assignment.md` CA1-CA6;
   tests `tests/compound_assign/`, `tests/fmt/compound_assign`, and the parser unit tests in `burdin_syntax`.
+- Issue #280: declaration generation in comptime. A module-scope `comptime generate { ... }` block is evaluated at
+  compile time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations it
+  holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its
+  names are not hygienic, as derives are, and errors in generated code are reported at the block. Other item kinds,
+  a generator that fails, and `comptime generate` outside module scope are E0242, E0222/E0224/E0225, and E0243.
+  Rules: `spec/generate.md` GN1-GN10; tests `tests/generate/`; decision 34 in `tests/README.md`.
+- Fallible allocation (issue #278; `spec/allocators.md`, AL11). `std` declares `AllocError` with `CapacityOverflow` and
+  `OutOfMemory`. The `try_` forms return `Result<_, AllocError>`: `List<T>.try_with_capacity`, `try_with_capacity_in`,
+  `try_reserve`, and `try_reserve_exact`; `Map<K, V>.try_with_capacity` and `try_reserve`; and `String.try_with_capacity`
+  and `try_reserve`. A failed call leaves the container unchanged. `Global` allocates through `__try_alloc` and
+  `__try_realloc`, and `Arena.allocate` returns null, changing nothing, when the heap refuses. The `Allocator` contract
+  now allows a null result: an infallible container operation whose stored allocator returns null panics with
+  `out of memory`. `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` keep infallible growth. Tests:
+  `tests/m24_stdlib/try_alloc_*`.
+
 - Issue #289: `-O0`, `-O1`, `-O2`, and `-O3` (or `-O <n>`) on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and
   `debug` replace the profile's `opt-level` for one invocation, and `burdin.toml`'s `[profile.<name>] opt-level` sets
   the level a profile builds with. The level changes the optimizer only: `overflow-checks` and `debug-assertions`

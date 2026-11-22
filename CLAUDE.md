@@ -27,7 +27,8 @@ not updated and may disagree with the repository.
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
    arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
    overloading and `Index`/`IndexMut`, `spec/comptime.md` is compile-time evaluation (`comptime` expressions,
-   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
+   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/generate.md` is declaration generation (`comptime
+   generate`, the text it produces, the order of generation, and what stops it), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
    `Drop` on a generic type, and the built-in interfaces on one, `spec/associated-types.md` is associated types

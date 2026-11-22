@@ -307,6 +307,11 @@ impl Code {
     /// An invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected
     /// `[u8; N]` is not the file's length (CT15).
     pub const INVALID_EMBED: Code = Code("E0241");
+    /// The text a `comptime generate` block produced is not valid: it does not parse, or it declares an item other
+    /// than a `struct`, `enum`, or `fn` (`spec/generate.md`, GN4).
+    pub const INVALID_GENERATED: Code = Code("E0242");
+    /// `comptime generate` outside module scope (GN2).
+    pub const GENERATE_SCOPE: Code = Code("E0243");
     /// An invalid const generic declaration or argument: a type where a value is expected or the other way round,
     /// a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit the
     /// parameter's type (`spec/const-generics.md`, CG1-CG2).

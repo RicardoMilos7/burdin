@@ -801,6 +801,25 @@ reports the rounded bytes handed out since the last reset, and `reset()` frees e
 usable. `Shared<T>` is shared by `clone()`, read by `get(): &T`, counted by `strong_count(): usize`, and is not
 `Copy`; its count is atomic, and it is `Send` and `Sync` when `T` is both ([`shared.md`](shared.md) SH1-SH2). The rules are [`allocators.md`](allocators.md) AL1-AL8.
 
+### Fallible allocation (issue #278)
+
+`AllocError` is an error enum in `std` with two variants, `CapacityOverflow` and `OutOfMemory`
+([`allocators.md`](allocators.md) AL11.1). The `try_` forms return `Result<_, AllocError>` instead of panicking:
+
+```
+List<T>.try_with_capacity(n: usize): Result<List<T>, AllocError>
+List<T>.try_with_capacity_in(n: usize, alloc: A): Result<List<T, A>, AllocError>
+List<T>.try_reserve(additional: usize): Result<(), AllocError>        // grows like reserve
+List<T>.try_reserve_exact(additional: usize): Result<(), AllocError>  // asks for exactly len + additional
+Map<K, V>.try_with_capacity(n: usize): Result<Map<K, V>, AllocError>
+Map<K, V>.try_reserve(additional: usize): Result<(), AllocError>
+String.try_with_capacity(n: usize): Result<String, AllocError>
+String.try_reserve(additional: usize): Result<(), AllocError>
+```
+
+A failed `try_` operation leaves the container unchanged. The rules are AL11.1-AL11.7. `Heap`, `Deque`, `Set`,
+`PriorityHeap`, and `Shared<T>` have no `try_` forms yet (AL11.6).
+
 ## `List<T>`
 
 ```
@@ -2509,6 +2528,7 @@ lists them by rule).
 | Integer functions | `m24_stdlib/int_constants`, `int_arithmetic`, `int_bits`, `int_bytes`, `int_unknown_names`, `int_ilog_zero`, `int_isqrt_negative`, `int_next_power_overflow` |
 | Integer radix and parse range | `m24_stdlib/int_radix`, `int_parse_range`, `int_radix_bad_radix`, `int_parse_radix_bad_radix` |
 | Fallible conversions (`TryFrom`, `try_from`) | `m24_stdlib/try_from_int`, `try_from_user`, `try_from_from_sources`, `try_from_str`, `try_from_error`, `try_from_expect_aborts`, and the `try_from_*` compile-fail cases |
+| Fallible allocation (`AllocError`, `try_` forms, AL11) | `m24_stdlib/try_alloc_list`, `try_alloc_out_of_memory`, `try_alloc_reserve`, `try_alloc_map_string`, `try_alloc_arena`, `try_alloc_infallible_aborts`, `try_alloc_stored_aborts`, `try_alloc_test_no_leak` |
 | Numeric `From`, `into`, and `as` (FR1-FR6) | `m24_stdlib/from_numeric`, `from_as_lossy`, `into_numeric`, `from_lossy`, `from_arity`, `into_no_target`, `into_no_impl`, `into_method_wins`, `from_bound_*` |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists` |

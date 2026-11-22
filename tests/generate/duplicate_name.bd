@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A generated struct repeats a hand-written name: E0007, reported at the block (spec/generate.md, GN5, GN6).
+
+struct Point {
+    x: i32
+}
+
+comptime generate { //~ E0007
+    String.from("struct Point {{\n    y: i32\n}}\n")
+}
+
+fn main() {
+}

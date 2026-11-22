@@ -163,6 +163,11 @@ impl Parser<'_> {
     /// (spec/comptime.md, CT2, CT5, CT6, CT8). `comptime` binds like a prefix operator: `comptime f(x) + 1` adds one
     /// to the compile-time value of `f(x)`.
     pub(super) fn comptime_expr(&mut self, r: Restriction) -> PResult<Expr> {
+        if self.at_generate() {
+            let block = self.misplaced_generate()?;
+            let span = block.span;
+            return Ok(Expr { kind: ExprKind::Block(block), span });
+        }
         let start = self.expect(&TokenKind::Comptime)?.span;
         if matches!(self.kind(), TokenKind::Ident(name) if name == "assert") && self.nth_kind(1) == &TokenKind::LParen {
             self.bump();

@@ -29,6 +29,35 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 (919 passed, 0 failed); `cargo clippy --all-targets -- -D warnings` (clean after one collapsible-`if` fix); `cargo fmt
 --all --check`; `check_tests.py`, `check_e9000.py`, `check_unit_tests.py`, `check_ci.py`, `check_error_docs.py`, and
 `check_fmt.py` (427 checks).
+**Declaration generation in comptime (issue #280, 2026-11-22).** A module-scope `comptime generate { ... }` block is
+evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
+`fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
+text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
+hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
+parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
+`fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
+`crates/burdin_query/src/db.rs` (`generate`, `sema_packages`, `reached_functions`); the text parser is
+`crates/burdin_syntax/src/generate.rs`; the comptime entry point is `burdin_comptime::run_generator`; the check cache
+keys a module on its generated text (`Module.generated`, GN8). Tests: `tests/generate/` (17 programs), `tests/fmt/generate.*`,
+`crates/burdin_query/tests/generate.rs`, and parser unit tests in `burdin_syntax`. Verified: `tests/run_tests.py generate`
+passes in debug (the 3 extra `m22` build fixtures match the filter), the full debug suite passes (1228 passed, 0 failed,
+6 skipped), `cargo test --workspace` (927 passed), `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`,
+and `check_tests`, `check_e9000`, `check_unit_tests`, `check_ci`, `check_fmt`, `check_error_docs`, `check_docs`, and
+`check_check` all pass. In this WSL VM the five `s3_tls`/`s3_http` OpenSSL tests need unversioned `libssl.so` and
+`libcrypto.so` symlinks, which the VM lacks; they pass with them under `LIBRARY_PATH`.
+
+**Gaps, and choices the author may revisit.** (1) Generation stops at a failing generator (GN7), so the rest of the
+program is not checked in that run; a generator's own errors are reported. Step 2 still runs the other generators so
+each failure is reported, but this is a judgment call. (2) A generator's reach set follows calls, `any` boxing, and
+closures; a `Drop` impl a generator reaches only implicitly is not counted in step 1. (3) A diagnostic inside generated
+code is followed by a note naming the declarations; `Diagnostics::absorb` merges two errors with the same code and span,
+so two same-code errors in one block can show as one. (4) An internal error in generation uses E0224's code; it is
+unreachable in practice but should get its own code. (5) Generated declarations are not in any file, so `burdin fmt`,
+`burdin lint`, `burdin doc`, and `burdin expand` show only the block, and the language server lists the generator as
+`comptime generate N`. (6) Still out: generated constants, impl blocks, interfaces, and derives; generation from
+function bodies (E0243); hygiene; generators that read generated names.
+
 **Associated types (issue #393, 2026-11-22).** An interface may declare `type Name` (`spec/associated-types.md`,
 AT1-AT6); a `Type: Interface` block binds each one exactly once (`type Name = Ty`), and a projection reads it back
 as `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The parser gives `InterfaceDecl` an `associated` list and
@@ -151,6 +180,19 @@ claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit oper
 #275); `cargo test --workspace` (899 passed, 0 failed); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `check_tests.py`, `check_ci.py`,
 `gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
 earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
+
+**Fallible allocation (issue #278, 2026-11-22).** `AllocError` (`std.bd`: `CapacityOverflow`, `OutOfMemory`) and
+the `try_` forms of the allocating operations (`spec/allocators.md`, AL11; `spec/stdlib.md`, "Fallible allocation"):
+`List<T>.try_with_capacity` and `try_with_capacity_in`, `List` `try_reserve` and `try_reserve_exact`,
+`Map<K, V>.try_with_capacity` and `try_reserve`, and `String.try_with_capacity` and `try_reserve`. The codegen computes a
+status word (`emit/fallible.rs`: 0 ok, 1 overflow, 2 out of memory) and builds the `Result` from it, so a failed
+operation leaves the container unchanged. The runtime has `__try_alloc` and `__try_realloc`, which return null where the
+heap refuses; `Global` uses them, and `Arena.allocate` returns null, changing nothing, for a request it cannot round or
+a block it cannot have. **Contract change:** `Allocator.allocate` and `reallocate` may return null; an infallible
+operation with a stored allocator panics with `out of memory` when they do (`emit/alloc.rs`, `check_allocated`).
+Not done: `try_` forms for `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` (AL11.6); the compile-time
+interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_alloc_*` (8 files, run with
+`python3 tests/run_tests.py try_alloc`).
 
 **`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`

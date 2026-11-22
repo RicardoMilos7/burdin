@@ -34,6 +34,10 @@ pub fn map_spans(file: &mut File, f: &mut dyn FnMut(&mut Span)) {
         (m.f)(&mut z.span);
     }
     file.bodies.iter_mut().for_each(|s| (m.f)(s));
+    for g in &mut file.generators {
+        (m.f)(&mut g.span);
+        (m.f)(&mut g.keyword);
+    }
 }
 
 struct Mapper<'a> {

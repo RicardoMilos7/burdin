@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A generator that prints: E0224 at the block (spec/generate.md, GN2; spec/comptime.md CT9).
+
+comptime generate { //~ E0224
+    println("generating")
+    String.new()
+}
+
+fn main() {
+}
