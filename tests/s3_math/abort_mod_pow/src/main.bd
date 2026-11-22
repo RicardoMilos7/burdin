@@ -1,0 +1,13 @@
+//@ run-abort
+//> before
+//@ stderr: mod_pow: the modulus is zero
+
+// A bad argument is a programming error: the call panics with a message that names the function (spec/math.md, MA9).
+
+use math.mod_pow
+
+fn main() {
+    println("before")
+    println("{}", mod_pow(2, 3, 0))
+    println("after")
+}

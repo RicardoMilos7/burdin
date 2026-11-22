@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// A method's own type parameter that no argument, bound, or expected type fixes is reported at the call (E0003),
+// the same as on a concrete receiver, when the receiver is a type parameter bounded by the interface.
+
+interface Maker {
+    fn value(self): i32
+
+    fn make<U: Default>(self): U {
+        U.default()
+    }
+}
+
+struct Mine {
+    v: i32,
+}
+
+Mine: Maker {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+fn use_it<T: Maker>(t: T): i32 {
+    t.make() //~ E0003
+    t.value()
+}
+
+fn main() {
+    println(use_it(Mine { v: 1 }).to_string())
+}

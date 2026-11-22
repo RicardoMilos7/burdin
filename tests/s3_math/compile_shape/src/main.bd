@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A matrix product of mismatched shapes is a type error, because the shape is part of the type (spec/math.md, MA7).
+
+use math.Matrix
+
+fn main() {
+    let a: Matrix<2, 3> = Matrix.zero()
+    let b: Matrix<2, 3> = Matrix.zero()
+    let c = a.times(b) //~ E0003
+    println("{}", c.rows())
+}

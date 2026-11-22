@@ -29,6 +29,8 @@ Official packages today:
   `spec/regex.md`).
 - `crypto` — hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 in pure Burdin; an experiment,
   not a security claim (issue #266; `packages/crypto/README.md`, `spec/crypto.md`).
+- `math` — numbers, statistics, `Vector<N>`, and fixed-size and heap-backed matrices over `f64`, with integer number theory
+  and root finding (issue #268; `packages/math/README.md`, `spec/math.md`).
 
 - `tls` — TLS 1.2 and 1.3 over OpenSSL 3 through the C bridge: certificates and keys, verified client connections, servers,
   and a `Read`/`Write` stream over `TcpStream` (issue #262; `packages/tls/README.md`, `spec/tls.md`). It links a system

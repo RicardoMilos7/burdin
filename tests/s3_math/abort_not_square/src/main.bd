@@ -1,0 +1,14 @@
+//@ run-abort
+//> before
+//@ stderr: Matrix: the matrix is not square
+
+// A bad argument is a programming error: the call panics with a message that names the function (spec/math.md, MA9).
+
+use math.Matrix
+
+fn main() {
+    println("before")
+    let m: Matrix<2, 3> = Matrix.zero()
+    println("{}", m.det())
+    println("after")
+}

@@ -49,9 +49,11 @@ def check(ok: bool, message: str) -> None:
 burdin = harness.require_burdin()
 fixtures = harness.TESTS / "bench"
 
+# The interval is mean ± 1.96 · s / √n (spec/bench.md, BN5), so its lower bound can be negative for a noisy run with few
+# samples; the mean, median, and MAD cannot.
 STATS_LINE = re.compile(
     r"^(?P<display>.+): (?P<median>[0-9.]+) (?P<unit>ns|us|ms|s) "
-    r"\(mean [0-9.]+ \w+, ci 95% [0-9.]+ \w+ to [0-9.]+ \w+, mad [0-9.]+ \w+, [0-9]+/[0-9]+ outliers\)$"
+    r"\(mean [0-9.]+ \w+, ci 95% -?[0-9.]+ \w+ to -?[0-9.]+ \w+, mad [0-9.]+ \w+, [0-9]+/[0-9]+ outliers\)$"
 )
 
 

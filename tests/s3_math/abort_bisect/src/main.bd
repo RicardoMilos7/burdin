@@ -1,0 +1,14 @@
+//@ run-abort
+//> before
+//@ stderr: bisect: the tolerance must be positive
+
+// A bad argument is a programming error: the call panics with a message that names the function (spec/math.md, MA9).
+
+use math.bisect
+
+fn main() {
+    println("before")
+    let root = bisect(|x: f64| x - 1.0, 0.0, 2.0, 0.0)
+    println("{}", root.unwrap())
+    println("after")
+}

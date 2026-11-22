@@ -1,0 +1,152 @@
+// Fixed-size vectors of `f64` (spec/math.md, MA6).
+
+/// A vector of `N` components. It is a value: it is copied like a number.
+struct Vector<const N: usize>: Copy, Clone {
+    data: [f64; N]
+}
+
+Vector<N> {
+    /// The vector whose components are all zero.
+    fn zero(): Vector<N> {
+        Vector { data: [0.0; N] }
+    }
+
+    /// The vector with the given components.
+    fn from_array(values: [f64; N]): Vector<N> {
+        Vector { data: values }
+    }
+
+    /// The number of components.
+    fn len(self): usize {
+        N
+    }
+
+    /// The component at `i`. Panics when `i` is out of range.
+    fn get(self, i: usize): f64 {
+        self.data[i]
+    }
+
+    /// The dot product.
+    fn dot(self, other: Vector<N>): f64 {
+        let mut total = 0.0
+        for i in 0..N {
+            total = total + self.data[i] * other.data[i]
+        }
+        total
+    }
+
+    /// The squared length.
+    fn norm_squared(self): f64 {
+        self.dot(self)
+    }
+
+    /// The length.
+    fn norm(self): f64 {
+        self.norm_squared().sqrt()
+    }
+
+    /// The distance between the two points.
+    fn distance(self, other: Vector<N>): f64 {
+        (self - other).norm()
+    }
+
+    /// Each component times `k`.
+    fn scale(self, k: f64): Vector<N> {
+        let mut out = Vector<N>.zero()
+        for i in 0..N {
+            out.data[i] = self.data[i] * k
+        }
+        out
+    }
+
+    /// `f` applied to each component.
+    fn map<F: Fn(f64): f64>(self, f: F): Vector<N> {
+        let mut out = Vector<N>.zero()
+        for i in 0..N {
+            out.data[i] = f(self.data[i])
+        }
+        out
+    }
+
+    /// The vector of length one in the same direction, or `None` for the zero vector.
+    fn normalized(self): Option<Vector<N>> {
+        let length = self.norm()
+        if length == 0.0 {
+            return None
+        }
+        Some(self.scale(1.0 / length))
+    }
+
+    /// The angle between the vectors in radians, or `None` when either is the zero vector. The cosine is clamped to
+    /// `[-1, 1]` first, so rounding cannot make the angle NaN.
+    fn angle(self, other: Vector<N>): Option<f64> {
+        let lengths = self.norm() * other.norm()
+        if lengths == 0.0 {
+            return None
+        }
+        let cosine = self.dot(other) / lengths
+        let clamped = if cosine > 1.0 { 1.0 } else if cosine < -1.0 { -1.0 } else { cosine }
+        Some(clamped.acos())
+    }
+
+    /// Whether every component differs from `other`'s by at most `tolerance`.
+    fn approx_eq(self, other: Vector<N>, tolerance: f64): bool {
+        for i in 0..N {
+            if !((self.data[i] - other.data[i]).abs() <= tolerance) {
+                return false
+            }
+        }
+        true
+    }
+}
+
+Vector<N>: Add {
+    fn add(self, other: Vector<N>): Vector<N> {
+        let mut out = Vector<N>.zero()
+        for i in 0..N {
+            out.data[i] = self.data[i] + other.data[i]
+        }
+        out
+    }
+}
+
+Vector<N>: Sub {
+    fn sub(self, other: Vector<N>): Vector<N> {
+        let mut out = Vector<N>.zero()
+        for i in 0..N {
+            out.data[i] = self.data[i] - other.data[i]
+        }
+        out
+    }
+}
+
+Vector<N>: Neg {
+    fn neg(self): Vector<N> {
+        let mut out = Vector<N>.zero()
+        for i in 0..N {
+            out.data[i] = -self.data[i]
+        }
+        out
+    }
+}
+
+Vector<N>: Index<f64> {
+    fn index(self, i: usize): &f64 {
+        &self.data[i]
+    }
+}
+
+Vector<N>: IndexMut<f64> {
+    fn index_mut(mut self, i: usize): &mut f64 {
+        &mut self.data[i]
+    }
+}
+
+/// The cross product, which exists only in three dimensions.
+Vector<3> {
+    fn cross(self, other: Vector<3>): Vector<3> {
+        let a = self.data
+        let b = other.data
+        Vector { data: [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] }
+    }
+}
