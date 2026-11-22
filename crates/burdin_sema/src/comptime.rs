@@ -66,7 +66,8 @@ impl Globals {
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::Param(_)
-            | Ty::Const(_) => false,
+            | Ty::Const(_)
+            | Ty::Projection { .. } => false,
         }
     }
 }

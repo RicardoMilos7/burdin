@@ -85,6 +85,9 @@ pub(crate) struct ImplTemplate<'t> {
 pub(crate) struct AdtSrcEntry<'t, T> {
     pub(crate) decl: &'t T,
     pub(crate) subst: Vec<(String, Ty)>,
+    /// The bounds each substituted type parameter keeps, so a field may write `T.Item` (`spec/associated-types.md`,
+    /// AT3).
+    pub(crate) bounds: Vec<(String, Vec<Bound>)>,
     pub(crate) module: usize,
 }
 
@@ -93,6 +96,22 @@ pub(crate) struct AdtSrcEntry<'t, T> {
 pub(crate) struct AdtSrc<'t> {
     pub(crate) structs: Vec<AdtSrcEntry<'t, ast::StructDecl>>,
     pub(crate) enums: Vec<AdtSrcEntry<'t, ast::EnumDecl>>,
+}
+
+/// An associated type binding of a generic impl whose `Self` type was not allocated when the impl was registered.
+/// The binding is resolved again once the instance exists, so a binding may name `Self`
+/// (`spec/associated-types.md`, AT2).
+pub(crate) struct PendingAssoc<'t> {
+    /// The index of the [`crate::generics::ImplInfo`] in `Globals::impls`.
+    pub(crate) index: usize,
+    pub(crate) decl: &'t ast::ImplBlock,
+    /// The generic type the impl is for and the instance's arguments (the impl's pattern), for a generic impl.
+    pub(crate) generic: Option<(usize, Vec<Ty>)>,
+    /// The target type of a plain impl.
+    pub(crate) self_ty: Option<Ty>,
+    pub(crate) subst: Vec<(String, Ty)>,
+    pub(crate) bounds: Vec<(String, Vec<Bound>)>,
+    pub(crate) module: usize,
 }
 
 /// A constant or type alias, with the module whose names it uses.
@@ -134,6 +153,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) export_srcs: Vec<(FuncId, &'t ast::ExternFnDecl)>,
     /// Generic functions whose bounds are resolved once imports are known.
     pub(crate) generic_fn_bounds: Vec<(usize, &'t ast::FnDecl, usize)>,
+    /// Generic impls whose associated bindings name `Self`: resolved again after the instance exists.
+    pub(crate) pending_assoc: Vec<PendingAssoc<'t>>,
     /// Every `Drop::drop` method and where it was declared, to check its signature once all are known.
     pub(crate) drop_checks: Vec<(FuncId, Span)>,
     /// Declare and check the entry package's `test` or `bench` items: what `burdin test` and `burdin bench` build.
@@ -221,6 +242,7 @@ impl<'t> Sema<'t> {
             derive_srcs: Vec::new(),
             export_srcs: Vec::new(),
             generic_fn_bounds: Vec::new(),
+            pending_assoc: Vec::new(),
             drop_checks: Vec::new(),
             mode,
             tests: Vec::new(),
