@@ -209,7 +209,8 @@ fn document(target: &Path, args: &DocArgs) -> ExitCode {
             }
         };
         let file = scratch.path.join("std_doc.bd");
-        if let Err(e) = std::fs::write(&file, "// The program `burdin doc --std` loads the standard library beside.\n") {
+        if let Err(e) = std::fs::write(&file, "// The program `burdin doc --std` loads the standard library beside.\n")
+        {
             eprintln!("error: cannot write {}: {e}", file.display());
             return ExitCode::from(2);
         }
