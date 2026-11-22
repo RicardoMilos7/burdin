@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #289: `-O0`, `-O1`, `-O2`, and `-O3` (or `-O <n>`) on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and
+  `debug` replace the profile's `opt-level` for one invocation, and `burdin.toml`'s `[profile.<name>] opt-level` sets
+  the level a profile builds with. The level changes the optimizer only: `overflow-checks` and `debug-assertions`
+  stay as the profile sets them, so `dev -O3` keeps its overflow checks and `--release -O0` still wraps. A level
+  outside 0 to 3, a bare `-O`, and two levels on one command are usage errors. Rules: `spec/profiles.md`, BP4 and BP5;
+  tests `tests/check_profiles.py` (the `-O` IR comparisons, the checks, and the usage errors) and the unit tests in
+  `crates/burdin_driver/src/profile.rs`.
 - Associated types (issue #393; `spec/associated-types.md`, AT1-AT6). An interface may declare `type Name`; a
   `Type: Interface` block binds each one exactly once with `type Name = Ty`, and a projection reads it back as
   `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The checker resolves a projection through the bound environment

@@ -68,6 +68,10 @@ validated, not only the selected one, so a typo cannot hide in an unused profile
 reported. A package that names a profile that does not exist sees a usage error that lists the profiles available
 (the built-ins and the ones the manifest defines).
 
+The `opt-level` of a `[profile.<name>]` table is the level a build with that profile uses. The command line can
+replace it for one invocation with `-O` (BP4). A profile with no `opt-level` keeps its built-in level: 0 for `dev`
+and `test`, 2 for `release` and `bench`.
+
 ## BP4. The command line
 
 `--profile <name>` selects a profile on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and `debug`.
@@ -77,8 +81,15 @@ The default is the profile the command's name suggests (BP1): `build` and `run` 
 `bench` uses `bench`, and the others use `dev`. `burdin watch` passes the arguments through, so it selects the
 same profile as the command it reruns.
 
+`-O<n>` sets the optimization level of one invocation: `-O0`, `-O1`, `-O2`, or `-O3`, or `-O <n>` (issue #289).
+It takes the commands `--profile` takes, and `burdin watch` passes it through. It replaces the `opt-level` of the
+selected profile, however the profile was chosen, and changes nothing else (BP5). `-O2` is the level `release` and
+`bench` use; it does not select them. A level outside 0 to 3 is a usage error, as is an `-O` with no level, and two
+`-O` options that name different levels, as `--release` with another `--profile` is. A repeated `-O` with the same
+level is accepted.
+
 `burdin asm` and `burdin bloat` keep their `--debug` switch, which selects `dev` instead of their `release`
-default; `burdin repl` keeps `--release`. They do not take `--profile`.
+default; `burdin repl` keeps `--release`. They do not take `--profile` or `-O`.
 
 ## BP5. What a profile changes
 
@@ -89,6 +100,13 @@ A profile changes code generation deterministically:
 - `debug-assertions` removes or keeps `debug_assert*` calls and error trace frames.
 - `overflow-checks` emits or removes the overflow checks of arithmetic.
 - `panic` is fixed to `abort`.
+
+The optimization level and the checks are independent (issue #289). `opt-level` and `-O<n>` choose the LLVM pipeline
+and the target machine, and nothing else: `overflow-checks` and `debug-assertions` keep the value the profile gives
+them at every level. So `dev -O3` still panics on overflow, `--release -O0` still wraps, and an optimized build has
+exactly the checks its profile asks for. The built-in `release` and `bench` profiles turn both checks off, as they
+always have; a profile that wants them in an optimized build sets `overflow-checks = true`, as the `fast` example in
+BP2 does. No check is removed or added by a level.
 
 Two builds of one program with two profiles that differ only in a setting that does not affect it (for example,
 `debug` with optimization off) differ only in the metadata. The generated code of a program whose source has no
@@ -146,7 +164,11 @@ parallelism rather than the meaning of the code.
 | a per-package override turns checks on for a dependency's function only | BP7 |
 | `[profile.<name>.package.<pkg>]` rejects `opt-level` | BP7 |
 | an unknown profile, an unknown setting, a bad value, `panic = "unwind"`, and an inheritance cycle fail with stable messages | BP3, BP4 |
-| the `--help` of `build` lists `--profile` | BP4 |
+| the `--help` of `build` lists `--profile` and `-O` | BP4 |
+| `-O0` is the default `dev` IR, `-O2` and `-O 2` match each other and differ from `-O0` | BP4, BP5 |
+| `[profile.dev] opt-level = 2` builds the level the manifest names, and `-O0` replaces it | BP3, BP4 |
+| `dev -O3` still panics on overflow, and `--release -O0` still wraps | BP4, BP5 |
+| `-O4`, `-O` with no level, and `-O1 -O2` are usage errors (exit 2) with stable messages | BP4 |
 
 The unit tests in `crates/burdin_driver/src/profile.rs` cover the built-in table, inheritance, cycles, and the
 `opt-level` mapping without a compiler run.
