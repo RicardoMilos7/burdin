@@ -437,3 +437,10 @@ fn __offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
         __offload_raw(code, env)
     }
 }
+
+/// The error type of the `try_` allocating operations (spec/allocators.md, AL11). The variants are in the order the
+/// compiler's fallible operations report them: `CapacityOverflow` is 0 and `OutOfMemory` is 1.
+error enum AllocError: Eq, Debug {
+    CapacityOverflow "capacity overflow"
+    OutOfMemory "out of memory"
+}

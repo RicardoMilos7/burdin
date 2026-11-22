@@ -1,0 +1,40 @@
+//@ run
+//> 0
+//> true
+//> 3
+//> capacity overflow
+//> CapacityOverflow
+//> true
+//> ok
+
+// `List<T>.try_with_capacity(n)` is `Ok` with room for `n` elements when the buffer can be had, and
+// `Err(AllocError.CapacityOverflow)` when `n` elements of `T` cannot be addressed at all (spec/allocators.md, AL11).
+
+fn main() {
+    match List<i64>.try_with_capacity(10) {
+        Ok(xs) => {
+            println(xs.len().to_string())
+            println((xs.capacity() >= 10).to_string())
+        }
+        Err(e) => println("{}", e),
+    }
+    let mut ys = List<i64>.new()
+    ys.push(1)
+    ys.push(2)
+    ys.push(3)
+    println(ys.len().to_string())
+
+    let n: usize = 2305843009213693952
+    match List<i64>.try_with_capacity(n) {
+        Ok(_) => println("allocated"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+            println((e == AllocError.CapacityOverflow).to_string())
+        }
+    }
+    match List<i64>.try_with_capacity(0) {
+        Ok(_) => println("ok"),
+        Err(_) => println("failed"),
+    }
+}

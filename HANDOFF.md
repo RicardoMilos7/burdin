@@ -103,6 +103,19 @@ claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit oper
 `gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
 earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
 
+**Fallible allocation (issue #278, 2026-11-22).** `AllocError` (`std.bd`: `CapacityOverflow`, `OutOfMemory`) and
+the `try_` forms of the allocating operations (`spec/allocators.md`, AL11; `spec/stdlib.md`, "Fallible allocation"):
+`List<T>.try_with_capacity` and `try_with_capacity_in`, `List` `try_reserve` and `try_reserve_exact`,
+`Map<K, V>.try_with_capacity` and `try_reserve`, and `String.try_with_capacity` and `try_reserve`. The codegen computes a
+status word (`emit/fallible.rs`: 0 ok, 1 overflow, 2 out of memory) and builds the `Result` from it, so a failed
+operation leaves the container unchanged. The runtime has `__try_alloc` and `__try_realloc`, which return null where the
+heap refuses; `Global` uses them, and `Arena.allocate` returns null, changing nothing, for a request it cannot round or
+a block it cannot have. **Contract change:** `Allocator.allocate` and `reallocate` may return null; an infallible
+operation with a stored allocator panics with `out of memory` when they do (`emit/alloc.rs`, `check_allocated`).
+Not done: `try_` forms for `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` (AL11.6); the compile-time
+interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_alloc_*` (8 files, run with
+`python3 tests/run_tests.py try_alloc`).
+
 **`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,

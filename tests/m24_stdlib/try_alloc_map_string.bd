@@ -1,0 +1,54 @@
+//@ run
+//> 0
+//> 1
+//> capacity overflow
+//> capacity overflow
+//> 2
+//> reserved
+//> hi
+//> capacity overflow
+
+// The `try_` forms of `Map` and `String` report the same two failures as `List` (spec/allocators.md, AL11): a
+// table or buffer that cannot be addressed is `CapacityOverflow`, and a map or string that works is unchanged by a
+// failed reserve.
+
+fn main() {
+    match Map<i32, i32>.try_with_capacity(10) {
+        Ok(mut m) => {
+            println(m.len().to_string())
+            m.insert(1, 10)
+            println(m.len().to_string())
+        }
+        Err(e) => println("{}", e),
+    }
+    let n: usize = 2305843009213693952
+    match Map<i32, i32>.try_with_capacity(n) {
+        Ok(_) => println("allocated"),
+        Err(e) => println("{}", e),
+    }
+    let mut m = Map<i32, i32>.new()
+    match m.try_reserve(n) {
+        Ok(_) => println("reserved"),
+        Err(e) => println("{}", e),
+    }
+
+    match String.try_with_capacity(16) {
+        Ok(mut s) => {
+            s.push_str("hi")
+            println(s.len().to_string())
+            match s.try_reserve(8) {
+                Ok(_) => println("reserved"),
+                Err(e) => println("{}", e),
+            }
+            println(s)
+        }
+        Err(e) => println("{}", e),
+    }
+    let mut t = String.new()
+    t.push_str("ab")
+    let max: usize = 18446744073709551615
+    match t.try_reserve(max) {
+        Ok(_) => println("reserved"),
+        Err(e) => println("{}", e),
+    }
+}

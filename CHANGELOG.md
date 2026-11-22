@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Fallible allocation (issue #278; `spec/allocators.md`, AL11). `std` declares `AllocError` with `CapacityOverflow` and
+  `OutOfMemory`. The `try_` forms return `Result<_, AllocError>`: `List<T>.try_with_capacity`, `try_with_capacity_in`,
+  `try_reserve`, and `try_reserve_exact`; `Map<K, V>.try_with_capacity` and `try_reserve`; and `String.try_with_capacity`
+  and `try_reserve`. A failed call leaves the container unchanged. `Global` allocates through `__try_alloc` and
+  `__try_realloc`, and `Arena.allocate` returns null, changing nothing, when the heap refuses. The `Allocator` contract
+  now allows a null result: an infallible container operation whose stored allocator returns null panics with
+  `out of memory`. `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` keep infallible growth. Tests:
+  `tests/m24_stdlib/try_alloc_*`.
+
 - Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
   type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
   each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,

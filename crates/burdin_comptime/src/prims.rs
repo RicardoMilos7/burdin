@@ -815,7 +815,8 @@ impl<'p> Interp<'p, '_> {
             // `burdin test --interpret` models the C heap, so the raw allocation builtins run there; every other
             // compile-time evaluation keeps its containers abstract and has no allocator
             // (`spec/allocators.md`, AL10; `spec/test-runner.md`, IN1).
-            Builtin::RawAlloc => {
+            // `__try_alloc` differs only in its name: the interpreter's heap never refuses a block.
+            Builtin::RawAlloc | Builtin::RawTryAlloc => {
                 self.charge(2, span)?;
                 if !self.raw_memory {
                     return Err(impure("allocating memory with an explicit allocator", span));
@@ -826,7 +827,7 @@ impl<'p> Interp<'p, '_> {
                 let align = usize::try_from(align).unwrap_or(1);
                 Value::Int(self.mem.alloc(size, align, span))
             }
-            Builtin::RawRealloc => {
+            Builtin::RawRealloc | Builtin::RawTryRealloc => {
                 self.charge(3, span)?;
                 if !self.raw_memory {
                     return Err(impure("allocating memory with an explicit allocator", span));
@@ -849,7 +850,11 @@ impl<'p> Interp<'p, '_> {
                 self.mem.release(addr, span).map_err(Unwind::Fault)?;
                 Value::Unit
             }
-            Builtin::ListNewIn | Builtin::ListWithCapacityIn | Builtin::MapNewIn | Builtin::HeapNewIn => {
+            Builtin::ListNewIn
+            | Builtin::ListWithCapacityIn
+            | Builtin::ListTryWithCapacityIn
+            | Builtin::MapNewIn
+            | Builtin::HeapNewIn => {
                 return Err(impure("allocating memory with an explicit allocator", span));
             }
             Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
@@ -863,6 +868,20 @@ impl<'p> Interp<'p, '_> {
             Builtin::StringWithCapacity => {
                 let _ = self.eval(&args[0], Mode::Use)?;
                 Value::String(Vec::new())
+            }
+            // The fallible constructors succeed at compile time: capacity is not modeled, so nothing is refused
+            // (`spec/allocators.md`, AL11).
+            Builtin::ListTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::List(Vec::new()))))
+            }
+            Builtin::MapTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::Map(Vec::new()))))
+            }
+            Builtin::StringTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::String(Vec::new()))))
             }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
@@ -986,6 +1005,10 @@ impl<'p> Interp<'p, '_> {
                 let _ = self.eval(&args[1], Mode::Use)?;
                 Value::Unit
             }
+            Method::StringTryReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::Unit)))
+            }
             Method::StringShrinkToFit => Value::Unit,
             Method::StringInsertStr => {
                 let place = self.eval_place(recv)?;
@@ -1056,6 +1079,10 @@ impl<'p> Interp<'p, '_> {
             Method::ListReserve | Method::ListReserveExact => {
                 let _ = self.eval(&args[1], Mode::Use)?.int();
                 Value::Unit
+            }
+            Method::ListTryReserve | Method::ListTryReserveExact => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Res(Ok(Box::new(Value::Unit)))
             }
             Method::ListShrinkToFit => Value::Unit,
             Method::ListSwap => {
@@ -1250,6 +1277,10 @@ impl<'p> Interp<'p, '_> {
             // Capacity is not modeled at compile time: the map is a list of pairs, so reserving and shrinking
             // change nothing observable.
             Method::MapReserve | Method::MapShrinkToFit => Value::Unit,
+            Method::MapTryReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Res(Ok(Box::new(Value::Unit)))
+            }
             Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
                 return Err(impure("an entry into a map value", span));
             }

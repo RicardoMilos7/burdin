@@ -7,6 +7,7 @@
 //! grows (and rehashes) when the next insert would pass a 3/4 load factor. Iteration scans the slots, so its order
 //! is unspecified, as the standard library says.
 
+use super::fallible::{TRY_OK, TRY_OUT_OF_MEMORY, TRY_OVERFLOW};
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_diag::Span;
 use burdin_tir::{self as tir, FnKind, Method, Ty};
@@ -129,15 +130,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_conditional_branch(empty, first, again).map_err(llvm_err)?;
         self.builder.position_at_end(first);
         let fresh = self.alloc_in(&alloc, alloc_addr, new_bytes, align, Some(span))?;
+        let first_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(grown).map_err(llvm_err)?;
         self.builder.position_at_end(again);
         let renewed = self.realloc_in(&alloc2, alloc_addr2, data, old_bytes, new_bytes, align, Some(span))?;
+        let again_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(grown).map_err(llvm_err)?;
         self.builder.position_at_end(grown);
         let data_phi = self.builder.build_phi(self.ptr_ty(), "seq.data").map_err(llvm_err)?;
-        data_phi.add_incoming(&[(&fresh, first), (&renewed, again)]);
+        data_phi.add_incoming(&[(&fresh, first_end), (&renewed, again_end)]);
         let cap_phi = self.builder.build_phi(self.usize_ty, "seq.cap").map_err(llvm_err)?;
-        cap_phi.add_incoming(&[(&at_least_four, first), (&at_least_four, again)]);
+        cap_phi.add_incoming(&[(&at_least_four, first_end), (&at_least_four, again_end)]);
         seq.data = data_phi.as_basic_value().into_pointer_value();
         seq.cap = cap_phi.as_basic_value().into_int_value();
         self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
@@ -468,6 +471,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.seq_store(&seq)?;
                 Ok(None)
+            }
+            (Ty::List(elem, _), Method::ListTryReserve | Method::ListTryReserveExact) => {
+                let elem = (**elem).clone();
+                let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
+                let additional = self.expr_mode(&args[1], Mode::Use)?;
+                let additional = self.need_int(additional, &Ty::Int(tir::IntTy::Usize));
+                let exact = m == Method::ListTryReserveExact;
+                let status = self.list_try_reserve(&mut seq, &elem, additional, exact, span)?;
+                self.seq_store(&seq)?;
+                Ok(Some(self.try_result(status, None, ty)?))
             }
             (Ty::List(elem, _), Method::ListShrinkToFit) => {
                 let elem = (**elem).clone();
@@ -1128,6 +1141,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // `shrink_to_fit()`: rehash into the smallest table that holds the entries, and free the buffer of an
             // empty map.
+            // `try_reserve(additional)`: the fallible `reserve`, which leaves the map unchanged on failure.
+            (Ty::Map(key, value, alloc), Method::MapTryReserve) => {
+                let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
+                let alloc = alloc.clone();
+                let Some(addr) = self.place_ptr(&args[0])? else { return Ok(None) };
+                let additional = self.expr_mode(&args[1], Mode::Use)?;
+                let additional = self.need_int(additional, &Ty::Int(tir::IntTy::Usize));
+                let status = self.map_try_reserve_at(addr, &alloc, &key_ty, &value_ty, additional, span)?;
+                Ok(Some(self.try_result(status, None, ty)?))
+            }
             (Ty::Map(key, value, _), Method::MapShrinkToFit) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
@@ -1628,13 +1651,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_conditional_branch(had, renew_bb, fresh_bb).map_err(llvm_err)?;
         self.builder.position_at_end(fresh_bb);
         let fresh = self.alloc_in(&alloc, alloc_addr, new_bytes, align, Some(span))?;
+        let fresh_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(grew).map_err(llvm_err)?;
         self.builder.position_at_end(renew_bb);
         let renewed = self.realloc_in(&alloc, alloc_addr, old_data, old_bytes, new_bytes, align, Some(span))?;
+        let renew_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(grew).map_err(llvm_err)?;
         self.builder.position_at_end(grew);
         let data = self.builder.build_phi(self.ptr_ty(), "seq.capacity.data").map_err(llvm_err)?;
-        data.add_incoming(&[(&fresh, fresh_bb), (&renewed, renew_bb)]);
+        data.add_incoming(&[(&fresh, fresh_end), (&renewed, renew_end)]);
         self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
         self.builder.position_at_end(done);
         let null = self.ptr_ty().const_null();
@@ -1652,6 +1677,261 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         seq.data = data_end.as_basic_value().into_pointer_value();
         seq.cap = cap_end.as_basic_value().into_int_value();
         Ok(())
+    }
+
+    /// The `{ ptr, len, cap }` words of a list value, with `len` zero, and the allocator value it stores read back
+    /// from `alloc_addr` (an allocation may change it in place, so the stored value is the updated one).
+    pub(super) fn seq_with_buffer(
+        &mut self,
+        data: PointerValue<'ctx>,
+        capacity: IntValue<'ctx>,
+        alloc: &burdin_tir::Alloc,
+        alloc_addr: Option<PointerValue<'ctx>>,
+    ) -> GenResult<StructValue<'ctx>> {
+        let seq_ty = self.seq_ty(alloc);
+        let mut agg = seq_ty.const_zero();
+        agg = self.builder.build_insert_value(agg, data, 0, "").map_err(llvm_err)?.into_struct_value();
+        agg = self.builder.build_insert_value(agg, capacity, 2, "").map_err(llvm_err)?.into_struct_value();
+        if let (Some(addr), Some(ty)) = (alloc_addr, alloc.allocator_ty()) {
+            let t = self.storage_ty(ty);
+            let value = self.builder.build_load(t, addr, "list.alloc").map_err(llvm_err)?;
+            agg = self.builder.build_insert_value(agg, value, 3, "").map_err(llvm_err)?.into_struct_value();
+        }
+        Ok(agg)
+    }
+
+    /// `try_reserve(additional)` and `try_reserve_exact(additional)` on a list (`spec/allocators.md`, AL11): grows
+    /// the buffer through the list's allocator so it holds `additional` more elements, and returns the status word
+    /// (`fallible::TRY_OK` and the two failures). The list is unchanged unless the status is `TRY_OK`. The growth
+    /// is the one `reserve` uses, or exactly `want` for `exact`.
+    pub(super) fn list_try_reserve(
+        &mut self,
+        seq: &mut Seq<'ctx>,
+        elem: &Ty,
+        additional: IntValue<'ctx>,
+        exact: bool,
+        span: Span,
+    ) -> GenResult<IntValue<'ctx>> {
+        let usize_ty = self.usize_ty;
+        let i32_ty = self.cx.i32_type();
+        let (old_data, old_cap, len) = (seq.data, seq.cap, seq.len);
+        let size = self.elem_size(elem);
+        // The most elements whose bytes still fit in a `usize`.
+        let limit = usize_ty.const_int(u64::MAX / size, false);
+        let align = self.value_align(elem);
+        let status = self.alloca(i32_ty.into(), "try.status")?;
+        let data_slot = self.alloca(self.ptr_ty().into(), "try.data")?;
+        let cap_slot = self.alloca(usize_ty.into(), "try.cap")?;
+        self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+        self.builder.build_store(data_slot, old_data).map_err(llvm_err)?;
+        self.builder.build_store(cap_slot, old_cap).map_err(llvm_err)?;
+        let done = self.new_block("try.reserve.end");
+        let overflow = self.new_block("try.reserve.overflow");
+        let bytes = self.new_block("try.reserve.bytes");
+        let fits = self.new_block("try.reserve.fits");
+        let grow = self.new_block("try.reserve.grow");
+
+        // The element count: `len + additional`, and it must not wrap.
+        let want = self.builder.build_int_add(len, additional, "try.want").map_err(llvm_err)?;
+        let wrapped = self.builder.build_int_compare(IntPredicate::ULT, want, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(wrapped, overflow, bytes).map_err(llvm_err)?;
+        self.builder.position_at_end(bytes);
+        let too_big = self.builder.build_int_compare(IntPredicate::UGT, want, limit, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(too_big, overflow, fits).map_err(llvm_err)?;
+        self.builder.position_at_end(fits);
+        let enough = self.builder.build_int_compare(IntPredicate::ULE, want, old_cap, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(enough, done, grow).map_err(llvm_err)?;
+
+        // The new capacity: twice the old one when that is enough and still fits, else `want`.
+        self.builder.position_at_end(grow);
+        let new_cap = if exact {
+            want
+        } else {
+            let doubled = self.builder.build_int_mul(old_cap, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+            let wraps = self.builder.build_int_compare(IntPredicate::ULT, doubled, old_cap, "").map_err(llvm_err)?;
+            let short = self.builder.build_int_compare(IntPredicate::ULT, doubled, want, "").map_err(llvm_err)?;
+            let big = self.builder.build_int_compare(IntPredicate::UGT, doubled, limit, "").map_err(llvm_err)?;
+            let not_doubled = self.builder.build_or(wraps, short, "").map_err(llvm_err)?;
+            let not_doubled = self.builder.build_or(not_doubled, big, "").map_err(llvm_err)?;
+            self.builder.build_select(not_doubled, want, doubled, "try.cap").map_err(llvm_err)?.into_int_value()
+        };
+        let new_bytes = self.builder.build_int_mul(new_cap, usize_ty.const_int(size, false), "").map_err(llvm_err)?;
+        let had =
+            self.builder.build_int_compare(IntPredicate::NE, old_cap, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let renew = self.new_block("try.reserve.renew");
+        let fresh = self.new_block("try.reserve.fresh");
+        let got = self.new_block("try.reserve.got");
+        self.builder.build_conditional_branch(had, renew, fresh).map_err(llvm_err)?;
+        self.builder.position_at_end(fresh);
+        let fresh_p = self.try_alloc_in(&seq.alloc, seq.alloc_addr, new_bytes, align, Some(span))?;
+        let fresh_end = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_unconditional_branch(got).map_err(llvm_err)?;
+        self.builder.position_at_end(renew);
+        let old_bytes = self.builder.build_int_mul(old_cap, usize_ty.const_int(size, false), "").map_err(llvm_err)?;
+        let renewed_p =
+            self.try_realloc_in(&seq.alloc, seq.alloc_addr, old_data, old_bytes, new_bytes, align, Some(span))?;
+        let renew_end = self.builder.get_insert_block().expect("positioned");
+        self.builder.build_unconditional_branch(got).map_err(llvm_err)?;
+        self.builder.position_at_end(got);
+        let p = self.builder.build_phi(self.ptr_ty(), "try.p").map_err(llvm_err)?;
+        p.add_incoming(&[(&fresh_p, fresh_end), (&renewed_p, renew_end)]);
+        let p = p.as_basic_value().into_pointer_value();
+        let refused = self.builder.build_is_null(p, "").map_err(llvm_err)?;
+        let oom = self.new_block("try.reserve.oom");
+        let took = self.new_block("try.reserve.took");
+        self.builder.build_conditional_branch(refused, oom, took).map_err(llvm_err)?;
+        self.builder.position_at_end(took);
+        self.builder.build_store(data_slot, p).map_err(llvm_err)?;
+        self.builder.build_store(cap_slot, new_cap).map_err(llvm_err)?;
+        self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(oom);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OUT_OF_MEMORY, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(overflow);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OVERFLOW, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.builder.position_at_end(done);
+        seq.data = self.builder.build_load(self.ptr_ty(), data_slot, "").map_err(llvm_err)?.into_pointer_value();
+        seq.cap = self.builder.build_load(usize_ty, cap_slot, "").map_err(llvm_err)?.into_int_value();
+        Ok(self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value())
+    }
+
+    /// `List<T>.try_with_capacity(n)` and `try_with_capacity_in(n, alloc)` (AL11): a list with room for `capacity`
+    /// elements, through `alloc`, and the status word. A stored allocator value at `alloc_addr` is dropped when the
+    /// allocation fails, because the call took ownership of it; on success the list holds it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn list_try_with_capacity(
+        &mut self,
+        capacity: IntValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+        alloc_addr: Option<PointerValue<'ctx>>,
+        span: Span,
+    ) -> GenResult<(IntValue<'ctx>, StructValue<'ctx>)> {
+        let usize_ty = self.usize_ty;
+        let i32_ty = self.cx.i32_type();
+        let size = self.elem_size(elem);
+        let limit = usize_ty.const_int(u64::MAX / size, false);
+        let align = self.value_align(elem);
+        let status = self.alloca(i32_ty.into(), "try.status")?;
+        let data_slot = self.alloca(self.ptr_ty().into(), "try.data")?;
+        self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+        self.builder.build_store(data_slot, self.ptr_ty().const_null()).map_err(llvm_err)?;
+        let done = self.new_block("try.capacity.end");
+        let overflow = self.new_block("try.capacity.overflow");
+        let nonempty = self.new_block("try.capacity.alloc");
+        let oom = self.new_block("try.capacity.oom");
+        let took = self.new_block("try.capacity.took");
+        let too_big = self.builder.build_int_compare(IntPredicate::UGT, capacity, limit, "").map_err(llvm_err)?;
+        let check_empty = self.new_block("try.capacity.empty");
+        self.builder.build_conditional_branch(too_big, overflow, check_empty).map_err(llvm_err)?;
+        self.builder.position_at_end(check_empty);
+        let empty =
+            self.builder.build_int_compare(IntPredicate::EQ, capacity, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(empty, done, nonempty).map_err(llvm_err)?;
+        self.builder.position_at_end(nonempty);
+        let bytes = self.builder.build_int_mul(capacity, usize_ty.const_int(size, false), "").map_err(llvm_err)?;
+        let p = self.try_alloc_in(alloc, alloc_addr, bytes, align, Some(span))?;
+        let refused = self.builder.build_is_null(p, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(refused, oom, took).map_err(llvm_err)?;
+        self.builder.position_at_end(took);
+        self.builder.build_store(data_slot, p).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(oom);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OUT_OF_MEMORY, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(overflow);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OVERFLOW, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.builder.position_at_end(done);
+        let data = self.builder.build_load(self.ptr_ty(), data_slot, "").map_err(llvm_err)?.into_pointer_value();
+        let st = self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value();
+        let list = self.seq_with_buffer(data, capacity, alloc, alloc_addr)?;
+        // The call owned a stored allocator: a failed call releases it.
+        if alloc.allocator_ty().is_some() {
+            let failed =
+                self.builder.build_int_compare(IntPredicate::NE, st, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let drop_bb = self.new_block("try.capacity.drop");
+            let end = self.new_block("try.capacity.finish");
+            self.builder.build_conditional_branch(failed, drop_bb, end).map_err(llvm_err)?;
+            self.builder.position_at_end(drop_bb);
+            self.drop_stored_allocator(alloc, alloc_addr)?;
+            self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+            self.builder.position_at_end(end);
+        }
+        Ok((st, list))
+    }
+
+    /// `try_reserve(additional)` on a map and the fallible `with_capacity` (AL11): makes the slot table hold
+    /// `additional` more entries without passing the load factor, and returns the status word. The map at `addr`
+    /// changes only when the status is `TRY_OK`.
+    pub(super) fn map_try_reserve_at(
+        &mut self,
+        addr: PointerValue<'ctx>,
+        alloc: &burdin_tir::Alloc,
+        key: &Ty,
+        value: &Ty,
+        additional: IntValue<'ctx>,
+        span: Span,
+    ) -> GenResult<IntValue<'ctx>> {
+        let usize_ty = self.usize_ty;
+        let i32_ty = self.cx.i32_type();
+        let status = self.alloca(i32_ty.into(), "try.status")?;
+        self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+        let mut seq = self.seq_load_at(addr, alloc)?;
+        let done = self.new_block("try.map.end");
+        let overflow = self.new_block("try.map.overflow");
+        let fits = self.new_block("try.map.fits");
+        let grow = self.new_block("try.map.grow");
+        let oom = self.new_block("try.map.oom");
+        let took = self.new_block("try.map.took");
+
+        // `len + additional` must not wrap, and the slot count it needs must stay within the map limit.
+        let room = self.builder.build_int_sub(usize_ty.const_all_ones(), seq.len, "").map_err(llvm_err)?;
+        let too_many = self.builder.build_int_compare(IntPredicate::UGT, additional, room, "").map_err(llvm_err)?;
+        let needed = self.builder.build_int_add(seq.len, additional, "").map_err(llvm_err)?;
+        let limit = usize_ty.const_int(1u64 << 62, false);
+        let over_limit = self.builder.build_int_compare(IntPredicate::UGT, needed, limit, "").map_err(llvm_err)?;
+        let not_fit = self.builder.build_or(too_many, over_limit, "").map_err(llvm_err)?;
+        let check_cap = self.new_block("try.map.cap");
+        self.builder.build_conditional_branch(not_fit, overflow, check_cap).map_err(llvm_err)?;
+        self.builder.position_at_end(check_cap);
+        let cap = self.map_capacity_loop(needed)?;
+        let over = self.builder.build_int_compare(IntPredicate::UGT, cap, seq.cap, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(over, grow, fits).map_err(llvm_err)?;
+        self.builder.position_at_end(fits);
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        // The table's bytes must fit in a `usize`; then the new table is allocated before anything moves.
+        self.builder.position_at_end(grow);
+        let entry_size = self.map_entry_size(key, value);
+        let entry_limit = usize_ty.const_int(u64::MAX / entry_size, false);
+        let wide = self.builder.build_int_compare(IntPredicate::UGT, cap, entry_limit, "").map_err(llvm_err)?;
+        let fit_bytes = self.new_block("try.map.bytes");
+        self.builder.build_conditional_branch(wide, overflow, fit_bytes).map_err(llvm_err)?;
+        self.builder.position_at_end(fit_bytes);
+        let bytes = self.builder.build_int_mul(cap, usize_ty.const_int(entry_size, false), "").map_err(llvm_err)?;
+        let entry = Self::map_entry_ty(key, value);
+        let align = self.value_align(&entry);
+        let base = self.try_alloc_in(alloc, seq.alloc_addr, bytes, align, Some(span))?;
+        let refused = self.builder.build_is_null(base, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(refused, oom, took).map_err(llvm_err)?;
+        self.builder.position_at_end(took);
+        self.map_rehash_fill(&mut seq, key, value, base, cap)?;
+        self.seq_store(&seq)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(oom);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OUT_OF_MEMORY, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(overflow);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OVERFLOW, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        self.builder.position_at_end(done);
+        Ok(self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value())
     }
 
     /// Releases the buffer and the stored allocator of a sequence whose elements were moved out (`append`).
@@ -1677,7 +1957,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         alloc_addr: Option<PointerValue<'ctx>>,
         span: Span,
     ) -> GenResult<StructValue<'ctx>> {
-        let seq_ty = self.seq_ty(alloc);
         let ptr_ty = self.ptr_ty();
         let zero = self.usize_zero();
         let bytes = self
@@ -1692,20 +1971,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.position_at_end(allocate);
         let align = self.value_align(elem);
         let fresh = self.alloc_in(alloc, alloc_addr, bytes, align, Some(span))?;
+        let fresh_end = self.builder.get_insert_block().expect("positioned");
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);
         let data = self.builder.build_phi(ptr_ty, "list.capacity.data").map_err(llvm_err)?;
         let null = ptr_ty.const_null();
-        data.add_incoming(&[(&null, before), (&fresh, allocate)]);
-        let mut agg = seq_ty.const_zero();
-        agg = self.builder.build_insert_value(agg, data.as_basic_value(), 0, "").map_err(llvm_err)?.into_struct_value();
-        agg = self.builder.build_insert_value(agg, capacity, 2, "").map_err(llvm_err)?.into_struct_value();
-        if let (Some(addr), Some(ty)) = (alloc_addr, alloc.allocator_ty()) {
-            let t = self.storage_ty(ty);
-            let value = self.builder.build_load(t, addr, "list.alloc").map_err(llvm_err)?;
-            agg = self.builder.build_insert_value(agg, value, 3, "").map_err(llvm_err)?.into_struct_value();
-        }
-        Ok(agg)
+        data.add_incoming(&[(&null, before), (&fresh, fresh_end)]);
+        self.seq_with_buffer(data.as_basic_value().into_pointer_value(), capacity, alloc, alloc_addr)
     }
 
     /// A map entry is `(key, value, hash)`. A zero hash marks an empty slot; a live entry stores a nonzero hash.
@@ -1967,6 +2239,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let limit = self.usize_ty.const_int(1u64 << 62, false);
         let fits = self.builder.build_int_compare(IntPredicate::ULE, needed, limit, "").map_err(llvm_err)?;
         self.check(fits, "Map capacity overflow", span)?;
+        self.map_capacity_loop(needed)
+    }
+
+    /// The slot count [`Codegen::map_capacity_for`] computes, for a `needed` the caller has checked against the map
+    /// limit of 2^62 entries.
+    fn map_capacity_loop(&mut self, needed: IntValue<'ctx>) -> GenResult<IntValue<'ctx>> {
         let cap = self.alloca(self.usize_ty.into(), "map.cap")?;
         self.builder.build_store(cap, self.usize_ty.const_int(8, false)).map_err(llvm_err)?;
         let header = self.new_block("map.cap.cond");
@@ -2013,13 +2291,29 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         span: Span,
     ) -> GenResult<()> {
         let entry = Self::map_entry_ty(key, value);
+        let size = self.map_entry_size(key, value);
+        let bytes = self.builder.build_int_mul(new_cap, self.usize_ty.const_int(size, false), "").map_err(llvm_err)?;
+        let align = self.value_align(&entry);
+        let base = self.alloc_in(&seq.alloc, seq.alloc_addr, bytes, align, Some(span))?;
+        self.map_rehash_fill(seq, key, value, base, new_cap)
+    }
+
+    /// Moves a map's live entries into `base`, a fresh slot table of `new_cap` slots that the caller allocated for
+    /// them, and frees the old table. `seq` then holds the new buffer and capacity.
+    pub(super) fn map_rehash_fill(
+        &mut self,
+        seq: &mut Seq<'ctx>,
+        key: &Ty,
+        value: &Ty,
+        base: PointerValue<'ctx>,
+        new_cap: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let entry = Self::map_entry_ty(key, value);
         let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();
         let size = self.map_entry_size(key, value);
         let one = self.usize_ty.const_int(1, false);
         let zero = self.usize_ty.const_zero();
-        let bytes = self.builder.build_int_mul(new_cap, self.usize_ty.const_int(size, false), "").map_err(llvm_err)?;
         let align = self.value_align(&entry);
-        let base = self.alloc_in(&seq.alloc, seq.alloc_addr, bytes, align, Some(span))?;
         let entry_bytes = self.usize_ty.const_int(size, false);
 
         // Zero every hash word: every slot of the new table starts empty.
