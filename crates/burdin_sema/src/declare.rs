@@ -277,6 +277,9 @@ impl<'t> Sema<'t> {
                     has_default: m.has_body,
                     is_unsafe: m.decl.is_unsafe,
                     generic: !m.decl.generics.is_empty(),
+                    params: m.decl.generics.iter().map(|g| g.name.name.clone()).collect(),
+                    // The method's own bounds see the interface's parameters and the method's own (`F: FnMut(T): U`).
+                    bounds: method_bounds(&m.decl, &subst, &self.globals, module, diags),
                 })
                 .collect();
             self.globals.interfaces[i].bounds = bounds;

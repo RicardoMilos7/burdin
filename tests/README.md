@@ -24,7 +24,7 @@ tests/
   m10_test_runner/     `test` blocks and `burdin test`
   m11_llvm/            calling the LLVM C API from Burdin
   m12_closures/        closures, captures, closure types and bounds
-  m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
+  m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops, generic interfaces and their default methods
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
   m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
