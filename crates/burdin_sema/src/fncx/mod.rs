@@ -204,7 +204,7 @@ impl<'a> FnCx<'a> {
     }
 
     pub(super) fn resolve(&mut self, ty: &ast::Type) -> Ty {
-        self.globals.resolve_type_in(ty, self.self_ty.as_ref(), &self.subst, self.module, self.diags)
+        self.globals.resolve_type_bounded(ty, self.self_ty.as_ref(), &self.subst, &self.bounds, self.module, self.diags)
     }
 
     /// Whether a type parameter's bounds provide `bound`.
@@ -249,7 +249,15 @@ impl<'a> FnCx<'a> {
                 .map(PathTy::Ty);
         }
         let self_ty = self.self_ty.clone();
-        Some(PathTy::Ty(self.globals.generic_type(name, args, self_ty.as_ref(), &self.subst, self.module, self.diags)))
+        Some(PathTy::Ty(self.globals.generic_type(
+            name,
+            args,
+            self_ty.as_ref(),
+            &self.subst,
+            &self.bounds,
+            self.module,
+            self.diags,
+        )))
     }
 
     /// The segments of a plain expression path (`math.add`, `geometry.shapes.Square`), or `None` when the

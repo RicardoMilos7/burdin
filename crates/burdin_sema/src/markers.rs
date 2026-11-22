@@ -60,6 +60,8 @@ impl Globals {
             | Ty::Chars
             | Ty::Never
             | Ty::Const(_)
+            // A projection is opaque; the concrete binding is checked when it is substituted.
+            | Ty::Projection { .. }
             | Ty::Error => None,
             Ty::Param(p) => {
                 if self.bound_in_env(p, &Bound::User(iface, Vec::new()), env) {

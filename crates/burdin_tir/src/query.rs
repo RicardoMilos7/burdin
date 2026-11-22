@@ -99,7 +99,9 @@ impl TypeDefs<'_> {
                     && self.holds(v, prop, seen)
                     && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen))
             }
-            Ty::Param(_) | Ty::Const(_) => false,
+            // A projection is opaque until the implementation's binding is substituted; it is never copied or
+            // cloned on its own (`spec/associated-types.md`, AT3).
+            Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => false,
             // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
             Ty::Any(_) => false,
             Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
@@ -142,7 +144,13 @@ impl TypeDefs<'_> {
     fn needs_drop_seen(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => false,
-            Ty::Ref { .. } | Ty::Slice(_) | Ty::Param(_) | Ty::Const(_) | Ty::CPtr(_) | Ty::Chars => false,
+            Ty::Ref { .. }
+            | Ty::Slice(_)
+            | Ty::Param(_)
+            | Ty::Const(_)
+            | Ty::Projection { .. }
+            | Ty::CPtr(_)
+            | Ty::Chars => false,
             Ty::Range(..)
             | Ty::MapIter(..)
             | Ty::RangeIter(..)

@@ -33,6 +33,8 @@ struct CheckArgs {
     release: bool,
     /// `--profile <name>` (`spec/profiles.md`).
     profile_name: Option<String>,
+    /// `-O<n>`: the optimization level that replaces the profile's `opt-level` (`spec/profiles.md`, BP4).
+    opt_level: Option<crate::profile::OptLevel>,
     tests: bool,
     /// `--locked`: refuse to update `burdin.lock`.
     locked: bool,
@@ -63,6 +65,8 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
             // `-j4` is `-j 4`, as in cargo and make.
             _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
+            // `-O2` is `-O 2` (`spec/profiles.md`, BP4).
+            _ if raw.len() > 2 && raw.starts_with("-O") => ("-O", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         if parse_diagnostic_option(&mut it, inline, a, &mut args.diagnostics)? {
@@ -71,6 +75,10 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
+            "-O" => {
+                let value = option_value(&mut it, inline, a, "an optimization level from 0 to 3")?;
+                crate::profile::set_opt_level(&mut args.opt_level, crate::profile::parse_opt_level(&value)?)?;
+            }
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
             "--features" => {
@@ -137,8 +145,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("check", &message),
     };
-    let profile = match crate::profile::resolve_for_command("check", &args.target, args.profile_name.as_deref(), "dev")
-    {
+    let profile = match crate::profile::resolve_for_command(
+        "check",
+        &args.target,
+        args.profile_name.as_deref(),
+        "dev",
+        args.opt_level,
+    ) {
         Ok(profile) => profile,
         Err(code) => return code,
     };

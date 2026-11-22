@@ -24,7 +24,32 @@ impl Fmt<'_> {
                 }
                 self.type_path()
             }
-            TokenKind::SelfType => Ok(self.tok_doc()),
+            // `Self` or `Self.Name`: an associated type of the enclosing interface or impl block
+            // (`spec/associated-types.md`, AT3).
+            TokenKind::SelfType => {
+                let mut parts = vec![self.tok_doc()];
+                if self.at(&TokenKind::Dot) && matches!(self.nth(1), TokenKind::Ident(_)) {
+                    parts.push(self.tok_doc());
+                    parts.push(self.ident()?);
+                }
+                Ok(concat(parts))
+            }
+            // `<T as Interface>.Name`: a qualified associated type projection.
+            TokenKind::Lt => {
+                let open = self.open(&TokenKind::Lt, false)?;
+                let mut parts = vec![open.lead, open.text, self.ty()?];
+                parts.push(space());
+                parts.push(self.take(&TokenKind::As)?);
+                parts.push(space());
+                parts.push(self.ty()?);
+                let close = self.closing_angle()?;
+                parts.push(close.lead);
+                parts.push(close.text);
+                parts.push(close.trail);
+                parts.push(self.take(&TokenKind::Dot)?);
+                parts.push(self.ident()?);
+                Ok(concat(parts))
+            }
             TokenKind::Any | TokenKind::Impl => {
                 let kw = self.tok_doc();
                 let inner = self.ty()?;

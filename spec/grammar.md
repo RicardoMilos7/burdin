@@ -6,8 +6,9 @@ milestone 13's member names, milestone 14's string interpolation (the details ar
 (the details are in `errors.md`), milestone 17's default and named arguments (the details are in
 `arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), milestone 20's comptime
 forms (the details are in `comptime.md`), and milestone 21's `derive` item, const parameters, computed field access,
-generic type aliases, and impl blocks for specific type arguments (the details are in `reflection.md`,
-`const-generics.md`, `type-aliases.md`, and `impls.md`). It is derived from the conformance tests in `tests/`, so every construct
+generic type aliases, impl blocks for specific type arguments, and associated types (the details are in
+`reflection.md`, `const-generics.md`, `type-aliases.md`, `impls.md`, and `associated-types.md`). It is derived from
+the conformance tests in `tests/`, so every construct
 below is used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
 milestones (derive declarations, tasks) are reserved but not parsed.
 
@@ -154,12 +155,19 @@ ErrorItem     = "error" "enum" IDENT [ GenericParams ] [ Derives ] "{" [ ErrorVa
 ErrorVariantList = ErrorVariant { Sep ErrorVariant } [ Sep ] ;
 ErrorVariant  = Variant [ "from" ] STRING ;
 
-InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceFn } "}" ;
+InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceMember } "}" ;
+InterfaceMember = InterfaceFn | AssociatedType ;
 InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
+(* `type Name` declares an associated type; it takes no bound and no default in stage 1 (`associated-types.md`, AT1). *)
+AssociatedType = "type" IDENT ;
 
-ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplFn } "}" ;
+ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplItem } "}" ;
                 (* `unsafe` is required for `Send` and `Sync` and allowed for nothing else (E0281); spec/shared.md SH5 *)
+ImplItem      = ImplFn | AssociatedTypeBinding ;
 ImplFn        = [ "priv" ] FnItem ;
+(* In a `Type: Interface` block, every associated type of the interface is bound exactly once
+   (`associated-types.md`, AT2). An impl block with no interface cannot bind one (E0144). *)
+AssociatedTypeBinding = "type" IDENT "=" Type ;
 
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
 ConstItem     = "const" IDENT ":" Type "=" Expr ;
@@ -250,6 +258,7 @@ rules are in
 
 ```
 Type          = TypePath
+              | Projection                              (* an associated type, stage 1 (`associated-types.md`, AT3) *)
               | "any" TypePath                          (* stage 1, milestone 15 *)
               | "impl" TypePath                         (* stage 1, milestone 15; only in a parameter list *)
               | ClosureType                             (* stage 1, milestone 12 *)
@@ -261,6 +270,11 @@ Type          = TypePath
               | "!" ;                                   (* never; written by the standard library only *)
 
 TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
+                (* `T.Name`, with `T` a type parameter or a type path segment, is parsed as this two-segment path and
+                   reinterpreted as an unqualified associated type projection in the checker (`associated-types.md`,
+                   AT3). *)
+Projection    = "Self" "." IDENT
+              | "<" Type "as" TypePath ">" "." IDENT ;  (* qualified: `<T as Iterator<i32>>.Item` *)
 GenericArgs   = "<" GenericArg { "," GenericArg } [ "," ] ">" ;
 GenericArg    = Type
               | [ "-" ] INT | "true" | "false" | CHAR   (* a const argument: spec/const-generics.md, CG2 *)

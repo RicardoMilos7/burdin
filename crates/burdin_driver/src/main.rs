@@ -58,6 +58,8 @@ pub(crate) struct Args {
     pub(crate) release: bool,
     /// `--profile <name>`: the requested profile name, resolved against the package's manifest into `profile`.
     pub(crate) profile_name: Option<String>,
+    /// `-O<n>`: the optimization level that replaces the profile's `opt-level` (`spec/profiles.md`, BP4).
+    pub(crate) opt_level: Option<profile::OptLevel>,
     /// The resolved profile (`spec/profiles.md`).
     pub(crate) profile: profile::Profile,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
@@ -226,11 +228,17 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
             // `-j4` is `-j 4`, as in cargo and make.
             _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
+            // `-O2` is `-O 2` (`spec/profiles.md`, BP4).
+            _ if raw.len() > 2 && raw.starts_with("-O") => ("-O", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
+            "-O" => {
+                let value = option_value(&mut it, inline, a, "an optimization level from 0 to 3")?;
+                profile::set_opt_level(&mut args.opt_level, profile::parse_opt_level(&value)?)?;
+            }
             "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
@@ -798,11 +806,16 @@ fn driver_main() -> ExitCode {
         "bench" => "bench",
         _ => "dev",
     };
-    let profile =
-        match profile::resolve_for_command(&command, &args.target, args.profile_name.as_deref(), default_profile) {
-            Ok(profile) => profile,
-            Err(code) => return code,
-        };
+    let profile = match profile::resolve_for_command(
+        &command,
+        &args.target,
+        args.profile_name.as_deref(),
+        default_profile,
+        args.opt_level,
+    ) {
+        Ok(profile) => profile,
+        Err(code) => return code,
+    };
     args.profile = profile;
     let emit = (!args.emit.is_empty()).then(|| emit::Emit {
         kinds: args.emit.clone(),

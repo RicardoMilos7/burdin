@@ -87,6 +87,7 @@ impl<'t> Sema<'t> {
                 params,
                 bounds: Vec::new(),
                 requires: Vec::new(),
+                assoc: Vec::new(),
                 methods: Vec::new(),
             });
             self.tpl.ifaces.push(i);
@@ -161,7 +162,12 @@ impl<'t> Sema<'t> {
                 self.globals.struct_refs.push(adt(id));
                 self.globals.struct_pkg.push(package);
                 self.globals.adt_priv.insert((false, id), is_priv);
-                self.src.structs.push(crate::session::AdtSrcEntry { decl: s, subst: Vec::new(), module });
+                self.src.structs.push(crate::session::AdtSrcEntry {
+                    decl: s,
+                    subst: Vec::new(),
+                    bounds: Vec::new(),
+                    module,
+                });
             }
             ast::Item::Enum(e) if generics.is_empty() => {
                 let id = self.globals.enums.len();
@@ -175,7 +181,12 @@ impl<'t> Sema<'t> {
                 self.globals.enum_refs.push(adt(id));
                 self.globals.enum_pkg.push(package);
                 self.globals.adt_priv.insert((true, id), is_priv);
-                self.src.enums.push(crate::session::AdtSrcEntry { decl: e, subst: Vec::new(), module });
+                self.src.enums.push(crate::session::AdtSrcEntry {
+                    decl: e,
+                    subst: Vec::new(),
+                    bounds: Vec::new(),
+                    module,
+                });
             }
             ast::Item::Struct(s) => {
                 let g = self.globals.generic_adts.len();
@@ -282,8 +293,37 @@ impl<'t> Sema<'t> {
                     bounds: method_bounds(&m.decl, &subst, &self.globals, module, diags),
                 })
                 .collect();
+            // An associated type is a member of the interface: it may not repeat another member's name, whether
+            // that member is a method or another associated type (`spec/associated-types.md`, AT1). Report the
+            // later occurrence.
+            let mut members: Vec<(&str, burdin_diag::Span)> = decl
+                .associated
+                .iter()
+                .map(|a| (a.name.name.as_str(), a.name.span))
+                .chain(decl.methods.iter().map(|m| (m.decl.name.name.as_str(), m.decl.name.span)))
+                .collect();
+            members.sort_by_key(|(_, span)| span.lo);
+            let mut seen: Vec<&str> = Vec::new();
+            for (name, span) in &members {
+                if seen.contains(name) {
+                    diags.error(
+                        Code::DUPLICATE_NAME,
+                        *span,
+                        format!("`{name}` is declared more than once in interface `{}`", decl.name.name),
+                    );
+                } else {
+                    seen.push(name);
+                }
+            }
+            let mut assoc: Vec<String> = Vec::new();
+            for a in &decl.associated {
+                if !assoc.contains(&a.name.name) {
+                    assoc.push(a.name.name.clone());
+                }
+            }
             self.globals.interfaces[i].bounds = bounds;
             self.globals.interfaces[i].requires = requires;
+            self.globals.interfaces[i].assoc = assoc;
             self.globals.interfaces[i].methods = methods;
         }
         // Generic functions were named before imports; their bounds may name imported interfaces.

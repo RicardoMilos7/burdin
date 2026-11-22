@@ -220,6 +220,9 @@ compile options:
                        `release`, `test` (the default of test), `bench` (the default of bench), or one that
                        burdin.toml defines in [profile.<name>]; `--release` is `--profile release`
                        (the behavior is spec/profiles.md)
+  -O <n>               optimize at level n, from 0 to 3, instead of the profile's opt-level: `-O2` is `-O 2`;
+                       it changes the optimizer only, so the overflow and assertion checks stay as the profile
+                       sets them (spec/profiles.md, BP4 and BP5)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,

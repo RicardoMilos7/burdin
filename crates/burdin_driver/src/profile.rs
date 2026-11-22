@@ -81,6 +81,15 @@ impl Profile {
         builtin("release").expect("release is a built-in profile")
     }
 
+    /// Replaces the optimization level with a `-O` option's (`spec/profiles.md`, BP4). The overflow and assertion
+    /// checks stay as the profile sets them: the level and the checks are independent (BP5).
+    pub(crate) fn with_opt_level(mut self, level: Option<OptLevel>) -> Profile {
+        if let Some(level) = level {
+            self.opt_level = level;
+        }
+        self
+    }
+
     /// The settings that change the generated code, as the build-script cache key spells them. Two profiles with
     /// the same settings share the key (so `dev` and `test` do not rerun a script for no reason).
     pub(crate) fn key(&self) -> String {
@@ -116,18 +125,43 @@ pub(crate) enum Failure {
     Manifest(String),
 }
 
+/// The level a `-O` option names, `0` to `3` (`spec/profiles.md`, BP4). `-O2` and `-O 2` name the same level.
+pub(crate) fn parse_opt_level(value: &str) -> Result<OptLevel, String> {
+    value
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .and_then(OptLevel::from_number)
+        .ok_or_else(|| format!("`-O` needs an optimization level from 0 to 3, got `{}`", value.trim()))
+}
+
+/// Records a `-O` option's level in `slot`. A second `-O` that names another level is a usage error, as
+/// `--release` with another `--profile` is (BP4); the same level twice is accepted.
+pub(crate) fn set_opt_level(slot: &mut Option<OptLevel>, level: OptLevel) -> Result<(), String> {
+    match *slot {
+        Some(previous) if previous != level => {
+            Err(format!("`-O{}` conflicts with `-O{}`: give one optimization level", level.number(), previous.number()))
+        }
+        _ => {
+            *slot = Some(level);
+            Ok(())
+        }
+    }
+}
+
 /// Resolves the profile a command builds with, printing and returning the exit status when it cannot.
 ///
 /// `requested` is `--profile` (or `--release`, which is `--profile release`); `default_name` is the command's
-/// default (`dev`, `test`, or `bench`).
+/// default (`dev`, `test`, or `bench`); `opt_level` is the `-O` option, which replaces the profile's level.
 pub(crate) fn resolve_for_command(
     command: &str,
     target: &Path,
     requested: Option<&str>,
     default_name: &str,
+    opt_level: Option<OptLevel>,
 ) -> Result<Profile, ExitCode> {
     match resolve(target, requested, default_name) {
-        Ok(profile) => Ok(profile),
+        Ok(profile) => Ok(profile.with_opt_level(opt_level)),
         Err(Failure::Usage(message)) => Err(cli::usage_error(command, &message)),
         Err(Failure::Manifest(message)) => {
             eprintln!("error: {message}");
@@ -533,5 +567,32 @@ mod tests {
         assert_eq!(OptLevel::from_number(4), None);
         assert_eq!(OptLevel::O3.pipeline(), "default<O3>");
         assert!(!OptLevel::None.optimized());
+    }
+
+    #[test]
+    fn a_dash_o_option_names_a_level_and_replaces_only_the_level() {
+        assert_eq!(parse_opt_level("2"), Ok(OptLevel::O2));
+        assert_eq!(parse_opt_level(" 0 "), Ok(OptLevel::None));
+        assert!(parse_opt_level("4").unwrap_err().contains("needs an optimization level"));
+        assert!(parse_opt_level("x").unwrap_err().contains("got `x`"));
+
+        let mut slot = None;
+        set_opt_level(&mut slot, OptLevel::O1).unwrap();
+        set_opt_level(&mut slot, OptLevel::O1).unwrap();
+        let conflict = set_opt_level(&mut slot, OptLevel::O2).unwrap_err();
+        assert_eq!(conflict, "`-O2` conflicts with `-O1`: give one optimization level");
+
+        // The level changes; the checks and debug information stay as the profile sets them (BP5).
+        let dev = Profile::dev().with_opt_level(Some(OptLevel::O3));
+        assert_eq!(
+            (dev.opt_level, dev.debug, dev.debug_assertions, dev.overflow_checks),
+            (OptLevel::O3, false, true, true)
+        );
+        let release = Profile::release().with_opt_level(Some(OptLevel::None));
+        assert_eq!(
+            (release.opt_level, release.debug, release.debug_assertions, release.overflow_checks),
+            (OptLevel::None, false, false, false)
+        );
+        assert_eq!(Profile::release().with_opt_level(None), Profile::release());
     }
 }

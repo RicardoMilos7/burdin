@@ -243,6 +243,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0141 | Interface bound or `requires` not satisfied, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an operator or `Index`/`IndexMut` interface |
 | E0142 | Orphan rule violation |
 | E0143 | Two implementations of one interface for one generic type that apply to a common instance |
+| E0144 | Interface implementation's associated type bindings are wrong: a missing binding, a name the interface does not declare, or a binding in a block with no interface |
+| E0145 | An associated type projection that cannot be resolved: no interface declares that associated type, or more than one does and none is named |
 | E0150 | Use of a `priv` item from another package |
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
