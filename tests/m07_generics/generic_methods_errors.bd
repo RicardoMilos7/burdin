@@ -1,0 +1,46 @@
+//@ compile-fail
+
+// What a method-level type parameter refuses (issue #391; `spec/arguments.md`, GM1-GM6): a parameter that nothing
+// determines (E0003), a parameter that a const argument nothing determines (E0252), and an argument that does not
+// meet the parameter's bound, written inline or in a `where` clause (E0141). Each call is reported on its line.
+
+interface Show {
+    fn show(self): String
+}
+
+struct Holder {}
+
+Holder {
+    fn make<U: Default>(): U {
+        U.default()
+    }
+
+    fn split<U>(self): (U, U) {
+        panic("nothing to split")
+    }
+
+    fn render<U: Show>(self, u: U): String {
+        u.show()
+    }
+
+    fn pick<U>(self, own u: U): U where U: Show {
+        u
+    }
+
+    fn count<const N: usize>(self): usize {
+        N
+    }
+
+    fn twice<U, U>(self): U { //~ E0007
+        panic("nothing to return")
+    }
+}
+
+fn main() {
+    let h = Holder {}
+    let a = Holder.make() //~ E0003
+    let b = h.split() //~ E0003
+    let c = h.render(5) //~ E0141
+    let d = h.pick(5) //~ E0141
+    let e = h.count() //~ E0252
+}

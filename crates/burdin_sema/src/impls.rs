@@ -25,6 +25,9 @@ impl<'t> Sema<'t> {
     /// Registers an impl block. Methods of an impl on a generic type are registered when each instance of the
     /// type is allocated.
     pub(crate) fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
+        for method in &imp.methods {
+            crate::declare::check_duplicate_generics(&method.generics, diags);
+        }
         let Some((kind, iface_seg)) = self.impl_kind(imp, module, diags) else { return };
         // `Send` and `Sync` are promises the compiler cannot check, so their impl blocks are `unsafe`, and nothing
         // else is (`spec/shared.md`, SH5).

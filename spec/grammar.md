@@ -239,10 +239,11 @@ package-private item, and a public signature or field naming a package-private t
 
 **Extension methods.** `fn Type.name(self, ...)` declares an extension method: the receiver is the type path before
 the last dot, including the type arguments that declare its type parameters (`fn List<T>.sum(self)`), and a
-`<...>` list after the method name declares method-level ones. An extension is visible in its declaring module and
-in modules that import it by name (`use text.shout`, `use text.{shout}`); importing the module alone does not bring
-it, and it cannot be imported `as` another name (E0216). A call tries the receiver type's methods first and a
-visible extension last; a shadowed extension gets the warning E0215 at its declaration. The rules are in
+`<...>` list after the method name declares method-level ones (`arguments.md`, GM1-GM6). An extension is visible
+in its declaring module and in modules that import it by name (`use text.shout`, `use text.{shout}`); importing the
+module alone does not bring it, and it cannot be imported `as` another name (E0216). A call tries the receiver type's
+methods first and a visible extension last; a shadowed extension gets the warning E0215 at its declaration. The
+rules are in
 `extensions.md` EX1-EX8.
 
 ## 4. Types

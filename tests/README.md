@@ -591,6 +591,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `spec/memory-rules.md` DR6, RT2, and RT5, `m02_basics/break_value`, `break_value_errors`,
     `m05_ownership/break_value_moves`, `break_value_drops`, `m06_conventions/break_value_view`.
 
+33. **Method-level type parameters.** A method, associated function, or extension method declares parameters of its
+    own with `<...>` after its name. The impl block's parameters stay in scope in the method's signature and body
+    (`Pair<A>.zip<U>` uses `A`), and their bounds are the impl header's. The method's parameters are inferred from
+    the arguments, the receiver, the closure bounds, and the expected type; each is checked against its bounds
+    (E0141) and monomorphized per instantiation. A parameter that nothing determines is E0003, a const parameter
+    E0252, and an interface with a generic method is not object-safe (E0202). A repeated name in the list is
+    E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
+    `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
+    `m18_extension/method_type_params`.
+
 ## Review of the expected outputs
 
 The expected outputs and diagnostics were written by hand before the compiler existed, so a passing test only

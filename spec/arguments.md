@@ -5,7 +5,8 @@ call may fill a parameter by name. The rules below extend the call-site conventi
 [`memory-rules.md`](memory-rules.md) CV1-CV4 and the call syntax of [`grammar.md`](grammar.md); they do not add
 a parallel set of conventions.
 
-The tests are `tests/m17_arguments/`.
+The tests are `tests/m17_arguments/`. The call site's explicit type arguments (issue #847) are TA1-TA6, and a
+method's own type parameters (issue #391) are GM1-GM6.
 
 **AG1. Declaration.** A named parameter is written `name: Type = expr`. Only a function or method with one
 implementation can declare one: not `self`, not an interface method signature, not an `extern "C"` declaration,
@@ -112,3 +113,50 @@ keep their own rule (`existentials.md`, AN6).
 **TA6. The look-ahead.** Rule 8.2 reads `f(a < b, c > (d))` as the list `<b, c>` followed by `(`, because both halves
 are type syntax. A comparison written that way is parenthesized, `f((a < b), c > (d))`. Any other comparison that
 contains an operator, a string, or a keyword between its `<` and a later `>` stays a comparison.
+
+## Method-level type parameters (issue #391)
+
+A method, associated function, or extension method may declare type parameters of its own. The rules below are their
+declaration, inference, bounds, and monomorphization; `grammar.md` section 4 is the syntax and
+`extensions.md` EX1 the extension form. The tests are `tests/m07_generics/generic_methods.bd` and
+`generic_methods_errors.bd`, and `tests/m18_extension/method_type_params.bd`.
+
+**GM1. Declaration.** A `<...>` list after the method's name declares its own parameters, with the inline bounds and
+`const` parameters a function's list takes. The list follows the enclosing declaration's parameters (an impl block's,
+an interface's, or an extension receiver's) and is a scope of its own: a method parameter of a name hides an impl
+parameter of the same name, and repeating a name within the method's list is E0007. The parameters are monomorphized
+per distinct instantiation, like a generic function's (GM5). `spec/existentials.md` AN2 still keeps a **generic method
+out of an object-safe interface**: `any I` for an interface with one is E0202, because a vtable slot cannot hold a
+method instantiated per call.
+
+**GM2. The impl's parameters are in scope.** Inside a method, the impl block's parameters stand for the instance's
+arguments, exactly as they do in an impl body: `Pair<A>.zip<U>` uses `A` in its signature and `(self.a, u)` in its
+body, and `Box<A>`'s methods may use `A` in a parameter, a return type, or another parameter's bound
+(`f: Fn(A): U`). The same holds for an interface's parameters in a default method and an extension receiver's
+parameters. Their bounds are the ones the enclosing declaration states (`Box<A> where A: Show { ... }`), so a method
+that needs a bound on an impl parameter is written on an impl header that states it. A method's own `where` clause
+names its own type parameters.
+
+**GM3. Inference.** The method's type arguments are inferred from the call in argument order, exactly as a generic
+function's are: the receiver binds an impl parameter, each argument binds what its type pattern matches, a parameter
+that appears only in another parameter's `Fn` bound is inferred by matching that bound against the closure's
+signature, and the expected type binds what remains. A parameter that nothing determines is E0003
+("cannot tell what `U` stands for"). A closure parameter written as a function type with an open return
+(`fn apply<U>(self, f: Fn(i32): U)`) still supplies the closure's parameter types; the return is the body's type, and
+`|n| n + 1` is accepted without annotating `n`. Explicit type arguments are accepted on a method or associated
+function with parameters of its own (TA1-TA5) and seed the inference.
+
+**GM4. Bounds.** A method-level parameter's bounds come from its inline list and from the method's `where` clause. Every
+inferred or written type argument is checked against them at the call, and the body is checked once symbolically with
+the parameter's bounds (E0141 when an argument does not meet one). A bound on an impl parameter is checked where the
+impl covers the instance, not again per method.
+
+**GM5. Monomorphization.** Each distinct combination of the receiver's instance and the method's type arguments is one
+instance with its own body and its own symbol; two calls with the same arguments share it, and calls with different
+arguments get separate code. The symbolic check of the method's body runs once, with the impl's parameters and the
+method's parameters opaque.
+
+**GM6. Rejections.** A call that determines no argument is E0003, and one whose const parameter nothing determines is
+E0252 (`const-generics.md` CG6). An argument that does not meet its bound is E0141. An explicit list on a method with
+no parameters of its own, of the wrong length, or of a type that does not match is E0003 (TA2, TA5), and an interface
+with a generic method is not object-safe (E0202).

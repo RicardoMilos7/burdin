@@ -11,6 +11,20 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, AdtRef, ConstId, Signature, Ty};
 use std::rc::Rc;
 
+/// E0007: a generic parameter list may not repeat a name (`spec/grammar.md`, section 4). A function and a
+/// method are checked once, where they are declared; a type and an impl block have their own checks.
+pub(crate) fn check_duplicate_generics(generics: &[ast::GenericParam], diags: &mut Diagnostics) {
+    for (k, g) in generics.iter().enumerate() {
+        if generics[..k].iter().any(|other| other.name.name == g.name.name) {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                g.name.span,
+                format!("type parameter `{}` is declared twice", g.name.name),
+            );
+        }
+    }
+}
+
 /// An `extern` declaration whose signature is still to be resolved.
 pub(crate) struct ExternSrc<'t> {
     pub(crate) decl: &'t ast::FnDecl,
@@ -59,6 +73,9 @@ impl<'t> Sema<'t> {
                         format!("type parameter `{p}` is declared twice"),
                     );
                 }
+            }
+            for method in &i.methods {
+                check_duplicate_generics(&method.decl.generics, diags);
             }
             let full = self.globals.qualified(module, name);
             let index = self.globals.interfaces.len();
@@ -307,6 +324,7 @@ impl<'t> Sema<'t> {
                             continue;
                         }
                         let full = self.globals.qualified(module, name);
+                        check_duplicate_generics(&f.generics, diags);
                         if f.generics.is_empty() && f.where_clause.is_empty() {
                             let id = self.push_fn(FnItem::plain(f, full, module, None));
                             self.globals.modules[module].values.insert(name.clone(), Global::Func(id));

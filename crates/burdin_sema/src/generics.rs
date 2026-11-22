@@ -292,8 +292,10 @@ impl Globals {
                 self.unify(pv, av, bindings);
                 self.unify_alloc(pa, aa, bindings);
             }
+            // A closure value is usable where the same signature at a lower capability is expected (CL5), so the
+            // actual kind must be at least as capable as the declared one: an `Fn` closure meets `FnMut`/`FnOnce`.
             (Ty::Fn { sig: psig, kind: pk, borrowed: pb, .. }, Ty::Fn { sig: asig, kind: ak, borrowed: ab, .. })
-                if pk.at_least(*ak) && pb == ab && psig.params.len() == asig.params.len() =>
+                if ak.at_least(*pk) && pb == ab && psig.params.len() == asig.params.len() =>
             {
                 for (p, a) in psig.params.iter().zip(&asig.params) {
                     self.unify(p, a, bindings);
@@ -1108,6 +1110,31 @@ mod tests {
         let mut out = Vec::new();
         Globals::default().unify(pat, act, &mut out);
         out
+    }
+
+    fn closure_ty(kind: FnKind, ret: Ty) -> Ty {
+        Ty::Fn {
+            sig: Rc::new(FnSig { params: vec![i32_()], ret: Box::new(ret) }),
+            kind,
+            borrowed: false,
+            send: tir::FnSend::unknown(),
+        }
+    }
+
+    #[test]
+    fn a_closure_unifies_with_its_signature_at_a_higher_capability() {
+        // An `Fn` closure value may fill a declared `FnMut` or `FnOnce` parameter (CL5), so unifying it binds
+        // the declared signature's parameters: `fn once<U>(f: FnOnce(i32): U)` infers `U` from `|n| n * 2`.
+        assert_eq!(
+            bindings(&closure_ty(FnKind::FnOnce, param("U")), &closure_ty(FnKind::Fn, i32_())),
+            vec![("U".to_string(), i32_())]
+        );
+        assert_eq!(
+            bindings(&closure_ty(FnKind::FnMut, param("U")), &closure_ty(FnKind::Fn, i32_())),
+            vec![("U".to_string(), i32_())]
+        );
+        // The other direction is not usable (CL5), so it binds nothing.
+        assert_eq!(bindings(&closure_ty(FnKind::Fn, param("U")), &closure_ty(FnKind::FnMut, i32_())), vec![]);
     }
 
     /// A pattern, the actual type, and the bindings unifying them must produce.
