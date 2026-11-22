@@ -1,0 +1,60 @@
+---
+import ProgramPanel from '../examples/ProgramPanel.astro';
+import { commandFor, type Example } from '../../data/examples';
+
+interface Props {
+	heading: string;
+	text: string;
+	example: Example;
+}
+
+const { heading, text, example } = Astro.props;
+---
+
+<section class="feature" aria-labelledby={`${example.slug}-heading`}>
+	<div class="copy">
+		<h2 id={`${example.slug}-heading`}>{heading}</h2>
+		<p>{text}</p>
+		<a class="text-link" href={`/examples/${example.slug}/`}>Read the walkthrough →</a>
+	</div>
+	<ProgramPanel file={example.file} source={example.source} output={example.output} command={commandFor(example)} />
+</section>
+
+<style>
+	.feature {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1.75rem;
+		padding: clamp(3rem, 7vw, 5rem) 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.copy {
+		max-width: 40rem;
+	}
+
+	h2 {
+		margin: 0;
+		font-family: var(--burdin-display);
+		font-weight: 400;
+		font-size: clamp(1.55rem, 3.3vw, 2.25rem);
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		color: var(--sl-color-white);
+	}
+
+	p {
+		margin: 1rem 0 1.25rem;
+		font-size: 1.05rem;
+		line-height: 1.65;
+		color: var(--sl-color-gray-2);
+	}
+
+	.text-link {
+		color: var(--sl-color-white);
+		text-decoration: underline;
+		text-decoration-color: var(--burdin-oxide);
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 0.3em;
+	}
+</style>

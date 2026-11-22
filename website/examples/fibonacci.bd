@@ -1,0 +1,29 @@
+// Fibonacci numbers two ways: a recursive function, and a loop that keeps the last two values.
+
+fn fib_recursive(n: u32): u64 {
+    if n < 2 {
+        n as u64
+    } else {
+        fib_recursive(n - 1) + fib_recursive(n - 2)
+    }
+}
+
+fn fib_loop(n: u32): u64 {
+    let mut a: u64 = 0
+    let mut b: u64 = 1
+    for _ in 0..n {
+        let next = a + b
+        a = b
+        b = next
+    }
+    a
+}
+
+fn main() {
+    let last: u32 = 10
+    for n in 0..=last {
+        println("fib({n}) = {fib_loop(n)}")
+    }
+    println("fib(25) by recursion = {fib_recursive(25)}")
+    println("fib(90) by loop = {fib_loop(90)}")
+}

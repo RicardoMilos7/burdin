@@ -1,0 +1,56 @@
+// Count how often each word appears in the standard input, then print the words in sorted order.
+// A word is a run of letters, and capital letters count as lowercase.
+// Try it with a file: burdin run word-count.bd < some-file.txt
+
+// Add one to a word's count. The word is passed by value (own), so the map can keep it.
+fn bump(mut counts: Map<String, i32>, own word: String) {
+    let current = match counts.get(word.as_str()) {
+        Some(n) => *n,
+        None => 0,
+    }
+    counts.insert(word, current + 1)
+}
+
+fn count_line(mut counts: Map<String, i32>, line: str) {
+    let mut word = String.new()
+    for c in line.chars() {
+        if c.is_alphabetic() {
+            word.push(c.to_ascii_lowercase())
+        } else if word.len() > 0 {
+            bump(mut counts, word)
+            word = String.new()
+        }
+    }
+    if word.len() > 0 {
+        bump(mut counts, word)
+    }
+}
+
+fn main() {
+    let mut counts = Map<String, i32>.new()
+    let mut input = stdin()
+    loop {
+        match input.read_line() {
+            Ok(Some(line)) => count_line(mut counts, line),
+            Ok(None) => break,
+            Err(_) => {
+                println("could not read the input")
+                break
+            },
+        }
+    }
+
+    // A map has no order, so copy its words into a list and sort the list before printing.
+    let mut words = List<String>.new()
+    for (word, _) in counts.iter() {
+        words.push((*word).clone())
+    }
+    words.sort()
+    for word in words {
+        let n = match counts.get(word.as_str()) {
+            Some(n) => *n,
+            None => 0,
+        }
+        println("{word}: {n}")
+    }
+}

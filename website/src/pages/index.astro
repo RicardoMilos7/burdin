@@ -1,0 +1,139 @@
+---
+const base = import.meta.env.BASE_URL;
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import Hero from '../components/landing/Hero.astro';
+import Feature from '../components/landing/Feature.astro';
+import ExampleCard from '../components/examples/ExampleCard.astro';
+import ComingFrom from '../components/landing/ComingFrom.astro';
+import Toolchain from '../components/landing/Toolchain.astro';
+import { bySlug, examples } from '../data/examples';
+---
+
+<StarlightPage
+	hasSidebar={false}
+	frontmatter={{
+		title: 'Burdin',
+		description:
+			'Burdin is an experimental native-compiled language with memory safety, no garbage collector, and value semantics. Learn it from examples that run.',
+		template: 'splash',
+	}}
+>
+	<div class="page">
+		<Hero />
+
+		<Feature
+			heading="Values have one owner"
+			text="push and pop take the stack by value, so the old stack cannot be used after the change. Each node owns the rest of the stack through a Heap."
+			example={bySlug('linked-stack')}
+		/>
+
+		<Feature
+			heading="Errors you can read"
+			text="Each failure is a variant with a message. ? passes it up, a from conversion turns a parse error into the ledger's own error, and main can return the error. The program then exits with status 1."
+			example={bySlug('bank-errors')}
+		/>
+
+		<Feature
+			heading="Tasks and channels"
+			text="Work runs on a task pool. Each task sends its result through a typed channel, and the main task collects them and waits for every task to finish."
+			example={bySlug('tasks-and-channels')}
+		/>
+
+		<section class="all" aria-labelledby="all-title">
+			<h2 id="all-title">Every example</h2>
+			<p class="intro">Nine complete programs, from a few lines to a few dozen. Each one names the features it shows.</p>
+			<div class="grid">
+				{examples.map((example) => <ExampleCard example={example} />)}
+			</div>
+		</section>
+
+		<ComingFrom />
+		<Toolchain />
+
+		<section class="closing">
+			<h2>Write hello world.</h2>
+			<p>Install the compiler, then follow the quickstart to build your first package.</p>
+			<a class="text-link" href={`${base}getting-started/installation/`}>Install Burdin →</a>
+		</section>
+	</div>
+</StarlightPage>
+
+<style is:global>
+	/* The splash template prints the page title as a second heading above the hero. The hero already carries the
+	   page's h1, so the template's title block is hidden on this page only. */
+	main:has(.page) .content-panel:has(h1#_top) {
+		display: none;
+	}
+
+	main:has(.page) .content-panel {
+		border-top: 0;
+	}
+</style>
+
+<style>
+	.page {
+		max-width: 72rem;
+		margin: 0 auto;
+		padding: 0 1rem 4rem;
+	}
+
+	@media (min-width: 40rem) {
+		.page {
+			padding: 0 2rem 5rem;
+		}
+	}
+
+	.all {
+		padding: clamp(3rem, 7vw, 5rem) 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.all h2,
+	.closing h2 {
+		margin: 0;
+		font-family: var(--burdin-display);
+		font-weight: 400;
+		font-size: clamp(1.55rem, 3.3vw, 2.25rem);
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		color: var(--sl-color-white);
+	}
+
+	.intro,
+	.closing p {
+		margin: 0.75rem 0 2rem;
+		max-width: 38rem;
+		line-height: 1.6;
+		color: var(--sl-color-gray-2);
+	}
+
+	.grid {
+		display: grid;
+		gap: 1rem;
+	}
+
+	@media (min-width: 40rem) {
+		.grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@media (min-width: 60rem) {
+		.grid {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+
+	.closing {
+		padding: clamp(3rem, 7vw, 5rem) 0 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.text-link {
+		color: var(--sl-color-white);
+		text-decoration: underline;
+		text-decoration-color: var(--burdin-oxide);
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 0.3em;
+	}
+</style>

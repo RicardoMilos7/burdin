@@ -37,3 +37,10 @@ Thumbs.db
 
 # Build-script outputs of packages anywhere in the tree
 **/target/
+
+# The website (website/): dependencies, the Astro build, and its cache
+website/node_modules/
+website/dist/
+website/.astro/
+# The API reference that `bun run api-docs` generates with `burdin doc`
+website/public/api/

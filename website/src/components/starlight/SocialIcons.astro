@@ -1,0 +1,64 @@
+---
+// The top bar's right group: the site's main sections, then Starlight's own social links. Starlight
+// renders this component in the header on wide screens and in the mobile menu's footer, so the same
+// links are reachable at every width.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+
+const path = Astro.url.pathname;
+
+const sections = [
+	{ label: 'Docs', href: '/getting-started/introduction/', match: ['/getting-started/', '/guide/', '/coming-from/'] },
+	{ label: 'Examples', href: '/examples/', match: ['/examples/'] },
+	{ label: 'API', href: '/api/', match: ['/api/', '/reference/standard-library/'] },
+	{ label: 'Reference', href: '/reference/cli/', match: ['/reference/cli/', '/reference/language-spec/', '/reference/status/'] },
+];
+---
+
+<nav class="sections" aria-label="Sections">
+	{
+		sections.map(({ label, href, match }) => (
+			<a href={href} aria-current={match.some((prefix) => path.startsWith(prefix)) ? 'page' : undefined}>
+				{label}
+			</a>
+		))
+	}
+</nav>
+<Default />
+
+<style>
+	.sections {
+		display: flex;
+		align-items: center;
+		gap: 0.95rem;
+	}
+
+	.sections a {
+		padding: 0.25rem 0;
+		font-size: 0.9rem;
+		font-weight: 500;
+		white-space: nowrap;
+		text-decoration: none;
+		color: var(--sl-color-gray-2);
+		border-bottom: 1.5px solid transparent;
+	}
+
+	.sections a:hover {
+		color: var(--sl-color-white);
+	}
+
+	.sections a[aria-current='page'] {
+		color: var(--sl-color-white);
+		border-bottom-color: var(--burdin-oxide);
+	}
+
+	/* Between the mobile breakpoint and a wide screen the header is crowded, so the links sit closer. */
+	@media (max-width: 68rem) {
+		.sections {
+			gap: 0.85rem;
+		}
+
+		.sections a {
+			font-size: 0.86rem;
+		}
+	}
+</style>

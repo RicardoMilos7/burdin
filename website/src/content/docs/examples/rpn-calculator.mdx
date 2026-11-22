@@ -1,0 +1,31 @@
+---
+title: RPN calculator
+description: A reverse Polish notation calculator whose errors are values, with messages and ? that passes them up.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/rpn-calculator.bd?raw';
+import output from '../../../../examples/rpn-calculator.out?raw';
+
+A small calculator for expressions written in reverse Polish notation, such as `3 4 + 2 *`. Every failure, from an empty expression to division by zero, is an error value with a message.
+
+<Code code={source} lang="burdin" title="rpn-calculator.bd" />
+
+## Run it
+
+```console
+$ burdin run rpn-calculator.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `error enum CalcError` declares the messages once. Printing an error prints its message, so the loop in `main` only writes `{e}`.
+- `let Some(b) = stack.pop() else { return Err(...) }` takes the value, or leaves the function with an error. See [control flow](/guide/control-flow/).
+- `apply(op, a, b)?` passes a failed division up to `evaluate`, which returns it to its caller. See [errors](/guide/errors/).
+- `match token` handles both kinds of token. The compiler checks that the match covers `Num` and `Op`.
+
+The source is in the repository at [`website/examples/rpn-calculator.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/rpn-calculator.bd). The checker compares its output with the compiler every time the site is checked.

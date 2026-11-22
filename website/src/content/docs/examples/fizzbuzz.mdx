@@ -1,0 +1,30 @@
+---
+title: FizzBuzz
+description: "The classic FizzBuzz: a function that picks a label for each number, and a loop over a range."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/fizzbuzz.bd?raw';
+import output from '../../../../examples/fizzbuzz.out?raw';
+
+A function that returns a label for one number, and a loop that prints the labels for 1 to 30. It is a short way to see `if` used as a value and a `for` loop over an inclusive range.
+
+<Code code={source} lang="burdin" title="fizzbuzz.bd" />
+
+## Run it
+
+```console
+$ burdin run fizzbuzz.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `label` returns a `String` in every branch. `if` is an expression, so each branch produces the value, and the branches must agree on the type.
+- `1..=30` includes 30. The exclusive form `1..30` would stop at 29. See [control flow](/guide/control-flow/).
+- `n.to_string()` makes a `String` from a number. `String.from` makes one from a `str` literal.
+
+The source is in the repository at [`website/examples/fizzbuzz.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/fizzbuzz.bd). The checker compares its output with the compiler every time the site is checked.

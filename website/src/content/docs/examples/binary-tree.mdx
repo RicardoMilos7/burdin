@@ -1,0 +1,30 @@
+---
+title: Expression tree
+description: An expression tree of boxed nodes, evaluated and printed by recursion.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/binary-tree.bd?raw';
+import output from '../../../../examples/binary-tree.out?raw';
+
+Arithmetic expressions stored as a tree. Each child is a `Heap<Expr>`, so the tree owns its nodes. Evaluating and printing both consume the tree.
+
+<Code code={source} lang="burdin" title="binary-tree.bd" />
+
+## Run it
+
+```console
+$ burdin run binary-tree.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `enum Expr` refers to itself through `Heap<Expr>`. Each child is its own box, and the whole tree is freed when its root is dropped.
+- `eval(*a)` reads a child out of its box. The `*` is needed because the box holds the child.
+- `show` builds a `String` with interpolation, and it calls itself for each child. See [enums and match](/guide/enums-and-match/).
+
+The source is in the repository at [`website/examples/binary-tree.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/binary-tree.bd). The checker compares its output with the compiler every time the site is checked.

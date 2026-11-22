@@ -1,0 +1,67 @@
+---
+import type { Example } from '../../data/examples';
+
+interface Props {
+	example: Example;
+}
+
+const { example } = Astro.props;
+---
+
+<a class="entry" href={`/examples/${example.slug}/`}>
+	<span class="file">{example.file}</span>
+	<h3>{example.title}</h3>
+	<p>{example.description}</p>
+	<p class="features"><span class="sr-only">Shows: </span>{example.features.join(' · ')}</p>
+</a>
+
+<style>
+	.entry {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		height: 100%;
+		padding: 1.1rem 0 1.4rem;
+		border-top: 1px solid var(--sl-color-hairline-light);
+		color: inherit;
+		text-decoration: none;
+	}
+
+	.file {
+		font-family: var(--sl-font-mono);
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+	}
+
+	h3 {
+		margin: 0;
+		font-family: var(--burdin-display);
+		font-weight: 400;
+		font-size: 1.12rem;
+		line-height: 1.2;
+		letter-spacing: -0.03em;
+		color: var(--sl-color-white);
+		text-decoration: underline;
+		text-decoration-color: transparent;
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 0.2em;
+	}
+
+	.entry:hover h3 {
+		text-decoration-color: var(--burdin-oxide);
+	}
+
+	p {
+		margin: 0;
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+	}
+
+	.features {
+		margin-top: auto;
+		padding-top: 0.35rem;
+		font-family: var(--sl-font-mono);
+		font-size: 0.78rem;
+		color: var(--sl-color-gray-3);
+	}
+</style>

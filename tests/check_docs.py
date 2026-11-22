@@ -6,7 +6,8 @@ BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,rele
 
 What it checks:
   * every relative link in the repository's Markdown files points at a file, and every `#anchor`
-    matches a heading;
+    matches a heading (the website's Markdown is left out: its links are site addresses, checked on
+    the built site by website/scripts/check-links.mjs);
   * the `burdin` program marked `check-docs` in README.md compiles and prints the documented output;
   * `build` output naming, `-o`, `--emit-ir`, `--release`, `-g`, `--strip`, and `--link-lib` (including
     LLVM-C when llvm-config is available), and `--version`'s six metadata lines;
@@ -52,7 +53,9 @@ def check_links() -> None:
     files = [
         path
         for path in sorted(harness.ROOT.rglob("*.md"))
-        if ".git" not in path.parts and "target" not in path.parts
+        # `website/` is the published site: its links are addresses in the built site (`/guide/ownership/`), which
+        # `website/scripts/check-links.mjs` checks against the build, not files in the tree.
+        if ".git" not in path.parts and "target" not in path.parts and "website" not in path.parts
     ]
     for path in files:
         directory = path.parent

@@ -1,0 +1,83 @@
+// A small bank ledger. Each operation returns Result, and ? passes an error up to the caller. The
+// error enum formats its own messages, and main returns Result, so a failure ends the program
+// with the message.
+
+error enum BankError {
+    UnknownAccount(String) "no account named {0}"
+    Insufficient { needed: i32, available: i32 } "needed {needed}, but only {available} is available"
+    BadAmount(i32) "amount must be positive, got {0}"
+    Parse(ParseIntError) from "not a number: {0}"
+}
+
+struct Ledger {
+    names: List<String>
+    balances: List<i32>
+}
+
+Ledger {
+    fn new(): Ledger {
+        Ledger { names: List<String>.new(), balances: List<i32>.new() }
+    }
+
+    fn open(mut self, name: str, amount: i32) {
+        self.names.push(String.from(name))
+        self.balances.push(amount)
+    }
+
+    fn index_of(self, name: str): Result<usize, BankError> {
+        for i in 0..self.names.len() {
+            if self.names[i].as_str() == name {
+                return Ok(i)
+            }
+        }
+        Err(BankError.UnknownAccount(String.from(name)))
+    }
+
+    fn withdraw(mut self, name: str, amount: i32): Result<i32, BankError> {
+        if amount <= 0 {
+            return Err(BankError.BadAmount(amount))
+        }
+        let i = self.index_of(name)?
+        let available = self.balances[i]
+        if available < amount {
+            return Err(BankError.Insufficient { needed: amount, available })
+        }
+        self.balances[i] = available - amount
+        Ok(self.balances[i])
+    }
+
+    fn transfer(mut self, from: str, to: str, text: str): Result<(), BankError> {
+        let amount = i32.parse(text)?
+        self.withdraw(from, amount)?
+        let j = self.index_of(to)?
+        self.balances[j] = self.balances[j] + amount
+        Ok(())
+    }
+}
+
+fn main(): Result<()> {
+    let mut ledger = Ledger.new()
+    ledger.open("ana", 100)
+    ledger.open("ben", 20)
+
+    ledger.transfer("ana", "ben", "30")?
+    println("after transfer: ana={ledger.balances[0]} ben={ledger.balances[1]}")
+
+    match ledger.transfer("ben", "ana", "500") {
+        Ok(_) => println("transfer ok"),
+        Err(e) => println("refused: {e}"),
+    }
+    match ledger.transfer("ana", "cy", "5") {
+        Ok(_) => println("transfer ok"),
+        Err(e) => println("refused: {e}"),
+    }
+    match ledger.transfer("ana", "ben", "ten") {
+        Ok(_) => println("transfer ok"),
+        Err(e) => println("refused: {e}"),
+    }
+
+    // The last step fails, and main returns that error.
+    ledger.withdraw("ben", 0)?
+    println("not reached")
+    Ok(())
+}

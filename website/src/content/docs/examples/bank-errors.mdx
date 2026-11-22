@@ -1,0 +1,33 @@
+---
+title: Bank ledger with errors
+description: A small ledger whose operations return Result, with an error enum, ? across several functions, and main returning Result.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/bank-errors.bd?raw';
+import output from '../../../../examples/bank-errors.out?raw';
+
+A ledger of accounts with transfers. Each operation can fail, and the failures are values of one error enum. The program prints the refusals, then ends with an error from `main`.
+
+<Code code={source} lang="burdin" title="bank-errors.bd" />
+
+## Run it
+
+```console
+$ burdin run bank-errors.bd
+```
+
+This program ends with an error on purpose, so it exits with status 1. The lines below are its standard output; the error message goes to standard error.
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `Insufficient { needed: i32, available: i32 }` has a message that names both fields, so the refusal explains itself.
+- `Parse(ParseIntError) from ...` lets `?` turn a parse failure into a `BankError` without a `match`. `transfer` uses it on its first line.
+- `fn main(): Result<()>` returns the last error. The program prints it to standard error and exits with status 1, which is what the expected status file records.
+- `mut self` on `withdraw` and `transfer` changes the ledger in place, and the caller writes `ledger.transfer(...)` on a `let mut` binding. See [ownership](/guide/ownership/).
+
+The source is in the repository at [`website/examples/bank-errors.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/bank-errors.bd). The checker compares its output with the compiler every time the site is checked.

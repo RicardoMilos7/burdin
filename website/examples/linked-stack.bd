@@ -1,0 +1,50 @@
+// A persistent stack. Each node holds its rest of the stack in a Heap<T>. push and pop take the
+// stack by value (own self), so the old stack cannot be used after the change.
+
+enum Stack<T> {
+    Empty
+    Node(T, Heap<Stack<T>>)
+}
+
+Stack<T> {
+    fn new(): Stack<T> {
+        Stack.Empty
+    }
+
+    fn push(own self, own value: T): Stack<T> {
+        Stack.Node(value, Heap.new(self))
+    }
+
+    fn len(self): i32 {
+        match self {
+            Stack.Empty => 0,
+            Stack.Node(_, rest) => 1 + (*rest).len(),
+        }
+    }
+
+    fn pop(own self): Option<(T, Stack<T>)> {
+        match self {
+            Stack.Empty => None,
+            Stack.Node(value, rest) => Some((value, *rest)),
+        }
+    }
+}
+
+fn main() {
+    let s = Stack<String>.new()
+    let s = s.push(String.from("first"))
+    let s = s.push(String.from("second"))
+    let s = s.push(String.from("third"))
+    println("size: {s.len()}")
+
+    let mut rest = s
+    loop {
+        match rest.pop() {
+            Some((value, next)) => {
+                println("popped {value}")
+                rest = next
+            },
+            None => break,
+        }
+    }
+}

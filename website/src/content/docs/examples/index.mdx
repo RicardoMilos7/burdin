@@ -1,0 +1,42 @@
+---
+title: Examples
+description: Complete Burdin programs, each compiled and run when the site is checked, with the output the compiler produced.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import ExampleBlock from '../../../components/examples/ExampleBlock.astro';
+import { bySlug } from '../../../data/examples';
+
+Each example is a complete program. The source and its output come from the same files the compiler checks, so what you see here is what `burdin run` prints.
+
+<Aside type="tip" title="Every example is checked">
+	When the site is built, each example is compiled and run, and its output is compared with the stored result. An
+	example whose output drifts from the compiler fails the build, so the examples stay correct as the language changes.
+</Aside>
+
+To run one, save the program as `main.bd` and run it:
+
+```text
+burdin run main.bd
+```
+
+## Ownership and errors
+
+<ExampleBlock example={bySlug('linked-stack')} />
+<ExampleBlock example={bySlug('bank-errors')} />
+
+## Types and traits
+
+<ExampleBlock example={bySlug('shapes')} />
+<ExampleBlock example={bySlug('binary-tree')} />
+
+## Concurrency
+
+<ExampleBlock example={bySlug('tasks-and-channels')} />
+
+## Everyday programs
+
+<ExampleBlock example={bySlug('fizzbuzz')} />
+<ExampleBlock example={bySlug('fibonacci')} />
+<ExampleBlock example={bySlug('rpn-calculator')} />
+<ExampleBlock example={bySlug('word-count')} />

@@ -1,0 +1,84 @@
+// A reverse Polish notation calculator. Each token is either a number or an operator. The
+// evaluator returns Result, so a bad expression is an error value, not a crash.
+
+enum Token {
+    Num(i32)
+    Op(char)
+}
+
+error enum CalcError {
+    Empty "the expression has no tokens"
+    BadToken(char) "unknown operator '{0}'"
+    StackUnderflow "not enough operands for an operator"
+    LeftoverValues(usize) "{0} values were left on the stack"
+    DivideByZero "division by zero"
+}
+
+fn tokenize(text: str): List<Token> {
+    let mut tokens = List<Token>.new()
+    for word in text.split(" ") {
+        if word.len() == 0 {
+            continue
+        }
+        match i32.parse(word) {
+            Ok(n) => tokens.push(Token.Num(n)),
+            Err(_) => tokens.push(Token.Op(word.chars().next().unwrap())),
+        }
+    }
+    tokens
+}
+
+fn apply(op: char, a: i32, b: i32): Result<i32, CalcError> {
+    match op {
+        '+' => Ok(a + b),
+        '-' => Ok(a - b),
+        '*' => Ok(a * b),
+        '/' => {
+            if b == 0 {
+                Err(CalcError.DivideByZero)
+            } else {
+                Ok(a / b)
+            }
+        },
+        _ => Err(CalcError.BadToken(op)),
+    }
+}
+
+fn evaluate(text: str): Result<i32, CalcError> {
+    let tokens = tokenize(text)
+    if tokens.len() == 0 {
+        return Err(CalcError.Empty)
+    }
+    let mut stack = List<i32>.new()
+    for token in tokens {
+        match token {
+            Token.Num(n) => stack.push(n),
+            Token.Op(op) => {
+                let Some(b) = stack.pop() else { return Err(CalcError.StackUnderflow) }
+                let Some(a) = stack.pop() else { return Err(CalcError.StackUnderflow) }
+                stack.push(apply(op, a, b)?)
+            },
+        }
+    }
+    if stack.len() != 1 {
+        return Err(CalcError.LeftoverValues(stack.len()))
+    }
+    Ok(stack[0])
+}
+
+fn main() {
+    let expressions = [
+        "3 4 + 2 *",
+        "5 1 2 + 4 * + 3 -",
+        "10 0 /",
+        "1 +",
+        "2 3",
+        "7 2 %",
+    ]
+    for text in expressions {
+        match evaluate(text) {
+            Ok(value) => println("{text} = {value}"),
+            Err(e) => println("{text} : error: {e}"),
+        }
+    }
+}

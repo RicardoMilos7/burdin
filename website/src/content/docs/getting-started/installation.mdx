@@ -1,0 +1,121 @@
+---
+title: Installation
+description: Install the Burdin compiler on Windows, Linux, or macOS, or build it from source.
+---
+
+import { Tabs, TabItem, Aside, Steps } from '@astrojs/starlight/components';
+
+There are two ways to get `burdin`: download a published release with the installer, or build the compiler from source.
+The installers fetch a release from the [GitHub repository](https://github.com/RicardoMilos7/burdin). If the repository
+has no published release yet, use the source build below.
+
+<Aside type="caution" title="LLVM 21 is needed at run time">
+Burdin generates code with LLVM 21. A prebuilt compiler loads the LLVM 21 shared library when it runs, so LLVM 21 must
+be installed or present next to `burdin`: `LLVM-C.dll` on Windows, `libLLVM-21.so` on Linux, and `libLLVM.dylib` on
+macOS. The release archives do not bundle it.
+</Aside>
+
+## Install a release
+
+<Tabs>
+	<TabItem label="Windows">
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.ps1 | iex
+```
+
+The script checks the release's `SHA256SUMS` file, installs `burdin` to `%LOCALAPPDATA%\Programs\burdin\bin`, and adds
+that folder to your user `PATH`. Open a new terminal afterwards.
+
+Linking a program also needs the Microsoft C++ build tools. Install **Build Tools for Visual Studio** with the
+*Desktop development with C++* workload, which includes the MSVC linker and a Windows SDK.
+
+	</TabItem>
+	<TabItem label="Linux">
+
+```console
+curl -fsSL https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.sh | sh
+```
+
+The script checks the release's checksums, installs into `$HOME/.local/bin`, and adds that folder to your shell's
+`PATH` (`~/.bashrc`, `~/.zshrc`, or `~/.config/fish/config.fish`). Set `BURDIN_NO_MODIFY_PATH` to skip the `PATH` step.
+
+Programs are linked with the system C compiler driver, `cc`. On Ubuntu or Debian, `build-essential` provides it.
+
+	</TabItem>
+	<TabItem label="macOS">
+
+```console
+curl -fsSL https://raw.githubusercontent.com/RicardoMilos7/burdin/main/install.sh | sh
+```
+
+The script installs into `$HOME/.local/bin` and adds that folder to your shell's `PATH` (`~/.zshrc` or
+`~/.bash_profile`). Programs are linked with the Xcode command line tools, so run `xcode-select --install` once.
+
+	</TabItem>
+</Tabs>
+
+The installers accept a few environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `BURDIN_VERSION` | Install a specific version instead of the latest. |
+| `BURDIN_CHANNEL=nightly` | Install the newest nightly build. |
+| `BURDIN_INSTALL_DIR` | Install somewhere other than the default folder. |
+
+Check the installation:
+
+```console
+$ burdin --version
+```
+
+## Build from source
+
+Building needs three things: the Rust toolchain, LLVM 21 with its development files, and a C compiler driver.
+
+<Steps>
+
+1. **Get the source.**
+
+   ```console
+   $ git clone https://github.com/RicardoMilos7/burdin.git
+   $ cd burdin
+   ```
+
+2. **Install Rust.** Install it with [rustup](https://rustup.rs). The repository pins its toolchain in
+   `rust-toolchain.toml`, so rustup selects the right version automatically.
+
+3. **Install LLVM 21.**
+   - Ubuntu: `sudo apt install build-essential llvm-21-dev libpolly-21-dev clang-21 libzstd-dev zlib1g-dev`.
+   - Windows: download the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz` archive, unpack it, and set `LLVM_SYS_211_PREFIX` to its folder. Put its `bin` folder on `PATH`, and build from a Visual Studio developer command prompt so that `cl` is available (or set `BURDIN_CC`).
+   - macOS: install LLVM 21 and set `LLVM_SYS_211_PREFIX` to its prefix.
+
+4. **Build the compiler.**
+
+   ```console
+   $ cargo build
+   ```
+
+   The compiler is `target/debug/burdin` (or `target\debug\burdin.exe` on Windows). For an optimized build, run
+   `cargo build --release`.
+
+5. **Use it.** Either add the folder to your `PATH`, or call the binary by its path:
+
+   ```console
+   $ ./target/debug/burdin --version
+   ```
+
+</Steps>
+
+<Aside type="tip" title="Which platforms are supported">
+Releases are built for Linux, macOS, and Windows, on x86-64 and arm64. The
+[platform support page](https://github.com/RicardoMilos7/burdin/blob/main/docs/platform-support.md) lists exactly which
+configurations CI tests and the known limitations of each.
+</Aside>
+
+## Next steps
+
+Your first program is in the [quickstart](/getting-started/quickstart/). If you use an editor, set up
+[editor support](/getting-started/editors/) to get errors and completions as you type.
