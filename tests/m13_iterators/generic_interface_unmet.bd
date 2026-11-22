@@ -1,0 +1,57 @@
+//@ compile-fail
+
+// A generic interface's bounds and `requires` are checked against the arguments an impl or a call gives (issue #390).
+// Each of the three is E0141: an interface parameter's bound the argument does not meet, a bound with an argument
+// the type does not implement, and a `requires` generic instance that the impl's type does not implement.
+
+interface Keyed<K: Eq> {
+    fn key(self): K
+}
+
+interface Store<T> {
+    fn get(self): T
+}
+
+interface Labeled<T> requires Store<T> {
+    fn label(self): T {
+        self.get()
+    }
+}
+
+struct Plain {
+    n: i32,
+}
+
+struct NoEq {
+    f: f64,
+}
+
+// `NoEq` is not `Eq`, which the parameter `K: Eq` of `Keyed` requires.
+Plain: Keyed<NoEq> { //~ E0141
+    fn key(self): NoEq {
+        NoEq { f: 1.0 }
+    }
+}
+
+struct Cell {
+    v: i32,
+}
+
+Cell: Store<i32> {
+    fn get(self): i32 {
+        self.v
+    }
+}
+
+fn need<S: Store<str>>(s: S) {}
+
+fn main() {
+    need(Cell { v: 1 }) //~ E0141
+}
+
+struct Box2<T> {
+    v: T,
+}
+
+// `Box2<T>` has no `Store<T>` implementation, which `Labeled<T>` requires.
+Box2<T>: Labeled<T> {} //~ E0141

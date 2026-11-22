@@ -1,0 +1,67 @@
+//@ run
+//> 40
+//> 10
+//> 140
+//> 10
+//> 107
+//> 4
+
+// A default method with its own type parameters, reached through a bound (issue #390). The method's parameters are
+// found from the closure the call receives, so `U` is the closure's return type inside the generic body, and the
+// adapters of `Iterator<T>` (`map`, `filter`, `zip`, `flat_map`, `max`) work on a type parameter the same way.
+
+interface Mapper<T> {
+    fn get(self): T
+
+    // `U` is inferred from the closure's return type, through the `FnMut(T): U` bound.
+    fn pair<U, F: FnMut(T): U>(self, own f: F): (U, U) {
+        let a = self.get()
+        let mut f = f
+        (f(a), f(a))
+    }
+}
+
+struct Cell {
+    v: i32,
+}
+
+Cell: Mapper<i32> {
+    fn get(self): i32 {
+        self.v
+    }
+}
+
+// The bound is what makes `pair` callable here, and `x + y` needs `U` to be `i32` in this body.
+fn sum_pair<M: Mapper<i32>>(m: M): i32 {
+    let (x, y) = m.pair(|v| v + 1)
+    x + y
+}
+
+fn pipeline<I: Iterator<i32>>(own it: I): i32 {
+    it.map(|x| x * 2).filter(|x| *x > 2).sum()
+}
+
+fn pairs<I: Iterator<i32>>(own it: I): i32 {
+    let mut total = 0
+    for (a, b) in it.zip([10, 20, 30].into_iter()) {
+        total = total + a * b
+    }
+    total
+}
+
+fn spread<I: Iterator<i32>>(own it: I): i32 {
+    it.flat_map(|x| [x, x].into_iter()).count() as i32
+}
+
+fn shifted_max<I: Iterator<i32>>(own it: I): Option<i32> {
+    it.map(|x| x + 100).max()
+}
+
+fn main() {
+    println(Cell { v: 4 }.pair(|v: i32| v * 10).0.to_string())
+    println(sum_pair(Cell { v: 4 }).to_string())
+    println(pairs([1, 2, 3].into_iter()).to_string())
+    println(pipeline([1, 2, 3].into_iter()).to_string())
+    println(shifted_max([1, 7, 3].into_iter()).unwrap().to_string())
+    println(spread([1, 2].into_iter()).to_string())
+}

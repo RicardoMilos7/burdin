@@ -1,7 +1,7 @@
 //! Calls, constructors, and literals of generic functions and types, where the type arguments are inferred.
 
 use super::{FnCx, error_expr, mk};
-use crate::generics::{Bound, GenericMethod, Request, SYMBOLIC_CALL};
+use crate::generics::{Bound, BoundMethodGenerics, GenericMethod, Request, SYMBOLIC_CALL};
 use crate::types::generic_args_missing;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -267,12 +267,13 @@ impl FnCx<'_> {
             );
         }
         let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
-        let generic = self.globals.bound_method_generic(&recv.ty, &name.name, &self.bounds);
+        let generic = self.globals.bound_method_generics(&recv.ty, &name.name, &self.bounds);
         let receiver_place = Some((&recv, receiver.exclusive));
-        let checked = if generic {
-            self.generic_bound_args(&name.name, (&rest, ret), args, receiver_place, (span, expect))
-        } else {
-            self.args(&name.name, &rest, args, receiver_place, span).map(|c| (c, ret))
+        let checked = match generic {
+            Some(generic) => {
+                self.generic_bound_args(&name.name, (&rest, ret), args, receiver_place, (span, expect), &generic)
+            }
+            None => self.args(&name.name, &rest, args, receiver_place, span).map(|c| (c, ret)),
         };
         let Some((mut checked, ret)) = checked else { return error_expr(span) };
         checked.insert(0, recv);
@@ -290,21 +291,40 @@ impl FnCx<'_> {
         args: &[ast::Arg],
         receiver_place: Option<(&tir::Expr, bool)>,
         (span, expect): (Span, Option<&Ty>),
+        (own, bounds, base): &BoundMethodGenerics,
     ) -> Option<(Vec<tir::Expr>, Ty)> {
         if args.len() != params.len() {
             let _ = self.args(name, params, args, receiver_place, span);
             return None;
         }
         let globals = self.globals;
-        let mut bindings: Vec<(String, Ty)> = Vec::new();
+        // The bound's arguments already stand for the interface's parameters, so a closure bound written with them
+        // (`F: FnMut(T): U`) is read with them too.
+        let mut bindings: Vec<(String, Ty)> = base.clone();
         let mut written = Vec::new();
         for (a, p) in args.iter().zip(params) {
-            let e = self.expr_arg(&a.expr, None, p.mut_param);
+            let hint = generic_hint(globals, &p.ty, own, bounds, &bindings);
+            let e = self.expr_arg(&a.expr, hint.as_ref(), p.mut_param);
             globals.unify(&p.ty, &e.ty, &mut bindings);
             written.push(e);
         }
         if let Some(expected) = expect {
             globals.unify(&ret, expected, &mut bindings);
+        }
+        // A method's type parameters that appear only in a closure bound (`fn pair<U, F: FnMut(T): U>`) or in an
+        // `Iterator` bound are found from the arguments, as a call on a concrete receiver finds them.
+        let per_arg: Vec<Option<tir::Expr>> = written.iter().cloned().map(Some).collect();
+        bound_fn_inference(globals, own, bounds, params, &per_arg, &mut bindings);
+        bound_iterator_inference(globals, own, bounds, &self.bounds, &mut bindings);
+        for pname in own {
+            if !bindings.iter().any(|(n, _)| n == pname) {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
+                );
+                return None;
+            }
         }
         let params: Vec<ParamSig> = params.iter().map(|p| globals.subst_param(p, &bindings)).collect();
         let ret = globals.subst_ty(&ret, &bindings);
@@ -346,11 +366,12 @@ impl FnCx<'_> {
                 format!("calling the unsafe function `{}` requires an `unsafe` block", name.name),
             );
         }
-        let generic = self.globals.bound_method_generic(ty, &name.name, &self.bounds);
-        let checked = if generic {
-            self.generic_bound_args(&name.name, (&sig.params, sig.ret), args, None, (span, expect))
-        } else {
-            self.args(&name.name, &sig.params, args, None, span).map(|c| (c, sig.ret))
+        let generic = self.globals.bound_method_generics(ty, &name.name, &self.bounds);
+        let checked = match generic {
+            Some(generic) => {
+                self.generic_bound_args(&name.name, (&sig.params, sig.ret), args, None, (span, expect), &generic)
+            }
+            None => self.args(&name.name, &sig.params, args, None, span).map(|c| (c, sig.ret)),
         };
         let Some((checked, ret)) = checked else { return error_expr(span) };
         mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
