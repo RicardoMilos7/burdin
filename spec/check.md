@@ -40,19 +40,32 @@ Tests: `a clean check with no linker`, `checking a package wrote files or needed
 
 **CK3. Output.** The diagnostics are printed to standard error in the chosen format, exactly as `burdin build` prints
 them (`--diagnostic-format`, `--color`, `--width`, `--error-limit`), and a failed check ends with `error: could not check
-<target> (N errors)` (and, in the human format, the note about `burdin explain`); the JSON format ends with the same
-`summary` object. Warnings are printed too and do not fail the check. A check with no errors and no warnings prints
-nothing at all, on either stream. The SARIF format follows `spec/diagnostics.md` (DG11): a check is a CI gate like a
+<target> (N errors)` (and, in the human format, the note about `burdin explain`); the JSON format ends with the check
+summary of CK12 instead of the build's `summary` object. Warnings are printed too and do not fail the check. In the
+human and short formats, a check with no errors and no warnings prints nothing at all, on either stream (in the JSON
+format it prints its check summary alone, CK12). The SARIF format follows `spec/diagnostics.md` (DG11): a check is a CI gate like a
 build, so it writes one log even when the package is clean, and the log is the only thing on standard error. Standard
 output is never used.
-Tests: the goldens, `ok_program.bd` (silent), `ok_warning.bd`, the JSON, `--error-limit`, the human-format and SARIF
-checks.
+Tests: the goldens, `ok_program.bd` (silent), `ok_warning.bd`, the JSON (CK12), `--error-limit`, the human-format and
+SARIF checks.
 
-**CK4. Every error is reported.** Like a build, a check reports every error of the front end, not the first. Parsing
-errors stop the later stages (a tree with syntax errors would mostly produce follow-on errors); every later stage runs
-even when an earlier one failed, as in a build, except compile-time evaluation, which runs only on a program every other
-check accepted (`spec/comptime.md`, CT1).
-Tests: `err_types.bd` (four errors in one file), `two_errors` (two files), `err_syntax.bd`, `err_comptime.bd`.
+**CK4. Every error is reported.** Like a build, a check reports every error of the front end, not the first. A file
+with a syntax error is not type checked: its own checks are not reported, but every other module is, and the other
+modules are checked against the declarations the broken file did read (its `ast::File` keeps every item it parsed). A
+declaration the parser could not read (`ast::File::unparsed`, the source of each item the parser recovered from) is
+missing from that tree, so a diagnostic in another module is a follow-on of it, and is not reported, when its span or
+a backticked name in its message mentions a name the unreadable declaration declares: an item's name, the method
+names of a `fn`, the interface and type of an `impl` header, the variants of an `enum`, and the leaf names of a
+`use`. Parameter names, fields, payload types, and module paths are not declared names. A name that only parsed
+declarations declare is never a follow-on, so an error that names it is reported. When in doubt the follow-on is dropped: a diagnostic in a
+file with a syntax error never survives, and a missing `main` is not reported when the unreadable declarations declare
+`main`. The syntax errors themselves are always reported. With syntax errors the program is not returned (the
+language server keeps its last good one), and compile-time evaluation never runs (`spec/comptime.md`, CT1).
+The rule lives in `crates/burdin_query/src/follow_on.rs`, so a build, a check, and a language server report the same.
+Tests: `err_syntax_declared.bd` (a broken function is not reported, and neither is a mismatch in the broken file),
+`packages/syntax_neighbors` (a broken module's neighbors are checked against what it parsed), `packages/syntax_no_main`
+(a `main` that did not parse), `err_types.bd` and `err_syntax.bd` (one file, unchanged), and the unit tests of
+`follow_on.rs`.
 
 **CK5. `test` blocks: `--tests`.** A plain check does not declare or check `test` blocks, and neither does a build. With
 `--tests` the package is loaded the way `burdin test` loads it: the `test` blocks and their attributes are checked, and a
@@ -64,7 +77,8 @@ Tests: `lib_tests` and `tests_error` packages, the `test-compile-fail` and `burd
 **CK6. The profile.** The profile changes what the front end does in two places: error trace frames are recorded only
 when the profile's `debug-assertions` is on (`spec/errors.md`, ERR7), and compile-time evaluation follows its
 `overflow-checks` and `debug-assertions` (`spec/comptime.md`). `--profile <name>` selects one
-(`spec/profiles.md`); `--release` is `--profile release`, and the default is `dev`.
+(`spec/profiles.md`); `--release` is `--profile release`, and the default is `dev`. `-O<n>` is accepted
+for the same reason, and changes nothing: a check generates no code, so no optimization level applies (BP4).
 Tests: `--release on a clean program`, the `release-only` conformance tests.
 
 **CK7. `--comptime-steps <n>`.** Sets the step budget of each compile-time evaluation, as for a build
@@ -141,9 +155,35 @@ rule ID is the one from `spec/memory-rules.md`. The suggested fix is the referen
 (`burdin_diag::explain_fix`). Every memory diagnostic also carries one `help` line pointing at the mode, and its
 `notes` (which the JSON format publishes as `related` information) point at the declaration and each move or borrow
 on the way. The plain diagnostic line — and therefore every conformance test's `//~` markers and the short format —
-does not change.
+does not change. The trace is text, so it is printed in the human and short formats only: with `--diagnostic-format json`
+it is skipped, which keeps the check summary (CK12) the last line on standard error, and the JSON diagnostics carry the
+same rule ID, help line, and related locations.
 Tests: `tests/check/explain/` (one fixture per code) and its goldens, the JSON/SARIF goldens in
 `tests/diagnostics/`, and `tests/check_check.py`.
+
+**CK12. The machine-readable result.** With `--diagnostic-format json` a check is read line by line by an editor's
+problem list or a CI annotation step, so it has a contract of its own:
+
+- Each diagnostic is one line of the diagnostic object (`spec/diagnostics.md`, DG3), in the order DG1 gives. Warnings
+  are included.
+- The last line on standard error is the check summary, on every run that reaches the checks and whatever it found:
+  `{"type":"check-summary","version":1,"errors":E,"warnings":W,"shown":S,"limit":L|null,"files":F,"elapsed_ms":T}`.
+  `errors` and `warnings` count every diagnostic of each severity, whatever `--error-limit` shows; `shown` is the number
+  of diagnostic lines printed; `limit` is the limit or `null`.
+- `files` is the number of source files the check read from disk: every module of every package that is neither
+  embedded (the standard library) nor generated by a build script. `elapsed_ms` is the whole milliseconds from the start
+  of the command to the summary, so it differs between runs and no golden may contain it.
+- A run that stops before the checks (a usage error, a missing target, a package that cannot be loaded, a failing
+  build script) prints its plain `error:` line and no summary. Its exit status is the one CK8 gives.
+- The exit status does not depend on the format: 0 when there are no errors, 1 when there are errors or the package
+  cannot be read, 2 for a usage error.
+- The human and short formats are unchanged by this rule.
+
+Tests: `tests/check_check.py` (the `machine-readable result` section): a clean program prints only the summary, a
+warning-only program prints its warning and a summary with `warnings` 1, a failing program's summary counts four errors
+with `--error-limit 2` showing two, a package reports one file per module, `--explain` adds no trace in JSON, the
+summary matches the schema in `docs/diagnostic.schema.json`, and the golden of the whole JSON output with `elapsed_ms`
+masked.
 
 ## Choices that are not obvious
 
@@ -156,6 +196,7 @@ Tests: `tests/check/explain/` (one fixture per code) and its goldens, the JSON/S
   without `main.bd` would make the same command check different things in a library and a program. One flag says what
   is checked.
 - **Silence on success.** A build prints nothing when it succeeds, and a check is the part of a build that needs no
-  output at all. A summary line would only be noise in a CI log and in an editor's problem list.
+  output at all. A summary line would only be noise in a CI log and in an editor's problem list. The JSON format is the exception: a
+tool reads it line by line and needs the counts on every run, so it always ends with the check summary (CK12).
 - **The conformance suite is the equivalence test.** CK1 is a claim about every program, so the check script runs the
   command on every conformance test and compares it with that test's markers, instead of on a few hand-picked programs.

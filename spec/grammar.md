@@ -6,8 +6,9 @@ milestone 13's member names, milestone 14's string interpolation (the details ar
 (the details are in `errors.md`), milestone 17's default and named arguments (the details are in
 `arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), milestone 20's comptime
 forms (the details are in `comptime.md`), and milestone 21's `derive` item, const parameters, computed field access,
-generic type aliases, and impl blocks for specific type arguments (the details are in `reflection.md`,
-`const-generics.md`, `type-aliases.md`, and `impls.md`). It is derived from the conformance tests in `tests/`, so every construct
+generic type aliases, impl blocks for specific type arguments, and associated types (the details are in
+`reflection.md`, `const-generics.md`, `type-aliases.md`, `impls.md`, and `associated-types.md`). It is derived from
+the conformance tests in `tests/`, so every construct
 below is used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
 milestones (derive declarations, tasks) are reserved but not parsed.
 
@@ -61,6 +62,10 @@ immediately after a `.` token, a numeric literal is lexed as plain digits.
 
 **Char literals**: `'x'`, with escapes `\n \r \t \\ \' \0`. One Unicode scalar value.
 
+**Loop labels**: a quote, then an identifier, with no quote after the identifier, is a `LABEL` token (`'outer`). A quote
+that closes after one character or name is a character literal instead: `'a'` and `'_'` are chars, and `'a:` is a
+label (issue #275).
+
 **String literals**: `"..."` with escapes `\n \r \t \\ \" \0`, and raw newlines allowed inside. There is no interpolation in
 stage 0: `{` and `}` are ordinary characters.
 
@@ -88,7 +93,8 @@ There are no statement terminators. Each token records whether a line break come
 4. **Lists inside braces** (struct fields, enum variants, struct-literal fields, match arms) are separated by `,` or
    by a line break. A trailing separator is allowed. Interface methods and `extern` declarations follow one another
    with no separator, like top-level items. Lists inside `(...)`, `[...]` and `<...>` use commas only.
-5. `return` and `break` take a value only if one starts on the same line.
+5. `return` and `break` take a value only if one starts on the same line. A label after `break` or `continue` must start
+   on the same line too; a value after the label follows the same rule.
 
 ```
 let total = a +
@@ -104,7 +110,7 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert
+Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert | ComptimeGenerate
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
@@ -149,12 +155,19 @@ ErrorItem     = "error" "enum" IDENT [ GenericParams ] [ Derives ] "{" [ ErrorVa
 ErrorVariantList = ErrorVariant { Sep ErrorVariant } [ Sep ] ;
 ErrorVariant  = Variant [ "from" ] STRING ;
 
-InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceFn } "}" ;
+InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceMember } "}" ;
+InterfaceMember = InterfaceFn | AssociatedType ;
 InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
+(* `type Name` declares an associated type; it takes no bound and no default in stage 1 (`associated-types.md`, AT1). *)
+AssociatedType = "type" IDENT ;
 
-ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplFn } "}" ;
+ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplItem } "}" ;
                 (* `unsafe` is required for `Send` and `Sync` and allowed for nothing else (E0281); spec/shared.md SH5 *)
+ImplItem      = ImplFn | AssociatedTypeBinding ;
 ImplFn        = [ "priv" ] FnItem ;
+(* In a `Type: Interface` block, every associated type of the interface is bound exactly once
+   (`associated-types.md`, AT2). An impl block with no interface cannot bind one (E0144). *)
+AssociatedTypeBinding = "type" IDENT "=" Type ;
 
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
 ConstItem     = "const" IDENT ":" Type "=" Expr ;
@@ -234,16 +247,18 @@ package-private item, and a public signature or field naming a package-private t
 
 **Extension methods.** `fn Type.name(self, ...)` declares an extension method: the receiver is the type path before
 the last dot, including the type arguments that declare its type parameters (`fn List<T>.sum(self)`), and a
-`<...>` list after the method name declares method-level ones. An extension is visible in its declaring module and
-in modules that import it by name (`use text.shout`, `use text.{shout}`); importing the module alone does not bring
-it, and it cannot be imported `as` another name (E0216). A call tries the receiver type's methods first and a
-visible extension last; a shadowed extension gets the warning E0215 at its declaration. The rules are in
+`<...>` list after the method name declares method-level ones (`arguments.md`, GM1-GM6). An extension is visible
+in its declaring module and in modules that import it by name (`use text.shout`, `use text.{shout}`); importing the
+module alone does not bring it, and it cannot be imported `as` another name (E0216). A call tries the receiver type's
+methods first and a visible extension last; a shadowed extension gets the warning E0215 at its declaration. The
+rules are in
 `extensions.md` EX1-EX8.
 
 ## 4. Types
 
 ```
 Type          = TypePath
+              | Projection                              (* an associated type, stage 1 (`associated-types.md`, AT3) *)
               | "any" TypePath                          (* stage 1, milestone 15 *)
               | "impl" TypePath                         (* stage 1, milestone 15; only in a parameter list *)
               | ClosureType                             (* stage 1, milestone 12 *)
@@ -255,6 +270,11 @@ Type          = TypePath
               | "!" ;                                   (* never; written by the standard library only *)
 
 TypePath      = IDENT [ GenericArgs ] { "." IDENT [ GenericArgs ] } ;
+                (* `T.Name`, with `T` a type parameter or a type path segment, is parsed as this two-segment path and
+                   reinterpreted as an unqualified associated type projection in the checker (`associated-types.md`,
+                   AT3). *)
+Projection    = "Self" "." IDENT
+              | "<" Type "as" TypePath ">" "." IDENT ;  (* qualified: `<T as Iterator<i32>>.Item` *)
 GenericArgs   = "<" GenericArg { "," GenericArg } [ "," ] ">" ;
 GenericArg    = Type
               | [ "-" ] INT | "true" | "false" | CHAR   (* a const argument: spec/const-generics.md, CG2 *)
@@ -310,7 +330,8 @@ Nested items inside blocks are not allowed in stage 0.
 
 ```
 Expr          = AssignExpr ;
-AssignExpr    = OrElseExpr [ "=" AssignExpr ] ;         (* right associative; the left side must be a place *)
+AssignExpr    = OrElseExpr [ AssignOp AssignExpr ] ;    (* right associative; the left side must be a place *)
+AssignOp      = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 OrElseExpr    = RangeExpr { "orelse" RangeExpr } ;
 RangeExpr     = OrExpr [ ( ".." | "..=" ) OrExpr ] ;
 (* then the binary levels below, loosest to tightest *)
@@ -320,7 +341,7 @@ Precedence from loosest to tightest:
 
 | Level | Operators | Notes |
 | --- | --- | --- |
-| 1 | `=` | right associative; statement-like, result is `()` |
+| 1 | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | right associative; statement-like, result is `()`; a compound operator is `spec/compound-assignment.md` (CA1) |
 | 2 | `orelse` | left associative |
 | 3 | `..` `..=` | not associative |
 | 4 | `\|\|` | |
@@ -345,6 +366,10 @@ UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | ComptimeExpr | P
    literal (E0220). *)
 ComptimeExpr  = ComptimeAssert | "comptime" UnaryExpr ;
 ComptimeAssert = "comptime" "assert" "(" Expr [ "," Expr ] [ "," ] ")" ;
+(* `comptime generate { ... }` is an item, and only at module scope (E0243 elsewhere): its block is the body of a
+   function that returns the `String` of source text the compiler parses as declarations (`spec/generate.md`, GN2).
+   `generate` is a keyword only right after `comptime`, and is not reserved. *)
+ComptimeGenerate = "comptime" "generate" Block ;
 PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." "{" Expr "}" | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
                                                         (* `x.{name}`: a field chosen by a compile-time string, `spec/reflection.md` RFL5 *)
 ArgList       = Arg { "," Arg } [ "," ] ;
@@ -352,8 +377,8 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
-              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" | "continue"
-              | InlineSnapshot ;
+              | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" [ LABEL ] [ Expr ]
+              | "continue" [ LABEL ] | LabeledExpr | InlineSnapshot ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 InlineSnapshot = "@" STRING ;                           (* no placeholders; only `assert_snapshot`'s second argument, E0172 (test-runner.md, SN4) *)
@@ -378,8 +403,9 @@ SelectArm     = [ SelectBind "=" ] Expr "." "recv" "(" ")" [ "if" Expr ] "=>" ( 
               | "default" "=>" ( Block | Expr ) [ Sep ] ;
 SelectBind    = "_" | [ "mut" ] IDENT ;
 LoopExpr      = "loop" Block ;
-WhileExpr     = "while" Expr Block ;
+WhileExpr     = "while" Cond Block ;                      (* a `let` condition is `while let`, rule 8.11 *)
 ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)
+LabeledExpr   = LABEL ":" ( LoopExpr | WhileExpr | ForExpr ) ;   (* the label names the loop for `break LABEL` and `continue LABEL` (rule 8.9); any other body is E0001 *)
 ```
 
 A closure body is a single expression; a block is one of the expressions, so `|x| { ... }` is a closure whose body is
@@ -401,10 +427,10 @@ endpoints must be integers, and both take their type from context, from the othe
 The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
 required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
 
-Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6). The `<` starts a type
-list when one parses and its closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without
-the uppercase-name requirement; otherwise it is a comparison. Member type arguments are accepted only for the
-compiler-known `is` and `downcast` methods of an `any I` value; any other member with type arguments is E0002.
+Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), and a method or associated
+function with type parameters of its own (`arguments.md`, TA1). The `<` starts a type list when one parses and its
+closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without the uppercase-name requirement;
+otherwise it is a comparison. A list on a callee that takes no type arguments is E0003 (`arguments.md`, TA5).
 
 ## 7. Patterns
 
@@ -432,9 +458,12 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
 
 1. **Struct literals are not allowed** directly in the head of `if`, `while`, `match`, `for`, or the right side of `let ... else`.
    Wrap them in parentheses there. Inside any `(...)`, `[...]` or block the restriction is lifted.
-2. **Generic arguments in expressions.** After an identifier that starts with an uppercase letter, a `<` starts generic
-   arguments if a type list parses and its closing `>` is followed by `.`, `(`, or `{`. Otherwise it is a comparison.
-   This is why `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison.
+2. **Generic arguments in expressions.** After an identifier, a `<` starts generic arguments if a list of type syntax
+   parses (types, const arguments, and the punctuation around them, so `a < b && c > (d)` is never one) and its closing
+   `>` is followed by `.`, `(`, or `{` after an identifier that starts with an uppercase letter, or by `(` after one that
+   starts with a lowercase letter (`f<i32>(x)`; `arguments.md`, TA1). Otherwise it is a comparison. This is why
+   `List<i32>.new()` and `Stack<i32>.new().push(1)` parse, and `Level.Low < Level.High` is a comparison. The one shape
+   that reads as a list by mistake is `f(a < b, c > (d))`: parenthesize the first comparison (`arguments.md`, TA6).
 3. **Paths in expressions** are parsed as an identifier followed by field accesses. Whether `a.b.c` is a module path,
    an associated function, a variant, or a field access is decided during name resolution, not parsing.
 4. **Call-site markers.** A named `mut` parameter is passed with `mut` before the argument (`add_to(mut c, 4)`);
@@ -451,6 +480,28 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    the parameter the argument fills: no expression of the grammar starts with `IDENT ":"`, so the look-ahead is
    unambiguous. `f(x: 1)` is a named argument, while `f(P { x: 1 })` passes a struct literal and `f(a.b)` passes
    a path. The name is matched and checked in `burdin_sema` (`arguments.md`, AG4).
+9. **Loop labels** (`'outer: for ...`). `break 'outer` and `continue 'outer` name the nearest enclosing loop with that
+   label in the same function body: a closure starts with no loops, so it cannot name one outside it (E0002, the label
+   is not in scope there). A label no enclosing loop has is E0002, and a label that repeats the label of an enclosing
+   loop is E0007. An unlabeled `break` or `continue` still names the innermost loop, whatever its label. A label goes
+   only on a `while`, `loop`, or `for`; on any other expression it is E0001, and the expression is checked without it.
+10. **Break values** (`let x = loop { break 42 }`). A `loop` gives back the value of its `break`s; `break` with no
+    value is `break ()`. Its type is the expected type when the context gives one, otherwise the type of the first
+    `break` value, and `!` when nothing breaks out of it. Every `break` of one loop must give the same type. A
+    `while` or `for` can end by its condition or its items running out, so it always gives back `()` and takes no
+    value: `break 1` in a `while` or `for` is E0003, while a value-less `break` there is the ordinary `break ()`.
+    A labeled `break` carries its value to the loop it names, which must be a `loop` when it carries a value. A
+    `break`'s value is computed before the scopes it leaves are dropped, like a `return` value
+    (`spec/memory-rules.md`, DR6).
+11. **`while let`** (`while let pattern = value { ... }`) runs its body for as long as the value matches the
+    pattern, and it is the `while` form of `if let`. The value is evaluated again before each pass. The pattern's
+    bindings are visible only in the body and are dropped at the end of each pass, and the scrutinee follows the
+    `if let` rules (`spec/memory-rules.md`, MV8). The loop ends when the value does not match, so it takes no `else`
+    (E0001). It is a `while` for rules 8.9 and 8.10: a label names it, and a `break` with a value is E0003. An
+    pattern that always matches is E0003, because the loop would never end (`let ... else` refuses its `else` on such a
+    pattern for the same reason). Witnesses: `tests/m02_basics/while_let.bd`
+    (runs), `while_let_errors.bd` and `while_let_else.bd` (codes and lines), `tests/m05_ownership/while_let_moves.bd`
+    (runs, drops per pass), and `while_let_moves_errors.bd` (a moved scrutinee is E0104).
 
 ## 9. What the parser does not decide
 

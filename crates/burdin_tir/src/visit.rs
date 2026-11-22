@@ -44,11 +44,15 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Local(_)
         | K::Const(_)
         | K::Closure { .. }
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                v.expr(value);
+            }
+        }
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|a| v.expr(a));
         }
@@ -79,7 +83,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::ArrayRepeat(inner, _)
         | K::Comptime(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
-        K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }
@@ -93,6 +97,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             v.expr(hi);
         }
         K::Block(b) | K::Loop(b) => v.block(b),
+        K::Labeled(_, body) => v.expr(body),
         K::If(c, then, other) => {
             v.expr(c);
             v.block(then);
@@ -180,11 +185,15 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Local(_)
         | K::Const(_)
         | K::Closure { .. }
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                v.expr(value);
+            }
+        }
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter_mut().for_each(|a| v.expr(a));
         }
@@ -215,7 +224,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::ArrayRepeat(inner, _)
         | K::Comptime(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
-        K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }
@@ -229,6 +238,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
             v.expr(hi);
         }
         K::Block(b) | K::Loop(b) => v.block(b),
+        K::Labeled(_, body) => v.expr(body),
         K::If(c, then, other) => {
             v.expr(c);
             v.block(then);

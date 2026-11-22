@@ -1,0 +1,6 @@
+err_generic_args.bd:9:17: error[E0003]: `Map` is generic and needs type arguments for `K, V`; write them, as in `Map<K, V>`
+err_generic_args.bd:13:13: error[E0003]: `Map` is generic and needs type arguments for `K, V`; write them, as in `Map<K, V>`
+err_generic_args.bd:14:13: error[E0003]: `std.set.Set` is generic and needs type arguments for `T`; write them, as in `std.set.Set<T>`
+err_generic_args.bd:15:13: error[E0003]: `Pair` is generic and needs type arguments for `A, B`; write them, as in `Pair<A, B>`
+err_generic_args.bd:16:13: error[E0003]: `Pair` is generic and needs type arguments for `B`; write them, as in `Pair<A, B>`
+error: could not check err_generic_args.bd (5 errors)

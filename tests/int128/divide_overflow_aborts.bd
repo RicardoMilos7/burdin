@@ -1,0 +1,14 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: attempt to divide with overflow
+//> before
+
+// `i128::MIN / -1` has no 128-bit result; it panics in a debug build (spec/int128.md, I128-3).
+
+fn main() {
+    let m: i128 = -170141183460469231731687303715884105728
+    let neg_one: i128 = -1
+    println("before")
+    println((m / neg_one).to_string())
+    println("after")
+}

@@ -1,0 +1,20 @@
+//@ run
+//> Eneko
+//> {"ok": true}
+
+// The example of issue #847: `json.from_str<Data>` names the type argument that `from_str` takes from the call. The
+// official `json` package is a module, so this is a module-qualified generic call (`spec/arguments.md`, TA1).
+
+use json
+
+struct Data: Serialize, Deserialize {
+    name: String,
+}
+
+fn main() {
+    let data = json.from_str<Data>("{{\"name\": \"Eneko\"}}")
+    let value = data.unwrap()
+    println(value.name)
+    let count = json.from_str<Data>("{{\"name\": \"seven\"}}")
+    println("{{\"ok\": {count.is_ok()}}}")
+}

@@ -86,6 +86,12 @@ pub fn walk_type<V: Visit + ?Sized>(v: &mut V, t: &Type) {
             v.expr(len);
         }
         TypeKind::Const(e) => v.expr(e),
+        TypeKind::Projection(p) => {
+            v.ty(&p.self_ty);
+            if let Some(iface) = &p.iface {
+                v.ty(iface);
+            }
+        }
         TypeKind::SelfType | TypeKind::Unit | TypeKind::Never => {}
     }
 }
@@ -109,13 +115,23 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                v.expr(value);
+            }
+        }
+        K::Labeled { body, .. } => v.expr(body),
         K::Interp(parts) => walk_interp(v, parts),
         K::Name { args, .. } => args.iter().for_each(|a| v.ty(a)),
         K::Tuple(es) | K::Array(es) => es.iter().for_each(|x| v.expr(x)),
-        K::ArrayRepeat(a, b) | K::Assign(a, b) | K::Binary(_, a, b) | K::OrElse(a, b) | K::Index(a, b) => {
+        K::ArrayRepeat(a, b)
+        | K::Assign(a, b)
+        | K::CompoundAssign(_, a, b)
+        | K::Binary(_, a, b)
+        | K::OrElse(a, b)
+        | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }
@@ -129,6 +145,11 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         }
         K::While { cond, body } => {
             v.expr(cond);
+            v.block(body);
+        }
+        K::WhileLet { pattern, scrutinee, body } => {
+            v.expr(scrutinee);
+            v.pattern(pattern);
             v.block(body);
         }
         K::For { pattern, iter, body, .. } => {

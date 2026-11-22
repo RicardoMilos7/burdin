@@ -29,6 +29,7 @@ impl Globals {
         args: &[ast::Type],
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<Bound>)],
         module: usize,
         diags: &mut Diagnostics,
     ) -> Ty {
@@ -59,7 +60,7 @@ impl Globals {
                     let declared = self.resolve_type_in(declared, None, &[], alias.module, diags);
                     self.eval_const_arg(arg, &declared, subst, module, diags)
                 }
-                None => self.resolve_type_in(arg, self_ty, subst, module, diags),
+                None => self.resolve_type_bounded(arg, self_ty, subst, bounds, module, diags),
             };
             env.push((param.name.name.clone(), ty));
         }
@@ -69,22 +70,27 @@ impl Globals {
         // The bounds on the parameters hold for these arguments, as for a generic type (E0141).
         let own: Vec<(String, Ty)> =
             decl.generics.iter().map(|g| (g.name.name.clone(), crate::generics::param_ty(&g.name.name))).collect();
+        // The body is resolved with the alias's parameters standing for the arguments and each parameter's
+        // declared bounds substituted to match (`spec/associated-types.md`, AT3).
+        let mut param_bounds: Vec<(String, Vec<Bound>)> = Vec::new();
         for (param, (_, arg)) in decl.generics.iter().zip(&env) {
+            let declared: Vec<Bound> =
+                param.bounds.iter().filter_map(|b| self.resolve_bound(b, &own, alias.module, diags)).collect();
             if param.const_ty.is_some() || self.ty_has_param(arg) {
+                param_bounds.push((param.name.name.clone(), declared));
                 continue;
             }
-            let bounds: Vec<Bound> =
-                param.bounds.iter().filter_map(|b| self.resolve_bound(b, &own, alias.module, diags)).collect();
-            for bound in &bounds {
+            for bound in &declared {
                 if !self.satisfies_with(arg, bound, &[], &env) {
                     let (code, message) =
                         self.bound_unmet(arg, bound, &[], &format!("`{}` of `{}`", param.name.name, decl.name.name));
                     diags.error(code, span, message);
                 }
             }
+            param_bounds.push((param.name.name.clone(), declared.iter().map(|b| self.subst_bound(b, &env)).collect()));
         }
         self.alias_depth.set(self.alias_depth.get() + 1);
-        let ty = self.resolve_type_in(&decl.ty, None, &env, alias.module, diags);
+        let ty = self.resolve_type_bounded(&decl.ty, None, &env, &param_bounds, alias.module, diags);
         self.alias_depth.set(self.alias_depth.get() - 1);
         ty
     }

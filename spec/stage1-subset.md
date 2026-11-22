@@ -113,7 +113,7 @@ are recorded in `spec/operators.md` OP1-OP13 (the decisions that the operator in
 interfaces declared in `std.ops`, with same-type operands and no mixed types; that the built-in operators and the
 `Eq`/`Ord` derives always win; that `PartialEq`/`PartialOrd` are new interfaces rather than the derive-only `Eq` and
 `Ord`; that `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; and that
-compound assignment and shifts are not overloadable). The existing diagnostics E0141 (a missing operator or index
+compound assignment and shifts are not overloadable; issue #277 later made compound assignment take the operator's interface, `spec/compound-assignment.md` CA5). The existing diagnostics E0141 (a missing operator or index
 implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
 (wrong operand types) cover the new rejections; no new error code was needed.
 
@@ -240,6 +240,11 @@ code; do not invent them inside the implementation.
    list. Write down whether `next` consumes, mutates, or borrows the iterator and how a lazy chain stays
    second-class.
 
+   **Update (issue #393).** Associated types are now implemented as a general language feature
+   (`spec/associated-types.md`, AT1-AT6: `type Name`, `type Name = Ty`, the three projection forms, object safety).
+   The `Iterator<T>`/`Iterable<T>` protocol is unchanged: it stays generic, and `Iterator<T>` is not rewritten with
+   an `Item` associated type.
+
 3. **`any` and `impl` — settled with milestone 15.** The decision is `spec/existentials.md` AN1-AN12: the value is
    boxed, object safety is AN2, `impl Interface` in a parameter is a hidden generic, and `is`/`downcast` are the
    downcast spelling. Dynamic `Error` in milestone 16 builds on it.
@@ -303,7 +308,7 @@ code; do not invent them inside the implementation.
    `Eq`/`Ord`, so every stage 0 derive keeps its exact behavior. `Index<T>`/`IndexMut<T>` name the element type,
    take a `usize`, and return `&T`/`&mut T`, which makes `x[i]` a place; a write selects `index_mut` and requires a
    mutable receiver. A literal never adopts a user type (`v + 1` is E0003). Compound assignment and the shift
-   operators are not overloadable. The rules are `spec/operators.md` OP1-OP13 and the tests are
+   operators were not overloadable at this milestone (issue #277 changed compound assignment, CA5). The rules are `spec/operators.md` OP1-OP13 and the tests are
    `tests/m19_operators/`.
 
 9. **Extension methods — settled with milestone 18.** An extension `fn Type.name(self, ...)` is visible in its
@@ -322,8 +327,11 @@ easier with them:
   preemption, and `Send`.
 - `burdin doc`, `add`, the language server, the lockfile, multiple-package workspaces, and the package registry.
   (`burdin fmt` and `lint` have landed; `burdin bindgen` is `spec/bindgen.md`.)
-- Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend,
-  fallible allocation, and `i128`/`u128`.
+- Doc tests, `bench` blocks, a custom debug backend, fallible allocation. (Declaration generation in comptime landed
+  with issue #280: `spec/generate.md`.) (`i128`/`u128` landed with issue #273; `spec/int128.md`.)
+- Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend.
+  (`i128`/`u128` landed with issue #273; `spec/int128.md`. Fallible allocation landed with issue #278;
+  `spec/allocators.md`, AL11.)
 - Self-hosting. The compiler stays in Rust (decided).
 
 ## Later stages (roadmap)
@@ -381,14 +389,24 @@ overlapped per-operation Windows path are later refinements.
 
 The query-based compiler library has landed (`spec/query.md`, issue #241): the command line runs its front end
 through it, and the memo, the tool API, cancellation, and the budget are in place. The lockfile and `burdin add`
-have landed too (`spec/packages.md`, issues #238 and #239); multiple-package workspaces, cached object files, and the
-package registry are still open. The build tool's command surface is recorded in `spec/build-tool.md` (issue #338),
+have landed too (`spec/packages.md`, issues #238 and #239); cached object files landed too (`spec/target.md`, issue #243); the
+package registry is still open. The build tool's command surface is recorded in `spec/build-tool.md` (issue #338),
 and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in `spec/profiles.md` (issue #339).
 
 ### When wanted
 
-`i128`/`u128`, `try_from`, labeled loops, `break` with a value, compound assignment, doc tests, `bench` blocks,
-fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
+`TryFrom` and `try_from` have landed for user types and integer types (`spec/stdlib.md`, "Conversions", issue
+#274), and fallible allocation has landed for `List`, `Map`, `String`, and the allocator primitives
+(`spec/allocators.md`, AL11, issue #278); the remaining items below are still wanted.
+
+`i128`/`u128` have landed too (issue #273, `spec/int128.md`), and so has `break` with a value (issue #276,
+`spec/grammar.md` rule 8.10), and compound assignment has landed for the built-in types (issue #277,
+`spec/compound-assignment.md`). The remaining items are doc tests, `bench` blocks, fallible allocation,
+compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
+slip past stage 1, and a package registry. Compound assignment on a user type (issue #277) takes the operator from its interface, as `a = a op b`.
+`spec/grammar.md` rule 8.10). The remaining items are compound assignment, doc tests, `bench` blocks,
+fallible allocation, compiler-inserted preemption checks, a MIR (decision 6), `Set`/`Deque` if they
+compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
 slip past stage 1, and a package registry.
 
 ## Working on stage 1

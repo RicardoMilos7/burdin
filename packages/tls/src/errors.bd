@@ -1,0 +1,58 @@
+// The error every fallible function in this package reports (spec/tls.md, TLS6).
+
+/// Every way a TLS operation can fail. The variant says what kind of failure it was, so a program can tell a failed
+/// certificate check from a transport error without parsing the message. Nothing in this package panics on what a peer
+/// sends: a hostile or broken peer is a `TlsError`.
+error enum TlsError: Clone, Debug {
+    Io(IoError) from "I/O error: {0}",
+    Handshake(String) "TLS handshake failed: {0}",
+    Protocol(String) "TLS protocol error: {0}",
+    CertificateInvalid(String) "certificate verification failed: {0}",
+    HostnameMismatch(String) "the certificate does not match the host: {0}",
+    UnexpectedEof "the connection closed without a TLS close_notify (the data may be truncated)",
+    Closed "the TLS connection is closed",
+    BadCertificate(String) "bad certificate: {0}",
+    BadKey(String) "bad private key: {0}",
+    KeyMismatch "the private key does not match the certificate",
+    Config(String) "invalid TLS configuration: {0}",
+    Unsupported(String) "unsupported: {0}",
+}
+
+TlsError {
+    /// Whether the transport timed out (a read or write timeout set on the connection expired).
+    fn is_timeout(self): bool {
+        match self {
+            TlsError.Io(failure) => match failure.kind() {
+                IoErrorKind.TimedOut => true,
+                else => false,
+            }
+            // lint: allow(else_on_local_enum)
+            else => false,
+        }
+    }
+
+    /// Whether this is a certificate or hostname verification failure.
+    fn is_verification(self): bool {
+        match self {
+            TlsError.CertificateInvalid(_) => true,
+            TlsError.HostnameMismatch(_) => true,
+            // lint: allow(else_on_local_enum)
+            else => false,
+        }
+    }
+
+    /// The error as an `IoError`, which is what `Read` and `Write` report: a transport error keeps its own value, a
+    /// truncated stream is `IoError.UnexpectedEof`, and every other failure is `IoError.InvalidData`.
+    fn to_io(own self): IoError {
+        match self {
+            TlsError.Io(failure) => failure,
+            TlsError.UnexpectedEof => IoError.UnexpectedEof,
+            other => IoError.Net {
+                op: "TLS".to_string(),
+                addr: other.to_string(),
+                kind: IoErrorKind.InvalidData,
+                os_code: None,
+            },
+        }
+    }
+}

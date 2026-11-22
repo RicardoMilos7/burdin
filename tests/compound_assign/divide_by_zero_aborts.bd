@@ -1,0 +1,16 @@
+//@ run-abort
+//@ stderr: division by zero
+//> start
+
+// A division by zero in a compound assignment panics in both profiles (spec/compound-assignment.md, CA2).
+
+fn zero(): i32 {
+    0
+}
+
+fn main() {
+    println("start")
+    let mut x = 10
+    x /= zero()
+    println("{x}")
+}

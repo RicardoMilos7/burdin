@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A literal outside its type's range is E0008 (spec/int128.md, I128-2): one past `i128::MAX` and one below
+// `i128::MIN`. Negating an unsigned value is a type error, E0003, as for `u64`.
+
+fn main() {
+    let a: i128 = 170141183460469231731687303715884105728 //~ E0008
+    let b: i128 = -170141183460469231731687303715884105729 //~ E0008
+    let d: u128 = -1 //~ E0003
+    println(a.to_string())
+    println(b.to_string())
+    println(d.to_string())
+}

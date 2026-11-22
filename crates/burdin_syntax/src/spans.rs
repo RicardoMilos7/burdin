@@ -34,6 +34,10 @@ pub fn map_spans(file: &mut File, f: &mut dyn FnMut(&mut Span)) {
         (m.f)(&mut z.span);
     }
     file.bodies.iter_mut().for_each(|s| (m.f)(s));
+    for g in &mut file.generators {
+        (m.f)(&mut g.span);
+        (m.f)(&mut g.keyword);
+    }
 }
 
 struct Mapper<'a> {
@@ -103,6 +107,11 @@ impl Mapper<'_> {
                     self.ty(i);
                 }
                 self.wheres(&mut b.where_clause);
+                for a in &mut b.assoc {
+                    self.ident(&mut a.name);
+                    self.ty(&mut a.ty);
+                    (self.f)(&mut a.span);
+                }
                 b.methods.iter_mut().for_each(|m| self.fn_decl(m));
                 (self.f)(&mut b.span);
             }
@@ -110,6 +119,10 @@ impl Mapper<'_> {
                 self.ident(&mut i.name);
                 self.generics(&mut i.generics);
                 i.requires.iter_mut().for_each(|t| self.ty(t));
+                for a in &mut i.associated {
+                    self.ident(&mut a.name);
+                    (self.f)(&mut a.span);
+                }
                 i.methods.iter_mut().for_each(|m| self.fn_decl(&mut m.decl));
                 (self.f)(&mut i.span);
             }
@@ -220,6 +233,13 @@ impl Mapper<'_> {
                 }
             }
             TypeKind::SelfType | TypeKind::Unit | TypeKind::Never => {}
+            TypeKind::Projection(p) => {
+                self.ty(&mut p.self_ty);
+                if let Some(iface) = &mut p.iface {
+                    self.ty(iface);
+                }
+                self.ident(&mut p.name);
+            }
             TypeKind::Tuple(ts) => ts.iter_mut().for_each(|x| self.ty(x)),
             TypeKind::Array(elem, len) => {
                 self.ty(elem);
@@ -299,9 +319,24 @@ impl Mapper<'_> {
             | ExprKind::InlineSnapshot(_)
             | ExprKind::Bool(_)
             | ExprKind::Unit
-            | ExprKind::SelfValue
-            | ExprKind::Break
-            | ExprKind::Continue => {}
+            | ExprKind::SelfValue => {}
+            ExprKind::Break { label, value } => {
+                if let Some(label) = label {
+                    self.ident(label);
+                }
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
+            ExprKind::Continue(label) => {
+                if let Some(label) = label {
+                    self.ident(label);
+                }
+            }
+            ExprKind::Labeled { label, body } => {
+                self.ident(label);
+                self.expr(body);
+            }
             ExprKind::Interp(parts) => self.parts(parts),
             ExprKind::Name { name, args } => {
                 self.ident(name);
@@ -310,6 +345,7 @@ impl Mapper<'_> {
             ExprKind::Tuple(es) | ExprKind::Array(es) => es.iter_mut().for_each(|x| self.expr(x)),
             ExprKind::ArrayRepeat(a, b)
             | ExprKind::Assign(a, b)
+            | ExprKind::CompoundAssign(_, a, b)
             | ExprKind::Binary(_, a, b)
             | ExprKind::OrElse(a, b)
             | ExprKind::DynField(a, b)
@@ -327,6 +363,11 @@ impl Mapper<'_> {
             }
             ExprKind::While { cond, body } => {
                 self.expr(cond);
+                self.block(body);
+            }
+            ExprKind::WhileLet { pattern, scrutinee, body } => {
+                self.pat(pattern);
+                self.expr(scrutinee);
                 self.block(body);
             }
             ExprKind::For { pattern, iter, body, .. } => {

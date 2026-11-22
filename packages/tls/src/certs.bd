@@ -1,0 +1,539 @@
+use errors.TlsError
+// Certificates, private keys, and trust stores (spec/tls.md, TLS3 and TLS4).
+//
+// A `Certificate` and a `PrivateKey` own an OpenSSL object each and free it when dropped. Both are loaded from memory
+// (PEM text or DER bytes) or from a file, and a bad input is a `TlsError` that names what failed. Nothing is parsed
+// lazily: a value that exists holds a valid object.
+
+use features
+use ffi.{bytes_ptr, c_text, clear_errors, error_text, no_openssl, or_else}
+use openssl.{
+    ASN1_TIME_print,
+    Asn1Time,
+    BIO_free,
+    BIO_new,
+    BIO_new_mem_buf,
+    BIO_read,
+    BIO_s_mem,
+    EVP_PKEY_free,
+    EVP_sha256,
+    EvpPkey,
+    PEM_read_bio_PrivateKey,
+    PEM_read_bio_X509,
+    X509,
+    X509Name,
+    X509_NAME_oneline,
+    X509_digest,
+    X509_free,
+    X509_get0_notAfter,
+    X509_get0_notBefore,
+    X509_get_issuer_name,
+    X509_get_subject_name,
+    X509_up_ref,
+    d2i_AutoPrivateKey,
+    d2i_X509,
+    i2d_X509,
+}
+use schannel.{
+    CertContext,
+    CertCreateCertificateContext,
+    CertDuplicateCertificateContext,
+    CertFreeCertificateContext,
+    KeyBlock,
+    NCryptFreeObject,
+    bytes_at,
+    calloc,
+    cert_der,
+    cert_fingerprint,
+    cert_from_der,
+    cert_issuer,
+    cert_not_after,
+    cert_not_before,
+    cert_subject,
+    certs_from_pem,
+    free,
+    import_key,
+    is_ed25519,
+    key_to_pkcs8,
+    memcpy,
+    pem_blocks,
+}
+
+/// The bytes of a file as text.
+fn read_text(path: str): Result<String, TlsError> {
+    let bytes = fs.read(path)?
+    Ok(String.from_utf8_lossy(bytes[0..bytes.len()]))
+}
+
+// ----- certificates ---------------------------------------------------------------------------------------------
+
+/// An X.509 certificate. `duplicate` makes a second owner of the same certificate.
+struct Certificate {
+    priv handle: CPtr<X509>,
+}
+
+// An X.509 object that nobody mutates is safe to share between threads (its reference count is atomic).
+unsafe Certificate: Send {}
+unsafe Certificate: Sync {}
+
+/// Every certificate in a PEM text, in order. Text with no certificate gives an empty list.
+fn read_pem_certificates(pem: str): List<Certificate> {
+    comptime if target.os() == target.Os.Windows {
+        let mut found = List<Certificate>.new()
+        unsafe {
+            let contexts = certs_from_pem(pem)
+            for i in 0..contexts.len() {
+                found.push(Certificate { handle: contexts[i] as CPtr<X509> })
+            }
+        }
+        found
+    } else if features.openssl {
+        let mut found = List<Certificate>.new()
+        let bytes = pem.as_bytes()
+        if bytes.len() == 0 {
+            return found
+        }
+        unsafe {
+            let bio = BIO_new_mem_buf(bytes_ptr(bytes), bytes.len() as i32)
+            if bio.is_null() {
+                return found
+            }
+            loop {
+                let handle = PEM_read_bio_X509(bio, CPtr.null(), CPtr.null(), CPtr.null())
+                if handle.is_null() {
+                    break
+                }
+                found.push(Certificate { handle: handle })
+            }
+            let _ = BIO_free(bio)
+        }
+        // Running out of certificates leaves "no start line" in the queue; it is not an error.
+        clear_errors()
+        found
+    } else {
+        List<Certificate>.new()
+    }
+}
+
+Certificate {
+    /// Reads the first certificate of a PEM text. Text that holds none is `TlsError.BadCertificate`.
+    fn from_pem(pem: str): Result<Certificate, TlsError> {
+        let all = read_pem_certificates(pem)
+        for cert in all.into_iter() {
+            return Ok(cert)
+        }
+        Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
+    }
+
+    /// Reads every certificate of a PEM text (a chain or a bundle), in order. At least one is required.
+    fn chain_from_pem(pem: str): Result<List<Certificate>, TlsError> {
+        let all = read_pem_certificates(pem)
+        if all.is_empty() {
+            return Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
+        }
+        Ok(all)
+    }
+
+    /// Reads one certificate from its DER encoding.
+    fn from_der(data: [u8]): Result<Certificate, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if data.len() == 0 {
+                return Err(TlsError.BadCertificate("the DER input is empty".to_string()))
+            }
+            unsafe {
+                let handle = cert_from_der(data)
+                if handle.is_null() {
+                    return Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
+                }
+                Ok(Certificate { handle: handle as CPtr<X509> })
+            }
+        } else if features.openssl {
+            if data.len() == 0 {
+                return Err(TlsError.BadCertificate("the DER input is empty".to_string()))
+            }
+            unsafe {
+                let mut cursor = bytes_ptr(data)
+                let handle = d2i_X509(CPtr.null(), &mut cursor as CPtr<CPtr<u8>>, data.len() as i64)
+                if handle.is_null() {
+                    clear_errors()
+                    return Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
+                }
+                Ok(Certificate { handle: handle })
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Reads the first certificate of a PEM file.
+    fn load_pem_file(path: str): Result<Certificate, TlsError> {
+        let text = read_text(path)?
+        Certificate.from_pem(text.as_str())
+    }
+
+    /// Reads every certificate of a PEM file.
+    fn load_chain_file(path: str): Result<List<Certificate>, TlsError> {
+        let text = read_text(path)?
+        Certificate.chain_from_pem(text.as_str())
+    }
+
+    /// A second owner of the same certificate (the library's `Clone` cannot be written by hand yet).
+    fn duplicate(self): Certificate {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                Certificate { handle: CertDuplicateCertificateContext(self.handle as CPtr<CertContext>) as CPtr<X509> }
+            }
+        } else if features.openssl {
+            unsafe {
+                let _ = X509_up_ref(self.handle)
+                Certificate { handle: self.handle }
+            }
+        } else {
+            unsafe { Certificate { handle: CPtr.null() } }
+        }
+    }
+
+    /// The DER encoding.
+    fn to_der(self): List<u8> {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_der(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            let mut out = List<u8>.new()
+            unsafe {
+                let size = i2d_X509(self.handle, CPtr.null())
+                if size <= 0 {
+                    return out
+                }
+                for _ in 0..(size as usize) {
+                    out.push(0)
+                }
+                let mut cursor = (&mut out[0]) as CPtr<u8>
+                let _ = i2d_X509(self.handle, &mut cursor as CPtr<CPtr<u8>>)
+            }
+            out
+        } else {
+            List<u8>.new()
+        }
+    }
+
+    /// The subject in OpenSSL's one-line form (`/CN=localhost`).
+    fn subject(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_subject(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            unsafe { name_text(X509_get_subject_name(self.handle)) }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The issuer in OpenSSL's one-line form.
+    fn issuer(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_issuer(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            unsafe { name_text(X509_get_issuer_name(self.handle)) }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The start of the validity period (`Jan  1 00:00:00 2020 GMT`).
+    fn not_before(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_not_before(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            unsafe { time_text(X509_get0_notBefore(self.handle)) }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The end of the validity period.
+    fn not_after(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_not_after(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            unsafe { time_text(X509_get0_notAfter(self.handle)) }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The SHA-256 of the DER encoding, as 64 lower-case hex digits.
+    fn fingerprint(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { cert_fingerprint(self.handle as CPtr<CertContext>) }
+        } else if features.openssl {
+            let mut digest = List<u8>.new()
+            for _ in 0..32 {
+                digest.push(0)
+            }
+            let mut length: u32 = 0
+            unsafe {
+                let ok = X509_digest(self.handle, EVP_sha256(), (&mut digest[0]) as CPtr<u8>, &mut length as CPtr<u32>)
+                if ok != 1 {
+                    return String.new()
+                }
+            }
+            digest.to_hex()
+        } else {
+            String.new()
+        }
+    }
+}
+
+Certificate: Drop {
+    fn drop(mut self) {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                if !self.handle.is_null() {
+                    let _ = CertFreeCertificateContext(self.handle as CPtr<CertContext>)
+                }
+            }
+        } else if features.openssl {
+            unsafe {
+                if !self.handle.is_null() {
+                    X509_free(self.handle)
+                }
+            }
+        } else {}
+    }
+}
+
+/// An `X509_NAME` as OpenSSL's one-line text.
+unsafe fn name_text(name: CPtr<X509Name>): String {
+    comptime if features.openssl {
+        let mut buffer = List<u8>.new()
+        for _ in 0..512 {
+            buffer.push(0)
+        }
+        let text = X509_NAME_oneline(name, (&mut buffer[0]) as CPtr<CChar>, 512)
+        c_text(text)
+    } else {
+        String.new()
+    }
+}
+
+/// An `ASN1_TIME` as OpenSSL prints it.
+unsafe fn time_text(time: CPtr<Asn1Time>): String {
+    comptime if features.openssl {
+        let bio = BIO_new(BIO_s_mem())
+        if bio.is_null() {
+            return String.new()
+        }
+        let mut buffer = List<u8>.new()
+        for _ in 0..128 {
+            buffer.push(0)
+        }
+        let _ = ASN1_TIME_print(bio, time)
+        let count = BIO_read(bio, (&mut buffer[0]) as CPtr<u8>, 127)
+        let _ = BIO_free(bio)
+        if count <= 0 {
+            return String.new()
+        }
+        String.from_utf8_lossy(buffer[0..(count as usize)])
+    } else {
+        String.new()
+    }
+}
+
+// ----- private keys ---------------------------------------------------------------------------------------------
+
+/// A private key: RSA, ECDSA, or Ed25519, unencrypted (an encrypted key is refused; spec/tls.md, TLS4).
+struct PrivateKey {
+    priv handle: CPtr<EvpPkey>,
+}
+
+unsafe PrivateKey: Send {}
+unsafe PrivateKey: Sync {}
+
+PrivateKey {
+    /// Reads a PEM private key (PKCS#8, or the older RSA and EC forms). An encrypted key is `TlsError.BadKey`: the
+    /// package has no way to ask for a password.
+    fn from_pem(pem: str): Result<PrivateKey, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if pem.as_bytes().len() == 0 {
+                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+            }
+            if pem.contains("ENCRYPTED") {
+                return Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
+            }
+            let mut der = pem_blocks(pem, "PRIVATE KEY")
+            if der.is_empty() {
+                der = pem_blocks(pem, "RSA PRIVATE KEY")
+            }
+            if der.is_empty() {
+                der = pem_blocks(pem, "EC PRIVATE KEY")
+            }
+            if der.is_empty() {
+                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+            }
+            match PrivateKey.__from_der(der[0][0..der[0].len()]) {
+                Some(key) => Ok(key),
+                None => Err(TlsError.BadKey("no private key found in the PEM text".to_string())),
+            }
+        } else if features.openssl {
+            let bytes = pem.as_bytes()
+            if bytes.len() == 0 {
+                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+            }
+            if pem.contains("ENCRYPTED") {
+                return Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
+            }
+            unsafe {
+                let bio = BIO_new_mem_buf(bytes_ptr(bytes), bytes.len() as i32)
+                if bio.is_null() {
+                    return Err(TlsError.BadKey(or_else(error_text(), "out of memory")))
+                }
+                // A non-null password argument keeps OpenSSL from prompting on the terminal for one.
+                let empty = CString.from("")
+                let handle = PEM_read_bio_PrivateKey(bio, CPtr.null(), CPtr.null(), empty.as_ptr() as CPtr<CVoid>)
+                let _ = BIO_free(bio)
+                if handle.is_null() {
+                    clear_errors()
+                    return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+                }
+                Ok(PrivateKey { handle: handle })
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Reads a private key from its DER encoding (PKCS#8, or the RSA and EC forms).
+    fn from_der(data: [u8]): Result<PrivateKey, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if data.len() == 0 {
+                return Err(TlsError.BadKey("the DER input is empty".to_string()))
+            }
+            match PrivateKey.__from_der(data) {
+                Some(key) => Ok(key),
+                None => Err(TlsError.BadKey("the bytes are not a DER private key".to_string())),
+            }
+        } else if features.openssl {
+            if data.len() == 0 {
+                return Err(TlsError.BadKey("the DER input is empty".to_string()))
+            }
+            unsafe {
+                let mut cursor = bytes_ptr(data)
+                let handle = d2i_AutoPrivateKey(CPtr.null(), &mut cursor as CPtr<CPtr<u8>>, data.len() as i64)
+                if handle.is_null() {
+                    clear_errors()
+                    return Err(TlsError.BadKey("the bytes are not a DER private key".to_string()))
+                }
+                Ok(PrivateKey { handle: handle })
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// The key CNG accepts from DER in any common form (Windows). `None` when the bytes are no usable key.
+    priv fn __from_der(data: [u8]): Option<PrivateKey> {
+        comptime if target.os() == target.Os.Windows {
+            let pkcs8 = key_to_pkcs8(data)
+            if pkcs8.is_none() {
+                return None
+            }
+            let pkcs8 = pkcs8.unwrap()
+            unsafe {
+                // CNG parses the key now, so a key it cannot use is refused here and not in the first handshake.
+                // An Ed25519 key is read and kept (it is a valid key), but CNG cannot use it, so a configuration refuses it.
+                if !is_ed25519(pkcs8[0..pkcs8.len()]) {
+                    let imported = import_key(bytes_at(pkcs8[0..pkcs8.len()]), pkcs8.len(), CPtr.null(), 0)
+                    if imported.is_none() {
+                        return None
+                    }
+                    let (provider, key) = imported.unwrap()
+                    let _ = NCryptFreeObject(key)
+                    let _ = NCryptFreeObject(provider)
+                }
+                let block = calloc(1, KeyBlock.size()) as CPtr<KeyBlock>
+                let der = calloc(1, pkcs8.len())
+                let _ = memcpy(der, bytes_at(pkcs8[0..pkcs8.len()]), pkcs8.len())
+                (*block).der = der
+                (*block).len = pkcs8.len()
+                Some(PrivateKey { handle: block as CPtr<EvpPkey> })
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Reads a PEM private key file.
+    fn load_pem_file(path: str): Result<PrivateKey, TlsError> {
+        let text = read_text(path)?
+        PrivateKey.from_pem(text.as_str())
+    }
+}
+
+PrivateKey: Drop {
+    fn drop(mut self) {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                if !self.handle.is_null() {
+                    let block = self.handle as CPtr<KeyBlock>
+                    for i in 0..(*block).len {
+                        *((*block).der + i) = 0
+                    }
+                    free((*block).der)
+                    free(block as CPtr<u8>)
+                }
+            }
+        } else if features.openssl {
+            unsafe {
+                if !self.handle.is_null() {
+                    EVP_PKEY_free(self.handle)
+                }
+            }
+        } else {}
+    }
+}
+
+// ----- trust ----------------------------------------------------------------------------------------------------
+
+/// The certificate authorities a client trusts: the system's, some of your own, or both. A store with neither trusts
+/// nothing, so every verification against it fails.
+struct TrustStore {
+    use_system: bool,
+    roots: List<Certificate>,
+}
+
+TrustStore {
+    /// The system's trust store (OpenSSL's default certificate file and directory, or `SSL_CERT_FILE` and
+    /// `SSL_CERT_DIR`).
+    fn system(): TrustStore {
+        TrustStore { use_system: true, roots: List<Certificate>.new() }
+    }
+
+    /// A store with no authority at all; add the ones to trust.
+    fn empty(): TrustStore {
+        TrustStore { use_system: false, roots: List<Certificate>.new() }
+    }
+
+    /// Trusts `cert` too.
+    fn add(mut self, own cert: Certificate) {
+        self.roots.push(cert)
+    }
+
+    /// Trusts every certificate of a PEM text (one certificate or a bundle). Text with none is an error.
+    fn add_pem(mut self, pem: str): Result<(), TlsError> {
+        let all = Certificate.chain_from_pem(pem)?
+        for cert in all.into_iter() {
+            self.roots.push(cert)
+        }
+        Ok(())
+    }
+
+    /// Trusts every certificate of a PEM file.
+    fn add_pem_file(mut self, path: str): Result<(), TlsError> {
+        let text = read_text(path)?
+        self.add_pem(text.as_str())
+    }
+
+    /// How many certificates were added (the system's are not counted).
+    fn len(self): usize {
+        self.roots.len()
+    }
+}

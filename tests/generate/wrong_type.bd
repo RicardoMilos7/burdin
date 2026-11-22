@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A generator's value must be a `String`: E0003 at the value (spec/generate.md, GN2).
+
+comptime generate {
+    42 //~ E0003
+}
+
+fn main() {
+}

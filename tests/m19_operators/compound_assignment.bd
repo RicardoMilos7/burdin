@@ -1,6 +1,7 @@
 //@ compile-fail
 
-// Compound assignment is not part of stage 1, so `+=` is a syntax error (E0001, spec/operators.md OP1).
+// A user type without the operator's interface has no `+=`: the compound form is `a = a + a`, which needs `Add`, so it is
+// E0141 (spec/compound-assignment.md, CA5). The built-in forms are in tests/compound_assign/.
 
 struct Counter {
     n: i32
@@ -8,5 +9,5 @@ struct Counter {
 
 fn main() {
     let mut a = Counter { n: 1 }
-    a += a //~ E0001
+    a += a //~ E0141
 }

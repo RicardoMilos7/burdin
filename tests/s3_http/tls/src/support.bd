@@ -1,0 +1,661 @@
+// A scripted HTTPS server for the client's TLS tests (spec/http-client.md, HC17).
+//
+// It is the server of `tests/s3_http/client/src/support.bd` with TLS: a `Server` listens on 127.0.0.1 and a port the
+// system picks; the test hands it one `Script` per connection it expects, and connection number N plays script N. A
+// script is a list of steps (read a request, write bytes, sleep, close with a `close_notify`, abort without one, wait
+// for the client to close). A server made with a certificate runs the TLS handshake on each connection first; a
+// script marked `plain` is played on a bare socket instead, so one port can serve an `http` and an `https` connection
+// (the pool tests need that). The server records every request it reads, every handshake it finished, and how many
+// handshakes failed, so a test can show that a client that rejected a certificate sent no HTTP byte.
+//
+// Nothing here depends on the network outside the machine. The certificates are the committed test certificates of
+// tests/tls/regenerate.py, read with `embed`.
+
+use http
+use tls.{ServerConfig, TlsStream, TrustStore}
+
+const ROOT: str = embed("certs/root.pem")
+const CHAIN: str = embed("certs/chain.pem")
+const SERVER_KEY: str = embed("certs/server.key")
+const WRONG_HOST: str = embed("certs/wrong_host.pem")
+const WRONG_HOST_KEY: str = embed("certs/wrong_host.key")
+const EXPIRED: str = embed("certs/expired.pem")
+const EXPIRED_KEY: str = embed("certs/expired.key")
+const SELF_SIGNED: str = embed("certs/self_signed.pem")
+const SELF_SIGNED_KEY: str = embed("certs/self_signed.key")
+
+/// A server configuration for a certificate chain and its key (PEM texts).
+fn server_config(chain: str, key: str): ServerConfig {
+    ServerConfig.from_pem(chain, key).unwrap()
+}
+
+/// The good server: a leaf for localhost, example.test, and 127.0.0.1 behind an intermediate, signed by the test root.
+fn good_config(): ServerConfig {
+    server_config(CHAIN, SERVER_KEY)
+}
+
+/// A trust store that holds exactly the test root.
+fn root_store(): TrustStore {
+    let mut trust = TrustStore.empty()
+    trust.add_pem(ROOT).unwrap()
+    trust
+}
+
+/// A client that retries quickly and verifies against the test root only.
+fn trusting_client(): http.Client {
+    let mut client = http.Client.new()
+    client.retry_backoff = Duration.from_millis(1)
+    client.max_backoff = Duration.from_millis(5)
+    client.trust(root_store()).unwrap()
+    client
+}
+
+/// One thing the server does on a connection.
+enum Step: Clone {
+    /// Reads one request (its head, and its body when it has a `Content-Length`) and records it.
+    Read,
+    /// Reads whatever the client sends first (up to 4 KiB) and drops it: for a peer that is not speaking HTTP.
+    Drain,
+    /// Writes these bytes.
+    Write(String),
+    /// Waits this many milliseconds.
+    Sleep(u64),
+    /// Ends the connection with a TLS `close_notify` (a plain close without TLS); the script ends.
+    Close,
+    /// Ends the connection with no `close_notify`, as a crash or an attacker would; the script ends.
+    Abort,
+    /// Waits until the client ends its side of the connection, and records how it ended.
+    WaitClose,
+}
+
+/// What the server does on one connection. The connection is closed when the steps run out.
+struct Script: Clone {
+    steps: List<Step>,
+    /// Play the script on a bare socket even though the server has a certificate.
+    bare: bool,
+}
+
+Script {
+    fn new(): Script {
+        Script { steps: List<Step>.new(), bare: false }
+    }
+
+    fn plain(own self): Script {
+        let mut script = self
+        script.bare = true
+        script
+    }
+
+    fn read(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Read)
+        script
+    }
+
+    fn drain(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Drain)
+        script
+    }
+
+    fn write(own self, text: str): Script {
+        let mut script = self
+        script.steps.push(Step.Write(text.to_string()))
+        script
+    }
+
+    fn sleep(own self, millis: u64): Script {
+        let mut script = self
+        script.steps.push(Step.Sleep(millis))
+        script
+    }
+
+    fn close(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Close)
+        script
+    }
+
+    fn abort(own self): Script {
+        let mut script = self
+        script.steps.push(Step.Abort)
+        script
+    }
+
+    fn wait_close(own self): Script {
+        let mut script = self
+        script.steps.push(Step.WaitClose)
+        script
+    }
+}
+
+/// A complete response: the status line text (`200 OK`), extra header lines (each ending in CRLF), and a body whose
+/// `Content-Length` is added.
+fn reply(status: str, headers: str, body: str): String {
+    format("HTTP/1.1 {}\r\n{}Content-Length: {}\r\n\r\n{}", status, headers, body.len(), body)
+}
+
+/// `reply` with `200 OK` and no extra headers.
+fn ok(body: str): String {
+    reply("200 OK", "", body)
+}
+
+/// A redirect response to `location`.
+fn redirect(status: str, location: str): String {
+    reply(status, format("Location: {}\r\n", location), "")
+}
+
+/// `count` letters, as text.
+fn letters(count: usize): String {
+    let alphabet = "abcdefghijklmnopqrstuvwxyz"
+    let mut text = String.new()
+    for i in 0..count {
+        text.push_str(alphabet[i % 26..i % 26 + 1])
+    }
+    text
+}
+
+/// A connection of the server: a bare socket or a TLS session over one. Exactly one field holds a stream; a stream is
+/// taken out to be used and put back, because a `match` binding would move it out for good.
+struct Wire {
+    plain: Option<net.TcpStream>,
+    secure: Option<TlsStream>,
+}
+
+Wire {
+    fn bare(own stream: net.TcpStream): Wire {
+        Wire { plain: Some(stream), secure: None }
+    }
+
+    fn tls(own stream: TlsStream): Wire {
+        Wire { plain: None, secure: Some(stream) }
+    }
+
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match self.secure.take() {
+            Some(mut stream) => {
+                let result = stream.read(mut buf, max)
+                self.secure = Some(stream)
+                result
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                let result = stream.read(mut buf, max)
+                self.plain = Some(stream)
+                result
+            }
+        }
+    }
+
+    fn write_all(mut self, data: [u8]): Result<(), IoError> {
+        match self.secure.take() {
+            Some(mut stream) => {
+                let result: Result<(), IoError> = match stream.send_all(data) {
+                    Ok(_) => Ok(()),
+                    Err(failure) => Err(failure.to_io()),
+                }
+                self.secure = Some(stream)
+                result
+            }
+            None => {
+                let mut stream = self.plain.take().unwrap()
+                let result = stream.write_all(data)
+                self.plain = Some(stream)
+                result
+            }
+        }
+    }
+
+    fn is_tls(self): bool {
+        self.secure.is_some()
+    }
+
+    /// Ends the connection: with a `close_notify` when `notify`, and without when not. A bare socket just closes.
+    fn finish(own self, notify: bool) {
+        let mut me = self
+        match me.secure.take() {
+            Some(mut stream) => {
+                if notify {
+                    let _ = stream.close()
+                } else {
+                    stream.abort()
+                }
+            }
+            None => {
+                match me.plain.take() {
+                    Some(stream) => {
+                        let _ = stream.close()
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+}
+
+struct Server {
+    listener: net.TcpListener,
+    port: u16,
+    /// How many connections the test expects.
+    total: usize,
+    /// The certificate this server presents; `None` for a server that speaks no TLS at all.
+    config: Option<ServerConfig>,
+    log: Mutex<List<String>>,
+    hellos: Mutex<List<String>>,
+    accepts: AtomicUsize,
+    finished: AtomicUsize,
+    closed: AtomicUsize,
+    failed: AtomicUsize,
+}
+
+Server {
+    /// A server that speaks no TLS; `total` is how many connections the test makes.
+    fn start(total: usize): Server {
+        Server.open(total, None)
+    }
+
+    /// A server that runs a TLS handshake with `config` on every connection (but those of `plain` scripts).
+    fn start_tls(total: usize, own config: ServerConfig): Server {
+        Server.open(total, Some(config))
+    }
+
+    priv fn open(total: usize, own config: Option<ServerConfig>): Server {
+        let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+        let port = listener.local_addr().unwrap().port()
+        Server {
+            listener: listener,
+            port: port,
+            total: total,
+            config: config,
+            log: Mutex.new(List<String>.new()),
+            hellos: Mutex.new(List<String>.new()),
+            accepts: AtomicUsize.new(0),
+            finished: AtomicUsize.new(0),
+            closed: AtomicUsize.new(0),
+            failed: AtomicUsize.new(0),
+        }
+    }
+
+    /// `https://127.0.0.1:PORT` (`http` for a server without a certificate) followed by `path`.
+    fn url(self, path: str): String {
+        format("{}://127.0.0.1:{}{}", if self.config.is_some() { "https" } else { "http" }, self.port, path)
+    }
+
+    /// `http://127.0.0.1:PORT` followed by `path`, whether or not the server has a certificate.
+    fn plain_url(self, path: str): String {
+        format("http://127.0.0.1:{}{}", self.port, path)
+    }
+
+    /// `https://127.0.0.1:PORT` followed by `path`, whether or not the server has a certificate.
+    fn secure_url(self, path: str): String {
+        format("https://127.0.0.1:{}{}", self.port, path)
+    }
+
+    /// `https://localhost:PORT` followed by `path`: a host name, so the client sends SNI.
+    fn named_url(self, path: str): String {
+        format("https://localhost:{}{}", self.port, path)
+    }
+
+    /// `text` with this server's port number replaced by `PORT`, so output does not depend on the port.
+    fn mask(self, text: str): String {
+        text.replace(self.port.to_string().as_str(), "PORT")
+    }
+
+    /// Accepts `total` connections, one after another, and plays script N on connection N. Each connection gets its own
+    /// task (the handshake runs on it), so a script that waits does not keep the next connection from being served. A
+    /// task can only borrow what outlives the scope, so the accepted connections reach the tasks through a channel
+    /// made before it, and only one task accepts.
+    fn serve(self, scripts: List<Script>) {
+        let count = if scripts.len() < self.total { scripts.len() } else { self.total }
+        let work = Channel<(usize, net.TcpStream)>.bounded(1)
+        task.scope(|s| {
+            for _ in 0..count {
+                s.spawn(|| {
+                    match work.recv() {
+                        Some((index, conn)) => self.play(conn, scripts[index].clone(), index),
+                        None => {}
+                    }
+                })
+            }
+            for index in 0..count {
+                let (conn, _) = self.listener.accept().unwrap()
+                let _ = self.accepts.fetch_add(1)
+                let _ = work.send((index, conn))
+            }
+        })
+    }
+
+    /// The server is done when it has played `total` scripts. A client that made fewer connections would leave the
+    /// server waiting in `accept`; this connects (and drops) as many times as it takes, so a test that went wrong ends.
+    fn settle(self) {
+        let mut spins: usize = 0
+        while self.finished.load() < self.total && spins < 3000 {
+            if self.accepts.load() < self.total {
+                match net.TcpStream.connect(format("127.0.0.1:{}", self.port).as_str()) {
+                    Ok(stream) => {
+                        let _ = stream.close()
+                    }
+                    Err(_) => {}
+                }
+            }
+            time.sleep(Duration.from_millis(2))
+            spins = spins + 1
+        }
+    }
+
+    /// Waits until `count` scripts have ended their connection with a `Close` or `Abort` step.
+    fn wait_closed(self, count: usize) {
+        let mut spins: usize = 0
+        while self.closed.load() < count && spins < 3000 {
+            time.sleep(Duration.from_millis(2))
+            spins = spins + 1
+        }
+    }
+
+    fn accepted(self): usize {
+        self.accepts.load()
+    }
+
+    /// How many TLS handshakes failed on this server (the client rejected the certificate, or was not speaking TLS).
+    fn failed_handshakes(self): usize {
+        self.failed.load()
+    }
+
+    fn copy_of(entries: Mutex<List<String>>): List<String> {
+        entries.lock(|list| {
+            let mut copy = List<String>.new()
+            for item in list.iter() {
+                copy.push(item.clone())
+            }
+            copy
+        })
+    }
+
+    /// Every recorded request, in the order they were read, each as `#connection raw-request`.
+    fn requests(self): List<String> {
+        Server.copy_of(self.log)
+    }
+
+    /// The raw text of the Nth recorded request (from 0).
+    fn request(self, n: usize): String {
+        let all = self.requests()
+        if n < all.len() {
+            all[n].clone()
+        } else {
+            String.new()
+        }
+    }
+
+    /// The handshakes that completed, in the order they finished, each as `#connection version sni`.
+    fn handshakes(self): List<String> {
+        Server.copy_of(self.hellos)
+    }
+
+    /// Whether some record of the server says `text`.
+    fn saw(self, text: str): bool {
+        for entry in self.requests().iter() {
+            if entry.contains(text) {
+                return true
+            }
+        }
+        false
+    }
+
+    priv fn record(self, own text: String) {
+        self.log.lock(|list| list.push(text))
+    }
+
+    /// The connection of script `index`: after the handshake when the server has a certificate and the script is not
+    /// `plain`. `None` when the handshake failed.
+    priv fn wire_for(self, own conn: net.TcpStream, bare: bool, index: usize): Option<Wire> {
+        match self.config {
+            Some(config) => {
+                if bare {
+                    Some(Wire.bare(conn))
+                } else {
+                    match TlsStream.accept(conn, config) {
+                        Ok(stream) => {
+                            let name = match stream.server_name() {
+                                Some(text) => text,
+                                None => "-".to_string(),
+                            }
+                            let note = format("#{} {} sni={}", index + 1, stream.tls_version(), name)
+                            self.hellos.lock(|list| list.push(note))
+                            Some(Wire.tls(stream))
+                        }
+                        Err(_) => {
+                            let _ = self.failed.fetch_add(1)
+                            None
+                        }
+                    }
+                }
+            }
+            None => Some(Wire.bare(conn)),
+        }
+    }
+
+    /// Plays one script on one connection.
+    priv fn play(self, own conn: net.TcpStream, script: Script, index: usize) {
+        let mut conn = conn
+        // A client that gave up leaves a write with nowhere to go, and one that never speaks leaves a read waiting:
+        // neither may hold a test up for long.
+        conn.set_write_timeout(Some(Duration.from_millis(1000)))
+        conn.set_read_timeout(Some(Duration.from_millis(5000)))
+        let mut wire = match self.wire_for(conn, script.bare, index) {
+            Some(w) => w,
+            None => {
+                let _ = self.finished.fetch_add(1)
+                return
+            }
+        }
+        let mut pending = List<u8>.new()
+        let mut notify = true
+        for step in script.steps.iter() {
+            match step {
+                Step.Read => {
+                    match read_request(mut wire, mut pending) {
+                        Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
+                        None => self.record(format("#{}\n(no request)", index + 1)),
+                    }
+                }
+                Step.Drain => {
+                    let mut scratch = List<u8>.new()
+                    let _ = wire.read(mut scratch, 4096)
+                }
+                Step.Write(text) => {
+                    let bytes = text.to_utf8()
+                    let _ = wire.write_all(bytes[0..bytes.len()])
+                }
+                Step.Sleep(millis) => time.sleep(Duration.from_millis(millis)),
+                Step.Close => break,
+                Step.Abort => {
+                    notify = false
+                    break
+                }
+                Step.WaitClose => {
+                    let mut scratch = List<u8>.new()
+                    let mut how = "(client closed)".to_string()
+                    loop {
+                        match wire.read(mut scratch, 1024) {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(failure) => {
+                                how = match failure.kind() {
+                                    IoErrorKind.UnexpectedEof => "(client closed without close_notify)".to_string(),
+                                    IoErrorKind.TimedOut => "(client never closed)".to_string(),
+                                    else => "(client closed)".to_string(),
+                                }
+                                break
+                            }
+                        }
+                    }
+                    self.record(format("#{}\n{}", index + 1, how))
+                }
+            }
+        }
+        let by_script = script.ends_in_close()
+        // Close before counting, so a test that waits for the count finds the connection already closed.
+        wire.finish(notify)
+        if by_script {
+            let _ = self.closed.fetch_add(1)
+        }
+        let _ = self.finished.fetch_add(1)
+    }
+}
+
+Script {
+    /// Whether the script ends the connection itself (a `Close` or `Abort` step).
+    fn ends_in_close(self): bool {
+        for step in self.steps.iter() {
+            match step {
+                Step.Close => return true,
+                Step.Abort => return true,
+                // lint: allow(else_on_local_enum)
+                else => {}
+            }
+        }
+        false
+    }
+}
+
+/// The bytes of `bytes` from `from` on.
+fn tail_of(bytes: List<u8>, from: usize): List<u8> {
+    let mut rest = List<u8>.new()
+    rest.extend_from_slice(bytes[from..bytes.len()])
+    rest
+}
+
+fn text_of(bytes: List<u8>, end: usize): String {
+    String.from_utf8_lossy(bytes[0..end])
+}
+
+/// Reads one request: up to the blank line, and then `Content-Length` more bytes. `pending` holds bytes already read
+/// from the connection and not used yet. `None` when the client closed first.
+fn read_request(mut conn: Wire, mut pending: List<u8>): Option<String> {
+    let mut end: usize = 0
+    loop {
+        match http.find_head_end(pending) {
+            Some(at) => {
+                end = at
+                break
+            }
+            None => {}
+        }
+        match conn.read(mut pending, 4096) {
+            Ok(0) => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    let head = text_of(pending, end)
+    let length = match u64.parse(header_of(head.as_str(), "content-length").as_str()) {
+        Ok(n) => n as usize,
+        Err(_) => 0,
+    }
+    while pending.len() < end + length {
+        match conn.read(mut pending, 4096) {
+            Ok(0) => return None,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    let raw = text_of(pending, end + length)
+    let rest = tail_of(pending, end + length)
+    pending = rest
+    Some(raw)
+}
+
+// ----- looking into a recorded request --------------------------------------------------------------------------
+
+/// The request line of a recorded request (`#1\nGET / HTTP/1.1...`): without the `#N` line.
+fn request_line(recorded: str): String {
+    let lines = recorded.split("\r\n")
+    let first = lines[0].as_str()
+    match first.find('\n') {
+        Some(at) => first[at + 1..first.len()].to_string(),
+        None => first.to_string(),
+    }
+}
+
+/// The value of the header `name` in a recorded request, or `-` when it is absent.
+fn header_of(recorded: str, name: str): String {
+    let lines = recorded.split("\r\n")
+    let mut i: usize = 1
+    while i < lines.len() {
+        let line = lines[i].as_str()
+        match line.find(':') {
+            Some(colon) => {
+                if line[0..colon].eq_ignore_ascii_case(name) {
+                    return line[colon + 1..line.len()].trim().to_string()
+                }
+            }
+            None => {}
+        }
+        i = i + 1
+    }
+    "-".to_string()
+}
+
+/// The body of a recorded request.
+fn body_of(recorded: str): String {
+    match recorded.find_str("\r\n\r\n") {
+        Some(at) => recorded[at + 4..recorded.len()].to_string(),
+        None => String.new(),
+    }
+}
+
+// ----- helpers for the scenarios ---------------------------------------------------------------------------------
+
+/// The status and text of a response, or the failure, on one line.
+fn fetch(client: http.Client, url: str): String {
+    match client.get(url) {
+        Ok(response) => finish(response),
+        Err(e) => format("error: {}", e),
+    }
+}
+
+fn finish(own response: http.Response): String {
+    let mut response = response
+    let status = response.status
+    match response.text() {
+        Ok(text) => format("{} body={:?}", status, text),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// The variant of a TLS failure, which does not depend on OpenSSL's wording; `-` for an error that is not one.
+fn tls_kind(failure: http.HttpError): String {
+    match failure {
+        http.HttpError.Tls(inner) => {
+            let name = match inner {
+                tls.TlsError.Io(_) => "Io",
+                tls.TlsError.Handshake(_) => "Handshake",
+                tls.TlsError.Protocol(_) => "Protocol",
+                tls.TlsError.CertificateInvalid(_) => "CertificateInvalid",
+                tls.TlsError.HostnameMismatch(_) => "HostnameMismatch",
+                tls.TlsError.UnexpectedEof => "UnexpectedEof",
+                tls.TlsError.Closed => "Closed",
+                tls.TlsError.BadCertificate(_) => "BadCertificate",
+                tls.TlsError.BadKey(_) => "BadKey",
+                tls.TlsError.KeyMismatch => "KeyMismatch",
+                tls.TlsError.Config(_) => "Config",
+                tls.TlsError.Unsupported(_) => "Unsupported",
+            }
+            name.to_string()
+        }
+        else => "-".to_string(),
+    }
+}
+
+/// What a failed request says on one line: the message (when `with_message`), whether it is a TLS and a verification
+/// failure, and the TLS variant.
+fn describe(failure: http.HttpError, with_message: bool): String {
+    let text = if with_message { format("{} ", failure) } else { String.new() }
+    format(
+        "{}tls={} verification={} kind={}",
+        text,
+        failure.is_tls(),
+        failure.is_verification(),
+        tls_kind(failure.clone()),
+    )
+}

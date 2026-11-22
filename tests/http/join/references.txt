@@ -1,0 +1,19 @@
+# base | reference (HC2)
+http://h/a/b/c?x=1 | d
+http://h/a/b/c?x=1 | ./d
+http://h/a/b/c?x=1 | ../d
+http://h/a/b/c?x=1 | ../../../../d
+http://h/a/b/c?x=1 | /abs
+http://h/a/b/c?x=1 | /abs?q=2
+http://h/a/b/c?x=1 | ?y=2
+http://h/a/b/c?x=1 | //other:81/p
+http://h/a/b/c?x=1 | https://s/x
+http://h/a/b/c?x=1 | ftp://s/x
+http://h/a/b/c?x=1 | sub/../x
+http://h/a/b/c?x=1 | #frag
+http://h/a/b/c?x=1 | d#frag
+http://h/a/b/ | .
+http://h/a/b/ | ..
+http://h | x
+http://h | 
+http://h/a/b/c | bad ref

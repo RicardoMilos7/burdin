@@ -166,14 +166,14 @@ fn common(a: &str, b: &str) -> (usize, usize) {
 }
 
 /// An analysis with a program and a way to translate positions of the current text into it.
-struct Answering<'a> {
-    analysis: &'a Analysis,
+pub(crate) struct Answering<'a> {
+    pub(crate) analysis: &'a Analysis,
     old: Option<Rc<str>>,
     new: String,
 }
 
 impl Answering<'_> {
-    fn of<'a>(p: &'a Package, path: &str) -> Option<Answering<'a>> {
+    pub(crate) fn of<'a>(p: &'a Package, path: &str) -> Option<Answering<'a>> {
         let (analysis, texts) = p.program_analysis()?;
         let new = p.text(path)?.to_string();
         let old = texts.and_then(|t| t.get(path).cloned());
@@ -202,7 +202,7 @@ impl Answering<'_> {
 
     /// The type of the local `name` declared last before `offset` of the current text: what a name typed since the
     /// last good analysis most likely stands for.
-    fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
+    pub(crate) fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
         self.analysis
             .locals(path)
             .into_iter()
@@ -411,6 +411,11 @@ enum Context {
     Parameter { first: bool, method: bool },
     /// In the `: A, B` list after `struct Name` or `enum Name`, at the start of a name.
     Derives,
+    /// Where a type is written: a `let` annotation, a parameter's or a return type, a field's type (LS12).
+    Type,
+    /// Where an interface is named: a generic bound, a `where` clause, an interface's `requires` list, an impl block's
+    /// `Type: ` at the top level, or the interface after `any` or `impl` (LS12).
+    Bound,
     /// The name a declaration is introducing: nothing to offer.
     NewName,
     /// At the start of a line at the top level.
@@ -482,7 +487,7 @@ fn top_level_block(text: &str, ix: &FileIndex, brace: usize) -> Block {
     }
     match first {
         Some(Tk::Keyword("interface" | "derive")) => Block::Methods,
-        Some(Tk::Keyword("fn" | "extern")) => Block::Code,
+        Some(Tk::Keyword("fn" | "extern" | "const")) => Block::Code,
         Some(Tk::Ident(word)) if word == "test" || word == "bench" => Block::Code,
         Some(Tk::Ident(_) | Tk::SelfType) => Block::Methods,
         _ => Block::Declaration,
@@ -562,6 +567,93 @@ fn in_derive_list(ix: &FileIndex, end: usize) -> bool {
     false
 }
 
+/// Whether the tokens before `end` are inside a bound list: a generic parameter list (`fn f<T: `), a `where` clause, or
+/// an interface's `requires` list. The scan stops at the braces and parentheses that close the header.
+fn in_bound_list(ix: &FileIndex, end: usize) -> bool {
+    let mut depth = 0i32;
+    for i in (0..end).rev() {
+        match &ix.tokens[i].kind {
+            Tk::LBrace | Tk::RBrace | Tk::LParen | Tk::RParen => return false,
+            Tk::Gt => depth += 1,
+            Tk::Lt if depth == 0 => return i > 0 && ix.tokens[i - 1].ident().is_some(),
+            Tk::Lt => depth -= 1,
+            Tk::Keyword("where") => return true,
+            Tk::Ident(word) if word.as_str() == "requires" => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the tokens before `end` are `let name: `, `let mut name: `, or `const NAME: `: a type annotation.
+fn let_annotation(ix: &FileIndex, end: usize) -> bool {
+    let kind = |back: usize| end.checked_sub(back).map(|i| &ix.tokens[i].kind);
+    if !kind(2).is_some_and(|k| matches!(k, Tk::Ident(_))) {
+        return false;
+    }
+    kind(3) == Some(&Tk::Keyword("let"))
+        || kind(3) == Some(&Tk::Keyword("const"))
+        || (kind(3) == Some(&Tk::Keyword("mut")) && kind(4) == Some(&Tk::Keyword("let")))
+}
+
+/// Whether the tokens before `end` are the `): ` of a function declaration: the colon of its return type.
+fn return_type(ix: &FileIndex, end: usize) -> bool {
+    let Some(close) = end.checked_sub(2) else { return false };
+    if ix.tokens[close].kind != Tk::RParen {
+        return false;
+    }
+    let mut depth = 0i32;
+    for i in (0..=close).rev() {
+        match ix.tokens[i].kind {
+            Tk::RParen => depth += 1,
+            Tk::LParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return declares_function(ix, i).is_some();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the word before `end` is the first word of its line: `Type: ` written at the start of a line.
+fn at_line_start_word(text: &str, ix: &FileIndex, end: usize) -> bool {
+    let Some(word) = end.checked_sub(2).map(|i| &ix.tokens[i]) else { return false };
+    word.ident().is_some() && text[..word.lo as usize].rsplit('\n').next().is_some_and(|s| s.trim().is_empty())
+}
+
+/// The position of a type or an interface, by the word before the cursor (LS12): an interface after `any`, `impl`,
+/// `requires`, a `+` in a bound list, a colon in a bound list or at the top level (`Type: ` starts an impl block); a
+/// type after a colon that annotates a `let`, a `const`, a return, a field, or (by the caller) a parameter.
+fn type_or_bound(text: &str, ix: &FileIndex, end: usize, prev: Option<&Tk>, before: Option<&Tk>) -> Option<Context> {
+    let plus = end > 0
+        && ix.tokens[end - 1].kind == Tk::Other
+        && text.get(ix.tokens[end - 1].lo as usize..ix.tokens[end - 1].hi as usize) == Some("+");
+    let names_interface = matches!(prev, Some(Tk::Keyword("any" | "impl")))
+        || matches!(prev, Some(Tk::Ident(word)) if word.as_str() == "requires");
+    if names_interface || (plus && in_bound_list(ix, end)) {
+        return Some(Context::Bound);
+    }
+    if !matches!(prev, Some(Tk::Colon)) {
+        return None;
+    }
+    if in_bound_list(ix, end) {
+        return Some(Context::Bound);
+    }
+    let blocks = open_blocks(text, ix, end);
+    // `Type: ` at the top level, outside any parentheses, starts an impl block's interface.
+    if blocks.is_empty() && open_paren(ix, end).is_none() && at_line_start_word(text, ix, end) {
+        return Some(Context::Bound);
+    }
+    let in_declaration = blocks.last().is_some_and(|(_, b)| *b == Block::Declaration);
+    if let_annotation(ix, end) || return_type(ix, end) || (in_declaration && matches!(before, Some(Tk::Ident(_)))) {
+        return Some(Context::Type);
+    }
+    None
+}
+
 fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
     let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
     let line = text[line_start..start].trim_start();
@@ -579,7 +671,9 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
         let at_start = matches!(prev, Some(Tk::LParen | Tk::Comma));
         if let Some(extension) = declares_function(ix, open) {
             if !at_start {
-                return Context::Expression;
+                // `fn f(x: ` is a parameter's type, and `fn f(x: any ` or `fn f(x: T + ` an interface.
+                let fallback = if matches!(prev, Some(Tk::Colon)) { Context::Type } else { Context::Expression };
+                return type_or_bound(text, ix, end, prev, before).unwrap_or(fallback);
             }
             let blocks = open_blocks(text, ix, end);
             let method = extension || blocks.last().is_some_and(|(_, b)| *b == Block::Methods);
@@ -606,6 +700,9 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
         }
         (_, Some(Tk::Keyword("struct" | "enum" | "interface" | "fn"))) => return Context::NewName,
         _ => {}
+    }
+    if let Some(context) = type_or_bound(text, ix, end, prev, before) {
+        return context;
     }
     if !line.is_empty() {
         return Context::Expression;
@@ -660,19 +757,21 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         }
         Context::Derives => derive_completions(&mut r, &path, &ix, &mut out),
         Context::NewName => {}
+        Context::Type => scope_completions(&mut r, &path, &ix, offset, Scope::Types, &mut out),
+        Context::Bound => scope_completions(&mut r, &path, &ix, offset, Scope::Interfaces, &mut out),
         Context::Item => {
             out.snippets(ITEM_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, &mut out);
+            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
         }
         Context::MethodItem => {
             out.snippets(METHOD_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, &mut out);
+            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
         }
         Context::Statement => {
             out.snippets(STATEMENT_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, &mut out);
+            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
         }
-        Context::Expression => scope_completions(&mut r, &path, &ix, offset, &mut out),
+        Context::Expression => scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out),
     }
     let mut items = out.items;
     items.sort_by(|a, b| a.get("sortText").as_str().cmp(&b.get("sortText").as_str()));
@@ -726,8 +825,12 @@ fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
 fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, dot: u32, out: &mut Completions) {
     let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return };
     let receiver = ix.tokens[ti].clone();
+    // A name after a `.` is a member of the value before it, so it is never a local, a module, or a type.
+    let member = dot_before(ix, ti);
 
-    if let Tk::Ident(name) = &receiver.kind {
+    if let Tk::Ident(name) = &receiver.kind
+        && !member
+    {
         // The answering analysis may be older than the text: its offsets are mapped.
         let is_value = Answering::of(r.p, path).is_some_and(|a| {
             a.old_offset(receiver.lo)
@@ -753,24 +856,155 @@ fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, 
             }
         }
     }
-    let ty = Answering::of(r.p, path).and_then(|a| {
-        // A half-written member (`sq.` before the next line) may parse as part of a larger expression that does not
-        // type-check; the receiver's own declaration still says what it is.
-        a.type_at(path, receiver.lo).filter(|t| !t.contains("{error}") && !t.is_empty()).or_else(|| {
-            match &receiver.kind {
-                Tk::Ident(name) => a.local_before(path, name, receiver.lo),
-                _ => None,
-            }
-        })
-    });
+    // `self.` in a method: the members of the type the method belongs to, whether or not the body parses (issue #852).
+    if receiver.kind == Tk::SelfValue {
+        if let Some(owner) = ix.self_owner(receiver.lo) {
+            let all = r.all_items();
+            value_members(&all, &base_type(&owner), out);
+        }
+        return;
+    }
+    let all = r.all_items();
+    let ty = receiver_type(Answering::of(r.p, path).as_ref(), ix, &all, path, ti);
     // A literal's spelling says its type when the analysis has not seen it yet.
     let ty = match (ty, literal_type(text, &receiver)) {
         (Some(ty), _) => ty,
         (None, Some(literal)) => literal.to_string(),
         (None, None) => return,
     };
-    let all = r.all_items();
-    value_members(&all, &base_type(&ty), out);
+    let base = base_type(&ty);
+    match ix.bounds_of(receiver.lo, &base) {
+        // A generic parameter (`s: S` with `S: Serializer`): the methods of its bounds.
+        Some(bounds) => bound_members(&all, &bounds, out),
+        None => value_members(&all, &base, out),
+    }
+}
+
+/// Whether a type the analysis reports can be used: an error type says nothing about the value.
+fn usable(ty: &str) -> bool {
+    !ty.is_empty() && !ty.contains("{error}")
+}
+
+/// The type of the value the expression ending at token `ti` has, for a member completion (LS12). The typed tree
+/// answers first, when it holds the expression and types it. Otherwise the chain is read from the declarations: the
+/// root's type (a local, a parameter, or `self`), then each field's declared type and each method's return type. So
+/// `resp.body.` and `client.send(req).` resolve while the member after the dot is still missing (issue #879).
+fn receiver_type(
+    a: Option<&Answering<'_>>,
+    ix: &FileIndex,
+    all: &[(String, Item)],
+    path: &str,
+    ti: usize,
+) -> Option<String> {
+    let tok = &ix.tokens[ti];
+    if let Some(ty) = a.and_then(|a| a.type_at(path, tok.lo)).filter(|t| usable(t)) {
+        return Some(ty);
+    }
+    match &tok.kind {
+        Tk::SelfValue => ix.self_owner(tok.lo),
+        // `resp.body`: the field's declared type, read from the value before the dot.
+        Tk::Ident(name) if dot_before(ix, ti) => {
+            let owner = base_type(&receiver_type(a, ix, all, path, ti.checked_sub(2)?)?);
+            field_type(all, &owner, name)
+        }
+        Tk::Ident(name) => a
+            .and_then(|a| a.local_before(path, name, tok.lo))
+            .filter(|t| usable(t))
+            .or_else(|| ix.parameter_type(tok.lo, name)),
+        // `client.send(req)` or `read(req)`: the return type of the method or function called.
+        Tk::RParen => {
+            let open = open_before(ix, ti)?;
+            let callee = ix.tokens.get(open.checked_sub(1)?)?.ident()?;
+            if open >= 3 && dot_before(ix, open - 1) {
+                let owner = base_type(&receiver_type(a, ix, all, path, open - 3)?);
+                method_return(all, &owner, callee)
+            } else {
+                function_return(all, callee)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether token `i` is a name a `.` touches on its left (`resp.body`, not a name on the next line after a `.`).
+fn dot_before(ix: &FileIndex, i: usize) -> bool {
+    i > 0 && ix.tokens[i - 1].kind == Tk::Dot && ix.tokens[i - 1].hi == ix.tokens[i].lo
+}
+
+/// The `(` matching the `)` at token `close`.
+fn open_before(ix: &FileIndex, close: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for i in (0..=close).rev() {
+        match ix.tokens[i].kind {
+            Tk::RParen => depth += 1,
+            Tk::LParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The declared type of a field of `owner` (`body: Body` gives `Body`).
+fn field_type(all: &[(String, Item)], owner: &str, name: &str) -> Option<String> {
+    let (_, field) =
+        all.iter().find(|(_, i)| i.kind == Kind::Field && i.owner.as_deref() == Some(owner) && i.name == name)?;
+    field.detail.split_once(':').map(|(_, ty)| ty.trim().to_string()).filter(|ty| usable(ty))
+}
+
+/// The return type of the method `name` of `owner`, read from its declaration.
+fn method_return(all: &[(String, Item)], owner: &str, name: &str) -> Option<String> {
+    let (_, method) = all.iter().find(|(_, i)| {
+        matches!(i.kind, Kind::Method | Kind::InterfaceMethod) && i.owner.as_deref() == Some(owner) && i.name == name
+    })?;
+    return_type_of(&method.detail, owner)
+}
+
+/// The return type of the function `name`, preferring the file's own over the standard library's.
+fn function_return(all: &[(String, Item)], name: &str) -> Option<String> {
+    let (_, function) = all
+        .iter()
+        .filter(|(_, i)| i.kind == Kind::Function && i.owner.is_none() && i.name == name)
+        .min_by_key(|(path, _)| path.starts_with("<std>/"))?;
+    return_type_of(&function.detail, "")
+}
+
+/// The return type a declaration names (`fn send(self, req: Request): Response` gives `Response`), with `Self` read
+/// as `owner`; `None` when it names none.
+fn return_type_of(detail: &str, owner: &str) -> Option<String> {
+    let rest = &detail[detail.find("fn ")? + 3..];
+    let (mut angles, mut parens, mut open) = (0i32, 0i32, false);
+    let mut after = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '<' if !open => angles += 1,
+            '>' if !open => angles -= 1,
+            '(' if !open && angles == 0 => {
+                open = true;
+                parens = 1;
+            }
+            '(' if open => parens += 1,
+            ')' if open => {
+                parens -= 1;
+                if parens == 0 {
+                    after = Some(&rest[i + 1..]);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let ty = after?.trim().strip_prefix(':')?.trim().trim_end_matches('{').trim();
+    let ty = ty.split(" where ").next().unwrap_or(ty).trim();
+    match ty {
+        "" => None,
+        "Self" => Some(owner.to_string()),
+        _ => Some(ty.to_string()),
+    }
 }
 
 /// The associated functions of a type written by name (`String.new`, `Rect.new`) and its variants: what follows
@@ -831,6 +1065,19 @@ fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
         };
         if let Some((name, detail, docs)) = provided {
             out.add(name, 2, &detail, Some(docs), 1);
+        }
+    }
+}
+
+/// The methods with a `self` receiver that the interfaces a generic parameter is bounded by declare (`S: Serializer`
+/// gives `serialize_unit`, `serialize_i32`, ...), so `s.` in a body offers what `s` can do.
+fn bound_members(all: &[(String, Item)], bounds: &[String], out: &mut Completions) {
+    for (_, item) in all
+        .iter()
+        .filter(|(_, i)| i.kind == Kind::InterfaceMethod && i.owner.as_ref().is_some_and(|o| bounds.contains(o)))
+    {
+        if takes_self(&item.detail) {
+            out.item(item, 1);
         }
     }
 }
@@ -900,12 +1147,39 @@ fn module_file_named(r: &mut Resolver, path: &str, ix: &FileIndex, name: &str) -
     crate::nav::std_module(r.p, package, name)
 }
 
+/// What a plain name may stand for at a position (LS12): a value (the usual case), a type where a type is written, or
+/// an interface where a bound is written.
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    Values,
+    Types,
+    Interfaces,
+}
+
+impl Scope {
+    /// Whether a declaration of kind `kind` may be named here. Modules stay admitted: they are path prefixes.
+    fn admits(self, kind: Kind) -> bool {
+        match self {
+            Scope::Values => true,
+            Scope::Types => matches!(kind, Kind::Struct | Kind::Enum | Kind::Alias),
+            Scope::Interfaces => kind == Kind::Interface,
+        }
+    }
+}
+
 /// A plain name: the locals in scope, the file's items, what its `use` declarations import, the prelude, the
-/// built-ins, and the keywords.
-fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, out: &mut Completions) {
+/// built-ins, and the keywords, narrowed to what `scope` admits.
+fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, scope: Scope, out: &mut Completions) {
+    if scope == Scope::Types {
+        // A generic parameter of the function around the cursor is a type.
+        for (name, _) in ix.generic_params(offset) {
+            out.add(&name, 25, "generic parameter", None, 0);
+        }
+    }
     // Locals and parameters of the function around the cursor, declared before it.
     if let Some(function) = ix.function_around(offset).cloned()
         && let Some(answer) = Answering::of(r.p, path)
+        && scope == Scope::Values
     {
         let mut locals = answer.analysis.locals(path);
         locals.sort_by_key(|l| std::cmp::Reverse(l.at.lo));
@@ -917,7 +1191,7 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
             }
         }
     }
-    for item in ix.items.iter().filter(|i| i.parent.is_none() && i.kind != Kind::Method) {
+    for item in ix.items.iter().filter(|i| i.parent.is_none() && i.kind != Kind::Method && scope.admits(i.kind)) {
         out.item(item, 1);
     }
     // Imported names.
@@ -932,8 +1206,12 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
                             .and_then(|mix| mix.items.iter().find(|i| i.name == *name && i.parent.is_none()).cloned())
                     });
                     match found {
-                        Some(item) => out.item(&item, 2),
-                        None => out.add(name, 9, &format!("module {}.{name}", segments.join(".")), None, 2),
+                        Some(item) if scope.admits(item.kind) => out.item(&item, 2),
+                        Some(_) => {}
+                        None if scope == Scope::Values => {
+                            out.add(name, 9, &format!("module {}.{name}", segments.join(".")), None, 2)
+                        }
+                        None => {}
                     }
                 }
             } else if let Some((alias, _)) = &u.alias {
@@ -949,7 +1227,7 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
                                 mix.items.iter().find(|i| i.name == *last && i.parent.is_none()).cloned()
                             })
                         });
-                        if let Some(item) = found {
+                        if let Some(item) = found.filter(|item| scope.admits(item.kind)) {
                             out.item(&item, 2);
                         }
                     }
@@ -960,7 +1238,7 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
     // The built-in functions (`println`), then the prelude: every public item of every standard-library module, and
     // the one-segment modules by name (`env`, `fs`).
     let builtins = r.index(crate::builtins::PATH).unwrap_or_default();
-    for item in builtins.items.iter().filter(|i| i.kind == Kind::Function) {
+    for item in builtins.items.iter().filter(|i| i.kind == Kind::Function && scope == Scope::Values) {
         out.item(item, 3);
     }
     let std_files: Vec<(String, String)> =
@@ -971,7 +1249,11 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
             .collect();
     for (file, module) in &std_files {
         if let Some(ix) = r.index(file) {
-            for item in ix.items.iter().filter(|i| i.parent.is_none() && !i.is_priv && i.kind != Kind::Method) {
+            for item in ix
+                .items
+                .iter()
+                .filter(|i| i.parent.is_none() && !i.is_priv && i.kind != Kind::Method && scope.admits(i.kind))
+            {
                 out.item(item, 3);
             }
         }
@@ -979,11 +1261,15 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
             out.add(module, 9, &format!("module std.{module}"), None, 4);
         }
     }
-    for name in BUILTIN_TYPES {
-        out.add(name, 22, "built-in type", None, 4);
+    if scope != Scope::Interfaces {
+        for name in BUILTIN_TYPES {
+            out.add(name, 22, "built-in type", None, 4);
+        }
     }
-    for word in KEYWORDS {
-        out.add(word, 14, "keyword", None, 5);
+    if scope == Scope::Values {
+        for word in KEYWORDS {
+            out.add(word, 14, "keyword", None, 5);
+        }
     }
 }
 

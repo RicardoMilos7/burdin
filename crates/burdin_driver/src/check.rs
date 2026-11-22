@@ -8,15 +8,17 @@
 //! step-by-step trace for a memory error (`--explain`).
 
 use crate::{
-    CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, flag_without_value, front_end,
-    jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings, report_errors,
+    CheckStats, CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, check_summary_json,
+    flag_without_value, front_end, jobs_or_default, option_value, parse_diagnostic_option, parse_jobs, print_warnings,
+    report_errors,
 };
-use burdin_diag::{Json, SourceMap, Span};
+use burdin_diag::{DiagnosticFormat, Json, SourceMap, Span};
 use burdin_query::{Convention, FunctionOwnership, OwnershipEventInfo, OwnershipEventKind};
 use burdin_tir::{Function, MOVED_DEREF, Program};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OwnershipFormat {
@@ -31,6 +33,8 @@ struct CheckArgs {
     release: bool,
     /// `--profile <name>` (`spec/profiles.md`).
     profile_name: Option<String>,
+    /// `-O<n>`: the optimization level that replaces the profile's `opt-level` (`spec/profiles.md`, BP4).
+    opt_level: Option<crate::profile::OptLevel>,
     tests: bool,
     /// `--locked`: refuse to update `burdin.lock`.
     locked: bool,
@@ -48,6 +52,8 @@ struct CheckArgs {
     function: Option<String>,
     /// `--format`: `human`/`text` or `json`, for `--print-instances` and `--explain-ownership`.
     format: Option<OwnershipFormat>,
+    /// `-v`/`--verbose`: print each phase of the check with its time (`spec/build-tool.md`).
+    verbose: bool,
 }
 
 fn parse(argv: &[String]) -> Result<CheckArgs, String> {
@@ -59,6 +65,8 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
             // `-j4` is `-j 4`, as in cargo and make.
             _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
+            // `-O2` is `-O 2` (`spec/profiles.md`, BP4).
+            _ if raw.len() > 2 && raw.starts_with("-O") => ("-O", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         if parse_diagnostic_option(&mut it, inline, a, &mut args.diagnostics)? {
@@ -67,6 +75,10 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
+            "-O" => {
+                let value = option_value(&mut it, inline, a, "an optimization level from 0 to 3")?;
+                crate::profile::set_opt_level(&mut args.opt_level, crate::profile::parse_opt_level(&value)?)?;
+            }
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
             "--features" => {
@@ -79,6 +91,8 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
+            "-q" | "--quiet" => args.diagnostics.quiet = flag_without_value(a, inline)?,
+            "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--fn" => args.function = Some(option_value(&mut it, inline, a, "a function name")?),
             "--format" => {
@@ -109,6 +123,9 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
     if args.function.is_some() && !args.explain_ownership {
         return Err("`--fn` needs `--explain-ownership`".to_string());
     }
+    if args.verbose && args.diagnostics.quiet {
+        return Err("`--quiet` and `--verbose` conflict: choose one".to_string());
+    }
     args.target = target.ok_or("missing target file")?;
     if args.release {
         match &args.profile_name {
@@ -123,12 +140,18 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
 }
 
 pub(crate) fn run(argv: &[String]) -> ExitCode {
+    let started = Instant::now();
     let args = match parse(argv) {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("check", &message),
     };
-    let profile = match crate::profile::resolve_for_command("check", &args.target, args.profile_name.as_deref(), "dev")
-    {
+    let profile = match crate::profile::resolve_for_command(
+        "check",
+        &args.target,
+        args.profile_name.as_deref(),
+        "dev",
+        args.opt_level,
+    ) {
         Ok(profile) => profile,
         Err(code) => return code,
     };
@@ -155,14 +178,19 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: args.verbose,
     };
     let front = match front_end(&args.target, &options, &SourceOverrides::new()) {
         Ok(front) => front,
         Err(code) => return code,
     };
+    let stats = CheckStats { files: source_file_count(&front), started };
+    // The JSON format ends with the check summary (CK12), so nothing may follow it on standard error: the trace of
+    // `--explain` is text, and the JSON diagnostics already carry its rule ID, help, and related locations.
+    let json = args.diagnostics.format == DiagnosticFormat::Json;
     if front.diags.has_errors() {
-        report_errors("check", &args.target, &front.diags, &front.sources, &args.diagnostics);
-        if args.explain {
+        report_errors("check", &args.target, &front.diags, &front.sources, &args.diagnostics, Some(stats));
+        if args.explain && !json {
             explain_memory(&front);
         }
         if args.explain_ownership {
@@ -170,7 +198,10 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         }
         return ExitCode::from(1);
     }
-    print_warnings(&front.diags, &front.sources, &args.diagnostics, options.report_clean);
+    let shown = print_warnings(&front.diags, &front.sources, &args.diagnostics, options.report_clean);
+    if json {
+        eprint!("{}", check_summary_json(&front.diags, shown, args.diagnostics.error_limit, stats));
+    }
     if args.print_instances {
         let program = front.program.as_ref().expect("no errors means checking produced a program");
         let files = &front.files;
@@ -187,6 +218,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         show_ownership(&front, &args);
     }
     ExitCode::SUCCESS
+}
+
+/// The source files a check read: every module of every package on disk. The embedded standard library and a
+/// generated module (text the build script produced) are not files the package has, so they are not counted
+/// (`spec/check.md`, CK12).
+fn source_file_count(front: &FrontEnd) -> usize {
+    front.loaded.packages.iter().flat_map(|package| &package.modules).filter(|module| module.text.is_none()).count()
 }
 
 // ---- ownership events (--explain-ownership) -------------------------------------------------------------

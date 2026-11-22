@@ -133,6 +133,13 @@ impl Globals {
         seen.push(iface);
         let info = &self.interfaces[iface];
         let name = self.any_iface_name(iface, args);
+        // A vtable is a fixed set of function slots; it cannot answer which type an associated type is for a
+        // concrete value (`spec/associated-types.md`, AT5).
+        if let Some(first) = info.assoc.first() {
+            return Some(format!(
+                "interface `{name}` has the associated type `{first}`, so it cannot be used as `any`"
+            ));
+        }
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
         for m in &info.methods {
             if m.generic {
@@ -310,6 +317,7 @@ fn ty_mentions_self(ty: &Ty) -> bool {
         | Ty::Range(inner, _) => ty_mentions_self(inner),
         Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => ty_mentions_self(k) || ty_mentions_self(v),
         Ty::Any(a) => a.args.iter().any(ty_mentions_self),
+        Ty::Projection { self_ty, args, .. } => ty_mentions_self(self_ty) || args.iter().any(ty_mentions_self),
         Ty::Fn { sig, .. } => sig.params.iter().any(ty_mentions_self) || ty_mentions_self(&sig.ret),
         Ty::Tuple(ts) => ts.iter().any(ty_mentions_self),
         _ => false,

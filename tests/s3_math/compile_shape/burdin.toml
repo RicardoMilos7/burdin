@@ -1,0 +1,6 @@
+[package]
+name = "compile_shape"
+version = "0.1.0"
+
+[dependencies]
+math = true

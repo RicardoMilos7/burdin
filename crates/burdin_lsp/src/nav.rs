@@ -6,6 +6,7 @@
 //! type, or of a value whose type the analysis knows); a name in a `use` declaration; a field name in a struct
 //! literal; and finally a type, function, constant, or variant of that name visible from the file.
 
+use crate::edit::Answering;
 use crate::index::{FileIndex, Item, Kind, Tk};
 use crate::json::Json;
 use crate::project::{Loc, Package};
@@ -219,6 +220,17 @@ impl<'a> Resolver<'a> {
         self.find(from, name, |i| i.owner.as_deref() == Some(owner.as_str()) && i.kind != Kind::Impl)
     }
 
+    /// A member of a value of type `ty`: a member of the type, or, when `ty` is a generic parameter of the function
+    /// around `at`, a method one of its bounds declares (`s.serialize_unit` with `S: Serializer`).
+    fn member_of(&mut self, from: &str, ix: &FileIndex, at: u32, ty: &str, name: &str) -> Option<Symbol> {
+        if let Some(bounds) = ix.bounds_of(at, &base_type(ty)) {
+            return self.find(from, name, |i| {
+                i.kind == Kind::InterfaceMethod && i.owner.as_ref().is_some_and(|owner| bounds.contains(owner))
+            });
+        }
+        self.member(from, ty, name)
+    }
+
     /// The declaration item an analysis definition (a whole function or constant declaration) stands for.
     fn item_at_definition(&mut self, def: &Loc) -> Option<Symbol> {
         let ix = self.p.index(&def.path)?;
@@ -296,40 +308,53 @@ impl<'a> Resolver<'a> {
         // A member after a `.`.
         if prev_dot {
             let receiver = ix.tokens[ti - 2].clone();
+            // A receiver that is itself a member (`body` in `resp.body.read_to_string`) names a field, so no local or
+            // parameter that happens to share its name is its declaration (issue #880). Its type comes from the
+            // expression that holds it.
+            let receiver_is_member = ti >= 3 && ix.tokens[ti - 3].kind == Tk::Dot;
+            let value = !receiver_is_member && self.is_value(path, &receiver);
             match &receiver.kind {
                 Tk::Ident(r) => {
                     if let Some(file) = self.module_named(path, r)
-                        && !self.is_value(path, &receiver)
+                        && !value
                     {
                         return self
                             .find(&file, &name, |i| i.parent.is_none() && i.kind != Kind::Impl)
                             .filter(|s| s.def.path == file);
                     }
-                    if !self.is_value(path, &receiver)
+                    if !value
                         && let Some(owner) = self.find(path, r, |i| i.kind.is_type())
                         && let Some(m) = self.member(path, &owner.name, &name)
                     {
                         return Some(m);
                     }
                 }
-                Tk::SelfType => {
-                    if let Some(owner) = ix
-                        .items
-                        .iter()
-                        .filter(|i| i.kind == Kind::Impl && i.span.0 <= tok.lo && tok.hi <= i.span.1)
-                        .find_map(|i| i.owner.clone())
+                // `self` and `Self` name the type of the method (or impl block) around them, while the body may not parse.
+                Tk::SelfValue | Tk::SelfType => {
+                    if let Some(owner) = ix.self_owner(receiver.lo)
+                        && let Some(m) = self.member(path, &owner, &name)
                     {
-                        return self.member(path, &owner, &name);
+                        return Some(m);
                     }
                 }
                 _ => {}
+            }
+            if !receiver_is_member && let Some(ty) = self.local_type(path, &receiver) {
+                return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
             if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
                 // The innermost expression at the receiver's start may be longer than the receiver (`a.b` at `a` is
                 // `a`); only one that ends at the dot is the receiver.
                 if ty.at.hi == receiver.hi || ty.at.hi == ix.tokens[ti - 1].lo {
-                    return self.member(path, &ty.ty, &name);
+                    return self.member_of(path, &ix, receiver.lo, &ty.ty, &name);
                 }
+            }
+            // A parameter of the function, read from its signature when no analysis answers (`s: S` in `fn f(mut s: S)`).
+            if let Tk::Ident(r) = &receiver.kind
+                && !receiver_is_member
+                && let Some(ty) = ix.parameter_type(receiver.lo, r)
+            {
+                return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
             return None;
         }
@@ -349,10 +374,24 @@ impl<'a> Resolver<'a> {
 
     /// Whether the identifier is a local or parameter in scope (so `x.f` is a member of a value, not of a module).
     fn is_value(&mut self, path: &str, tok: &crate::index::Tok) -> bool {
-        self.p
-            .current()
-            .and_then(|a| a.resolve_at(path, tok.lo))
-            .is_some_and(|r| matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter))
+        self.local_type(path, tok).is_some()
+    }
+
+    /// The type of the local or parameter an identifier names, when it names one. The analysis answers for a name
+    /// its typed tree holds. Otherwise the local declared last before it gives the type (see
+    /// [`Answering::local_before`]): a method named without a call (`sq.area`) leaves its receiver out of the typed
+    /// tree, and a call still being written (`sq.area(`) makes the text unparseable, so the last good analysis is
+    /// the one that knows `sq`.
+    fn local_type(&mut self, path: &str, tok: &crate::index::Tok) -> Option<String> {
+        let name = tok.ident()?;
+        if let Some(analysis) = self.p.current()
+            && let Some(r) = analysis.resolve_at(path, tok.lo)
+            && r.name == name
+            && matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter)
+        {
+            return Some(r.ty);
+        }
+        Answering::of(&*self.p, path)?.local_before(path, name, tok.lo)
     }
 
     fn use_name(&mut self, path: &str, u: &crate::index::Use, tok: &crate::index::Tok, name: &str) -> Option<Symbol> {

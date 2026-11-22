@@ -41,6 +41,7 @@ conformance suite and the specs, not by this file; see the index below.
 | [`spec/doc.md`](spec/doc.md) | `burdin doc`: doc comments, the Markdown subset, intra-doc links and their diagnostics, the HTML site and its search, the JSON schema, the coverage report, and the command line (stage 3). |
 | [`spec/check.md`](spec/check.md) | `burdin check`: the type-check-only command, what it shares with a build, `--tests`, and the rules the tests cover (stage 3). |
 | [`spec/watch.md`](spec/watch.md) | `burdin watch` and `--watch`: what is watched and ignored, the debounce, restarting `run`, and the changed-modules-first `test` run (stage 3). |
+| [`spec/workspaces.md`](spec/workspaces.md) | Workspaces: members, default members, excludes, the selection flags, inherited package fields and dependencies, and one lockfile at the root (stage 3). |
 | [`spec/inspect.md`](spec/inspect.md) | Inspecting what the compiler generated: `burdin expand`, `--emit`, `burdin asm`, `burdin bloat`, and `burdin check --print-instances` (stage 3). |
 | [`spec/debug.md`](spec/debug.md) | Debugging: the panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file, `burdin debug`, and the `burdin dap` debug adapter (stage 3). |
 | [`AGENTS.md`](AGENTS.md) | The working agreement: definition of done, verification policy, and issue workflow. |
@@ -167,18 +168,21 @@ gets a suggestion (`a similar subcommand exists: 'check'`). The synopsis of the 
 
 ```
 usage:
-  burdin build <file.bd | package directory> [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
+  burdin build [file.bd | package directory] [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-               [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
-  burdin run <file.bd | package directory> [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
-             [--comptime-steps <n>] [--sanitize <list>] [diagnostics] [-- <program arguments>...]
-  burdin test <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
-              [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--ignored | --include-ignored]
+               [-p <member>]... [--workspace [--exclude <member>]...] [--link-lib <name>]...
+               [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
+  burdin run [file.bd | package directory] [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
+             [-p <member>]... [--workspace [--exclude <member>]...] [--comptime-steps <n>] [--sanitize <list>]
+             [diagnostics] [-- <program arguments>...]
+  burdin test [file.bd | package directory] [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
+              [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]...
+              [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
               [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
   burdin bench <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
-               [-p <package>]... [--workspace] [--exact] [--skip <pattern>]... [--list]
+               [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
                [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
@@ -190,9 +194,11 @@ usage:
   burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
   burdin <build|run|test|check> <target> --watch [--no-clear] ...
   burdin fmt [<file.bd | directory>]... [--check] [-j <n>] [diagnostics]
+  burdin fmt -p <member>... | --workspace [--exclude <member>]... [--check] [-j <n>] [diagnostics]
   burdin fmt --stdin [--stdin-filepath <path>] [--range <lo>:<hi>] [--check] [diagnostics]
   burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
              [--coverage] [--deny-warnings] [-j <n>] [diagnostics]
+  burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
   burdin doc --std [the same options]
   burdin debug <file.bd | package directory> [--debugger <name | path>] [--test <name | index>]
                [--break-on-panic] [--release | --profile <name>] [-j <n>] [diagnostics] [-- <program arguments>...]
@@ -215,6 +221,9 @@ compile options:
                        `release`, `test` (the default of test), `bench` (the default of bench), or one that
                        burdin.toml defines in [profile.<name>]; `--release` is `--profile release`
                        (the behavior is spec/profiles.md)
+  -O <n>               optimize at level n, from 0 to 3, instead of the profile's opt-level: `-O2` is `-O 2`;
+                       it changes the optimizer only, so the overflow and assertion checks stay as the profile
+                       sets them (spec/profiles.md, BP4 and BP5)
   --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
@@ -230,8 +239,9 @@ check options (type-check only: the front end and every memory check, no code ge
 
 test options:
   -j, --jobs <n>       tests to run at once, and compilation threads (default: the number of CPUs)
-  -p <package>         run the tests of one package of the build; may repeat
-  --workspace          run the tests of the entry package and every path dependency
+  -p, --package <name> run the tests of one package of the build, or one member of a workspace; may repeat
+  --workspace          run the tests of the entry package and every path dependency, or of every workspace member
+  --exclude <member>   with --workspace, leave out this workspace member; may repeat
   <filter>...          run only tests whose full path (`module.test name`) contains any filter; --filter <text>
                        is the same as a positional filter
   --exact              filters and --skip patterns must equal the full path instead of being contained in it
@@ -251,8 +261,9 @@ test options:
 bench options (the behavior is spec/bench.md; benchmarks build in the release profile, so --release is the
 default and changes nothing):
   -j, --jobs <n>       compilation threads only: benches are measured one at a time
-  -p <package>         measure the benches of one package of the build; may repeat
-  --workspace          measure the entry package and every path dependency
+  -p, --package <name> measure the benches of one package of the build, or one member of a workspace; may repeat
+  --workspace          measure the entry package and every path dependency, or every workspace member
+  --exclude <member>   with --workspace, leave out this workspace member; may repeat
   <filter>...          measure only benches whose full path contains any filter; --filter <text> is the same as a
                        positional filter
   --exact              filters and --skip patterns must equal the full path instead of being contained in it
@@ -312,17 +323,31 @@ A target is either a single `.bd` file, compiled as a one-module package, or a d
 
 `burdin check <target>` runs the front end of `burdin build` (build scripts, parsing, name resolution and type checking, the
 move and borrow checks, and compile-time evaluation) and stops before code generation: it needs no linker, writes no
-file, and prints the same diagnostics in the same formats as a build. A clean check prints nothing and exits 0; errors exit
+file, and prints the same diagnostics in the same formats as a build. A clean human-format check prints nothing and exits 0; errors exit
 1 and end with `error: could not check <target> (N errors)`. `--tests` also checks the package's `test` blocks and accepts
 a library package without `src/main.bd`; `--release` checks as `build --release` does. It is meant for CI gates and editor
 feedback. `--explain-ownership` prints each function's source with margin annotations for the moves, copies, borrows,
 drops, drop flags, argument conventions, and derived clones the checks recorded (`--fn` selects one function and
 `--format json` lists the events with spans), and `--explain` traces each memory error from the value's declaration to
-the failing use, with its rule ID and suggested fix. `burdin check <target> --print-instances [--format json]` also
+the failing use, with its rule ID and suggested fix (text formats only; the JSON diagnostics carry the same facts). `burdin check <target> --print-instances [--format json]` also
 prints every generic instance the program created and the call that required it
 ([`spec/inspect.md`](spec/inspect.md), INS12-INS15). [`spec/check.md`](spec/check.md) is the specification and
 `tests/check_check.py` checks it: the fixtures under `tests/check/`, and the whole conformance suite, whose
 `compile-fail` programs must report exactly their markers and whose other programs must be accepted.
+
+**Machine-readable result.** `burdin check <target> --diagnostic-format json` prints one JSON object per diagnostic
+(fields in [`docs/diagnostics.md`](docs/diagnostics.md), schema [`docs/diagnostic.schema.json`](docs/diagnostic.schema.json))
+and always ends with the check summary, clean or not:
+
+```
+{"type":"check-summary","version":1,"errors":0,"warnings":0,"shown":0,"limit":null,"files":1,"elapsed_ms":612}
+```
+
+`errors` and `warnings` count each severity; `shown` and `limit` are the `--error-limit` figures; `files` is the number of
+source files read from disk (the embedded standard library is not counted); `elapsed_ms` is the run's time in
+milliseconds and differs between runs. The exit status is `0` when there are no errors (warnings allowed), `1` when
+there are errors or the package cannot be read, and `2` for a usage error. A failure before the checks prints a plain
+`error:` line and no summary. The human format is unchanged. [`spec/check.md`](spec/check.md) CK12 is the contract.
 
 `burdin expand <target> [--item <path>] [--instances]` prints Burdin source for the program after compile-time evaluation,
 `comptime if` and `comptime for` unrolling, user derives, default and named arguments, and operators: the text of each
@@ -511,7 +536,9 @@ $ head -1 hello.ll
 burdin run <target> [--release] [--link-lib <name>]... [diagnostics] [-- <program arguments>...]
 ```
 
-Compiles into a temporary directory and runs the program. The program's stdout and stderr pass through unchanged, and
+Compiles into a temporary directory and runs the program. The target may be left out: in a package directory,
+`burdin run` runs that package, as `burdin run .` does. `burdin r` is the same command (the aliases are in
+`spec/build-tool.md`, BT4). The program's stdout and stderr pass through unchanged, and
 the command exits with the program's exit status. On Unix a signal becomes `128 + signal`; Windows statuses are
 truncated to 8 bits, with a non-zero status kept non-zero. A compilation failure with diagnostics exits 1. Arguments
 after `--` become the program's command-line arguments after the program name; `env.args()` returns them with the
@@ -549,7 +576,8 @@ The report is deterministic: failures and the summary follow declaration order, 
 
 By default only the entry package's tests run. `-p <package>` selects a package of the build (it may repeat), and
 `--workspace` selects the entry package and every path dependency. With more than one package, names are displayed as
-`<package>::<test>`.
+`<package>::<test>`. In a workspace, `-p`, `--workspace`, and `--exclude` select members instead, and the selected
+members run together with one report (`spec/workspaces.md`, WS11).
 
 Doc tests run with the `test` blocks: every Burdin code block in a `///` or `//!` comment of the selected packages
 is built as its own program against the package as a dependency (its public API only) and run like a `test` block;
@@ -737,8 +765,9 @@ After the diagnostics the driver prints a summary line and exits with status 1:
 error: could not compile bad.bd (1 error)
 ```
 
-The count is pluralized (`1 error`, `2 errors`). Semantic checks run only when there were no syntax errors, so a file
-with a syntax error may report fewer later diagnostics. Errors before or outside source checking (a malformed
+The count is pluralized (`1 error`, `2 errors`). A file with a syntax error is not type checked, and the other modules
+are checked against the declarations the broken file did read; the follow-on errors of a declaration that did not parse
+are left out, so a file with a syntax error may report fewer later diagnostics (`spec/check.md`, CK4). Errors before or outside source checking (a malformed
 manifest, a missing dependency, a dependency cycle, a missing target) are printed as `error: <message>` without an
 error code.
 

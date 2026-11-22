@@ -31,6 +31,8 @@ impl Sema<'_> {
         self.globals.double_ended_iface = find_iface(&self.globals, "DoubleEndedIterator");
         self.globals.display_iface = find_iface(&self.globals, "Display");
         self.globals.debug_iface = find_iface(&self.globals, "Debug");
+        self.globals.serialize_iface = find_iface(&self.globals, "Serialize");
+        self.globals.deserialize_iface = find_iface(&self.globals, "Deserialize");
         self.globals.send_iface = find_iface(&self.globals, "Send");
         self.globals.sync_iface = find_iface(&self.globals, "Sync");
         // Allocators (`spec/allocators.md`): the interface a container's allocator must implement, and the
@@ -95,6 +97,9 @@ impl Sema<'_> {
         }
         self.globals.io_error_kind_ty = self.globals.std_adt_ty("IoErrorKind");
         self.globals.parse_int_error_ty = self.globals.std_adt_ty("ParseIntError");
+        self.globals.alloc_error_ty = self.globals.std_adt_ty("AllocError");
+        self.globals.try_from_int_error_ty = self.globals.std_adt_ty("TryFromIntError");
+        self.globals.de_error_ty = self.globals.std_adt_ty("DeError");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.
         let aliases: Vec<(String, usize)> = std_modules
             .iter()

@@ -1,0 +1,18 @@
+//@ run
+//> 9
+//> 27
+
+// A generator loops at compile time and returns the source of one function per power (spec/generate.md, GN1-GN3).
+
+comptime generate {
+    let mut out = String.new()
+    for n in 2..4 {
+        out.push_str(format("fn power{}(x: i64): i64 {{\n    let mut r: i64 = 1\n    for _ in 0..{} {{\n        r = r * x\n    }}\n    r\n}}\n", n, n))
+    }
+    out
+}
+
+fn main() {
+    println(format("{}", power2(3)))
+    println(format("{}", power3(3)))
+}

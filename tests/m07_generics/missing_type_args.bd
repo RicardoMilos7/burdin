@@ -1,0 +1,26 @@
+//@ compile-fail
+
+// A generic type named without the type arguments it needs is E0003, reported at the name (issue #850). The
+// diagnostic names the missing parameters and shows the form to write, instead of "unknown name". Built-in
+// containers, standard-library types, and user types are all covered, in a value position and in a type position.
+
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+fn takes_map(m: Map) { //~ E0003
+}
+
+fn takes_partial(m: Map<i32>) { //~ E0003
+}
+
+fn main() {
+    let a = Map.new() //~ E0003
+    let b = List.new() //~ E0003
+    let c = Set.new() //~ E0003
+    let d = Pair.new() //~ E0003
+    let e = Pair<i32>.new() //~ E0003
+    let f = Option.None //~ E0003
+    let g: Heap = Heap.new(1) //~ E0003
+}

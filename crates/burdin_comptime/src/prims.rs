@@ -2,7 +2,7 @@
 //! (equality, ordering, hashing, layout) that compiled code answers with generated glue. Each one follows the code
 //! generator's behavior so a comptime result is the result the compiled program would compute (CT1).
 
-use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, range_bounds};
+use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, key_ty, range_bounds, to_key};
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
@@ -53,6 +53,10 @@ fn write_stream(bytes: &[u8], newline: bool, err: bool, span: Span) -> R<()> {
 /// `v` reduced to the range of `ty`, two's complement.
 pub(crate) fn wrap(v: i128, ty: IntTy) -> i128 {
     let bits = ty.bits();
+    // Every `i128` and `u128` value is its own two's complement word (`spec/int128.md`, I128-1).
+    if bits >= 128 {
+        return v;
+    }
     let mask: u128 = (1u128 << bits) - 1;
     let m = (v as u128) & mask;
     if ty.signed() && m >= 1u128 << (bits - 1) { (m as i128) - (1i128 << bits) } else { m as i128 }
@@ -186,39 +190,72 @@ pub(crate) fn value_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// Structural ordering: the derived `Ord`, and `str` byte order.
-pub(crate) fn value_cmp(a: &Value, b: &Value) -> Ordering {
+/// Structural ordering, typed: the derived `Ord`, and `str` byte order. The type says how to read each value,
+/// because a `u128` bit pattern above `i128::MAX` is not in order as a signed number (`spec/int128.md`, I128-1).
+pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering {
     let (a, b) = (shallow(a), shallow(b));
     match (a, b) {
         (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
         (Value::Str(_) | Value::String(_), Value::Str(_) | Value::String(_)) => a.bytes().cmp(b.bytes()),
-        (Value::Tuple(x), Value::Tuple(y)) => seq_cmp(x, y),
-        (Value::Variant(i, x), Value::Variant(j, y)) => i.cmp(j).then_with(|| seq_cmp(x, y)),
+        (Value::Tuple(x), Value::Tuple(y)) => match ty {
+            Ty::Struct(adt) => seq_cmp(p, x, y, p.structs[adt.id].fields.iter().map(|f| &f.ty)),
+            _ => seq_cmp(p, x, y, tuple_tys(ty)),
+        },
+        (Value::Variant(i, x), Value::Variant(j, y)) => i.cmp(j).then_with(|| match ty {
+            Ty::Enum(adt) => seq_cmp(p, x, y, p.enums[adt.id].variants[*i].fields.iter().map(|f| &f.ty)),
+            _ => seq_cmp(p, x, y, std::iter::empty()),
+        }),
+        // Integers, booleans, and characters: an integer is read at its own type (`u128`, `spec/int128.md` I128-1).
+        (Value::Int(_) | Value::Bool(_) | Value::Char(_), Value::Int(_) | Value::Bool(_) | Value::Char(_)) => {
+            match ty {
+                Ty::Int(i) => i.key(a.int()).cmp(&i.key(b.int())),
+                _ => a.int().cmp(&b.int()),
+            }
+        }
         (Value::Array(_) | Value::List(_) | Value::Slice(..), Value::Array(_) | Value::List(_) | Value::Slice(..)) => {
-            seq_cmp(a.elems(), b.elems())
+            let elem = match ty {
+                Ty::Array(t, _) | Ty::List(t, _) => Some(&**t),
+                _ => None,
+            };
+            match elem {
+                Some(t) => seq_cmp(p, a.elems(), b.elems(), std::iter::repeat(t)),
+                None => Ordering::Equal,
+            }
         }
         (Value::Opt(x), Value::Opt(y)) => match (x, y) {
             (None, None) => Ordering::Equal,
             (None, Some(_)) => Ordering::Less,
             (Some(_), None) => Ordering::Greater,
-            (Some(p), Some(q)) => value_cmp(p, q),
+            (Some(x), Some(y)) => match ty {
+                Ty::Option(inner) => value_cmp(p, x, y, inner),
+                _ => Ordering::Equal,
+            },
         },
         // `Ok(_) < Err(_)`: the variant order of `Result`.
-        (Value::Res(x), Value::Res(y)) => match (x, y) {
-            (Ok(p), Ok(q)) | (Err(p), Err(q)) => value_cmp(p, q),
-            (Ok(_), Err(_)) => Ordering::Less,
-            (Err(_), Ok(_)) => Ordering::Greater,
+        (Value::Res(x), Value::Res(y)) => match (x, y, ty) {
+            (Ok(x), Ok(y), Ty::Result(ok, _)) => value_cmp(p, x, y, ok),
+            (Err(x), Err(y), Ty::Result(_, err)) => value_cmp(p, x, y, err),
+            (Ok(_), Err(_), _) => Ordering::Less,
+            (Err(_), Ok(_), _) => Ordering::Greater,
+            _ => Ordering::Equal,
         },
-        (Value::Int(_) | Value::Bool(_) | Value::Char(_), Value::Int(_) | Value::Bool(_) | Value::Char(_)) => {
-            a.int().cmp(&b.int())
-        }
         _ => Ordering::Equal,
     }
 }
 
-fn seq_cmp(x: &[Value], y: &[Value]) -> Ordering {
-    for (p, q) in x.iter().zip(y) {
-        match value_cmp(p, q) {
+/// The field types of a tuple, or none for any other type.
+fn tuple_tys(ty: &Ty) -> &[Ty] {
+    match ty {
+        Ty::Tuple(ts) => ts,
+        _ => &[],
+    }
+}
+
+/// The fields of two sequences in order, each read at its type; a sequence with no type for a field compares equal
+/// there. A shorter sequence orders first.
+fn seq_cmp<'t>(p: &Program, x: &[Value], y: &[Value], tys: impl IntoIterator<Item = &'t Ty>) -> Ordering {
+    for ((u, v), t) in x.iter().zip(y).zip(tys) {
+        match value_cmp(p, u, v, t) {
             Ordering::Equal => {}
             other => return other,
         }
@@ -234,6 +271,10 @@ fn mix(acc: u64, x: u64) -> u64 {
 pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
     let v = shallow(v);
     match ty {
+        Ty::Int(i) if i.bits() == 128 => {
+            let n = v.int();
+            mix(mix(acc, n as u64), (n >> 64) as u64)
+        }
         Ty::Int(i) => {
             let n = v.int();
             let word = if i.signed() { (n as i64) as u64 } else { n as u64 };
@@ -319,7 +360,8 @@ fn container(p: &Program, base: (u64, u64), alloc: &Alloc) -> (u64, u64) {
 /// The size and alignment of a type's runtime value, or `None` for a type without one.
 fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
     Some(match ty {
-        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) => return None,
+        // A projection is resolved before code generation, so it never has a runtime value.
+        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => return None,
         Ty::Bool => (1, 1),
         Ty::Char => (4, 4),
         Ty::Int(i) => {
@@ -774,7 +816,8 @@ impl<'p> Interp<'p, '_> {
             // `burdin test --interpret` models the C heap, so the raw allocation builtins run there; every other
             // compile-time evaluation keeps its containers abstract and has no allocator
             // (`spec/allocators.md`, AL10; `spec/test-runner.md`, IN1).
-            Builtin::RawAlloc => {
+            // `__try_alloc` differs only in its name: the interpreter's heap never refuses a block.
+            Builtin::RawAlloc | Builtin::RawTryAlloc => {
                 self.charge(2, span)?;
                 if !self.raw_memory {
                     return Err(impure("allocating memory with an explicit allocator", span));
@@ -785,7 +828,7 @@ impl<'p> Interp<'p, '_> {
                 let align = usize::try_from(align).unwrap_or(1);
                 Value::Int(self.mem.alloc(size, align, span))
             }
-            Builtin::RawRealloc => {
+            Builtin::RawRealloc | Builtin::RawTryRealloc => {
                 self.charge(3, span)?;
                 if !self.raw_memory {
                     return Err(impure("allocating memory with an explicit allocator", span));
@@ -808,7 +851,11 @@ impl<'p> Interp<'p, '_> {
                 self.mem.release(addr, span).map_err(Unwind::Fault)?;
                 Value::Unit
             }
-            Builtin::ListNewIn | Builtin::ListWithCapacityIn | Builtin::MapNewIn | Builtin::HeapNewIn => {
+            Builtin::ListNewIn
+            | Builtin::ListWithCapacityIn
+            | Builtin::ListTryWithCapacityIn
+            | Builtin::MapNewIn
+            | Builtin::HeapNewIn => {
                 return Err(impure("allocating memory with an explicit allocator", span));
             }
             Builtin::ListNew | Builtin::ListWithCapacity => Value::List(Vec::new()),
@@ -822,6 +869,20 @@ impl<'p> Interp<'p, '_> {
             Builtin::StringWithCapacity => {
                 let _ = self.eval(&args[0], Mode::Use)?;
                 Value::String(Vec::new())
+            }
+            // The fallible constructors succeed at compile time: capacity is not modeled, so nothing is refused
+            // (`spec/allocators.md`, AL11).
+            Builtin::ListTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::List(Vec::new()))))
+            }
+            Builtin::MapTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::Map(Vec::new()))))
+            }
+            Builtin::StringTryWithCapacity => {
+                let _ = self.eval(&args[0], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::String(Vec::new()))))
             }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
@@ -874,6 +935,7 @@ impl<'p> Interp<'p, '_> {
                         }
                     }
                     (Ty::Char, v) => utf8(v.char()),
+                    (Ty::Int(i), v) if *i == IntTy::U128 => (v.int() as u128).to_string().into_bytes(),
                     (Ty::Int(_), v) => v.int().to_string().into_bytes(),
                     (_, v) => v.bytes().to_vec(),
                 })?;
@@ -884,22 +946,23 @@ impl<'p> Interp<'p, '_> {
                 let i = int_of(&recv.ty, span)?;
                 let x = self.eval(recv, Mode::Use)?.int();
                 let y = self.eval(&args[1], Mode::Use)?.int();
-                Value::Int(wrap(exact(m, x, y), i))
+                Value::Int(wrapping_int(m, x, y, i))
             }
             Method::CheckedAdd | Method::CheckedSub | Method::CheckedMul => {
                 let i = int_of(&recv.ty, span)?;
                 let x = self.eval(recv, Mode::Use)?.int();
                 let y = self.eval(&args[1], Mode::Use)?.int();
-                let r = exact_checked(m, x, y);
-                match r {
-                    Some(r) if r >= i.min() && r <= i.max() => Value::Opt(Some(Box::new(Value::Int(r)))),
-                    _ => Value::Opt(None),
+                match checked_int(m, x, y, i) {
+                    Some(r) => Value::Opt(Some(Box::new(Value::Int(r)))),
+                    None => Value::Opt(None),
                 }
             }
             Method::Min | Method::Max => {
+                let i = int_of(&recv.ty, span)?;
                 let x = self.eval(recv, Mode::Use)?.int();
                 let y = self.eval(&args[1], Mode::Use)?.int();
-                Value::Int(if m == Method::Min { x.min(y) } else { x.max(y) })
+                let less_or_equal = i.key(x) <= i.key(y);
+                Value::Int(if (m == Method::Min) == less_or_equal { x } else { y })
             }
             Method::Abs => {
                 let i = int_of(&recv.ty, span)?;
@@ -942,6 +1005,10 @@ impl<'p> Interp<'p, '_> {
             Method::StringReserve => {
                 let _ = self.eval(&args[1], Mode::Use)?;
                 Value::Unit
+            }
+            Method::StringTryReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?;
+                Value::Res(Ok(Box::new(Value::Unit)))
             }
             Method::StringShrinkToFit => Value::Unit,
             Method::StringInsertStr => {
@@ -1013,6 +1080,10 @@ impl<'p> Interp<'p, '_> {
             Method::ListReserve | Method::ListReserveExact => {
                 let _ = self.eval(&args[1], Mode::Use)?.int();
                 Value::Unit
+            }
+            Method::ListTryReserve | Method::ListTryReserveExact => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Res(Ok(Box::new(Value::Unit)))
             }
             Method::ListShrinkToFit => Value::Unit,
             Method::ListSwap => {
@@ -1149,8 +1220,13 @@ impl<'p> Interp<'p, '_> {
             }
             Method::ListSort => {
                 let place = self.eval_place(recv)?;
+                let p = self.p;
+                let elem = match &recv.ty {
+                    Ty::List(t, _) => (**t).clone(),
+                    other => return Err(internal(format!("sorting `{other}`"), span)),
+                };
                 let list = list_mut(self.place_mut(&place, span)?, span)?;
-                list.sort_by(value_cmp);
+                list.sort_by(|x, y| value_cmp(p, x, y, &elem));
                 let n = list.len() as u64;
                 self.charge(n, span)?;
                 Value::Unit
@@ -1202,6 +1278,10 @@ impl<'p> Interp<'p, '_> {
             // Capacity is not modeled at compile time: the map is a list of pairs, so reserving and shrinking
             // change nothing observable.
             Method::MapReserve | Method::MapShrinkToFit => Value::Unit,
+            Method::MapTryReserve => {
+                let _ = self.eval(&args[1], Mode::Use)?.int();
+                Value::Res(Ok(Box::new(Value::Unit)))
+            }
             Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
                 return Err(impure("an entry into a map value", span));
             }
@@ -1479,9 +1559,10 @@ impl<'p> Interp<'p, '_> {
                     })
                     .collect(),
             ),
-            (Ty::Range(..), v) => {
+            (Ty::Range(inner, _), v) => {
+                let ity = key_ty(inner);
                 let (lo, hi) = range_bounds(&v);
-                Value::RangeIter(lo, hi, false)
+                Value::RangeIter(to_key(ity, lo), to_key(ity, hi), false)
             }
             (ty, v) => return Err(internal(format!("an iterator over `{ty}` from {v:?}"), span)),
         })
@@ -1524,7 +1605,7 @@ impl<'p> Interp<'p, '_> {
                     } else {
                         *next += 1;
                     }
-                    Some(Value::Int(v))
+                    Some(Value::Int(to_key(key_ty(&recv.ty), v)))
                 }
             }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
@@ -1568,6 +1649,7 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             Value::RangeIter(lo, hi, done) => {
+                let ity = key_ty(&recv.ty);
                 if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
                     None
                 } else if inclusive {
@@ -1577,10 +1659,10 @@ impl<'p> Interp<'p, '_> {
                     } else {
                         *hi -= 1;
                     }
-                    Some(Value::Int(v))
+                    Some(Value::Int(to_key(ity, v)))
                 } else {
                     *hi -= 1;
-                    Some(Value::Int(*hi))
+                    Some(Value::Int(to_key(ity, *hi)))
                 }
             }
             other => return Err(internal(format!("`next_back` on {other:?}"), span)),
@@ -1599,6 +1681,14 @@ impl<'p> Interp<'p, '_> {
         let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
         let a = self.eval(l, Mode::Use)?.deref();
         let b = self.eval(r, Mode::Use)?.deref();
+        self.binary_values(op, &ty, a, b, &r.ty, span)
+    }
+
+    /// The value of a binary operator on two evaluated operands: the left one has type `ty` and the right one `r_ty`.
+    /// Compound assignment shares it with the binary operators, so both follow the same overflow and division rules
+    /// (`spec/compound-assignment.md`, CA6).
+    pub(crate) fn binary_values(&mut self, op: BinOp, ty: &Ty, a: Value, b: Value, r_ty: &Ty, span: Span) -> R<Value> {
+        let ty = ty.clone();
         let cmp = |o: Ordering| match op {
             BinOp::Eq => o == Ordering::Equal,
             BinOp::Ne => o != Ordering::Equal,
@@ -1632,7 +1722,7 @@ impl<'p> Interp<'p, '_> {
                 BinOp::Ne => Value::Bool(x != y),
                 // `p + n` and `p - n` move by `n` elements; `p - q` is the distance in elements (as compiled).
                 BinOp::Add => Value::Int(x.wrapping_add(y.wrapping_mul(size))),
-                BinOp::Sub => match &r.ty {
+                BinOp::Sub => match r_ty {
                     Ty::CPtr(_) => Value::Int(if size == 0 { 0 } else { x.wrapping_sub(y) / size }),
                     _ => Value::Int(x.wrapping_sub(y.wrapping_mul(size))),
                 },
@@ -1642,7 +1732,9 @@ impl<'p> Interp<'p, '_> {
         match op {
             BinOp::Eq => return Ok(Value::Bool(value_eq(&a, &b))),
             BinOp::Ne => return Ok(Value::Bool(!value_eq(&a, &b))),
-            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => return Ok(Value::Bool(cmp(value_cmp(&a, &b)))),
+            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                return Ok(Value::Bool(cmp(value_cmp(self.p, &a, &b, &ty))));
+            }
             _ => {}
         }
         if let (Ty::Bool, Value::Bool(x), Value::Bool(y)) = (&ty, &a, &b) {
@@ -1662,10 +1754,10 @@ impl<'p> Interp<'p, '_> {
                     BinOp::Sub => Method::WrappingSub,
                     _ => Method::WrappingMul,
                 };
-                match exact_checked(m, x, y) {
-                    Some(v) if v >= i.min() && v <= i.max() => v,
-                    _ if !self.overflow_checks => wrap(exact(m, x, y), i),
-                    _ => {
+                match checked_int(m, x, y, i) {
+                    Some(v) => v,
+                    None if !self.overflow_checks => wrapping_int(m, x, y, i),
+                    None => {
                         let verb = match op {
                             BinOp::Add => "add",
                             BinOp::Sub => "subtract",
@@ -1685,17 +1777,15 @@ impl<'p> Interp<'p, '_> {
                         return Err(panic(format!("attempt to {what} with overflow"), span));
                     }
                     if op == BinOp::Div { x } else { 0 }
-                } else if op == BinOp::Div {
-                    x / y
                 } else {
-                    x % y
+                    divide_int(op, x, y, i)
                 }
             }
             BinOp::Shl | BinOp::Shr => {
                 if y < 0 || y >= i128::from(i.bits()) {
                     return Err(panic("attempt to shift with overflow", span));
                 }
-                if op == BinOp::Shl { wrap(x << y, i) } else { x >> y }
+                if op == BinOp::Shl { wrap(x << y, i) } else { shift_right(x, y, i) }
             }
             BinOp::BitAnd => wrap(x & y, i),
             BinOp::BitOr => wrap(x | y, i),
@@ -1709,14 +1799,11 @@ impl<'p> Interp<'p, '_> {
         if !negate {
             return Ok(x);
         }
-        let r = -x;
-        if r < i.min() || r > i.max() {
-            if !self.overflow_checks {
-                return Ok(wrap(r, i));
-            }
-            return Err(panic("attempt to negate with overflow", span));
+        match x.checked_neg() {
+            Some(r) if r >= i.min() && r <= i.max() => Ok(r),
+            _ if !self.overflow_checks => Ok(wrap(x.wrapping_neg(), i)),
+            _ => Err(panic("attempt to negate with overflow", span)),
         }
-        Ok(r)
     }
 
     pub(crate) fn unary(&mut self, op: UnOp, v: Value, ty: &Ty, span: Span) -> R<Value> {
@@ -1741,10 +1828,19 @@ impl<'p> Interp<'p, '_> {
                 let n = wrap(v.int(), IntTy::U32);
                 Value::Char(char::from_u32(n as u32).unwrap_or('\u{fffd}'))
             }
-            (Ty::Int(_), Ty::Float(_)) => Value::Float(round_float(v.int() as f64, to)),
+            (Ty::Int(i), Ty::Float(_)) => {
+                let x = if *i == IntTy::U128 { (v.int() as u128) as f64 } else { v.int() as f64 };
+                Value::Float(round_float(x, to))
+            }
             (Ty::Float(_), Ty::Int(i)) => {
                 let x = v.float();
-                Value::Int(if x.is_nan() { 0 } else { (x as i128).clamp(i.min(), i.max()) })
+                Value::Int(if x.is_nan() {
+                    0
+                } else if *i == IntTy::U128 {
+                    (x as u128) as i128
+                } else {
+                    (x as i128).clamp(i.min(), i.max())
+                })
             }
             (Ty::Float(_), Ty::Float(_)) => Value::Float(round_float(v.float(), to)),
             (Ty::CPtr(_), Ty::Int(i)) => Value::Int(wrap(v.int(), *i)),
@@ -1798,6 +1894,51 @@ fn int_of(ty: &Ty, span: Span) -> R<IntTy> {
         Ty::Int(i) => Ok(*i),
         other => Err(internal(format!("integer arithmetic on `{other}`"), span)),
     }
+}
+
+/// `x op y` for `+`, `-`, `*` (`m` names the operation) when the result is in the range of `i`, or `None` when it
+/// overflows. A `u128` is computed as an unsigned number (`spec/int128.md`, I128-1).
+fn checked_int(m: Method, x: i128, y: i128, i: IntTy) -> Option<i128> {
+    if i == IntTy::U128 {
+        let (a, b) = (x as u128, y as u128);
+        let r = match m {
+            Method::WrappingAdd | Method::CheckedAdd => a.checked_add(b),
+            Method::WrappingSub | Method::CheckedSub => a.checked_sub(b),
+            _ => a.checked_mul(b),
+        };
+        return r.map(|v| v as i128);
+    }
+    let v = exact_checked(m, x, y)?;
+    (v >= i.min() && v <= i.max()).then_some(v)
+}
+
+/// `x op y` for `+`, `-`, `*` wrapped to the range of `i`.
+fn wrapping_int(m: Method, x: i128, y: i128, i: IntTy) -> i128 {
+    if i == IntTy::U128 {
+        let (a, b) = (x as u128, y as u128);
+        let r = match m {
+            Method::WrappingAdd | Method::CheckedAdd => a.wrapping_add(b),
+            Method::WrappingSub | Method::CheckedSub => a.wrapping_sub(b),
+            _ => a.wrapping_mul(b),
+        };
+        return r as i128;
+    }
+    wrap(exact(m, x, y), i)
+}
+
+/// `x / y` or `x % y` with the operands of `i`. The caller has checked for division by zero and for `MIN / -1`.
+fn divide_int(op: BinOp, x: i128, y: i128, i: IntTy) -> i128 {
+    if i == IntTy::U128 {
+        let (a, b) = (x as u128, y as u128);
+        let r = if op == BinOp::Div { a / b } else { a % b };
+        return r as i128;
+    }
+    if op == BinOp::Div { x / y } else { x % y }
+}
+
+/// `x >> y` for an operand of `i`: logical for `u128`, arithmetic for a signed type.
+fn shift_right(x: i128, y: i128, i: IntTy) -> i128 {
+    if i == IntTy::U128 { ((x as u128) >> y) as i128 } else { x >> y }
 }
 
 fn exact(m: Method, x: i128, y: i128) -> i128 {

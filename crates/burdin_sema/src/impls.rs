@@ -6,7 +6,7 @@ use crate::globals::{FromImpl, Globals, TypeName, adt_key};
 use crate::session::{FnItem, ImplTemplate, Sema};
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
-use burdin_tir::Ty;
+use burdin_tir::{FuncId, Ty};
 
 impl<'t> Sema<'t> {
     /// Registers the impl blocks of every module. This runs after imports, because the type and the interface it
@@ -25,6 +25,9 @@ impl<'t> Sema<'t> {
     /// Registers an impl block. Methods of an impl on a generic type are registered when each instance of the
     /// type is allocated.
     pub(crate) fn register_impl(&mut self, imp: &'t ast::ImplBlock, module: usize, diags: &mut Diagnostics) {
+        for method in &imp.methods {
+            crate::declare::check_duplicate_generics(&method.generics, diags);
+        }
         let Some((kind, iface_seg)) = self.impl_kind(imp, module, diags) else { return };
         // `Send` and `Sync` are promises the compiler cannot check, so their impl blocks are `unsafe`, and nothing
         // else is (`spec/shared.md`, SH5).
@@ -86,7 +89,7 @@ impl<'t> Sema<'t> {
         }
         let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
-            if matches!(kind, ImplKind::Builtin | ImplKind::From) && self_ty != Ty::Error {
+            if matches!(kind, ImplKind::Builtin | ImplKind::From | ImplKind::TryFrom) && self_ty != Ty::Error {
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
@@ -109,20 +112,23 @@ impl<'t> Sema<'t> {
             ImplKind::User(i) => Some((*i, self.resolve_iface_args(*i, iface_seg, &[], &[], module, imp.span, diags))),
             _ => None,
         };
+        // Only `Type: Interface` has associated types to bind (`spec/associated-types.md`, AT2).
+        if !matches!(&kind, ImplKind::Inherent | ImplKind::User(_)) {
+            reject_assoc_bindings(imp, diags);
+        }
         match kind {
             ImplKind::Builtin => builtin_by_hand(imp.span, diags),
-            ImplKind::From => {
-                let source = iface_seg
-                    .and_then(|s| s.args.first())
-                    .map(|t| self.globals.resolve_type_in(t, None, &[], module, diags))
-                    .unwrap_or(Ty::Error);
-                self.register_from_impl(imp, module, &self_ty, key, source, diags);
+            ImplKind::From => self.register_conversion_impl(imp, module, &self_ty, key, iface_seg, "from", diags),
+            ImplKind::TryFrom => {
+                self.register_conversion_impl(imp, module, &self_ty, key, iface_seg, "try_from", diags)
             }
             ImplKind::Drop => self.register_drop_impl(imp, module, &self_ty, key, &MethodScope::plain(), diags),
             ImplKind::Inherent | ImplKind::User(_) => {
                 let iface_args = iface.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
                 if let Some((i, args)) = iface {
                     check_missing_methods(&self.globals, imp, i, diags);
+                    let assoc = self.resolve_assoc_bindings(imp, Some(i), diags);
+                    let impl_index = self.globals.impls.len();
                     self.globals.impls.push(ImplInfo {
                         head: Head::Plain(key),
                         iface: i,
@@ -130,8 +136,21 @@ impl<'t> Sema<'t> {
                         params: Vec::new(),
                         args: Vec::new(),
                         wheres: Vec::new(),
+                        assoc,
                         span: imp.span,
                     });
+                    self.pending_assoc.push(crate::session::PendingAssoc {
+                        index: impl_index,
+                        decl: imp,
+                        generic: None,
+                        self_ty: Some(self_ty.clone()),
+                        subst: Vec::new(),
+                        bounds: Vec::new(),
+                        module,
+                    });
+                } else {
+                    // An inherent impl has no interface to bind associated types for.
+                    reject_assoc_bindings(imp, diags);
                 }
                 let iface = kind.user_interface().map(|i| (i, iface_args));
                 self.register_methods(imp, module, iface, &self_ty, MethodScope::plain(), diags);
@@ -168,11 +187,12 @@ impl<'t> Sema<'t> {
                 );
                 false
             }
-            ImplKind::From if !local_type => {
+            ImplKind::From | ImplKind::TryFrom if !local_type => {
+                let name = if matches!(kind, ImplKind::From) { "From" } else { "TryFrom" };
                 diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
-                    "`From` can only be implemented for a type declared in this package",
+                    format!("`{name}` can only be implemented for a type declared in this package"),
                 );
                 false
             }
@@ -218,16 +238,17 @@ impl<'t> Sema<'t> {
             if name == "Drop" {
                 return Some((ImplKind::Drop, None));
             }
-            if name == "From" {
+            if name == "From" || name == "TryFrom" {
                 if seg.args.len() != 1 {
                     diags.error(
                         Code::ARG_COUNT,
                         t.span,
-                        format!("`From` takes one type argument, but {} were given", seg.args.len()),
+                        format!("`{name}` takes one type argument, but {} were given", seg.args.len()),
                     );
                     return None;
                 }
-                return Some((ImplKind::From, Some(seg)));
+                let kind = if name == "From" { ImplKind::From } else { ImplKind::TryFrom };
+                return Some((kind, Some(seg)));
             }
             if BUILTIN_INTERFACES.contains(&name.as_str()) {
                 if !seg.args.is_empty() {
@@ -375,31 +396,50 @@ impl<'t> Sema<'t> {
         self.globals.check_adt_bounds(g, &written, imp.ty.span, diags);
         let plain = crate::impl_match::is_plain_pattern(&pattern);
         if matches!(kind, ImplKind::Builtin) {
+            reject_assoc_bindings(imp, diags);
             builtin_by_hand(imp.span, diags);
             return;
         }
         // A `Drop` implementation covers every instance: the drop glue of one instance cannot differ from the
         // type's others (`spec/impls.md`, IM7).
-        if matches!(kind, ImplKind::Drop) && (!plain || !imp.where_clause.is_empty()) {
-            diags.error(
-                Code::INVALID_DROP_IMPL,
-                imp.span,
-                "a `Drop` implementation covers every instance of its type, so it cannot name specific type \
-                 arguments or have a `where` clause",
-            );
-            return;
+        if matches!(kind, ImplKind::Drop) {
+            reject_assoc_bindings(imp, diags);
+            if !plain || !imp.where_clause.is_empty() {
+                diags.error(
+                    Code::INVALID_DROP_IMPL,
+                    imp.span,
+                    "a `Drop` implementation covers every instance of its type, so it cannot name specific type \
+                     arguments or have a `where` clause",
+                );
+                return;
+            }
         }
         let wheres = self.impl_wheres(imp, module, &params, diags);
+        // The bounds the impl's names keep while its associated bindings are resolved: the bounds of the type's
+        // arguments they matched, and the impl's own `where` clause (`spec/associated-types.md`, AT2).
+        let mut assoc_bounds: Vec<(String, Vec<Bound>)> = Vec::new();
+        for (written, bs) in pattern.iter().zip(&adt_bounds) {
+            if let Ty::Param(n) = written
+                && !assoc_bounds.iter().any(|(m, _)| m == &**n)
+            {
+                assoc_bounds.push((n.to_string(), bs.clone()));
+            }
+        }
+        assoc_bounds.extend(wheres.iter().cloned());
         let iface = kind.user_interface();
         let iface_args = match iface {
             Some(i) => {
                 check_missing_methods(&self.globals, imp, i, diags);
                 let args = self.resolve_iface_args(i, iface_seg, &subst, &wheres, module, imp.span, diags);
+                // The binding of each associated type, filled in once the instance whose arguments are the
+                // impl's pattern exists (`re_resolve_pending_assoc`).
+                let assoc = self.resolve_assoc_bindings(imp, Some(i), diags);
                 // The later of two overlapping impls is left out, so its methods do not also clash with the
                 // earlier one's on the instances both apply to.
                 if self.check_impl_overlap(g, i, &pattern, &args, imp.span, diags) {
                     return;
                 }
+                let impl_index = self.globals.impls.len();
                 self.globals.impls.push(ImplInfo {
                     head: Head::Generic(g),
                     iface: i,
@@ -407,11 +447,30 @@ impl<'t> Sema<'t> {
                     params: params.clone(),
                     args: pattern.clone(),
                     wheres: wheres.clone(),
+                    assoc,
                     span: imp.span,
+                });
+                // The instance whose arguments are the pattern may not exist yet; resolve the bindings again once
+                // it does, so `Self` in a binding means that instance (`spec/associated-types.md`, AT2).
+                self.pending_assoc.push(crate::session::PendingAssoc {
+                    index: impl_index,
+                    decl: imp,
+                    generic: Some((g, pattern.clone())),
+                    self_ty: None,
+                    subst: subst.clone(),
+                    bounds: assoc_bounds.clone(),
+                    module,
                 });
                 args
             }
-            None => Vec::new(),
+            None => {
+                // An inherent block (or a conversion) has no interface to bind associated types for; a `Drop`
+                // block was already checked above.
+                if !matches!(kind, ImplKind::Drop) {
+                    reject_assoc_bindings(imp, diags);
+                }
+                Vec::new()
+            }
         };
         // The instance an impl on specific arguments is checked on: the one whose arguments are its pattern. It is
         // symbolic when the pattern has names left (`Pair<i32, B>`), and its methods' bodies are checked there.
@@ -430,6 +489,58 @@ impl<'t> Sema<'t> {
             iface_args,
             is_drop,
         });
+    }
+
+    /// Validates the `type Name = Ty` entries of an impl block (`spec/associated-types.md`, AT2) and returns the
+    /// bindings it keeps, in the order written. The types are filled in by `re_resolve_pending_assoc` once the
+    /// impl's instance exists.
+    fn resolve_assoc_bindings(
+        &self,
+        imp: &ast::ImplBlock,
+        iface: Option<usize>,
+        diags: &mut Diagnostics,
+    ) -> Vec<(String, Ty)> {
+        let Some(iface) = iface else {
+            reject_assoc_bindings(imp, diags);
+            return Vec::new();
+        };
+        let declared = self.globals.interfaces[iface].assoc.clone();
+        let iface_name = self.globals.interfaces[iface].name.clone();
+        let mut out: Vec<(String, Ty)> = Vec::new();
+        for b in &imp.assoc {
+            if !declared.iter().any(|n| n == &b.name.name) {
+                let declared_text = if declared.is_empty() {
+                    "it declares no associated types".to_string()
+                } else {
+                    format!("it declares `{}`", declared.join("`, `"))
+                };
+                diags.error(
+                    Code::ASSOC_BINDING,
+                    b.span,
+                    format!("interface `{iface_name}` has no associated type `{}`: {declared_text}", b.name.name),
+                );
+                continue;
+            }
+            if out.iter().any(|(n, _)| n == &b.name.name) {
+                diags.error(
+                    Code::DUPLICATE_NAME,
+                    b.span,
+                    format!("associated type `{}` is bound more than once; the first binding is used", b.name.name),
+                );
+                continue;
+            }
+            out.push((b.name.name.clone(), Ty::Error));
+        }
+        for name in &declared {
+            if !out.iter().any(|(n, _)| n == name) {
+                diags.error(
+                    Code::ASSOC_BINDING,
+                    imp.span,
+                    format!("this implementation of `{iface_name}` is missing the associated type `{name}`"),
+                );
+            }
+        }
+        out
     }
 
     /// The type alias an impl block's type is written through, if it is one.
@@ -560,37 +671,57 @@ impl<'t> Sema<'t> {
         wheres
     }
 
-    /// `Type: From<Source> { fn from(value: Source): Type }`: the conversion `?` applies to an error.
-    fn register_from_impl(
+    /// `Type: From<Source> { fn from(value: Source): Type }` and `Type: TryFrom<Source> { fn try_from(value: Source):
+    /// Result<Type, E> }`. The conversion method is not one of the type's named members: a type converts from each
+    /// source type once, `Type.from(v)` and `Type.try_from(v)` pick the block by the type of `v`, and `?` picks a
+    /// `From` block by its error type (`spec/errors.md`, ERR3; `spec/stdlib.md`, "Conversions"). The other methods of
+    /// the block are ordinary members. The signature is checked once the signatures exist (resolve.rs).
+    #[allow(clippy::too_many_arguments)]
+    fn register_conversion_impl(
         &mut self,
         imp: &'t ast::ImplBlock,
         module: usize,
         self_ty: &Ty,
         key: (bool, usize),
-        source: Ty,
+        iface_seg: Option<&ast::PathSegment>,
+        method: &str,
         diags: &mut Diagnostics,
     ) {
-        let Some(m) = imp.methods.iter().find(|m| m.name.name == "from") else {
+        let iface = if method == "from" { "From" } else { "TryFrom" };
+        let source = iface_seg
+            .and_then(|s| s.args.first())
+            .map(|t| self.globals.resolve_type_in(t, None, &[], module, diags))
+            .unwrap_or(Ty::Error);
+        let mut named = imp.methods.iter().filter(|m| m.name.name == method);
+        let Some(m) = named.next() else {
             diags.error(
                 Code::MISSING_INTERFACE_METHOD,
                 imp.span,
-                "this implementation of `From` is missing the method `from`",
+                format!("this implementation of `{iface}` is missing the method `{method}`"),
             );
             return;
         };
+        if let Some(again) = named.next() {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                again.name.span,
+                format!("`{self_ty}` already has a member named `{method}`"),
+            );
+            return;
+        }
         if !m.generics.is_empty() || !m.where_clause.is_empty() {
             diags.error(
                 Code::TYPE_MISMATCH,
                 m.name.span,
-                "a `From` conversion cannot be generic: `?` calls it with exactly one argument",
+                format!("a `{iface}` conversion cannot be generic: `{method}` is called with exactly one argument"),
             );
             return;
         }
-        // Each target converts from a source type once (`spec/errors.md`, ERR3). The two generated blocks are
-        // separate impl blocks, so the duplicate is detected here rather than as a duplicate member: a source
-        // written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in the
-        // source text the syntax check compares.
-        if self.globals.from_impls.iter().any(|i| i.target == *self_ty && i.source == source) {
+        // Each target converts from a source type once (`spec/errors.md`, ERR3). The two generated blocks of an
+        // error enum are separate impl blocks, so the duplicate is detected here rather than as a duplicate member:
+        // a source written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in
+        // the source text the syntax check compares.
+        if self.globals.conversions_into(self_ty, method).iter().any(|c| c.source == source) {
             diags.error(
                 Code::DUPLICATE_FROM,
                 imp.span,
@@ -598,10 +729,26 @@ impl<'t> Sema<'t> {
             );
             return;
         }
-        self.register_methods(imp, module, None, self_ty, MethodScope::plain(), diags);
-        let Some(&func) = self.globals.methods.get(&(key, "from".to_string())) else { return };
+        if self.globals.methods.contains_key(&(key, method.to_string())) {
+            diags.error(
+                Code::DUPLICATE_NAME,
+                m.name.span,
+                format!("`{self_ty}` already has a member named `{method}`"),
+            );
+            return;
+        }
+        for other in imp.methods.iter().filter(|x| x.name.name != method) {
+            self.add_method(key, self_ty, other, module, &MethodScope::plain(), diags);
+        }
+        let label = format!("{self_ty}.{method}<{source}>");
+        let func = self.push_method(self_ty, m, module, &MethodScope::plain(), label, diags);
         self.globals.from_methods.push(func);
-        self.globals.from_impls.push(FromImpl { target: self_ty.clone(), source, func });
+        let conversion = FromImpl { target: self_ty.clone(), source, func, span: m.name.span };
+        if method == "from" {
+            self.globals.from_impls.push(conversion);
+        } else {
+            self.globals.try_from_impls.push(conversion);
+        }
     }
 
     /// `Type<T>: Drop { ... }` for one instance of the generic type, with what the block's names stand for.
@@ -670,6 +817,18 @@ impl<'t> Sema<'t> {
     }
 }
 
+/// E0144: an impl block with no interface has no associated type to bind (`spec/associated-types.md`, AT2).
+fn reject_assoc_bindings(imp: &ast::ImplBlock, diags: &mut Diagnostics) {
+    for b in &imp.assoc {
+        diags.error(
+            Code::ASSOC_BINDING,
+            b.span,
+            "an impl block with no interface cannot bind an associated type; add `: Interface` to the block or \
+             remove the `type` entry",
+        );
+    }
+}
+
 /// A built-in interface other than `Drop` written by hand (`Type: Eq { ... }`), for a generic type or not.
 fn builtin_by_hand(span: Span, diags: &mut Diagnostics) {
     diags.error(
@@ -688,6 +847,8 @@ enum ImplKind {
     Drop,
     /// `Type: From<Source> { fn from(value: Source): Type }`.
     From,
+    /// `Type: TryFrom<Source> { fn try_from(value: Source): Result<Type, E> }`.
+    TryFrom,
     /// A built-in interface other than `Drop`, which is only derived for now.
     Builtin,
     /// `Type: Interface { ... }` for an interface declared in the program (an index into the interfaces).
@@ -818,7 +979,9 @@ impl<'t> Sema<'t> {
             _ => false,
         };
         let method_key = (key, decl.name.name.clone());
-        if self.globals.methods.contains_key(&method_key) || clashes_with_variant {
+        let shares_conversion = matches!(decl.name.name.as_str(), "from" | "try_from")
+            && !self.globals.conversions_into(self_ty, &decl.name.name).is_empty();
+        if self.globals.methods.contains_key(&method_key) || clashes_with_variant || shares_conversion {
             diags.error(
                 Code::DUPLICATE_NAME,
                 decl.name.span,
@@ -826,6 +989,26 @@ impl<'t> Sema<'t> {
             );
             return;
         }
+        let label = format!("{self_ty}.{}", decl.name.name);
+        let id = self.push_method(self_ty, decl, module, scope, label, diags);
+        self.globals.methods.insert(method_key.clone(), id);
+        self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
+        self.globals.method_spans.insert(method_key.clone(), decl.name.span);
+        self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
+    }
+
+    /// Creates the function of one method and returns its id. `label` is its name: `Type.name`, or `Type.from<Source>`
+    /// for a conversion, whose symbol must differ from the other conversions of its type. The name is not entered in
+    /// the type's members, so a conversion block (`register_conversion_impl`) can add one per source type.
+    fn push_method(
+        &mut self,
+        self_ty: &Ty,
+        decl: &'t ast::FnDecl,
+        module: usize,
+        scope: &MethodScope,
+        label: String,
+        diags: &mut Diagnostics,
+    ) -> FuncId {
         // A method-level type parameter is opaque in the identity function; each call instantiates it. It comes
         // first so that the method's own `F` wins over an impl parameter with the same name in a default method.
         let mut subst: Vec<(String, Ty)> = Vec::new();
@@ -842,7 +1025,7 @@ impl<'t> Sema<'t> {
         let generics: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         let item = FnItem {
             decl,
-            name: format!("{self_ty}.{}", decl.name.name),
+            name: label.clone(),
             module,
             self_ty: Some(self_ty.clone()),
             subst,
@@ -853,14 +1036,10 @@ impl<'t> Sema<'t> {
             is_exported: false,
         };
         let id = self.push_fn(item);
-        self.globals.methods.insert(method_key.clone(), id);
-        self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
-        self.globals.method_spans.insert(method_key.clone(), decl.name.span);
-        self.globals.method_pkg.insert(method_key, self.globals.package_of(module));
         if !generics.is_empty() {
             let template = crate::session::MethodTemplate {
                 decl,
-                name: format!("{self_ty}.{}", decl.name.name),
+                name: label,
                 module,
                 self_ty: Some(self_ty.clone()),
                 base_subst: scope.subst.to_vec(),
@@ -878,8 +1057,10 @@ impl<'t> Sema<'t> {
                     identity: id,
                     params: self.tpl.methods[index].params.clone(),
                     bounds: self.tpl.methods[index].bounds.clone(),
+                    hidden: decl.generics.iter().any(|g| g.hidden),
                 },
             );
         }
+        id
     }
 }

@@ -32,6 +32,8 @@ pub(crate) struct Args {
     pub(crate) release: bool,
     /// `--profile <name>` (`spec/profiles.md`).
     pub(crate) profile_name: Option<String>,
+    /// `-O<n>`: the optimization level that replaces the profile's `opt-level` (`spec/profiles.md`, BP4).
+    pub(crate) opt_level: Option<crate::profile::OptLevel>,
     pub(crate) jobs: Option<usize>,
     pub(crate) diagnostics: DiagnosticOptions,
 }
@@ -46,12 +48,14 @@ impl Default for Args {
             program_args: Vec::new(),
             release: false,
             profile_name: None,
+            opt_level: None,
             jobs: None,
             diagnostics: DiagnosticOptions {
                 format: DiagnosticFormat::Human,
                 color: ColorChoice::Auto,
                 width: None,
                 error_limit: None,
+                quiet: false,
             },
         }
     }
@@ -68,6 +72,8 @@ pub(crate) fn parse(args: &[String]) -> Result<Args, String> {
         }
         let (name, inline) = match arg.split_once('=') {
             Some((name, value)) if name.starts_with("--") => (name, Some(value)),
+            // `-O2` is `-O 2` (`spec/profiles.md`, BP4).
+            _ if arg.len() > 2 && arg.starts_with("-O") => ("-O", Some(&arg[2..])),
             _ => (arg.as_str(), None),
         };
         match name {
@@ -103,6 +109,13 @@ pub(crate) fn parse(args: &[String]) -> Result<Args, String> {
                     None => rest.next().cloned().ok_or("`--profile` needs a profile name")?,
                 };
                 parsed.profile_name = Some(value);
+            }
+            "-O" => {
+                let value = match inline {
+                    Some(value) => value.to_string(),
+                    None => rest.next().cloned().ok_or("`-O` needs an optimization level from 0 to 3")?,
+                };
+                crate::profile::set_opt_level(&mut parsed.opt_level, crate::profile::parse_opt_level(&value)?)?;
             }
             "-j" | "--jobs" => {
                 let value = match inline {
@@ -283,10 +296,11 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         (None, true) => Some("release".to_string()),
         (None, false) => None,
     };
-    let profile = match crate::profile::resolve_for_command("debug", &target, requested.as_deref(), "dev") {
-        Ok(profile) => profile,
-        Err(code) => return code,
-    };
+    let profile =
+        match crate::profile::resolve_for_command("debug", &target, requested.as_deref(), "dev", args.opt_level) {
+            Ok(profile) => profile,
+            Err(code) => return code,
+        };
     let dir = match TempDir::new() {
         Ok(dir) => dir,
         Err(error) => {
@@ -318,6 +332,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let built = match compile(&target, &dir.path, Some(&exe), &options) {
         Ok(built) => built,

@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `TryFrom` is a standard interface and `i32` a standard type, so this package may not implement one for the other
+// (E0142, as for `From`).
+
+i32: TryFrom<i64> { //~ E0142
+    fn try_from(v: i64): Result<i32, i64> {
+        Ok(v as i32)
+    }
+}
+
+fn main() {}

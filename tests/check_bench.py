@@ -49,9 +49,11 @@ def check(ok: bool, message: str) -> None:
 burdin = harness.require_burdin()
 fixtures = harness.TESTS / "bench"
 
+# The interval is mean ± 1.96 · s / √n (spec/bench.md, BN5), so its lower bound can be negative for a noisy run with few
+# samples; the mean, median, and MAD cannot.
 STATS_LINE = re.compile(
     r"^(?P<display>.+): (?P<median>[0-9.]+) (?P<unit>ns|us|ms|s) "
-    r"\(mean [0-9.]+ \w+, ci 95% [0-9.]+ \w+ to [0-9.]+ \w+, mad [0-9.]+ \w+, [0-9]+/[0-9]+ outliers\)$"
+    r"\(mean [0-9.]+ \w+, ci 95% -?[0-9.]+ \w+ to -?[0-9.]+ \w+, mad [0-9.]+ \w+, [0-9]+/[0-9]+ outliers\)$"
 )
 
 
@@ -256,20 +258,22 @@ with harness.temporary_dir("burdin-bench-") as work:
     check(out.count("baseline nightly:") == 4, f"every bench needs its comparison line:\n{out}")
     check("new (not in the baseline)" not in out, f"a saved bench was reported as new:\n{out}")
 
-    # A tiny hand-written baseline: three of the benches are slower beyond noise by any standard, so the run
-    # fails. The empty bench is left out on purpose: it measures about nothing, so against a tiny baseline it can
-    # be faster, and a bench missing from the file is `new`, which never fails a run (BN11).
+    # A tiny hand-written baseline: two of the benches are slower beyond noise by any standard, so the run fails.
+    # `chatty` is left out on purpose: it is noisy, and BN11 compares against the larger spread, so on a busy machine
+    # its own spread can exceed its change from a tiny baseline and it is within noise. The empty bench is left out
+    # too: it measures about nothing, so against a tiny baseline it can be faster. A bench missing from the file is
+    # `new`, which never fails a run (BN11).
     tiny = basic / "target" / "burdin" / "bench" / "tiny.json"
     tiny.parent.mkdir(parents=True, exist_ok=True)
     entries = {path: {"iters": 1, "samples": [1], "median_ns": 0.001, "mean_ns": 0.001,
                       "ci_low_ns": 0.001, "ci_high_ns": 0.001, "mad_ns": 0.0}
-               for path in ("geometry.shapes.area", "counts", "chatty")}
+               for path in ("geometry.shapes.area", "counts")}
     tiny.write_text(json.dumps({"version": 1, "benches": entries}))
     status, out, err = bench(*SMALL, "--baseline", "tiny", "--fail-on-regression", "50", target=basic)
     check(status == 1, f"a regressed run must exit 1, got {status}")
-    check(out.count("FAIL") == 3 and "regressed over the baseline tiny" in out, f"the regressions were not reported:\n{out}")
-    # The missing bench was still measured, so it counts as measured, not failed.
-    check("bench result: 1 measured, 3 failed" in out, f"the regression summary is wrong:\n{out}")
+    check(out.count("FAIL") == 2 and "regressed over the baseline tiny" in out, f"the regressions were not reported:\n{out}")
+    # The missing benches were still measured, so they count as measured, not failed.
+    check("bench result: 2 measured, 2 failed" in out, f"the regression summary is wrong:\n{out}")
     check("new (not in the baseline)" in out, f"the missing bench was not reported as new:\n{out}")
 
     # Without the gate, the same comparison is only a report.

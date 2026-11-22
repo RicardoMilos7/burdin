@@ -8,7 +8,8 @@ are `tests/check_cli.py`.
 ## BT1. The command list
 
 A command is in scope when `burdin <command>` is listed by `burdin --help` and has a `burdin <command> --help` page.
-The complete list:
+The complete list (`burdin --help` shows it in this order's spirit: the commands used every day first, the specialized
+ones last; `burdin commands` lists every command alphabetically):
 
 | Command | What it does | Specification |
 | --- | --- | --- |
@@ -40,6 +41,7 @@ The complete list:
 | `explain` | print the reference entry for an error code | `docs/error-codes.md` |
 | `lsp` | run the language server on standard input and output | `spec/lsp.md` |
 | `dap` | run the debug adapter on standard input and output | `spec/debug.md` |
+| `commands` | list every command with its summary, alphabetically | this page |
 | `help` | print the help of a command | this page |
 
 The `burdin` **proxy** (`spec/toolchain.md`) adds `toolchain` and `+<toolchain>` before it runs a compiler. A
@@ -89,7 +91,7 @@ is still missing.
 
 ## BT4. The command line
 
-- `burdin` with no arguments, `burdin --help`, and `burdin help` print the command list and exit 0.
+- `burdin` with no arguments, `burdin --help`, and `burdin help` print the command list and exit 0. The list is ordered by use: build, run, test, and check first, then package setup, code tidying, measuring, refactoring and inspection, and packaging, bindings, and editor tooling last. `burdin commands` prints the same commands alphabetically and takes no arguments.
 - `burdin help <command>` and `burdin <command> --help` print the command's page and exit 0 (`burdin help help`, like
   `burdin help`, prints the command list). `--help` or `-h` after `--` belongs to the program being run, not to
   `burdin`.
@@ -101,6 +103,18 @@ is still missing.
   one-line summaries.
 - A command that has a target takes it as a positional argument, before any options and before `--`. `--` ends
   `burdin`'s options: `run` and `debug` pass what follows to the program, `fuzz` passes it to libFuzzer.
+- The target may be left out, and then it is the working directory: `burdin run` in a package runs it, exactly as
+  `burdin run .` does. `build`, `run`, `check`, `lint`, `fix`, `doc`, `debug`, `expand`, `bloat`, and `watch` take
+  it so; `ssr` and `refactor` take it after their first word. `test`, `bench`, `asm`, and `fuzz` take a name after
+  the target (a test filter, a function, a fuzz target), so their first word is the target only when it names a
+  path: a `.bd` file, a word with `/` or `\`, or an existing file or directory. Any other first word is the name,
+  and the target is `.`: `burdin test parse` runs the tests whose names contain `parse` in the working package.
+  `burdin watch` reads the options after its command word as that command's options.
+- Each command has a short alias, which the command accepts wherever its name is accepted and which help shows.
+  `burdin r app` is `burdin run app`. The aliases are: `b` build, `r` run, `t` test, `c` check, `n` new, `i` init,
+  `a` add, `f` fmt, `l` lint, `fx` fix, `d` doc, `bn` bench, `w` watch, `rp` repl, `dbg` debug, `fz` fuzz,
+  `cl` clean, `s` ssr, `rf` refactor, `xp` expand, `as` asm, `bl` bloat, `ex` explain, `pk` package, `v` vendor,
+  `bg` bindgen, and `h` help. `lsp`, `dap`, and `commands` have none.
 - Long options accept `--option value` and `--option=value`. A flag that takes no value rejects `--flag=value`.
   `-j4` is `-j 4`.
 
@@ -130,6 +144,29 @@ and `test` runs the same checked program's test dispatcher. `tests/check_cli.py`
 it, checks it, and tests it in one flow, and checks that the unknown-command and out-of-scope-command behavior of
 BT2 holds.
 
+## BT8. Quiet and verbose output
+
+`build`, `run`, and `check` take two flags for what they print besides their results (issue #799):
+
+- `-q`/`--quiet` prints only errors. Warnings and informational notes (such as `note: skipped` for a workspace member
+  with no `src/main.bd`) are left out, in every diagnostic format. Errors print as they do without the flag, and a
+  SARIF log is still written under `build` and `check`, holding only the errors. A result a command asks for is
+  unchanged: a program's output under `run`, and `check --print-instances` or `--explain-ownership`.
+- `-v`/`--verbose` prints, to standard error, `compiling <target>`, then each phase of the compilation with its
+  wall time, in this order: `dependencies` (the lockfile and git packages), `load` (the package and its modules),
+  `build scripts`, `parse and check` (parsing, name resolution, type checking, and the memory checks), and, for
+  `build` and `run` only, `codegen` followed by one `codegen unit <i> of <n>` line per unit, in unit order, and
+  `link`. `check` stops after `parse and check`. A fresh cached executable replaces `codegen` and `link` with
+  `phase cache: the executable is up to date, so codegen and link are skipped`. A failed compilation prints the
+  phases that finished, then its errors. The program's output and exit status are unchanged. The unit lines do not
+  depend on `-j`: the units are numbered by the split, not by the order their threads finish.
+- The two flags conflict (exit status 2). `-q` is valid only for `build`, `run`, and `check`; `-v` is also the test
+  and bench runners' flag for their own output, and `burdin fuzz` rejects it. The timings vary from run to run, so
+  the checks compare the phase names and the unit numbers, and golden text only for the quiet error output.
+
+The flags change only what is printed: `--error-limit`, `--color`, `--width`, and `--diagnostic-format` keep their
+meaning under both.
+
 ## Tests
 
 `tests/check_cli.py` checks:
@@ -141,3 +178,7 @@ BT2 holds.
 - every out-of-scope command in BT2 is rejected as unknown with exit status 2;
 - `burdin -V` and `burdin --version build` behave as BT4 says;
 - one fixture package goes through `build`, `run`, `check`, and `test` (BT7).
+
+`tests/check_verbosity.py` checks BT8 with the fixture packages under `tests/verbosity/`: the quiet output of a
+warning-only package and of a failing one (golden text under `tests/verbosity/golden/`), in every format; the phases
+and the codegen units of `-v` with `-j 1` and `-j 8`; the cached-executable line; and the usage errors.

@@ -27,10 +27,12 @@ not updated and may disagree with the repository.
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
    arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
    overloading and `Index`/`IndexMut`, `spec/comptime.md` is compile-time evaluation (`comptime` expressions,
-   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
+   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/generate.md` is declaration generation (`comptime
+   generate`, the text it produces, the order of generation, and what stops it), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
-   `Drop` on a generic type, and the built-in interfaces on one, `spec/allocators.md` is allocator parameters,
+   `Drop` on a generic type, and the built-in interfaces on one, `spec/associated-types.md` is associated types
+   (`type Name`, `type Name = Ty`, projections, monomorphization, and object safety), `spec/allocators.md` is allocator parameters,
    default type parameters, `Arena`, `Shared<T>`, and the checking allocator in `burdin test`, `spec/test-runner.md`
    is the behavior of `burdin test`, `spec/bench.md` is the behavior of `burdin bench` (bench items, the harness,
    statistics, baselines, `black_box`, and the profiler hook), `spec/fuzz.md` is the behavior of `burdin fuzz`
@@ -61,14 +63,22 @@ not updated and may disagree with the repository.
    serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
    path-aware errors, the derives, and the test format, `spec/toml.md` is the TOML 1.0.0 package: the subset it reads,
    the canonical form it writes, the framework mapping, the strict reader, and its errors with their locations,
+   `spec/http-client.md` is the `http` package: URLs, headers, requests, the body framings, redirects, timeouts,
+   retries, and connection reuse (and that `https` is not supported), `spec/crypto.md` is the `crypto` package: the
+   hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 it provides in pure Burdin, what each
+   reports, and why it is an experiment, not a security claim, `spec/math.md` is the `math` package: the integer, scalar,
+   statistics, vector, and matrix functions over `f64`, and which bad inputs panic and which give `None`, `spec/tls.md` is the `tls` package: OpenSSL 3 through the
+   C bridge as the backend, the memory-BIO engine, configuration and verification, certificates and keys, the stream,
+   errors, and linking (the decision, issue #322),
    `spec/toolchain.md` is the toolchain manager: `burdin
    toolchain`, the `burdin` proxy, `burdin-toolchain.toml`, components, and `self update`/`uninstall`, and `spec/debug.md` is debugging: the
    panic hook, symbolized panic frames, variable lifetimes, the gdb/lldb printers, the Windows Natvis file,
    `burdin debug`, and the `burdin dap` debug adapter, and `spec/watch.md` is `burdin watch` and `--watch`: what is
    watched, the debounce, restarting `run`, and the changed-modules-first `test` run; `spec/build-tool.md` is the
-   build tool's command surface, the Cargo commands it does not copy, and the exit statuses; and `spec/profiles.md`
+   build tool's command surface, the Cargo commands it does not copy, and the exit statuses; `spec/profiles.md`
    is named build profiles (`dev`, `release`, `test`, `bench`, and custom), their inheritance, settings, and
-   per-package overrides.
+   per-package overrides; and `spec/workspaces.md` is workspaces: members, default members, excludes, the selection
+   flags, inherited fields and dependencies, and the workspace lockfile.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
@@ -130,9 +140,15 @@ python3 tests/check_bindgen.py           check `burdin bindgen`: golden modules,
 python3 tests/check_rust_interop.py      check Rust interop: the fixture crate's golden shim and module, layout checks, `[rust.crates]` builds, and E0264 (needs cargo)
 python3 tests/check_new.py               check `burdin new`: the generated package, refusals, invalid names, and the command line
 python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: path and git dependencies, golden files, `--locked`, checksums
+python3 tests/check_workspace.py         check workspaces: members, default members, excludes, the selection flags, inherited
+                                         fields, and one lockfile at the root
 python3 tests/check_features.py          check dependency tables, features, and targets: selection, unification, dev-dependencies, `cfg` tables, the generated `features` module, and the potential-graph lockfile
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
+python3 tests/check_crypto.py            check the `crypto` official package: ~500 known-answer vectors (tests/crypto), the error messages, `burdin add crypto`, and its official pin
+python3 tests/check_math.py              check the `math` official package: ~2,400 known-answer cases (tests/math), the runner, `burdin add math`, and its official pin
+python3 tests/check_link.py              check the `[link]` manifest table: a dependency's libraries reach the link by name, target tables, and the manifest errors (needs a built driver)
+python3 tests/check_tls.py               check the `tls` official package: the committed test certificates, the conformance program (clients and servers over 127.0.0.1), the declared OpenSSL symbols, the README's examples, `burdin add tls`, and its official pin (needs OpenSSL 3 to link)
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
@@ -142,6 +158,7 @@ python3 tests/check_repl.py              check `burdin repl`: the golden session
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
 python3 tests/check_cli.py               check the command surface: every command's help, the golden command list, unknown commands
+python3 tests/check_verbosity.py          check `-q`/`--quiet` and `-v`/`--verbose` on build, run, and check: the golden quiet errors, the phases and codegen units
 python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_target.py            check the target directory's artifact cache: the layout, fingerprints, invalidation, the failure paths (spec/target.md)
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
@@ -259,7 +276,7 @@ docs/                     the user-facing error-code reference (checked by tests
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform
                           support matrix and known limitations (checked by tests/check_platform_support.py), and the
                           version/release policy (docs/releasing.md)
-.github/workflows/        ci.yml (pull requests and main; each OS split into four parallel parts) and release.yml (tag, nightly schedule, or manual dry run)
+.github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 spec/                     grammar, memory rules, standard-library surface, iteration protocol, derives, extension
                           methods, test runner, the query library, stage 0 scope, stage 1 plan
 tests/                    conformance tests and scripts

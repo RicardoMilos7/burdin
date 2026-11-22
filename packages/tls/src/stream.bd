@@ -1,0 +1,306 @@
+// `TlsStream`: a TLS connection over a `TcpStream` (spec/tls.md, TLS5).
+//
+// The stream owns the socket and an `Engine`, and pumps bytes between them: whenever the engine needs the peer it
+// has already handed over what it wanted sent, and the stream reads more from the socket. The socket reads and writes
+// park the calling task on the reactor (spec/io.md), so no OpenSSL call blocks and a waiting stream holds no worker.
+
+use certs.Certificate
+use config.{ClientConfig, ServerConfig}
+use engine.{Engine, Step}
+use errors.TlsError
+
+/// How much one socket read asks for: a TLS record with its framing.
+const NET_CHUNK: usize = 16640
+
+/// A TLS connection. One task uses it at a time. Dropping it sends a best-effort `close_notify` and closes the socket.
+struct TlsStream {
+    tcp: TcpStream,
+    engine: Engine,
+    /// Bytes read from the socket, on their way into the engine.
+    inbuf: List<u8>,
+    /// Bytes from the engine, on their way to the socket.
+    outbuf: List<u8>,
+    handshaken: bool,
+    /// The peer sent `close_notify`: reads return `Ok(0)`.
+    eof: bool,
+    /// `close` or `abort` ran: no `close_notify` is sent on drop, and every operation is `TlsError.Closed`.
+    closed: bool,
+    /// A fatal error ended the connection.
+    dead: bool,
+}
+
+// The stream is one mutable state machine: it can move to another task, but two tasks cannot share it.
+unsafe TlsStream: Send {}
+
+TlsStream {
+    /// Runs the client handshake over `tcp`, verifying the server's certificate against the configuration's trust
+    /// store and `server_name` against its names (an IP address is matched against its IP entries). A read timeout set
+    /// on `tcp` beforehand applies to the handshake's waits and fails it with `TlsError.Io`. On any failure `tcp` is
+    /// closed.
+    fn connect(own tcp: TcpStream, server_name: str, config: ClientConfig): Result<TlsStream, TlsError> {
+        let mut engine = Engine.new(unsafe { config.ctx }, false)?
+        engine.set_server_name(server_name, !config.skip_verify)?
+        let mut stream = TlsStream.__make(tcp, engine)
+        stream.__handshake()?
+        Ok(stream)
+    }
+
+    /// Runs the server handshake over `tcp`.
+    fn accept(own tcp: TcpStream, config: ServerConfig): Result<TlsStream, TlsError> {
+        let engine = Engine.new(unsafe { config.ctx }, true)?
+        let mut stream = TlsStream.__make(tcp, engine)
+        stream.__handshake()?
+        Ok(stream)
+    }
+
+    priv fn __make(own tcp: TcpStream, own engine: Engine): TlsStream {
+        TlsStream {
+            tcp: tcp,
+            engine: engine,
+            inbuf: List<u8>.new(),
+            outbuf: List<u8>.new(),
+            handshaken: false,
+            eof: false,
+            closed: false,
+            dead: false,
+        }
+    }
+
+    /// How long one socket read may wait; `None` waits forever. An expired wait is `TlsError.Io` with
+    /// `IoErrorKind.TimedOut`, and the stream stays usable.
+    fn set_read_timeout(mut self, timeout: Option<Duration>) {
+        self.tcp.set_read_timeout(timeout)
+    }
+
+    /// How long one socket write may wait for room.
+    fn set_write_timeout(mut self, timeout: Option<Duration>) {
+        self.tcp.set_write_timeout(timeout)
+    }
+
+    /// The application protocol the server chose by ALPN. `None` when none was offered or chosen (a server of this
+    /// package never chooses one: spec/tls.md, TLS8).
+    fn alpn_protocol(self): Option<String> {
+        self.engine.alpn_protocol()
+    }
+
+    /// The negotiated protocol version, as `TLSv1.2` or `TLSv1.3`.
+    fn tls_version(self): String {
+        self.engine.version()
+    }
+
+    /// The negotiated cipher suite.
+    fn cipher(self): String {
+        self.engine.cipher()
+    }
+
+    /// The peer's leaf certificate, if it sent one (a server always does; a client only when asked).
+    fn peer_certificate(self): Option<Certificate> {
+        self.engine.peer_certificate()
+    }
+
+    /// On a server, the name the client sent as SNI.
+    fn server_name(self): Option<String> {
+        self.engine.server_name()
+    }
+
+    /// Reads up to `max` decrypted bytes and appends them to `buf`. `Ok(0)` is the peer's `close_notify`, the clean end
+    /// of the stream. A socket that ends without one is `TlsError.UnexpectedEof`: a connection cut by someone else
+    /// must not look like an orderly end.
+    fn recv(mut self, mut buf: List<u8>, max: usize): Result<usize, TlsError> {
+        if self.closed || self.dead {
+            return Err(TlsError.Closed)
+        }
+        if self.eof || max == 0 {
+            return Ok(0)
+        }
+        loop {
+            let step = match self.engine.read(mut buf, max) {
+                Ok(step) => step,
+                Err(failure) => {
+                    let _ = self.__flush_out()
+                    self.dead = true
+                    return Err(failure)
+                }
+            }
+            match step {
+                Step.Data(n) => {
+                    self.__flush_out()?
+                    return Ok(n)
+                }
+                Step.Eof => {
+                    self.eof = true
+                    let _ = self.__flush_out()
+                    return Ok(0)
+                }
+                Step.NeedInput => {
+                    self.__flush_out()?
+                    self.__fill()?
+                }
+                Step.Done => { self.__flush_out()? }
+                Step.Retry => { self.__flush_out()? }
+            }
+        }
+    }
+
+    /// Encrypts a prefix of `data` (at most one record) and sends it, and returns how many bytes it took.
+    fn send(mut self, data: [u8]): Result<usize, TlsError> {
+        if self.closed || self.dead {
+            return Err(TlsError.Closed)
+        }
+        loop {
+            let step = match self.engine.write(data) {
+                Ok(step) => step,
+                Err(failure) => {
+                    let _ = self.__flush_out()
+                    self.dead = true
+                    return Err(failure)
+                }
+            }
+            match step {
+                Step.Data(n) => {
+                    self.__flush_out()?
+                    return Ok(n)
+                }
+                Step.NeedInput => {
+                    self.__flush_out()?
+                    self.__fill()?
+                }
+                Step.Done => { self.__flush_out()? }
+                Step.Retry => { self.__flush_out()? }
+                Step.Eof => { self.__flush_out()? }
+            }
+        }
+    }
+
+    /// Sends all of `data`.
+    fn send_all(mut self, data: [u8]): Result<(), TlsError> {
+        let mut done: usize = 0
+        while done < data.len() {
+            let n = self.send(data[done..data.len()])?
+            done = done + n
+        }
+        Ok(())
+    }
+
+    /// Sends `close_notify` and flushes it. Afterwards every operation is `TlsError.Closed`; the socket closes when the
+    /// stream is dropped.
+    fn close(mut self): Result<(), TlsError> {
+        if self.closed {
+            return Ok(())
+        }
+        self.closed = true
+        if self.handshaken && !self.dead {
+            self.engine.shutdown()
+            self.__flush_out()?
+            self.__linger()
+        }
+        Ok(())
+    }
+
+    /// Reads what the peer has already sent (a TLS 1.3 session ticket, its own close_notify) and drops it, so the
+    /// socket closes with an empty receive buffer. Windows resets a connection that closes with unread data, and the
+    /// peer may then lose the close_notify it was sent. The wait is short: a peer that sends nothing ends the drain.
+    priv fn __linger(mut self) {
+        self.tcp.set_read_timeout(Some(Duration.from_millis(50)))
+        loop {
+            self.inbuf.clear()
+            match self.tcp.read(mut self.inbuf, NET_CHUNK) {
+                Ok(0) => return,
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// Ends the connection without a `close_notify`, as a crash or an attacker would. The peer sees its stream end with
+    /// `TlsError.UnexpectedEof`. It exists so a program (and this package's tests) can produce that case on purpose.
+    fn abort(mut self) {
+        self.closed = true
+    }
+
+    // ----- the pump ---------------------------------------------------------------------------------------------
+
+    /// Sends what the engine has queued.
+    priv fn __flush_out(mut self): Result<(), TlsError> {
+        self.outbuf.clear()
+        let count = self.engine.drain(mut self.outbuf)
+        if count > 0 {
+            self.tcp.write_all(self.outbuf[0..count])?
+        }
+        Ok(())
+    }
+
+    /// Reads from the socket into the engine. A socket that ended is `UnexpectedEof`: this is only called when the
+    /// engine needs more bytes, so no `close_notify` has completed the stream.
+    priv fn __fill(mut self): Result<(), TlsError> {
+        self.inbuf.clear()
+        let n = self.tcp.read(mut self.inbuf, NET_CHUNK)?
+        if n == 0 {
+            self.dead = true
+            return Err(TlsError.UnexpectedEof)
+        }
+        self.engine.feed(self.inbuf[0..n])
+    }
+
+    priv fn __handshake(mut self): Result<(), TlsError> {
+        loop {
+            let step = match self.engine.handshake() {
+                Ok(step) => step,
+                Err(failure) => {
+                    // An alert may be waiting for the peer.
+                    let _ = self.__flush_out()
+                    self.dead = true
+                    return Err(failure)
+                }
+            }
+            self.__flush_out()?
+            match step {
+                Step.Done => {
+                    self.handshaken = true
+                    return Ok(())
+                }
+                Step.NeedInput => { self.__fill()? }
+                Step.Data(_) => {}
+                Step.Retry => {}
+                Step.Eof => {}
+            }
+        }
+    }
+}
+
+TlsStream: Read {
+    fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
+        match self.recv(mut buf, max) {
+            Ok(n) => Ok(n),
+            Err(failure) => Err(failure.to_io()),
+        }
+    }
+}
+
+TlsStream: Write {
+    fn write(mut self, data: [u8]): Result<usize, IoError> {
+        match self.send(data) {
+            Ok(n) => Ok(n),
+            Err(failure) => Err(failure.to_io()),
+        }
+    }
+
+    fn flush(mut self): Result<(), IoError> {
+        match self.__flush_out() {
+            Ok(()) => Ok(()),
+            Err(failure) => Err(failure.to_io()),
+        }
+    }
+}
+
+TlsStream: Drop {
+    fn drop(mut self) {
+        if self.handshaken && !self.closed && !self.dead {
+            self.closed = true
+            self.engine.shutdown()
+            // A peer that stopped reading must not hold a drop for long.
+            self.tcp.set_write_timeout(Some(Duration.from_millis(200)))
+            let _ = self.__flush_out()
+        }
+    }
+}

@@ -1,0 +1,352 @@
+// Connection reuse and closing against the scripted server (spec/http-client.md, HC15 and HC16).
+
+use http
+use support.{Script, Server, body_of, error_text, fetch, header_of, ok, quick_client, reply, request_line}
+
+/// Three requests, one connection: the pool hands back the connection a finished response returned (HC15).
+fn reuse() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).read().write(ok("two").as_str()).read().write(ok("three").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("reuse: {}", fetch(client.clone(), server.url("/1").as_str()))
+            println("idle after the first: {}", client.idle_connections())
+            println("reuse: {}", fetch(client.clone(), server.url("/2").as_str()))
+            println("reuse: {}", fetch(client.clone(), server.url("/3").as_str()))
+            println("idle after three: {}", client.idle_connections())
+            client.close_idle()
+            println("idle after close_idle: {}", client.idle_connections())
+            server.settle()
+        })
+    })
+    println("reuse: accepted {}", server.accepted())
+}
+
+/// A response that was not read to its end leaves the connection in an unknown state: it is closed, not reused (HC16).
+fn unread_body() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc").wait_close())
+    scripts.push(Script.new().read().write(ok("fresh").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let status = response.status
+                    response.close()
+                    println("unread: {} closed without reading the body", status)
+                }
+                Err(e) => println("unread: error {}", e),
+            }
+            println("unread: next {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let mut saw_close = false
+    for entry in server.requests().iter() {
+        if entry.contains("(client closed)") {
+            saw_close = true
+        }
+    }
+    println("unread: accepted {} and the server saw the client close: {}", server.accepted(), saw_close)
+}
+
+/// Reading part of a body and discarding the rest gets the connection back (HC16).
+fn partial_then_discard() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("0123456789").as_str()).read().write(ok("next").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let mut part = List<u8>.new()
+                    let n = response.body.read(mut part, 3).unwrap()
+                    let reached = response.discard(100).unwrap()
+                    println("partial: read {} bytes, discarded the rest: {}", n, reached)
+                }
+                Err(e) => println("partial: error {}", e),
+            }
+            println("partial: next {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("partial: accepted {}", server.accepted())
+}
+
+/// `Connection: close`, from the server or from the request, ends the connection after the response (HC16).
+fn connection_close() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(reply("200 OK", "Connection: close\r\n", "one").as_str()))
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("server close: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("server close: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("server close: accepted {}", server.accepted())
+
+    let other = Server.start(2)
+    let mut other_scripts = List<Script>.new()
+    other_scripts.push(Script.new().read().write(ok("one").as_str()))
+    other_scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| other.serve(other_scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            for _ in 0..2 {
+                let request = http.Request.get(other.url("/").as_str()).unwrap().header("Connection", "close")
+                match client.send(request) {
+                    Ok(response) => {
+                        let mut response = response
+                        let _ = response.text()
+                    }
+                    Err(e) => println("request close: error {}", e),
+                }
+            }
+            println("request close: idle {}", client.idle_connections())
+            client.close_idle()
+            other.settle()
+        })
+    })
+    println("request close: accepted {}", other.accepted())
+}
+
+/// An `HTTP/1.0` response closes the connection unless it says `keep-alive` (HC16).
+fn http_10() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.0 200 OK\r\nContent-Length: 3\r\n\r\none"))
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("http/1.0: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("http/1.0: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("http/1.0: accepted {}", server.accepted())
+
+    let alive = Server.start(1)
+    let mut alive_scripts = List<Script>.new()
+    alive_scripts.push(
+        Script.new()
+            .read()
+            .write("HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nContent-Length: 3\r\n\r\none")
+            .read()
+            .write(ok("two").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| alive.serve(alive_scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("http/1.0 keep-alive: {}", fetch(client.clone(), alive.url("/").as_str()))
+            println("http/1.0 keep-alive: {}", fetch(client.clone(), alive.url("/").as_str()))
+            client.close_idle()
+            alive.settle()
+        })
+    })
+    println("http/1.0 keep-alive: accepted {}", alive.accepted())
+}
+
+/// Connections are kept per host and port: two servers, two connections, each used twice (HC15).
+fn per_host() {
+    let a = Server.start(1)
+    let b = Server.start(1)
+    let mut a_scripts = List<Script>.new()
+    a_scripts.push(Script.new().read().write(ok("a1").as_str()).read().write(ok("a2").as_str()))
+    let mut b_scripts = List<Script>.new()
+    b_scripts.push(Script.new().read().write(ok("b1").as_str()).read().write(ok("b2").as_str()))
+    task.scope(|s| {
+        s.spawn(|| a.serve(a_scripts))
+        s.spawn(|| b.serve(b_scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("per host: {}", fetch(client.clone(), a.url("/").as_str()))
+            println("per host: {}", fetch(client.clone(), b.url("/").as_str()))
+            println("per host: {}", fetch(client.clone(), a.url("/").as_str()))
+            println("per host: {}", fetch(client.clone(), b.url("/").as_str()))
+            println("per host: idle {}", client.idle_connections())
+            client.close_idle()
+            a.settle()
+            b.settle()
+        })
+    })
+    println("per host: accepted {} and {}", a.accepted(), b.accepted())
+}
+
+/// At most `max_idle_per_host` connections wait in the pool; the others are closed (HC15).
+fn max_idle() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).wait_close())
+    scripts.push(Script.new().read().write(ok("two").as_str()).wait_close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_idle_per_host = 1
+            let first = client.get(server.url("/").as_str()).unwrap()
+            let second = client.get(server.url("/").as_str()).unwrap()
+            let mut first = first
+            let mut second = second
+            let a = first.text().unwrap()
+            println("max idle: first read {:?}, idle {}", a, client.idle_connections())
+            let b = second.text().unwrap()
+            println("max idle: second read {:?}, idle {}", b, client.idle_connections())
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("max idle: accepted {}", server.accepted())
+}
+
+/// With `max_idle_per_host = 0` nothing is kept, and the request says so with `Connection: close` (HC15).
+fn no_pool() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()))
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_idle_per_host = 0
+            println("no pool: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("no pool: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("no pool: idle {}", client.idle_connections())
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println("no pool: accepted {} connection={}", server.accepted(), header_of(raw.as_str(), "connection"))
+}
+
+/// A connection the server closed while it was idle is found out before it is used, and a new one is made (HC15).
+fn stale_probe() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).close())
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_retries = 0
+            println("stale: {}", fetch(client.clone(), server.url("/").as_str()))
+            server.wait_closed(1)
+            println("stale: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("stale: accepted {} and saw {} requests", server.accepted(), server.requests().len())
+}
+
+/// The server closes a connection just as the client sends a request on it: nothing came back, so a safe request goes
+/// again on a new connection without using a retry; an unsafe one reports the failure (HC15).
+fn stale_race() {
+    let server = Server.start(3)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).read().close())
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    scripts.push(Script.new().read().write(ok("three").as_str()).read().close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_retries = 0
+            println("race get: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("race get: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            match client.post(server.url("/").as_str(), "first") {
+                Ok(response) => {
+                    let mut response = response
+                    println("race post: first {:?}", response.text().unwrap())
+                }
+                Err(e) => println("race post: first {}", e),
+            }
+            match client.post(server.url("/").as_str(), "second") {
+                Ok(_) => println("race post: second got a response"),
+                Err(e) => println("race post: second {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("race: accepted {}", server.accepted())
+}
+
+/// A connection that waited longer than `idle_timeout` is not used again (HC15).
+fn idle_timeout() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).wait_close())
+    scripts.push(Script.new().read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.idle_timeout = Duration.from_millis(30)
+            println("idle timeout: {}", fetch(client.clone(), server.url("/").as_str()))
+            time.sleep(Duration.from_millis(120))
+            println("idle timeout: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("idle timeout: accepted {}", server.accepted())
+}
+
+/// Clones of a client share the pool, so a client may be handed around freely (HC15).
+fn clones_share() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("one").as_str()).read().write(ok("two").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            let copy = client.clone()
+            println("clones: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("clones: {} idle {}", fetch(copy.clone(), server.url("/").as_str()), copy.idle_connections())
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("clones: accepted {}", server.accepted())
+}
+
+fn run() {
+    reuse()
+    unread_body()
+    partial_then_discard()
+    connection_close()
+    http_10()
+    per_host()
+    max_idle()
+    no_pool()
+    stale_probe()
+    stale_race()
+    idle_timeout()
+    clones_share()
+}

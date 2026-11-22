@@ -271,6 +271,161 @@ impl FileIndex {
             .filter(|i| i.body.is_some() && i.span.0 <= offset && offset <= i.span.1)
             .min_by_key(|i| i.span.1 - i.span.0)
     }
+
+    /// The type `self` names at a byte offset (`spec/lsp.md`, LS12): the owner of the method around it, which is the
+    /// type its impl block names (or an extension method's receiver). Read from the syntax, so it holds while the
+    /// body does not parse.
+    pub fn self_owner(&self, offset: u32) -> Option<String> {
+        if let Some(owner) = self.function_around(offset).and_then(|f| f.owner.clone()) {
+            return Some(owner);
+        }
+        self.items
+            .iter()
+            .filter(|i| i.kind == Kind::Impl && i.span.0 <= offset && offset <= i.span.1)
+            .find_map(|i| i.owner.clone())
+    }
+
+    /// The generic parameters the function around a byte offset declares, each with the names of its bounds: from its
+    /// `<...>` list and its `where` clause (`fn f<S: Serializer + Clone>(...)`, `where S: Serializer`). Read from the
+    /// tokens, so it holds while the body does not parse.
+    pub fn generic_params(&self, offset: u32) -> Vec<(String, Vec<String>)> {
+        let Some(f) = self.function_around(offset) else { return Vec::new() };
+        let Some(body) = f.body else { return Vec::new() };
+        let Some(name) = self.tokens.iter().position(|t| t.lo == f.name_span.0) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut i = name + 1;
+        if self.tokens.get(i).is_some_and(|t| t.kind == Tk::Lt) {
+            let mut depth = 0;
+            let mut close = None;
+            for (j, t) in self.tokens.iter().enumerate().skip(i) {
+                match t.kind {
+                    Tk::Lt => depth += 1,
+                    Tk::Gt => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(j);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(close) = close {
+                out.extend(parse_params(&self.tokens[i + 1..close]));
+            }
+            i = close.unwrap_or(i) + 1;
+        }
+        // The `where` clause, between the signature and the body.
+        let clause: Vec<Tok> = self.tokens[i.min(self.tokens.len())..]
+            .iter()
+            .take_while(|t| t.lo < body.0)
+            .skip_while(|t| t.kind != Tk::Keyword("where"))
+            .skip(1)
+            .cloned()
+            .collect();
+        out.extend(parse_params(&clause));
+        out
+    }
+
+    /// The bounds of a generic parameter of the function around a byte offset, or `None` when `param` is not one.
+    pub fn bounds_of(&self, offset: u32, param: &str) -> Option<Vec<String>> {
+        self.generic_params(offset).into_iter().find(|(name, _)| name == param).map(|(_, bounds)| bounds)
+    }
+
+    /// The type a parameter of the function around a byte offset is declared with, by its base name (`s: S` gives
+    /// `S`, `list: List<i32>` gives `List`), read from the signature's tokens. `None` for a type that is not a plain
+    /// name (`[u8]`, `&T`).
+    pub fn parameter_type(&self, offset: u32, param: &str) -> Option<String> {
+        let f = self.function_around(offset)?;
+        let body = f.body?;
+        let name = self.tokens.iter().position(|t| t.lo == f.name_span.0)?;
+        let mut i = name + 1;
+        if self.tokens.get(i)?.kind == Tk::Lt {
+            let mut depth = 0;
+            loop {
+                match self.tokens.get(i)?.kind {
+                    Tk::Lt => depth += 1,
+                    Tk::Gt => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        if self.tokens.get(i)?.kind != Tk::LParen {
+            return None;
+        }
+        let params: Vec<&Tok> = self.tokens[i + 1..].iter().take_while(|t| t.lo < body.0).collect();
+        let mut depth = 0i32;
+        let mut at_start = true;
+        for (k, t) in params.iter().enumerate() {
+            match t.kind {
+                Tk::RParen if depth == 0 => break,
+                Tk::LParen | Tk::LBracket | Tk::Lt => depth += 1,
+                Tk::RParen | Tk::RBracket | Tk::Gt => depth -= 1,
+                Tk::Comma if depth == 0 => {
+                    at_start = true;
+                    continue;
+                }
+                _ => {}
+            }
+            if at_start
+                && depth == 0
+                && t.ident() == Some(param)
+                && params.get(k + 1).is_some_and(|c| c.kind == Tk::Colon)
+            {
+                return match &params.get(k + 2)?.kind {
+                    Tk::Ident(ty) => Some(ty.clone()),
+                    Tk::SelfType => Some("Self".to_string()),
+                    _ => None,
+                };
+            }
+            if !matches!(t.kind, Tk::Keyword("mut" | "own" | "comptime")) {
+                at_start = false;
+            }
+        }
+        None
+    }
+}
+
+/// The parameters of a generic list or a `where` clause, each with the names of its bounds: `S: Serializer + Clone,
+/// T: Ord` gives `S` with `Serializer` and `Clone`, and `T` with `Ord`. Bounds are the last name of each `+`-separated
+/// path; the arguments inside `<...>` are not read.
+fn parse_params(tokens: &[Tok]) -> Vec<(String, Vec<String>)> {
+    // A comma after the last token closes the last parameter.
+    let closing = Tok { kind: Tk::Comma, lo: 0, hi: 0 };
+    let mut out = Vec::new();
+    let mut name: Option<String> = None;
+    let mut bounds: Vec<String> = Vec::new();
+    let mut last: Option<String> = None;
+    let mut in_bounds = false;
+    let mut depth = 0i32;
+    for t in tokens.iter().chain(std::iter::once(&closing)) {
+        match &t.kind {
+            Tk::Lt => depth += 1,
+            Tk::Gt => depth -= 1,
+            Tk::Comma if depth == 0 => {
+                bounds.extend(last.take());
+                if let Some(n) = name.take() {
+                    out.push((n, std::mem::take(&mut bounds)));
+                }
+                in_bounds = false;
+            }
+            Tk::Colon if depth == 0 && !in_bounds => in_bounds = true,
+            Tk::Ident(word) if depth == 0 => {
+                if !in_bounds {
+                    name.get_or_insert_with(|| word.clone());
+                } else {
+                    last = Some(word.clone());
+                }
+            }
+            Tk::Other if depth == 0 && in_bounds => bounds.extend(last.take()),
+            _ => {}
+        }
+    }
+    out
 }
 
 struct Builder<'a> {

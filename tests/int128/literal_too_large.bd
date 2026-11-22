@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A literal above `u128::MAX` cannot be read at all: the lexer reports it as E0008 (spec/int128.md, I128-2). A file
+// with a syntax error is not type checked (spec/check.md, CK4), so this file has no other diagnostics.
+
+fn main() {
+    let c: u128 = 340282366920938463463374607431768211456 //~ E0008
+    println(c.to_string())
+}

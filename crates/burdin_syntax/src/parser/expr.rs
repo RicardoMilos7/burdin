@@ -18,7 +18,34 @@ impl Parser<'_> {
             let span = lhs.span.to(rhs.span);
             return Ok(Expr { kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)), span });
         }
+        if let Some(op) = self.compound_op()
+            && !self.nl()
+        {
+            self.bump();
+            let rhs = self.expr_r(r)?;
+            let span = lhs.span.to(rhs.span);
+            return Ok(Expr { kind: ExprKind::CompoundAssign(op, Box::new(lhs), Box::new(rhs)), span });
+        }
         Ok(lhs)
+    }
+
+    /// The binary operator of the compound assignment token at the current position, if there is one
+    /// (`spec/compound-assignment.md`, CA1).
+    fn compound_op(&self) -> Option<BinOp> {
+        use TokenKind as T;
+        Some(match self.kind() {
+            T::PlusEq => BinOp::Add,
+            T::MinusEq => BinOp::Sub,
+            T::StarEq => BinOp::Mul,
+            T::SlashEq => BinOp::Div,
+            T::PercentEq => BinOp::Rem,
+            T::AmpEq => BinOp::BitAnd,
+            T::PipeEq => BinOp::BitOr,
+            T::CaretEq => BinOp::BitXor,
+            T::ShlEq => BinOp::Shl,
+            T::ShrEq => BinOp::Shr,
+            _ => return None,
+        })
     }
 
     pub(super) fn orelse(&mut self, r: Restriction) -> PResult<Expr> {
@@ -136,6 +163,11 @@ impl Parser<'_> {
     /// (spec/comptime.md, CT2, CT5, CT6, CT8). `comptime` binds like a prefix operator: `comptime f(x) + 1` adds one
     /// to the compile-time value of `f(x)`.
     pub(super) fn comptime_expr(&mut self, r: Restriction) -> PResult<Expr> {
+        if self.at_generate() {
+            let block = self.misplaced_generate()?;
+            let span = block.span;
+            return Ok(Expr { kind: ExprKind::Block(block), span });
+        }
         let start = self.expect(&TokenKind::Comptime)?.span;
         if matches!(self.kind(), TokenKind::Ident(name) if name == "assert") && self.nth_kind(1) == &TokenKind::LParen {
             self.bump();
@@ -406,9 +438,21 @@ impl Parser<'_> {
             TokenKind::If => self.if_expr(),
             TokenKind::While => {
                 self.bump();
+                let let_pattern = if self.eat(&TokenKind::Let) {
+                    let pattern = self.pattern()?;
+                    self.expect(&TokenKind::Eq)?;
+                    Some(pattern)
+                } else {
+                    None
+                };
                 let cond = self.expr_r(Restriction::NoStructLiteral)?;
                 let body = self.block()?;
-                Ok(Expr { span: start.to(body.span), kind: ExprKind::While { cond: Box::new(cond), body } })
+                let span = start.to(body.span);
+                let kind = match let_pattern {
+                    Some(pattern) => ExprKind::WhileLet { pattern, scrutinee: Box::new(cond), body },
+                    None => ExprKind::While { cond: Box::new(cond), body },
+                };
+                Ok(Expr { span, kind })
             }
             TokenKind::Loop => {
                 self.bump();
@@ -437,11 +481,32 @@ impl Parser<'_> {
             }
             TokenKind::Break => {
                 self.bump();
-                lit(ExprKind::Break)
+                let label = self.break_label();
+                // Like `return`, a value only if one starts on the same line (rule 5).
+                let value =
+                    if !self.nl() && Self::can_start_expr(self.kind()) { Some(Box::new(self.expr()?)) } else { None };
+                Ok(Expr { kind: ExprKind::Break { label, value }, span: start.to(self.prev_span()) })
             }
             TokenKind::Continue => {
                 self.bump();
-                lit(ExprKind::Continue)
+                let label = self.break_label();
+                Ok(Expr { kind: ExprKind::Continue(label), span: start.to(self.prev_span()) })
+            }
+            TokenKind::Label(name) => {
+                self.bump();
+                let label = Ident { name, span: start };
+                self.expect(&TokenKind::Colon)?;
+                let body = self.primary(r)?;
+                if matches!(
+                    body.kind,
+                    ExprKind::While { .. } | ExprKind::WhileLet { .. } | ExprKind::Loop(_) | ExprKind::For { .. }
+                ) {
+                    Ok(Expr { span: start.to(body.span), kind: ExprKind::Labeled { label, body: Box::new(body) } })
+                } else {
+                    // The label is dropped and the expression parsed on, so the rest of the file is still checked.
+                    self.error_at(body.span, "a loop label must name a `while`, `loop`, or `for` loop".into());
+                    Ok(body)
+                }
             }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
@@ -451,6 +516,16 @@ impl Parser<'_> {
             }
             _ => Err(self.unexpected("an expression")),
         }
+    }
+
+    /// The label after `break` or `continue`, if one is written on the same line (`break 'outer`).
+    fn break_label(&mut self) -> Option<Ident> {
+        if self.nl() {
+            return None;
+        }
+        let TokenKind::Label(name) = self.kind().clone() else { return None };
+        let span = self.bump().span;
+        Some(Ident { name, span })
     }
 
     pub(super) fn at_struct_literal(&self, r: Restriction) -> bool {

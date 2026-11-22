@@ -1,0 +1,19 @@
+//@ run
+//> 44
+//> 4294967295
+//> 1
+//> 2
+
+// `as` keeps its behavior for the pairs without a built-in `From` impl (spec/stdlib.md, FR3): truncation and
+// rounding are not `From` conversions, so these casts still happen.
+
+fn main() {
+    let big: i32 = 300
+    println("{}", big as u8)
+    let neg: i64 = -1
+    println("{}", neg as u32)
+    let wide: i64 = 4294967297
+    println("{}", wide as i32)
+    let fraction: f64 = 2.9
+    println("{}", fraction as i32)
+}

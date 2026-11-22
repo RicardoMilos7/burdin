@@ -6,7 +6,7 @@
 //! while the body is checked, because `x.{field.name}` has a type only once the name is known: each copy of the
 //! body is checked with the loop variable standing for that item's literal value (RFL4, RFL5).
 
-use super::{FnCx, PathTy, error_expr, mk};
+use super::{FnCx, LoopScope, PathTy, error_expr, mk};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, IntTy, LocalKind, Ty};
@@ -201,7 +201,7 @@ impl FnCx<'_> {
             }
             // `break` and `continue` cannot leave the unrolled body: it is not a loop in the generated code.
             let saved_barrier = self.comptime_loop_barrier.replace(self.loops.len());
-            self.loops.push(false);
+            self.loops.push(LoopScope::for_body(None));
             let (block, ty) = self.block(body, None);
             self.loops.pop();
             self.comptime_loop_barrier = saved_barrier;

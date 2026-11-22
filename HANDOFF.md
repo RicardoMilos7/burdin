@@ -1,8 +1,288 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, and fiftieth. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, and fifty-first. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
+
+**Compound assignment (issue #277, 2026-11-22).** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the
+built-in integers, floats, and `bool` (`spec/compound-assignment.md`, CA1-CA6). The value is evaluated first, then the
+place's address once, then the place is read, the operator applied, and the result stored, so `v[next()] += 1` calls
+`next` once. The operator has the binary operator's rules: overflow wraps in release and panics in debug, division by
+zero panics, and a shift amount out of range panics in debug. Implementation: the ten operators are tokens
+(`crates/burdin_syntax/src/token.rs`, `lexer.rs`), the parser builds `ExprKind::CompoundAssign` in `parser/expr.rs`
+(a line break before it ends the statement; `>>=` splits inside generic arguments), and the typed tree has
+`ExprKind::CompoundAssign`. Sema checks it in `compound_assign` (`fncx/operators.rs`), sharing the place checks with
+`=` (`check_assign_target`). The move, borrow, and origin checkers, the closure capture analysis, codegen
+(`compound_assign` in `emit/place.rs`, sharing `arith_values` with the binary operators in `emit/ops.rs`), and the
+comptime interpreter (`binary_values` in `prims.rs`, shared with the binary operators) each handle the new node. The
+formatter, the linter, the refactoring engine, and `burdin expand` know the operator too.
+**User types (choice a, CA5).** On a user type or a type parameter, `a op= b` means `a = a op b` through the operator's
+existing interface (`Add` for `+=`, and so on); no new interface. A missing interface is E0141 naming `+=`, and shifts on
+a user type are E0003. The operator borrows its operands, so the value is not moved. Known gap: the place is evaluated
+twice on a user type, unlike the built-in form (CA2), so an index with side effects runs twice; removing that needs the
+place's address to be kept. Tests:
+`tests/compound_assign/` (run, abort, compile-fail, comptime, raw pointer, and the release wrap), `tests/fmt/compound_assign`
+(the formatter golden), the parser unit tests `a_compound_assignment_takes_its_operator_and_stops_at_a_line_break` and
+`a_shift_assignment_closes_nested_generic_arguments`, and the lexer's punctuation test. Decision 34 in `tests/README.md`.
+Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 failed, 7 skipped) and release (1213 passed,
+0 failed, 20 skipped), with `LIBRARY_PATH` pointing at unversioned OpenSSL symlinks on this VM; `cargo test --workspace`
+(919 passed, 0 failed); `cargo clippy --all-targets -- -D warnings` (clean after one collapsible-`if` fix); `cargo fmt
+--all --check`; `check_tests.py`, `check_e9000.py`, `check_unit_tests.py`, `check_ci.py`, `check_error_docs.py`, and
+`check_fmt.py` (427 checks).
+**Declaration generation in comptime (issue #280, 2026-11-22).** A module-scope `comptime generate { ... }` block is
+evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
+`fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
+text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
+hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
+parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
+`fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
+`crates/burdin_query/src/db.rs` (`generate`, `sema_packages`, `reached_functions`); the text parser is
+`crates/burdin_syntax/src/generate.rs`; the comptime entry point is `burdin_comptime::run_generator`; the check cache
+keys a module on its generated text (`Module.generated`, GN8). Tests: `tests/generate/` (17 programs), `tests/fmt/generate.*`,
+`crates/burdin_query/tests/generate.rs`, and parser unit tests in `burdin_syntax`. Verified: `tests/run_tests.py generate`
+passes in debug (the 3 extra `m22` build fixtures match the filter), the full debug suite passes (1228 passed, 0 failed,
+6 skipped), `cargo test --workspace` (927 passed), `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all --check`,
+and `check_tests`, `check_e9000`, `check_unit_tests`, `check_ci`, `check_fmt`, `check_error_docs`, `check_docs`, and
+`check_check` all pass. In this WSL VM the five `s3_tls`/`s3_http` OpenSSL tests need unversioned `libssl.so` and
+`libcrypto.so` symlinks, which the VM lacks; they pass with them under `LIBRARY_PATH`.
+
+**Gaps, and choices the author may revisit.** (1) Generation stops at a failing generator (GN7), so the rest of the
+program is not checked in that run; a generator's own errors are reported. Step 2 still runs the other generators so
+each failure is reported, but this is a judgment call. (2) A generator's reach set follows calls, `any` boxing, and
+closures; a `Drop` impl a generator reaches only implicitly is not counted in step 1. (3) A diagnostic inside generated
+code is followed by a note naming the declarations; `Diagnostics::absorb` merges two errors with the same code and span,
+so two same-code errors in one block can show as one. (4) An internal error in generation uses E0224's code; it is
+unreachable in practice but should get its own code. (5) Generated declarations are not in any file, so `burdin fmt`,
+`burdin lint`, `burdin doc`, and `burdin expand` show only the block, and the language server lists the generator as
+`comptime generate N`. (6) Still out: generated constants, impl blocks, interfaces, and derives; generation from
+function bodies (E0243); hygiene; generators that read generated names.
+
+**Associated types (issue #393, 2026-11-22).** An interface may declare `type Name` (`spec/associated-types.md`,
+AT1-AT6); a `Type: Interface` block binds each one exactly once (`type Name = Ty`), and a projection reads it back
+as `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The parser gives `InterfaceDecl` an `associated` list and
+`ImplBlock` an `assoc` list, and adds `TypeKind::Projection` (`Self.Name` and `<T as Interface>.Name`); `T.Name`
+stays a two-segment type path and is reinterpreted in sema when its prefix is not a module. `InterfaceInfo::assoc`
+holds the declared names and `ImplInfo::assoc` the resolved bindings; `resolve_type_bounded` (with the bounds of the
+type parameters in scope) resolves a projection through the bound environment for `Ty::Param` and through
+`Globals::impls` for any other type, producing the new opaque `Ty::Projection` in symbolic code. `subst_ty`
+substitutes and normalizes it through the implementation's binding, so `check_impl_signatures` compares an
+interface's `Self.Item` with an implementation after `Self` is substituted, and monomorphization replaces it before
+code generation (the backend crates treat it as having no runtime value). A missing, unknown, duplicate, or
+interface-less binding is E0144/E0007; a projection no interface can answer, or that two answer, is E0145; an
+interface with an associated type makes `any I` E0202. `Iterator<T>` stays generic (the m13 decision is unchanged).
+Errors: E0144 and E0145 are registered in `tests/README.md` and have `docs/error-codes.md` sections. Tests:
+`tests/m21_reflect/associated_types.bd`, `associated_types_errors.bd`, and `associated_type_projection_errors.bd`;
+unit tests for the projection display and symbolic substitution. `burdin fmt` understands `type Name`,
+`type Name = Ty`, `Self.Name`, and `<T as I>.Name`, and the span mapper visits the new lists. Verification:
+`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, `python3 tests/run_tests.py`
+(1184 passed, 5 failed, 6 skipped), `python3 tests/run_tests.py --release` (1171 passed, 5 failed, 19 skipped),
+`python3 tests/check_fmt.py`, `python3 tests/check_error_docs.py`, `python3 tests/check_tests.py`,
+`python3 tests/check_unit_tests.py`, `python3 tests/check_e9000.py`, and `python3 tests/check_docs.py`. The five
+failures are the `s3_http`/`s3_tls` cases, which fail to link in this WSL image because the OpenSSL development
+symlinks (`libssl.so`, `libcrypto.so`) are absent; they are unrelated to this change.
+
+**Method-level type parameters (issue #391, 2026-11-22).** A method, associated function, or extension method
+declares parameters of its own after its name (`fn zip<U>(own self, own u: U): (A, U)`), with inline `const`
+parameters and bounds, and `where` for its own parameters. The decisions: the impl block's parameters stay in scope
+in the method's signature and body (`A` in `Pair<A>.zip<U>`), with the bounds its impl header declares; the method's
+own list is a separate scope, and one of its names hides an impl parameter of the same name. Each call infers the
+method's arguments like a generic function's: from the receiver, the arguments in parameter order, a parameter that
+appears only in another parameter's `Fn` bound (matched against the closure's signature), and the expected type, in
+that order. Each argument is checked against its bounds (E0141) and monomorphized per distinct instantiation; a
+parameter nothing determines is E0003, a const parameter E0252, and an interface with a generic method is not
+object-safe (E0202). The machinery landed with milestone 13; this change closed two inference gaps it left.
+`generic_hint` (`crates/burdin_sema/src/fncx/generic.rs`) now supplies a closure's parameter types from a
+function-typed parameter whose return is still open (`fn apply<U>(self, f: Fn(i32): U)`), instead of dropping the
+whole hint, so `h.apply(|n| n + 1)` needs no annotation and binds `U`. `Globals::unify`
+(`crates/burdin_sema/src/generics.rs`) now applies CL5's capability order in the right direction (an actual `Fn`
+value meets a declared `FnMut` or `FnOnce`), so `fn consume<U>(own f: FnOnce(i32): U)` infers `U` too. A method-level
+const parameter that nothing determines reports E0252 like a function's, not E0003 (`inference_hole` in the same
+file). A generic parameter list that repeats a name is now E0007 for a function, a method, and an interface method
+(`check_duplicate_generics` in `crates/burdin_sema/src/declare.rs`, called from `declare_values`,
+`declare_type_item`, and `register_impl`), because only a struct and an impl block were checked before. Tests:
+`tests/m07_generics/generic_methods.bd` (run: impl parameters in scope, inference from arguments, the
+expected type, closures, and explicit arguments, bounds inline and in `where`, const parameters, an enum method, an
+interface method through a bound, and two instantiations of one method) and `generic_methods_errors.bd`
+(E0003/E0141/E0252/E0007); `tests/m07_generics/duplicate_type_parameter.bd` now also covers a function and an
+interface method; Rust unit tests `a_closure_parameter_with_an_open_return_still_supplies_its_parameters`,
+`a_closure_hint_substitutes_an_impl_parameter`, `a_closure_parameter_with_an_open_parameter_type_is_no_hint`, and
+`an_open_non_closure_type_is_still_no_hint` in `fncx::generic::tests`, and
+`a_closure_unifies_with_its_signature_at_a_higher_capability` in `generics::tests`. Rules GM1-GM6 in
+`spec/arguments.md`; decision 33 in `tests/README.md`. Not done: explicit type arguments on an extension method
+(`h.pair<i64>(7)` is E0003; TA5 names methods and associated functions, not extensions), and a method `where`
+predicate on an impl parameter (E9000, the `declare-where-non-param` site owned by #394; write the bound on the impl
+header). **Found but not fixed:** a method (or any generic function) whose return type nests an instance of its own
+generic type grows symbolic instances without end — `struct Rec<A> { fn nest(self): Rec<(A, i32)> }` hangs the front
+end rather than reporting the `instances-limit` E9000. Verification: the full suite in debug (1188 passed, 0 failed,
+6 skipped) and release (1175 passed, 0 failed, 19 skipped); the five TLS/HTTP cases needed the unversioned
+`libssl.so`/`libcrypto.so` symlinks because this VM has no `libssl-dev`, and pass with `LIBRARY_PATH` pointing at
+them. `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `check_tests.py`,
+`check_e9000.py`, `check_unit_tests.py`, and `check_docs.py` pass; `cargo test --workspace` passes (916 tests).
+**`while let` (issue #487, 2026-11-22).** `while let pattern = value { ... }` is the `while` form of `if let`
+(`spec/grammar.md`, rule 8.11). `WhileExpr` takes the same `Cond` as `if`, and the parser builds
+`ExprKind::WhileLet` for a `let` head. Sema lowers it in `while_let` (`fncx/control.rs`) to a TIR `Loop` whose body
+is `match value { pattern => body, _ => break }`, so the value is evaluated again on each pass and the pattern binds
+only in the body, as `if let` does. The loop's scope is a `while`'s, so `break value` is E0003 and a label names it.
+The move, borrow, origin, codegen, and comptime passes need no change: they see the same loop and match that
+`loop { match ... }` gives, and the scrutinee temporary is dropped at the end of each pass. The formatter (`exprs.rs`,
+`while`) and the walkers, the lints, the refactoring tree, and `burdin expand` each handle the new node. Tests:
+`tests/m02_basics/while_let.bd` (runs), `while_let_errors.bd`, `while_let_else.bd`, `tests/m05_ownership/while_let_moves.bd`
+(runs; drops per pass), `while_let_moves_errors.bd` (E0104), and `tests/fmt/while_let.*` (the formatter golden).
+A pattern that always matches (`while let x = e`) is E0003, since it never ends the loop. Gap: SSR matches a
+`while let` (and an `if let`) on its scrutinee and body without comparing the pattern, as it already did for `if let`.
+**Generic interfaces and their default methods (issue #390, 2026-11-22).** The generic-interface rules were already in
+place from milestone 13; what was left was a default method with its own type parameters called through a bound on a
+type parameter. `it.map(|x| ...).sum()` in `fn f<I: Iterator<i32>>`, and `m.pair(|v| ...)` for a user
+`interface Mapper<T> { fn pair<U, F: FnMut(T): U>(...) }`, left `U` open in the generic body, so the result type was
+wrong. `IfaceMethod` now records the method's own parameters and bounds (`declare.rs`), and `generic_bound_args`
+(`fncx/generic.rs`) infers them the way a concrete receiver does: closure hints, the `Fn` bound's return type, and the
+`Iterator` bound. A parameter nothing fixes is E0003 at the call. The rules are `spec/iterators.md` IT23 (`requires`
+lists with arguments, interface parameter bounds, arity), and the tests are `tests/m13_iterators/generic_*` and
+`generic_method_uninferred`, plus the unit test `a_bound_provides_its_generic_methods_with_the_arguments_substituted`.
+Not done: a closure whose body only says `Ok`/`Err` needs its return type written when it is passed through a bound,
+as it does on a concrete receiver. The `s3_http`/`s3_tls` package tests need `libssl-dev` in WSL to link.
+
+**`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`
+(`spec/grammar.md`, rule 8.10), so `let x = loop { break 42 }` binds `i32` and `break` with no value is `break ()`.
+The loop's type is the expected type when the context gives one, otherwise the type of the first break value, and
+`!` when nothing breaks out; every break of one loop must give the same type. A `while` or `for` can end by its
+condition or its items, so it always gives back `()` and `break 1` there is E0003 (a value-less `break` is still the
+ordinary `break ()`). A labeled `break` carries its value to the loop it names, which must be a `loop` when it
+carries a value. The value is computed before the scopes the jump leaves are dropped, like a returned value (DR6).
+Implementation: the AST and TIR `Break` carry an optional value; sema's `LoopScope` now holds the loop kind and its
+break type (the old two-entry label scope is gone, because the label and the loop are one construct), and
+`break_value` in `fncx/control.rs` checks each break against it; codegen allocates the loop's result slot in
+`loop_value` and stores a break value into it in the `K::Break` arm; the comptime interpreter's `Unwind::Break`
+carries the value and `Step` (renamed `LoopStep`) returns it to `K::Loop`. The origin analysis joins a break
+value's origin into the loop it leaves, so a view of a loop-body local is still E0123/E0122 (RT2, RT5) when it
+escapes as the loop's value. Tests: `tests/m02_basics/break_value.bd`, `break_value_errors.bd`,
+`tests/m05_ownership/break_value_moves.bd`, `break_value_drops.bd`,
+`tests/m06_conventions/break_value_view.bd`. **Fixed on the way:** a labeled `for` that lowers to the iteration protocol
+(`'a: for x in xs.into_iter()`) used to wrap the generated `Block` in `Labeled`, which codegen and the move
+checker reject as "not a loop"; `with_label` now puts the label on the generated `loop` (`spec/iterators.md`, the
+lowering paragraph), and `labeled_loops.bd` covers a labeled `break` and `continue` that name such a `for`
+themselves.
+
+**128-bit integers (issue #273, 2026-11-21).** `i128` and `u128` are implemented; the rules are `spec/int128.md`
+(I128-1 to I128-13), and each rule names the tests that witness it. The representation: every integer is carried as an
+`i128` in the typed tree and comptime; a `u128` above `i128::MAX` is its bit pattern, and ordering uses
+`IntTy::key` (the top bit flipped). Division and remainder use the runtime's own routine (`sdivrem128`/`udivrem128`), so
+no `__divti3` is linked (MSVC has none). Overflow checks are the existing debug-only checks; `MIN / -1` wraps in release.
+Comptime and run-time ranges and range iterators compare in key space (`to_key`/`key_ty` in
+`crates/burdin_comptime/src/interp.rs`), so a `u128` range straddling `2^127` runs in order and stops at the top of the type.
+Decisions: a literal above `u128::MAX` is a lexer E0008, so its file is not type checked (CK4) and the other diagnostics
+of that file are suppressed; I left that behavior as it is. `-1` for an unsigned type stays E0003. Not covered (no test
+claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit operations, and the high-half hashing
+(not observable from program output). Verification: `tests/int128/` (21 programs, all passing in debug and release);
+`tests/check_bindgen.py` (81 checks, including the E0263 export case and the `__int128` skip); the full suite in debug
+(1139 passed, 0 failed, 4 skipped) and release (1126 passed, 0 failed, 17 skipped), after merging `main` (labeled loops,
+#275); `cargo test --workspace` (899 passed, 0 failed); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --all --check`; `check_tests.py`, `check_ci.py`,
+`gen_int_std.py --check`, `check_e9000.py`, `check_unit_tests.py`, and `check_docs.py`. The `s3_http/client` case, which the
+earlier baseline recorded as failing, passed in both profiles in this run; its cause is not investigated.
+
+**Fallible allocation (issue #278, 2026-11-22).** `AllocError` (`std.bd`: `CapacityOverflow`, `OutOfMemory`) and
+the `try_` forms of the allocating operations (`spec/allocators.md`, AL11; `spec/stdlib.md`, "Fallible allocation"):
+`List<T>.try_with_capacity` and `try_with_capacity_in`, `List` `try_reserve` and `try_reserve_exact`,
+`Map<K, V>.try_with_capacity` and `try_reserve`, and `String.try_with_capacity` and `try_reserve`. The codegen computes a
+status word (`emit/fallible.rs`: 0 ok, 1 overflow, 2 out of memory) and builds the `Result` from it, so a failed
+operation leaves the container unchanged. The runtime has `__try_alloc` and `__try_realloc`, which return null where the
+heap refuses; `Global` uses them, and `Arena.allocate` returns null, changing nothing, for a request it cannot round or
+a block it cannot have. **Contract change:** `Allocator.allocate` and `reallocate` may return null; an infallible
+operation with a stored allocator panics with `out of memory` when they do (`emit/alloc.rs`, `check_allocated`).
+Not done: `try_` forms for `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` (AL11.6); the compile-time
+interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_alloc_*` (8 files, run with
+`python3 tests/run_tests.py try_alloc`).
+
+**`From` for scalar pairs, `into`, and `as` (2026-11-21).** A pair of scalar types that `as` converts exactly has a
+built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
+(the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
+`lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
+(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+Tests: `tests/m24_stdlib/from_*` and `into_*`.
+
+**`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
+Result<Type, E> }` and `T.try_from(v)` for integer types (`spec/stdlib.md`, "Conversions", TF1-TF7). An integer
+`try_from` is lowered by sema (`int_try_from` in `fncx/call.rs`) to an `if` over only the bounds the source type can
+leave, with the `Err` of `std.TryFromIntError.OutOfRange`. The conversion blocks are no longer named members:
+`register_conversion_impl` (`impls.rs`) keeps every `From` and `TryFrom` block in `from_impls` or `try_from_impls`,
+one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the argument's type, and
+`check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
+conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
+blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
+with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
+(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+from `char`, and `try_from` for other primitive types. Tests:
+`tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
+**Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
+(`spec/grammar.md`, rule 8.9). The lexer makes a `Label` token when a quote is followed by an identifier and no closing
+quote (`'a'` and `'_'` stay chars). The AST has `ExprKind::Labeled { label, body }` around a loop, and `Break`/`Continue`
+carry `Option<Ident>`; the TIR mirrors that with `Labeled(String, Box<Expr>)` and `Break(Option<String>)`. Sema keeps a
+`LoopScope` stack in which a labeled loop has two entries (the label, which the labeled jumps name, and the loop, which
+the unlabeled ones name) and checks each jump's target (`jump` and `labeled_loop` in `fncx/control.rs`). Codegen
+(`loop_expr`, `LoopTargets.label`), the comptime interpreter (`Unwind::Break(Option<String>)`, `iteration`), the move
+checker (`loop_expr`, `loop_index`, `LoopInfo.label`), and the lints take the label into account. Decided: the label is
+dropped only in the parser's error path (a label on a non-loop is E0001 and the expression is kept). Tests:
+`tests/m02_basics/labeled_loops.bd` (runs), `labeled_loops_errors.bd`, `labeled_loop_not_loop.bd`, and
+`tests/m05_ownership/labeled_loop_moves.bd` (E0104 across a labeled `continue`). Not done: a labeled block
+(`'a: { ... }`), which the grammar does not admit. (`break` with a value landed in issue #276, above.)
+
+**Check summary and exit status (issue #787, 2026-11-21).** `burdin check --diagnostic-format json` now ends every run
+that reaches the checks, clean or not, with `{"type":"check-summary","version":1,"errors","warnings","shown","limit","files","elapsed_ms"}`
+(`spec/check.md`, CK12; `spec/diagnostics.md`, DG6; `docs/diagnostic.schema.json`). It replaces the build's `summary`
+object for `check`, because a check's counts need the warnings apart from the errors (the build's `errors` counts both).
+`files` counts the source files read from disk (not the embedded standard library or generated modules); `elapsed_ms`
+is the whole run. The text trace of `--explain` is skipped in JSON so the summary stays the last line; the human, short,
+and SARIF formats are unchanged. Tests: `tests/check_check.py` (the `machine-readable result` section, with the golden
+`tests/check/golden/json_err_types.txt`) and the `the_check_summary_counts_each_severity_and_keeps_the_field_order` unit test in
+`crates/burdin_driver/src/main.rs`. Known and left alone: the build's `summary` and the human "(N errors)" line count
+warnings in a failing run (`Rendered::total` counts every diagnostic), so `errors` there is not only errors.
+
+**Explicit type arguments at calls (issue #847, 2026-11-20).** `f<T>(x)`, `m.f<T>(x)`, `x.m<T>(a)`, `Type.f<T>(a)`, and
+`Type<A>.f<T>(a)` now give a generic function, method, or associated function with type parameters of its own its type
+arguments, so `json.from_str<Data>(text)` works (`spec/arguments.md`, TA1-TA6). The decisions: the list names every type
+parameter, in order, and a partial list is refused (TA2); a callee with an `impl` parameter takes none (TA4); a list on
+anything else that takes none (a plain function, `println`, `env.args`, a variant, a built-in method) is E0003 (TA5);
+a lowercase bare name takes a list only when a `(` follows its `>` (grammar rule 8.2). The explicit types seed the
+inference (`generic_call_impl`, `generic_method_call`, `generic_assoc_method_call`, through `explicit_bindings` in
+`fncx/generic.rs`), so an argument of another type is the ordinary E0003 and a bound is still E0141. The parser's
+look-ahead (`type_list_end` in `crates/burdin_syntax/src/lookahead.rs`) now reads a list only when every token in it is
+type syntax; that fixed a bug where `if s.len < n && s.cap > (k)` was rejected (E0001) as a member's type arguments.
+The call dispatch is `call`, `method_call`, `method_call_on_with`, `module_call`, and `assoc_call` in
+`fncx/call.rs`; `reject_type_args` and `user_generic_method` are the refusals. `GenericParam.hidden` marks an `impl`
+parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it to sema. Tests:
+`tests/m07_generics/explicit_type_args.bd` (runs), `explicit_type_args_errors.bd` (codes and lines),
+`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. Not done: explicit
+arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
+`it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
+its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
+**Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
+`self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`
+completes and `self.area(` navigates while the body does not parse. A parameter of a generic type (`s: S`, `S:
+Serializer`) completes and resolves the methods of its bounds (`FileIndex::generic_params`, `bounds_of`,
+`parameter_type`). Completion after `:` in a type position (`let`, `const`, a parameter, a return, a field) offers types
+and the generic parameters of the function, and in a bound position (`<T: `, `where`, `+`, `any `, `requires `, a
+top-level `Type: `) offers interfaces only (`Context::Type` and `Context::Bound` in `crates/burdin_lsp/src/edit.rs`).
+The rules are LS8 and LS12 in `spec/lsp.md`, and the tests are `definition_resolves_the_callee_of_an_incomplete_call`,
+`self_and_bounded_parameters_complete_in_an_interface_impl`, and `completion_offers_only_what_the_position_takes`. Gaps: a
+generic parameter of a signature still being typed (no body yet) is not offered; a call on a local (`a.append(`) in a file
+that has never analyzed successfully still resolves nothing, because the local's type comes from the analysis (a
+syntactic guess from `let a = List<i32>.new()` was left out); `tests/check_lsp.py` needs a built driver (LLVM) and was
+not run on this machine.
+
+**Generic types named without their type arguments (issue #850, 2026-11-20).** `Map.new()`, `List.new()`, `Set.new()`,
+and `Pair.new()` for a user generic, and a bare `Map` or `Map<i32>` in a type position, are E0003 at the name. The
+message names the missing parameters and the form to write (`` `Map` is generic and needs type arguments for `K, V`;
+write them, as in `Map<K, V>` ``) where it used to say "unknown name" (E0002) for the built-in containers and "cannot
+tell the type arguments" for the others. The helpers are `generic_args_missing` and `builtin_generic_params` in
+`crates/burdin_sema/src/types.rs`; the value-name fallback is `name` in `fncx/literals.rs`, and the generic template
+path is `template_instance` in `fncx/generic.rs`. Inference still applies where the arguments or the context supply
+them (`Pair.make(1, 2)`, `let s: Set<i32> = Set.new()`, `List.from`, `Map.from`). Tests:
+`tests/m07_generics/missing_type_args.bd` (codes and lines), `tests/m07_generics/type_args_inferred.bd` (the inferred
+forms still run), and `tests/check/err_generic_args.bd` (the golden wording, checked by `tests/check_check.py`). The
+E0003 entry in `docs/error-codes.md` has an example. Not done: `Option.None` and `Result.Ok` do not take type arguments
+before the `.` in this language, so the hint names only the type form (`Option<T>`); a bare `Set` in a type position
+that is also used as `Set.new()` reports both places, once each.
 
 **Dependency tables, features, and targets (issues #340 and #341, 2026-11-20).** A manifest now also reads
 `[features]`, `[target.'cfg(...)'.dependencies]` and `.dev-dependencies`, and `[dev-dependencies]`
@@ -20,6 +300,14 @@ still reports "unknown module" with no hint. Tests: `tests/check_features.py` (b
 `tests/check_watch.py` (the pass-through), the loader's unit tests, and
 `crates/burdin_pkg/src/resolve.rs` (`the_lockfile_pins_the_potential_graph`).
 
+**Issue #341's verification (2026-11-22).** `tests/check_features.py` now also proves that a dev-dependency's code is in
+the test executable and absent from the `build` executable (its positive control is the test executable), and that a
+workspace member's dev-dependency reaches its test through `-p`, with `--offline` and `--locked` on a path-only
+workspace. It passes on Linux (WSL, the debug driver: 61 checks) and on Windows (the installed `stable` driver,
+0.1.2, from the toolchain directory; `BURDIN` must name the driver, not the proxy, because the test's temporary
+`BURDIN_HOME` holds no toolchain). The issue's "examples" are not a Burdin target yet (`--example` is issue #355), so
+dev-dependencies are checked against the test, bench, fuzz, and `check --tests` builds that exist.
+
 **The build tool's command surface and profiles (issues #338 and #339, 2026-11-20).** `spec/build-tool.md` records
 every command, the Cargo commands that are planned but not copied (with their issue), what is deliberately left out,
 the command-line and environment rules, and the exit statuses; `tests/check_cli.py` checks the golden command list,
@@ -34,6 +322,14 @@ options now carry an optimization level and the two flags instead of one `releas
 interpreter takes the same two flags. `tests/check_profiles.py` proves the observable differences and every failure
 path. Not done: `opt-level` `s`/`z`, `panic = "unwind"`, per-package `opt-level`, and per-package flags in the
 comptime interpreter.
+
+**Optimization level flags (issue #289).** `-O0` to `-O3` (and `-O <n>`) on the commands that take `--profile` replace
+the profile's `opt-level` for one invocation; `[profile.<name>] opt-level` in `burdin.toml` is the level that profile
+builds with. The level changes only the LLVM pipeline and the target machine. The checks are decided by the profile
+alone (`overflow-checks`, `debug-assertions`), at every level: `release` and `bench` turn them off, and a profile that
+wants them in an optimized build sets them. Rules: `spec/profiles.md` BP4 and BP5; tests in
+`tests/check_profiles.py` and the `profile.rs` unit tests. Not done: `-O` on `repl`, `asm`, and `bloat` (they keep
+`--debug`/`--release`).
 
 **Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
 end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
@@ -75,6 +371,17 @@ shape, so it is read and written through `parse`/`render`, not `from_str`/`to_st
 up: a type that recurses through `List<Self>` (`struct Node { kind: i32, children: List<Node> }`) builds fine and
 overflows the stack at run time, and a `Clone` derive on it is E0130, so the tree types use `Heap<T>` with an arena
 instead. The defect belongs to the compiler, not to the package.
+
+**Object cache (issue #243, 2026-11-20).** `spec/target.md` TG11-TG16. Each codegen unit's object is kept under
+`target/burdin/<profile>/objects/<kind>/<key>.o`, where the key hashes the compiler identity, the optimization level, the
+triple, and the unit's bitcode taken just before the optimizer runs (`crates/burdin_codegen/src/cache.rs`, used by
+`split.rs` and the single-unit path of `emit_object`). A unit whose module is unchanged is copied from the cache and
+skips the optimizer and backend; an edit to one function recompiles only the units that define or inline it, and a
+comment edit reuses every object. After a build only that build's objects stay. The parallel model is unchanged:
+whole-program lowering on one thread, functions cut into units, units compiled in parallel; the decision is recorded in
+`spec/target.md`. Only cacheable builds (TG2) use it. Not done: an edit that moves a unit boundary rebuilds the
+neighbours, and a unit-per-module split that would keep keys stable across such edits is not attempted. Tests:
+`tests/check_target.py` (the object-cache section, `BURDIN_CODEGEN_UNITS=3`) and the unit tests in `cache.rs`.
 
 **Target directory and artifact cache (issue #353, 2026-11-20).** `spec/target.md` (TG1-TG10) fixes the layout of a
 package's `target/burdin/<profile>/` (`bin/` for `build` and `run`, `test/` for `test`, beside the existing build-script,
@@ -380,6 +687,25 @@ of `URL_BASE` plus the two scripts that pin it. SARIF columns are Unicode scalar
 `unicodeCodePoints`), and a relative path is `%SRCROOT%`-relative. Existing assertions changed only where the JSON
 summary gained `"version":1`.
 
+The forty-seventh session implemented stage 3's workspaces (issues #342 and #343). A manifest with a `[workspace]`
+section now makes its directory a workspace root: `crates/burdin_query/src/workspace.rs` reads the membership (patterns
+within one component, excludes, default members, a member's nearest root) without loading a package graph, so a member
+that inherits from its root cannot cycle; `package.rs` resolves `key.workspace = true` for `version`, `edition`,
+`license`, and `authors` and `name.workspace = true` in `[dependencies]` against `[workspace.package]` and
+`[workspace.dependencies]`, rebasing an inherited path to the member's directory. The lockfile moved to the root for the
+whole workspace (`resolve.rs`, `add.rs`), and its resolution walks every member, so a command run in a member reads and
+writes the same pins. The driver's new `workspace.rs` turns `-p`/`--workspace`/`--exclude` into one `Scope`, chosen once
+after parsing, and `build`, `run`, `test`, `bench`, `doc`, and `fmt` read it: build loops the members with a `main` and
+skips libraries with a note, run needs exactly one, test and bench load the members as the build's roots with one report
+and share their record and baselines under the root's `target/`, doc writes a site per member, and fmt formats the
+selected members' directories. Outside a workspace the flags behave as before. `tests/check_workspace.py` proves the
+behavior black-box (46 checks) and every CI job runs it; the parser, membership, selection, and workspace-lockfile rules
+have unit tests. The decisions are `spec/workspaces.md` WS1-WS18. Not done: `--offline`, multi-line arrays in a
+manifest, `**` in a member pattern, and moving an inherited edition with `burdin fix --migrate`. The forty-eighth session
+closed issue #240 with the one missing piece, a shared target directory (WS19): members build into the root's `target/`,
+and a member's build-script and Rust-shim state sits in `target/burdin/<profile>/packages/<name>/`. `burdin doc` still
+writes per-member `target/doc`.
+
 The forty-sixth session implemented stage 3's `burdin check` (issue #237): the type-check-only command. It is not a new
 pipeline: `check.rs` calls `front_end` (`main.rs`), the one function that `build`, `run`, `test`, and `lint` use to load
 a package, run its build script, parse it, check it, run the memory checks, and evaluate `comptime`, and stops there. The
@@ -458,6 +784,22 @@ that CI repeats 20 times in both profiles. The Windows reactor uses a completion
 UDP wakeup sent from a second socket (Winsock serializes the socket a thread is polling, so the polled socket cannot
 wake itself); the macOS path uses `kqueue`. Every CI job runs `tests/s2_io` on its own platform, and the Windows
 socket and pool paths were also run locally on Windows x86-64 while fixing that job.
+
+Issue #867 (a write to a closed peer). Fixed on Linux: a write to a peer that had closed killed the process with
+`SIGPIPE` (exit 141), because `send` passed no `MSG_NOSIGNAL`. `send` and `sendto` now pass `MSG_NOSIGNAL` on Linux, and
+a macOS socket sets `SO_NOSIGPIPE` at creation. `tests/s2_io/net_write_peer_closed` covers a peer closed before the
+write, a peer closed during the wait, and a silent peer under a write timeout; it exits 141 on the old runtime and passes
+now (debug and release on Linux). On Windows the hang did not reproduce. Scenarios run on a local x86-64 build did not
+hang: a peer closed before the write, closed while the writer waited (five rounds), shut its write side and never read
+(with and without a write timeout), and a writer on the main thread. Every write returned `failed` or `timed out`
+promptly. `tests/s2_io` passed 23 of 23 on Windows with HEAD (one test skipped on Windows), and
+`net_write_peer_closed` and `net_write_waits_for_room` passed 10 times in a row. The OS side of the earlier suspicion
+is real: a `WSAPoll` probe on a socket whose peer shut its write side, with a full send buffer, returns at once with
+`POLLHUP` (`revents` 0x2) for a `POLLWRNORM`-only request. But the Burdin programs did not spin: the half-closed case
+used 0.02 s of CPU over a 4 s wait with the compiler as of `7db57e4` (before the #867 commits, no pause), so the
+reactor path that turns that `POLLHUP` into a wake does not, in these programs, become a tight loop. The 10 ms pause in
+`TcpStream.write` (`WRITE_BACKOFF_NANOS`, capped by the deadline) is therefore a guard against an unobserved spin.
+`s2_io/net_write_waits_for_room` covers the wake-up path on every platform.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component
@@ -605,6 +947,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Full language design | `Burdin Language Design.md` | Written. The repository copy is canonical; the copy on claude.ai is historical |
 | Stage 0 scope and 11 milestones | `spec/stage0-subset.md` | Written and complete |
 | Stage 1 plan | `spec/stage1-subset.md` | Written at the end of the tenth session: milestones 12+, open decisions, and the roadmaps for later stages |
+| Workspaces | `spec/workspaces.md` | Members, default members, excludes, the `-p`/`--workspace`/`--exclude` selection for build, run, test, bench, doc, and fmt, the workspace lockfile, and the inheritance of package fields and dependencies (issues #342, #343); `tests/check_workspace.py` and the unit tests of `workspace.rs`, `package.rs`, and the driver's selection |
 | Test runner | `spec/test-runner.md` | The behavior of `burdin test`: attributes (E0170), `-j`, `-p`/`--workspace`/`--filter`, output capture, isolation, and the `[differential]` comparison between the comptime interpreter and the compiled test (issue #444) |
 | Process and verification | `AGENTS.md`, `CHANGELOG.md` | Shared definition of done, milestone close-out checklist, verification policy, and shipped milestones. Process rules live here, not as GitHub issues |
 | Grammar | `spec/grammar.md` | Parser follows it, including `test` items, generic arguments in expressions (rule 8.2), member type arguments (`x.downcast<T>()`), `any`/`impl` types, `interface`, `use`/`pub use`, `extern` items, `repr(C)`, ranges as values, `Self` in expressions and patterns, the permissive declaration layout, the call-site marker rules, `...` in an `extern` signature, interpolated and raw strings, and the format-specifier grammar |
@@ -634,7 +977,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Reachability | `crates/burdin_codegen/src/emit/reach.rs` | Only functions reachable from `main`, the tests, exported functions, `Drop` implementations, and closure bodies get a real body; the rest are emitted as `unreachable` so the standard library does not bloat every program's IR |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
 | Benchmarks | `crates/burdin_bench/` | Generated inputs for three sizes; `cargo bench -p burdin_bench` times lexing, parsing, name resolution/type checking, and code generation (median per iteration). `--smoke` checks every stage against generous budgets (issue #41); `--save` and `--baseline` record and compare medians (issue #446) |
-| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). All run check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m24 and s2_tasks, s2_channels, s2_shared, and s2_io in both the debug and release profiles, plus the repeated stress tests of the stage 2 folders (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock`, and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. Every job also runs `tests/bench_regression.py`: it compares the full benchmark suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
+| CI | `.github/workflows/ci.yml` | `linux` (`ubuntu-24.04`, LLVM 21 from apt.llvm.org), `macos` (`macos-latest`, Apple Silicon, Homebrew `llvm@21`), and `windows` (`windows-latest`, MSVC through `ilammy/msvc-dev-cmd`, LLVM 21 from the official `clang+llvm-21.1.8-x86_64-pc-windows-msvc` archive). Each OS runs its work as fourteen small parallel matrix parts (`lint`, `unit`, `build`, `bench`, `flags`, five `tools-*` command-check parts, and two debug plus two release conformance parts), so the slowest part sets the wall-clock time. Every run covers check-ci, the directive check, docs checks, the debug-info/codegen-optimization/build-flag/parallel checks, fmt, clippy, unit tests, build, benchmark smoke budgets, `tests/check_platform.py`, `tests/check_platform_support.py`, and conformance m01-m24, s2_tasks, s2_channels, s2_shared, s2_io, s3_bench, s3_scripts, s3_serialize, s3_crypto, and s3_http in both the debug and release profiles, plus the repeated stress tests of the stage 2 folders (`tests/run_tests.py --release` skips the debug-only overflow test); the Windows job also reruns m01 and m11 with `BURDIN_CC=cl`. All three cache the cargo registry and `target/` under a key built from `rust-toolchain.toml` and `Cargo.lock` (shared by every part of a runner), and cache LLVM 21 (the installed tree on Linux, the Homebrew bottle downloads on macOS, the unpacked archive on Windows); `tests/check_ci.py` guards all three jobs, both profiles, and their caches. The benchmark regression runs in the `bench` part: it compares the full suite with a baseline cached per runner, toolchain, and lockfile, and records a new one on a main push, advisory for now (issue #446). A `fuzz` job runs on the weekly schedule and by hand: it replays the corpus, runs `tests/fuzz.py --seconds 600`, and uploads `fuzz-out/crashes` on a finding; it builds only `burdin_fuzz` and its front-end dependencies, so it needs no LLVM (issues #288, #447) |
 | Fuzzing | `crates/burdin_fuzz/` | Dependency-free deterministic lexer/parser fuzzing. `corpus/syntax/` holds the edge cases and every input that found a panic; `tests/corpus.rs` replays it plus 20,000 mutations during `cargo test --workspace`, which is the check that fails when a panic is reintroduced. `tests/fuzz.py` runs a longer session (the watchdog fails a stalled input) and the scheduled `fuzz` CI job uploads found inputs; a found input is committed under the corpus with its fix (issues #288, #447) |
 | Release pipeline | `.github/workflows/release.yml`, `tests/build_release.py`, `tests/release_notes.py`, `tests/check_release.py` | Implemented, no release cut (issue #452, sub-issues #453-#456). The workflow builds the six supported targets on native runners, smoke-tests each, writes `burdin-<version>-<target>.tar.gz` plus SHA-256 checksums, verifies Linux reproducibility from two checkout paths, and publishes only from a tag or an explicit manual `publish`; the schedule and a plain manual run are dry runs. `tests/build_release.py` also packages an existing binary (`--binary`) for the check, and its archive is deterministic (sorted entries, fixed mtimes, uid/gid 0, `gzip -n`). `tests/check_release.py` runs in every CI job |
 | Installers | `install.sh`, `install.ps1`, `docs/releasing.md` | One-line installers for Unix and Windows. Both verify `SHA256SUMS` before unpacking, install to a user directory, run `--version` and warn when the LLVM 21 runtime is missing, and support `BURDIN_VERSION`, `BURDIN_CHANNEL`, `BURDIN_INSTALL_DIR`, `BURDIN_BASE_URL`, and `BURDIN_RELEASE_DIR` (the local rehearsal path). A package-manager formula is not written yet |
@@ -1189,7 +1532,7 @@ What is left: sema and the memory checks are still sequential. The typed tree us
 `Rc<FnSig>`), so it is not `Send`; checking function bodies on several threads needs `Arc` there (or interned
 names) and a sema whose shared state is read-only while bodies are checked. That is the next big win for small
 programs, whose time is mostly sema over the standard library. A `burdin test --workspace` still compiles its
-packages one after another. Build timing reports (#472) and cached objects (#243) remain open.
+packages one after another. Build timing reports (#472) remain open; cached objects landed in issue #243 (below).
 
 ## The fifty-third session: debugger integration (issue #565, sub-issues #567, #569, #571, #572, #574, #576)
 
@@ -1450,12 +1793,18 @@ calls its own impl, and the built-in containers are written out recursively beca
 type to implement the interface; the fields' requirement is not checked yet. The generated format parameter is
 `__S`/`__D`, avoiding the method-shadows-impl-parameter scoping bug.
 
-What is left of the framework, in order: the compiler-provided impls for the primitives and the built-in containers
-(`List`, `Map`, `Option`, `Result`, tuples, arrays), specified in SER14, the derive's field requirement, and the
-switch of the derived container paths back to the SER14 helpers (SER12). An impl
-block cannot be written for a built-in type (so the compiler must provide those impls, in the place `Display`/`Debug`
-are provided), and a method's generic parameter currently shadows an impl parameter of the same name (so a hand-written
-generic impl must not name its format parameter `D`; fixing the scoping is a separate compiler change).
+The built-in types implement `Serialize` and `Deserialize` without an impl block (issue #853, SER14): the scalars,
+`String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts, when their parts do. The checker answers
+for them (`crates/burdin_sema/src/serial.rs`, `satisfies` through `implements`), and it lowers `value.serialize(mut s)`
+and `T.deserialize(mut d)` on them to receiver-first `__serialize_<shape>` and to `deserialize_<shape>` in
+`std/src/serialize.bd` (`crates/burdin_sema/src/fncx/serial.rs`). A manual impl can now delegate to `String` (the
+motivating newtype). Tests: `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`,
+`builtin_serialize_mut`. What is left of the framework, in order: arrays (SER16), the derive's field requirement, and
+the switch of the derived container paths back to the SER14 helpers (SER12). A method's generic parameter currently
+shadows an impl parameter of the same name (so a hand-written generic impl must not name its format parameter `D`;
+fixing the scoping is a separate compiler change). A closure that formats a `String` it captures while that string is
+borrowed reports E0101/E0111 (`ok_or_else(|| format("{s}"))` after `s.as_str()`), which is why the motivating example
+is written with `match` in the test; that is a closure-capture limitation, not a serialization one.
 v1 produces owned values: a struct field cannot be a view, so `deserialize_str` returns `String`.
 
 The first format package is done: `packages/json` (issue #255, `packages/json/README.md`) implements `Serializer` and
@@ -1500,6 +1849,179 @@ change for `self uninstall`; an archive without it installs the compiler alone, 
 is how `tests/check_toolchain.py` tests it. Gaps: no target components until cross-compilation (#282); `self update`
 follows the stable channel only; the GitHub API path and the Windows user-PATH removal are on the manual checklist in
 `spec/toolchain.md`.
+
+## Session: the `crypto` package (stage 3, issue #266)
+
+`packages/crypto` is an official package written entirely in Burdin (`spec/crypto.md`, CR1-CR14; the decision of native
+versus a C library is CR1: native). Files under `packages/crypto/src`: `sha256.bd`, `sha512.bd`, `sha1.bd`, `md5.bd`,
+`sha3.bd` (the hashes), `hash.bd` (`HashAlg`), `hmac.bd` (HMAC, HKDF, PBKDF2), `chacha.bd` (ChaCha20, XChaCha20,
+Poly1305, and the AEADs), `aes.bd` (AES, CTR, CBC, GCM; the S-box tables are generated, not typed), `curve25519.bd`
+(X25519 and Ed25519 after TweetNaCl, field elements as sixteen 16-bit limbs in `i64`), `util.bd`, `errors.bd`, and the
+root `crypto.bd`, which re-exports them with `pub use`. A dependency's non-root modules are hidden, so every public name
+has to be re-exported there. Tests: `tests/crypto/` (fixtures, `regenerate.py`, and the `runner` package),
+`tests/check_crypto.py`, `tests/s3_crypto/usage`, and one CI step per OS.
+
+Things the next person will trip over: `error` is a keyword, so the error module is `errors.bd`; an interface cannot
+have `own self` or a static function, so every hasher's `finish` takes `mut self`; a `mut` parameter of a slice type
+cannot be assigned through (use `fill`, or pass an array or a `List`); the borrow checker treats the result of a call
+that takes `x.as_slice()` as possibly borrowing `x`, so `x = f(x.as_slice())` needs a clone first
+(`let input = x.clone(); x = f(input.as_slice())`); two arguments touching one place conflict even when one only
+reads (`list.push(list[i])` is E0110, so read into a local first); and `str + str` does not exist (`format` or
+`push_str`). Not done: RSA, ECDSA/P-256, Argon2/scrypt, and any TLS or X.509 (the issue's "TLS/auth" goal is the next
+package's job; this one is the primitives).
+
+## Session: the `math` package (stage 3, issue #268)
+
+`packages/math` is an official package written entirely in Burdin over `f64` (`spec/math.md`, MA1-MA12; MA1 is the
+decision that there is no `f32` and no generic float interface). Files under `packages/math/src`: `num.bd` (integers and
+scalars), `special.bd` (`gamma`, `ln_gamma`), `stats.bd`, `vector.bd`, `matrix.bd` (`Matrix<R, C>`, fixed size),
+`dyn_matrix.bd` (`DynMatrix`, heap-backed, and the one LU with partial pivoting that both matrix types use), and the root
+`math.bd`, which re-exports every public name. Decisions taken: both matrix types (MA7, MA8); the square-only operations
+of `Matrix` check at run time, because `Matrix<N, N>` is E0007; a singular matrix is an exact zero pivot, with no
+tolerance; a programming error panics and an absent answer is `None` (MA9); `gamma` uses Stirling's series with the
+recurrence, because the Lanczos coefficients first written were only accurate to about `1e-8`. Tests: `tests/math/`
+(about 2,400 cases in seven `.kat` files, generated by `tests/math/regenerate.py` with exact arithmetic and checked by
+`--check`), `tests/math/runner`, `tests/check_math.py`, and `tests/s3_math/` (`usage`, `surface`, `compile_shape`, and
+nine `abort_*` cases). CI runs `check_math.py` in the tools-pkg part and `s3_math` in the conformance parts.
+
+Things the next person will trip over: a const parameter may not appear twice (E0007), so no `Matrix<N, N>` impl; the
+`Index` trait takes `usize` only, so a matrix is read with `get` and `set`; an array literal is not a slice, so bind it
+to a name and pass `arr[0..n]`; `Vector.zero()` in an expression needs a type annotation (E0003); and a struct literal
+of a const-generic type needs an annotated `let`. In WSL the release build linked through `mold`, which failed on this
+machine's `libc.so` linker script; `BURDIN_LD=platform` links it with the default linker. Not done: complex numbers,
+sparse matrices, eigenvalues or SVD, a random source, and integer matrices (MA12).
+
+## Session: TLS, phase A (stage 3, issue #262, #322)
+
+Decision (written in `spec/tls.md`, TLS1): TLS is OpenSSL 3 (`libssl`, `libcrypto`) through the C bridge, hand-written
+`extern "C"` declarations in the official package `packages/tls` (`src/openssl.bd`, re-exported by `src/tls.bd`), and the
+engine uses **memory BIOs** (TLS2) so the Burdin side pumps bytes between OpenSSL and a `TcpStream` and no OpenSSL call
+blocks. Native TLS 1.3 would need X.509, RSA/ECDSA, and a trust store (issue #559 is X.509); the platform stacks are three
+different APIs. Phase A landed: the compiler's `[link]` manifest table (`spec/packages.md`, PKG34: `[link] libs = [...]`
+plus additive `[target.'cfg(P)'.link]` tables; `PackageFiles.link_libs`, merged into the link list by `build::run`),
+`tests/check_link.py`, the bindings, and `tests/s3_tls/link` (a client over memory BIOs produces a ClientHello). CI
+installs `libssl-dev` (Linux), `openssl@3` with `LIBRARY_PATH` (macOS), and OpenSSL through choco with `LIB` and `PATH`
+(Windows); only the Linux step was run locally, the macOS and Windows steps are written but unverified. Phases B and C
+(the client with verification, SNI, ALPN, then the server and the in-process tests; TLS3-TLS6, planned test names in the
+spec) are not started. Gotchas: C `long` is 32 bits on Windows, so `openssl.bd` declares `long` parameters as 64-bit and
+`long` results as 32-bit; `pub` is not a keyword (items are public unless `priv`); a dependency's non-root modules are
+hidden, so `tls.bd` re-exports `openssl`; the C bridge cannot pass a Burdin function to C, so server-side ALPN selection,
+SNI certificate selection, and encrypted-key password callbacks are not provided (TLS8). On WSL without `libssl-dev`,
+make `libssl.so`/`libcrypto.so` symlinks in a directory and set `LIBRARY_PATH` to it.
+
+## Session: TLS, phase B (stage 3, issue #262, #323, #324)
+
+The safe layer of `packages/tls` is written: `errors.bd` (`TlsError`, an `error enum`), `ffi.bd` (pointers to bytes, C
+text, the error queue), `certs.bd` (`Certificate`, `PrivateKey`, `TrustStore`), `config.bd` (`ClientConfig`,
+`ServerConfig`, `TlsVersion`; a configuration owns an `SSL_CTX` and is `Send`/`Sync` through `unsafe` impls), `engine.bd`
+(`Engine`: the memory-BIO state machine, steps `Done`/`Data`/`NeedInput`/`Retry`/`Eof`), `stream.bd` (`TlsStream`, which
+owns a `TcpStream` and the engine and pumps bytes), and the root `tls.bd` re-exporting everything. Tests:
+`tests/s3_tls/conformance` (`loading.bd`, `handshake.bd`, `support.bd` with the in-process server; certificates under
+`src/certs`, read with `embed`), `tests/tls/regenerate.py` (the `openssl` CLI; random keys, so a regeneration changes
+every byte but not the meaning), and `tests/check_tls.py` (fixtures, conformance, declared symbols via `nm -D`, README
+examples, `burdin add tls`, the pin). `spec/tls.md` was rewritten to match what exists (TLS3-TLS6).
+
+Gotchas: a `[u8]` cannot be cast to `CPtr<u8>`, but `(&data[0]) as CPtr<u8>` works inside a function that takes the
+slice (it also works for `&mut list[0]`); a hand-written `Clone` for a type is E9000, so `Certificate` has `duplicate`;
+a `Drop` type cannot give a field back, so `TlsStream.close` returns `()` and the socket closes on drop; `PEM_read_bio_*`
+with a null password callback prompts on the terminal, so `PrivateKey.from_pem` passes a non-null empty password and
+refuses text that says `ENCRYPTED`; a task cannot borrow a local of its scope body (E0171: use a channel, as
+`tests/s3_http/client/src/support.bd` does), and **two tasks blocked in `accept` on one listener hung** in
+`tests/s3_tls/conformance` (one task accepts and hands connections out through a channel; the cause was not
+investigated and may be a `std` reactor limitation worth its own issue); in TLS 1.3 a client's handshake can finish
+before the server rejects its certificate, so mutual-TLS rejections surface on the first read; OpenSSL's reason text
+differs between versions, so the tests print only the variant of a `Handshake`/`Protocol` error. (Phase C backdated the
+test certificates by a year: see below.)
+
+Not done: a generic transport (`TlsStream<S>`), server-side ALPN selection and SNI certificate selection (callbacks, TLS8),
+encrypted keys, session resumption, revocation, the client-CA hint list, an engine-only test, and header-level signature
+checks (only symbol existence is checked). Verified only on Linux with OpenSSL 3.5.5 in WSL: the macOS and Windows CI
+paths (OpenSSL location, `LIB`, DLLs on `PATH`) are written but have never run.
+
+## Session: TLS, phase C: `https` in the `http` package (stage 3, issue #262; #260)
+
+`packages/http` depends on `tls` (`[dependencies] tls = true`; official-to-official works as is, and the lockfile of a
+program that uses `http` pins both packages and links `ssl` and `crypto` through the `[link]` table, which the tests
+confirm). A connection is a `Transport` (a struct holding an `Option<TcpStream>` or an `Option<TlsStream>`: **a `match`
+binding on a struct or enum field moves the stream out and drops it at the end of the arm, which closes the socket, so
+the code takes the stream out of its `Option`, uses it, and puts it back**). Everything above it is unchanged. Rules in
+`spec/http-client.md` HC17 (the spec was changed first): verification on by default, SNI and host check from the URL
+host, `HttpError.Tls(TlsError)` replaces `TlsUnsupported`, never retried, no plain-text fallback, pool key is
+`scheme://host:port`, handshake bounded by `connect_timeout`, truncation without `close_notify` is `BodyTruncated`,
+a TLS-cut response head is `ConnectionClosed`, `close_notify` on discarding a pooled connection (the `TlsStream` drop),
+ALPN `http/1.1` only, an https to http redirect is followed (HC12's rules allow it) with the credentials dropped.
+`Client` gained `trust`, `tls_config`, and `insecure_skip_verify`; its default configuration is built once per client
+family (`tls_default`), and clones copy the configuration but **share the pool**, so a pooled connection verified under
+one configuration is reused by a clone with another (documented; use `Client.new()` for another trust store).
+`IoError` (std) and `TlsError` now derive `Clone`, because `HttpError` is `Clone` and carries a `TlsError`. The
+`unsupported URL scheme` message now ends `only http and https are supported` (three goldens under `tests/http/` and two
+lines of `tests/s3_http/client/src/main.bd`; the `https` and `https made no connection` lines of that program, which
+asserted `TlsUnsupported`, were removed, and its `to https` redirect case now reports the connection refusal, because an
+`https` URL is really tried now). Tests: `tests/s3_http/tls` (82 output lines, an
+in-process HTTPS server with the test certificates copied to its `src/certs`), `tests/check_http.py` (runs both
+conformance programs, the README example, and the pins of `http` and `tls`). `tests/tls/regenerate.py` now signs
+everything with `openssl ca` and starts the valid certificates one year before the day they are made, and writes the
+copies for the `http` tests; `tests/check_tls.py` checks the backdating and that the copies are identical. Verified only
+on Linux with OpenSSL 3.5.5 in WSL; macOS and Windows are unverified. Limitations: errors after the handshake (a bad
+record) surface as `HttpError.Io` with the TLS text, not `Tls`; no proxies, session resumption, HTTP/2, pinning, or
+peer-certificate access from a `Response`; a server that closes a close-delimited body without `close_notify` is
+reported as truncated; the system trust store depends on the machine (a minimal container may have none, which makes
+every default `https` request fail verification).
+
+Closing notes (for the issue comments; nothing has been posted):
+
+- **#322 (backend decision and binding):** `spec/tls.md` TLS1, TLS2, TLS7; `packages/tls/src/openssl.bd`;
+  `spec/packages.md` PKG34 and `tests/check_link.py`; `tests/s3_tls/link`. Commands: `python3 tests/check_link.py`,
+  `python3 tests/check_tls.py`, `python3 tests/run_tests.py s3_tls`.
+- **#323 (client):** `spec/tls.md` TLS3-TLS6; `packages/tls/src/{config,engine,stream,certs,errors}.bd`;
+  `tests/s3_tls/conformance` sections "verification", "versions", "names and protocols", and "certificates, keys, and
+  configurations"; fixtures `tests/s3_tls/conformance/src/certs` made by `python3 tests/tls/regenerate.py` (valid from a
+  year before generation). Commands: `python3 tests/run_tests.py s3_tls` (debug and release; release needs
+  `BURDIN_PACKAGES`), `python3 tests/check_tls.py`.
+- **#324 (server and tests):** `spec/tls.md` TLS3 (mutual TLS), TLS5, TLS8; `ServerConfig` and `TlsStream.accept`;
+  `tests/s3_tls/conformance` sections "mutual TLS", "the end of a stream", and "bad peers"; CI installs OpenSSL on all
+  three OSes (`.github/workflows/ci.yml`; only Linux has run).
+- **#262 (the TLS issue as a whole):** the above plus phase C: `spec/http-client.md` HC17, `packages/http/{burdin.toml,
+  README.md,src/http.bd}`, `tests/s3_http/tls`, `tests/check_http.py`; commands `python3 tests/check_http.py`,
+  `python3 tests/run_tests.py s3_http s3_tls`, `python3 tests/check_tls.py`. Manual verification: none against the real
+  Internet (no test touches the network). Not covered: macOS and Windows runs, a real certificate authority.
+- **#260 (http client):** `https` now works (HC17); the earlier note that `https` is refused is obsolete.
+
+## Session: the `regex` package (stage 3, issue #264)
+
+`packages/regex` is an official package written in Burdin (`spec/regex.md`, RX1-RX14). The engine is a Pike VM over a
+Thompson NFA (RX1), so every search is linear in the pattern and the text; backreferences, lookaround, atomic groups, and
+possessive quantifiers are errors (RX2, RX3). Files: `errors.bd` (`RegexError`), `classes.bd` (character classes and
+POSIX), `parse.bd` (recursive descent to an arena of `Node`s), `compile.bd` (the instruction program, with the limits of
+RX7), `vm.bd` (the Pike VM and the empty-match rule of RX10), and `regex.bd` (the API). The README is
+`packages/regex/README.md`.
+
+Tests: `tests/regex/cases.tsv` (206 golden rows, one or more per RX rule and error message; `tests/regex/README.md` gives
+the format), `tests/regex/runner` (the program that runs the rows), `tests/check_regex.py` (the goldens, a seeded
+differential of about 22000 rows against Python `re` over the subset both define the same way, `burdin add regex`, the
+official pin, and `--locked`), and `tests/s3_regex/usage` (the conformance case). CI runs the check on all three OSes
+and `s3_regex` in the conformance parts.
+
+Decisions made here: RX10 follows Python 3.7's `finditer` rule (after an empty match, a non-empty match may start at the
+same position), so `x*` on `abxd` reports the match `x` at 2 between the empty matches at 1 and 3; names are ASCII
+letters, digits, and `_`; a `-` after a class escape is a literal, and a range that ends in a class escape is an error;
+`{3,2}` is `invalid repetition count`, and `(?z)` is `unknown group flag`.
+
+Known problem, found while writing the package: a `List<Option<String>>` element copied with `names.push(x[i].clone())`
+lost its string, and a later comparison of that element crashed with `invalid memory access`. The package works around it
+in `Captures` by matching the clone first (`match self.names[i].clone() { Some(label) => names.push(Some(label)), ... }`).
+`Regex.new` still copies its names with the direct form; the goldens exercise it and pass, but the compiler defect is
+unexplained and should be reproduced in a small program and fixed or filed before the direct form is relied on.
+
+CI found two more problems that the local runs did not show. The parser recurses once per group level, and a
+depth of 180 overflowed a 1 MB stack (the Windows main-thread default), so the nesting limit is 100 (RX7), not 250.
+On macOS the differential run died with `invalid memory access`; it did not reproduce on Linux, in debug or release,
+with freed memory poisoned (`MALLOC_PERTURB_`). The check now bisects a failing run to its first crashing row, so the
+next failure names the row. The package's `Regex.new` copies its names with the match-on-clone form that works around
+the `Option<String>` defect.
+
+Commands (run from WSL, where the driver is built): `python3 tests/check_regex.py` and `python3 tests/run_tests.py
+s3_regex`, with `BURDIN` pointing at the driver.
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -2578,6 +3100,61 @@ Four tools that make the test suite stricter, each with its own spec file and it
 What is left: snapshots are checked only in a compiled run (an interpreted test that reads a snapshot file is
 skipped); `--interpret` runs `test` blocks only, not doc tests; the fuzzer's corpus is not shared across a workspace;
 and a sanitizer report in a test is attributed to the test, not to the line inside the library that caused it.
+
+## Quiet and verbose output (issue #799)
+
+`build`, `run`, and `check` take `-q`/`--quiet` (only errors: no warnings, no informational notes; the results are
+unchanged, and the SARIF log is still written with only its errors) and `-v`/`--verbose` (to standard error, the
+compilation's phases with their times in a fixed order, then each codegen unit in unit order). The decisions are
+BT8 in `spec/build-tool.md`. `burdin_codegen::emit_object_timed` reports each unit's time, and `emit_object` is the
+same call without the times. The phases are the driver's (`dependencies`, `load`, `build scripts`, `parse and check`,
+`codegen`, `link`): `parse and check` is one phase because the query library runs parsing and checking together.
+`tests/check_verbosity.py` runs the fixture packages in `tests/verbosity/` (golden quiet errors in
+`tests/verbosity/golden/`) and passes 60 checks in WSL, with `-j 1` and `-j 8` giving the same unit sequence.
+
+What is left: `-q` and `-v` are not on `test`, `bench`, or the other compiling commands; `-v` does not print the
+phases of the build scripts' own compilations; and the timing is wall time, so a phase that runs in parallel
+inside `parse and check` cannot be told apart.
+
+## Type checking past a syntax error (issue #786)
+
+A file with a syntax error no longer stops the front end before checking. `burdin_query::Db::analyze` checks every
+module as before: a file with syntax errors keeps the items it parsed (`ast::File`) and a new `unparsed` list of the
+source regions of the items it could not read. The diagnostics of the broken file's own checks are dropped, and so is a
+diagnostic elsewhere that mentions a name one of those unreadable regions declares (`crates/burdin_query/src/follow_on.rs`,
+`spec/check.md` CK4). The program is not returned when a file has syntax errors, so the language server keeps its last
+good program, and compile-time evaluation still never runs on such a program. The check cache is off for such a run
+(`CheckCache::set_enabled`), and a run with the cache off keeps the entries of the last run (`CheckCache::begin`), so the
+fix after a syntax error still reuses the other packages' answers (the LSP workspace test pins this). Tests: `tests/check/err_syntax_declared.bd`,
+`tests/check/packages/syntax_neighbors`, `tests/check/packages/syntax_no_main`, the unit tests of `follow_on.rs`, and the
+parser's `unparsed` regions. Gap: the broken file's own checks are not reported at all, even for its parsed functions;
+reporting them would need the follow-on rule to know which parsed items refer to a dropped declaration.
+
+## TLS on Windows and the optional OpenSSL (issue #878)
+
+Decided: the link of `libssl`/`libcrypto` is automatic on Windows and TLS is a feature on `http`, on by default. The
+`tls` package keeps `[features] default = ["openssl"]`; its OpenSSL libraries are named by an optional package
+`packages/tls/openssl_link` (PKG34: an inactive optional dependency adds no libraries), and every OpenSSL call of `tls`
+sits in a `comptime if features.openssl` branch (CT5) whose other branch is `TlsError.Unsupported`. `http` declares
+`tls = { official = true, default-features = false }` with `default = ["tls"]` and `tls = ["tls/openssl"]`, so
+`http = { official = true, default-features = false }` in a program links no OpenSSL. The table form `{ official = true,
+... }` is new (PKG15, `crates/burdin_query/src/package.rs`). The driver (`crates/burdin_driver/src/openssl.rs`) finds an
+OpenSSL 3 install on Windows (`OPENSSL_DIR`, `OPENSSL_ROOT_DIR`, the installer folders, vcpkg), passes its `lib` to the
+linker, copies its `libssl-3*.dll` and `libcrypto-3*.dll` beside the program, and reports a missing install with the
+steps. When none is found it downloads FireDaemon's OpenSSL 3.5.9 LTS ZIP (the SHA-256 is pinned in `openssl.rs`; a
+mismatch is deleted), unpacks it into `<burdin home>/cache/openssl/3.5.9`, and uses that copy from then on
+(`BURDIN_OPENSSL_NO_DOWNLOAD` turns this off; `BURDIN_OPENSSL_URL` names a mirror). Rules: `spec/tls.md` TLS7 and TLS7a, `spec/http-client.md` HC17, `spec/packages.md`
+PKG15. Checked: a codegen fact the change depends on: an extern function referenced only from an unreachable function is
+not linked, so the gate is enough. Tests: `cargo test -p burdin_query package`, `cargo test -p burdin_driver openssl`,
+`python3 tests/check_tls.py` (the feature off builds with no `-lssl`, on links it, on Unix via a `BURDIN_CC` wrapper),
+`python3 tests/check_http.py`, `python3 tests/check_features.py`, `python3 tests/check_packages.py`,
+`python3 tests/check_link.py`, `python3 tests/run_tests.py s3_tls s3_http`. Windows, by hand (no OpenSSL installed on the
+machine, `LIB` and `OPENSSL_DIR` empty, a plain shell): `burdin build` of `tests/s3_tls/link` downloaded the pinned ZIP,
+checked its SHA-256, unpacked it under `%APPDATA%\burdin\cache\openssl\3.5.9`, linked, and copied both DLLs; the program ran
+and reported OpenSSL 3; a rebuild with the cache found it with no download; `BURDIN_OPENSSL_NO_DOWNLOAD` and a missing
+mirror each stopped before the linker with their notes. The download is unit-tested through `file://` URLs on every host,
+and the unpack on Windows. Not verified in CI: the CI `windows` job still installs OpenSSL and sets `LIB` itself, so it
+never runs the download; and the Linux and macOS links are unchanged from the manifest-only rule (TLS7).
 
 ## Starting the next session
 

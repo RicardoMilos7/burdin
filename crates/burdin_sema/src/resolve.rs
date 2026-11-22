@@ -1,7 +1,7 @@
 //! Resolving every written type: aliases, fields, variants, signatures, constants, and extern declarations.
 
 use crate::derives::parse_derives;
-use crate::generics::param_ty;
+use crate::generics::{Bound, param_ty};
 use crate::globals::{Globals, TypeName};
 use crate::session::{NamedSrc, Sema};
 use crate::types::check_storable;
@@ -19,6 +19,9 @@ impl Sema<'_> {
         for i in 0..self.alias_decls.len() {
             resolve_alias(i, &self.alias_decls, &mut self.globals, &mut state, diags);
         }
+        // A generic impl's bindings are resolved again once the instance they write against exists, so a binding
+        // may use `Self` (`spec/associated-types.md`, AT2).
+        self.re_resolve_pending_assoc(diags);
         // An extension's receiver may name a generic type, whose instance appears only after the previous pass's
         // requests were allocated; resolve it before the signatures that use it (`spec/extensions.md`).
         self.refresh_extensions(diags);
@@ -30,7 +33,7 @@ impl Sema<'_> {
                 .fields
                 .iter()
                 .map(|f| {
-                    let ty = self.globals.resolve_type_in(&f.ty, None, &entry.subst, module, diags);
+                    let ty = self.globals.resolve_type_bounded(&f.ty, None, &entry.subst, &entry.bounds, module, diags);
                     // An instance of a generic type is second-class when an argument is (SC3), so its own field
                     // may hold the view; the check applies where the instance is stored instead.
                     if entry.subst.is_empty() {
@@ -68,7 +71,8 @@ impl Sema<'_> {
                     );
                 }
                 let field = |ty: &ast::Type, name: String, span: Span, is_priv: bool, diags: &mut Diagnostics| {
-                    let resolved = self.globals.resolve_type_in(ty, None, &entry.subst, module, diags);
+                    let resolved =
+                        self.globals.resolve_type_bounded(ty, None, &entry.subst, &entry.bounds, module, diags);
                     // See the struct field case above (SC3).
                     if entry.subst.is_empty() {
                         check_storable(&resolved, ty.span, "an enum variant field", diags);
@@ -105,7 +109,14 @@ impl Sema<'_> {
         for i in 0..self.globals.interfaces.len() {
             let module = self.globals.interfaces[i].module;
             let params = self.globals.interfaces[i].params.clone();
+            let iface_bounds = self.globals.interfaces[i].bounds.clone();
             let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+            // An interface's own signatures see `Self` as a parameter bound by the interface, so `Self.Item`
+            // resolves through the interface's associated types; the interface's parameters keep their bounds
+            // (`spec/associated-types.md`, AT3).
+            let self_args: Vec<Ty> = params.iter().map(|p| param_ty(p)).collect();
+            let mut bounds: Vec<(String, Vec<Bound>)> = vec![("Self".to_string(), vec![Bound::User(i, self_args)])];
+            bounds.extend(params.iter().cloned().zip(iface_bounds));
             for k in 0..self.globals.interfaces[i].methods.len() {
                 let decl = &self.tpl.ifaces[i].methods[k].decl;
                 // A method-level type parameter is opaque in the interface's own signature.
@@ -113,8 +124,16 @@ impl Sema<'_> {
                 for g in &decl.generics {
                     method_subst.push((g.name.name.clone(), param_ty(&g.name.name)));
                 }
-                let sig =
-                    fn_signature(decl, Some(&param_ty("Self")), &method_subst, module, &self.globals, false, diags);
+                let sig = fn_signature(
+                    decl,
+                    Some(&param_ty("Self")),
+                    &method_subst,
+                    &bounds,
+                    module,
+                    &self.globals,
+                    false,
+                    diags,
+                );
                 // A default argument is a call-site convenience of one concrete function; an interface's
                 // signature is shared by every implementation, so it cannot declare one
                 // (spec/arguments.md, AG5).
@@ -142,6 +161,7 @@ impl Sema<'_> {
                 item.decl,
                 item.self_ty.as_ref(),
                 &item.subst,
+                &item.bounds,
                 item.module,
                 &self.globals,
                 item.is_exported,
@@ -198,6 +218,32 @@ impl Sema<'_> {
         // Duplicate declarations and shadowed extensions need the resolved receiver and every method in place
         // (`spec/extensions.md`, EX4 and EX5).
         self.check_extension_problems(diags);
+        check_conversion_signatures(&self.globals, diags);
+    }
+
+    /// Re-resolves the associated bindings of a generic impl now that its instance exists, so a binding may name
+    /// `Self` (`spec/associated-types.md`, AT2). The names and errors were settled when the impl was registered.
+    fn re_resolve_pending_assoc(&mut self, diags: &mut Diagnostics) {
+        for p in &self.pending_assoc {
+            let self_ty = match &p.generic {
+                Some((template, pattern)) => self.globals.adt_instance_ty(*template, pattern.clone()),
+                None => p.self_ty.clone().unwrap_or(Ty::Error),
+            };
+            let Some(info) = self.globals.impls.get(p.index) else { continue };
+            let mut resolved: Vec<(String, Ty)> = Vec::new();
+            for (name, _) in &info.assoc {
+                let ty = match p.decl.assoc.iter().find(|b| &b.name.name == name) {
+                    Some(b) => {
+                        self.globals.resolve_type_bounded(&b.ty, Some(&self_ty), &p.subst, &p.bounds, p.module, diags)
+                    }
+                    None => Ty::Error,
+                };
+                resolved.push((name.clone(), ty));
+            }
+            if let Some(info) = self.globals.impls.get_mut(p.index) {
+                info.assoc = resolved;
+            }
+        }
     }
 }
 
@@ -286,6 +332,12 @@ fn alias_refs(ty: &ast::Type, module: usize, globals: &Globals, depth: usize, ou
         }
         // `any I` and a parameter `impl I` name an interface, not a type alias, but their arguments may name one.
         ast::TypeKind::Any(e) | ast::TypeKind::Impl(e) => alias_refs(e, module, globals, depth, out),
+        ast::TypeKind::Projection(p) => {
+            alias_refs(&p.self_ty, module, globals, depth, out);
+            if let Some(iface) = &p.iface {
+                alias_refs(iface, module, globals, depth, out);
+            }
+        }
         ast::TypeKind::SelfType | ast::TypeKind::Unit | ast::TypeKind::Never | ast::TypeKind::Const(_) => {}
     }
 }
@@ -300,10 +352,12 @@ pub(crate) fn check_unique_fields<'a>(names: impl Iterator<Item = &'a ast::Ident
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn fn_signature(
     f: &ast::FnDecl,
     self_ty: Option<&Ty>,
     subst: &[(String, Ty)],
+    bounds: &[(String, Vec<Bound>)],
     module: usize,
     globals: &Globals,
     is_exported: bool,
@@ -339,7 +393,7 @@ pub(crate) fn fn_signature(
                 }
             }
             ast::ParamKind::Named { name, ty } => {
-                let ty = globals.resolve_type_in(ty, self_ty, subst, module, diags);
+                let ty = globals.resolve_type_bounded(ty, self_ty, subst, bounds, module, diags);
                 let name = Some(name.name.clone());
                 let comptime = p.comptime.is_some();
                 if let Some(at) = p.comptime {
@@ -396,7 +450,11 @@ pub(crate) fn fn_signature(
             }
         }
     }
-    let ret = f.ret.as_ref().map(|t| globals.resolve_type_in(t, self_ty, subst, module, diags)).unwrap_or(Ty::Unit);
+    let ret = f
+        .ret
+        .as_ref()
+        .map(|t| globals.resolve_type_bounded(t, self_ty, subst, bounds, module, diags))
+        .unwrap_or(Ty::Unit);
     Signature { params, ret, has_self, ret_origins: Vec::new() }
 }
 
@@ -461,9 +519,13 @@ fn extern_signature(f: &ast::FnDecl, module: usize, globals: &Globals, diags: &m
 /// Whether a type has the same representation in Burdin and in C: integers, floats, and raw pointers. A Burdin
 /// `bool` is a one-bit value, while C `_Bool` is a one-byte integer, so it is passed as `u8` instead. Aggregates
 /// cross the C ABI through `CPtr<T>` only: the platform by-value ABI coercions (packing a small struct into a
-/// register, `sret`, and so on) are not implemented (issues #73 and #490).
+/// register, `sret`, and so on) are not implemented (issues #73 and #490). A 128-bit integer does not cross either: C
+/// has no 128-bit integer type that every platform declares (`spec/int128.md`, I128-9).
 pub(crate) fn is_c_abi_value(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::CPtr(_) | Ty::Unit | Ty::Never | Ty::Error)
+    match ty {
+        Ty::Int(i) => i.bits() <= 64,
+        _ => matches!(ty, Ty::Float(_) | Ty::CPtr(_) | Ty::Unit | Ty::Never | Ty::Error),
+    }
 }
 
 /// The E0162 text for a type that cannot cross the C ABI.
@@ -472,6 +534,9 @@ pub(crate) fn c_abi_rejection(ty: &Ty, direction: &str) -> String {
         Ty::Bool => {
             format!("`bool` cannot be {direction}; C `_Bool` is a one-byte integer, so declare it `u8` (0 or 1)")
         }
+        Ty::Int(_) => format!(
+            "`{ty}` cannot be {direction}; C has no 128-bit integer type that every platform declares, so pass it through `CPtr<{ty}>`"
+        ),
         Ty::Struct(_) | Ty::Enum(_) | Ty::Tuple(_) | Ty::Array(..) => {
             format!("`{ty}` cannot be {direction} by value; an aggregate crosses the C ABI through `CPtr<{ty}>`")
         }
@@ -480,6 +545,51 @@ pub(crate) fn c_abi_rejection(ty: &Ty, direction: &str) -> String {
 }
 
 /// Whether two `extern` declarations describe the same C function.
+/// The signatures of the conversion blocks (`spec/stdlib.md`, "Conversions"). A `From` block's `from` takes one
+/// parameter of the source type and returns the target; a `TryFrom` block's `try_from` returns `Result<target, E>`.
+/// The callers (`?`, `Type.from`, `Type.try_from`) rely on this shape, so a block that differs is reported here.
+fn check_conversion_signatures(globals: &Globals, diags: &mut Diagnostics) {
+    for (conversions, method) in [(&globals.from_impls, "from"), (&globals.try_from_impls, "try_from")] {
+        let iface = if method == "from" { "From" } else { "TryFrom" };
+        for conv in conversions {
+            let sig = &globals.sigs[conv.func.0];
+            if sig.has_self || sig.params.len() != 1 {
+                diags.error(
+                    Code::ARG_COUNT,
+                    conv.span,
+                    format!(
+                        "`{method}` in a `{iface}` block takes exactly one argument, of the source type `{}`",
+                        conv.source
+                    ),
+                );
+                continue;
+            }
+            let param = &sig.params[0].ty;
+            if *param != conv.source && *param != Ty::Error {
+                diags.error(
+                    Code::TYPE_MISMATCH,
+                    conv.span,
+                    format!("`{method}` takes `{param}`, but this block converts from `{}`", conv.source),
+                );
+                continue;
+            }
+            let returns_target = match method {
+                "from" => sig.ret == conv.target,
+                _ => matches!(&sig.ret, Ty::Result(ok, _) if **ok == conv.target),
+            };
+            if !returns_target && sig.ret != Ty::Error {
+                let expected =
+                    if method == "from" { conv.target.to_string() } else { format!("Result<{}, _>", conv.target) };
+                diags.error(
+                    Code::TYPE_MISMATCH,
+                    conv.span,
+                    format!("`{method}` in a `{iface}` block returns `{expected}`, not `{}`", sig.ret),
+                );
+            }
+        }
+    }
+}
+
 fn same_signature(a: &Signature, b: &Signature) -> bool {
     a.ret == b.ret && a.params.len() == b.params.len() && a.params.iter().zip(&b.params).all(|(x, y)| x.ty == y.ty)
 }

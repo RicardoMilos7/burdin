@@ -1,0 +1,44 @@
+//@ run
+//> reserved
+//> out of memory
+//> OutOfMemory
+//> 2
+//> 3
+//> 1
+//> capacity overflow
+//> CapacityOverflow
+//> 2
+
+// `try_reserve` makes room for more elements or reports why it could not, and a failed reserve leaves the list as it
+// was (spec/allocators.md, AL11). `try_reserve_exact` is the same with the capacity asked for exactly.
+
+fn main() {
+    let mut xs = List<i64>.new()
+    xs.push(1)
+    xs.push(2)
+    match xs.try_reserve(4) {
+        Ok(_) => println("reserved"),
+        Err(e) => println("{}", e),
+    }
+    let huge: usize = 1152921504606846976
+    match xs.try_reserve(huge) {
+        Ok(_) => println("reserved"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+        }
+    }
+    println(xs.len().to_string())
+    xs.push(3)
+    println(xs.len().to_string())
+    println(xs[0].to_string())
+    let max: usize = 18446744073709551615
+    match xs.try_reserve_exact(max) {
+        Ok(_) => println("reserved"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+        }
+    }
+    println(xs[1].to_string())
+}

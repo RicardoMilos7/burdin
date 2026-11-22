@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The parameter of `try_from` is the block's source type; a different parameter type is E0003 at the method.
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i64): Result<Percent, i64> { //~ E0003
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+fn main() {}

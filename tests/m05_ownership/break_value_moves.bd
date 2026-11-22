@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A break value moves like a returned value (spec/memory-rules.md, DR6): the value leaves the loop, so using the
+// local it came from afterwards is E0100.
+
+fn main() {
+    let s = String.from("x")
+    let t = loop { break s }
+    println(s) //~ E0100
+    println(t)
+}

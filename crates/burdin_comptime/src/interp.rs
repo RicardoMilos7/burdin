@@ -30,8 +30,11 @@ pub(crate) enum Fault {
 }
 
 pub(crate) enum Unwind {
-    Break,
-    Continue,
+    /// `break`, `break 'label`, or `break value`: the label is the name the loop must have to stop here (None: the
+    /// innermost loop), and the value is what the loop gives back (unit when no value is written).
+    Break(Option<String>, Value),
+    /// `continue`, or `continue 'label`: as for `Break`.
+    Continue(Option<String>),
     Return(Value),
     Fault(Fault),
 }
@@ -212,7 +215,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         match result {
             Ok(v) => Ok(v),
             Err(Unwind::Fault(f)) => Err(f),
-            Err(Unwind::Return(_)) | Err(Unwind::Break) | Err(Unwind::Continue) => {
+            Err(Unwind::Return(_)) | Err(Unwind::Break(..)) | Err(Unwind::Continue(_)) => {
                 Err(Fault::Internal("control flow left a comptime expression".into(), span))
             }
         }
@@ -275,6 +278,11 @@ impl<'p, 'c> Interp<'p, 'c> {
             return Err(impure(&format!("dereferencing a `CPtr<{pointee}>`"), span));
         };
         let addr = self.eval(ptr, Mode::Use)?.int();
+        self.ptr_read(addr, scalar, pointee, span)
+    }
+
+    /// The value of type `pointee` stored at `addr`, read with the checks of `ptr_deref`.
+    fn ptr_read(&mut self, addr: i128, scalar: crate::memory::Scalar, pointee: &Ty, span: Span) -> R<Value> {
         let n = self.mem.read(addr, scalar, span).map_err(Unwind::Fault)?;
         Ok(match pointee {
             Ty::Bool => Value::Bool(n != 0),
@@ -444,87 +452,49 @@ impl<'p, 'c> Interp<'p, 'c> {
                     Value::Unit
                 }
             }
-            K::While(c, body) => {
-                while self.eval(c, Mode::Use)?.bool() {
-                    match self.block(body, Mode::Use) {
-                        Ok(_) | Err(Unwind::Continue) => {}
-                        Err(Unwind::Break) => break,
-                        Err(u) => return Err(u),
-                    }
-                }
-                Value::Unit
-            }
-            K::Loop(body) => loop {
-                match self.block(body, Mode::Use) {
-                    Ok(_) | Err(Unwind::Continue) => {}
-                    Err(Unwind::Break) => break Value::Unit,
-                    Err(u) => return Err(u),
-                }
-            },
-            K::ForRange { var, lo, hi, inclusive, body } => {
-                let lo = self.eval(lo, Mode::Use)?.int();
-                let hi = self.eval(hi, Mode::Use)?.int();
-                let end = if *inclusive { hi } else { hi - 1 };
-                self.int_loop(*var, lo, end, body)?;
-                Value::Unit
-            }
-            K::ForRangeValue { var, range, body } => {
-                let (lo, hi) = range_bounds(&self.eval(range, Mode::Use)?);
-                let inclusive = matches!(range.ty, Ty::Range(_, true));
-                let end = if inclusive { hi } else { hi - 1 };
-                self.int_loop(*var, lo, end, body)?;
-                Value::Unit
-            }
-            K::ForArray { pat, array: src, body }
-            | K::ForSlice { pat, slice: src, body }
-            | K::ForList { pat, list: src, body } => {
-                let items: Vec<Value> = self.eval(src, Mode::Use)?.elems().to_vec();
-                // A loop over a place iterates copies of its elements (the place is borrowed); a loop over a
-                // temporary array owns the elements, which are dropped like the array's.
-                let item_ty = match &src.ty {
-                    Ty::Array(t, _) if !Self::is_place(src) => (**t).clone(),
-                    _ => Ty::Unit,
-                };
-                self.items_loop(pat, items, &item_ty, body, span)?;
-                Value::Unit
-            }
-            K::ForMap { pat, map, body } => {
-                let pairs = match self.eval(map, Mode::Use)?.deref() {
-                    Value::Map(pairs) => pairs,
-                    _ => return Err(Fault::Internal("a map loop over a value that is not a map".into(), span).into()),
-                };
-                let items = pairs.into_iter().map(|(k, v)| Value::Tuple(vec![k, v])).collect();
-                self.items_loop(pat, items, &Ty::Unit, body, span)?;
-                Value::Unit
-            }
-            K::ForChars { pat, string, body } => {
-                let v = self.eval(string, Mode::Use)?;
-                let bytes = match v.deref() {
-                    Value::Chars(b, at) => b[at..].to_vec(),
-                    other => other.bytes().to_vec(),
-                };
-                let items = String::from_utf8_lossy(&bytes).chars().map(Value::Char).collect();
-                self.items_loop(pat, items, &Ty::Char, body, span)?;
-                Value::Unit
-            }
-            K::ComptimeFor { pat, iter, body } => {
-                let items = self.comptime_items(iter)?;
-                let item_ty = match &iter.ty {
-                    Ty::Array(t, _) | Ty::List(t, _) | Ty::Range(t, _) => (**t).clone(),
-                    other => other.clone(),
-                };
-                self.items_loop(pat, items, &item_ty, body, span)?;
-                Value::Unit
-            }
+            K::While(..)
+            | K::Loop(_)
+            | K::ForRange { .. }
+            | K::ForRangeValue { .. }
+            | K::ForArray { .. }
+            | K::ForSlice { .. }
+            | K::ForList { .. }
+            | K::ForMap { .. }
+            | K::ForChars { .. }
+            | K::ComptimeFor { .. } => self.loop_expr(e, None)?,
+            K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str()))?,
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, mode, span)?,
-            K::Break => return Err(Unwind::Break),
-            K::Continue => return Err(Unwind::Continue),
+            K::Break { label, value } => {
+                let value = match value {
+                    Some(value) => self.eval(value, Mode::Move)?,
+                    None => Value::Unit,
+                };
+                return Err(Unwind::Break(label.clone(), value));
+            }
+            K::Continue(label) => return Err(Unwind::Continue(label.clone())),
             K::Return(v) => {
                 let v = match v {
                     Some(v) => self.eval(v, Mode::Move)?,
                     None => Value::Unit,
                 };
                 return Err(Unwind::Return(v));
+            }
+            K::CompoundAssign(op, lhs, rhs) => {
+                // The value is evaluated first, then the place once, as for `=` (spec/compound-assignment.md, CA2).
+                let v = self.eval(rhs, Mode::Use)?;
+                if let K::PtrDeref(ptr) = &lhs.kind {
+                    let addr = self.eval(ptr, Mode::Use)?.int();
+                    let scalar = crate::memory::scalar(&lhs.ty).expect("checked: a compound operand is a scalar");
+                    let old = self.ptr_read(addr, scalar, &lhs.ty, span)?;
+                    let new = self.binary_values(*op, &lhs.ty, old, v, &rhs.ty, span)?;
+                    self.ptr_write(addr, &lhs.ty, new, span)?;
+                    return Ok(Value::Unit);
+                }
+                let p = self.eval_place(lhs)?;
+                let old = self.place_mut(&p, span)?.clone();
+                let new = self.binary_values(*op, &lhs.ty, old, v, &rhs.ty, span)?;
+                *self.place_mut(&p, span)? = new;
+                Value::Unit
             }
             K::Assign(lhs, rhs) => {
                 if let K::PtrDeref(ptr) = &lhs.kind {
@@ -680,26 +650,121 @@ impl<'p, 'c> Interp<'p, 'c> {
         })
     }
 
-    fn int_loop(&mut self, var: Option<tir::LocalId>, lo: i128, end: i128, body: &'p Block) -> R<()> {
-        let mut i = lo;
-        while i <= end {
+    /// A loop, with the label written before it, if any. The value is `()`, or the value a `break` of a `loop`
+    /// gives back (`Value::Unit` here, as the language has no `break` with a value).
+    fn loop_expr(&mut self, e: &'p Expr, label: Option<&str>) -> R<Value> {
+        let span = e.span;
+        Ok(match &e.kind {
+            K::While(c, body) => {
+                while self.eval(c, Mode::Use)?.bool() {
+                    if let LoopStep::Break(_) = iteration(self.block(body, Mode::Use), label)? {
+                        break;
+                    }
+                }
+                Value::Unit
+            }
+            K::Loop(body) => loop {
+                if let LoopStep::Break(value) = iteration(self.block(body, Mode::Use), label)? {
+                    break value;
+                }
+            },
+            K::ForRange { var, lo, hi, inclusive, body } => {
+                let ity = key_ty(&lo.ty);
+                let lo = self.eval(lo, Mode::Use)?.int();
+                let hi = self.eval(hi, Mode::Use)?.int();
+                self.int_loop(*var, (lo, hi, *inclusive, ity), body, label)?;
+                Value::Unit
+            }
+            K::ForRangeValue { var, range, body } => {
+                let ity = key_ty(&range.ty);
+                let (lo, hi) = range_bounds(&self.eval(range, Mode::Use)?);
+                let inclusive = matches!(range.ty, Ty::Range(_, true));
+                self.int_loop(*var, (lo, hi, inclusive, ity), body, label)?;
+                Value::Unit
+            }
+            K::ForArray { pat, array: src, body }
+            | K::ForSlice { pat, slice: src, body }
+            | K::ForList { pat, list: src, body } => {
+                let items: Vec<Value> = self.eval(src, Mode::Use)?.elems().to_vec();
+                // A loop over a place iterates copies of its elements (the place is borrowed); a loop over a
+                // temporary array owns the elements, which are dropped like the array's.
+                let item_ty = match &src.ty {
+                    Ty::Array(t, _) if !Self::is_place(src) => (**t).clone(),
+                    _ => Ty::Unit,
+                };
+                self.items_loop(pat, items, &item_ty, body, span, label)?;
+                Value::Unit
+            }
+            K::ForMap { pat, map, body } => {
+                let pairs = match self.eval(map, Mode::Use)?.deref() {
+                    Value::Map(pairs) => pairs,
+                    _ => return Err(Fault::Internal("a map loop over a value that is not a map".into(), span).into()),
+                };
+                let items = pairs.into_iter().map(|(k, v)| Value::Tuple(vec![k, v])).collect();
+                self.items_loop(pat, items, &Ty::Unit, body, span, label)?;
+                Value::Unit
+            }
+            K::ForChars { pat, string, body } => {
+                let v = self.eval(string, Mode::Use)?;
+                let bytes = match v.deref() {
+                    Value::Chars(b, at) => b[at..].to_vec(),
+                    other => other.bytes().to_vec(),
+                };
+                let items = String::from_utf8_lossy(&bytes).chars().map(Value::Char).collect();
+                self.items_loop(pat, items, &Ty::Char, body, span, label)?;
+                Value::Unit
+            }
+            K::ComptimeFor { pat, iter, body } => {
+                let items = self.comptime_items(iter)?;
+                let item_ty = match &iter.ty {
+                    Ty::Array(t, _) | Ty::List(t, _) | Ty::Range(t, _) => (**t).clone(),
+                    other => other.clone(),
+                };
+                self.items_loop(pat, items, &item_ty, body, span, label)?;
+                Value::Unit
+            }
+            _ => unreachable!("loop_expr is called with a loop"),
+        })
+    }
+
+    /// A counted loop over `lo..hi` (or `lo..=hi`). The bounds are compared as order keys of their type, so a `u128`
+    /// range above `i128::MAX` runs in order, and the counter stops at the top of the type instead of overflowing
+    /// (`spec/int128.md`, I128-8).
+    fn int_loop(
+        &mut self,
+        var: Option<tir::LocalId>,
+        (lo, hi, inclusive, ity): (i128, i128, bool, Option<burdin_tir::IntTy>),
+        body: &'p Block,
+        label: Option<&str>,
+    ) -> R<()> {
+        let (mut i, end) = (to_key(ity, lo), to_key(ity, hi));
+        while if inclusive { i <= end } else { i < end } {
             let mark = self.frame().scope.len();
             if let Some(var) = var {
-                self.frame().slots[var.0] = Slot::Val(Value::Int(i));
+                self.frame().slots[var.0] = Slot::Val(Value::Int(to_key(ity, i)));
             }
             let r = self.block(body, Mode::Use);
             self.end_scope(mark, body_span(body))?;
-            match r {
-                Ok(_) | Err(Unwind::Continue) => {}
-                Err(Unwind::Break) => break,
-                Err(u) => return Err(u),
+            if let LoopStep::Break(_) = iteration(r, label)? {
+                break;
             }
-            i += 1;
+            match i.checked_add(1) {
+                Some(next) => i = next,
+                None => break,
+            }
         }
         Ok(())
     }
 
-    fn items_loop(&mut self, pat: &'p Pat, items: Vec<Value>, ty: &Ty, body: &'p Block, span: Span) -> R<()> {
+    fn items_loop(
+        &mut self,
+        pat: &'p Pat,
+        items: Vec<Value>,
+        ty: &Ty,
+        body: &'p Block,
+        span: Span,
+        label: Option<&str>,
+    ) -> R<()> {
         for item in items {
             self.step(span)?;
             let mark = self.frame().scope.len();
@@ -709,10 +774,8 @@ impl<'p, 'c> Interp<'p, 'c> {
             let r = self.block(body, Mode::Use);
             self.end_scope(mark, span)?;
             self.end_temps(temps, span)?;
-            match r {
-                Ok(_) | Err(Unwind::Continue) => {}
-                Err(Unwind::Break) => break,
-                Err(u) => return Err(u),
+            if let LoopStep::Break(_) = iteration(r, label)? {
+                break;
             }
         }
         Ok(())
@@ -952,7 +1015,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: owned });
         let r = match self.block(body, Mode::Move) {
             Ok(v) | Err(Unwind::Return(v)) => Ok(v),
-            Err(Unwind::Break) | Err(Unwind::Continue) => {
+            Err(Unwind::Break(..)) | Err(Unwind::Continue(_)) => {
                 Err(Fault::Internal("`break` left a function".into(), span).into())
             }
             Err(u) => Err(u),
@@ -1237,6 +1300,21 @@ fn depth(span: Span) -> Unwind {
     Fault::Budget(format!("compile-time evaluation nested more than {MAX_DEPTH} calls"), span).into()
 }
 
+/// The integer type of a value, or of the elements of a range or range iterator; `None` for any other type.
+pub(crate) fn key_ty(ty: &Ty) -> Option<burdin_tir::IntTy> {
+    match ty {
+        Ty::Int(i) => Some(*i),
+        Ty::Range(inner, _) | Ty::RangeIter(inner, _) => key_ty(inner),
+        _ => None,
+    }
+}
+
+/// Maps an integer carrier to its order key, or a key back to the carrier: `IntTy::key` is its own inverse. A range
+/// iterator keeps its bounds as keys, so `u128` values above `i128::MAX` compare in order (`spec/int128.md`, I128-8).
+pub(crate) fn to_key(ity: Option<burdin_tir::IntTy>, v: i128) -> i128 {
+    ity.map_or(v, |t| t.key(v))
+}
+
 pub(crate) fn range_bounds(v: &Value) -> (i128, i128) {
     match v {
         Value::Tuple(ends) if ends.len() == 2 => (ends[0].int(), ends[1].int()),
@@ -1294,5 +1372,25 @@ pub(crate) fn pattern_matches(pat: &Pat, v: &Value) -> bool {
             Value::Variant(j, fs) => i == j && subs.iter().zip(fs).all(|(p, f)| pattern_matches(p, f)),
             _ => false,
         },
+    }
+}
+
+/// What a loop does with the outcome of one iteration of its body.
+enum LoopStep {
+    Continue,
+    Break(Value),
+}
+
+/// What a loop does with the outcome of one iteration of its body: `Continue` goes on with the next iteration,
+/// `Break` leaves the loop with that value, and an `Err` leaves the loop and goes on outwards. A `break` or
+/// `continue` with no label is the loop's own; one with a label is the loop's only when the label is its own
+/// (`label`).
+fn iteration(outcome: R<Value>, label: Option<&str>) -> R<LoopStep> {
+    let names = |target: &Option<String>| target.is_none() || target.as_deref() == label;
+    match outcome {
+        Ok(_) => Ok(LoopStep::Continue),
+        Err(Unwind::Continue(target)) if names(&target) => Ok(LoopStep::Continue),
+        Err(Unwind::Break(target, value)) if names(&target) => Ok(LoopStep::Break(value)),
+        Err(u) => Err(u),
     }
 }

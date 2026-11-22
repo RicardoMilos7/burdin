@@ -1,0 +1,14 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: attempt to multiply with overflow
+//> before
+
+// An `i128` multiplication past `i128::MAX` panics in a debug build (spec/int128.md, I128-4).
+
+fn main() {
+    let big: i128 = 170141183460469231731687303715884105727
+    let two: i128 = 2
+    println("before")
+    println((big * two).to_string())
+    println("after")
+}

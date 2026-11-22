@@ -35,6 +35,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
+        generators: Vec::new(),
     };
     p.file()
 }
@@ -58,6 +59,7 @@ pub fn parse_block(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> O
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
+        generators: Vec::new(),
     };
     let block = p.block().ok()?;
     let clean = p.at_eof() && p.diags.len() == before;
@@ -83,6 +85,8 @@ pub(super) struct Parser<'a> {
     select_count: usize,
     /// The block of every function and test body the file wrote, in source order ([`File::bodies`]).
     bodies: Vec<Span>,
+    /// The module-scope `comptime generate` items this file has parsed ([`File::generators`]).
+    generators: Vec<Generator>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -195,7 +199,7 @@ impl Parser<'_> {
         Ok(t)
     }
 
-    /// Consumes a `>` that closes generic arguments, splitting `>>` and `>=`.
+    /// Consumes a `>` that closes generic arguments, splitting `>>`, `>=`, and `>>=`.
     fn eat_closing_angle(&mut self) -> bool {
         let span = self.span();
         let rest = match self.kind() {
@@ -205,6 +209,8 @@ impl Parser<'_> {
             }
             TokenKind::Shr => TokenKind::Gt,
             TokenKind::Ge => TokenKind::Eq,
+            // `>>=` closes one list and leaves `>=` for the enclosing one.
+            TokenKind::ShrEq => TokenKind::Ge,
             _ => return false,
         };
         let t = &mut self.toks[self.pos];
@@ -221,6 +227,15 @@ impl Parser<'_> {
     fn starts_item_only(kind: &TokenKind) -> bool {
         use TokenKind::*;
         matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv | Comptime)
+    }
+
+    /// Recovers from an item that did not parse, which began at token `start`: skips to the next item, and records
+    /// the whole stretch (from the item's first token to the last one skipped) in `unparsed`.
+    fn recover_unparsed_item(&mut self, start: usize, unparsed: &mut Vec<Span>) {
+        self.recover_item();
+        let first = self.toks[start].span;
+        let span = if self.pos > start { first.to(self.toks[self.pos - 1].span) } else { first };
+        unparsed.push(span);
     }
 
     /// Skips to the start of the next item: an item keyword at the start of a line.
@@ -445,6 +460,31 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_item_is_recorded_from_its_first_token() {
+        // The unreadable `fn broken` is one region from its `fn` to the token recovery stopped at; the good items
+        // parse and record nothing.
+        let src = "fn broken( { }
+fn good() {}
+struct Bad { x i32 }
+";
+        let (file, _) = render(src);
+        let texts: Vec<&str> = file.unparsed.iter().map(|span| &src[span.lo as usize..span.hi as usize]).collect();
+        assert_eq!(texts, ["fn broken( { }", "struct Bad { x i32 }"]);
+        assert_eq!(fn_names(&file), ["good"]);
+    }
+
+    #[test]
+    fn a_readable_file_records_no_unreadable_item() {
+        let (file, out) = render(
+            "fn main() {}
+struct Point { x: i32 }
+",
+        );
+        assert_eq!(out, "");
+        assert!(file.unparsed.is_empty());
+    }
+
+    #[test]
     fn recovers_from_an_unclosed_bracket_at_the_block_end() {
         let (file, out) = render("fn main() {\n    g(1, 2\n}\nfn good() {}\n");
         assert_eq!(out, "t.bd:3:1: error[E0001]: expected `)`, found `}`\n");
@@ -635,6 +675,51 @@ mod tests {
         assert_eq!(fn_names(&file), ["good"]);
         assert_eq!(file.benches.len(), 1);
         assert_eq!(file.benches[0].name, "one");
+    }
+
+    #[test]
+    fn generate_items_are_functions_returning_a_string() {
+        // `comptime generate { ... }` at module scope is a private function with no parameters and the return type
+        // `String`, named so that no written name can refer to it, and recorded in `generators` for the front end
+        // (`spec/generate.md`, GN2). Its block is not one of the file's `bodies`.
+        let src = "comptime generate {\n    String.new()\n}\ncomptime generate { String.new() }\nfn good() {}\n";
+        let (file, out) = render(src);
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["comptime generate 1", "comptime generate 2", "good"]);
+        assert_eq!(file.generators.len(), 2);
+        let Item::Fn(generator) = &file.items[0] else { panic!("expected a function") };
+        assert!(generator.is_priv && generator.params.is_empty());
+        assert!(
+            matches!(generator.ret.as_ref().map(|t| &t.kind), Some(TypeKind::Path(p)) if p[0].name.name == "String")
+        );
+        assert_eq!(file.generators[0].name, "comptime generate 1");
+        assert_eq!(file.generators[0].span, generator.span);
+        let keyword = &src[file.generators[0].keyword.lo as usize..file.generators[0].keyword.hi as usize];
+        assert_eq!(keyword, "comptime generate");
+        assert_eq!(file.bodies.len(), 1, "only `good`'s body is a function body");
+
+        // `generate` is a keyword only right after `comptime`.
+        let (_, out) = render("fn f(): i32 {\n    let generate = 1\n    generate\n}\n");
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn generate_outside_module_scope_is_e0243_and_the_rest_parses() {
+        let (file, out) = render(
+            "fn main() {\n    comptime generate {\n        String.new()\n    }\n    let x = 1\n}\n\
+             Point: Display {\n    comptime generate { String.new() }\n    fn f(self) {}\n}\n\
+             fn good() {}\n",
+        );
+        let codes: Vec<&str> = out.lines().filter(|l| l.contains("error[")).collect();
+        assert_eq!(codes.len(), 2, "{out}");
+        assert!(codes.iter().all(|l| l.contains("E0243")), "{out}");
+        assert!(out.contains("t.bd:2:5:") && out.contains("t.bd:8:5:"), "{out}");
+        assert_eq!(fn_names(&file), ["main", "good"]);
+        assert!(file.generators.is_empty());
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert!(binding_names(&main.body).contains(&"x"), "the statements after the block still parse");
+        let Item::Impl(block) = &file.items[1] else { panic!("expected an impl block") };
+        assert_eq!(block.methods.len(), 1, "the method after the block still parses");
     }
 
     #[test]
@@ -857,6 +942,38 @@ mod tests {
         assert!(matches!(lhs.kind, ExprKind::DynField(..)));
         let ExprKind::Field(inner, _) = &rhs.kind else { unreachable!() };
         assert!(matches!(inner.kind, ExprKind::DynField(..)));
+    }
+
+    #[test]
+    fn a_compound_assignment_takes_its_operator_and_stops_at_a_line_break() {
+        // `spec/compound-assignment.md`, CA1: one token per operator, and a line break before it ends the statement.
+        let (file, out) = render(
+            "fn main() {
+    a <<= b + 1
+    c
+    >>= d
+}
+",
+        );
+        assert!(out.contains("E0001"), "{out}");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(shift) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::CompoundAssign(op, lhs, rhs) = &shift.kind else { unreachable!() };
+        assert_eq!(*op, BinOp::Shl);
+        assert!(matches!(lhs.kind, ExprKind::Name { .. }));
+        assert!(matches!(rhs.kind, ExprKind::Binary(BinOp::Add, ..)));
+    }
+
+    #[test]
+    fn a_shift_assignment_closes_nested_generic_arguments() {
+        // `>>=` closes the inner list and leaves `>=` for the outer one, as `>>` and `>=` do (grammar.md).
+        let (_, out) = render(
+            "fn main() {
+    let grid: List<List<i32>>= List<List<i32>>.new()
+}
+",
+        );
+        assert_eq!(out, "");
     }
 
     #[test]

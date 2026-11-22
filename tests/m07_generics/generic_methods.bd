@@ -1,0 +1,143 @@
+//@ run
+//> 1 x
+//> true
+//> 5
+//> 21
+//> 6
+//> 0
+//> 0
+//> 2
+//> 6
+//> 3
+//> 7
+//> 9
+//> 2
+
+// Method-level type parameters (issue #391; `spec/arguments.md`, GM1-GM6): the `<...>` list after a method's
+// name declares parameters of its own, on every kind of callee. The impl block's parameters stay in scope in the
+// method's signature and body (`A` in `Pair<A>.zip<U>`), a method-level parameter is inferred from the arguments
+// and the expected type and checked against its bounds, and each distinct argument list is monomorphized on its
+// own. A method-level parameter that appears only in a closure bound (`F: Fn(i32): U`) is inferred from the
+// closure's signature, and a closure parameter written as a function type (`f: Fn(i32): U`) still tells the
+// closure its parameter types while its return stays open.
+
+interface Show {
+    fn show(self): String
+}
+
+struct Num {
+    n: i32,
+}
+
+Num: Show {
+    fn show(self): String {
+        self.n.to_string()
+    }
+}
+
+struct Pair<A> {
+    a: A,
+}
+
+Pair<A> {
+    // `A` is the impl's parameter; `U` is the method's own.
+    fn zip<U>(own self, own u: U): (A, U) {
+        (self.a, u)
+    }
+
+    fn wrap<U>(own self, own u: U): Pair<U> {
+        Pair { a: u }
+    }
+
+    fn render<U: Show>(self, u: U): String {
+        u.show()
+    }
+
+    fn pick<U>(self, own u: U): U where U: Show {
+        u
+    }
+}
+
+enum Maybe<A> {
+    None
+    Some(A)
+}
+
+Maybe<A> {
+    // A closure parameter written as a function type whose return is the open `U`.
+    fn map<U>(own self, own f: Fn(A): U): Maybe<U> {
+        match self {
+            Maybe.None => Maybe.None,
+            Maybe.Some(v) => Maybe.Some(f(v)),
+        }
+    }
+}
+
+struct Holder {}
+
+Holder {
+    // An associated function's method-level parameter comes from the expected type.
+    fn make<U: Default>(): U {
+        U.default()
+    }
+
+    fn apply<U>(self, f: Fn(i32): U): U {
+        f(1)
+    }
+
+    fn consume<U>(self, own f: FnOnce(i32): U): U {
+        f(2)
+    }
+
+    // A parameter that appears only in another parameter's closure bound.
+    fn map_first<U, F: Fn(i32): U>(self, own f: F): U {
+        f(1)
+    }
+
+    // A const parameter may be a method's own too.
+    fn count<const N: usize>(self): usize {
+        N
+    }
+}
+
+interface Wrap {
+    fn wrapped<U: Show>(self, u: U): String
+}
+
+struct Wrapped {}
+
+Wrapped: Wrap {
+    fn wrapped<U: Show>(self, u: U): String {
+        u.show()
+    }
+}
+
+fn through_bound<T: Wrap>(t: T): String {
+    t.wrapped(Num { n: 9 })
+}
+
+fn main() {
+    let p = Pair { a: 1 }
+    let r = p.zip("x".to_string())
+    println("{r.0} {r.1}")
+    let q = Pair { a: 2 }.wrap(true)
+    println("{q.a}")
+    println(Pair { a: 3 }.render(Num { n: 5 }))
+    println(Pair { a: 4 }.pick(Num { n: 21 }).show())
+    let m = Maybe.Some(3)
+    match m.map(|v| v * 2) {
+        Maybe.Some(v) => println("{v}"),
+        Maybe.None => println("none"),
+    }
+    let x: i32 = Holder.make()
+    println("{x}")
+    println("{Holder.make<i32>()}")
+    let h = Holder {}
+    println("{h.apply(|n| n + 1)}")
+    println("{h.consume(|n| n * 3)}")
+    println("{h.map_first(|n| n + 2)}")
+    println("{h.count<7>()}")
+    println("{through_bound(Wrapped {})}")
+    let w = Pair { a: 8 }.wrap<i64>(2)
+    println("{w.a}")
+}

@@ -372,6 +372,30 @@ fn main() {
         check(needle in collapsed, f"the E0263 report does not mention {needle!r}")
     check(not (work / "invalid.h").exists(), "a failed export still wrote a header")
 
+    # A 128-bit integer has no C spelling, so the header cannot declare a struct that holds one (spec/int128.md, I128-13).
+    wide = bindgen("--export", ".", "--out", str(work / "wide.h"), cwd=FIXTURES / "export_wide")
+    wide_output = " ".join(output(wide).split())
+    check(wide.returncode == 1, f"an export with a 128-bit field exited {wide.returncode}, expected 1")
+    check("error[E0263]" in wide_output, "the 128-bit field was not reported as E0263")
+    check(
+        "the type `u128` has no C spelling" in wide_output,
+        "the 128-bit field's E0263 report does not say the type has no C spelling",
+    )
+    check(not (work / "wide.h").exists(), "a failed export with a 128-bit field still wrote a header")
+
+    # A C `__int128` has no Burdin equivalent: its function is skipped with a note, and the others are generated.
+    wide_header = work / "wide_header.bd"
+    result = bindgen("headers/wide.h", "--out", str(wide_header))
+    check(result.returncode == 0, f"bindgen headers/wide.h exited {result.returncode}: {output(result).strip()}")
+    if wide_header.is_file():
+        text = harness.read_text(wide_header)
+        check("fn small_value(x: i32)" in text, "the function beside a `__int128` one was not generated")
+        check("fn wide_value(" not in text, "a function with a C `__int128` parameter was generated")
+        check(
+            "the type `__int128` has no Burdin equivalent" in text,
+            "the skipped `__int128` function is not reported in the module",
+        )
+
 print(f"Checked `burdin bindgen` and `burdin bindgen --export` ({checks} checks)")
 
 if harness.report_problems(problems):

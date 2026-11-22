@@ -1,0 +1,54 @@
+//@ run
+//@ skip-platform: windows
+//> backend is OpenSSL 3: true
+//> client config: built
+//> client hello is a handshake record: true
+//> connect to a peer that is not a TLS server: failed
+
+// The `tls` package links its TLS stack through its own manifest (issue #322; spec/tls.md, TLS1 and TLS7). The
+// program declares no library (spec/packages.md, PKG34), so this case builds only if the link table of a dependency
+// reaches the linker. It uses the public API only: `tls.backend()` names the stack, and a client connects to a
+// listener in this process that is not a TLS server, so the first thing the engine does, the ClientHello, is the first
+// thing the listener reads. No handshake can finish, so the connect fails once the listener closes.
+
+use tls.{ClientConfig, TlsStream, backend}
+
+fn main() {
+    task.set_workers(2)
+    let name = backend()
+    println("backend is OpenSSL 3: {}", name.starts_with("OpenSSL 3"))
+    let config = ClientConfig.new().unwrap()
+    println("client config: built")
+
+    let listener = net.TcpListener.bind("127.0.0.1:0").unwrap()
+    let port = listener.local_addr().unwrap().port()
+    let seen = Mutex.new(List<u8>.new())
+    let outcome = Mutex.new(List<String>.new())
+    task.scope(|s| {
+        s.spawn(|| {
+            let (tcp, _) = listener.accept().unwrap()
+            let mut tcp = tcp
+            tcp.set_read_timeout(Some(Duration.from_millis(5000)))
+            let mut hello = List<u8>.new()
+            let _ = tcp.read(mut hello, 16384)
+            seen.lock(|list| {
+                for byte in hello.iter() {
+                    list.push(byte)
+                }
+            })
+            let _ = tcp.close()
+        })
+        s.spawn(|| {
+            let tcp = net.TcpStream.connect(format("127.0.0.1:{}", port).as_str()).unwrap()
+            match TlsStream.connect(tcp, "localhost", config) {
+                Ok(_) => outcome.lock(|list| list.push("connected".to_string())),
+                Err(_) => outcome.lock(|list| list.push("failed".to_string())),
+            }
+        })
+    })
+    let count = seen.lock(|list| list.len())
+    let first = seen.lock(|list| if list.len() > 0 { list[0] } else { 0 })
+    println("client hello is a handshake record: {}", count > 5 && first == 22)
+    let result = outcome.lock(|list| list[0].clone())
+    println("connect to a peer that is not a TLS server: {}", result)
+}

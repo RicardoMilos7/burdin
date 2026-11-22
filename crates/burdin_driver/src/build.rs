@@ -63,6 +63,12 @@ pub(crate) fn run(
     // the package that depends on it is loaded. The steps are independent either way.
     for index in (0..workspace.packages.len()).rev() {
         let package = &mut workspace.packages[index];
+        // The libraries a manifest links (`spec/packages.md`, PKG34), merged without duplicates.
+        for lib in &package.link_libs {
+            if !outcome.link_libs.contains(lib) {
+                outcome.link_libs.push(lib.clone());
+            }
+        }
         if crate::rust_build::has_crates(package) {
             let bound = crate::rust_build::run_package(package, &profile.dir, &fingerprint)?;
             for input in bound.inputs {
@@ -145,7 +151,7 @@ fn run_package(
 ) -> Result<Vec<String>, Failure> {
     let dir = package.dir.clone().expect("a build script belongs to a package with a directory");
     let script = dir.join(BUILD_SCRIPT);
-    let out = dir.join("target").join("burdin").join(&profile.dir);
+    let out = burdin_query::workspace::package_out_dir(&dir, &package.name, &profile.dir);
     let out_src = out.join("src");
     let key_path = out.join("build.key");
     let script_bytes = std::fs::read(&script)
@@ -249,6 +255,7 @@ fn run_script(
         jobs: options.jobs,
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {
         Failure::new(Code::BUILD_SCRIPT, format!("the build script of package `{}` did not compile", package.name))
@@ -722,6 +729,7 @@ mod tests {
                 .collect(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
@@ -752,6 +760,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),

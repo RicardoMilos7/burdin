@@ -1,0 +1,563 @@
+use certs.Certificate
+use errors.TlsError
+// The engine: one TLS connection as a state machine over two memory BIOs (spec/tls.md, TLS2).
+//
+// The engine never touches a socket. `feed` puts bytes received from the peer into the input BIO, `drain` takes the
+// bytes OpenSSL wants sent out of the output BIO, and `handshake`, `read`, `write`, and `shutdown` run OpenSSL between
+// the two. A call that needs the peer returns at once with the step it needs (`NeedInput`), and the caller moves bytes
+// and calls again. The caller drains the output after every call, including the ones that succeeded: a successful read
+// may have queued a key update or an alert.
+
+use features
+use ffi.{bytes_ptr, c_text, clear_errors, error_text, no_openssl, or_else}
+use openssl.{
+    BIO_free,
+    BIO_new,
+    BIO_read,
+    BIO_s_mem,
+    BIO_write,
+    Bio,
+    SSL_CIPHER_get_name,
+    SSL_CTRL_SET_TLSEXT_HOSTNAME,
+    SSL_ERROR_SSL,
+    SSL_ERROR_WANT_READ,
+    SSL_ERROR_WANT_WRITE,
+    SSL_ERROR_ZERO_RETURN,
+    SSL_ctrl,
+    SSL_do_handshake,
+    SSL_free,
+    SSL_get0_alpn_selected,
+    SSL_get0_param,
+    SSL_get1_peer_certificate,
+    SSL_get_current_cipher,
+    SSL_get_error,
+    SSL_get_servername,
+    SSL_get_verify_result,
+    SSL_get_version,
+    SSL_new,
+    SSL_read,
+    SSL_set1_host,
+    SSL_set_accept_state,
+    SSL_set_bio,
+    SSL_set_connect_state,
+    SSL_shutdown,
+    SSL_write,
+    Ssl,
+    SslCtx,
+    X509,
+    X509_VERIFY_PARAM_set1_ip_asc,
+    X509_V_ERR_HOSTNAME_MISMATCH,
+    X509_V_ERR_IP_ADDRESS_MISMATCH,
+    X509_verify_cert_error_string,
+}
+use schannel.{
+    CertContext,
+    CertFreeCertificateContext,
+    NEXT_DATA,
+    NEXT_DONE,
+    NEXT_EOF,
+    NEXT_NEED_INPUT,
+    NEXT_RETRY,
+    WinConfig,
+    WinConn,
+    win_alpn,
+    win_cipher,
+    win_drain,
+    win_feed,
+    win_free,
+    win_handshake,
+    win_new,
+    win_peer_cert,
+    win_read,
+    win_shutdown,
+    win_sni,
+    win_version,
+    win_write,
+}
+
+/// How much one OpenSSL call moves: the size of the engine's scratch buffer (and of a TLS record's plaintext).
+const SCRATCH: usize = 16384
+
+/// What an engine call needs next.
+enum Step {
+    /// The call finished: the handshake is complete.
+    Done,
+    /// The call moved this many bytes.
+    Data(usize),
+    /// The peer's bytes are needed: send what `drain` gives, then `feed` more and call again.
+    NeedInput,
+    /// Send what `drain` gives and call again without waiting for input.
+    Retry,
+    /// The peer sent `close_notify`: the stream ended cleanly.
+    Eof,
+}
+
+struct Engine {
+    ssl: CPtr<Ssl>,
+    incoming: CPtr<Bio>,
+    outgoing: CPtr<Bio>,
+    scratch: List<u8>,
+    server: bool,
+    /// The name the client is verifying, for the error message of a mismatch.
+    host: String,
+}
+
+unsafe Engine: Send {}
+
+/// The step a `win_*` call of schannel.bd asked for.
+fn step_of(next: u32, count: usize): Step {
+    if next == NEXT_DONE {
+        Step.Done
+    } else if next == NEXT_DATA {
+        Step.Data(count)
+    } else if next == NEXT_NEED_INPUT {
+        Step.NeedInput
+    } else if next == NEXT_RETRY {
+        Step.Retry
+    } else {
+        Step.Eof
+    }
+}
+
+/// Whether `host` is an IP address literal (IPv4 dotted quad or anything with a colon) and not a DNS name.
+fn is_ip_address(host: str): bool {
+    if host.contains(":") {
+        return true
+    }
+    let mut dots: usize = 0
+    for b in host.bytes() {
+        if b == 46 {
+            dots = dots + 1
+        } else if b < 48 || b > 57 {
+            return false
+        }
+    }
+    dots == 3
+}
+
+Engine {
+    /// A connection over `ctx`: a client (`server` false) or a server.
+    fn new(ctx: CPtr<SslCtx>, server: bool): Result<Engine, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            // On Windows `ssl` holds the connection of schannel.bd, and the BIO pointers stay null.
+            unsafe {
+                let conn = win_new(ctx as CPtr<WinConfig>, server)?
+                let mut scratch = List<u8>.new()
+                for _ in 0..SCRATCH {
+                    scratch.push(0)
+                }
+                Ok(
+                    Engine {
+                        ssl: conn as CPtr<Ssl>,
+                        incoming: CPtr.null(),
+                        outgoing: CPtr.null(),
+                        scratch: scratch,
+                        server: server,
+                        host: String.new(),
+                    },
+                )
+            }
+        } else if features.openssl {
+            unsafe {
+                let ssl = SSL_new(ctx)
+                if ssl.is_null() {
+                    return Err(TlsError.Config(or_else(error_text(), "cannot create a connection")))
+                }
+                let incoming = BIO_new(BIO_s_mem())
+                let outgoing = BIO_new(BIO_s_mem())
+                if incoming.is_null() || outgoing.is_null() {
+                    if !incoming.is_null() {
+                        let _ = BIO_free(incoming)
+                    }
+                    if !outgoing.is_null() {
+                        let _ = BIO_free(outgoing)
+                    }
+                    SSL_free(ssl)
+                    return Err(TlsError.Config("out of memory".to_string()))
+                }
+                // The connection owns the BIOs from here on and frees them with itself.
+                SSL_set_bio(ssl, incoming, outgoing)
+                if server {
+                    SSL_set_accept_state(ssl)
+                } else {
+                    SSL_set_connect_state(ssl)
+                }
+                let mut scratch = List<u8>.new()
+                for _ in 0..SCRATCH {
+                    scratch.push(0)
+                }
+                Ok(
+                    Engine {
+                        ssl: ssl,
+                        incoming: incoming,
+                        outgoing: outgoing,
+                        scratch: scratch,
+                        server: server,
+                        host: String.new(),
+                    },
+                )
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// A client's server name: sent as SNI (a DNS name only) and, when `verify`, the name the certificate must carry
+    /// (a DNS name against its names, an IP address against its IP entries). Both come from this one value.
+    fn set_server_name(mut self, host: str, verify: bool): Result<(), TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if host.len() == 0 || host.contains("\0") {
+                return Err(TlsError.Config("the server name is empty or holds a NUL".to_string()))
+            }
+            // The one name is both sent as SNI and checked against the certificate, by the handshake.
+            self.host = host.to_string()
+            Ok(())
+        } else if features.openssl {
+            if host.len() == 0 || host.contains("\0") {
+                return Err(TlsError.Config("the server name is empty or holds a NUL".to_string()))
+            }
+            self.host = host.to_string()
+            let name = CString.from(host)
+            unsafe {
+                if is_ip_address(host) {
+                    if verify {
+                        let param = SSL_get0_param(self.ssl)
+                        if X509_VERIFY_PARAM_set1_ip_asc(param, name.as_ptr()) != 1 {
+                            clear_errors()
+                            return Err(TlsError.Config(format("'{}' is not a valid IP address", host)))
+                        }
+                    }
+                    return Ok(())
+                }
+                if SSL_ctrl(self.ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, 0, name.as_ptr() as CPtr<u8>) != 1 {
+                    clear_errors()
+                    return Err(TlsError.Config("cannot set the server name indication".to_string()))
+                }
+                if verify {
+                    if SSL_set1_host(self.ssl, name.as_ptr()) != 1 {
+                        clear_errors()
+                        return Err(TlsError.Config(format("'{}' is not a valid host name", host)))
+                    }
+                }
+            }
+            Ok(())
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Puts bytes received from the peer into the input BIO.
+    fn feed(mut self, data: [u8]): Result<(), TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                let conn = self.ssl as CPtr<WinConn>
+                if !win_feed(conn, data) {
+                    return Err(TlsError.Protocol("cannot buffer the peer's bytes".to_string()))
+                }
+                if self.server {
+                    match win_sni(conn) {
+                        Some(name) => self.host = name,
+                        None => {}
+                    }
+                }
+            }
+            Ok(())
+        } else if features.openssl {
+            let mut done: usize = 0
+            while done < data.len() {
+                unsafe {
+                    let n = BIO_write(self.incoming, bytes_ptr(data[done..data.len()]), (data.len() - done) as i32)
+                    if n <= 0 {
+                        return Err(TlsError.Protocol("cannot buffer the peer's bytes".to_string()))
+                    }
+                    done = done + (n as usize)
+                }
+            }
+            Ok(())
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Appends every byte OpenSSL wants sent to `out`, and returns how many.
+    fn drain(mut self, mut out: List<u8>): usize {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_drain(self.ssl as CPtr<WinConn>, mut out, mut self.scratch) }
+        } else if features.openssl {
+            let mut total: usize = 0
+            loop {
+                unsafe {
+                    let n = BIO_read(self.outgoing, (&mut self.scratch[0]) as CPtr<u8>, SCRATCH as i32)
+                    if n <= 0 {
+                        break
+                    }
+                    out.extend_from_slice(self.scratch[0..(n as usize)])
+                    total = total + (n as usize)
+                }
+            }
+            total
+        } else {
+            0
+        }
+    }
+
+    /// The failure an OpenSSL call reported with `code` (`SSL_get_error`). `handshake` says which phase it was in.
+    fn failure(self, code: i32, handshake: bool): TlsError {
+        comptime if features.openssl {
+            let reason = error_text()
+            if code == SSL_ERROR_ZERO_RETURN {
+                return TlsError.UnexpectedEof
+            }
+            unsafe {
+                if code == SSL_ERROR_SSL && reason.contains("certificate verify failed") {
+                    let result = SSL_get_verify_result(self.ssl)
+                    if result == X509_V_ERR_HOSTNAME_MISMATCH || result == X509_V_ERR_IP_ADDRESS_MISMATCH {
+                        return TlsError.HostnameMismatch(self.host.clone())
+                    }
+                    if result != 0 {
+                        return TlsError.CertificateInvalid(c_text(X509_verify_cert_error_string(result as i64)))
+                    }
+                }
+            }
+            let text = or_else(reason, "the connection failed")
+            if handshake {
+                TlsError.Handshake(text)
+            } else {
+                TlsError.Protocol(text)
+            }
+        } else {
+            no_openssl()
+        }
+    }
+
+    /// Runs the handshake as far as it can go with the bytes fed so far.
+    fn handshake(mut self): Result<Step, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                match win_handshake(self.ssl as CPtr<WinConn>, self.host.as_str()) {
+                    Ok(next) => Ok(step_of(next, 0)),
+                    Err(failure) => Err(failure),
+                }
+            }
+        } else if features.openssl {
+            unsafe {
+                clear_errors()
+                let result = SSL_do_handshake(self.ssl)
+                if result == 1 {
+                    return Ok(Step.Done)
+                }
+                let code = SSL_get_error(self.ssl, result)
+                if code == SSL_ERROR_WANT_READ {
+                    return Ok(Step.NeedInput)
+                }
+                if code == SSL_ERROR_WANT_WRITE {
+                    return Ok(Step.Retry)
+                }
+                Err(self.failure(code, true))
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Appends up to `max` decrypted bytes to `out`.
+    fn read(mut self, mut out: List<u8>, max: usize): Result<Step, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if max == 0 {
+                return Ok(Step.Data(0))
+            }
+            unsafe {
+                match win_read(self.ssl as CPtr<WinConn>, mut out, mut self.scratch, max) {
+                    Ok((next, count)) => Ok(step_of(next, count)),
+                    Err(failure) => Err(failure),
+                }
+            }
+        } else if features.openssl {
+            let want = if max < SCRATCH { max } else { SCRATCH }
+            if want == 0 {
+                return Ok(Step.Data(0))
+            }
+            unsafe {
+                clear_errors()
+                let result = SSL_read(self.ssl, (&mut self.scratch[0]) as CPtr<u8>, want as i32)
+                if result > 0 {
+                    out.extend_from_slice(self.scratch[0..(result as usize)])
+                    return Ok(Step.Data(result as usize))
+                }
+                let code = SSL_get_error(self.ssl, result)
+                if code == SSL_ERROR_WANT_READ {
+                    return Ok(Step.NeedInput)
+                }
+                if code == SSL_ERROR_WANT_WRITE {
+                    return Ok(Step.Retry)
+                }
+                if code == SSL_ERROR_ZERO_RETURN {
+                    return Ok(Step.Eof)
+                }
+                Err(self.failure(code, false))
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Encrypts a prefix of `data` (one record's worth at most) and returns how many bytes it took.
+    fn write(mut self, data: [u8]): Result<Step, TlsError> {
+        comptime if target.os() == target.Os.Windows {
+            if data.len() == 0 {
+                return Ok(Step.Data(0))
+            }
+            unsafe {
+                match win_write(self.ssl as CPtr<WinConn>, data) {
+                    Ok((next, count)) => Ok(step_of(next, count)),
+                    Err(failure) => Err(failure),
+                }
+            }
+        } else if features.openssl {
+            let want = if data.len() < SCRATCH { data.len() } else { SCRATCH }
+            if want == 0 {
+                return Ok(Step.Data(0))
+            }
+            unsafe {
+                clear_errors()
+                let result = SSL_write(self.ssl, bytes_ptr(data), want as i32)
+                if result > 0 {
+                    return Ok(Step.Data(result as usize))
+                }
+                let code = SSL_get_error(self.ssl, result)
+                if code == SSL_ERROR_WANT_READ {
+                    return Ok(Step.NeedInput)
+                }
+                if code == SSL_ERROR_WANT_WRITE {
+                    return Ok(Step.Retry)
+                }
+                Err(self.failure(code, false))
+            }
+        } else {
+            Err(no_openssl())
+        }
+    }
+
+    /// Queues a `close_notify` (once). Its bytes are in `drain`'s output afterwards.
+    fn shutdown(mut self) {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_shutdown(self.ssl as CPtr<WinConn>) }
+        } else if features.openssl {
+            unsafe {
+                clear_errors()
+                let _ = SSL_shutdown(self.ssl)
+                clear_errors()
+            }
+        } else {}
+    }
+
+    /// The protocol the peer chose by ALPN, if any.
+    fn alpn_protocol(self): Option<String> {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_alpn(self.ssl as CPtr<WinConn>) }
+        } else if features.openssl {
+            unsafe {
+                let mut data: CPtr<u8> = CPtr.null()
+                let mut length: u32 = 0
+                SSL_get0_alpn_selected(self.ssl, &mut data as CPtr<CPtr<u8>>, &mut length as CPtr<u32>)
+                if data.is_null() || length == 0 {
+                    return None
+                }
+                let mut name = List<u8>.new()
+                for i in 0..(length as usize) {
+                    name.push(*(data + i))
+                }
+                Some(String.from_utf8_lossy(name[0..name.len()]))
+            }
+        } else {
+            None
+        }
+    }
+
+    /// The negotiated protocol version (`TLSv1.3`).
+    fn version(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_version(self.ssl as CPtr<WinConn>) }
+        } else if features.openssl {
+            unsafe { c_text(SSL_get_version(self.ssl)) }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The negotiated cipher suite.
+    fn cipher(self): String {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_cipher(self.ssl as CPtr<WinConn>) }
+        } else if features.openssl {
+            unsafe {
+                let cipher = SSL_get_current_cipher(self.ssl)
+                if cipher.is_null() {
+                    return String.new()
+                }
+                c_text(SSL_CIPHER_get_name(cipher))
+            }
+        } else {
+            String.new()
+        }
+    }
+
+    /// The server name a client sent in SNI, as a server sees it.
+    fn server_name(self): Option<String> {
+        comptime if target.os() == target.Os.Windows {
+            // SChannel does not report the name a client sent; `feed` read it from the ClientHello.
+            if self.host.is_empty() {
+                return None
+            }
+            Some(self.host.clone())
+        } else if features.openssl {
+            unsafe {
+                let name = SSL_get_servername(self.ssl, 0)
+                if name.is_null() {
+                    return None
+                }
+                Some(c_text(name))
+            }
+        } else {
+            None
+        }
+    }
+
+    /// The peer's leaf certificate, if it sent one.
+    fn peer_certificate(self): Option<Certificate> {
+        comptime if target.os() == target.Os.Windows {
+            unsafe {
+                let handle = win_peer_cert(self.ssl as CPtr<WinConn>)
+                if handle.is_null() {
+                    return None
+                }
+                Some(Certificate { handle: handle as CPtr<X509> })
+            }
+        } else if features.openssl {
+            unsafe {
+                let handle = SSL_get1_peer_certificate(self.ssl)
+                if handle.is_null() {
+                    return None
+                }
+                Some(Certificate { handle: handle })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+Engine: Drop {
+    fn drop(mut self) {
+        comptime if target.os() == target.Os.Windows {
+            unsafe { win_free(self.ssl as CPtr<WinConn>) }
+        } else if features.openssl {
+            unsafe {
+                if !self.ssl.is_null() {
+                    // Freeing the connection frees the two BIOs it owns.
+                    SSL_free(self.ssl)
+                }
+            }
+        } else {}
+    }
+}

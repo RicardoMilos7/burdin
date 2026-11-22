@@ -603,7 +603,7 @@ impl<'a> Expander<'a> {
             K::Call(callee, args) => self.call_text(e, callee, args, typed, cx),
             K::DynField(recv, _) => self.dyn_field_text(e, recv, typed, cx),
             K::Field(..) => typed.and_then(|t| self.reflected_text(t)),
-            K::Assign(lhs, rhs) => return self.assign_text(e, lhs, rhs, cx),
+            K::Assign(lhs, rhs) | K::CompoundAssign(_, lhs, rhs) => return self.assign_text(e, lhs, rhs, cx),
             _ => None,
         };
         replaced.unwrap_or_else(|| self.default_text(e, cx))
@@ -1152,8 +1152,12 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
         | K::Unit
         | K::Name { .. }
         | K::SelfValue
-        | K::Break
-        | K::Continue => {}
+        | K::Continue(_) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                out.push(value);
+            }
+        }
         K::Interp(parts) => {
             for p in parts {
                 if let ast::InterpPart::Hole(h) = p
@@ -1166,6 +1170,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
         K::Tuple(items) | K::Array(items) => out.extend(items.iter()),
         K::ArrayRepeat(a, b)
         | K::Assign(a, b)
+        | K::CompoundAssign(_, a, b)
         | K::Binary(_, a, b)
         | K::OrElse(a, b)
         | K::Index(a, b)
@@ -1184,8 +1189,13 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             block_children(then_block, out);
             out.extend(else_expr.iter().map(|b| &**b));
         }
+        K::Labeled { body, .. } => out.push(body),
         K::While { cond, body } => {
             out.push(cond);
+            block_children(body, out);
+        }
+        K::WhileLet { scrutinee, body, .. } => {
+            out.push(scrutinee);
             block_children(body, out);
         }
         K::For { iter, body, .. } => {

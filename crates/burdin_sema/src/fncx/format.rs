@@ -307,7 +307,7 @@ impl FnCx<'_> {
     /// `__f.name(args)` on the hidden formatter.
     fn formatter_call(&mut self, name: &str, args: Vec<ast::Arg>, span: Span) -> tir::Expr {
         let recv = expr(ast::ExprKind::Name { name: ident("__f", span), args: Vec::new() }, span);
-        self.method_call(&recv, &ident(name, span), &args, span, None)
+        self.method_call(&recv, &ident(name, span), &[], &args, span, None)
     }
 
     fn set_spec_call(&mut self, spec: &ast::FormatSpec, span: Span) -> tir::Expr {
@@ -416,6 +416,8 @@ impl FnCx<'_> {
         };
         let f = f.clone();
         match e.ty.clone() {
+            Ty::Int(IntTy::I128) => self.std_call("__fmt_i128", vec![e, int(128), f], span),
+            Ty::Int(IntTy::U128) => self.std_call("__fmt_u128", vec![e, f], span),
             Ty::Int(i) if i.signed() => {
                 let bits = i128::from(i.bits());
                 self.std_call("__fmt_i64", vec![cast(e, IntTy::I64), int(bits), f], span)

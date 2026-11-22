@@ -1,0 +1,30 @@
+//@ run
+//> index
+//> index
+//> 1
+//> 15
+
+// The desugaring `a = a op b` reads the place for the operator and then writes it, so on a user type the index of the
+// place is evaluated twice (spec/compound-assignment.md, CA5). A built-in place is evaluated once (CA2).
+
+struct Cell {
+    n: i64
+}
+
+Cell: Add {
+    fn add(self, other: Cell): Cell {
+        Cell { n: self.n + other.n }
+    }
+}
+
+fn pick(label: str, i: usize): usize {
+    println(label)
+    i
+}
+
+fn main() {
+    let mut cells = [Cell { n: 1 }, Cell { n: 10 }]
+    cells[pick("index", 1)] += Cell { n: 5 }
+    println("{cells[0].n}")
+    println("{cells[1].n}")
+}

@@ -166,6 +166,7 @@ impl Walker<'_> {
                 self.block(body);
             }
             K::Loop(body) => self.block(body),
+            K::Labeled(_, inner) => self.expr(inner),
             K::ForRange { lo, hi, body, .. } => {
                 self.expr(lo);
                 self.expr(hi);
@@ -216,7 +217,7 @@ impl Walker<'_> {
             | K::Some(inner)
             | K::Ok(inner)
             | K::Err(inner) => self.expr(inner),
-            K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+            K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }
@@ -245,11 +246,15 @@ impl Walker<'_> {
             | K::Str(_)
             | K::Local(_)
             | K::Const(_)
-            | K::Break
-            | K::Continue
+            | K::Continue(_)
             | K::None
             | K::Return(None)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
         }
     }
 }

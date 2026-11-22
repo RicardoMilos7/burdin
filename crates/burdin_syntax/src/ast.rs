@@ -20,10 +20,31 @@ pub struct File {
     pub benches: Vec<BenchDecl>,
     /// `fuzz` items (`spec/fuzz.md`, FZ1): declared by `burdin fuzz` and `burdin test` only.
     pub fuzzes: Vec<FuzzDecl>,
+    /// The source of every item the parser could not read, from its first token to the token recovery stopped at.
+    /// Such an item is not in the other fields, so a name it declares is missing from this tree; the query library
+    /// uses these regions to keep the follow-on errors of such a name out of the report (`spec/check.md`, CK4).
+    pub unparsed: Vec<Span>,
     /// The block of every function, method, and `test` body the file wrote, in source order. Code the compiler
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
     pub bodies: Vec<Span>,
+    /// The module-scope `comptime generate` blocks, in source order (`spec/generate.md`, GN2). Each one is also a
+    /// function in `items`, so every later stage sees an ordinary declaration; this list is how the front end finds
+    /// the generators.
+    pub generators: Vec<Generator>,
+}
+
+/// A `comptime generate { ... }` item: parsed as a private function with no parameters that returns `String`, whose
+/// body is the block (`spec/generate.md`, GN2).
+#[derive(Debug, Clone)]
+pub struct Generator {
+    /// The name of the function the block is, which no written name can equal (`comptime generate 1`).
+    pub name: String,
+    /// The whole item, from `comptime` to the block's closing brace: where the function is.
+    pub span: Span,
+    /// The two keywords, `comptime generate`: the span every token of the generated text carries, and where an
+    /// error of the generator or of its text is reported (GN6, GN7).
+    pub keyword: Span,
 }
 
 /// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters
@@ -237,7 +258,27 @@ pub struct InterfaceDecl {
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     pub requires: Vec<Type>,
+    /// `type Name` entries: the associated types every implementation must bind
+    /// (`spec/associated-types.md`, AT1).
+    pub associated: Vec<AssocTypeDecl>,
     pub methods: Vec<InterfaceFn>,
+    pub span: Span,
+}
+
+/// `type Name` in an interface body: the name of an associated type. Stage 1 gives it no bound and no default
+/// (`spec/associated-types.md`, AT1).
+#[derive(Debug, Clone)]
+pub struct AssocTypeDecl {
+    pub name: Ident,
+    pub span: Span,
+}
+
+/// `type Name = Ty` in an impl block: the type an implementation binds the interface's associated type to
+/// (`spec/associated-types.md`, AT2).
+#[derive(Debug, Clone)]
+pub struct AssocBinding {
+    pub name: Ident,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -258,6 +299,9 @@ pub struct ImplBlock {
     pub ty: Type,
     pub interface: Option<Type>,
     pub where_clause: Vec<WherePred>,
+    /// `type Name = Ty`: the associated type bindings of an interface implementation
+    /// (`spec/associated-types.md`, AT2).
+    pub assoc: Vec<AssocBinding>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
@@ -307,6 +351,9 @@ pub struct GenericParam {
     /// `A: Allocator = Global`: the type a use of the type may leave out (`spec/allocators.md`, AL5). Only a
     /// struct's or enum's type parameters take one.
     pub default: Option<Type>,
+    /// The hidden parameter of an `impl I` parameter (`spec/existentials.md`, AN4). Its name is not written, so a call
+    /// cannot give it a type argument (`spec/arguments.md`, TA4).
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +410,10 @@ pub enum TypeKind {
         ret: Option<Box<Type>>,
     },
     SelfType,
+    /// `Self.Name` or `<T as Interface>.Name`: a projection onto an interface's associated type
+    /// (`spec/associated-types.md`, AT3). The shorthand `T.Name`, where `T` is a type parameter or a type path,
+    /// is parsed as a [`TypeKind::Path`] and reinterpreted as a projection in `burdin_sema`.
+    Projection(Box<ProjectionType>),
     Unit,
     Tuple(Vec<Type>),
     Array(Box<Type>, Box<Expr>),
@@ -376,6 +427,16 @@ pub enum TypeKind {
         ty: Box<Type>,
     },
     Never,
+}
+
+/// The payload of [`TypeKind::Projection`], boxed so a type stays small.
+#[derive(Debug, Clone)]
+pub struct ProjectionType {
+    /// The type the projection starts from (`Self`, or the left of `as`).
+    pub self_ty: Box<Type>,
+    /// The interface after `as`, when the projection is qualified.
+    pub iface: Option<Box<Type>>,
+    pub name: Ident,
 }
 
 #[derive(Debug, Clone)]
@@ -513,6 +574,13 @@ pub enum ExprKind {
         cond: Box<Expr>,
         body: Block,
     },
+    /// `while let pattern = scrutinee { body }`: a `while` that repeats while the scrutinee matches the pattern
+    /// (`spec/grammar.md`, rule 8.11). The pattern binds in the body only, as with `if let`.
+    WhileLet {
+        pattern: Pattern,
+        scrutinee: Box<Expr>,
+        body: Block,
+    },
     Loop(Block),
     For {
         pattern: Pattern,
@@ -522,9 +590,23 @@ pub enum ExprKind {
         body: Block,
     },
     Return(Option<Box<Expr>>),
-    Break,
-    Continue,
+    /// `'label: loop`, `'label: while`, or `'label: for`: a loop that `break 'label` and `continue 'label` name
+    /// (spec/grammar.md, rule 8.9). The parser admits only a loop as the body.
+    Labeled {
+        label: Ident,
+        body: Box<Expr>,
+    },
+    /// `break`, `break 'label`, or `break value`: leave the loop with that label, giving it `value`. Only a
+    /// `loop` takes a value (`spec/grammar.md`, rule 8.10).
+    Break {
+        label: Option<Ident>,
+        value: Option<Box<Expr>>,
+    },
+    /// `continue`, or `continue 'label` to go on with the loop with that label.
+    Continue(Option<Ident>),
     Assign(Box<Expr>, Box<Expr>),
+    /// `place op= value`, with the binary operator `op` (`spec/compound-assignment.md`, CA1).
+    CompoundAssign(BinOp, Box<Expr>, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     Cast(Box<Expr>, Type),
@@ -697,8 +779,10 @@ impl Expr {
                 | ExprKind::If { .. }
                 | ExprKind::IfLet { .. }
                 | ExprKind::While { .. }
+                | ExprKind::WhileLet { .. }
                 | ExprKind::Loop(_)
                 | ExprKind::For { .. }
+                | ExprKind::Labeled { .. }
                 | ExprKind::Match(..)
         )
     }

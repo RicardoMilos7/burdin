@@ -13,6 +13,7 @@ pub(crate) mod select;
 pub(crate) mod snapshots;
 
 use crate::package::{self, Workspace};
+use crate::workspace;
 use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, compile};
 use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
 use doc_tests::{DocAttrs, DocExample};
@@ -181,7 +182,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     if let Err(code) = crate::sync_dependencies(&args.target, args.locked, args.offline) {
         return code;
     }
-    let workspace = match package::load_selected(&args.target, EntryMode::Test, &args.features) {
+    let workspace = match load_selection(args, EntryMode::Test) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -236,6 +237,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         jobs: crate::jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
+        verbose: false,
     };
     // `--doc` runs only the doc tests, so no `test` block is compiled.
     let mut compiled = Vec::new();
@@ -429,16 +431,34 @@ fn default_timeout(args: &Args) -> Option<Duration> {
 /// Where `--failed` keeps its record: `<package>/target/burdin/<profile>/test-failed.txt`, next to the build-script
 /// output. A single-file target has no package directory, so it keeps none.
 fn failed_record_path(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
-    let dir = workspace.packages[workspace.entry_package].dir.as_ref()?;
+    let dir = shared_dir(workspace, args)?;
     let profile = &args.profile.dir;
-    Some(dir.join("target").join("burdin").join(profile).join("test-failed.txt"))
+    Some(burdin_query::workspace::target_dir(&dir).join("burdin").join(profile).join("test-failed.txt"))
+}
+
+/// The packages a run loads: the build of the target, or, for a selection of workspace members (WS11), the members
+/// together as the build's roots, so one report covers them and a package two members reach is loaded once.
+pub(crate) fn load_selection(args: &Args, mode: EntryMode) -> Result<Workspace, String> {
+    match &args.scope {
+        workspace::Scope::Standalone => package::load_selected(&args.target, mode, &args.features),
+        workspace::Scope::Members { members, .. } => {
+            let dirs: Vec<PathBuf> = members.iter().map(|member| member.dir.clone()).collect();
+            package::load_members(&dirs, mode, &args.features)
+        }
+    }
+}
+
+/// The directory a run keeps its shared outputs in (the failed-test record, the benchmark baselines): the workspace
+/// root for a selection of members (WS11), otherwise the entry package's own directory, when it has one.
+pub(crate) fn shared_dir(workspace: &Workspace, args: &Args) -> Option<PathBuf> {
+    workspace::shared_root(&args.scope).or_else(|| workspace.packages[workspace.entry_package].dir.clone())
 }
 
 /// `burdin test --interpret` (`spec/test-runner.md`, IN1-IN6): checks each package and runs its `test` blocks in
 /// the interpreter instead of compiling them. A test that needs C or the operating system is skipped, with the
 /// reason; a test that trips one of the strict checks fails at the source line that tripped it.
 fn run_interpreted(args: &Args) -> ExitCode {
-    let workspace = match package::load_selected(&args.target, EntryMode::Test, &args.features) {
+    let workspace = match load_selection(args, EntryMode::Test) {
         Ok(workspace) => workspace,
         Err(message) => {
             eprintln!("error: {message}");
@@ -471,6 +491,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         jobs: 1,
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let compile_options = CompileOptions { link_libs: args.link_libs.as_slice(), ..options };
     let interp_options = burdin_comptime::Options {
@@ -490,7 +511,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
             Err(code) => return code,
         };
         if front.diags.has_errors() {
-            crate::report_errors("test", &target, &front.diags, &front.sources, &args.diagnostics);
+            crate::report_errors("test", &target, &front.diags, &front.sources, &args.diagnostics, None);
             return ExitCode::from(1);
         }
         let Some(program) = front.program else {
@@ -645,6 +666,19 @@ fn merge_cases(blocks: Vec<TestCase>, docs: Vec<TestCase>, packages: &[String]) 
 /// The packages `-p`/`--workspace` select, in build order (the entry package first, then its dependencies). The
 /// embedded standard library has no directory and is never selected.
 pub(crate) fn select_packages(args: &Args, workspace: &Workspace) -> Result<Vec<usize>, String> {
+    if let workspace::Scope::Members { members, .. } = &args.scope {
+        // The members are the build's roots, loaded from their directories, in workspace order (WS6).
+        return members
+            .iter()
+            .map(|member| {
+                workspace
+                    .packages
+                    .iter()
+                    .position(|package| package.dir.as_deref() == Some(member.dir.as_path()))
+                    .ok_or_else(|| format!("member `{}` is not in this build", member.name))
+            })
+            .collect();
+    }
     if !args.packages.is_empty() {
         let mut selected = Vec::new();
         for name in &args.packages {
@@ -672,7 +706,8 @@ pub(crate) fn select_packages(args: &Args, workspace: &Workspace) -> Result<Vec<
 }
 
 pub(crate) fn package_target(workspace: &Workspace, args: &Args, index: usize) -> PathBuf {
-    if index == workspace.entry_package {
+    // A member is built from its own directory: the target names the workspace, which may be a virtual root.
+    if index == workspace.entry_package && !matches!(args.scope, workspace::Scope::Members { .. }) {
         args.target.clone()
     } else {
         workspace.packages[index].dir.clone().expect("a selected dependency package has a directory")
@@ -941,6 +976,7 @@ mod tests {
             modules: Vec::new(),
             deps: Vec::new(),
             build_allow: Vec::new(),
+            link_libs: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),

@@ -354,9 +354,13 @@ impl<'a> Checker<'a> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break
-            | K::Continue
+            | K::Continue(_)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value, Mode::Move);
+                }
+            }
             K::Local(_) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) | K::Index(..) => {
                 let access = if mode == Mode::Move && !self.is_copy(&e.ty) { Access::Move } else { Access::Read };
                 self.access_place(e, access);
@@ -422,7 +426,7 @@ impl<'a> Checker<'a> {
                 tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
                 // `with_capacity_in(n, alloc)` stores the allocator value.
-                tir::Builtin::ListWithCapacityIn => {
+                tir::Builtin::ListWithCapacityIn | tir::Builtin::ListTryWithCapacityIn => {
                     self.expr(&args[0], Mode::Use);
                     self.expr(&args[1], Mode::Move);
                 }
@@ -555,6 +559,7 @@ impl<'a> Checker<'a> {
                 self.loop_block(body);
             }
             K::Loop(body) => self.loop_block(body),
+            K::Labeled(_, inner) => self.expr(inner, mode),
             K::ForRange { lo, hi, body, .. } => {
                 self.expr(lo, Mode::Use);
                 self.expr(hi, Mode::Use);
@@ -640,6 +645,10 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                self.access_place(place, Access::Write);
+            }
+            K::CompoundAssign(_, place, value) => {
+                self.expr(value, Mode::Use);
                 self.access_place(place, Access::Write);
             }
             K::Binary(_, l, r) => {
@@ -821,10 +830,14 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                locals_used(value, out);
+            }
+        }
         K::Field(base, _)
         | K::Deref(base)
         | K::PtrDeref(base)
@@ -865,7 +878,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(callee, out);
             args.iter().for_each(|x| locals_used(x, out));
         }
-        K::Binary(_, l, r) | K::Assign(l, r) => {
+        K::Binary(_, l, r) | K::Assign(l, r) | K::CompoundAssign(_, l, r) => {
             locals_used(l, out);
             locals_used(r, out);
         }
@@ -886,6 +899,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used_block(body, out);
         }
         K::Loop(body) => locals_used_block(body, out),
+        K::Labeled(_, inner) => locals_used(inner, out),
         K::ForRange { lo, hi, body, .. } => {
             locals_used(lo, out);
             locals_used(hi, out);
@@ -952,10 +966,14 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Str(_)
         | K::Const(_)
         | K::None
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                uses_expr(value, stmt, last);
+            }
+        }
         K::Field(base, _)
         | K::Deref(base)
         | K::PtrDeref(base)
@@ -1000,7 +1018,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(callee, stmt, last);
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
-        K::Binary(_, l, r) | K::Assign(l, r) => {
+        K::Binary(_, l, r) | K::Assign(l, r) | K::CompoundAssign(_, l, r) => {
             uses_expr(l, stmt, last);
             uses_expr(r, stmt, last);
         }
@@ -1021,6 +1039,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_block(body, stmt, last);
         }
         K::Loop(body) => uses_block(body, stmt, last),
+        K::Labeled(_, inner) => uses_expr(inner, stmt, last),
         K::ForRange { lo, hi, body, .. } => {
             uses_expr(lo, stmt, last);
             uses_expr(hi, stmt, last);

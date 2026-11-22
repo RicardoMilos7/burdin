@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `from` takes one argument, as for any conversion (spec/stdlib.md, FR2).
+
+fn main() {
+    let x = i64.from(1, 2) //~ E0004
+    println("{}", x)
+}

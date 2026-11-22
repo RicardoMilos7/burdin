@@ -2,6 +2,7 @@
 //! `burdin lint` does (so a package that does not compile has no documentation), builds the documented API from the
 //! syntax trees with `burdin_doc`, and writes a static HTML site, a JSON document, or a coverage report.
 
+use crate::workspace;
 use crate::{
     CompileOptions, DiagnosticOptions, EntryMode, FrontEnd, SourceOverrides, TempDir, flag_without_value, front_end,
     jobs_or_default, option_value, parse_color, parse_format, parse_jobs, parse_number, render_options,
@@ -34,6 +35,10 @@ struct DocArgs {
     comptime_steps: Option<u64>,
     /// `-j`: the most parser threads.
     jobs: Option<usize>,
+    /// `-p`, `--workspace`, and `--exclude`: which members of the workspace to document (`spec/workspaces.md`, WS12).
+    packages: Vec<String>,
+    workspace: bool,
+    exclude: Vec<String>,
 }
 
 fn parse(argv: &[String]) -> Result<DocArgs, String> {
@@ -48,6 +53,9 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
         diagnostics: DiagnosticOptions::default(),
         comptime_steps: None,
         jobs: None,
+        packages: Vec::new(),
+        workspace: false,
+        exclude: Vec::new(),
     };
     let mut target = None;
     let mut it = argv.iter();
@@ -69,6 +77,9 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "--std" => args.std = flag_without_value(a, inline)?,
+            "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
             "--private" => args.private = flag_without_value(a, inline)?,
             "--coverage" => args.coverage = flag_without_value(a, inline)?,
             "--deny-warnings" => args.deny_warnings = flag_without_value(a, inline)?,
@@ -110,6 +121,9 @@ fn parse(argv: &[String]) -> Result<DocArgs, String> {
                 target.display()
             ));
         }
+        if !args.packages.is_empty() || args.workspace || !args.exclude.is_empty() {
+            return Err("`--std` documents the standard library and selects no workspace members".to_string());
+        }
     } else {
         args.target = target.ok_or("missing target file")?;
     }
@@ -124,6 +138,41 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("doc", &message),
     };
+    if args.std {
+        return document(&args.target, &args);
+    }
+    let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
+    let scope = match workspace::choose(&args.target, flags, false) {
+        Ok(scope) => scope,
+        Err(workspace::Failure::Usage(message)) => return crate::cli::usage_error("doc", &message),
+        Err(workspace::Failure::Error(message)) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    let workspace::Scope::Members { members, .. } = scope else {
+        return document(&args.target, &args);
+    };
+    // `-o` names one place, so it needs one package (WS12).
+    if args.out.is_some() && members.len() > 1 {
+        return crate::cli::usage_error(
+            "doc",
+            "`-o` names one place: select one package with `-p` (this selects several)",
+        );
+    }
+    // Each selected member gets its own site (or report), and the command reports the first failure (WS12).
+    let mut status = ExitCode::SUCCESS;
+    for member in &members {
+        let code = document(&member.dir, &args);
+        if code != ExitCode::SUCCESS && status == ExitCode::SUCCESS {
+            status = code;
+        }
+    }
+    status
+}
+
+/// Documents the package in `target`: checks it, then writes its site, its JSON, or its coverage report.
+fn document(target: &Path, args: &DocArgs) -> ExitCode {
     let options = CompileOptions {
         profile: crate::profile::Profile::dev(),
         debug: false,
@@ -147,6 +196,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     // The standard library is documented through an empty program that loads it beside itself: the compiler's own
     // copy is the package, and there is no other way to name it. The directory lives as long as the front end.
@@ -159,17 +209,13 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
             }
         };
         let file = scratch.path.join("std_doc.bd");
-        if let Err(e) = std::fs::write(
-            &file,
-            "// The program `burdin doc --std` loads the standard library beside.
-",
-        ) {
+        if let Err(e) = std::fs::write(&file, "// The program `burdin doc --std` loads the standard library beside.\n") {
             eprintln!("error: cannot write {}: {e}", file.display());
             return ExitCode::from(2);
         }
         (Some(scratch), file, "the standard library".to_string())
     } else {
-        (None, args.target.clone(), args.target.display().to_string())
+        (None, target.to_path_buf(), target.display().to_string())
     };
     let front = match front_end(&target, &options, &SourceOverrides::new()) {
         Ok(f) => f,
@@ -222,7 +268,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
             }
         }
         Format::Html => {
-            let out = args.out.clone().unwrap_or_else(|| default_out(&args));
+            let out = args.out.clone().unwrap_or_else(|| default_out(&target, args.std));
             let pages = burdin_doc::html::render(&api);
             match write_site(&out, &pages) {
                 Ok(()) => eprintln!("doc: wrote {} files to {}", pages.len(), out.display()),
@@ -245,11 +291,10 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
 
 /// `<package>/target/doc` for a package directory, `target/doc` beside the file for a single file, and
 /// `target/doc/std` in the working directory for `--std`.
-fn default_out(args: &DocArgs) -> PathBuf {
-    if args.std {
+fn default_out(target: &Path, std: bool) -> PathBuf {
+    if std {
         return PathBuf::from("target").join("doc").join("std");
     }
-    let target = &args.target;
     let base =
         if target.is_dir() { target.to_path_buf() } else { target.parent().map(Path::to_path_buf).unwrap_or_default() };
     base.join("target").join("doc")
@@ -262,7 +307,7 @@ fn packages_of(front: &FrontEnd) -> Vec<burdin_doc::PackageInput<'_>> {
     let mut first = 0usize;
     for (index, package) in front.loaded.packages.iter().enumerate() {
         let is_entry = index == front.loaded.entry_package;
-        let generated = package.dir.as_ref().map(|d| d.join("target"));
+        let generated = package.dir.as_ref().map(|d| burdin_query::workspace::target_dir(d));
         let mut modules = Vec::new();
         for (m, module) in package.modules.iter().enumerate() {
             let skip =

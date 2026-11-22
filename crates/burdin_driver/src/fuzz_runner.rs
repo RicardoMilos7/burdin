@@ -84,6 +84,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         jobs: crate::jobs_or_default(args.jobs),
         sanitize,
         fuzz_target: Some(name),
+        verbose: false,
     };
     let exe = binaries.path.join(format!("fuzz-{name}")).with_extension(std::env::consts::EXE_EXTENSION);
     if let Err(code) = compile(&args.target, &binaries.path, Some(&exe), &options) {

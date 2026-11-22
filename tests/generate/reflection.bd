@@ -1,0 +1,22 @@
+//@ run
+//> x,y,
+
+// A generator reads the fields of a hand-written struct through reflection (spec/generate.md, GN2; RFL4).
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+comptime generate {
+    let mut names = String.new()
+    comptime for field in Point.fields {
+        names.push_str(field.name)
+        names.push_str(",")
+    }
+    format("fn field_names(): String {{\n    String.from(\"{}\")\n}}\n", names)
+}
+
+fn main() {
+    println(field_names())
+}

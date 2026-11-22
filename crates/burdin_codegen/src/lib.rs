@@ -28,6 +28,7 @@
 //! Every function starts with an `entry` block that holds only stack slots and their initialization, and branches to
 //! the body. After a terminator (`return`, `break`, a panic, ...) code generation continues in a fresh block without
 //! predecessors, so the rest of the tree can be generated without special cases.
+mod cache;
 mod emit;
 mod runtime;
 mod split;
@@ -99,6 +100,8 @@ pub struct PackageFlags {
     pub debug_assertions: bool,
 }
 
+pub use cache::ObjectCache;
+
 pub struct Options {
     /// The optimization level (`spec/profiles.md`).
     pub opt_level: OptLevel,
@@ -136,6 +139,10 @@ pub struct Options {
     /// The sanitizers to instrument for (`--sanitize`, `spec/sanitizers.md`) and libFuzzer's coverage
     /// (`burdin fuzz`, `spec/fuzz.md`). An instrumented program is always one codegen unit.
     pub sanitize: Sanitizers,
+    /// Keep each codegen unit's object under a hash of its module and reuse it when a later build produces the same
+    /// module (`spec/target.md`, TG11-TG16). Ignored by every build that always uses one unit for its own reasons
+    /// (bitcode, instrumentation, and the inspection outputs).
+    pub object_cache: Option<ObjectCache>,
 }
 
 impl Default for Options {
@@ -158,6 +165,7 @@ impl Default for Options {
             emit_asm: None,
             asm_syntax: AsmSyntax::Default,
             sanitize: Sanitizers::default(),
+            object_cache: None,
         }
     }
 }
@@ -246,6 +254,13 @@ pub fn resolve_jobs(jobs: usize) -> usize {
     if jobs > 0 { jobs } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) }
 }
 
+/// What [`emit_object_timed`] produced: the object files in link order, and how long each codegen unit took, in unit
+/// order. An unsplit program has one unit, which is the whole module (`burdin build -v` prints these).
+pub struct Emitted {
+    pub objects: Vec<PathBuf>,
+    pub unit_times: Vec<std::time::Duration>,
+}
+
 /// Compiles the program to native object files for the host: `object` itself, and for a program large enough to
 /// be split into codegen units (`split.rs`), `<stem>.1.<ext>`, `<stem>.2.<ext>`, ... next to it, compiled on up to
 /// `opts.jobs` threads. Returns every object written, in link order. `sources` gives panic messages their file and
@@ -257,6 +272,17 @@ pub fn emit_object(
     object: &Path,
     opts: &Options,
 ) -> Result<Vec<PathBuf>, String> {
+    emit_object_timed(program, sources, module_name, object, opts).map(|emitted| emitted.objects)
+}
+
+/// [`emit_object`], also reporting the time each codegen unit took.
+pub fn emit_object_timed(
+    program: &Program,
+    sources: &SourceMap,
+    module_name: &str,
+    object: &Path,
+    opts: &Options,
+) -> Result<Emitted, String> {
     // The dialect is read when the target machine builds its assembly printer, so it is set first.
     set_asm_syntax(opts.asm_syntax)?;
     let machine = target_machine(opts.opt_level)?;
@@ -322,23 +348,59 @@ pub fn emit_object(
         split::unit_count(instructions, functions, opts.units)
     };
     if units > 1 {
-        return split::emit_units(&module, units, resolve_jobs(opts.jobs), opts.opt_level, object);
+        let (objects, unit_times) = split::emit_units(
+            &module,
+            units,
+            resolve_jobs(opts.jobs),
+            opts.opt_level,
+            object,
+            opts.object_cache.as_ref(),
+        )?;
+        return Ok(Emitted { objects, unit_times });
     }
+    // One unit: the whole module is the unit, and its object is cached the same way (TG12).
+    let cache = opts.object_cache.as_ref().filter(|_| !single);
+    let cache_key = cache.map(|c| {
+        let bitcode = module.write_bitcode_to_memory();
+        c.key(bitcode.as_slice(), opts.opt_level.number(), &triple.as_str().to_string_lossy())
+    });
+    let cache_started = std::time::Instant::now();
+    if let (Some(cache), Some(key)) = (cache, &cache_key)
+        && cache.fetch(key, object)
+    {
+        cache.prune(&std::iter::once(key.clone()).collect());
+        return Ok(Emitted { objects: vec![object.to_path_buf()], unit_times: vec![cache_started.elapsed()] });
+    }
+    let started = std::time::Instant::now();
+    let objects = emit_single(&module, &machine, opts, object, cache, cache_key.as_ref())?;
+    Ok(Emitted { objects, unit_times: vec![started.elapsed()] })
+}
+
+/// Optimizes the whole module of an unsplit program and writes its one object file (and the artifacts that ask for
+/// the optimized module).
+fn emit_single(
+    module: &Module<'_>,
+    machine: &TargetMachine,
+    opts: &Options,
+    object: &Path,
+    cache: Option<&crate::cache::ObjectCache>,
+    cache_key: Option<&String>,
+) -> Result<Vec<PathBuf>, String> {
     // The attributes go on before the optimization pipeline, as clang's front end puts them: some transformations
     // are not done to a function that will be instrumented.
-    add_sanitizer_attributes(&module, opts.sanitize);
+    add_sanitizer_attributes(module, opts.sanitize);
     if opts.opt_level.optimized() {
         let pipeline = opts.opt_level.pipeline();
         module
-            .run_passes(&pipeline, &machine, inkwell::passes::PassBuilderOptions::create())
+            .run_passes(&pipeline, machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
-    instrument_sanitizers(&module, &machine, opts.sanitize)?;
+    instrument_sanitizers(module, machine, opts.sanitize)?;
     if opts.instrument {
         // `pgo-instr-gen` adds the IR-level counters and `instrprof` lowers them to the profile data structures;
         // the result is what `pgo-instr-use` reads.
         module
-            .run_passes("pgo-instr-gen,instrprof", &machine, inkwell::passes::PassBuilderOptions::create())
+            .run_passes("pgo-instr-gen,instrprof", machine, inkwell::passes::PassBuilderOptions::create())
             .map_err(|e| e.to_string_lossy().to_string())?;
     }
     if let Some(path) = &opts.emit_opt_ir {
@@ -350,7 +412,7 @@ pub fn emit_object(
         return Err(format!("cannot write LLVM bitcode to {}", path.display()));
     }
     if let Some(path) = &opts.emit_asm {
-        machine.write_to_file(&module, FileType::Assembly, path).map_err(|e| e.to_string_lossy().to_string())?;
+        machine.write_to_file(module, FileType::Assembly, path).map_err(|e| e.to_string_lossy().to_string())?;
     }
     if opts.bitcode {
         // Link-time optimization consumes bitcode; the driver links it with an LLVM compiler driver.
@@ -358,7 +420,11 @@ pub fn emit_object(
             return Err(format!("cannot write LLVM bitcode to {}", object.display()));
         }
     } else {
-        machine.write_to_file(&module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
+        machine.write_to_file(module, FileType::Object, object).map_err(|e| e.to_string_lossy().to_string())?;
+        if let (Some(cache), Some(key)) = (cache, cache_key) {
+            cache.store(key, object);
+            cache.prune(&std::iter::once(key.clone()).collect());
+        }
     }
     Ok(vec![object.to_path_buf()])
 }

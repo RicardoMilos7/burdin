@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// The bound names the source type (spec/stdlib.md, FR7): `T.from` takes an `i32`, and an `i64` is not one (E0003).
+
+fn widen<T: From<i32>>(v: i64): T {
+    T.from(v) //~ E0003
+}
+
+fn main() {
+}

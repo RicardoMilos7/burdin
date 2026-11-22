@@ -119,6 +119,7 @@ fn required_builtin_method(name: &str) -> Option<&'static str> {
     match name {
         "Drop" => Some("drop"),
         "From" => Some("from"),
+        "TryFrom" => Some("try_from"),
         _ => None,
     }
 }
@@ -150,6 +151,7 @@ fn generated_impl(
         ty: path(&type_name.name, args),
         interface: Some(iface.clone()),
         where_clause,
+        assoc: Vec::new(),
         methods,
         span: at,
     }

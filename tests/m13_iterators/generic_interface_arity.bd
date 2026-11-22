@@ -1,0 +1,28 @@
+//@ compile-fail
+
+// A generic interface needs exactly its type arguments everywhere it is named (issue #390): in a bound, in an impl
+// block, and in a `requires` list. Leaving them out or adding more is E0003, reported at the name.
+
+interface Store<T> {
+    fn get(self): T
+}
+
+interface Labeled<T> requires Store {  //~ E0003
+    fn label(self): i32 {
+        1
+    }
+}
+
+struct Cell {
+    v: i32,
+}
+
+Cell: Store<i32, i32> { //~ E0003
+    fn get(self): i32 {
+        self.v
+    }
+}
+
+fn need<S: Store>(s: S) {} //~ E0003
+
+fn main() {}

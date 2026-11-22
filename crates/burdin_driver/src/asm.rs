@@ -158,6 +158,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let FrontEnd { loaded, files, sources, program, diags, rust_libs, .. } =
         match front_end(&args.target, &options, &SourceOverrides::new()) {
@@ -165,7 +166,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
             Err(code) => return code,
         };
     if diags.has_errors() {
-        report_errors("compile", &args.target, &diags, &sources, &args.diagnostics);
+        report_errors("compile", &args.target, &diags, &sources, &args.diagnostics, None);
         return ExitCode::from(1);
     }
     print_warnings(&diags, &sources, &args.diagnostics, false);

@@ -1,0 +1,18 @@
+//@ run-abort
+//> before
+//@ stderr: DynMatrix.from_list: the number of values is not rows * cols
+
+// A `DynMatrix` whose value count is not rows times columns is a programming error (spec/math.md, MA8, MA9).
+
+use math.DynMatrix
+
+fn main() {
+    println("before")
+    let mut values = List<f64>.new()
+    values.push(1.0)
+    values.push(2.0)
+    values.push(3.0)
+    let m = DynMatrix.from_list(2, 2, values)
+    println("{}", m.rows())
+    println("after")
+}

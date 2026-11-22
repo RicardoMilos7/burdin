@@ -53,7 +53,7 @@ pub(crate) fn run_package(package: &mut PackageFiles, profile: &str, fingerprint
             ));
         }
     };
-    let out = dir.join("target").join("burdin").join(profile);
+    let out = burdin_query::workspace::package_out_dir(&dir, &package.name, profile);
     let rust_src = out.join("rust-src");
     if let Err(e) = std::fs::remove_dir_all(&rust_src)
         && e.kind() != std::io::ErrorKind::NotFound

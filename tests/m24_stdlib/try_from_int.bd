@@ -1,0 +1,67 @@
+//@ run
+//> Ok(127) Err(OutOfRange)
+//> Ok(-128) Err(OutOfRange)
+//> Ok(255) Err(OutOfRange)
+//> Err(OutOfRange) Ok(4294967295)
+//> Err(OutOfRange) Ok(9223372036854775807)
+//> Ok(0) Err(OutOfRange)
+//> Ok(18446744073709551615) Ok(-9223372036854775808)
+//> Ok(100) Err(OutOfRange)
+//> Ok(1) 1
+//> Ok(2) 2
+//> Err(OutOfRange) 300
+//> Err(OutOfRange) Ok(-5)
+
+// `T.try_from(v)` for an integer `T` and an integer `v` of any type (spec/stdlib.md, "Conversions"): `Ok` of the
+// converted value when it fits, and `Err(TryFromIntError.OutOfRange)` when it does not. The value is evaluated once.
+
+struct Ticker {
+    n: i64
+}
+
+Ticker {
+    fn next(mut self): i64 {
+        self.n = self.n + 1
+        self.n
+    }
+}
+
+fn main() {
+    // The first values that fit each type's range, and the first that do not.
+    let fits: i32 = 127
+    let over: i32 = 128
+    println("{:?} {:?}", i8.try_from(fits), i8.try_from(over))
+    let under: i32 = -128
+    let below: i32 = -129
+    println("{:?} {:?}", i8.try_from(under), i8.try_from(below))
+    let top: i32 = 255
+    let neg: i32 = -1
+    println("{:?} {:?}", u8.try_from(top), u8.try_from(neg))
+
+    // A value too large for a narrower signed type, and the largest signed value into an unsigned one.
+    let big: i64 = 4294967296
+    let limit: i64 = 4294967295
+    println("{:?} {:?}", i32.try_from(big), u32.try_from(limit))
+    let max: i64 = i64.MAX
+    println("{:?} {:?}", i64.try_from(u64.MAX), u64.try_from(max))
+
+    // The unsigned minimum into a signed type, and a negative value into an unsigned one.
+    println("{:?} {:?}", i64.try_from(u64.MIN), usize.try_from(i64.MIN))
+    println("{:?} {:?}", u64.try_from(u64.MAX), i64.try_from(i64.MIN))
+
+    // A narrow source always fits a wider target; a wider source may not fit a narrower one.
+    let hundred: u8 = 100
+    println("{:?} {:?}", i8.try_from(hundred), u16.try_from(i16.MIN))
+
+    // The conversion evaluates its argument once: each call makes one tick, and a value that does not fit still ticks.
+    let mut t = Ticker { n: 0 }
+    println("{:?} {}", u8.try_from(t.next()), t.n)
+    println("{:?} {}", u8.try_from(t.next()), t.n)
+    let mut u = Ticker { n: 299 }
+    println("{:?} {}", u8.try_from(u.next()), u.n)
+
+    // The same conversion runs at compile time.
+    let folded = comptime u8.try_from(300)
+    let signed = comptime i8.try_from(-5)
+    println("{:?} {:?}", folded, signed)
+}

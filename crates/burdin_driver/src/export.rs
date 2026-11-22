@@ -44,6 +44,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         jobs: crate::jobs_or_default(None),
         sanitize: Default::default(),
         fuzz_target: None,
+        verbose: false,
     };
     let front = match front_end(target, &options, &SourceOverrides::new()) {
         Ok(front) => front,
@@ -86,7 +87,7 @@ fn entry_files(front: &FrontEnd) -> Vec<FileId> {
     let mut first = 0usize;
     for (index, package) in front.loaded.packages.iter().enumerate() {
         if index == front.loaded.entry_package {
-            let generated = package.dir.as_ref().map(|dir| dir.join("target"));
+            let generated = package.dir.as_ref().map(|dir| burdin_query::workspace::target_dir(dir));
             for (offset, module) in package.modules.iter().enumerate() {
                 let outside = generated.as_ref().is_some_and(|dir| module.file.starts_with(dir));
                 if module.text.is_none() && !outside {
@@ -173,6 +174,8 @@ fn build_header(front: &FrontEnd, program: &Program, guard: String, diags: &mut 
 /// The text after `#define NAME` for a constant of a type C has a literal for, or `None` for any other value.
 fn constant_text(kind: &ExprKind, ty: &Ty) -> Option<String> {
     match kind {
+        // A 128-bit constant has no C literal, so it is not exported (see `convert`).
+        ExprKind::Int(_) if matches!(ty, Ty::Int(IntTy::I128 | IntTy::U128)) => None,
         ExprKind::Int(value) => {
             // A suffix keeps a 64-bit or unsigned value from being read as a narrower C type.
             let suffix = match ty {
@@ -243,6 +246,8 @@ impl<'a> Collector<'a> {
 
     fn convert(&mut self, ty: &Ty, position: Position) -> Result<CType, String> {
         match ty {
+            // C has no 128-bit integer every header can name (MSVC has none), so an exported signature cannot use one.
+            Ty::Int(IntTy::I128 | IntTy::U128) => Err(format!("the type `{ty}` has no C spelling")),
             Ty::Int(int) => Ok(CType::Scalar(match int {
                 IntTy::I8 => "int8_t",
                 IntTy::I16 => "int16_t",
@@ -254,6 +259,7 @@ impl<'a> Collector<'a> {
                 IntTy::U32 => "uint32_t",
                 IntTy::U64 => "uint64_t",
                 IntTy::Usize => "size_t",
+                IntTy::I128 | IntTy::U128 => unreachable!("handled above"),
             })),
             Ty::Float(FloatTy::F32) => Ok(CType::Scalar("float")),
             Ty::Float(FloatTy::F64) => Ok(CType::Scalar("double")),

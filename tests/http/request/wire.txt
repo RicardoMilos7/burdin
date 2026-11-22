@@ -1,0 +1,14 @@
+# METHOD url | Name: value ; Name: value | body (HC5, HC6)
+GET http://example.test/ 
+GET http://example.test:8080/a?b=1 | Accept: text/html ; X-One: 1
+GET http://example.test/ | User-Agent: custom/1
+GET http://example.test/ | Host: virtual.test
+POST http://example.test/items | Content-Type: text/plain | name=burdin
+POST http://example.test/empty
+PUT http://example.test/doc | Content-Length: 99 ; Transfer-Encoding: chunked | stored
+DELETE http://example.test/doc
+HEAD http://example.test/doc
+GET http://example.test/ | Connection: keep-alive
+GET http://example.test/a%20b?q=1
+BREW http://example.test/
+GET ftp://example.test/

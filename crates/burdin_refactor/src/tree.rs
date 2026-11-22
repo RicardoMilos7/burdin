@@ -73,10 +73,14 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         | K::Bool(_)
         | K::Unit
         | K::SelfValue
-        | K::Break
-        | K::Continue
+        | K::Continue(_)
         | K::Name { .. }
         | K::Return(None) => {}
+        K::Break { value, .. } => {
+            if let Some(value) = value {
+                out.push(Child::Expr(Role::Plain, value));
+            }
+        }
         K::Interp(parts) => {
             for part in parts {
                 if let InterpPart::Hole(Hole { arg: HoleArg::Expr(x), .. }) = part {
@@ -89,7 +93,7 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
             out.push(Child::Expr(Role::Plain, a));
             out.push(Child::Expr(Role::Plain, b));
         }
-        K::Assign(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) => {
             out.push(Child::Expr(Role::Plain, a));
             out.push(Child::Expr(Role::Plain, b));
         }
@@ -108,6 +112,7 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         }
         K::Block(b) | K::UnsafeBlock(b) => out.push(Child::Block(Role::Plain, b)),
         K::Loop(b) => out.push(Child::Block(Role::LoopBody, b)),
+        K::Labeled { body, .. } => out.push(Child::Expr(Role::Plain, body)),
         K::If { cond, then_block, else_expr } => {
             out.push(Child::Expr(Role::Plain, cond));
             out.push(Child::Block(Role::Branch, then_block));
@@ -124,6 +129,10 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         }
         K::While { cond, body } => {
             out.push(Child::Expr(Role::LoopCond, cond));
+            out.push(Child::Block(Role::LoopBody, body));
+        }
+        K::WhileLet { scrutinee, body, .. } => {
+            out.push(Child::Expr(Role::LoopCond, scrutinee));
             out.push(Child::Block(Role::LoopBody, body));
         }
         K::For { iter, body, .. } => {
@@ -375,7 +384,7 @@ pub fn kind_name(e: &Expr) -> &'static str {
     match &e.kind {
         K::Call(..) => "call",
         K::Closure { .. } => "closure",
-        K::While { .. } => "while",
+        K::While { .. } | K::WhileLet { .. } => "while",
         K::For { .. } => "for",
         K::Loop(_) => "loop",
         K::Match(..) => "match",
@@ -645,8 +654,8 @@ pub fn control_flow(b: &Block) -> ControlFlow {
     each_expr(b, &mut |e, _| {
         match &e.kind {
             ExprKind::Return(_) => out.returns = true,
-            ExprKind::Break => out.breaks = true,
-            ExprKind::Continue => out.continues = true,
+            ExprKind::Break { .. } => out.breaks = true,
+            ExprKind::Continue(_) => out.continues = true,
             ExprKind::SelfValue => out.self_value = true,
             ExprKind::Comptime(_) | ExprKind::ComptimeAssert(..) => out.comptime = true,
             _ => {}

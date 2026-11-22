@@ -24,7 +24,7 @@ tests/
   m10_test_runner/     `test` blocks and `burdin test`
   m11_llvm/            calling the LLVM C API from Burdin
   m12_closures/        closures, captures, closure types and bounds
-  m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops
+  m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops, generic interfaces and their default methods
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
   m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
@@ -49,6 +49,20 @@ tests/
                        `Serialize`/`Deserialize` derives (spec/serialization.md); `s3_serialize/json` and
                        `s3_serialize/toml` are the conformance cases of the `json` and `toml` packages, packages that
                        depend on them with `json = true` and `toml = true`
+  s3_http/             stage 3: the conformance case of the `http` package (`s3_http/client`, a package that depends on
+                       it with `http = true`), run against a scripted server in the same program (spec/http-client.md)
+  s3_crypto/           stage 3: the `crypto` package end to end (`s3_crypto/usage`, spec/crypto.md); its known-answer
+                       vectors are in `tests/crypto/` and run by `tests/check_crypto.py`
+  s3_math/             stage 3: the `math` package (spec/math.md): `s3_math/usage` (an end-to-end program), `surface`
+                       (every other public member), `compile_shape` (E0003 for mismatched matrix shapes), and the
+                       `abort_*` cases (one panic each); its about 2,400 known-answer cases are in `tests/math/` and run
+                       by `tests/check_math.py`
+  s3_tls/              stage 3: the `tls` package (spec/tls.md): `s3_tls/link` (the package's manifest links the system
+                       OpenSSL 3 and a client runs over memory BIOs) and `s3_tls/conformance` (certificates, keys, and
+                       configurations, then clients and servers in one process over 127.0.0.1: verification, versions,
+                       mutual TLS, truncation, timeouts; its test certificates are committed under `src/certs` and made
+                       by `tests/tls/regenerate.py`); needs OpenSSL's development files installed (`libssl-dev`,
+                       `brew install openssl@3`)
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by
@@ -202,12 +216,12 @@ unassigned, stale, or owned by a milestone that has shipped.
 | Code | Meaning |
 | --- | --- |
 | E0001 | Syntax error (lexing or parsing) |
-| E0002 | Unknown name (variable, function, type, module, or imported item) |
+| E0002 | Unknown name (variable, function, type, module, or imported item); a `break` or `continue` label that no enclosing loop has (`spec/grammar.md`, rule 8.9) |
 | E0003 | Type mismatch |
 | E0004 | Wrong number of arguments |
 | E0005 | Assignment to an immutable binding, or mutation through a read-only parameter |
 | E0006 | Non-exhaustive `match` (reported at the `match` line) |
-| E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import) |
+| E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import); a loop label that repeats the label of an enclosing loop |
 | E0008 | Literal out of range for its type |
 | E0009 | A declaration depends on itself: a constant (also through the calls of its compile-time evaluation), a type alias, or a type that contains itself |
 | E0100 | Use of a moved or possibly moved value |
@@ -229,6 +243,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0141 | Interface bound or `requires` not satisfied, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an operator or `Index`/`IndexMut` interface |
 | E0142 | Orphan rule violation |
 | E0143 | Two implementations of one interface for one generic type that apply to a common instance |
+| E0144 | Interface implementation's associated type bindings are wrong: a missing binding, a name the interface does not declare, or a binding in a block with no interface |
+| E0145 | An associated type projection that cannot be resolved: no interface declares that associated type, or more than one does and none is named |
 | E0150 | Use of a `priv` item from another package |
 | E0160 | `?` used in a function whose return type is not `Option` or `Result` |
 | E0161 | Operation that requires `unsafe` used outside `unsafe` |
@@ -250,7 +266,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
 | E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
-| E0211 | Two variants of one error enum convert from the same source type |
+| E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
 | E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
@@ -269,6 +285,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
 | E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
+| E0242 | Invalid generated text from a `comptime generate` block (`spec/generate.md`): it does not parse, or it declares an item other than a `struct`, `enum`, or `fn` (a `const`, `use`, `impl`, `interface`, `derive`, `type`, test, bench, `comptime assert`, or a nested `comptime generate`) |
+| E0243 | `comptime generate` outside module scope (in a function body, an impl block, or an expression) |
 | E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
 | E0251 | A const expression (an array length or const argument) that cannot be computed: an unknown name, overflow, a division by zero, or a length out of range |
 | E0252 | A const generic argument that cannot be inferred from the call |
@@ -471,8 +489,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `x[i]` is a place; a write (assignment, `&mut x[i]`, `mut x[i]`, or an index inside a written place) selects
     `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
-    non-`Copy` element out is E0101. Compound assignment and the shifts are not overloadable; `&&`, `||`, and `=`
-    remain non-overloadable.
+    non-`Copy` element out is E0101. The shifts are not overloadable, and `&&`, `||`, and `=` remain non-overloadable.
+    Compound assignment on a user type takes its operator from the interface (issue #277, CA5; decision 34).
     `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
 
 25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
@@ -566,6 +584,41 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `derives (...)` clause is gone and `derives` is an ordinary identifier, so the old form is a syntax error
     (E0001). Issue #825; `spec/grammar.md`, `spec/derives.md`, `m07_generics/derive_default_interface`,
     `derive_default_bound`, `derive_not_derivable`, `derives_old_syntax`, `m05_ownership/drop_derive`.
+
+32. **Break values.** `break` may carry a value from a `loop` (`let x = loop { break 42 }`), and `break` with no
+    value is `break ()`. The loop's type is the expected type when the context gives one, otherwise the type of the
+    first `break` value, and `!` when nothing breaks out. Every break of one loop must give the same type. A
+    `while` or `for` can end by its condition or its items, so it gives back `()` and takes no break value:
+    `break 1` there is E0003. A labeled `break` carries its value to the loop it names. The value is computed
+    before the scopes being left are dropped, and its view origin joins the loop's result (RT2/RT5: a view of a
+    loop-body local is E0123 or E0122 when it escapes). Issue #276; `spec/grammar.md` rule 8.10,
+    `spec/memory-rules.md` DR6, RT2, and RT5, `m02_basics/break_value`, `break_value_errors`,
+    `m05_ownership/break_value_moves`, `break_value_drops`, `m06_conventions/break_value_view`.
+
+33. **Method-level type parameters.** A method, associated function, or extension method declares parameters of its
+    own with `<...>` after its name. The impl block's parameters stay in scope in the method's signature and body
+    (`Pair<A>.zip<U>` uses `A`), and their bounds are the impl header's. The method's parameters are inferred from
+    the arguments, the receiver, the closure bounds, and the expected type; each is checked against its bounds
+    (E0141) and monomorphized per instantiation. A parameter that nothing determines is E0003, a const parameter
+    E0252, and an interface with a generic method is not object-safe (E0202). A repeated name in the list is
+    E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
+    `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
+    `m18_extension/method_type_params`.
+34. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
+    and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
+    On a user type or a type parameter, `a op= b` is `a = a op b` through the operator's interface (`Add` for `+=`,
+    and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
+    place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
+    `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
+34. **Declaration generation (first slice).** A module-scope `comptime generate { ... }` block is evaluated at compile
+    time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations the text
+    holds to its module. The mechanism is source text, parsed like a derive body, not typed item values. Generated
+    names are not hygienic, as derives are (decision 24), and every generated token carries the block's span. The
+    front end runs generation before the whole-program check: generators are checked against the hand-written
+    declarations only, evaluated in module and source order, and their text is then declared. A generator that
+    fails stops generation, and its errors are reported without the rest of the program's. Other items in the text
+    (constants, impls, interfaces, derives, aliases, tests) are E0242, and `comptime generate` outside module scope is
+    E0243. Issue #280; `spec/generate.md` GN1-GN10, `tests/generate/`.
 
 ## Review of the expected outputs
 
@@ -762,8 +815,9 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   are not implemented until stage 1 (issue #481). `m09_stdlib/option_result_basics.bd`.
 - **Only `wrapping_*` and `checked_*` exist.** The design also lists `saturating_*` and `overflowing_*`; the stage 0
   subset narrows the set. `m02_basics/casts_and_numeric_methods.bd`.
-- **No `i128`/`u128` (deviation).** Stage 0 stops at `i64`/`u64`, as the stage 0 subset says; the design lists all of
-  them. No test uses the wider types.
+- **128-bit integers arrived after stage 0 (issue #273).** Stage 0 stops at `i64`/`u64`, as the stage 0 subset says.
+  `i128` and `u128` are now implemented; the rules are in `spec/int128.md` (I128-1 to I128-13), and `tests/int128/`
+  and the two checks in `tests/check_bindgen.py` witness them.
 - **File I/O is binary-safe.** No newline translation on Windows and no UTF-8 normalization. Decision 10;
   `m09_stdlib/file_io.bd`, `file_io_binary.bd`.
 - **`env.args()` puts the program name first.** The design names `std.env.args()` but not its contents. Decision 7;

@@ -208,8 +208,14 @@ Tests: `tests/lint/docs/`, `tests/check_lint.py`.
 ```
 burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
            [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
+burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
 burdin doc --std [the same options]
 ```
+
+**DC21b. Members.** In a manifest-level workspace (`spec/workspaces.md`, WS12), `-p`, `--workspace`, and `--exclude`
+select the members to document: one site per member, under that member's `target/doc` when `-o` is absent, with the
+usual message for each, and `--coverage` prints one report per member. `-o` names one place, so it needs exactly one
+selected member.
 
 **DC22. Loading and status.** `burdin doc` loads the target the way `burdin build` does, including build scripts and
 compile-time evaluation, with `test` blocks treated as tests (so a library package needs no `main`). A package that
@@ -233,8 +239,9 @@ a single file, JSON to a file).
 a target: the package `std`, its modules, and their public interface, by the same rules as any package (DC5-DC21). The
 standard library is built into the compiler, so `burdin doc std/` cannot do this: it would load the folder as a second
 package beside the built-in one. The other options are unchanged. A module's file is named as in the repository
-(`src/iter.bd`). With no `-o` the site goes to `target/doc/std` in the working directory. `--std` with a target is a
-usage error (status 2). The standard library's own doc comments have no broken links, so `--deny-warnings` passes.
+(`src/iter.bd`). With no `-o` the site goes to `target/doc/std` in the working directory. `--std` with a target, or
+with `-p`, `--workspace`, or `--exclude` (DC21b), is a usage error (status 2). The standard library's own doc comments
+have no broken links, so `--deny-warnings` passes.
 Tests: `check_doc.py` (the standard library section: the overview and its modules, the `Deque` and `Iterator` pages,
 `peekable`, the search index, site integrity, `--deny-warnings`, the JSON, `--coverage`, the default location; the
-command line section: a target with `--std`, `-o` with `--coverage`).
+command line section: `--std` with a target, with `-p`, with `--workspace`, and with `-o` and `--coverage`).

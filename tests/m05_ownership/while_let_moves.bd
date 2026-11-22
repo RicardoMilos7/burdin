@@ -1,0 +1,39 @@
+//@ run
+//> body
+//> 2
+//> body
+//> 1
+//> after
+//> 9
+
+// Each pass of a `while let` evaluates the scrutinee again, and the bindings and temporaries of a pass end with that
+// pass (issue #487, `spec/grammar.md` rule 8.11, `spec/memory-rules.md` MV8). Here the payload moves into `v`, so the
+// value is dropped at the end of its own pass, before the next pass makes another one.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+fn make(n: i32): Option<Noisy> {
+    if n > 0 { Some(Noisy { id: n }) } else { None }
+}
+
+fn main() {
+    let mut n = 2
+    while let Some(v) = make(n) {
+        n = n - 1
+        println("body")
+    }
+    println("after")
+    let mut k = 9
+    while let Some(_) = make(0) {
+        k = 0
+    }
+    println(k.to_string())
+}

@@ -1,0 +1,440 @@
+// Regular expressions (issue #264; spec/regex.md). A pattern is compiled once with `Regex.new` and then searches any
+// number of texts. The engine is a Pike VM, so every search runs in time proportional to the pattern times the text,
+// and a pattern that the engine cannot run in that time (a lookaround, a backreference) is rejected when it compiles.
+//
+// The public types are `Regex`, `Match` (one matched span with its text), `Captures` (the groups of one match), and
+// `RegexError` (a bad pattern, with the byte offset of the problem).
+
+pub use errors.RegexError
+use compile.{Program, compile}
+use parse.parse
+use vm.run
+
+/// A compiled regular expression (RX9). It does not change after `new`, so one can serve many searches.
+struct Regex {
+    pattern: String,
+    prog: Program,
+    /// The name of each group: `names[0]` is group 0 (the whole match), which has none.
+    names: List<Option<String>>,
+}
+
+/// One match: the byte offsets of its span in the searched text, and a copy of the matched text (RX14).
+struct Match: Clone, Eq, Debug {
+    span_start: usize,
+    span_end: usize,
+    text: String,
+}
+
+/// The groups of one match (RX8). `spans[i]` is group `i`, and `None` for a group that did not take part.
+struct Captures: Debug {
+    spans: List<Option<Match>>,
+    names: List<Option<String>>,
+}
+
+Regex {
+    /// Compiles `pattern` (RX2), or reports the first problem with its byte offset (RX3).
+    fn new(pattern: str): Result<Regex, RegexError> {
+        let parsed = parse(pattern)?
+        let mut names = List<Option<String>>.new()
+        names.push(None)
+        let mut i: usize = 0
+        while i < parsed.names.len() {
+            match parsed.names[i].clone() {
+                Some(label) => names.push(Some(label)),
+                None => names.push(None),
+            }
+            i = i + 1
+        }
+        let prog = compile(parsed)?
+        Ok(Regex { pattern: pattern.to_string(), prog: prog, names: names })
+    }
+
+    /// `text` with each metacharacter escaped, so that `Regex.new` of the result matches `text` exactly (RX13).
+    fn escape(text: str): String {
+        let mut out = String.new()
+        for c in text.chars() {
+            if is_meta(c) {
+                out.push('\\')
+            }
+            out.push(c)
+        }
+        out
+    }
+
+    /// The pattern this regex was compiled from.
+    fn as_str(self): str {
+        self.pattern.as_str()
+    }
+
+    /// The number of capturing groups, not counting group 0.
+    fn group_count(self): usize {
+        self.names.len() - 1
+    }
+
+    /// The number of the group named `name`, if there is one.
+    fn group_index(self, name: str): Option<usize> {
+        name_index(self.names.as_slice(), name)
+    }
+
+    /// Whether the pattern matches somewhere in `text`.
+    fn is_match(self, text: str): bool {
+        run(&self.prog, text.as_bytes(), 0, false).is_some()
+    }
+
+    /// The leftmost match in `text`.
+    fn find(self, text: str): Option<Match> {
+        match run(&self.prog, text.as_bytes(), 0, false) {
+            Some(slots) => Some(whole_match(text, slots.as_slice())),
+            None => None,
+        }
+    }
+
+    /// Every match in `text`, from left to right without overlap (RX10).
+    fn find_all(self, text: str): List<Match> {
+        let found = self.all_slots(text, None)
+        let mut out = List<Match>.new()
+        let mut i: usize = 0
+        while i < found.len() {
+            out.push(whole_match(text, found[i].as_slice()))
+            i = i + 1
+        }
+        out
+    }
+
+    /// The leftmost match in `text` with its groups.
+    fn captures(self, text: str): Option<Captures> {
+        match run(&self.prog, text.as_bytes(), 0, false) {
+            Some(slots) => Some(self.captures_of(text, slots.as_slice())),
+            None => None,
+        }
+    }
+
+    /// Every match in `text` with its groups (RX10).
+    fn captures_all(self, text: str): List<Captures> {
+        let found = self.all_slots(text, None)
+        let mut out = List<Captures>.new()
+        let mut i: usize = 0
+        while i < found.len() {
+            out.push(self.captures_of(text, found[i].as_slice()))
+            i = i + 1
+        }
+        out
+    }
+
+    /// `text` with its first match replaced by `replacement`, which may use the references of RX11.
+    fn replace(self, text: str, replacement: str): String {
+        self.replace_with(text, Some(1), replacement)
+    }
+
+    /// `text` with its first `limit` matches replaced by `replacement` (RX11).
+    fn replacen(self, text: str, limit: usize, replacement: str): String {
+        self.replace_with(text, Some(limit), replacement)
+    }
+
+    /// `text` with every match replaced by `replacement` (RX11).
+    fn replace_all(self, text: str, replacement: str): String {
+        self.replace_with(text, None, replacement)
+    }
+
+    /// The pieces of `text` between the matches (RX12).
+    fn split(self, text: str): List<String> {
+        self.split_with(text, None)
+    }
+
+    /// At most `limit` pieces of `text`: the last one is the rest of the text (RX12).
+    fn splitn(self, text: str, limit: usize): List<String> {
+        self.split_with(text, Some(limit))
+    }
+
+    /// The capture slots of every match, from left to right (RX10). At most `limit` of them when one is given.
+    fn all_slots(self, text: str, limit: Option<usize>): List<List<Option<usize>>> {
+        let bytes = text.as_bytes()
+        let len = text.len()
+        let mut out = List<List<Option<usize>>>.new()
+        let mut pos: usize = 0
+        let mut after_empty = false
+        loop {
+            if pos > len {
+                break
+            }
+            if let Some(max) = limit {
+                if out.len() >= max {
+                    break
+                }
+            }
+            match run(&self.prog, bytes, pos, after_empty) {
+                None => break,
+                Some(slots) => {
+                    let start = slots[0].unwrap()
+                    let end = slots[1].unwrap()
+                    // After an empty match the next one may not be empty at the same place (Python's `finditer`).
+                    after_empty = end == start
+                    pos = end
+                    out.push(slots)
+                }
+            }
+        }
+        out
+    }
+
+    fn captures_of(self, text: str, slots: [Option<usize>]): Captures {
+        let mut spans = List<Option<Match>>.new()
+        let groups = self.names.len()
+        let mut g: usize = 0
+        while g < groups {
+            spans.push(span_of(text, slots[2 * g], slots[2 * g + 1]))
+            g = g + 1
+        }
+        let mut names = List<Option<String>>.new()
+        let mut i: usize = 0
+        while i < groups {
+            match self.names[i].clone() {
+                Some(label) => names.push(Some(label)),
+                None => names.push(None),
+            }
+            i = i + 1
+        }
+        Captures { spans: spans, names: names }
+    }
+
+    fn replace_with(self, text: str, limit: Option<usize>, replacement: str): String {
+        let found = self.all_slots(text, limit)
+        let mut out = String.new()
+        let mut last: usize = 0
+        let mut i: usize = 0
+        while i < found.len() {
+            let slots = found[i].as_slice()
+            let start = slots[0].unwrap()
+            let end = slots[1].unwrap()
+            out.push_str(text[last..start])
+            let caps = self.captures_of(text, slots)
+            out.push_str(caps.expand(replacement).as_str())
+            last = end
+            i = i + 1
+        }
+        out.push_str(text[last..text.len()])
+        out
+    }
+
+    fn split_with(self, text: str, limit: Option<usize>): List<String> {
+        let mut pieces = List<String>.new()
+        if let Some(n) = limit {
+            if n == 0 {
+                return pieces
+            }
+        }
+        // `n` pieces take `n - 1` matches.
+        let max_matches = match limit {
+            Some(n) => Some(n - 1),
+            None => None,
+        }
+        let found = self.all_slots(text, max_matches)
+        let mut last: usize = 0
+        let mut i: usize = 0
+        while i < found.len() {
+            let slots = found[i].as_slice()
+            pieces.push(text[last..slots[0].unwrap()].to_string())
+            last = slots[1].unwrap()
+            i = i + 1
+        }
+        pieces.push(text[last..text.len()].to_string())
+        pieces
+    }
+}
+
+Match {
+    /// The byte offset where the match starts.
+    fn start(self): usize {
+        self.span_start
+    }
+
+    /// The byte offset just past the end of the match.
+    fn end(self): usize {
+        self.span_end
+    }
+
+    /// The matched text.
+    fn as_str(self): str {
+        self.text.as_str()
+    }
+
+    /// The length of the match in bytes.
+    fn len(self): usize {
+        self.span_end - self.span_start
+    }
+
+    /// Whether the match is empty.
+    fn is_empty(self): bool {
+        self.span_end == self.span_start
+    }
+}
+
+Captures {
+    /// The number of groups, including group 0 (the whole match).
+    fn len(self): usize {
+        self.spans.len()
+    }
+
+    /// Group `index`, or None when there is no such group or it did not take part in the match.
+    fn get(self, index: usize): Option<Match> {
+        if index < self.spans.len() {
+            self.spans[index].clone()
+        } else {
+            None
+        }
+    }
+
+    /// The group named `name`, or None when there is no such group or it did not take part.
+    fn name(self, key: str): Option<Match> {
+        match name_index(self.names.as_slice(), key) {
+            Some(index) => self.get(index),
+            None => None,
+        }
+    }
+
+    /// `template` with its references replaced by the groups of this match (RX11). A reference is `$N`, `$name`,
+    /// `${N}`, or `${name}`, and `$$` is a dollar sign. A reference to a missing or unset group is empty.
+    fn expand(self, template: str): String {
+        let chars = template.to_char_list()
+        let mut out = String.new()
+        let mut i: usize = 0
+        while i < chars.len() {
+            let c = chars[i]
+            if c != '$' {
+                out.push(c)
+                i = i + 1
+            } else if i + 1 < chars.len() && chars[i + 1] == '$' {
+                out.push('$')
+                i = i + 2
+            } else if i + 1 < chars.len() && chars[i + 1] == '{' {
+                let mut close = i + 2
+                while close < chars.len() && chars[close] != '}' {
+                    close = close + 1
+                }
+                if close >= chars.len() {
+                    out.push('$')
+                    i = i + 1
+                } else {
+                    let key = slice_text(chars.as_slice(), i + 2, close)
+                    out.push_str(self.reference(key.as_str()).as_str())
+                    i = close + 1
+                }
+            } else {
+                let mut end = i + 1
+                if end < chars.len() && chars[end].is_ascii_digit() {
+                    while end < chars.len() && chars[end].is_ascii_digit() {
+                        end = end + 1
+                    }
+                } else {
+                    while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '_') {
+                        end = end + 1
+                    }
+                }
+                if end == i + 1 {
+                    out.push('$')
+                    i = i + 1
+                } else {
+                    let key = slice_text(chars.as_slice(), i + 1, end)
+                    out.push_str(self.reference(key.as_str()).as_str())
+                    i = end
+                }
+            }
+        }
+        out
+    }
+
+    /// The text of the group a reference names by number or by name, empty when there is no such group.
+    fn reference(self, key: str): String {
+        let index = if all_digits(key) {
+            parse_index(key)
+        } else {
+            name_index(self.names.as_slice(), key)
+        }
+        match index {
+            Some(i) => match self.get(i) {
+                Some(m) => m.as_str().to_string(),
+                None => String.new(),
+            },
+            None => String.new(),
+        }
+    }
+}
+
+/// The span `start..end` of `text` as a match, or None when the group did not take part.
+fn span_of(text: str, start: Option<usize>, end: Option<usize>): Option<Match> {
+    match start {
+        Some(s) => match end {
+            Some(e) => Some(Match { span_start: s, span_end: e, text: text[s..e].to_string() }),
+            None => None,
+        },
+        None => None,
+    }
+}
+
+/// The match of group 0 in `slots`.
+fn whole_match(text: str, slots: [Option<usize>]): Match {
+    let start = slots[0].unwrap()
+    let end = slots[1].unwrap()
+    Match { span_start: start, span_end: end, text: text[start..end].to_string() }
+}
+
+/// The number of the group named `name` in `names` (where `names[i]` is group `i`).
+fn name_index(names: [Option<String>], name: str): Option<usize> {
+    let wanted = Some(name.to_string())
+    let mut i: usize = 0
+    while i < names.len() {
+        if names[i] == wanted {
+            return Some(i)
+        }
+        i = i + 1
+    }
+    None
+}
+
+/// The characters `Regex.escape` puts a backslash before (RX13).
+fn is_meta(c: char): bool {
+    match c {
+        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~' => true,
+        _ => false,
+    }
+}
+
+fn all_digits(key: str): bool {
+    if key.is_empty() {
+        return false
+    }
+    for c in key.chars() {
+        if !c.is_ascii_digit() {
+            return false
+        }
+    }
+    true
+}
+
+/// The value of a string of decimal digits, or None when it is too large to be a group number.
+fn parse_index(key: str): Option<usize> {
+    let mut value: usize = 0
+    for c in key.chars() {
+        match c.to_digit(10) {
+            Some(d) => {
+                if value > 100000 {
+                    return None
+                }
+                value = value * 10 + (d as usize)
+            }
+            None => return None,
+        }
+    }
+    Some(value)
+}
+
+/// The text of the characters `from..to` of `chars`.
+fn slice_text(chars: [char], begin: usize, finish: usize): String {
+    let mut out = String.new()
+    let mut i = begin
+    while i < finish {
+        out.push(chars[i])
+        i = i + 1
+    }
+    out
+}

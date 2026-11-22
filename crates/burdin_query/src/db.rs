@@ -13,14 +13,15 @@
 //! `type_check` lives in `burdin_sema` (`CheckCache`) because it shares the checker's private state; this crate
 //! owns everything around it.
 
+use crate::follow_on::{self, declared_names};
 use crate::package::{self, Workspace};
 use crate::reparse;
 use crate::stats::{Counters, RevisionStats};
-use burdin_diag::{Diagnostic, Diagnostics, FileId, SourceMap};
+use burdin_diag::{Code, Diagnostic, Diagnostics, FileId, Severity, SourceMap, Span};
 use burdin_sema::{CheckCache, Edit};
 use burdin_syntax::ast;
 use burdin_tir::Program;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -187,8 +188,8 @@ pub struct Analysis {
     /// Every diagnostic of parsing, checking, and compile-time evaluation, in the order the batch compiler reports
     /// them.
     pub diagnostics: Diagnostics,
-    /// The checked program. `None` when parsing failed: checking a tree with syntax errors would mostly report
-    /// follow-on errors.
+    /// The checked program. `None` when a file has syntax errors: its tree is partial, so the program is not handed
+    /// out, but the other modules are still checked and their diagnostics are reported (`spec/check.md`, CK4).
     pub program: Option<Program>,
     /// The revision this analysis is of.
     pub revision: u64,
@@ -546,33 +547,54 @@ impl Db {
             }
             diags.absorb(file_diags);
         }
-        if diags.has_errors() {
-            return Ok(Analysis { diagnostics: diags, program: None, revision: self.revision, files: self.paths() });
-        }
-
-        let packages: Vec<burdin_sema::Package> = self
-            .layout
-            .packages
+        // A file with syntax errors is not type checked, but the other modules are, against the declarations its
+        // tree kept (`spec/check.md`, CK4). Everything checked from here on comes after the syntax errors, and the
+        // follow-on errors among it are dropped once the checks have run.
+        let syntax_errors = diags.has_errors();
+        let checked_from = diags.len();
+        let broken: Vec<FileId> = parsed
             .iter()
             .enumerate()
-            .map(|(id, package)| burdin_sema::Package {
-                name: package.name.clone(),
-                is_root: id == self.layout.entry_package,
-                edition: package.edition,
-                deps: package.deps.clone(),
-                root_module: package.root_module,
-                official: package.official.clone(),
-                modules: package
-                    .modules
-                    .iter()
-                    .map(|module| burdin_sema::Module {
-                        file: module.file,
-                        path: module.path.clone(),
-                        ast: &parsed[module.file.0 as usize].ast,
-                    })
-                    .collect(),
+            .filter(|(_, p)| p.diags.iter().any(|d| d.severity == Severity::Error))
+            .map(|(slot, _)| FileId(slot as u32))
+            .collect();
+
+        // The checks of a file with syntax errors are not reported, and neither are the follow-on errors of the
+        // names such a file declares (`follow_on`, CK4). The syntax errors themselves are kept.
+        let names: BTreeSet<String> = broken
+            .iter()
+            .flat_map(|&file| {
+                let tree = &parsed[file.0 as usize];
+                declared_names(&tree.text, file, &tree.ast.unparsed)
             })
             .collect();
+
+        // Generation runs before the program is checked as a whole (`spec/generate.md`, GN3). A program with no
+        // `comptime generate` block skips it.
+        let generated = if parsed.iter().any(|p| !p.ast.generators.is_empty()) {
+            match self.generate(&parsed, &mut diags)? {
+                Some(generated) => generated,
+                // A generator failed: its errors are reported and the rest of the program is not checked (GN7).
+                None => {
+                    let diags = follow_on::retain_checked(diags, checked_from, &broken, &names, &self.sources);
+                    return Ok(Analysis {
+                        diagnostics: diags,
+                        program: None,
+                        revision: self.revision,
+                        files: self.paths(),
+                    });
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
+        // A program with syntax errors is checked without the cache. Its answers belong to a partial tree, so they
+        // must not replace the answers of the last checked program, which the next edit can still reuse.
+        let cache_wanted = !self.options.no_cache;
+        self.check_cache.set_enabled(cache_wanted && !syntax_errors);
+
+        let packages = sema_packages(&self.layout, &parsed, &generated);
         self.check_cache.set_cancel(Some(self.cancel.0.clone()));
         // A debug build records error trace frames; `--release` records none (`spec/errors.md`, ERR7).
         let checked = burdin_sema::check_cached(
@@ -585,6 +607,7 @@ impl Db {
             &mut diags,
             &mut self.check_cache,
         );
+        self.check_cache.set_enabled(cache_wanted);
         let Some(mut program) = checked else { return Err(Cancelled) };
         let stats = self.check_cache.stats();
         self.counters.bodies_checked += stats.checked.len();
@@ -602,14 +625,19 @@ impl Db {
         self.counters.memory_reused += self.last.memory_reused;
         diags.absorb(memory);
         self.poll()?;
+        // A generator's function ran during generation and the program never calls it: it has no code.
+        for generator in parsed.iter().flat_map(|p| &p.ast.generators) {
+            if let Some(function) = program.functions.iter_mut().find(|f| is_generator(f, generator)) {
+                function.symbolic = true;
+            }
+        }
 
-        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1).
+        let mut diags = follow_on::retain_checked(diags, checked_from, &broken, &names, &self.sources);
+
+        // Compile-time evaluation runs only on a program every check accepted (`spec/comptime.md`, CT1). With syntax
+        // errors there is no such program: it is never evaluated, and it is not returned (its tree is partial).
         if !diags.has_errors() {
-            let comptime = burdin_comptime::Options {
-                overflow_checks: self.options.overflow_checks,
-                debug_assertions: self.options.debug_assertions,
-                steps: self.options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
-            };
+            let comptime = self.comptime_options();
             burdin_comptime::evaluate(&mut program, comptime, &mut diags);
             // A `[differential]` test body is also run now, so the runner can compare it with the compiled test
             // (`spec/test-runner.md`). It runs after the rewrite above, so it sees the program code generation will.
@@ -619,13 +647,251 @@ impl Db {
         }
         drop(packages);
         self.check_cache.evict(self.budget.bodies);
-        Ok(Analysis { diagnostics: diags, program: Some(program), revision: self.revision, files: self.paths() })
+        let program = (!syntax_errors).then_some(program);
+        let diags = name_generated_items(diags, &generated);
+        Ok(Analysis { diagnostics: diags, program, revision: self.revision, files: self.paths() })
+    }
+
+    fn comptime_options(&self) -> burdin_comptime::Options {
+        burdin_comptime::Options {
+            overflow_checks: self.options.overflow_checks,
+            debug_assertions: self.options.debug_assertions,
+            steps: self.options.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
+        }
+    }
+
+    /// Runs the `comptime generate` blocks of the program (`spec/generate.md`, GN3): checks them against the
+    /// hand-written declarations alone, runs them, and parses their text. Returns the modules that gained
+    /// declarations, by file. `None` when generation failed (GN7): its errors are in `diags`, and no later step runs.
+    fn generate(
+        &self,
+        parsed: &[Rc<Parsed>],
+        diags: &mut Diagnostics,
+    ) -> Result<Option<HashMap<usize, Generated>>, Cancelled> {
+        // The generators, in module order and, within a module, in source order.
+        let mut found: Vec<(usize, &ast::Generator)> = Vec::new();
+        for module in self.layout.packages.iter().flat_map(|package| &package.modules) {
+            let slot = module.file.0 as usize;
+            found.extend(parsed[slot].ast.generators.iter().map(|generator| (slot, generator)));
+        }
+
+        // Step 1: check the program with the hand-written declarations only. The caches are fresh, so nothing
+        // computed without the generated declarations is kept for a later run (GN8).
+        let none = HashMap::new();
+        let packages = sema_packages(&self.layout, parsed, &none);
+        let mut checked = Diagnostics::default();
+        let mut fresh = CheckCache::disabled();
+        fresh.set_cancel(Some(self.cancel.0.clone()));
+        let Some(mut program) = burdin_sema::check_cached(
+            &packages,
+            self.layout.entry_package,
+            self.layout.entry_module,
+            self.options.mode,
+            !self.options.release,
+            &self.sources,
+            &mut checked,
+            &mut fresh,
+        ) else {
+            return Err(Cancelled);
+        };
+        self.poll()?;
+        crate::memory::MemoryCache::default().check(&mut program, &mut checked, &mut RevisionStats::default());
+
+        let mut ids = Vec::new();
+        for (_, generator) in &found {
+            let Some(id) = program.functions.iter().position(|f| is_generator(f, generator)) else {
+                diags.error(
+                    Code::COMPTIME_IMPURE,
+                    generator.keyword,
+                    "internal error in generation: the `comptime generate` block has no function; please report it",
+                );
+                return Ok(None);
+            };
+            ids.push(id);
+        }
+
+        // The errors that count are those inside a generator and inside the functions it reaches. The others come
+        // from bodies that name a generated declaration, and step 4 reports the ones that remain (GN3).
+        let reached = reached_functions(&program, &ids);
+        let spans: Vec<Span> = reached.iter().map(|&id| program.functions[id].span).collect();
+        let counted: Vec<Diagnostic> = checked
+            .into_vec()
+            .into_iter()
+            .filter(|d| {
+                d.severity == Severity::Error
+                    && spans.iter().any(|s| s.file == d.span.file && s.lo <= d.span.lo && d.span.hi <= s.hi)
+            })
+            .collect();
+        if !counted.is_empty() {
+            counted.into_iter().for_each(|d| diags.push(d));
+            return Ok(None);
+        }
+
+        // Step 2: run each generator under the compile-time rules.
+        let options = self.comptime_options();
+        let mut texts = Vec::new();
+        let mut failed = false;
+        for ((slot, generator), &id) in found.iter().zip(&ids) {
+            self.poll()?;
+            match burdin_comptime::run_generator(&program, burdin_tir::FuncId(id), options, generator.keyword, diags) {
+                Some(text) => texts.push((*slot, *generator, text)),
+                None => failed = true,
+            }
+        }
+        if failed {
+            return Ok(None);
+        }
+
+        // Step 3: parse each text and add its declarations to the module of its block.
+        let mut generated: HashMap<usize, Generated> = HashMap::new();
+        for (slot, generator, text) in texts {
+            match burdin_syntax::generate::parse_generated(&text, generator.keyword) {
+                Ok(items) => {
+                    let module = generated.entry(slot).or_insert_with(|| Generated {
+                        ast: parsed[slot].ast.clone(),
+                        text: String::new(),
+                        blocks: Vec::new(),
+                    });
+                    let names = items
+                        .iter()
+                        .filter_map(|item| match item {
+                            ast::Item::Fn(d) => Some(d.name.name.clone()),
+                            ast::Item::Struct(d) => Some(d.name.name.clone()),
+                            ast::Item::Enum(d) => Some(d.name.name.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    module.blocks.push((generator.keyword, names));
+                    module.ast.items.extend(items);
+                    // The separator keeps two texts from reading as one.
+                    module.text.push_str(&text);
+                    module.text.push('\0');
+                }
+                Err(message) => {
+                    diags.error(Code::INVALID_GENERATED, generator.keyword, message);
+                    failed = true;
+                }
+            }
+        }
+        Ok((!failed).then_some(generated))
     }
 
     /// The path of every file, in module order.
     fn paths(&self) -> Vec<String> {
         self.files.iter().map(|f| f.path.clone()).collect()
     }
+}
+
+/// What generation adds to a module that has a `comptime generate` block (`spec/generate.md`, GN3).
+struct Generated {
+    /// The module's tree: the parsed one, with the generated declarations after the hand-written ones.
+    ast: ast::File,
+    /// The text the module's blocks produced, for the check cache's key (GN8).
+    text: String,
+    /// Each block and the names it declares, to say which declaration a diagnostic at the block is about (GN6).
+    blocks: Vec<(Span, Vec<String>)>,
+}
+
+/// Adds to every diagnostic located at a `comptime generate` block the names that block declares: the error is in
+/// one of them, and the block is the only place the diagnostic can point (`spec/generate.md`, GN6).
+fn name_generated_items(diags: Diagnostics, generated: &HashMap<usize, Generated>) -> Diagnostics {
+    if generated.is_empty() {
+        return diags;
+    }
+    let blocks: Vec<&(Span, Vec<String>)> = generated.values().flat_map(|g| &g.blocks).collect();
+    let mut named = Diagnostics::default();
+    for mut diagnostic in diags.into_vec() {
+        if let Some((_, names)) = blocks.iter().find(|(span, _)| *span == diagnostic.span) {
+            let list: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+            diagnostic.note_without_span(format!(
+                "this is in code generated by the `comptime generate` block here, which declares {}",
+                list.join(", ")
+            ));
+        }
+        named.push(diagnostic);
+    }
+    named
+}
+
+/// The packages the checker reads: the layout over the parsed trees, with the tree of every module in `generated`
+/// (by file) in place of the parsed one.
+fn sema_packages<'a>(
+    layout: &Layout,
+    parsed: &'a [Rc<Parsed>],
+    generated: &'a HashMap<usize, Generated>,
+) -> Vec<burdin_sema::Package<'a>> {
+    layout
+        .packages
+        .iter()
+        .enumerate()
+        .map(|(id, package)| burdin_sema::Package {
+            name: package.name.clone(),
+            is_root: id == layout.entry_package,
+            edition: package.edition,
+            deps: package.deps.clone(),
+            root_module: package.root_module,
+            official: package.official.clone(),
+            modules: package
+                .modules
+                .iter()
+                .map(|module| {
+                    let slot = module.file.0 as usize;
+                    let (ast, text) = match generated.get(&slot) {
+                        Some(module) => (&module.ast, module.text.as_str()),
+                        None => (&parsed[slot].ast, ""),
+                    };
+                    burdin_sema::Module { file: module.file, path: module.path.clone(), ast, generated: text }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Whether `function` is the one `generator` was parsed as.
+fn is_generator(function: &burdin_tir::Function, generator: &ast::Generator) -> bool {
+    function.span == generator.span && function.name.ends_with(&generator.name)
+}
+
+/// `roots` and the functions they call, directly or through other calls (a closure's body belongs to the function
+/// that creates it, and a box into an `any` counts as a call of the vtable's methods).
+fn reached_functions(program: &Program, roots: &[usize]) -> HashSet<usize> {
+    use burdin_tir::visit::{Visit, walk_expr};
+    use burdin_tir::{Expr, ExprKind};
+
+    struct Calls<'p> {
+        program: &'p Program,
+        found: Vec<usize>,
+        closures: HashSet<usize>,
+    }
+    impl Visit for Calls<'_> {
+        fn expr(&mut self, e: &Expr) {
+            match &e.kind {
+                ExprKind::Call(id, _) => self.found.push(id.0),
+                ExprKind::BoxAny { vtable, .. } => {
+                    self.found.extend(self.program.any_vtables[*vtable].entries.iter().map(|id| id.0));
+                }
+                ExprKind::Closure { closure, .. } if self.closures.insert(*closure) => {
+                    let body = &self.program.closures[*closure].func.body;
+                    self.block(body);
+                }
+                _ => {}
+            }
+            walk_expr(self, e);
+        }
+    }
+
+    let mut reached: HashSet<usize> = roots.iter().copied().collect();
+    let mut pending: Vec<usize> = roots.to_vec();
+    while let Some(id) = pending.pop() {
+        let mut calls = Calls { program, found: Vec::new(), closures: HashSet::new() };
+        calls.block(&program.functions[id].body);
+        for callee in calls.found {
+            if callee < program.functions.len() && reached.insert(callee) {
+                pending.push(callee);
+            }
+        }
+    }
+    reached
 }
 
 /// How many workers to parse `files` files with: at most one per file, never zero. `jobs` (from `-j`) wins, then

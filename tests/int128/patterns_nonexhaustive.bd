@@ -1,0 +1,23 @@
+//@ compile-fail
+
+// A `match` on `u128` that leaves out the values from 2^127 up is not exhaustive, and neither is an `i128` match with
+// no arm for the positive values; both are E0006 (spec/int128.md, I128-10).
+
+fn low(x: u128): i32 {
+    match x { //~ E0006
+        0 => 0,
+        1..=170141183460469231731687303715884105727 => 1,
+    }
+}
+
+fn sign(x: i128): i32 {
+    match x { //~ E0006
+        -170141183460469231731687303715884105728..=-1 => -1,
+        0 => 0,
+    }
+}
+
+fn main() {
+    println(low(0).to_string())
+    println(sign(0).to_string())
+}

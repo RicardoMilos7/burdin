@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A compound assignment writes its place, so a reference that is still used after it conflicts with it (E0111,
+// spec/compound-assignment.md, CA4).
+
+fn main() {
+    let mut n = 1
+    let r = &mut n
+    n += 1 //~ E0111
+    println("{*r}")
+}

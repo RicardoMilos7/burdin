@@ -1,0 +1,117 @@
+//@ run
+//> in show 7
+//> drop 7
+//> some
+//> 7
+//> none
+//> in show 8
+//> drop 8
+//> ok
+//> 8
+//> err
+//> -2
+//> in show 9
+//> drop 9
+//> 9
+//> drop 10
+//> after let _
+//> drop 11
+//> 11
+
+// A value that a read-only parameter borrows is a temporary of the statement that passes it (DR5). When that
+// value comes out of a block, `if`, or `match`, the block's tail moves it out, so it drops exactly once.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        announce("drop ", self.id)
+    }
+}
+
+fn announce(prefix: str, id: i32) {
+    let mut line = String.from(prefix)
+    line.push_str(id.to_string())
+    println(line)
+}
+
+fn make(id: i32): Option<Noisy> {
+    if id < 0 { return None }
+    Some(Noisy { id })
+}
+
+fn make_result(id: i32): Result<Noisy, i32> {
+    if id < 0 { return Err(id) }
+    Ok(Noisy { id })
+}
+
+// `n` is read-only, so the caller's argument is a temporary that it does not own.
+fn show(n: Noisy): i32 {
+    announce("in show ", n.id)
+    n.id
+}
+
+fn from_option(id: i32): Option<i32> {
+    let v = show(make(id)?)
+    Some(v)
+}
+
+fn from_result(id: i32): Result<i32, i32> {
+    let v = show(make_result(id)?)
+    Ok(v)
+}
+
+// The statement that passes the temporary is the tail, so the temporary drops when `show` returns.
+fn from_match(id: i32): i32 {
+    show(match make_result(id) {
+        Ok(n) => n,
+        Err(_) => Noisy { id: 0 },
+    })
+}
+
+fn field_of_block(id: i32): i32 {
+    let x = match make_result(id) {
+        Ok(n) => n,
+        Err(_) => Noisy { id: 0 },
+    }.id
+    x
+}
+
+fn show_option(o: Option<i32>) {
+    match o {
+        Some(n) => {
+            println("some")
+            println(n.to_string())
+        }
+        None => println("none"),
+    }
+}
+
+fn show_result(r: Result<i32, i32>) {
+    match r {
+        Ok(n) => {
+            println("ok")
+            println(n.to_string())
+        }
+        Err(e) => {
+            println("err")
+            println(e.to_string())
+        }
+    }
+}
+
+fn main() {
+    show_option(from_option(7))
+    show_option(from_option(-1))
+    show_result(from_result(8))
+    show_result(from_result(-2))
+    println(from_match(9).to_string())
+    let _ = match make_result(10) {
+        Ok(n) => n,
+        Err(_) => Noisy { id: 0 },
+    }
+    println("after let _")
+    println(field_of_block(11).to_string())
+}

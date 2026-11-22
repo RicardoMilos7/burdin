@@ -1,0 +1,44 @@
+//@ run
+//> 4
+//> 170141183460469231731687303715884105729
+//> 3
+//> 0
+//> 3
+//> 1
+
+// `for` over a 128-bit range at run time: the loops run in order across the top bit, and an inclusive range that ends
+// at `u128::MAX` stops there instead of wrapping (spec/int128.md, I128-8).
+
+fn main() {
+    let lo: u128 = 170141183460469231731687303715884105726
+    let hi: u128 = 170141183460469231731687303715884105729
+    let mut n: u128 = 0
+    let mut last: u128 = 0
+    for i in lo..=hi {
+        n = n + 1
+        last = i
+    }
+    println(n.to_string())
+    println(last.to_string())
+    let top: u128 = 340282366920938463463374607431768211455
+    let mut m: u128 = 0
+    for j in (top - 2)..=top {
+        m = m + 1
+    }
+    println(m.to_string())
+    let mut k: u128 = 0
+    for j in top..top {
+        k = k + 1
+    }
+    println(k.to_string())
+    let mut q: u128 = 0
+    for j in lo..hi {
+        q = q + 1
+    }
+    println(q.to_string())
+    let mut e: u128 = 0
+    for j in top..=top {
+        e = e + 1
+    }
+    println(e.to_string())
+}

@@ -371,8 +371,15 @@ impl Fmt<'_> {
         Ok(concat(parts))
     }
 
-    /// `comptime assert(condition, "message")` at module scope.
+    /// `comptime assert(condition, "message")` or `comptime generate { ... }` at module scope. The block is laid
+    /// out as a function body (`spec/generate.md`, GN9).
     fn comptime_item(&mut self) -> R<D> {
+        if matches!(self.nth(1), TokenKind::Ident(name) if name == "generate") && self.nth(2) == &TokenKind::LBrace {
+            let comptime = self.tok_doc();
+            let generate = self.tok_doc();
+            let block = self.block_parts()?;
+            return Ok(concat(vec![comptime, space(), generate, space(), self.block_doc(block, false)]));
+        }
         Ok(self.expr_r(Restriction::None)?.doc)
     }
 
@@ -392,6 +399,21 @@ impl Fmt<'_> {
             let blank_before = self.blank_before();
             let lead = self.start_of_line();
             let mut parts = vec![lead];
+            // An associated type: `type Name` in an interface, `type Name = Ty` in an implementation
+            // (`spec/associated-types.md`, AT1-AT2).
+            if self.at(&TokenKind::Type) {
+                parts.push(self.tok_doc());
+                parts.push(space());
+                parts.push(self.ident()?);
+                if self.at(&TokenKind::Eq) {
+                    parts.push(space());
+                    parts.push(self.tok_doc());
+                    parts.push(space());
+                    parts.push(self.ty()?);
+                }
+                members.push(Member { doc: concat(parts), after: Doc::Nil, blank_before });
+                continue;
+            }
             if self.at(&TokenKind::Priv) {
                 parts.push(self.tok_doc());
                 parts.push(space());

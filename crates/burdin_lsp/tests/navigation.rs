@@ -65,7 +65,7 @@ fn definition_finds_functions_types_methods_fields_locals_and_modules() {
     assert_eq!(definition(&mut g, true, "Color.Green", 0, 6), "src/shapes.bd:36:Green");
     assert_eq!(definition(&mut g, true, "Rect { w, h }", 0, 7), "src/shapes.bd:17:w", "shorthand names the parameter");
     // The standard library is opened from a materialized copy.
-    assert_eq!(definition(&mut g, false, "assert_eq", 0, 0), "std/std.bd:257:assert_eq");
+    assert_eq!(definition(&mut g, false, "assert_eq", 0, 0), "std/std.bd:262:assert_eq");
     // Nothing to find on a keyword, a literal, or a comment.
     assert_eq!(definition(&mut g, false, "fn main", 0, 0), "none");
     assert_eq!(definition(&mut g, false, "\"área\"", 0, 2), "none");
@@ -235,5 +235,65 @@ fn type_hierarchy_between_interfaces_and_types() {
     let none = g.client.call("textDocument/prepareTypeHierarchy", g.client.at(&uri, &text, "fn favorite", 0, 3));
     assert!(none.is_null());
     golden("type-hierarchy", &normalize(&Json::Arr(vec![shape, subtypes]), &g.root));
+    assert_eq!(g.client.shutdown(), 0);
+}
+
+/// Definition on the callee of a call that is still being written resolves to its declaration (issue #851; LS9): a
+/// method named with missing arguments, with an unclosed list, or without a call, a method called on `self`, and the
+/// same from inside a method. Each case writes its call into the file, so the call's text is the file's last.
+#[test]
+fn definition_resolves_the_callee_of_an_incomplete_call() {
+    let root = fixture("incomplete");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let mut g = Geometry { root, client, main: (uri.clone(), text.clone()), shapes: (uri.clone(), text.clone()) };
+    // The receiver is declared first and analyzed, so the calls written after it are the only text that is new.
+    let declared = text.replacen("    println", "    let mut a = List<i32>.new()\n    println", 1);
+    let mut version = 2;
+    g.client.change(&uri, version, &declared);
+    g.client.diagnostics(&uri, |_| true);
+    g.main = (uri.clone(), declared.clone());
+    let mut ask = |g: &mut Geometry, base: &str, anchor: &str, replacement: &str, callee: &str| -> String {
+        version += 1;
+        let edited = base.replacen(anchor, replacement, 1);
+        let at = edited.find(replacement.trim_start()).unwrap() + replacement.trim_start().find(callee).unwrap() + 1;
+        g.client.change(&uri, version, &edited);
+        let before = &edited[..at];
+        let line = before.matches('\n').count() as i64;
+        let character = (before.len() - before.rfind('\n').map_or(0, |n| n + 1)) as i64;
+        let params = Json::obj()
+            .with("textDocument", Json::obj().with("uri", uri.as_str()))
+            .with("position", Json::obj().with("line", line).with("character", character));
+        let result = g.client.call("textDocument/definition", params);
+        g.main = (uri.clone(), edited);
+        if result.is_null() { "none".to_string() } else { place(g, &result) }
+    };
+    // `append` is a method of the standard library's `List`: the built-ins' materialized copy.
+    let list = "    println";
+    for call in ["    a.append()\n    println", "    a.append(\n    println", "    a.append(List<i32>.\n    println"] {
+        let got = ask(&mut g, &declared, list, call, "append");
+        assert!(got.starts_with("std/builtins.bd:") && got.ends_with(":append"), "`{call}`: {got}");
+    }
+    // A function of the file, named with an unclosed list: `sq.grow(` in `main`.
+    let grow_line = declared.lines().position(|l| l.contains("fn grow")).unwrap() + 1;
+    for call in ["    sq.grow(\n    println", "    sq.grow\n    println"] {
+        let got = ask(&mut g, &declared, list, call, "grow");
+        assert_eq!(got, format!("src/main.bd:{grow_line}:grow"), "`{call}`");
+    }
+    // A method called on `self` from inside another method, with the call unfinished, unclosed, or without its call.
+    let area_line = declared.lines().position(|l| l.contains("fn area")).unwrap() + 1;
+    let inside = "        self.side = self.side + by\n";
+    for (call, callee) in [
+        ("        self.area()\n", "area"),
+        ("        self.area(\n", "area"),
+        ("        let z = self.area\n", "area"),
+        ("        self.grow(\n", "grow"),
+    ] {
+        let replacement = format!("{inside}{call}");
+        let got = ask(&mut g, &declared, inside, &replacement, callee);
+        let line = if callee == "area" { area_line } else { grow_line };
+        assert_eq!(got, format!("src/main.bd:{line}:{callee}"), "`{}`", call.trim());
+    }
     assert_eq!(g.client.shutdown(), 0);
 }

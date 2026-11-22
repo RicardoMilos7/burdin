@@ -1,0 +1,42 @@
+//@ run
+//> 170141183460469231731687303715884105727
+//> 340282366920938463463374607431768211455
+//> -170141183460469231731687303715884105728
+//> 113427455640312821154458202477256070485
+//> 455
+//> -24305883351495604533098186245126300818
+//> -2
+//> 170141183460469231731687303715884105727
+//> 170141183460469231731687303715884105728
+//> ffffffffffffffffffffffffffffffff
+//> -170141183460469231731687303715884105728
+//> 18446744073709551615
+//> 18446744073709551615
+//> 170141183460469231731687303715884105727
+
+// i128 and u128 literals at both ends of their ranges, arithmetic on them, and formatting (spec/int128.md, I128-1,
+// I128-2, I128-3).
+
+fn main() {
+    let a: i128 = 170141183460469231731687303715884105727
+    let b: u128 = 340282366920938463463374607431768211455
+    let m: i128 = -170141183460469231731687303715884105728
+    println(a.to_string())
+    println(b.to_string())
+    println(m.to_string())
+    println((b / 3).to_string())
+    println((b % 1000).to_string())
+    println((m / 7).to_string())
+    println((m % 7).to_string())
+    println((a * 1).to_string())
+    let x: u128 = 1
+    println((x << 127).to_string())
+    println(format("{:x}", b))
+    println(format("{}", m))
+    println((a as u64).to_string())
+    println(((b >> 64) as u64).to_string())
+    match i128.parse("170141183460469231731687303715884105727") {
+        Ok(v) => println(v.to_string()),
+        Err(_) => println("bad"),
+    }
+}

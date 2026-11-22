@@ -85,7 +85,8 @@ loop {
 
 so the stage 0 semantics carry over: the loop binding lives for one iteration, `break` and `continue` target the
 loop, items and the body's bindings drop each iteration, and the pattern must match every item (E0006;
-`memory-rules.md` IT2). `__iter` is a compiler-made name.
+`memory-rules.md` IT2). `__iter` is a compiler-made name. A label on the `for` goes on this generated `loop`
+(the node `break 'label` and `continue 'label` target), not on the surrounding `let`/block.
 
 A literal range (`for 2 in 0..4`) still uses the stage 0 lowering when its pattern is a binding or `_`; any other
 pattern matches through `(lo..hi).iter()`, so it gets the protocol's item type and exhaustiveness rule. A stored
@@ -215,8 +216,8 @@ build, exactly as `a + b` does; a float never traps. An empty iterator gives 0 f
 **`try_fold` and `try_for_each`** short-circuit on a `Result`. The error type `E` is inferred from the closure's
 return type; a closure with an early `return Err(..)` needs its return type written (`|x|: Result<(), i32> { ... }`). An
 `Option` version is not provided: `fold` with an `Option` accumulator, or a `for` loop with `?`, covers it. They are
-interface default methods, so they are not callable on a type parameter bounded by `Iterator<T>` (default methods with
-their own type parameters do not resolve through a bound yet).
+interface default methods, and they are callable on a type parameter bounded by `Iterator<T>` like every other default
+method (IT23).
 
 **Consumers that are not provided (issue #707).** `unzip` needs the pair's two types, which only appear in a bound, so
 a call cannot infer them. `rposition` needs a double-ended source (IT14), which exists now, but it is not written yet. These stay open on the
@@ -385,3 +386,26 @@ make it with `new_in` and call `extend_iter`, which is generic over the allocato
 is no `collect_in`.
 
 Tests: `tests/m24_stdlib/collect_*`, `extend_iter`, and `from_array` (listed in `stdlib.md`, "Collecting and extending").
+
+**IT23 Generic interfaces and their default methods (issue #390).** These rules apply to every generic interface, the
+standard ones included:
+
+1. An interface parameter may carry bounds (`interface Keyed<K: Eq>`). Every impl and every bound that names the
+   interface must give arguments that meet them, which is E0141.
+2. `requires` names interfaces with arguments, and the arguments may be the interface's own parameters
+   (`interface Labeled<T> requires Show + Store<T>`). An impl must implement each required instance (E0141).
+3. A named generic interface takes exactly its type arguments, in a bound, an impl, or a `requires` list. A missing or
+   extra argument is E0003 at the name.
+4. A default method may have type parameters of its own. Through a bound on a type parameter, the call infers them
+   from the arguments as it does on a concrete receiver: a parameter that appears only in a closure bound
+   (`F: FnMut(T): U`) is the closure's return type, and one that appears only in an `Iterator` bound is that
+   iterator's item type. The interface's parameters stand for the bound's arguments throughout. A parameter that
+   nothing fixes is E0003 at the call.
+5. A closure argument to such a method takes its parameter types from the closure bound, as a generic function's
+   argument does.
+
+Tests: `tests/m13_iterators/generic_bound_default_methods` (rules 4 and 5, with `map`, `zip`, `flat_map`, and `max`
+on an `Iterator<i32>` parameter), `generic_interface_requires` (rules 1 and 2 and default methods that use a bound of
+their parameter), `generic_interface_unmet` (E0141), `generic_interface_arity` (E0003), and
+`generic_method_uninferred` (E0003 at the call). The unit test `generics::tests::a_bound_provides_its_generic_methods_with_the_arguments_substituted`
+covers the lookup.

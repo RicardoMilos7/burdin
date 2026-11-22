@@ -1,0 +1,14 @@
+//@ run
+//@ release-only
+//> -170141183460469231731687303715884105728
+//> 0
+
+// In a release build `MIN / -1` wraps to `MIN` and `MIN % -1` to `0`; a debug build panics instead
+// (divide_overflow_aborts.bd, spec/int128.md, I128-3).
+
+fn main() {
+    let m: i128 = -170141183460469231731687303715884105728
+    let neg_one: i128 = -1
+    println((m / neg_one).to_string())
+    println((m % neg_one).to_string())
+}

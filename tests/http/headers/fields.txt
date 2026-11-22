@@ -1,0 +1,28 @@
+# one operation per line, on one set of headers (HC4)
+add Content-Type: text/plain
+add X-One: 1
+add x-one: 2
+get content-type
+get CONTENT-TYPE
+get missing
+all X-ONE
+contains x-one
+contains x-two
+add X-Spaces:    padded value   
+get X-Spaces
+add Connection: keep-alive, Upgrade
+token connection upgrade
+token connection close
+set x-one: replaced
+all x-one
+wire
+remove X-One
+remove X-One
+wire
+add Bad Name: v
+add : v
+add X-Bad: line\r\nInjected: yes
+add X-Tab: a\tb
+get X-Tab
+add X-Empty:
+get X-Empty

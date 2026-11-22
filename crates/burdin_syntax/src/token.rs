@@ -5,6 +5,8 @@ use burdin_diag::Span;
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     Ident(String),
+    /// A loop label, `'name` (spec/grammar.md, section 1). The name is kept without the quote.
+    Label(String),
     /// Integer literal. The value is exact; whether it fits its type is checked later.
     Int(u128),
     /// Float literal, kept as written (without `_`).
@@ -82,6 +84,18 @@ pub enum TokenKind {
     Caret,
     Shl,
     Shr,
+    /// The compound assignment operators (`spec/compound-assignment.md`, CA1): `+=`, `-=`, `*=`, `/=`, `%=`, `&=`,
+    /// `|=`, `^=`, `<<=`, and `>>=`.
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
+    ShlEq,
+    ShrEq,
     Bang,
     AndAnd,
     OrOr,
@@ -145,6 +159,7 @@ impl TokenKind {
         use TokenKind::*;
         match self {
             Ident(name) => format!("identifier `{name}`"),
+            Label(name) => format!("loop label `'{name}`"),
             Int(_) => "integer literal".into(),
             Float(_) => "float literal".into(),
             Char(_) => "character literal".into(),
@@ -221,6 +236,16 @@ impl TokenKind {
             Caret => "^",
             Shl => "<<",
             Shr => ">>",
+            PlusEq => "+=",
+            MinusEq => "-=",
+            StarEq => "*=",
+            SlashEq => "/=",
+            PercentEq => "%=",
+            AmpEq => "&=",
+            PipeEq => "|=",
+            CaretEq => "^=",
+            ShlEq => "<<=",
+            ShrEq => ">>=",
             Bang => "!",
             AndAnd => "&&",
             OrOr => "||",
@@ -230,7 +255,7 @@ impl TokenKind {
             Gt => ">",
             Le => "<=",
             Ge => ">=",
-            Ident(_) | Int(_) | Float(_) | Char(_) | Str(_) | Interp(_) | Reserved(_) | Eof => "",
+            Ident(_) | Label(_) | Int(_) | Float(_) | Char(_) | Str(_) | Interp(_) | Reserved(_) | Eof => "",
         }
     }
 }

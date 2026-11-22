@@ -69,6 +69,12 @@ pub enum Builtin {
     /// `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n` elements, allocated through the
     /// allocator value, which the list then stores.
     ListWithCapacityIn,
+    /// `List<T>.try_with_capacity(n)`: `with_capacity` that returns `Err(AllocError)` instead of panicking when
+    /// the buffer cannot be had (`spec/allocators.md`, AL11).
+    ListTryWithCapacity,
+    /// `List<T, A>.try_with_capacity_in(n, alloc)`: the fallible `with_capacity_in`. On failure the allocator value
+    /// is dropped, as the call took ownership of it.
+    ListTryWithCapacityIn,
     /// `Map<K, V>.new_in(alloc)`.
     MapNewIn,
     /// `Heap.new_in(alloc, value)`: one heap allocation through the allocator value.
@@ -80,6 +86,12 @@ pub enum Builtin {
     RawRealloc,
     /// `__dealloc(ptr, size, align)`: frees a `Global` allocation.
     RawDealloc,
+    /// `__try_alloc(size, align)`: a `Global` allocation that returns a null pointer when it fails instead of
+    /// panicking (`spec/allocators.md`, AL11).
+    RawTryAlloc,
+    /// `__try_realloc(ptr, old_size, new_size, align)`: a `Global` reallocation that returns a null pointer when it
+    /// fails, and then leaves the old block valid (`spec/allocators.md`, AL11).
+    RawTryRealloc,
     /// `CPtr.null()`: a null C pointer, typed by the expected type.
     CPtrNull,
     /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
@@ -92,6 +104,8 @@ pub enum Builtin {
     MapNew,
     /// `Map<K, V>.with_capacity(n)`: an empty map whose slot table holds `n` entries without growing.
     MapWithCapacity,
+    /// `Map<K, V>.try_with_capacity(n)`: the fallible `with_capacity` (`spec/allocators.md`, AL11).
+    MapTryWithCapacity,
     /// `i32.parse(str)` (and every integer type): the number, or an error.
     IntParse(IntTy),
     /// `read_to_string(path)`: the file's bytes as a `String`.
@@ -242,6 +256,8 @@ pub enum Builtin {
     ViewAsText,
     /// `String.with_capacity(n)`: an empty string whose buffer holds `n` bytes without growing.
     StringWithCapacity,
+    /// `String.try_with_capacity(n)`: the fallible `with_capacity` (`spec/allocators.md`, AL11).
+    StringTryWithCapacity,
     /// `__closure_own(f)`: the closure `f`, whose borrow captures the compiler tracks, as an owned `FnOnce` value. It
     /// is only for the standard library's `Scope.spawn`, which guarantees the closure ends before the borrowed
     /// places do (`spec/tasks.md`, TK7).
@@ -567,6 +583,10 @@ pub enum Method {
     ListReserve,
     /// `List<T>.reserve_exact(additional)`: makes room for exactly `additional` more elements.
     ListReserveExact,
+    /// `List<T>.try_reserve(additional): Result<(), AllocError>`: `reserve` that fails instead of panicking.
+    ListTryReserve,
+    /// `List<T>.try_reserve_exact(additional): Result<(), AllocError>`: the fallible `reserve_exact`.
+    ListTryReserveExact,
     /// `List<T>.shrink_to_fit()`: releases the capacity past the length.
     ListShrinkToFit,
     /// `List<T>.swap(a, b)`: exchanges two elements.
@@ -612,6 +632,8 @@ pub enum Method {
     MapRetain,
     /// `Map<K, V>.reserve(additional)`: grows the slot table so it can hold `additional` more entries.
     MapReserve,
+    /// `Map<K, V>.try_reserve(additional): Result<(), AllocError>`: `reserve` that fails instead of panicking.
+    MapTryReserve,
     /// `Map<K, V>.shrink_to_fit()`: shrinks the slot table to the smallest one that holds the entries.
     MapShrinkToFit,
     /// `Map<K, V>.entry(key): MapEntry<K, V>`: a pending lookup that owns `key` and borrows the map exclusively.
@@ -652,6 +674,8 @@ pub enum Method {
     /// `String.reserve(additional)`: grows the buffer to hold `additional` more bytes (`spec/stdlib.md`, "String
     /// capacity and editing").
     StringReserve,
+    /// `String.try_reserve(additional): Result<(), AllocError>`: `reserve` that fails instead of panicking.
+    StringTryReserve,
     /// `String.shrink_to_fit()`: shrinks the buffer to the current length.
     StringShrinkToFit,
     /// `String.insert_str(byte_idx, text)`: inserts text at a character boundary, shifting the tail.
@@ -748,6 +772,7 @@ impl Method {
             Method::PushStr
                 | Method::PushChar
                 | Method::StringReserve
+                | Method::StringTryReserve
                 | Method::StringShrinkToFit
                 | Method::StringInsertStr
                 | Method::StringReplaceRange
@@ -758,6 +783,8 @@ impl Method {
                 | Method::ListSort
                 | Method::ListReserve
                 | Method::ListReserveExact
+                | Method::ListTryReserve
+                | Method::ListTryReserveExact
                 | Method::ListShrinkToFit
                 | Method::ListSwap
                 | Method::ListSwapRemove
@@ -779,6 +806,7 @@ impl Method {
                 | Method::MapRemoveEntry
                 | Method::MapRetain
                 | Method::MapReserve
+                | Method::MapTryReserve
                 | Method::MapShrinkToFit
                 | Method::IterMut
                 | Method::IterNext
@@ -875,7 +903,14 @@ mod tests {
         // `append` takes the other list by ownership; the capacity operations take only a count.
         assert!(Method::ListAppend.owns_argument(1));
         assert!(!Method::ListAppend.owns_argument(0));
-        for method in [Method::ListReserve, Method::ListReserveExact, Method::ListTruncate, Method::ListDrain] {
+        for method in [
+            Method::ListReserve,
+            Method::ListReserveExact,
+            Method::ListTryReserve,
+            Method::ListTryReserveExact,
+            Method::ListTruncate,
+            Method::ListDrain,
+        ] {
             assert!(!method.owns_argument(0), "{method:?}");
             assert!(!method.owns_argument(1), "{method:?}");
         }
@@ -894,6 +929,7 @@ mod tests {
             Method::PushStr,
             Method::PushChar,
             Method::StringReserve,
+            Method::StringTryReserve,
             Method::StringShrinkToFit,
             Method::StringInsertStr,
             Method::StringReplaceRange,
@@ -904,6 +940,8 @@ mod tests {
             Method::ListSort,
             Method::ListReserve,
             Method::ListReserveExact,
+            Method::ListTryReserve,
+            Method::ListTryReserveExact,
             Method::ListShrinkToFit,
             Method::ListSwap,
             Method::ListSwapRemove,
@@ -925,6 +963,7 @@ mod tests {
             Method::MapRemoveEntry,
             Method::MapRetain,
             Method::MapReserve,
+            Method::MapTryReserve,
             Method::MapShrinkToFit,
             Method::IterMut,
         ] {

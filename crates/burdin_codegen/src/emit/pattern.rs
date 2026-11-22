@@ -90,7 +90,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             Pat::Int(n) => {
                 let v = load_int(self)?;
-                let c = v.get_type().const_int(*n as u64, false);
+                let c = super::types::int_const(v.get_type(), *n);
                 self.builder.build_int_compare(IntPredicate::EQ, v, c, "").map_err(llvm_err)
             }
             Pat::Char(ch) => {
@@ -120,8 +120,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 } else {
                     (IntPredicate::UGE, IntPredicate::ULE)
                 };
-                let lo_c = v.get_type().const_int(*lo as u64, false);
-                let hi_c = v.get_type().const_int(*hi as u64, false);
+                let lo_c = super::types::int_const(v.get_type(), *lo);
+                let hi_c = super::types::int_const(v.get_type(), *hi);
                 let a = self.builder.build_int_compare(ge, v, lo_c, "").map_err(llvm_err)?;
                 let b = self.builder.build_int_compare(le, v, hi_c, "").map_err(llvm_err)?;
                 self.builder.build_and(a, b, "").map_err(llvm_err)

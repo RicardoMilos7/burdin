@@ -163,7 +163,7 @@ once), `blocking_outside_extern`, `blocking_variadic` (E0290).
 ```
 struct SocketAddr                            // an IPv4 address and a port; parse, to_text, ip, port, octets
 struct TcpListener { fn bind(str), accept(): (TcpStream, SocketAddr), local_addr(), close() }
-struct TcpStream { fn connect(str), read, write, peer_addr, local_addr, set_read_timeout,
+struct TcpStream { fn connect(str), connect_timeout(str, Duration), read, write, peer_addr, local_addr, set_read_timeout,
                     set_write_timeout, set_nodelay, shutdown_read, shutdown_write, close }
 struct UdpSocket { fn bind(str), recv_from(): (usize, SocketAddr), send_to, local_addr, set_read_timeout, close }
 fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
@@ -178,13 +178,27 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
   system code in a thread-local slot that `__net_last_error()` reports. `std` loops on `-1`: it registers the
   descriptor with the reactor (`readable` or `writable`) and retries when it is woken.
 * `connect` is non-blocking; when it returns in progress, the task waits for writability and then reads `SO_ERROR`
-  (`__net_error`) to learn whether the connection was established or refused.
+  (`__net_error`) to learn whether the connection was established or refused. `connect_timeout(addr, timeout)` puts
+  a deadline on that wait: when it passes the attempt is abandoned, its socket is closed, and the call reports
+  `IoErrorKind.TimedOut`.
 * A read returns `Ok(0)` at the end of the stream (`recv` returning 0), which is what `Read.read_to_end` expects.
 * `TcpStream` implements `Read` and `Write`, so `read_exact`, `read_to_end`, `read_to_string`, `write_all`, `write_text`,
   and `write_line` come from `std.rw`.
 * `set_read_timeout`/`set_write_timeout` take an `Option<Duration>`; `None` waits forever. A timeout is a deadline on
   the reactor's timer list, so a waiting task wakes at the deadline even with no traffic, and the call reports
   `IoError.Net` with `IoErrorKind.TimedOut`. A deadline is computed once per call and shared by its retries.
+* A write to a peer that has closed is an error, never a signal. `send` passes `MSG_NOSIGNAL` on Linux, and a macOS
+  socket sets `SO_NOSIGPIPE` when it is created (an accepted socket inherits it from its listener), so `SIGPIPE` does
+  not end the process. The error is the system's own (`BrokenPipe`, `ConnectionReset`, or `ConnectionAborted`), and a
+  write waiting for room returns it when the peer goes away, or `TimedOut` when its deadline passes first.
+  `s2_io/net_write_peer_closed` covers a peer closed before the write, a peer closed during the wait, and a silent
+  peer under a write timeout (issue #867).
+* A write whose wait woke but made no room pauses for 10 ms (or until its deadline, if sooner) before it waits again.
+  Windows reports a half-closed peer as a hang-up at once, even with a full send buffer (a `WSAPoll` probe confirms it),
+  so without the pause a writer could wake and re-register in a tight loop. Measured runs of the writer did not spin,
+  so the pause is a guard. The pause adds at most 10 ms to a real wake-up. `s2_io/net_write_waits_for_room`
+  covers a write with no timeout that waits on a peer which shuts its write side and reads later: it must finish, with
+  every byte delivered.
 * Dropping a socket closes it; `close(own self)` does the same and reports a failure. `TcpListener`/`TcpStream`/
   `UdpSocket` are `Send` and `Sync` because every field is (SH4): a descriptor is an integer, and the socket's state
   lives in the kernel. A `TcpStream` cannot be `Copy`: closing is a destructor.
@@ -245,6 +259,6 @@ Tests: `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog`.
 | IO2 | `s2_io/timer_parks_task`, `channel_watchdog`, `stress_connections` |
 | IO3 | `s2_io/file_fifo_offload` |
 | IO4 | `s2_io/blocking_parks_worker`, `blocking_two_tasks`, `blocking_outside_extern`, `blocking_variadic` |
-| IO5 | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_refused`, `net_scope_borrow`, `net_udp`, `stress_connections`, `net_borrow_conflict`, `net_view_channel` |
+| IO5 | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_connect_timeout`, `net_tcp_refused`, `net_scope_borrow`, `net_udp`, `stress_connections`, `net_borrow_conflict`, `net_view_channel`, `net_write_peer_closed`, `net_write_waits_for_room` |
 | IO6 | `s2_io/net_lookup_host` |
 | IO7 | `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog` |

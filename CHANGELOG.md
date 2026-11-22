@@ -6,6 +6,212 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
+  integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
+  binary operator's overflow and division rules in both profiles. On a user type or a type parameter, `a op= b` is
+  `a = a op b` through the operator's interface (`Add` for `+=`, and so on), so no new interface is needed; a missing
+  one is E0141. The place is evaluated twice on a user type, a known gap. Rules: `spec/compound-assignment.md` CA1-CA6;
+  tests `tests/compound_assign/`, `tests/fmt/compound_assign`, and the parser unit tests in `burdin_syntax`.
+- Issue #280: declaration generation in comptime. A module-scope `comptime generate { ... }` block is evaluated at
+  compile time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations it
+  holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its
+  names are not hygienic, as derives are, and errors in generated code are reported at the block. Other item kinds,
+  a generator that fails, and `comptime generate` outside module scope are E0242, E0222/E0224/E0225, and E0243.
+  Rules: `spec/generate.md` GN1-GN10; tests `tests/generate/`; decision 34 in `tests/README.md`.
+- Fallible allocation (issue #278; `spec/allocators.md`, AL11). `std` declares `AllocError` with `CapacityOverflow` and
+  `OutOfMemory`. The `try_` forms return `Result<_, AllocError>`: `List<T>.try_with_capacity`, `try_with_capacity_in`,
+  `try_reserve`, and `try_reserve_exact`; `Map<K, V>.try_with_capacity` and `try_reserve`; and `String.try_with_capacity`
+  and `try_reserve`. A failed call leaves the container unchanged. `Global` allocates through `__try_alloc` and
+  `__try_realloc`, and `Arena.allocate` returns null, changing nothing, when the heap refuses. The `Allocator` contract
+  now allows a null result: an infallible container operation whose stored allocator returns null panics with
+  `out of memory`. `Heap`, `Deque`, `Set`, `PriorityHeap`, and `Shared<T>` keep infallible growth. Tests:
+  `tests/m24_stdlib/try_alloc_*`.
+
+- Issue #289: `-O0`, `-O1`, `-O2`, and `-O3` (or `-O <n>`) on `build`, `run`, `test`, `bench`, `check`, `fuzz`, and
+  `debug` replace the profile's `opt-level` for one invocation, and `burdin.toml`'s `[profile.<name>] opt-level` sets
+  the level a profile builds with. The level changes the optimizer only: `overflow-checks` and `debug-assertions`
+  stay as the profile sets them, so `dev -O3` keeps its overflow checks and `--release -O0` still wraps. A level
+  outside 0 to 3, a bare `-O`, and two levels on one command are usage errors. Rules: `spec/profiles.md`, BP4 and BP5;
+  tests `tests/check_profiles.py` (the `-O` IR comparisons, the checks, and the usage errors) and the unit tests in
+  `crates/burdin_driver/src/profile.rs`.
+- Associated types (issue #393; `spec/associated-types.md`, AT1-AT6). An interface may declare `type Name`; a
+  `Type: Interface` block binds each one exactly once with `type Name = Ty`, and a projection reads it back as
+  `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The checker resolves a projection through the bound environment
+  (on a type parameter) or the program's impl blocks (on any other type), normalizes it during substitution with
+  `Self`, and monomorphization replaces it with the binding, so no projection reaches code generation. A missing,
+  unknown, duplicate, or interface-less binding is E0144/E0007; a projection no interface can answer, or that two
+  answer, is E0145; an interface with an associated type is not object-safe, so `any I` on it is E0202. `Iterator<T>`
+  stays generic. Tests: `tests/m21_reflect/associated_types.bd`, `associated_types_errors.bd`, and
+  `associated_type_projection_errors.bd`; the error reference has E0144 and E0145 entries.
+- Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
+  type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
+  each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,
+  checks their bounds, and monomorphizes per instantiation. Two inference gaps are closed: a function-typed
+  parameter with an open return (`f: Fn(i32): U`) now tells the closure its parameter types, and closure capability
+  is checked in CL5's direction so an `Fn` value meets a declared `FnMut`/`FnOnce` and binds `U`. An undetermined
+  const parameter reports E0252 as for a function, and a generic parameter list that repeats a name is E0007 for a
+  function, a method, and an interface method, as it already was for a type and an impl block. Rules:
+  `spec/arguments.md` GM1-GM6; tests `tests/m07_generics/generic_methods`, `generic_methods_errors`, and
+  `duplicate_type_parameter`.
+- Issue #487: `while let pattern = value { ... }`, the `while` form of `if let`. It repeats its body while the value
+  matches, evaluates the value again on every pass, binds the pattern in the body only, and takes no `else`; a label
+  names it, and a `break` with a value is E0003. Rules: `spec/grammar.md` rule 8.11, `spec/memory-rules.md` MV8 and RT5.
+- The `regex` official package (stage 3, issue #264; `spec/regex.md`, RX1-RX14): a Pike VM with leftmost-first matches, named
+  groups, the flags `i m s x`, Unicode and POSIX classes, replacement templates, splitting, and escaping, all over byte offsets.
+  Backreferences, lookaround, atomic groups, and possessive quantifiers are errors, not emulations, so every search runs in
+  time linear in the pattern and the text. `tests/regex/cases.tsv` holds the goldens, `tests/check_regex.py` runs them and a
+  seeded differential against Python's `re`, and `tests/s3_regex/usage` is the conformance case.
+- Issue #878: on Windows the `tls` package uses SChannel, the system's own TLS stack, so Windows needs no OpenSSL
+  install and the driver downloads nothing. Linux and macOS still link the system's OpenSSL 3. The `tls` package has an
+  `openssl` feature and `http` a `tls` feature, both on by default, so `http = { official = true, default-features = false }`
+  builds a program that links no OpenSSL (on Linux and macOS; the feature has no effect on Windows). A dependency may be
+  written `{ official = true, ... }` to take the keys of PKG25 (PKG15). Rules: `spec/tls.md` TLS1, TLS1a, and TLS7,
+  `spec/http-client.md` HC17.
+- Completion after the `.` of a member chain (`resp.body.`, `client.send(req).`) offers the members on that keystroke
+  instead of an empty list, because the receiver's type is read from the declarations along the chain (issue #879;
+  `spec/lsp.md` LS12).
+- The `math` official package (stage 3, issue #268; `spec/math.md`, MA1-MA12). Over `f64`, in pure Burdin: integer number
+  theory on `u64` (`gcd`, `lcm`, `mod_pow`, `is_prime` exact for every `u64`, `factorial`, `binomial`; an overflow is
+  `None`); `lerp`, `approx_eq`, `poly_eval`, `gamma`, `ln_gamma`, and the closure-taking `bisect` and `simpson`;
+  statistics over a slice (`mean`, the variances, `median`, `quantile`, `covariance`, `correlation`, and more); `Vector<N>`
+  with `cross` for `Vector<3>`; and two matrices, `Matrix<R, C>` (fixed size, inline, its product's shape checked by the
+  compiler) and `DynMatrix` (heap-backed), sharing one LU with partial pivoting. A bad argument panics with a message that
+  names the function; an absent answer is `None`. `tests/math/` holds about 2,400 known-answer cases generated with exact
+  arithmetic (`tests/math/regenerate.py`) and run by `tests/check_math.py`; `tests/s3_math/` is the conformance suite,
+  with an end-to-end usage case, a surface case, a compile-fail case for mismatched shapes, and one abort case per panic.
+
+## 0.1.2 — 2026-11-21
+
+- `https` in the `http` package (stage 3, issue #262 phase C, issue #260; `spec/http-client.md`, HC17). A connection is a
+  plain `TcpStream` or a `TlsStream` and everything above it (heads, framing, bodies, redirects, retries, timeouts) is
+  shared; `https` URLs connect to port 443 (or the URL's), verify the server against the system's trust store and the
+  URL's host by default, and fail with the new `HttpError.Tls(TlsError)` (which replaces `HttpError.TlsUnsupported`;
+  `is_tls()` and `is_verification()` classify it) without a retry or a plain-text fallback. `Client.trust(store)`,
+  `tls_config(config)`, and `insecure_skip_verify()` configure it; ALPN offers `http/1.1` only. The pool key is the origin
+  (scheme, host, port), the TLS handshake is bounded by `connect_timeout`, a stale pooled TLS connection is found through
+  the TLS layer, a connection that ends without `close_notify` is a truncated body, and an unread response closes with a
+  `close_notify`. `http` now depends on `tls = true`, so programs that use it link OpenSSL 3. The `unsupported URL scheme`
+  message says `only http and https are supported`. `IoError` and `TlsError` are `Clone`. `tests/s3_http/tls` is the
+  conformance case (an in-process HTTPS server: verification failures, redirects, pooling, truncation, retries, and
+  timeouts); `tests/tls/regenerate.py` backdates the test certificates by a year and writes the copies that test keeps.
+- The `tls` official package (stage 3, issue #262, sub-issues #322, #323, #324; `spec/tls.md`, TLS1-TLS8). TLS 1.2 and
+  1.3 over OpenSSL 3 through the C bridge, with hand-written `extern "C"` bindings and memory BIOs, so no OpenSSL call
+  blocks and the stream parks the task on the reactor. `Certificate`, `PrivateKey`, and `TrustStore` load PEM, DER, and
+  files; `ClientConfig` verifies the chain and the host name by default (system roots, TLS 1.2 minimum, ALPN, a client
+  certificate, and the loudly named `insecure_skip_verify`); `ServerConfig` serves a chain and can require client
+  certificates; `TlsStream` is a `Read` and `Write` over a `TcpStream` with `recv`/`send` (`TlsError` results), clean
+  close versus truncation (`UnexpectedEof`), timeouts, SNI, and the negotiated version. The compiler gains the
+  manifest `[link]` table (`spec/packages.md`, PKG34) so a package declares its native libraries. A server speaks no ALPN
+  and serves one certificate (`spec/tls.md`, TLS8). `tests/s3_tls/` holds the conformance cases (about 130 output
+  lines of verification, version, mutual TLS, truncation, and timeout cases against an in-process server),
+  `tests/tls/regenerate.py` makes the committed test certificates, and `tests/check_tls.py` and `tests/check_link.py`
+  run in CI after the jobs install OpenSSL.
+- `break` with a value (issue #276; `spec/grammar.md`, rule 8.10). A `loop` gives back the value of its `break`, so
+  `let x = loop { break 42 }` binds `i32`; `break` with no value is `break ()`. The loop's type is the expected type
+  when the context gives one, otherwise the type of the first break value, and `!` when nothing breaks out; every
+  break of one loop must agree. A `while` or `for` can end by its condition or its items, so it always gives back
+  `()` and `break 1` there is E0003. A labeled `break` carries its value to the loop it names. The value is computed
+  before the scopes the jump leaves are dropped, and its view origin joins the loop's result, so a view of a
+  loop-body local is still E0123/E0122. `tests/m02_basics/break_value*.bd`,
+  `tests/m05_ownership/break_value_*.bd`, and `tests/m06_conventions/break_value_view.bd` cover it. Also fixes a labeled `for` that lowers to the iteration protocol:
+  the label now goes on the generated `loop` rather than on the generated block, so `break 'a`/`continue 'a` by the
+  name of such a `for` work (issue #275 follow-up).
+- 128-bit integers, `i128` and `u128` (issue #273; `spec/int128.md`, I128-1 to I128-13). Both are 16 bytes with
+  16-byte alignment, lowered to LLVM `i128`. Literals, the full set of operators with debug overflow panics, shifts,
+  `wrapping_`/`checked_`/`saturating_`/`overflowing_` methods, decimal and radix formatting, `parse`, casts (saturating
+  from floats), ordering, ranges and iterators at compile time and at run time, patterns and exhaustiveness, hashing,
+  and `List`/`Map`/`Set` all accept them. Division needs no compiler runtime library (MSVC has none). A 128-bit
+  integer cannot cross the C boundary (E0162), and `burdin bindgen --export` cannot spell one (E0263); `burdin
+  bindgen` skips a C `__int128` function with a note. `tests/int128/` (21 programs) and two checks in
+  `tests/check_bindgen.py` witness the rules.
+- `From` for the scalar pairs `as` converts exactly, and `v.into()`: `T.from(v)` and `as` use the same built-in
+  conversion, and `into` converts to the type the context expects (`spec/stdlib.md`, "Numeric conversions"). `From<S>` is
+  a bound: a generic function with `T: From<S>` can call `T.from(v)` and `v.into()`.
+- `TryFrom` and `try_from` (issue #274; `spec/stdlib.md`, "Conversions"). A `Type: TryFrom<Source>` block gives a
+  type a fallible conversion whose `Result` error type the block chooses, and every integer type has `T.try_from(v)`,
+  which returns `Result<T, TryFromIntError>` and is `Err` when the value is out of range. A type now converts from
+  several source types through `From` as well: a type with two `From` blocks of different sources was rejected with
+  E0007, so an error enum with two `from` variants of different sources did not compile. `tests/m24_stdlib/try_from_*`
+  covers the feature and its diagnostics.
+- Labeled loops (issue #275; `spec/grammar.md`, rule 8.9; `spec/memory-rules.md`, DR6 and CL8). A `while`, `loop`, or
+  `for` may carry a label, `'outer: for ...`, and `break 'outer` and `continue 'outer` leave or go on with it from
+  inside any loop nested in it; an unlabeled `break` or `continue` still names the innermost loop. A label no enclosing
+  loop has is E0002, a label that repeats an enclosing one is E0007, a label on anything but a loop is E0001, and a
+  labeled jump cannot leave a closure (E0002) or a `comptime for` body (E0220). A labeled jump drops the scopes it
+  leaves, innermost first. `tests/m02_basics/labeled_loops*.bd`, `labeled_loop_not_loop.bd`, and
+  `tests/m05_ownership/labeled_loop_moves.bd` cover it.
+
+- Fixed a use-after-free and double drop when a block, `if`, or `match` value was passed as a borrowed argument, used
+  as a method receiver, or bound with `let _`: `f(g()?)` with a `?` temporary was the first report (issue #866;
+  `spec/memory-rules.md`, MV9). The tail of such a value now moves out, so the temporary drops exactly once.
+  `tests/m05_ownership/temporary_question_arg.bd` and `tests/m05_ownership/move_block_value_borrowed.bd` cover it.
+- `burdin build`, `run`, and `check` take `-q`/`--quiet`, which prints only errors, and `-v`/`--verbose`, which prints
+  each phase of the compilation and each codegen unit with its time, in a fixed order (issue #799;
+  `spec/build-tool.md`, BT8). `tests/check_verbosity.py` checks both with the packages under `tests/verbosity/`.
+
+- Type checking continues past a syntax error (issue #786; `spec/check.md`, CK4). A file with a syntax error is not
+  type checked, but every other module is, against the declarations the broken file did read. The follow-on errors of
+  a declaration that did not parse (a use of a function, type, or method the broken file failed to declare) are left
+  out, and a diagnostic in the broken file other than its syntax errors is not reported. `burdin check`, `build`, and
+  the language server share the rule (`crates/burdin_query/src/follow_on.rs`). `tests/check/err_syntax_declared.bd`,
+  `tests/check/packages/syntax_neighbors`, and `tests/check/packages/syntax_no_main` cover it.
+- The `http` official package (stage 3, issue #260, sub-issues #328, #329, #330; `spec/http-client.md`, HC1-HC16).
+  `packages/http` is an HTTP/1.1 client over `std`'s `TcpStream`: URLs and relative references, requests, responses and
+  headers, a body that streams or is read whole (content-length, chunked with trailers, or until close, with a size
+  limit), redirects with a limit, loop detection, and credential stripping across origins, connect, read, and total
+  timeouts, retries of safe requests with backoff, and per-host connection reuse with a staleness probe. `https` URLs
+  parse but failed with `HttpError.TlsUnsupported` (there was no TLS in `std`; `https` works now, see the entry above). `std` gains `TcpStream.connect_timeout`
+  (`spec/io.md`, IO5). `tests/http/` holds golden fixtures for the pure parts, `tests/s3_http/client` is the
+  conformance case against a scripted in-process server, and `tests/check_http.py` runs both and checks
+  `burdin add http` and the pin; CI runs it.
+- The `crypto` official package (stage 3, issue #266; `spec/crypto.md`, CR1-CR14). Pure Burdin, no C library: the
+  hashes SHA-224/256/384/512, SHA3-224/256/384/512, SHAKE128/256, SHA-1, and MD5 (the last two documented as broken),
+  each one-shot and incremental; HMAC, HKDF, and PBKDF2 over any of them; ChaCha20, XChaCha20, Poly1305, and the
+  ChaCha20-Poly1305 and XChaCha20-Poly1305 AEADs; AES-128/192/256 with CTR, CBC (PKCS#7), and GCM; X25519; Ed25519
+  signing and verification; and `constant_time_eq` and `random_bytes` (from the OS entropy source). Failures are
+  `CryptoError` values or `false`, never panics, and the package and its docs say plainly that it is an experiment, not
+  a security claim (AES uses a secret-indexed S-box and is not cache-timing safe). `tests/crypto/` holds about 500
+  known-answer vectors (published RFC/FIPS/NIST vectors, asserted by `tests/crypto/regenerate.py`, plus vectors from
+  OpenSSL) and the error messages; `tests/check_crypto.py` runs them through `tests/crypto/runner` and checks
+  `burdin add crypto` and the official pin; `tests/s3_crypto/usage` is the conformance case, and CI runs the check.
+
+- Cached object files (stage 3, issue #243; `spec/target.md`, TG11-TG16). A cacheable build keeps each codegen unit's
+  object under `target/burdin/<profile>/objects/<kind>/`, keyed by a hash of the unit's module, the compiler, the
+  optimization level, and the target. A later build whose unit is unchanged copies the object instead of optimizing
+  and compiling it, so an edit to one function rebuilds only the units that contain it and a comment edit rebuilds
+  none; only the last build's objects are kept. Code generation stays whole-program and parallel by unit.
+  `tests/check_target.py` and the unit tests in `crates/burdin_codegen/src/cache.rs` cover it.
+- One target directory per workspace (stage 3, issue #240; `spec/workspaces.md`, WS19). The members of a workspace share
+  the root's `target/`: executables, test binaries, the `--failed` record, and the benchmark baselines sit in
+  `target/burdin/<profile>/`, and a member's build-script output and Rust shims move to
+  `target/burdin/<profile>/packages/<name>/` so members never overwrite each other. A standalone package keeps its own
+  `target/`. `tests/check_workspace.py` and a unit test in `workspace.rs` cover it.
+
+- Built-in types implement `Serialize` and `Deserialize` (issue #853; `spec/serialization.md`, SER14). The scalars,
+  `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2-4 parts implement both interfaces without an
+  impl block when their parts do, so a manual impl delegates to them: `String.deserialize(mut d)?` reads a string and
+  `value.serialize(mut s)` writes one. The checker lowers both forms to the standard library's helpers
+  (`std/src/serialize.bd`). `tests/s3_serialize/builtin_impls`, `builtin_methods`, `builtin_map_key`, and
+  `builtin_serialize_mut` cover it.
+
+- Workspaces (stage 3, issues #342 and #343; `spec/workspaces.md`). A `burdin.toml` with a `[workspace]` section makes
+  its directory a workspace root: `members` lists the packages that build together (a path, or a `*` pattern within one
+  component), `exclude` removes some, and `default-members` picks what a command in the root selects. A root with a
+  `[package]` section is a package too; without one it is virtual, and `check`, `lint`, `fix`, and the other
+  single-package commands reject it by naming its members. `build`, `run`, `test`, `bench`, `doc`, and `fmt` take
+  `-p`/`--package`, `--workspace`, and `--exclude`, which select members whatever the target is; outside a workspace
+  they mean what they did. `build` writes one executable per member that has a `src/main.bd`, under that member's
+  `target/burdin/<profile>/bin/`, and skips a library with a note; `run` runs exactly one; `test` and `bench` run the members together with
+  one report and share their `--failed` record and baselines under the root's `target/`; `doc` writes one site per
+  member; `fmt` formats the selected members' directories. One `burdin.lock` sits beside the root manifest and records
+  the whole workspace, whatever the command selects, and `burdin add` in a member edits that member and the root's
+  lockfile. `[workspace.package]` sets `version`, `edition`, `license`, and `authors`, which a member takes with
+  `key.workspace = true` (or `key = { workspace = true }`); a key both set and inherited, a key the root does not set,
+  and any other inherited key are errors, `name` is never inherited, and `burdin fix --migrate` refuses an inherited
+  edition. `[workspace.dependencies]` declares dependencies a member takes with `name.workspace = true`, a path there
+  relative to the root. The language server no longer treats a virtual root as a package. `tests/check_workspace.py`
+  checks all of it in every CI job.
+
 - Dependency tables, features, and platform targets (stage 3, issues #340 and #341; `spec/packages.md`, PKG25-PKG33).
   `[features]` declares named features whose items are other features, `dep:x` for an optional dependency, or
   `x/feature` to forward to a dependency; every optional dependency is an implicit feature of its name, `default` is

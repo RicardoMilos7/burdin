@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `try_from` takes exactly one argument (E0004), for an integer type as for a user type.
+
+fn main() {
+    let x = i8.try_from() //~ E0004
+    let y = u16.try_from(1, 2) //~ E0004
+}

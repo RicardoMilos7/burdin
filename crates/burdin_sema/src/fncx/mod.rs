@@ -7,6 +7,7 @@ mod call;
 mod closure;
 mod comptime;
 mod control;
+pub(crate) mod conversion;
 mod edition;
 mod embed;
 mod expr;
@@ -19,6 +20,7 @@ mod literals;
 mod operators;
 mod pattern;
 mod reflect;
+mod serial;
 mod stmt;
 mod suggest;
 
@@ -37,14 +39,60 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Which kind of loop a [`LoopScope`] is: only a `loop` takes a `break` value, because a `while` or `for` can end
+/// normally and gives back `()`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Loop,
+    While,
+    For,
+}
+
+/// One entry on the stack of open loops while a body is checked. A loop with a label carries that label, which the
+/// labeled `break`s and `continue`s name; the unlabeled ones name the innermost loop. `has_break` records whether a
+/// `break` leaves the loop, and `break_ty` is the type its `break` values must have: `()` for a `while`/`for`, the
+/// expected type of the `loop` when it is known, or `None` until the first break of a `loop` with no expected type.
+struct LoopScope {
+    label: Option<String>,
+    kind: LoopKind,
+    break_ty: Option<Ty>,
+    has_break: bool,
+}
+
+impl LoopScope {
+    /// The entry of a `loop`, which may take a `break` value of `expect`'s type.
+    fn loop_body(label: Option<&ast::Ident>, expect: Option<&Ty>) -> Self {
+        LoopScope {
+            label: label.map(|label| label.name.clone()),
+            kind: LoopKind::Loop,
+            break_ty: expect.cloned(),
+            has_break: false,
+        }
+    }
+
+    /// The entry of a `while`, which always gives back `()`.
+    fn while_body(label: Option<&ast::Ident>) -> Self {
+        LoopScope::unit_loop(label, LoopKind::While)
+    }
+
+    /// The entry of a `for` (or a `comptime for`), which always gives back `()`.
+    fn for_body(label: Option<&ast::Ident>) -> Self {
+        LoopScope::unit_loop(label, LoopKind::For)
+    }
+
+    fn unit_loop(label: Option<&ast::Ident>, kind: LoopKind) -> Self {
+        LoopScope { label: label.map(|label| label.name.clone()), kind, break_ty: Some(Ty::Unit), has_break: false }
+    }
+}
+
 struct FnCx<'a> {
     globals: &'a Globals,
     diags: &'a mut Diagnostics,
     locals: Vec<tir::Local>,
     scopes: Vec<HashMap<String, LocalId>>,
     ret: Ty,
-    /// One entry per enclosing loop: whether it contains a `break`.
-    loops: Vec<bool>,
+    /// The enclosing loops, innermost last (see `LoopScope`).
+    loops: Vec<LoopScope>,
     /// What `Self` means: the type of the enclosing method block.
     self_ty: Option<Ty>,
     /// The `self` parameter of the method being checked.
@@ -156,7 +204,7 @@ impl<'a> FnCx<'a> {
     }
 
     pub(super) fn resolve(&mut self, ty: &ast::Type) -> Ty {
-        self.globals.resolve_type_in(ty, self.self_ty.as_ref(), &self.subst, self.module, self.diags)
+        self.globals.resolve_type_bounded(ty, self.self_ty.as_ref(), &self.subst, &self.bounds, self.module, self.diags)
     }
 
     /// Whether a type parameter's bounds provide `bound`.
@@ -201,7 +249,15 @@ impl<'a> FnCx<'a> {
                 .map(PathTy::Ty);
         }
         let self_ty = self.self_ty.clone();
-        Some(PathTy::Ty(self.globals.generic_type(name, args, self_ty.as_ref(), &self.subst, self.module, self.diags)))
+        Some(PathTy::Ty(self.globals.generic_type(
+            name,
+            args,
+            self_ty.as_ref(),
+            &self.subst,
+            &self.bounds,
+            self.module,
+            self.diags,
+        )))
     }
 
     /// The segments of a plain expression path (`math.add`, `geometry.shapes.Square`), or `None` when the

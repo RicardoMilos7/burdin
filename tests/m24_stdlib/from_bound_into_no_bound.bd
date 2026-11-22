@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `v.into()` into a type parameter needs the `From` bound that names `v`'s type (spec/stdlib.md, FR7) (E0003).
+
+fn convert<T>(v: i32): T {
+    v.into() //~ E0003
+}
+
+fn main() {
+}

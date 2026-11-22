@@ -1,0 +1,16 @@
+//@ run-abort
+//> before
+//@ stderr: DynMatrix.times: the columns of the left side differ from the rows of the right side
+
+// A bad argument is a programming error: the call panics with a message that names the function (spec/math.md, MA9).
+
+use math.DynMatrix
+
+fn main() {
+    println("before")
+    let a = DynMatrix.zeros(2, 3)
+    let b = DynMatrix.zeros(2, 2)
+    let c = a.times(b)
+    println("{}", c.rows())
+    println("after")
+}

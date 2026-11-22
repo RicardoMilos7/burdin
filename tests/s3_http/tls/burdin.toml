@@ -1,0 +1,7 @@
+[package]
+name = "http_tls_conformance"
+version = "0.1.0"
+
+[dependencies]
+http = true
+tls = true

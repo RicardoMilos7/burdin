@@ -36,6 +36,25 @@ const LEVEL_OR: u8 = 4;
 const LEVEL_AND: u8 = 5;
 const LEVEL_CMP: u8 = 6;
 
+/// Whether the token is a compound assignment operator (`+=`, `<<=`, ...), which lays out like `=`
+/// (`spec/compound-assignment.md`, CA1).
+fn is_compound_assign(kind: &TokenKind) -> bool {
+    use TokenKind as T;
+    matches!(
+        kind,
+        T::PlusEq
+            | T::MinusEq
+            | T::StarEq
+            | T::SlashEq
+            | T::PercentEq
+            | T::AmpEq
+            | T::PipeEq
+            | T::CaretEq
+            | T::ShlEq
+            | T::ShrEq
+    )
+}
+
 /// One link of a postfix chain: `.name`, `(args)`, `[index]`, `?`.
 struct Seg {
     doc: D,
@@ -62,7 +81,7 @@ impl Fmt<'_> {
 
     pub fn expr_r(&mut self, r: Restriction) -> R<Ex> {
         let lhs = self.orelse(r)?;
-        if self.at(&TokenKind::Eq) && !self.nl() {
+        if (self.at(&TokenKind::Eq) || is_compound_assign(self.kind())) && !self.nl() {
             let eq = self.tok_doc();
             let rhs = self.expr_r(r)?;
             let doc = concat(vec![lhs.doc, space(), eq, self.after_operator(rhs)]);
@@ -462,10 +481,23 @@ impl Fmt<'_> {
             TokenKind::If => self.if_expr(),
             TokenKind::While => {
                 let kw = self.tok_doc();
+                let mut head = vec![kw, space()];
+                // `while let pattern = value { ... }`: the same head as `if let`.
+                if self.at(&TokenKind::Let) {
+                    head.push(self.tok_doc());
+                    head.push(space());
+                    head.push(self.pattern()?);
+                    head.push(space());
+                    head.push(self.take(&TokenKind::Eq)?);
+                    head.push(space());
+                }
                 let cond = self.expr_r(Restriction::NoStructLiteral)?;
                 let body = self.block_parts()?;
                 let body = self.block_doc(body, false);
-                Ok(Ex { block_like: true, ..Ex::plain(concat(vec![kw, space(), cond.doc, space(), body])) })
+                head.push(cond.doc);
+                head.push(space());
+                head.push(body);
+                Ok(Ex { block_like: true, ..Ex::plain(concat(head)) })
             }
             TokenKind::Loop => {
                 let kw = self.tok_doc();
@@ -497,7 +529,38 @@ impl Fmt<'_> {
                 }
                 Ok(Ex::plain(kw))
             }
-            TokenKind::Break | TokenKind::Continue => Ok(Ex::plain(self.tok_doc())),
+            TokenKind::Break => {
+                let kw = self.tok_doc();
+                let mut parts = vec![kw];
+                // A label on the same line names the loop the jump leaves.
+                if !self.nl() && matches!(self.kind(), TokenKind::Label(_)) {
+                    parts.push(space());
+                    parts.push(self.tok_doc());
+                }
+                // So does a value (`break 42`); `continue` takes none.
+                if !self.nl() && lookahead::can_start_expr(self.kind()) {
+                    let value = self.expr()?;
+                    parts.push(space());
+                    parts.push(value.doc);
+                }
+                Ok(Ex::plain(concat(parts)))
+            }
+            TokenKind::Continue => {
+                let kw = self.tok_doc();
+                // A label on the same line names the loop the jump goes on with.
+                if !self.nl() && matches!(self.kind(), TokenKind::Label(_)) {
+                    let label = self.tok_doc();
+                    return Ok(Ex::plain(concat(vec![kw, space(), label])));
+                }
+                Ok(Ex::plain(kw))
+            }
+            // `'label: loop`, `'label: while`, or `'label: for`: the label, its colon, and the loop.
+            TokenKind::Label(_) => {
+                let label = self.tok_doc();
+                let colon = self.take(&TokenKind::Colon)?;
+                let body = self.primary(r)?;
+                Ok(Ex { block_like: body.block_like, ..Ex::plain(concat(vec![label, colon, space(), body.doc])) })
+            }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
             _ => Err(self.error("expected an expression")),

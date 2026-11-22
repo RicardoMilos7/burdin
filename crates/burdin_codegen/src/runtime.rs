@@ -134,6 +134,14 @@ const IPPROTO_TCP: i32 = 6;
 const TCP_NODELAY: i32 = libc::TCP_NODELAY;
 #[cfg(windows)]
 const TCP_NODELAY: i32 = 0x0001;
+/// `send`'s flag that turns a write to a peer that has gone away into `EPIPE` instead of a `SIGPIPE`, which would end
+/// the process. Linux has the flag (`0x4000`). Windows raises no signal, and macOS takes `SO_NOSIGPIPE` on the socket
+/// instead (`SO_NOSIGPIPE_OPTION`), so the flag is zero there. An accepted socket inherits the option from its
+/// listener on macOS.
+const MSG_NOSIGNAL: i32 = if cfg!(target_os = "linux") { 0x4000 } else { 0 };
+/// `SO_NOSIGPIPE`, the macOS socket option that does what `MSG_NOSIGNAL` does for one socket. The value is defined
+/// everywhere so the same function body can name it; only macOS sets it.
+const SO_NOSIGPIPE_OPTION: i32 = 0x1022;
 /// `ioctlsocket`'s "set non-blocking" request. Only Windows uses it; the value is defined everywhere so the
 /// same function body can name it.
 const FIONBIO: i32 = 0x8004_667e_u32 as i32;
@@ -285,6 +293,14 @@ pub(crate) struct Runtime<'ctx> {
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
     pub i64_to_string: FunctionValue<'ctx>,
+    /// `(v: i128, out: *String)` and `(v: u128, out: *String)`: the decimal text of a 128-bit integer
+    /// (`spec/int128.md`, I128-5).
+    pub i128_to_string: FunctionValue<'ctx>,
+    pub u128_to_string: FunctionValue<'ctx>,
+    /// `(n: i128, d: i128, rem: *i128) -> i128` and the unsigned `(n: u128, d: u128, rem: *u128) -> u128`: the
+    /// quotient, with the remainder stored to `rem`. The divisor is not 0 (the caller checks it).
+    pub sdivrem128: FunctionValue<'ctx>,
+    pub udivrem128: FunctionValue<'ctx>,
     /// `(v: f64, prec: i32, single: bool, out: *String)`: the text of a float, fixed with `prec` digits after the
     /// point, or (`prec < 0`) the shortest scientific text that reads back as the same number.
     pub f64_to_string: FunctionValue<'ctx>,
@@ -304,6 +320,12 @@ pub(crate) struct Runtime<'ctx> {
     pub cstring_clone: FunctionValue<'ctx>,
     /// `(ptr, bytes: usize, site, site_len: usize) -> ptr`: resizes an allocation, panicking when it fails.
     pub realloc: FunctionValue<'ctx>,
+    /// `(bytes: usize, site, site_len: usize) -> ptr`: `alloc`, but a null pointer when it fails instead of a panic
+    /// (`spec/allocators.md`, AL11).
+    pub try_alloc: FunctionValue<'ctx>,
+    /// `(ptr, bytes, site, site_len) -> ptr`: `realloc`, but a null pointer when it fails. The block it was given
+    /// is still valid then (AL11).
+    pub try_realloc: FunctionValue<'ctx>,
     /// `(s: *String, c: i32)`: appends one UTF-8 code point.
     pub string_push_char: FunctionValue<'ctx>,
     /// `(ptr, len, ptr2, len2) -> i1`: byte equality.
@@ -1262,7 +1284,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let h0 = self.base_helpers()?;
         let alloc = self.heap_alloc(&h0)?;
         let free = self.heap_free(&h0)?;
-        let realloc = self.heap_realloc(&h0, alloc, free)?;
+        let realloc = self.heap_realloc(&h0, alloc, free, false)?;
+        let try_alloc = self.heap_alloc_fn("burdin_rt_try_alloc", &h0, true)?;
+        let try_realloc = self.heap_realloc(&h0, try_alloc, free, true)?;
         self.fn_alloc = Some(alloc);
         self.fn_free = Some(free);
         self.fn_realloc = Some(realloc);
@@ -1308,6 +1332,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         wsa.set_linkage(Linkage::Internal);
         let clock = self.clock()?;
         self.net_functions(string_push_str, string_push_char)?;
+        let udivrem128 = self.divrem128(false)?;
+        let sdivrem128 = self.divrem128(true)?;
+        let i128_to_string = self.int128_to_string(&h, udivrem128, true)?;
+        let u128_to_string = self.int128_to_string(&h, udivrem128, false)?;
         Ok(Runtime {
             print: self.print(&h)?,
             flush: self.module.get_function("burdin_rt_flush_locked").expect("the locked flush exists"),
@@ -1329,6 +1357,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             untrack,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
+            i128_to_string,
+            u128_to_string,
+            sdivrem128,
+            udivrem128,
             f64_to_string: self.f64_to_string(&h)?,
             u64_to_string: self.int_to_string(&h, false)?,
             char_to_string: self.char_to_string(&h)?,
@@ -1338,6 +1370,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
             cstring_clone: self.cstring_clone(&h, cstring_from)?,
             realloc,
+            try_alloc,
+            try_realloc,
             string_push_char,
             str_eq: self.str_eq()?,
             str_cmp: self.str_cmp()?,
@@ -1532,6 +1566,30 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         args: &[BasicMetadataValueEnum<'ctx>],
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         Ok(self.b.build_call(f, args, "").map_err(llvm_err)?.try_as_basic_value().basic())
+    }
+
+    /// A call to libc's `malloc` or `realloc`. LLVM knows these as allocators and may delete an allocation whose only
+    /// uses are a null check and a `free`, which folds the null check away: a refused request would then look like a
+    /// success and an infallible allocation would not panic (`spec/allocators.md`, AL11). The result is passed to
+    /// [`Gen::escape_pointer`], so the allocation is kept.
+    fn call_libc_alloc(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let site = self.b.build_call(f, args, "").map_err(llvm_err)?;
+        let p = site.try_as_basic_value().basic().expect("malloc and realloc return a pointer").into_pointer_value();
+        self.escape_pointer(p)?;
+        Ok(Some(p.into()))
+    }
+
+    /// Hands `p` to an empty inline assembly block that may read and write memory. LLVM cannot see what the block does
+    /// with the pointer, so it keeps the code that produced `p` and the null check on it.
+    fn escape_pointer(&self, p: PointerValue<'ctx>) -> GenResult<()> {
+        let ty = self.cx.void_type().fn_type(&[self.ptr_ty.into()], false);
+        let asm = self.cx.create_inline_asm(ty, String::new(), "r,~{memory}".to_string(), true, false, None, false);
+        self.b.build_indirect_call(ty, asm, &[p.into()], "").map_err(llvm_err)?;
+        Ok(())
     }
 
     /// `ptr + offset` bytes.
@@ -3026,10 +3084,15 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
     /// box, or a `String`, or a panic. In a test build the checking allocator records the block and its source
     /// site, so `free` can detect a double free and the test can report a leak (`spec/allocators.md`, AL9).
     fn heap_alloc(&mut self, h: &BaseHelpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        self.heap_alloc_fn("burdin_rt_alloc", h, false)
+    }
+
+    /// The allocation under `name`. A `fallible` one returns null when the system has no block to give, and its
+    /// caller decides; the other one panics with `panic: out of memory`.
+    fn heap_alloc_fn(&mut self, name: &str, h: &BaseHelpers<'ctx>, fallible: bool) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i64());
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
-        let f =
-            self.function("burdin_rt_alloc", ptr_ty.fn_type(&[usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
+        let f = self.function(name, ptr_ty.fn_type(&[usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
         let (size, site, site_len) = (Self::int_param(f, 0), Self::ptr_param(f, 1), Self::int_param(f, 2));
         let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
         let size =
@@ -3047,7 +3110,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let done = self.block(f, "done");
         self.b.build_conditional_branch(wrap, oom, take).map_err(llvm_err)?;
         self.b.position_at_end(take);
-        let p = self.call(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let p = self.call_libc_alloc(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
         let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(null, oom, init).map_err(llvm_err)?;
 
@@ -3075,10 +3138,14 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         };
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(oom);
-        self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
-        self.call(h.print_backtrace, &[])?;
-        self.call(h.die, &[])?;
-        self.b.build_unreachable().map_err(llvm_err)?;
+        if fallible {
+            self.b.build_return(Some(&ptr_ty.const_null())).map_err(llvm_err)?;
+        } else {
+            self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+            self.call(h.print_backtrace, &[])?;
+            self.call(h.die, &[])?;
+            self.b.build_unreachable().map_err(llvm_err)?;
+        }
         self.b.position_at_end(done);
         self.b.build_return(Some(&data)).map_err(llvm_err)?;
         Ok(f)
@@ -3241,20 +3308,22 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `realloc(ptr, size, site, site_len) -> ptr`: resizes an allocation, panicking when it fails. In a test
-    /// build the new block is recorded and the old one released through the checking allocator.
+    /// `realloc(ptr, size, site, site_len) -> ptr`: resizes an allocation, panicking when it fails. A `fallible`
+    /// one (`burdin_rt_try_realloc`, `spec/allocators.md`, AL11) returns null instead, and the block it was given
+    /// stays valid. In a test build the new block is recorded and the old one released through the checking
+    /// allocator; `alloc` is the allocation that makes the new block (the fallible one for `fallible`).
     fn heap_realloc(
         &mut self,
         h: &BaseHelpers<'ctx>,
         alloc: FunctionValue<'ctx>,
         free: FunctionValue<'ctx>,
+        fallible: bool,
     ) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
         let libc_realloc = libc(self.module, "realloc", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
-        let f = self.function(
-            "burdin_rt_realloc",
-            ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false),
-        );
+        let name = if fallible { "burdin_rt_try_realloc" } else { "burdin_rt_realloc" };
+        let f = self
+            .function(name, ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into(), ptr_ty.into(), usize_ty.into()], false));
         let (ptr, size, site, site_len) =
             (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2), Self::int_param(f, 3));
         let zero = self.b.build_int_compare(IntPredicate::EQ, size, usize_ty.const_zero(), "").map_err(llvm_err)?;
@@ -3262,7 +3331,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.b.build_select(zero, usize_ty.const_int(1, false), size, "").map_err(llvm_err)?.into_int_value();
         if !self.checking {
             let p = self
-                .call(libc_realloc, &[ptr.into(), size.into()])?
+                .call_libc_alloc(libc_realloc, &[ptr.into(), size.into()])?
                 .expect("realloc returns a pointer")
                 .into_pointer_value();
             let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
@@ -3270,17 +3339,23 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let done = self.block(f, "done");
             self.b.build_conditional_branch(null, oom, done).map_err(llvm_err)?;
             self.b.position_at_end(oom);
-            self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
-            self.call(h.print_backtrace, &[])?;
-            self.call(h.die, &[])?;
-            self.b.build_unreachable().map_err(llvm_err)?;
+            if fallible {
+                self.b.build_return(Some(&ptr_ty.const_null())).map_err(llvm_err)?;
+            } else {
+                self.write_const(h.write_all, 2, b"panic: out of memory\n")?;
+                self.call(h.print_backtrace, &[])?;
+                self.call(h.die, &[])?;
+                self.b.build_unreachable().map_err(llvm_err)?;
+            }
             self.b.position_at_end(done);
             self.b.build_return(Some(&p)).map_err(llvm_err)?;
             return Ok(f);
         }
-        // The checking path: a fresh tracked block, a copy of the smaller size, and a tracked free of the old.
+        // The checking path: a fresh tracked block, a copy of the smaller size, and a tracked free of the old. A
+        // refused new block leaves the old one valid and not freed.
         let fresh = self.block(f, "fresh");
         let grow = self.block(f, "grow");
+        let copy = self.block(f, "copy");
         let done = self.block(f, "done");
         let null = self.b.build_is_null(ptr, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(null, fresh, grow).map_err(llvm_err)?;
@@ -3302,6 +3377,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .call(alloc, &[size.into(), site.into(), site_len.into()])?
             .expect("alloc returns a pointer")
             .into_pointer_value();
+        // A fallible allocation can refuse the new block; the old one then stays as it was.
+        let refused = if fallible { Some(self.block(f, "refused")) } else { None };
+        match refused {
+            Some(refused) => {
+                let none = self.b.build_is_null(newp2, "").map_err(llvm_err)?;
+                self.b.build_conditional_branch(none, refused, copy).map_err(llvm_err)?;
+            }
+            None => {
+                self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+            }
+        }
+
+        self.b.position_at_end(copy);
         let take = self
             .b
             .build_select(self.b.build_int_compare(IntPredicate::ULT, old, size, "").map_err(llvm_err)?, old, size, "")
@@ -3309,12 +3397,25 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .into_int_value();
         self.b.build_memcpy(newp2, 1, ptr, 1, take).map_err(|e| format!("LLVM builder error: {e}"))?;
         self.call(free, &[ptr.into()])?;
-        let grow_end = self.b.get_insert_block().expect("positioned");
+        let copy_end = self.b.get_insert_block().expect("positioned");
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+
+        let null_ptr = ptr_ty.const_null();
+        let refused_end = match refused {
+            Some(refused) => {
+                self.b.position_at_end(refused);
+                self.b.build_unconditional_branch(done).map_err(llvm_err)?;
+                Some(refused)
+            }
+            None => None,
+        };
 
         self.b.position_at_end(done);
         let out = self.b.build_phi(ptr_ty, "realloc.out").map_err(llvm_err)?;
-        out.add_incoming(&[(&newp, fresh_end), (&newp2, grow_end)]);
+        match refused_end {
+            Some(refused) => out.add_incoming(&[(&newp, fresh_end), (&newp2, copy_end), (&null_ptr, refused)]),
+            None => out.add_incoming(&[(&newp, fresh_end), (&newp2, copy_end)]),
+        }
         self.b.build_return(Some(&out.as_basic_value())).map_err(llvm_err)?;
         Ok(f)
     }
@@ -3505,6 +3606,182 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         }
         let len = self.distance(start, end)?;
         self.call(h.alloc_string, &[Self::ptr_param(f, 1).into(), start.into(), len.into()])?;
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `divrem(n, d, rem) -> quotient` for 128-bit integers (`signed` for `i128`, else `u128`): the quotient, with
+    /// the remainder stored to `rem`. The division is shift and subtract, one quotient bit at a time, so the module
+    /// needs no `__udivti3` from a compiler runtime, which the MSVC link does not have (`spec/int128.md`, I128-3).
+    fn divrem128(&mut self, signed: bool) -> GenResult<FunctionValue<'ctx>> {
+        let unsigned = self.divrem128_unsigned()?;
+        if !signed {
+            return Ok(unsigned);
+        }
+        // The signed routine divides the magnitudes. The quotient is negative when the signs differ, and the
+        // remainder takes the sign of the dividend.
+        let i128_ty = self.cx.i128_type();
+        let f = self.function(
+            "burdin_rt_sdivrem128",
+            i128_ty.fn_type(&[i128_ty.into(), i128_ty.into(), self.ptr_ty.into()], false),
+        );
+        let (n, d, rem) = (Self::int_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let zero = i128_ty.const_zero();
+        let neg_n = self.b.build_int_compare(IntPredicate::SLT, n, zero, "").map_err(llvm_err)?;
+        let neg_d = self.b.build_int_compare(IntPredicate::SLT, d, zero, "").map_err(llvm_err)?;
+        let minus_n = self.b.build_int_sub(zero, n, "").map_err(llvm_err)?;
+        let minus_d = self.b.build_int_sub(zero, d, "").map_err(llvm_err)?;
+        let abs_n = self.b.build_select(neg_n, minus_n, n, "").map_err(llvm_err)?.into_int_value();
+        let abs_d = self.b.build_select(neg_d, minus_d, d, "").map_err(llvm_err)?.into_int_value();
+        let rem_slot = self.b.build_alloca(i128_ty, "rem").map_err(llvm_err)?;
+        let q = self
+            .call(unsigned, &[abs_n.into(), abs_d.into(), rem_slot.into()])?
+            .expect("divrem returns a quotient")
+            .into_int_value();
+        let r = self.b.build_load(i128_ty, rem_slot, "").map_err(llvm_err)?.into_int_value();
+        let signs_differ = self.b.build_xor(neg_n, neg_d, "").map_err(llvm_err)?;
+        let minus_q = self.b.build_int_sub(zero, q, "").map_err(llvm_err)?;
+        let quotient = self.b.build_select(signs_differ, minus_q, q, "").map_err(llvm_err)?;
+        let minus_r = self.b.build_int_sub(zero, r, "").map_err(llvm_err)?;
+        let remainder = self.b.build_select(neg_n, minus_r, r, "").map_err(llvm_err)?;
+        self.b.build_store(rem, remainder).map_err(llvm_err)?;
+        self.b.build_return(Some(&quotient)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// The unsigned routine behind `divrem128`: `udivrem(n, d, rem) -> n / d`, with `n % d` stored to `rem`.
+    fn divrem128_unsigned(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i128_ty = self.cx.i128_type();
+        let i64_ty = self.i64();
+        let i32_ty = self.i32();
+        let f = self.function(
+            "burdin_rt_udivrem128",
+            i128_ty.fn_type(&[i128_ty.into(), i128_ty.into(), self.ptr_ty.into()], false),
+        );
+        let (n, d, rem) = (Self::int_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let small = self.block(f, "small");
+        let wide = self.block(f, "wide");
+        let lp = self.block(f, "bit");
+        let done = self.block(f, "done");
+        // Both operands below 2^64: one 64-bit division does it.
+        let high = self.b.build_or(n, d, "").map_err(llvm_err)?;
+        let high = self.b.build_right_shift(high, i128_ty.const_int(64, false), false, "").map_err(llvm_err)?;
+        let fits = self.b.build_int_compare(IntPredicate::EQ, high, i128_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(fits, small, wide).map_err(llvm_err)?;
+
+        self.b.position_at_end(small);
+        let n64 = self.b.build_int_truncate(n, i64_ty, "").map_err(llvm_err)?;
+        let d64 = self.b.build_int_truncate(d, i64_ty, "").map_err(llvm_err)?;
+        let q64 = self.b.build_int_unsigned_div(n64, d64, "").map_err(llvm_err)?;
+        let r64 = self.b.build_int_unsigned_rem(n64, d64, "").map_err(llvm_err)?;
+        let q_small = self.b.build_int_z_extend(q64, i128_ty, "").map_err(llvm_err)?;
+        let r_small = self.b.build_int_z_extend(r64, i128_ty, "").map_err(llvm_err)?;
+        self.b.build_store(rem, r_small).map_err(llvm_err)?;
+        self.b.build_return(Some(&q_small)).map_err(llvm_err)?;
+
+        // The long division, from the top bit of `n` down. The next bit joins the remainder, and the quotient
+        // gets a 1 bit when the remainder reaches `d`. The shifted remainder can need 129 bits: the bit that the
+        // shift loses is kept as `carry`, and then the wrapped subtraction is still the exact result, because
+        // the true result is below `d`.
+        self.b.position_at_end(wide);
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+        self.b.position_at_end(lp);
+        let left = self.b.build_phi(i32_ty, "left").map_err(llvm_err)?;
+        let q = self.b.build_phi(i128_ty, "q").map_err(llvm_err)?;
+        let r = self.b.build_phi(i128_ty, "r").map_err(llvm_err)?;
+        let left_v = left.as_basic_value().into_int_value();
+        let q_v = q.as_basic_value().into_int_value();
+        let r_v = r.as_basic_value().into_int_value();
+        let bit_index = self.b.build_int_sub(left_v, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let index = self.b.build_int_z_extend(bit_index, i128_ty, "").map_err(llvm_err)?;
+        let shifted_n = self.b.build_right_shift(n, index, false, "").map_err(llvm_err)?;
+        let bit = self.b.build_and(shifted_n, i128_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let carry = self.b.build_right_shift(r_v, i128_ty.const_int(127, false), false, "").map_err(llvm_err)?;
+        let carried = self.b.build_int_compare(IntPredicate::NE, carry, i128_ty.const_zero(), "").map_err(llvm_err)?;
+        let r_shifted = self.b.build_left_shift(r_v, i128_ty.const_int(1, false), "").map_err(llvm_err)?;
+        let r_next = self.b.build_or(r_shifted, bit, "").map_err(llvm_err)?;
+        let reaches = self.b.build_int_compare(IntPredicate::UGE, r_next, d, "").map_err(llvm_err)?;
+        let ge = self.b.build_or(carried, reaches, "").map_err(llvm_err)?;
+        let minus_d = self.b.build_int_sub(r_next, d, "").map_err(llvm_err)?;
+        let r_out = self.b.build_select(ge, minus_d, r_next, "").map_err(llvm_err)?.into_int_value();
+        let bit_value = self.b.build_left_shift(i128_ty.const_int(1, false), index, "").map_err(llvm_err)?;
+        let added = self.b.build_select(ge, bit_value, i128_ty.const_zero(), "").map_err(llvm_err)?.into_int_value();
+        let q_out = self.b.build_or(q_v, added, "").map_err(llvm_err)?;
+        let more = self.b.build_int_compare(IntPredicate::NE, bit_index, i32_ty.const_zero(), "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, lp, done).map_err(llvm_err)?;
+        left.add_incoming(&[(&i32_ty.const_int(128, false), wide), (&bit_index, lp)]);
+        q.add_incoming(&[(&i128_ty.const_zero(), wide), (&q_out, lp)]);
+        r.add_incoming(&[(&i128_ty.const_zero(), wide), (&r_out, lp)]);
+
+        self.b.position_at_end(done);
+        self.b.build_store(rem, r_out).map_err(llvm_err)?;
+        self.b.build_return(Some(&q_out)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `int128_to_string(v, out)` for `i128` (`signed`) or `u128`: the decimal digits, written backwards into a
+    /// 40-byte buffer (39 digits and a sign), then copied into a fresh `String`.
+    fn int128_to_string(
+        &mut self,
+        h: &Helpers<'ctx>,
+        udivrem: FunctionValue<'ctx>,
+        signed: bool,
+    ) -> GenResult<FunctionValue<'ctx>> {
+        let i128_ty = self.cx.i128_type();
+        let void = self.cx.void_type();
+        let name = if signed { "burdin_rt_i128_to_string" } else { "burdin_rt_u128_to_string" };
+        let f = self.function(name, void.fn_type(&[i128_ty.into(), self.ptr_ty.into()], false));
+        let buf = self.buffer(40)?;
+        let end = self.offset(buf, self.usize_ty.const_int(40, false))?;
+        let v = Self::int_param(f, 0);
+        let zero = i128_ty.const_zero();
+        let (neg, magnitude) = if signed {
+            let neg = self.b.build_int_compare(IntPredicate::SLT, v, zero, "").map_err(llvm_err)?;
+            let minus_v = self.b.build_int_sub(zero, v, "").map_err(llvm_err)?;
+            (neg, self.b.build_select(neg, minus_v, v, "").map_err(llvm_err)?.into_int_value())
+        } else {
+            (self.cx.bool_type().const_zero(), v)
+        };
+        let rem_slot = self.b.build_alloca(i128_ty, "rem").map_err(llvm_err)?;
+        let entry = self.b.get_insert_block().expect("positioned");
+        let lp = self.block(f, "digit");
+        let sign_store = self.block(f, "sign");
+        let finish = self.block(f, "finish");
+        let copy = self.block(f, "copy");
+        self.b.build_unconditional_branch(lp).map_err(llvm_err)?;
+
+        self.b.position_at_end(lp);
+        let cur = self.b.build_phi(i128_ty, "cur").map_err(llvm_err)?;
+        let at = self.b.build_phi(self.ptr_ty, "at").map_err(llvm_err)?;
+        let cur_v = cur.as_basic_value().into_int_value();
+        let quotient = self
+            .call(udivrem, &[cur_v.into(), i128_ty.const_int(10, false).into(), rem_slot.into()])?
+            .expect("divrem returns a quotient")
+            .into_int_value();
+        let digit = self.b.build_load(i128_ty, rem_slot, "").map_err(llvm_err)?.into_int_value();
+        let digit = self.b.build_int_truncate(digit, self.i8(), "").map_err(llvm_err)?;
+        let ch = self.b.build_int_add(digit, self.i8().const_int(u64::from(b'0'), false), "").map_err(llvm_err)?;
+        let slot = self.offset(at.as_basic_value().into_pointer_value(), self.usize_ty.const_all_ones())?;
+        self.b.build_store(slot, ch).map_err(llvm_err)?;
+        let more = self.b.build_int_compare(IntPredicate::NE, quotient, zero, "").map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, lp, finish).map_err(llvm_err)?;
+        cur.add_incoming(&[(&magnitude, entry), (&quotient, lp)]);
+        at.add_incoming(&[(&end, entry), (&slot, lp)]);
+
+        // `slot` is the most significant digit. There is room for the sign before it: 39 digits at most.
+        self.b.position_at_end(finish);
+        let sign_at = self.offset(slot, self.usize_ty.const_all_ones())?;
+        self.b.build_conditional_branch(neg, sign_store, copy).map_err(llvm_err)?;
+        self.b.position_at_end(sign_store);
+        self.b.build_store(sign_at, self.i8().const_int(u64::from(b'-'), false)).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let start = self.b.build_phi(self.ptr_ty, "start").map_err(llvm_err)?;
+        start.add_incoming(&[(&slot, finish), (&sign_at, sign_store)]);
+        let start_v = start.as_basic_value().into_pointer_value();
+        let len = self.distance(start_v, end)?;
+        self.call(h.alloc_string, &[Self::ptr_param(f, 1).into(), start_v.into(), len.into()])?;
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(f)
     }
@@ -8236,6 +8513,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     i32_ty.const_int(4, false).into(),
                 ],
             )?;
+            // macOS has no `MSG_NOSIGNAL`: a write to a closed peer must not raise `SIGPIPE` on this socket.
+            if cfg!(target_os = "macos") {
+                self.call(
+                    setsockopt,
+                    &[
+                        fd.into(),
+                        i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
+                        i32_ty.const_int(u64::from(SO_NOSIGPIPE_OPTION as u32), false).into(),
+                        one.into(),
+                        i32_ty.const_int(4, false).into(),
+                    ],
+                )?;
+            }
         }
         self.b.build_return(Some(&fd)).map_err(llvm_err)?;
 
@@ -8358,7 +8648,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.count_ty().fn_type(&[i64_ty.into(), ptr_ty.into(), i64_ty.into(), i32_ty.into()], false),
         );
         let raw = self
-            .call(send, &[fd.into(), data.into(), len.into(), i32_ty.const_zero().into()])?
+            .call(
+                send,
+                &[fd.into(), data.into(), len.into(), i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into()],
+            )?
             .expect("send returns a count")
             .into_int_value();
         let out = self.net_result(raw)?;
@@ -8410,7 +8703,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     fd.into(),
                     data.into(),
                     len.into(),
-                    i32_ty.const_zero().into(),
+                    i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into(),
                     sockaddr.into(),
                     i32_ty.const_int(SOCKADDR_SIZE, false).into(),
                 ],

@@ -66,11 +66,13 @@ pub enum IntTy {
     I16,
     I32,
     I64,
+    I128,
     Isize,
     U8,
     U16,
     U32,
     U64,
+    U128,
     Usize,
 }
 
@@ -79,7 +81,7 @@ pub const POINTER_BITS: u32 = 64;
 
 impl IntTy {
     pub fn signed(self) -> bool {
-        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::Isize)
+        matches!(self, IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64 | IntTy::I128 | IntTy::Isize)
     }
 
     pub fn bits(self) -> u32 {
@@ -88,16 +90,37 @@ impl IntTy {
             IntTy::I16 | IntTy::U16 => 16,
             IntTy::I32 | IntTy::U32 => 32,
             IntTy::I64 | IntTy::U64 => 64,
+            IntTy::I128 | IntTy::U128 => 128,
             IntTy::Isize | IntTy::Usize => POINTER_BITS,
         }
     }
 
+    /// The least value of the type, as a value (`spec/int128.md`, I128-1). `u128` values above `i128::MAX` are
+    /// carried as their two's complement bit pattern, so `u128`'s least value is 0 and its greatest is `-1`.
     pub fn min(self) -> i128 {
-        if self.signed() { -(1i128 << (self.bits() - 1)) } else { 0 }
+        match self {
+            IntTy::I128 => i128::MIN,
+            _ if self.signed() => -(1i128 << (self.bits() - 1)),
+            _ => 0,
+        }
     }
 
+    /// The greatest value of the type. For `u128` this is the bit pattern of `u128::MAX`, which is `-1` (see
+    /// [`IntTy::min`]); callers that compare values of `u128` use [`IntTy::key`].
     pub fn max(self) -> i128 {
-        if self.signed() { (1i128 << (self.bits() - 1)) - 1 } else { (1i128 << self.bits()) - 1 }
+        match self {
+            IntTy::I128 => i128::MAX,
+            IntTy::U128 => -1,
+            _ if self.signed() => (1i128 << (self.bits() - 1)) - 1,
+            _ => (1i128 << self.bits()) - 1,
+        }
+    }
+
+    /// A value's position in the type's order, as an `i128` that sorts the same way. It is the value itself for
+    /// every type except `u128`, whose bit patterns sort wrongly as signed numbers: flipping the sign bit maps
+    /// `0..=u128::MAX` onto `i128::MIN..=i128::MAX` in order. The mapping is its own inverse.
+    pub fn key(self, v: i128) -> i128 {
+        if self == IntTy::U128 { v ^ i128::MIN } else { v }
     }
 
     pub fn name(self) -> &'static str {
@@ -106,11 +129,13 @@ impl IntTy {
             IntTy::I16 => "i16",
             IntTy::I32 => "i32",
             IntTy::I64 => "i64",
+            IntTy::I128 => "i128",
             IntTy::Isize => "isize",
             IntTy::U8 => "u8",
             IntTy::U16 => "u16",
             IntTy::U32 => "u32",
             IntTy::U64 => "u64",
+            IntTy::U128 => "u128",
             IntTy::Usize => "usize",
         }
     }
@@ -282,6 +307,21 @@ pub enum Ty {
     /// A type parameter of a generic function or type, only while its body is checked against its bounds. Such
     /// code never reaches code generation: instantiations replace the parameter with a concrete type.
     Param(Rc<str>),
+    /// An unresolved associated type projection, `Self.Name` or `<T as Interface>.Name`, while a signature or a
+    /// body is checked symbolically (`spec/associated-types.md`, AT3). It is opaque: resolution substitutes the
+    /// implementation's binding as soon as the self type is known, so no projection reaches the typed tree of a
+    /// concrete function or code generation.
+    Projection {
+        self_ty: Box<Ty>,
+        /// The index of the interface in the program's interface table.
+        iface: usize,
+        /// The interface's display name, such as `Container` or `Container<i32>`.
+        iface_name: Rc<str>,
+        /// The interface's type arguments. Used for identity and display only.
+        args: Vec<Ty>,
+        /// The associated type's name.
+        name: Rc<str>,
+    },
     /// A const generic argument: the value `Matrix<f64, 2, 3>` gives `R` and `C`. Values from `1 << 100` up are
     /// expressions over const parameters that sema has not folded yet, only seen while a generic body is checked
     /// (`spec/const-generics.md`). It has no run-time representation.
@@ -403,6 +443,20 @@ impl fmt::Display for Ty {
             Ty::Struct(a) | Ty::Enum(a) => f.write_str(&a.name),
             Ty::Never => f.write_str("!"),
             Ty::Param(name) => f.write_str(name),
+            Ty::Projection { self_ty, iface_name, args, name, .. } => {
+                write!(f, "<{self_ty} as {iface_name}")?;
+                if !args.is_empty() {
+                    f.write_str("<")?;
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{a}")?;
+                    }
+                    f.write_str(">")?;
+                }
+                write!(f, ">.{name}")
+            }
             Ty::Const(v) if *v >= 1 << 100 => f.write_str("_"),
             Ty::Const(v) => write!(f, "{v}"),
             Ty::Error => f.write_str("{error}"),
@@ -428,6 +482,18 @@ mod tests {
         assert_eq!(IntTy::Isize.bits(), POINTER_BITS);
         assert_eq!(IntTy::Usize.bits(), 64);
         assert_eq!(IntTy::Usize.max(), u64::MAX as i128);
+        // The 128-bit types: `u128::MAX` is the bit pattern `-1`, and `key` keeps the order of the values.
+        assert_eq!(IntTy::I128.bits(), 128);
+        assert_eq!(IntTy::I128.min(), i128::MIN);
+        assert_eq!(IntTy::I128.max(), i128::MAX);
+        assert_eq!(IntTy::U128.min(), 0);
+        assert_eq!(IntTy::U128.max(), -1);
+        assert_eq!(IntTy::U128.key(IntTy::U128.min()), i128::MIN);
+        assert_eq!(IntTy::U128.key(IntTy::U128.max()), i128::MAX);
+        assert!(IntTy::U128.key(1) < IntTy::U128.key(-1));
+        assert_eq!(IntTy::U128.key(IntTy::U128.key(12345)), 12345);
+        assert_eq!(IntTy::I128.key(-7), -7);
+        assert_eq!(IntTy::I128.name(), "i128");
         assert!(IntTy::Isize.signed());
         assert!(!IntTy::Usize.signed());
         assert_eq!(IntTy::I32.name(), "i32");
@@ -527,6 +593,26 @@ mod tests {
             (Ty::Enum(AdtRef { id: 0, name: "E".into(), second_class: false }), "E"),
             (Ty::Never, "!"),
             (Ty::Param("T".into()), "T"),
+            (
+                Ty::Projection {
+                    self_ty: Box::new(Ty::Param("T".into())),
+                    iface: 0,
+                    iface_name: "Container".into(),
+                    args: Vec::new(),
+                    name: "Item".into(),
+                },
+                "<T as Container>.Item",
+            ),
+            (
+                Ty::Projection {
+                    self_ty: Box::new(i32_.clone()),
+                    iface: 0,
+                    iface_name: "Container".into(),
+                    args: vec![i32_.clone()],
+                    name: "Item".into(),
+                },
+                "<i32 as Container<i32>>.Item",
+            ),
             (Ty::Error, "{error}"),
         ];
         for (ty, want) in cases {

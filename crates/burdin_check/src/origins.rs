@@ -150,6 +150,17 @@ struct Analyzer<'a> {
     current_block: usize,
     /// The block each local is declared in. Borrowed parameters have none (they live for the whole call).
     local_block: Vec<Option<usize>>,
+    /// The enclosing loops, innermost last: the label a jump may name and the joined origin of their `break`
+    /// values (only a `loop` gives one back).
+    loops: Vec<LoopOrigin>,
+    /// The label of the loop the next loop node is about to be checked with (`'a: loop ...`).
+    pending_label: Option<String>,
+}
+
+/// One open loop for the origin of its `break` values.
+struct LoopOrigin {
+    label: Option<String>,
+    origin: Origin,
 }
 
 impl<'a> Analyzer<'a> {
@@ -172,6 +183,8 @@ impl<'a> Analyzer<'a> {
             block_parent: vec![None],
             current_block: 0,
             local_block,
+            loops: Vec::new(),
+            pending_label: None,
         }
     }
     /// Analyzes the body and returns the union of the origins of all returned expressions.
@@ -338,6 +351,11 @@ impl<'a> Analyzer<'a> {
                 }
             }
         }
+    }
+
+    /// Opens a loop for the origin of its `break` values, with the label the enclosing `Labeled` gave it.
+    fn open_loop(&mut self) {
+        self.loops.push(LoopOrigin { label: self.pending_label.take(), origin: Origin::default() });
     }
 
     /// Analyzes a block in a new scope.
@@ -676,14 +694,27 @@ impl<'a> Analyzer<'a> {
                 }
                 origin
             }
+            K::Labeled(label, inner) => {
+                // The label belongs to the loop node right below it; the loop pushes it and its break values
+                // join into that loop's origin.
+                let saved = self.pending_label.replace(label.clone());
+                let origin = self.expr(inner);
+                self.pending_label = saved;
+                origin
+            }
             K::While(cond, body) => {
+                self.open_loop();
                 self.expr(cond);
                 self.block(body);
+                self.loops.pop();
                 Origin::default()
             }
             K::Loop(body) => {
+                self.open_loop();
                 self.block(body);
-                Origin::default()
+                let origin = self.loops.pop().expect("opened above").origin;
+                // A `loop` gives back the joined origin of its break values; `while` and `for` give `()`.
+                origin
             }
             K::Range { lo, hi, .. } => {
                 let mut origin = self.expr(lo);
@@ -691,6 +722,7 @@ impl<'a> Analyzer<'a> {
                 origin
             }
             K::ForRangeValue { var, range, body } => {
+                self.open_loop();
                 self.expr(range);
                 let id = self.block_parent.len();
                 self.block_parent.push(Some(self.current_block));
@@ -700,9 +732,11 @@ impl<'a> Analyzer<'a> {
                 }
                 self.block_body(body);
                 self.current_block = self.block_parent[id].expect("a nested block has a parent");
+                self.loops.pop();
                 Origin::default()
             }
             K::ForRange { var, lo, hi, body, .. } => {
+                self.open_loop();
                 self.expr(lo);
                 self.expr(hi);
                 let id = self.block_parent.len();
@@ -714,6 +748,7 @@ impl<'a> Analyzer<'a> {
                 }
                 self.block_body(body);
                 self.current_block = self.block_parent[id].expect("a nested block has a parent");
+                self.loops.pop();
                 Origin::default()
             }
             K::ForArray { pat, array, body }
@@ -721,6 +756,7 @@ impl<'a> Analyzer<'a> {
             | K::ForList { pat, list: array, body }
             | K::ForMap { pat, map: array, body }
             | K::ForChars { pat, string: array, body } => {
+                self.open_loop();
                 let origin = self.expr(array);
                 let id = self.block_parent.len();
                 self.block_parent.push(Some(self.current_block));
@@ -730,6 +766,7 @@ impl<'a> Analyzer<'a> {
                 self.bind_pattern(pat, &origin, true, array.span);
                 self.block_body(body);
                 self.current_block = self.block_parent[id].expect("a nested block has a parent");
+                self.loops.pop();
                 Origin::default()
             }
             K::Match(scrutinee, arms) => {
@@ -774,12 +811,35 @@ impl<'a> Analyzer<'a> {
                 self.place_origin(place);
                 Origin::default()
             }
+            K::CompoundAssign(_, place, value) => {
+                // A built-in value holds no view, so nothing is stored; the operands are still walked.
+                self.expr(value);
+                self.place_origin(place);
+                Origin::default()
+            }
             K::Binary(_, l, r) => {
                 self.expr(l);
                 self.expr(r);
                 Origin::temp()
             }
-            K::Break | K::Continue => Origin::default(),
+            K::Break { label, value } => {
+                // A break value leaves the loop with the jump, so its origin joins the loop's result and the
+                // return and binding checks (RT2, RT5) see where it came from.
+                if let Some(value) = value {
+                    let origin = self.expr(value);
+                    let target = match label {
+                        None => self.loops.len().checked_sub(1),
+                        Some(name) => self.loops.iter().rposition(|lp| lp.label.as_deref() == Some(name.as_str())),
+                    };
+                    if let Some(target) = target
+                        && let Some(open) = self.loops.get_mut(target)
+                    {
+                        open.origin.join(&origin);
+                    }
+                }
+                Origin::default()
+            }
+            K::Continue(_) => Origin::default(),
         }
     }
 }

@@ -1,0 +1,170 @@
+//@ run
+//> 340282366920938463463374607431768211455
+//> -170141183460469231731687303715884105728
+//> 1267650600228229401496703205376
+//> 1
+//> true
+//> 340282366920938463463374607431768211455
+//> 170141183460469231731687303715884105727
+//> true
+//> -170141183460469231731687303715884105728
+//> -170141183460469231731687303715884105728
+//> 340282366920938463463374607431768211455
+//> 128
+//> 1
+//> 100
+//> 27
+//> 170141183460469231731687303715884105728
+//> -1
+//> true
+//> true
+//> 0
+//> true
+//> 340282366920938463463374607431768211455
+//> -1
+//> -1
+//> true
+//> true
+//> true
+//> 340282366920938463463374607431768211455
+//> 1
+//> -170141183460469231731687303715884105728
+//> 0
+//> 1
+//> 2
+//> 3
+//> -1
+//> 0
+//> 255
+//> 340282366920938463463374607431768211455
+//> -170141183460469231731687303715884105728
+//> 46
+//> 0x10000000000000000000000000
+//> 1000
+//> -80000000000000000000000000000000
+//> Pair { a: 340282366920938463463374607431768211455, b: -170141183460469231731687303715884105728 }
+//> true
+//> 1
+//> 1267650600228229401496703205376
+//> 340282366920938463463374607431768211455
+//> -170141183460469231731687303715884105728
+//> 5
+//> 1
+//> 2
+//> 3
+//> true
+
+// Wrapping, checked, saturating, and overflowing arithmetic; casts; comparisons; patterns; byte order; formatting;
+// derived ordering; sorting; maps and sets (spec/int128.md, I128-4, I128-7, I128-8, I128-10, I128-11).
+
+const BIG: u128 = 340282366920938463463374607431768211455
+const SMALL: i128 = -170141183460469231731687303715884105728
+const SHIFTED: u128 = 1 << 100
+
+struct Pair: Clone, Copy, Eq, Ord, Debug, Hash {
+    a: u128,
+    b: i128,
+}
+
+fn classify(x: u128): i32 {
+    match x {
+        0 => 0,
+        1..=9 => 1,
+        340282366920938463463374607431768211455 => 2,
+        _ => 3,
+    }
+}
+
+fn sign(x: i128): i32 {
+    match x {
+        -170141183460469231731687303715884105728..=-1 => -1,
+        0 => 0,
+        _ => 1,
+    }
+}
+
+fn main() {
+    println(BIG.to_string())
+    println(SMALL.to_string())
+    println(SHIFTED.to_string())
+    // wrapping, checked, overflowing, saturating
+    println(BIG.wrapping_add(2).to_string())
+    println(BIG.checked_add(1).is_none().to_string())
+    println(BIG.checked_add(0).unwrap().to_string())
+    println(SMALL.wrapping_sub(1).to_string())
+    println(SMALL.checked_neg().is_none().to_string())
+    println(SMALL.wrapping_neg().to_string())
+    println(SMALL.saturating_sub(1).to_string())
+    println(BIG.saturating_add(5).to_string())
+    println(BIG.count_ones().to_string())
+    println(SMALL.count_ones().to_string())
+    println(SHIFTED.trailing_zeros().to_string())
+    println(SHIFTED.leading_zeros().to_string())
+    // casts
+    println((SMALL as u128).to_string())
+    println((BIG as i128).to_string())
+    println(((BIG as f64) > 3.4e38).to_string())
+    println((1e40 as u128 == BIG).to_string())
+    println((-5.0 as u128).to_string())
+    println((-1e40 as i128 == SMALL).to_string())
+    let k: i8 = -1
+    println((k as u128).to_string())
+    println((k as i128).to_string())
+    println(((BIG >> 1) as i64).to_string())
+    // comparisons across the top bit
+    let lo: u128 = 1
+    println((lo < BIG).to_string())
+    println((BIG > lo).to_string())
+    println((SMALL < 0).to_string())
+    println((BIG.max(lo)).to_string())
+    println((lo.min(BIG)).to_string())
+    println((SMALL.min(0)).to_string())
+    println(classify(0).to_string())
+    println(classify(5).to_string())
+    println(classify(BIG).to_string())
+    println(classify(SHIFTED).to_string())
+    println(sign(SMALL).to_string())
+    println(sign(0).to_string())
+    // bytes
+    let bytes = BIG.to_le_bytes()
+    println(bytes[0].to_string())
+    println(u128.from_le_bytes(bytes).to_string())
+    println(i128.from_be_bytes(SMALL.to_be_bytes()).to_string())
+    // radix and width
+    println(format("{:>45}|", SHIFTED).len().to_string())
+    println(format("{:#x}", SHIFTED))
+    println(format("{:b}", lo << 3))
+    println(SMALL.to_string_radix(16))
+    println(format("{:?}", Pair { a: BIG, b: SMALL }))
+    // ordering of structs and lists
+    let p = Pair { a: BIG, b: 0 }
+    let q = Pair { a: 1, b: SMALL }
+    println((p > q).to_string())
+    let mut xs: List<u128> = List<u128>.new()
+    xs.push(BIG)
+    xs.push(1)
+    xs.push(SHIFTED)
+    xs.sort()
+    for x in xs {
+        println(x.to_string())
+    }
+    let mut ys: List<i128> = List<i128>.new()
+    ys.push(5)
+    ys.push(SMALL)
+    ys.push(BIG as i128)
+    ys.sort()
+    println(ys[0].to_string())
+    println(ys[2].to_string())
+    // maps and hashing
+    let mut m: Map<u128, i32> = Map<u128, i32>.new()
+    m.insert(BIG, 1)
+    m.insert(SHIFTED, 2)
+    m.insert(1, 3)
+    println(m.get(BIG).unwrap().to_string())
+    println(m.get(SHIFTED).unwrap().to_string())
+    println(m.len().to_string())
+    let mut s: Set<i128> = Set<i128>.new()
+    s.insert(SMALL)
+    s.insert(0 - 1)
+    println(s.contains(SMALL).to_string())
+}

@@ -286,7 +286,7 @@ impl<'a> Fmt<'a> {
         Ok(Closer { lead, text, trail })
     }
 
-    /// Consumes the `>` that closes generic arguments, splitting `>>` and `>=`.
+    /// Consumes the `>` that closes generic arguments, splitting `>>`, `>=`, and `>>=`.
     pub fn closing_angle(&mut self) -> R<Parts> {
         let index = self.pos;
         let rest = match self.kind() {
@@ -296,6 +296,7 @@ impl<'a> Fmt<'a> {
             }
             TokenKind::Shr => TokenKind::Gt,
             TokenKind::Ge => TokenKind::Eq,
+            TokenKind::ShrEq => TokenKind::Ge,
             _ => return Err(self.error("expected `>`")),
         };
         // The first `>` closes the list and takes the comments in front; the rest stays for the caller.

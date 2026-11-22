@@ -1,0 +1,157 @@
+// Character classes (spec/regex.md, RX5 and RX6): the items a bracket class or a class escape is made of, the POSIX
+// sets, and the case-insensitive test. A class is a list of items; a character is in it when one item holds it.
+
+/// One member of a class. A predicate item's `bool` is whether it is negated (`\D`, `\P{L}`).
+enum ClassItem: Copy, Clone, Eq, Debug {
+    Range(u32, u32)
+    Digit(bool)
+    Word(bool)
+    Space(bool)
+    Letter(bool)
+    Upper(bool)
+    Lower(bool)
+    Number(bool)
+}
+
+/// The word characters: a letter or a digit (as `std` classifies them), or `_`.
+fn is_word_char(c: char): bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn item_matches(item: ClassItem, c: char): bool {
+    match item {
+        ClassItem.Range(lo, hi) => {
+            let code = c as u32
+            code >= lo && code <= hi
+        }
+        ClassItem.Digit(negated) => (c >= '0' && c <= '9') != negated,
+        ClassItem.Word(negated) => is_word_char(c) != negated,
+        ClassItem.Space(negated) => c.is_whitespace() != negated,
+        ClassItem.Letter(negated) => c.is_alphabetic() != negated,
+        ClassItem.Upper(negated) => c.is_uppercase() != negated,
+        ClassItem.Lower(negated) => c.is_lowercase() != negated,
+        ClassItem.Number(negated) => c.is_numeric() != negated,
+    }
+}
+
+/// A bracket class, or a single escape such as `\d`. `fold` makes the test case-insensitive.
+struct CharClass {
+    items: List<ClassItem>,
+    negated: bool,
+    fold: bool,
+}
+
+CharClass {
+    fn new(negated: bool, fold: bool): CharClass {
+        CharClass { items: List<ClassItem>.new(), negated: negated, fold: fold }
+    }
+
+    /// Whether some item holds `c`, without the negation or the case folding.
+    fn any_item(self, c: char): bool {
+        let mut i: usize = 0
+        while i < self.items.len() {
+            if item_matches(self.items[i], c) {
+                return true
+            }
+            i = i + 1
+        }
+        false
+    }
+
+    /// Whether the class holds `c`. With `fold`, the lower and upper forms of `c` count as `c`, and a negated class
+    /// excludes them too.
+    fn matches(self, c: char): bool {
+        let mut hit = self.any_item(c)
+        if !hit && self.fold {
+            hit = self.any_item(c.to_lowercase()) || self.any_item(c.to_uppercase())
+        }
+        hit != self.negated
+    }
+}
+
+/// The ranges of a POSIX class, sorted and without overlap, so a negated one is their complement.
+fn posix_ranges(name: str): Option<List<(u32, u32)>> {
+    let mut r = List<(u32, u32)>.new()
+    match name {
+        "alpha" => {
+            r.push((65, 90))
+            r.push((97, 122))
+        }
+        "digit" => r.push((48, 57)),
+        "alnum" => {
+            r.push((48, 57))
+            r.push((65, 90))
+            r.push((97, 122))
+        }
+        "upper" => r.push((65, 90)),
+        "lower" => r.push((97, 122)),
+        "space" => {
+            r.push((9, 13))
+            r.push((32, 32))
+        }
+        "blank" => {
+            r.push((9, 9))
+            r.push((32, 32))
+        }
+        "punct" => {
+            r.push((33, 47))
+            r.push((58, 64))
+            r.push((91, 96))
+            r.push((123, 126))
+        }
+        "xdigit" => {
+            r.push((48, 57))
+            r.push((65, 70))
+            r.push((97, 102))
+        }
+        "word" => {
+            r.push((48, 57))
+            r.push((65, 90))
+            r.push((95, 95))
+            r.push((97, 122))
+        }
+        "cntrl" => {
+            r.push((0, 31))
+            r.push((127, 127))
+        }
+        "print" => r.push((32, 126)),
+        "graph" => r.push((33, 126)),
+        "ascii" => r.push((0, 127)),
+        _ => return None,
+    }
+    Some(r)
+}
+
+/// The items of the POSIX class `name` (`[:alpha:]`), or of its complement when `negated` (`[:^alpha:]`). None when
+/// the name is not a POSIX class.
+fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
+    let ranges = match posix_ranges(name) {
+        Some(r) => r,
+        None => return None,
+    }
+    let mut items = List<ClassItem>.new()
+    if !negated {
+        let mut i: usize = 0
+        while i < ranges.len() {
+            let (lo, hi) = ranges[i]
+            items.push(ClassItem.Range(lo, hi))
+            i = i + 1
+        }
+        return Some(items)
+    }
+    // The complement over every code point: the gaps between the sorted ranges, and the tail after the last one.
+    let mut next: u32 = 0
+    let mut i: usize = 0
+    while i < ranges.len() {
+        let (lo, hi) = ranges[i]
+        if lo > next {
+            items.push(ClassItem.Range(next, lo - 1))
+        }
+        next = hi + 1
+        i = i + 1
+    }
+    if next <= 1114111 {
+        items.push(ClassItem.Range(next, 1114111))
+    }
+    Some(items)
+}

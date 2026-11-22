@@ -15,12 +15,14 @@ pub mod api;
 pub mod cfg;
 mod db;
 pub mod features;
+mod follow_on;
 pub mod lockfile;
 mod memory;
 pub mod navigate;
 pub mod package;
 mod reparse;
 mod stats;
+pub mod workspace;
 
 pub use api::{
     Convention, DefinitionKind, ExprFacts, FunctionOwnership, ItemSignature, LocalUse, Location, Member, MoveEvent,

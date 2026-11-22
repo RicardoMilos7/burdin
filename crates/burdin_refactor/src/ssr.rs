@@ -176,10 +176,21 @@ impl Pattern {
             (ExprKind::Char(a), ExprKind::Char(b)) => a == b,
             (ExprKind::Str(a), ExprKind::Str(b)) => a == b,
             (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
-            (ExprKind::Unit, ExprKind::Unit)
-            | (ExprKind::SelfValue, ExprKind::SelfValue)
-            | (ExprKind::Break, ExprKind::Break)
-            | (ExprKind::Continue, ExprKind::Continue) => true,
+            (ExprKind::Unit, ExprKind::Unit) | (ExprKind::SelfValue, ExprKind::SelfValue) => true,
+            (ExprKind::Break { label: la, value: va }, ExprKind::Break { label: lb, value: vb }) => {
+                la.as_ref().map(|l| &l.name) == lb.as_ref().map(|l| &l.name)
+                    && match (va, vb) {
+                        (Some(a), Some(b)) => self.matches(cx, a, b, bound),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (ExprKind::Continue(a), ExprKind::Continue(b)) => {
+                a.as_ref().map(|l| &l.name) == b.as_ref().map(|l| &l.name)
+            }
+            (ExprKind::Labeled { label: a, body: x }, ExprKind::Labeled { label: b, body: y }) => {
+                a.name == b.name && self.matches(cx, x, y, bound)
+            }
             (ExprKind::Name { name: a, args: at }, ExprKind::Name { name: b, args: bt }) => {
                 at.is_empty() && bt.is_empty() && cx.name_matches(&a.name, &b.name, e)
             }
@@ -191,6 +202,11 @@ impl Pattern {
                 a == b && self.matches(cx, x, p, bound) && self.matches(cx, y, q, bound)
             }
             (ExprKind::Unary(a, x), ExprKind::Unary(b, y)) => a == b && self.matches(cx, x, y, bound),
+            (ExprKind::CompoundAssign(a, ..), ExprKind::CompoundAssign(b, ..)) if a == b => {
+                let (x, y) = two(&pattern.kind);
+                let (p, q) = two(&e.kind);
+                self.matches(cx, x, p, bound) && self.matches(cx, y, q, bound)
+            }
             (ExprKind::Assign(..), ExprKind::Assign(..))
             | (ExprKind::OrElse(..), ExprKind::OrElse(..))
             | (ExprKind::Index(..), ExprKind::Index(..))
@@ -241,6 +257,10 @@ impl Pattern {
             (ExprKind::While { cond: c1, body: b1 }, ExprKind::While { cond: c2, body: b2 }) => {
                 self.matches(cx, c1, c2, bound) && self.blocks(cx, b1, b2, bound)
             }
+            (
+                ExprKind::WhileLet { scrutinee: s1, body: b1, .. },
+                ExprKind::WhileLet { scrutinee: s2, body: b2, .. },
+            ) => self.matches(cx, s1, s2, bound) && self.blocks(cx, b1, b2, bound),
             (ExprKind::Loop(b1), ExprKind::Loop(b2)) => self.blocks(cx, b1, b2, bound),
             (ExprKind::For { iter: i1, body: b1, .. }, ExprKind::For { iter: i2, body: b2, .. }) => {
                 self.matches(cx, i1, i2, bound) && self.blocks(cx, b1, b2, bound)
@@ -313,6 +333,7 @@ fn dotted(e: &Expr) -> Option<String> {
 fn two(kind: &ExprKind) -> (&Expr, &Expr) {
     match kind {
         ExprKind::Assign(a, b)
+        | ExprKind::CompoundAssign(_, a, b)
         | ExprKind::OrElse(a, b)
         | ExprKind::Index(a, b)
         | ExprKind::ArrayRepeat(a, b)

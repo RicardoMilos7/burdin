@@ -1,0 +1,90 @@
+//@ run
+//> == https basics (HC17)
+//> get: 200 OK content-type=text/plain x-one=["1", "2"] fields=4 body="hello" url=https://127.0.0.1:PORT/greet?name=burdin
+//> get sent: GET /greet?name=burdin HTTP/1.1 host=127.0.0.1:PORT agent=burdin-http/0.1 length=-
+//> get handshakes: ["#1 TLSv1.3 sni=-"]
+//> post: 201 Created body="stored"
+//> post sent: POST /items HTTP/1.1 length=11 type=text/plain token=abc body="name=burdin"
+//> server name: 200 body="named"
+//> server name: handshakes ["#1 TLSv1.3 sni=localhost"] host=localhost:PORT
+//> length: 100000 bytes, as sent: true
+//> chunked: body="hello world" trailer=11
+//> close-delimited: 200 body="until the end"
+//> close-delimited: idle 0
+//> bodies: accepted 1
+//> keep-alive: 200 body="one"
+//> idle after the first: 1
+//> keep-alive: 200 body="two"
+//> keep-alive: 200 body="three"
+//> idle after three: 1
+//> idle after close_idle: 0
+//> keep-alive: accepted 1 and 1 handshakes
+//> keep-alive: the server saw an orderly close: true
+//> keep-alive: the server saw a cut: false
+//> unread: 200 closed without reading the body
+//> unread: the server saw an orderly close: true
+//> https: 200 body="secure one"
+//> http: 200 body="bare"
+//> idle: 2
+//> https again: 200 body="secure two"
+//> pool keys: accepted 2
+//> pool keys: #1 GET /a | #2 GET /b | #1 GET /c
+//> pool keys: handshakes ["#1 TLSv1.3 sni=-"]
+//> == redirects (HC12, HC17)
+//> http -> https: 200 "landed" redirects=1 url=https://127.0.0.1:PORT/secure
+//> http -> https got: GET /secure HTTP/1.1 authorization=- cookie=- x-custom=kept
+//> https -> https (same origin): 200 "second" redirects=1 url=https://127.0.0.1:PORT/second
+//> https -> https (same origin): accepted 1 second got GET /second HTTP/1.1 authorization=Bearer secret
+//> https -> https (other origin): 200 "there" redirects=1 url=https://127.0.0.1:PORT/there
+//> https -> https (other origin) got: GET /there HTTP/1.1 authorization=- x-custom=kept
+//> https -> http: 200 "plain" redirects=1 url=http://127.0.0.1:PORT/downgraded
+//> https -> http got: GET /downgraded HTTP/1.1 authorization=- cookie=- x-custom=kept
+//> https -> http, not followed: 302 location=http://127.0.0.1:1/downgraded
+//> == verification and configuration (HC17)
+//> unknown authority: https connection failed: certificate verification failed: unable to get local issuer certificate tls=true verification=true kind=CertificateInvalid
+//> unknown authority: accepted 1, handshakes failed 1, requests seen 0, completed 0
+//> wrong host: https connection failed: the certificate does not match the host: 127.0.0.1 tls=true verification=true kind=HostnameMismatch
+//> wrong host: accepted 1, handshakes failed 1, requests seen 0, completed 0
+//> expired: https connection failed: certificate verification failed: certificate has expired tls=true verification=true kind=CertificateInvalid
+//> expired: accepted 1, handshakes failed 1, requests seen 0, completed 0
+//> self-signed: https connection failed: certificate verification failed: self-signed certificate tls=true verification=true kind=CertificateInvalid
+//> self-signed: accepted 1, handshakes failed 1, requests seen 0, completed 0
+//> skip verify, unknown authority: 200 body="served anyway"
+//> skip verify, wrong host: 200 body="served anyway"
+//> skip verify, expired: 200 body="served anyway"
+//> skip verify, self-signed: 200 body="served anyway"
+//> trust: 200 body="served"
+//> tls_config: 200 body="served"
+//> other store: tls=true verification=true kind=CertificateInvalid
+//> clone: 200 body="served"
+//> clone with its own store: tls=true verification=true kind=CertificateInvalid
+//> original after the clone changed: 200 body="served"
+//> configuration: accepted 6
+//> == truncation, retries, and timeouts (HC13, HC14, HC17)
+//> truncated length: the connection closed before the whole body arrived
+//> truncated chunked: the connection closed before the whole body arrived
+//> truncated close-delimited: the connection closed before the whole body arrived
+//> close-delimited with close_notify: 200 body="until the end"
+//> truncated: accepted 4
+//> get retried: 200 body="second try"
+//> get retried: accepted 2 and saw 2 requests, 2 handshakes
+//> post not retried: the connection closed before a response was received
+//> post not retried: accepted 1
+//> stale (close_notify): 200 body="one"
+//> stale (close_notify): 200 body="two"
+//> stale (close_notify): accepted 2 and 2 handshakes
+//> stale (cut): 200 body="one"
+//> stale (cut): 200 body="two"
+//> stale (cut): accepted 2 and 2 handshakes
+//> handshake timeout: timed out while TLS handshake with 127.0.0.1:PORT is_timeout=true connection_failure=true tls=false
+//> handshake timeout: ended well before the read timeout: true
+//> plain port: tls=true verification=false kind=Handshake
+//> silent close: tls=true verification=false kind=UnexpectedEof
+//> plain port: accepted 2, requests seen 0
+
+use https
+
+fn main() {
+    task.set_workers(4)
+    https.run()
+}

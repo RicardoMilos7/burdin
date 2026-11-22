@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// A value of a type the block does not convert from is E0003 at the argument: `Percent` converts from `i32` only.
+
+struct Percent {
+    value: u8
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, i32> {
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+fn main() {
+    let x = Percent.try_from(true) //~ E0003
+}

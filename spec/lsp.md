@@ -141,8 +141,15 @@ and a definition lands there. The same declarations answer hover, signature help
 compiled, and its names cannot be renamed. A keyword, literal, or comment
 has no definition (`null`). When the latest analysis has no program (the file does not parse), the last analysis that
 had one answers, with positions mapped through the edit.
+`self` and `Self` name the type of the method (or impl block) around them, so `self.name` and `self.area(` resolve to
+that type's member whether or not the body parses. A value of a generic parameter's type (`s: S` with `S: Serializer`)
+resolves its methods through the bounds (the interface's declaration), and a parameter's declared type answers when no
+analysis does. The callee of a call still being written resolves like a complete one: a method named with missing
+arguments, with an unclosed list, or without its call (`a.append()`, `a.append(`, `sq.grow`), and a function named the
+same way (issue #851).
 Tests: `definition_finds_functions_types_methods_fields_locals_and_modules`,
-`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`.
+`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
+`definition_resolves_the_callee_of_an_incomplete_call`.
 
 **LS9. References, highlights, rename.** `textDocument/references` lists every identifier, in every file of every
 package that contains the declaration, that resolves to the same declaration; `includeDeclaration` adds the
@@ -172,8 +179,16 @@ b: i32): i32`), followed by its doc comment; a local or parameter shows `let nam
 type. A local or parameter also lists the ownership events the memory checks recorded for it (`spec/check.md`, CK10),
 one line each: `moved to \`t\``, `copied`, `borrowed (read)`, `borrowed (mut)`, `dropped`, `cloned`, with the
 `line:column` of the event. The events come from `Analysis::ownership_events`; the server computes nothing. The
-answer's range is the name.
-Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
+answer's range is the name. A callee still being written shows its signature too: a method named without its call
+(`sq.area`), a call whose arguments are not closed (`sq.area(`), and a module's function named alone. A member of a
+value resolves through the local declared last before it when the typed tree no longer holds the value (the method
+named without a call drops its receiver from the tree, and unclosed text has no tree); a hover never shows `{error}`
+for those. A member named after a dot is never resolved through a local or parameter that shares its name when it is
+itself a member: in `resp.body.read_to_string()`, `body` is the field, and a `let body` on the same line is not its
+declaration. The method's signature shows in a nested chain as it does on a one-level call.
+Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_incomplete_call` (`fixtures/incomplete`),
+`hover_on_a_method_of_a_nested_receiver_shows_its_signature` (`fixtures/nested`),
+`the_ownership_lens_shows_moves_and_drops_and_a_hover_lists_them`
 (`ownership-hover.json`), `positions_count_utf16_units_or_utf8_bytes_as_negotiated`.
 
 **LS12. Completion.** What is offered depends on where the cursor is (issues #819-#824):
@@ -189,6 +204,14 @@ Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_
   literal is a value of its type: `"..."` a `str` (an interpolated one a `String`), an integer literal an `i32`, a float
   literal an `f64`, a character a `char`, and `true`/`false` a `bool`. On a line that does not parse yet, the type
   comes from the last analysis with a program and the receiver's declaration (or its spelling, for a literal).
+  `self.` in a method offers the members of the type the method belongs to (its impl block's type, or an extension
+  method's receiver), whether or not the body parses. A value whose type is a generic parameter (`s: S`) offers the
+  methods of the parameter's bounds (`S: Serializer` gives `serialize_bool`, `serialize_unit`, ...), read from the
+  function's `<...>` list or `where` clause; with no analysis to answer, the parameter's declared type says what it is
+  (issue #852). A member chain whose last member is still missing (`resp.body.`, `client.send(req).`) is typed from the
+  declarations when the typed tree does not hold its receiver (the analysis of the text with the dangling dot types it
+  `{error}`): the root's type (a local, a parameter, or `self`), then each field's declared type and each method's
+  return type, so the list appears on the keystroke that types the dot (issue #879).
 - **In a `use` path**, the modules and the public items below the path written so far, from the package and its
   dependencies (a dependency's `priv` items are left out).
 - **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a
@@ -202,6 +225,16 @@ Tests: `hover_shows_signatures_types_and_docs`, `the_ownership_lens_shows_moves_
   and nothing else. Directly after the type's name nothing is offered (the list's `:`, `repr(C)`, or the body comes
   next), and a `:` inside the generic parameters starts a bound, not the list. The name a `struct`, `enum`,
   `interface`, or `fn` is introducing gets no completion.
+- **Where a type is written** (issue #849): after the `:` of a `let` or `const` annotation, of a function parameter
+  (`fn f(a: `), of a return type (`fn f(): `), and of a struct's or enum's field, the types the name can stand for: the
+  file's structs, enums, and type aliases, the imported and the prelude's, the built-in types, and the generic
+  parameters of the function around the cursor (in its body; a signature still being written has none yet). Values,
+  functions, and interfaces are not offered.
+- **Where an interface is written** (issue #849): after `any` or `impl` (`x: any `), in a generic bound (`fn f<T: `),
+  in a `where` clause (`where T: `), after a `+` that continues a bound list, in an interface's `requires` list, and
+  after an impl block's `Type: ` written at the start of a top-level line (`Point: `, which names the interface the
+  impl implements). The interfaces the name can stand for are offered (the file's, imported, and the prelude's), and
+  nothing else. A module stays offered in both, as a path prefix.
 - **Anywhere else**, the locals and parameters declared before the cursor (nearest first), the file's items, the
   imported names, the built-in functions, the prelude (every public item of every standard-library module, and the
   one-segment standard modules by name, such as `env`, `fs`, and `mem`), the built-in types, and the keywords.
@@ -234,10 +267,12 @@ takes parameters, with the `editor.action.triggerParameterHints` command so sign
 it takes none (a method's `self` does not count). The bare name is inserted when the next character is already `(`, in
 a `use` path, and when the client has no `snippetSupport`. `.` triggers completion.
 Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
-`members_after_a_type_name_a_literal_and_a_primitive`,
-`builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
+`members_after_a_type_name_a_literal_and_a_primitive`, `member_chains_offer_their_members_on_the_dot_that_starts_them`
+(`fixtures/nested`), `builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
 `self_is_offered_only_as_the_first_parameter_of_a_method`, `snippets_follow_the_position_and_the_client`,
-`completing_a_function_inserts_the_call`, `derives_and_the_derivable_interfaces`; the `builtins.rs` unit test.
+`completing_a_function_inserts_the_call`, `derives_and_the_derivable_interfaces`,
+`self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`; the
+`builtins.rs` unit test.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
 with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is

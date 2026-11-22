@@ -12,7 +12,7 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 1. `tests/README.md` — the test format, the error-code registry, and the 16 settled decisions.
 2. `spec/grammar.md`, `spec/memory-rules.md` — syntax and the exact memory semantics.
 3. `spec/stdlib.md`, `spec/derives.md`, `spec/format.md`, `spec/errors.md`, `spec/arguments.md`,
-   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md`, `spec/toml.md`, `spec/toolchain.md`, `spec/watch.md`, `spec/build-tool.md`, `spec/profiles.md` — the standard-library
+   `spec/extensions.md`, `spec/operators.md`, `spec/allocators.md`, `spec/tasks.md`, `spec/channels.md`, `spec/shared.md`, `spec/build-scripts.md`, `spec/bindgen.md`, `spec/rust-interop.md`, `spec/diagnostics.md`, `spec/query.md`, `spec/lsp.md`, `spec/packages.md`, `spec/serialization.md`, `spec/toml.md`, `spec/crypto.md`, `spec/tls.md`, `spec/toolchain.md`, `spec/watch.md`, `spec/build-tool.md`, `spec/profiles.md` — the standard-library
    surface, the exact derived members, formatting, error handling, default and named arguments, extension methods,
    operator overloading with `Index`/`IndexMut`, allocators and `Shared<T>`, tasks and threads, channels and `select`, shared state (`Send`, `Sync`, atomics, locks), `build.bd`, `burdin bindgen`, the JSON and SARIF diagnostic formats, the query-based compiler library, the language server, dependencies with `burdin.lock` and `burdin add`, and the toolchain manager.
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
@@ -59,6 +59,10 @@ python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: p
 python3 tests/check_features.py          check dependency tables, features, and targets: selection, unification, dev-dependencies, `cfg` tables, the generated `features` module, and the potential-graph lockfile
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
+python3 tests/check_crypto.py            check the `crypto` official package: known-answer vectors, error messages, `burdin add crypto`, and its official pin
+python3 tests/check_math.py              check the `math` official package: known-answer fixtures (tests/math), the runner, `burdin add math`, and its official pin
+python3 tests/check_link.py              check the `[link]` manifest table: a dependency's libraries reach the link by name, target tables, and the manifest errors
+python3 tests/check_tls.py               check the `tls` official package: test certificates, conformance program, declared OpenSSL symbols, README examples, `burdin add tls`, and its pin
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
@@ -68,6 +72,7 @@ python3 tests/check_repl.py              check `burdin repl`: the golden session
 python3 tests/check_scripts.py           check single-file scripts: the shebang, the inline manifest, and the cache
 python3 tests/check_watch.py             check `burdin watch`: reruns on edits, ignored files, `run` restarts, changed-modules-first `test`
 python3 tests/check_cli.py               check the command surface: every command's help, the golden command list, unknown commands
+python3 tests/check_verbosity.py          check `-q`/`--quiet` and `-v`/`--verbose` on build, run, and check: the golden quiet errors, the phases and codegen units
 python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
@@ -174,7 +179,7 @@ docs/                     the user-facing error-code reference (checked against 
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
                           and known limitations, and the version/release policy (docs/releasing.md)
 install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA-256 verification
-.github/workflows/        ci.yml (pull requests and main; each OS split into four parallel parts) and release.yml (tag, nightly schedule, or manual dry run)
+.github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),

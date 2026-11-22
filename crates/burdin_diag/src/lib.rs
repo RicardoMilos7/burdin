@@ -208,6 +208,12 @@ impl Code {
     pub const ORPHAN_RULE: Code = Code("E0142");
     /// Two implementations of one interface for one type that apply to a common instance.
     pub const OVERLAPPING_IMPLS: Code = Code("E0143");
+    /// An interface implementation's associated type bindings are wrong: a missing binding, a name the interface
+    /// does not declare, or a binding in a block with no interface.
+    pub const ASSOC_BINDING: Code = Code("E0144");
+    /// An associated type projection that cannot be resolved: no interface declares that associated type, or more
+    /// than one does and none is named.
+    pub const ASSOC_PROJECTION: Code = Code("E0145");
     pub const PRIVATE_ITEM: Code = Code("E0150");
     pub const QUESTION_OUTSIDE: Code = Code("E0160");
     pub const UNSAFE_REQUIRED: Code = Code("E0161");
@@ -301,6 +307,11 @@ impl Code {
     /// An invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected
     /// `[u8; N]` is not the file's length (CT15).
     pub const INVALID_EMBED: Code = Code("E0241");
+    /// The text a `comptime generate` block produced is not valid: it does not parse, or it declares an item other
+    /// than a `struct`, `enum`, or `fn` (`spec/generate.md`, GN4).
+    pub const INVALID_GENERATED: Code = Code("E0242");
+    /// `comptime generate` outside module scope (GN2).
+    pub const GENERATE_SCOPE: Code = Code("E0243");
     /// An invalid const generic declaration or argument: a type where a value is expected or the other way round,
     /// a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit the
     /// parameter's type (`spec/const-generics.md`, CG1-CG2).
@@ -692,6 +703,16 @@ impl Diagnostics {
     /// Whether at least one warning is waiting to be printed. Compilation continues.
     pub fn has_warnings(&self) -> bool {
         self.list.iter().any(|d| d.severity == Severity::Warning)
+    }
+
+    /// The number of errors in the list, whatever an error limit shows.
+    pub fn error_count(&self) -> usize {
+        self.list.iter().filter(|d| d.severity == Severity::Error).count()
+    }
+
+    /// The number of warnings in the list, whatever an error limit shows.
+    pub fn warning_count(&self) -> usize {
+        self.list.iter().filter(|d| d.severity == Severity::Warning).count()
     }
 
     pub fn len(&self) -> usize {

@@ -397,10 +397,14 @@ impl An<'_> {
             | K::Str(_)
             | K::Const(_)
             | K::None
-            | K::Break
-            | K::Continue
+            | K::Continue(_)
             | K::Return(None)
             | K::LayoutOf { .. } => {}
+            K::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.expr(value, false);
+                }
+            }
             K::Local(id) => {
                 self.use_local(*id);
             }
@@ -484,7 +488,7 @@ impl An<'_> {
                     self.mark_mut(place);
                 }
             }
-            K::Assign(target, value) => {
+            K::Assign(target, value) | K::CompoundAssign(_, target, value) => {
                 self.expr(value, false);
                 self.expr(target, false);
                 self.mark_mut(target);
@@ -514,6 +518,7 @@ impl An<'_> {
                     self.expr(o, false);
                 }
             }
+            K::Labeled(_, inner) => self.expr(inner, receiver_of_eager),
             K::While(c, body) => {
                 // The condition is evaluated on every iteration, so it belongs to the loop.
                 let start = self.bump();
@@ -677,6 +682,8 @@ fn invariant(e: &Expr, allocates: &mut bool) -> bool {
                 | Builtin::HeapNew
                 | Builtin::ListWithCapacity
                 | Builtin::MapWithCapacity
+                | Builtin::ListTryWithCapacity
+                | Builtin::MapTryWithCapacity
                 | Builtin::CStringFrom => Some(true),
                 _ => None,
             };

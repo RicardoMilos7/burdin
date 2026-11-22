@@ -137,7 +137,10 @@ pub fn type_name(ty: &Type) -> Option<&str> {
 
 /// Whether a name is one the compiler invented or one that is never documented (`main`, `__x`).
 pub fn is_internal_name(name: &str) -> bool {
-    name == "main" || name.starts_with("__") || name.starts_with("comptime assert")
+    name == "main"
+        || name.starts_with("__")
+        || name.starts_with("comptime assert")
+        || name.starts_with("comptime generate")
 }
 
 /// The public items of one file, in source order: the functions, types, interfaces, aliases, constants, and derives

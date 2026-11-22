@@ -1,0 +1,14 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: attempt to add with overflow
+//> before
+
+// An `u128` addition past `u128::MAX` panics in a debug build, after the output before it (spec/int128.md, I128-4).
+
+fn main() {
+    let top: u128 = 340282366920938463463374607431768211455
+    println("before")
+    let one: u128 = 1
+    println((top + one).to_string())
+    println("after")
+}

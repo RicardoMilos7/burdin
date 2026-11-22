@@ -36,31 +36,32 @@ COMMANDS = [
     "build",
     "run",
     "test",
-    "bench",
-    "fuzz",
     "check",
-    "fmt",
-    "lint",
-    "fix",
-    "ssr",
-    "refactor",
-    "doc",
     "new",
     "init",
     "add",
-    "clean",
-    "package",
-    "vendor",
-    "repl",
+    "fmt",
+    "lint",
+    "fix",
+    "doc",
+    "bench",
     "watch",
+    "repl",
     "debug",
+    "fuzz",
+    "clean",
+    "ssr",
+    "refactor",
     "expand",
     "asm",
     "bloat",
     "explain",
+    "package",
+    "vendor",
     "bindgen",
     "lsp",
     "dap",
+    "commands",
     "help",
 ]
 
@@ -86,35 +87,36 @@ ROOT_HELP = """The Burdin compiler and toolchain
 Usage: burdin [OPTIONS] [COMMAND]
 
 Commands:
-  build     Compile a file or package into an executable
-  run       Build a program and run it
-  test      Build and run the `test` blocks of a file or package
-  bench     Build and measure the `bench` blocks of a file or package
-  fuzz      Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it
-  check     Type-check a program and run the memory checks, without generating code
-  fmt       Format source files
-  lint      Report common mistakes and style issues, and fix them
-  fix       Apply the machine-applicable fixes of the compiler and the linter across a package
-  ssr       Structural search and replace: match a pattern written as Burdin code across a package
-  refactor  Refactor code: extract, inline, change a signature, or move an item
-  doc       Generate the documentation of a package
-  new       Create a new package
-  init      Create a package in an existing directory
-  add       Add a path, git, or official dependency to burdin.toml
-  clean     Remove a package's build output, and with --cache its caches
-  package   Write the package's reproducible archive to target/package
-  vendor    Copy the git dependencies into vendor/ for offline builds
-  repl      Start an interactive session
-  watch     Rerun check, build, test, or run whenever the sources change
-  debug     Build a program with debug info and start a debugger on it
-  expand    Print the source after comptime, derives, default arguments, and operators
-  asm       Print the assembly or LLVM IR of one function, with its source
-  bloat     Report the size of each function, module, package, and generic in the executable
-  explain   Print the reference entry for an error code
-  bindgen   Generate bindings: a module from a C header or Rust crate, or a C header for a package
+  build     Compile a file or package into an executable [alias: b]
+  run       Build a program and run it [alias: r]
+  test      Build and run the `test` blocks of a file or package [alias: t]
+  check     Type-check a program and run the memory checks, without generating code [alias: c]
+  new       Create a new package [alias: n]
+  init      Create a package in an existing directory [alias: i]
+  add       Add a path, git, or official dependency to burdin.toml [alias: a]
+  fmt       Format source files [alias: f]
+  lint      Report common mistakes and style issues, and fix them [alias: l]
+  fix       Apply the machine-applicable fixes of the compiler and the linter across a package [alias: fx]
+  doc       Generate the documentation of a package [alias: d]
+  bench     Build and measure the `bench` blocks of a file or package [alias: bn]
+  watch     Rerun check, build, test, or run whenever the sources change [alias: w]
+  repl      Start an interactive session [alias: rp]
+  debug     Build a program with debug info and start a debugger on it [alias: dbg]
+  fuzz      Build a `fuzz` target with libFuzzer and AddressSanitizer, and fuzz it [alias: fz]
+  clean     Remove a package's build output, and with --cache its caches [alias: cl]
+  ssr       Structural search and replace: match a pattern written as Burdin code across a package [alias: s]
+  refactor  Refactor code: extract, inline, change a signature, or move an item [alias: rf]
+  expand    Print the source after comptime, derives, default arguments, and operators [alias: xp]
+  asm       Print the assembly or LLVM IR of one function, with its source [alias: as]
+  bloat     Report the size of each function, module, package, and generic in the executable [alias: bl]
+  explain   Print the reference entry for an error code [alias: ex]
+  package   Write the package's reproducible archive to target/package [alias: pk]
+  vendor    Copy the git dependencies into vendor/ for offline builds [alias: v]
+  bindgen   Generate bindings: a module from a C header or Rust crate, or a C header for a package [alias: bg]
   lsp       Run the language server on standard input and output
   dap       Run the debug adapter on standard input and output
-  help      Print the help of a command
+  commands  List every command, alphabetically
+  help      Print the help of a command [alias: h]
 
 Options:
   -V, --version  Print version info and exit
@@ -178,13 +180,38 @@ for command in COMMANDS:
         f"`burdin {command} --help` does not name the command's usage:\n{stdout(page)[:300]}",
     )
 
+# `burdin commands` lists every command alphabetically, with its summary.
+listing = run("commands")
+check(listing.returncode == 0, f"`burdin commands` failed: {stderr(listing)[:300]}")
+names = [line.split()[0] for line in stdout(listing).splitlines() if line.strip()]
+check(names == sorted(COMMANDS), f"`burdin commands` lists {names}, expected {sorted(COMMANDS)}")
+check(run("commands", "extra").returncode == 2, "`burdin commands extra` is not a usage error")
+
 # A representative page is golden, so a change to the page format is visible.
 new_help = run("help", "new")
 check(stdout(new_help) == NEW_HELP, f"`burdin help new` is not the golden page:\n{stdout(new_help)}")
 
-# BT4: help after `--` belongs to the program, not to `burdin`.
-program_help = run("run", "--", "--help")
-check(program_help.returncode != 0, "`burdin run -- --help` ran without a target")
+# BT4: help after `--` belongs to the program, not to `burdin`. Left without a target, `run` works on the working
+# directory; checked in an empty directory, where there is no package to run.
+with harness.temporary_dir("burdin-cli-empty-") as empty:
+    program_help = run("run", "--", "--help", cwd=empty)
+    check(program_help.returncode != 0, "`burdin run -- --help` ran without a package")
+    check(
+        "usage: burdin run" not in stdout(program_help).lower(),
+        f"`burdin run -- --help` printed burdin's help:\n{stdout(program_help)[:300]}",
+    )
+
+# BT4: the short aliases name their commands: `burdin <alias> --help` is the command's page, and `burdin h <command>`
+# is `burdin help <command>`.
+for alias, command in [("b", "build"), ("r", "run"), ("t", "test"), ("c", "check")]:
+    page = run(alias, "--help")
+    check(page.returncode == 0, f"`burdin {alias} --help` failed: {stderr(page)[:300]}")
+    check(
+        f"usage: burdin {command}" in stdout(page).lower(),
+        f"`burdin {alias} --help` is not `{command}`'s page:\n{stdout(page)[:300]}",
+    )
+help_by_alias = run("h", "run")
+check(help_by_alias.returncode == 0 and stdout(help_by_alias) == stdout(run("help", "run")), "`burdin h run` is not `burdin help run`")
 
 # BT4: an unknown command is a usage error with a suggestion for a near miss.
 unknown = run("burld")
@@ -248,12 +275,41 @@ with harness.temporary_dir("burdin-cli-") as work:
     check(tested.returncode == 0, f"`burdin test app` failed: {stderr(tested)[:400]}")
     check("1 passed" in stdout(tested), f"`burdin test app` printed {stdout(tested)!r}")
 
-    # BT4: an unknown option and a missing target are usage errors.
+    # BT4: an unknown option is a usage error.
     bogus = run("build", "app", "--bogus", cwd=work)
     check(bogus.returncode == 2, f"`burdin build app --bogus` exited {bogus.returncode}, expected 2")
     check("unknown option" in stderr(bogus), f"`--bogus` is not reported:\n{stderr(bogus)[:300]}")
-    missing = run("build", cwd=work)
-    check(missing.returncode == 2, f"`burdin build` exited {missing.returncode}, expected 2")
+    # BT4: without a target the working directory is the target; outside a package there is nothing to build.
+    outside = run("build", cwd=work)
+    check(outside.returncode != 0, f"`burdin build` outside a package exited {outside.returncode}")
+
+    # BT4: the target may be left out. In the package directory, `build`, `run`, and `test` need no argument, and
+    # `test` takes a filter in its place.
+    here = work / ("here.exe" if harness.PLATFORM == "windows" else "here")
+    built_here = run("build", "-o", str(here), cwd=app)
+    check(built_here.returncode == 0 and here.is_file(), f"`burdin build` in the package failed: {stderr(built_here)[:400]}")
+    ran_here = run("run", cwd=app)
+    check(
+        ran_here.returncode == 0 and stdout(ran_here).strip() == "42",
+        f"`burdin run` in the package printed {stdout(ran_here)!r}: {stderr(ran_here)[:300]}",
+    )
+    tested_here = run("test", "doubles", cwd=app)
+    check(
+        tested_here.returncode == 0 and "1 passed" in stdout(tested_here),
+        f"`burdin test doubles` in the package printed {stdout(tested_here)!r}: {stderr(tested_here)[:300]}",
+    )
+
+    # BT4: the aliases run the same commands.
+    aliased_run = run("r", "app", cwd=work)
+    check(
+        aliased_run.returncode == 0 and stdout(aliased_run).strip() == "42",
+        f"`burdin r app` printed {stdout(aliased_run)!r}: {stderr(aliased_run)[:300]}",
+    )
+    aliased_test = run("t", cwd=app)
+    check(
+        aliased_test.returncode == 0 and "1 passed" in stdout(aliased_test),
+        f"`burdin t` in the package printed {stdout(aliased_test)!r}: {stderr(aliased_test)[:300]}",
+    )
 
 print(f"check_cli: {checks} checks")
 sys.exit(harness.report_problems(problems))

@@ -15,20 +15,23 @@ use burdin_tir::{self as tir, AssertKind, Builtin, FloatTy, FuncId, IntTy, Metho
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
-            return self.method_call(recv, name, args, span, expect);
+            return self.method_call(recv, name, &[], args, span, expect);
         }
-        // `x.downcast<T>()`: type arguments on a member name (AN6).
+        // `x.m<T>(...)`, `module.f<T>(...)`, `Type.f<T>(...)`, and `x.downcast<T>()`: type arguments on a member name
+        // (`spec/arguments.md`, TA1; AN6 for `is` and `downcast`).
         if let ast::ExprKind::TypeArgs(base, type_args) = &callee.kind {
             if let ast::ExprKind::Field(recv, name) = &base.kind {
-                let recv = self.expr(recv, None);
-                return self.member_type_args_call(recv, name, type_args, args, span);
+                return self.method_call(recv, name, type_args, args, span, expect);
             }
-            self.diags.error(
-                Code::UNKNOWN_NAME,
-                span,
-                "type arguments on a call are only allowed on the methods `is` and `downcast`",
-            );
+            self.diags.error(Code::UNKNOWN_NAME, span, "type arguments on a call are only allowed on a named member");
             return self.args_then_error(args, span);
+        }
+        // A local is a closure value, not a generic function, so type arguments on its name are refused.
+        if let ast::ExprKind::Name { name: id, args: type_args } = &callee.kind
+            && !type_args.is_empty()
+            && self.lookup(&id.name).is_some()
+        {
+            return self.reject_type_args(&id.name, type_args, args, span);
         }
         // A bare name that resolves to a local, or to a variable captured from the enclosing function, is a
         // closure call; only a name with no value meaning is looked up as a function.
@@ -52,9 +55,12 @@ impl FnCx<'_> {
             }
         }
         let (params, ret, target) = match &callee.kind {
-            ast::ExprKind::Name { name: id, args: type_args }
-                if type_args.is_empty() && self.lookup(&id.name).is_none() =>
-            {
+            ast::ExprKind::Name { name: id, args: type_args } if self.lookup(&id.name).is_none() => {
+                // Only a generic function takes type arguments on its name (`f<T>(...)`).
+                let generic = matches!(self.globals.value(self.module, &id.name), Some(Global::Generic(_)));
+                if !type_args.is_empty() && !generic {
+                    return self.reject_type_args(&id.name, type_args, args, span);
+                }
                 match self.globals.value(self.module, &id.name) {
                     Some(Global::Func(f)) => {
                         if let Some(rejected) = self.edition_gate(f, id, args, span) {
@@ -77,6 +83,9 @@ impl FnCx<'_> {
                         (sig.params.clone(), sig.ret.clone(), Callee::User(f))
                     }
                     Some(Global::Generic(g)) => {
+                        if !type_args.is_empty() && self.compiler_generic(g) {
+                            return self.reject_type_args(&id.name, type_args, args, span);
+                        }
                         if self.globals.test_assert_eq == Some(g) {
                             return self.test_assert_eq_call(g, id, args, span, expect);
                         }
@@ -98,7 +107,7 @@ impl FnCx<'_> {
                         if args.len() > 2 && self.globals.assert_ne_gen == Some(g) {
                             return self.assert_compare_msg_call(args, span, AssertKind::Ne);
                         }
-                        return self.generic_call(g, id, args, span, expect);
+                        return self.generic_call(g, id, args, type_args, span, expect);
                     }
                     Some(Global::Extern(e)) => return self.extern_call(id, e, args, span),
                     Some(Global::Const(_)) => {
@@ -1043,14 +1052,93 @@ impl FnCx<'_> {
         error_expr(span)
     }
 
+    /// Reports explicit type arguments on a callee that takes none, then checks the arguments as usual (TA5).
+    pub(super) fn reject_type_args(
+        &mut self,
+        what: &str,
+        explicit: &[ast::Type],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        if let (Some(first), Some(last)) = (explicit.first(), explicit.last()) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                first.span.to(last.span),
+                format!("`{what}` takes no type arguments"),
+            );
+        }
+        self.args_then_error(args, span)
+    }
+
+    /// Whether `name` on a value of type `ty` (through references) is a method of the program that has type
+    /// parameters of its own. Only such a method, or an associated function like it, takes explicit type arguments.
+    pub(super) fn user_generic_method(&self, ty: &Ty, name: &str) -> bool {
+        let mut base = ty;
+        while let Ty::Ref { inner, .. } = base {
+            base = &**inner;
+        }
+        adt_key(base)
+            .and_then(|key| self.globals.methods.get(&(key, name.to_string())))
+            .is_some_and(|f| self.globals.method_templates.contains_key(f))
+    }
+
+    /// Whether `ty` (through references) is an `any` value or the dynamic `Error`, whose `is` and `downcast` take a
+    /// type argument (AN6).
+    pub(super) fn is_any_like(&self, ty: &Ty) -> bool {
+        let mut base = ty;
+        while let Ty::Ref { inner, .. } = base {
+            base = &**inner;
+        }
+        matches!(base, Ty::Any(_)) || self.globals.is_error_ty(base)
+    }
+
+    /// Whether `g` is one of the compiler-known assertion functions, which take no type arguments.
+    fn compiler_generic(&self, g: usize) -> bool {
+        [
+            self.globals.test_assert_eq,
+            self.globals.test_assert_ne,
+            self.globals.snapshot_gen,
+            self.globals.debug_assert_eq_gen,
+            self.globals.debug_assert_ne_gen,
+            self.globals.assert_eq_gen,
+            self.globals.assert_ne_gen,
+        ]
+        .contains(&Some(g))
+    }
+
+    /// Whether `recv.name` is one of the built-in static functions written as a path through a name that is not a
+    /// type (`env.args`, `process.exit`, `Heap.new`, `CPtr.null`, ...). They take no type arguments.
+    fn builtin_static(&self, recv: &ast::Expr, name: &ast::Ident) -> bool {
+        let ast::ExprKind::Name { name: id, args } = &recv.kind else { return false };
+        args.is_empty()
+            && self.lookup(&id.name).is_none()
+            && self.globals.value(self.module, &id.name).is_none()
+            && matches!(
+                (id.name.as_str(), name.name.as_str()),
+                ("env", "args")
+                    | ("process", "exit")
+                    | ("Heap", "new")
+                    | ("Heap", "new_in")
+                    | ("Shared", "new")
+                    | ("List", "from")
+                    | ("Map", "from")
+                    | ("CPtr", "null")
+            )
+    }
+
     pub(super) fn method_call(
         &mut self,
         recv: &ast::Expr,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        // The built-in static functions below take no type arguments (TA5).
+        if !explicit.is_empty() && self.builtin_static(recv, name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
+        }
         // The prelude modules: `env.args()` and `process.exit`.
         if let ast::ExprKind::Name { name: id, args: type_args } = &recv.kind
             && type_args.is_empty()
@@ -1107,20 +1195,24 @@ impl FnCx<'_> {
         }
         if let Some(path) = self.type_path(recv) {
             return match path {
-                PathTy::Ty(ty) => self.assoc_call(&ty, name, args, span, expect),
-                PathTy::Template(g) => self.assoc_call_template(g, name, args, expect, span),
+                PathTy::Ty(ty) => self.assoc_call(&ty, name, explicit, args, span, expect),
+                PathTy::Template(g) => self.assoc_call_template(g, name, explicit, args, expect, span),
             };
         }
         // A module-qualified type: `sh.Square.new()`.
         if let Some(ty) = self.qualified_type(recv) {
-            return self.assoc_call(&ty, name, args, span, expect);
+            return self.assoc_call(&ty, name, explicit, args, span, expect);
         }
         // A module-qualified function: `math.add(...)`, `sh.area(...)`.
         if let Some((target, item)) = self.module_member(recv, name) {
-            return self.module_call(target, &item, args, span, expect);
+            return self.module_call(target, &item, explicit, args, span, expect);
         }
         let recv = self.expr(recv, None);
-        self.method_call_on(recv, name, args, span, expect)
+        // `x.is<T>()` and `x.downcast<T>()` on an `any` value (AN6) are compiler-known methods, not templates.
+        if !explicit.is_empty() && matches!(name.name.as_str(), "is" | "downcast") && self.is_any_like(&recv.ty) {
+            return self.member_type_args_call(recv, name, explicit, args, span);
+        }
+        self.method_call_on_with(recv, name, explicit, args, span, expect)
     }
 
     /// The type of `e` when it is a range argument to `get`: a range expression, or a local whose value is a
@@ -1184,8 +1276,25 @@ impl FnCx<'_> {
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
+        self.method_call_on_with(recv, name, &[], args, span, expect)
+    }
+
+    /// `method_call_on` with the explicit type arguments of the call (`x.m<T>(...)`, TA1).
+    pub(super) fn method_call_on_with(
+        &mut self,
+        recv: tir::Expr,
+        name: &ast::Ident,
+        explicit: &[ast::Type],
+        args: &[ast::Arg],
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
+        }
+        // Only a method of the program with type parameters of its own takes explicit type arguments (TA5).
+        if !explicit.is_empty() && !self.user_generic_method(&recv.ty, &name.name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
         }
         // `x.clone()`: the deep copy the compiler derives (CP). It applies to the receiver as written, before
         // any auto-dereference, so cloning a shared reference clones the reference.
@@ -1223,6 +1332,14 @@ impl FnCx<'_> {
         if let Ty::Param(_) = recv.ty {
             return self.param_method_call(recv, name, args, span, expect);
         }
+        // `v.into()`: the conversion into the type the context expects (spec/stdlib.md, FR4), unless the receiver
+        // has an `into` method of its own.
+        if name.name == "into"
+            && args.is_empty()
+            && !adt_key(&recv.ty).is_some_and(|key| self.globals.methods.contains_key(&(key, "into".to_string())))
+        {
+            return self.convert_into(recv, expect, span);
+        }
         if let Some(key) = adt_key(&recv.ty)
             && let Some(&f) = self.globals.methods.get(&(key, name.name.clone()))
         {
@@ -1230,7 +1347,7 @@ impl FnCx<'_> {
             self.check_unsafe_call(f, &name.name, name.span);
             // A method with its own type parameters is instantiated for the arguments this call infers.
             if let Some(info) = self.globals.method_templates.get(&f).cloned() {
-                return self.generic_method_call(info, recv, &name.name, args, span, expect);
+                return self.generic_method_call(info, recv, &name.name, explicit, args, span, expect);
             }
             let sig = &self.globals.sigs[f.0];
             if !sig.has_self {
@@ -1282,6 +1399,10 @@ impl FnCx<'_> {
             let field = mk(tir::ExprKind::Field(Box::new(recv), index), field_ty, name.span);
             return self.closure_call(field, args, span);
         }
+        // `value.serialize(mut s)` on a built-in type: the serialization helpers of `std` write it (SER14).
+        if let Some(e) = self.builtin_serialize_method(recv.clone(), name, args, span) {
+            return e;
+        }
         // `fmt` and `debug` of the built-in types, which the formatting helpers of `std` implement.
         if let Some(e) = self.builtin_format_method(recv.clone(), name, args, span) {
             return e;
@@ -1316,6 +1437,7 @@ impl FnCx<'_> {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{recv_ty}`", name.name));
             return self.args_then_error(args, span);
         };
+        let ret = self.fallible_method_ret(&m, ret);
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
             // A mutating method writes through its receiver. The receiver is a mutable place, or a slice view
             // over one: `xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`
@@ -1549,12 +1671,17 @@ impl FnCx<'_> {
         &mut self,
         target: usize,
         item: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
     ) -> tir::Expr {
         self.check_value_visibility(target, &item.name, item.span);
-        match self.globals.exported_value(target, &item.name) {
+        let value = self.globals.exported_value(target, &item.name);
+        if !explicit.is_empty() && matches!(value, Some(Global::Func(_) | Global::Extern(_) | Global::Const(_))) {
+            return self.reject_type_args(&item.name, explicit, args, span);
+        }
+        match value {
             Some(Global::Func(f)) => {
                 self.check_unsafe_call(f, &item.name, item.span);
                 let sig = &self.globals.sigs[f.0];
@@ -1564,7 +1691,7 @@ impl FnCx<'_> {
                 };
                 mk(tir::ExprKind::Call(f, checked), ret, span)
             }
-            Some(Global::Generic(g)) => self.generic_call(g, item, args, span, expect),
+            Some(Global::Generic(g)) => self.generic_call(g, item, args, explicit, span, expect),
             Some(Global::Extern(e)) => self.extern_call(item, e, args, span),
             Some(Global::Const(_)) => {
                 self.diags.error(
@@ -1719,16 +1846,23 @@ impl FnCx<'_> {
 
     /// `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n`
     /// elements. The allocator-free form exists only for the default layout, like `new` (`spec/allocators.md`,
-    /// AL4).
+    /// AL4). The `try_` forms return `Result<List<T>, AllocError>` instead of panicking (AL11).
     fn list_with_capacity(
         &mut self,
         elem: &Ty,
         written: &burdin_tir::Alloc,
         with_alloc: bool,
+        fallible: bool,
         args: &[ast::Arg],
         span: Span,
     ) -> tir::Expr {
-        let name = if with_alloc { "List.with_capacity_in" } else { "List.with_capacity" };
+        let name = match (with_alloc, fallible) {
+            (false, false) => "List.with_capacity",
+            (true, false) => "List.with_capacity_in",
+            (false, true) => "List.try_with_capacity",
+            (true, true) => "List.try_with_capacity_in",
+        };
+        let in_form = if fallible { "List.try_with_capacity_in(n, alloc)" } else { "List.with_capacity_in(n, alloc)" };
         self.reject_named_args(name, args);
         let wanted = if with_alloc { 2 } else { 1 };
         if args.len() != wanted {
@@ -1750,14 +1884,18 @@ impl FnCx<'_> {
                     Code::MISSING_ALLOCATOR,
                     span,
                     format!(
-                        "a `{}` stores an allocator, so it is made with `List.with_capacity_in(n, alloc)`",
+                        "a `{}` stores an allocator, so it is made with `{in_form}`",
                         Ty::List(Box::new(elem.clone()), written.clone())
                     ),
                 );
                 return error_expr(span);
             }
-            let ty = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
-            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), ty, span);
+            let list = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
+            if fallible {
+                let ty = self.alloc_result_ty(list);
+                return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacity, vec![size]), ty, span);
+            }
+            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), list, span);
         }
         let value = self.expr(&args[1].expr, None);
         if value.ty == Ty::Error {
@@ -1778,8 +1916,30 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         }
-        let ty = Ty::List(Box::new(elem.clone()), alloc);
-        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), ty, span)
+        let list = Ty::List(Box::new(elem.clone()), alloc);
+        if fallible {
+            let ty = self.alloc_result_ty(list);
+            return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacityIn, vec![size, value]), ty, span);
+        }
+        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), list, span)
+    }
+
+    /// `Result<ok, AllocError>`: the type a fallible allocation returns (`spec/allocators.md`, AL11). `AllocError`
+    /// is the standard library's error enum; without it the error is `Ty::Error`, which suppresses later errors.
+    pub(super) fn alloc_result_ty(&self, ok: Ty) -> Ty {
+        Ty::Result(Box::new(ok), Box::new(self.globals.alloc_error_ty.clone().unwrap_or(Ty::Error)))
+    }
+
+    /// The type of a fallible method with the standard library's `AllocError` in place of the placeholder the
+    /// method table gives (`builtins::alloc_result_placeholder`). Every other method keeps its type.
+    fn fallible_method_ret(&self, m: &Method, ret: Ty) -> Ty {
+        match (m, ret) {
+            (
+                Method::ListTryReserve | Method::ListTryReserveExact | Method::MapTryReserve | Method::StringTryReserve,
+                Ty::Result(ok, _),
+            ) => self.alloc_result_ty(*ok),
+            (_, ret) => ret,
+        }
     }
 
     /// `Map<K, V>.new_in(alloc)`.
@@ -1855,11 +2015,110 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::SharedNew, vec![value]), ty, span)
     }
 
+    /// `T.try_from(value)` for an integer type `T` and an integer `value` of any type (`spec/stdlib.md`, "Conversions"):
+    /// `Ok` of the value converted to `T` when it fits, and `Err(TryFromIntError.OutOfRange)` when it does not. Only
+    /// the bounds the source type can actually leave are checked, so a conversion that always fits has no check.
+    fn int_try_from(&mut self, to: IntTy, args: &[ast::Arg], span: Span) -> tir::Expr {
+        if args.len() != 1 {
+            let message = format!("`{}.try_from` takes 1 argument, but {} were given", to.name(), args.len());
+            self.diags.error(Code::ARG_COUNT, span, message);
+            return self.args_then_error(args, span);
+        }
+        let value = self.expr(&args[0].expr, None);
+        let from = match &value.ty {
+            Ty::Int(from) => *from,
+            Ty::Error => return error_expr(span),
+            other => {
+                let message = format!("`{}.try_from` converts an integer, not `{other}`", to.name());
+                self.diags.error(Code::TYPE_MISMATCH, value.span, message);
+                return error_expr(span);
+            }
+        };
+        let Some(err_ty) = self.globals.try_from_int_error_ty.clone() else { return error_expr(span) };
+        let Ty::Enum(err) = &err_ty else { return error_expr(span) };
+        let Some(out_of_range) = self.globals.enums[err.id].variants.iter().position(|v| v.name == "OutOfRange") else {
+            return error_expr(span);
+        };
+        let result = Ty::Result(Box::new(Ty::Int(to)), Box::new(err_ty.clone()));
+        // The value is evaluated once, into a local the checks and the conversion read.
+        let (id, mode) = self.payload_local("value", Ty::Int(from), true);
+        let read = || mk(tir::ExprKind::Local(id), Ty::Int(from), span);
+        let bound = |n: i128| mk(tir::ExprKind::Int(n), Ty::Int(from), span);
+        let mut checks = Vec::new();
+        if to.min() > from.min() {
+            let check = tir::ExprKind::Binary(tir::BinOp::Ge, Box::new(read()), Box::new(bound(to.min())));
+            checks.push(mk(check, Ty::Bool, span));
+        }
+        if to.max() < from.max() {
+            let check = tir::ExprKind::Binary(tir::BinOp::Le, Box::new(read()), Box::new(bound(to.max())));
+            checks.push(mk(check, Ty::Bool, span));
+        }
+        let cond = checks
+            .into_iter()
+            .reduce(|a, b| mk(tir::ExprKind::Binary(tir::BinOp::And, Box::new(a), Box::new(b)), Ty::Bool, span))
+            .unwrap_or_else(|| mk(tir::ExprKind::Bool(true), Ty::Bool, span));
+        let converted = mk(tir::ExprKind::Cast(Box::new(read())), Ty::Int(to), span);
+        let ok = mk(tir::ExprKind::Ok(Box::new(converted)), result.clone(), span);
+        let variant = mk(tir::ExprKind::Variant(out_of_range, Vec::new()), err_ty, span);
+        let err = mk(tir::ExprKind::Err(Box::new(variant)), result.clone(), span);
+        let fits = tir::Block { stmts: Vec::new(), tail: Some(Box::new(ok)), close: span };
+        let branch = mk(tir::ExprKind::If(Box::new(cond), fits, Some(Box::new(err))), result.clone(), span);
+        let bind = tir::Stmt::Let(Pat::Binding(id, mode), value, None);
+        let block = tir::Block { stmts: vec![bind], tail: Some(Box::new(branch)), close: span };
+        mk(tir::ExprKind::Block(block), result, span)
+    }
+
+    /// `Type.from(value)` and `Type.try_from(value)` for a type with conversion blocks of that method (`spec/stdlib.md`,
+    /// "Conversions"). The block is chosen by the type of `value`. `None` when the type has no such block, so the
+    /// caller reports the name as unknown.
+    fn conversion_call(&mut self, ty: &Ty, method: &str, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
+        let candidates: Vec<(Ty, FuncId)> =
+            self.globals.conversions_into(ty, method).iter().map(|c| (c.source.clone(), c.func)).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        if args.len() != 1 {
+            let message = format!("`{ty}.{method}` takes 1 argument, but {} were given", args.len());
+            self.diags.error(Code::ARG_COUNT, span, message);
+            return Some(self.args_then_error(args, span));
+        }
+        // With one source type the argument is checked against it, so a literal takes that type.
+        let expect = match candidates.as_slice() {
+            [(source, _)] => Some(source.clone()),
+            _ => None,
+        };
+        let value = self.expr(&args[0].expr, expect.as_ref());
+        if value.ty == Ty::Error {
+            return Some(error_expr(span));
+        }
+        // A `String` is borrowed as a `str` where a `str` is expected (IC1), as for any argument.
+        let exact = candidates.iter().find(|(source, _)| *source == value.ty);
+        let borrowed = candidates.iter().find(|(source, _)| *source == Ty::Str);
+        let found = match (exact, borrowed) {
+            (Some(hit), _) => Some(hit.clone()),
+            (None, Some(hit)) if value.ty == Ty::String => Some(hit.clone()),
+            _ => None,
+        };
+        let Some((source, func)) = found else {
+            let sources: Vec<String> = candidates.iter().map(|(source, _)| format!("`{source}`")).collect();
+            let message = format!("`{ty}` converts from {}, not from `{}`", sources.join(" or "), value.ty);
+            self.diags.error(Code::TYPE_MISMATCH, value.span, message);
+            return Some(error_expr(span));
+        };
+        let value = self.coerce_arg(value, &source);
+        let sig = self.globals.sigs[func.0].clone();
+        let Some(checked) = self.args_pre(method, &sig.params, args, None, span, Some(vec![value])) else {
+            return Some(error_expr(span));
+        };
+        Some(mk(tir::ExprKind::Call(func, checked), sig.ret, span))
+    }
+
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
     pub(super) fn assoc_call(
         &mut self,
         ty: &Ty,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
@@ -1871,12 +2130,24 @@ impl FnCx<'_> {
             }
             return error_expr(span);
         }
+        // Only an associated function of the program with type parameters of its own takes type arguments (TA5).
+        if !explicit.is_empty() && !self.user_generic_method(ty, &name.name) {
+            return self.reject_type_args(&name.name, explicit, args, span);
+        }
         if let Ty::Param(_) = ty {
             return self.param_assoc_call(ty, name, args, span, expect);
+        }
+        // `String.deserialize(mut d)`, `List<T>.deserialize(mut d)`, and the other built-in types (SER14).
+        if let Some(call) = self.builtin_deserialize_call(ty, name, args, span) {
+            return call;
         }
         // `from_iter` of the built-in collections and `from` of a `List` or `Map` (`spec/iterators.md`, IT18).
         if let Some(call) = self.builtin_collection_call(ty, name, args, span) {
             return call;
+        }
+        // `T.from(v)` for a scalar `T`: the built-in pairs of `From` (spec/stdlib.md, FR2).
+        if name.name == "from" && matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char) {
+            return self.primitive_from_call(ty, args, span);
         }
         // `Type.size()` and `Type.align()`: the C layout of a type, for `repr(C)` size assertions (issue #490).
         if matches!(name.name.as_str(), "size" | "align") && args.is_empty() {
@@ -1929,7 +2200,13 @@ impl FnCx<'_> {
                 let elem = (**elem).clone();
                 let written = written_alloc.clone();
                 let with_alloc = name.name == "with_capacity_in";
-                return self.list_with_capacity(&elem, &written, with_alloc, args, span);
+                return self.list_with_capacity(&elem, &written, with_alloc, false, args, span);
+            }
+            if name.name == "try_with_capacity" || name.name == "try_with_capacity_in" {
+                let elem = (**elem).clone();
+                let written = written_alloc.clone();
+                let with_alloc = name.name == "try_with_capacity_in";
+                return self.list_with_capacity(&elem, &written, with_alloc, true, args, span);
             }
         }
         if let Ty::Map(key, value, written_alloc) = ty {
@@ -1952,12 +2229,14 @@ impl FnCx<'_> {
                 let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
                 return self.map_new_in(&key, &value, &written, args, span);
             }
-            if name.name == "with_capacity" {
+            if name.name == "with_capacity" || name.name == "try_with_capacity" {
+                let fallible = name.name == "try_with_capacity";
+                let reserve = if fallible { "try_reserve" } else { "reserve" };
                 if !written_alloc.is_global() {
                     self.diags.error(
                         Code::MISSING_ALLOCATOR,
                         span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `reserve`"),
+                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `{reserve}`"),
                     );
                     return error_expr(span);
                 }
@@ -1965,11 +2244,18 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &params, args, None, span) else {
                     return error_expr(span);
                 };
+                if fallible {
+                    let result = self.alloc_result_ty(ty.clone());
+                    return mk(tir::ExprKind::Builtin(Builtin::MapTryWithCapacity, checked), result, span);
+                }
                 return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
             }
         }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
+            if name.name == "try_from" {
+                return self.int_try_from(*i, args, span);
+            }
             // The other associated functions of an integer type (`u32.from_le_bytes(b)`) are `std` functions named
             // `__<type>_<name>` (spec/stdlib.md, "Integer functions").
             if name.name != "parse"
@@ -1994,6 +2280,17 @@ impl FnCx<'_> {
                 let Some(checked) = self.args("parse", &[ParamSig::plain(Ty::Str)], args, None, span) else {
                     return error_expr(span);
                 };
+                // The 128-bit types parse in `std`, in base 10 (`spec/int128.md`, I128-6): the runtime's parser
+                // reads into 64 bits.
+                if matches!(i, IntTy::I128 | IntTy::U128) {
+                    let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_parse_radix", i.name())) else {
+                        unreachable!("std defines the 128-bit parsers")
+                    };
+                    let sig = self.globals.sigs[f.0].clone();
+                    let mut call_args = checked;
+                    call_args.push(mk(tir::ExprKind::Int(10), Ty::Int(IntTy::U32), span));
+                    return mk(tir::ExprKind::Call(f, call_args), sig.ret, span);
+                }
                 let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
                 let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
                 return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
@@ -2044,6 +2341,13 @@ impl FnCx<'_> {
                     return error_expr(span);
                 };
                 return mk(tir::ExprKind::Builtin(Builtin::StringWithCapacity, checked), sig.ret, span);
+            }
+            if name.name == "try_with_capacity" {
+                let sig = builtin_sig(Builtin::StringTryWithCapacity, self.globals);
+                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
+                    return error_expr(span);
+                };
+                return mk(tir::ExprKind::Builtin(Builtin::StringTryWithCapacity, checked), sig.ret, span);
             }
             let b = match name.name.as_str() {
                 "new" => Builtin::StringNew,
@@ -2106,6 +2410,11 @@ impl FnCx<'_> {
             let fields = checked.into_iter().enumerate().collect();
             return mk(tir::ExprKind::Variant(index, fields), ty.clone(), span);
         }
+        if (name.name == "from" || name.name == "try_from")
+            && let Some(call) = self.conversion_call(ty, &name.name, args, span)
+        {
+            return call;
+        }
         let method = adt_key(ty).and_then(|k| self.globals.methods.get(&(k, name.name.clone())).copied());
         let Some(f) = method else {
             if name.name == "default" && args.is_empty() && self.globals.has_default(ty) {
@@ -2126,7 +2435,7 @@ impl FnCx<'_> {
         if let Some(info) = self.globals.method_templates.get(&f).cloned()
             && !self.globals.sigs[f.0].has_self
         {
-            return self.generic_assoc_method_call(info, &name.name, args, None, span, expect);
+            return self.generic_assoc_method_call(info, &name.name, explicit, args, None, span, expect);
         }
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());

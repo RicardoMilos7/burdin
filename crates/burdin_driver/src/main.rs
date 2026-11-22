@@ -38,6 +38,7 @@ mod scripts;
 mod test_runner;
 mod vendor;
 mod watch;
+mod workspace;
 
 use burdin_diag::{DiagnosticFormat, Diagnostics, RenderOptions, Rule, SourceMap, Span, Tool};
 pub(crate) use burdin_query::EntryMode;
@@ -57,6 +58,8 @@ pub(crate) struct Args {
     pub(crate) release: bool,
     /// `--profile <name>`: the requested profile name, resolved against the package's manifest into `profile`.
     pub(crate) profile_name: Option<String>,
+    /// `-O<n>`: the optimization level that replaces the profile's `opt-level` (`spec/profiles.md`, BP4).
+    pub(crate) opt_level: Option<profile::OptLevel>,
     /// The resolved profile (`spec/profiles.md`).
     pub(crate) profile: profile::Profile,
     /// `--locked`: refuse to update `burdin.lock` (`spec/packages.md`, PKG8).
@@ -97,8 +100,14 @@ pub(crate) struct Args {
     pub(crate) jobs: Option<usize>,
     // `burdin test` only.
     pub(crate) verbose: bool,
+    /// `-p <name>` and `--package <name>`: the packages to build, run, test, or bench (`spec/workspaces.md`, WS6).
     pub(crate) packages: Vec<String>,
+    /// `--workspace`: every member of the workspace the target belongs to.
     pub(crate) workspace: bool,
+    /// `--exclude <name>`: a member `--workspace` leaves out.
+    pub(crate) exclude: Vec<String>,
+    /// What the command runs on, decided from the selection flags and the target after parsing (`workspace.rs`).
+    pub(crate) scope: workspace::Scope,
     pub(crate) ignored_only: bool,
     pub(crate) include_ignored: bool,
     /// The positional filters and every `--filter`: a test runs when its full path matches any of them.
@@ -173,6 +182,9 @@ pub(crate) struct DiagnosticOptions {
     pub(crate) width: Option<usize>,
     /// `None` prints every diagnostic; `Some(0)` also means every diagnostic.
     pub(crate) error_limit: Option<usize>,
+    /// `-q`/`--quiet`: print only the errors. Warnings and the notes that are not part of an error are left out,
+    /// in every format; the results a command asks for (a program's output, `--print-instances`) are unchanged.
+    pub(crate) quiet: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -216,11 +228,17 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
             // `-j4` is `-j 4`, as in cargo and make.
             _ if raw.len() > 2 && raw.starts_with("-j") => ("-j", Some(&raw[2..])),
+            // `-O2` is `-O 2` (`spec/profiles.md`, BP4).
+            _ if raw.len() > 2 && raw.starts_with("-O") => ("-O", Some(&raw[2..])),
             _ => (raw.as_str(), None),
         };
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "--profile" => args.profile_name = Some(option_value(&mut it, inline, a, "a profile name")?),
+            "-O" => {
+                let value = option_value(&mut it, inline, a, "an optimization level from 0 to 3")?;
+                profile::set_opt_level(&mut args.opt_level, profile::parse_opt_level(&value)?)?;
+            }
             "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
@@ -271,8 +289,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
             "-v" | "--verbose" => args.verbose = flag_without_value(a, inline)?,
-            "-p" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
+            "-q" | "--quiet" => args.diagnostics.quiet = flag_without_value(a, inline)?,
+            "-p" | "--package" => args.packages.push(option_value(&mut it, inline, a, "a package name")?),
             "--workspace" => args.workspace = flag_without_value(a, inline)?,
+            "--exclude" => args.exclude.push(option_value(&mut it, inline, a, "a member name")?),
             "--ignored" => args.ignored_only = flag_without_value(a, inline)?,
             "--include-ignored" => args.include_ignored = flag_without_value(a, inline)?,
             "--filter" => args.filters.push(option_value(&mut it, inline, a, "a text")?),
@@ -468,13 +488,18 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     let tests = args.command == "test";
     let benches = args.command == "bench";
+    if args.diagnostics.quiet && !matches!(args.command.as_str(), "build" | "run") {
+        return Err("`--quiet` is only valid for `burdin build`, `burdin run`, and `burdin check`".to_string());
+    }
+    if args.verbose && args.command == "fuzz" {
+        return Err("`--verbose` is only valid for `burdin build`, `burdin run`, `burdin check`, `burdin test`, and \
+             `burdin bench`"
+            .to_string());
+    }
+    if args.verbose && args.diagnostics.quiet {
+        return Err("`--quiet` and `--verbose` conflict: choose one".to_string());
+    }
     if !tests && !benches {
-        if args.verbose {
-            return Err("`--verbose` is only valid for `burdin test` and `burdin bench`".to_string());
-        }
-        if !args.packages.is_empty() || args.workspace {
-            return Err("`-p` and `--workspace` are only valid for `burdin test` and `burdin bench`".to_string());
-        }
         if !args.filters.is_empty() {
             return Err("`--filter` is only valid for `burdin test` and `burdin bench`".to_string());
         }
@@ -543,6 +568,11 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if args.ignored_only && args.include_ignored {
         return Err("`--ignored` and `--include-ignored` cannot be used together".to_string());
+    }
+    if args.command == "fuzz" && (!args.packages.is_empty() || args.workspace || !args.exclude.is_empty()) {
+        return Err("`-p`, `--workspace`, and `--exclude` are only valid for `burdin build`, `burdin run`, \
+             `burdin test`, and `burdin bench`"
+            .to_string());
     }
     if args.workspace && !args.packages.is_empty() {
         return Err("`-p` and `--workspace` cannot be used together".to_string());
@@ -708,7 +738,7 @@ fn dap(args: &[String]) -> ExitCode {
 }
 
 fn driver_main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
     // The toolchain manager's proxy handles `toolchain` and `+toolchain` before it runs a compiler, so reaching here
     // means this compiler was run directly (`spec/toolchain.md` TC9).
     if let Some(first) = argv.first().filter(|a| *a == "toolchain" || a.starts_with('+')) {
@@ -722,6 +752,9 @@ fn driver_main() -> ExitCode {
         cli::Route::Exit(code) => return code,
         cli::Route::Command(command) => command,
     };
+    // From here on the command's name is its canonical one (`r` is `run`), and an omitted target is `.`.
+    argv[0] = command.clone();
+    let argv = cli::with_default_target(argv);
     let rest = &argv[1..];
     match command.as_str() {
         "fmt" => return fmt::run(rest),
@@ -730,6 +763,7 @@ fn driver_main() -> ExitCode {
         "bloat" => return bloat::run(rest),
         "expand" => return expand::run(rest),
         "explain" => return explain(rest),
+        "commands" => return cli::commands(rest),
         "bindgen" => return bindgen::run(rest),
         "lint" => return lint::run(rest),
         "fix" => return fix::run(rest),
@@ -750,21 +784,38 @@ fn driver_main() -> ExitCode {
         "build" | "run" | "test" | "check" if watch::asks_for_watch(rest) => return watch::run_flagged(&command, rest),
         _ => {}
     }
-    let args = match parse_args(&argv) {
+    let mut args = match parse_args(&argv) {
         Ok(a) => a,
         Err(msg) => return cli::usage_error(&command, &msg),
     };
+    // The profile is read before the scope: a member build reuses the target's profile.
+    if matches!(args.command.as_str(), "build" | "run" | "test" | "bench") {
+        let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
+        let graph = matches!(args.command.as_str(), "test" | "bench");
+        match workspace::choose(&args.target, flags, graph) {
+            Ok(scope) => args.scope = scope,
+            Err(workspace::Failure::Usage(message)) => return cli::usage_error(&args.command, &message),
+            Err(workspace::Failure::Error(message)) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(1);
+            }
+        }
+    }
     let default_profile = match command.as_str() {
         "test" => "test",
         "bench" => "bench",
         _ => "dev",
     };
-    let profile =
-        match profile::resolve_for_command(&command, &args.target, args.profile_name.as_deref(), default_profile) {
-            Ok(profile) => profile,
-            Err(code) => return code,
-        };
-    let mut args = args;
+    let profile = match profile::resolve_for_command(
+        &command,
+        &args.target,
+        args.profile_name.as_deref(),
+        default_profile,
+        args.opt_level,
+    ) {
+        Ok(profile) => profile,
+        Err(code) => return code,
+    };
     args.profile = profile;
     let emit = (!args.emit.is_empty()).then(|| emit::Emit {
         kinds: args.emit.clone(),
@@ -793,12 +844,10 @@ fn driver_main() -> ExitCode {
         jobs: jobs_or_default(args.jobs),
         sanitize: args.sanitize,
         fuzz_target: None,
+        verbose: args.verbose && matches!(args.command.as_str(), "build" | "run"),
     };
     match args.command.as_str() {
-        "build" => match compile(&args.target, Path::new("."), args.output.as_deref(), &options) {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(code) => code,
-        },
+        "build" => build(&args, &options),
         "run" => run(&args, &options),
         "bench" => bench_runner::run(&args),
         "fuzz" => fuzz_runner::run(&args),
@@ -839,7 +888,76 @@ fn code_list() -> String {
     burdin_diag::code_list()
 }
 
+/// `burdin build`: one executable per selected package that has a `src/main.bd` (`spec/workspaces.md`, WS9). A
+/// package outside a workspace is built as before, into the working directory. A member's executable goes under its
+/// own `target/burdin/<profile>/`. The first build that fails stops the command.
+fn build(args: &Args, options: &CompileOptions) -> ExitCode {
+    let workspace::Scope::Members { members, named, .. } = &args.scope else {
+        return match compile(&args.target, Path::new("."), args.output.as_deref(), options) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(code) => code,
+        };
+    };
+    let mut entries = Vec::new();
+    for member in members {
+        if member.dir.join("src").join("main.bd").is_file() {
+            entries.push(member);
+        } else if named.contains(&member.name) {
+            eprintln!("error: `{}` has no src/main.bd to build, and `-p` names it", member.name);
+            return ExitCode::from(1);
+        } else if !options.diagnostics.quiet {
+            eprintln!("note: skipped {}: it has no src/main.bd", member.name);
+        }
+    }
+    if entries.is_empty() {
+        eprintln!("error: no selected package has a src/main.bd to build");
+        return ExitCode::from(1);
+    }
+    let one_file = args.output.is_some() || args.emit_ir.is_some() || args.emit_deps.is_some();
+    if one_file && entries.len() > 1 {
+        return cli::usage_error(
+            "build",
+            "`-o`, `--emit-ir`, and `--emit-deps` name one file: select one package with `-p` (this build selects several)",
+        );
+    }
+    // The profile is the one resolved from the target: a workspace root defines the profiles its members build with
+    // (`spec/profiles.md`, `spec/workspaces.md`).
+    let profile = &options.profile.dir;
+    for member in entries {
+        let out_dir = burdin_query::workspace::target_dir(&member.dir).join("burdin").join(profile).join("bin");
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("error: cannot create {}: {e}", package::source_path_text(&out_dir));
+            return ExitCode::from(1);
+        }
+        if let Err(code) = compile(&member.dir, &out_dir, args.output.as_deref(), options) {
+            return code;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 fn run(args: &Args, options: &CompileOptions) -> ExitCode {
+    // `burdin run` runs one program, so the selection must name exactly one member (WS10).
+    if let workspace::Scope::Members { members, .. } = &args.scope {
+        let [member] = members.as_slice() else {
+            let names: Vec<&str> = members.iter().map(|member| member.name.as_str()).collect();
+            return cli::usage_error(
+                "run",
+                &format!(
+                    "`burdin run` runs one program: select one package with `-p` (this selects {})",
+                    names.join(", ")
+                ),
+            );
+        };
+        if !member.dir.join("src").join("main.bd").is_file() {
+            eprintln!("error: `{}` has no src/main.bd to run", member.name);
+            return ExitCode::from(1);
+        }
+        let mut single = args.clone();
+        single.target = member.dir.clone();
+        single.scope = workspace::Scope::Standalone;
+        return run(&single, options);
+    }
     // A one-file target that makes itself a script runs from a content-addressed cache (`spec/scripts.md`, SC5).
     if let Some(code) = scripts::run_script(args, options) {
         return code;
@@ -927,6 +1045,9 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) sanitize: burdin_codegen::Sanitizers,
     /// With [`EntryMode::Fuzz`], the fuzz target the binary is built for (`spec/fuzz.md`, FZ3).
     pub(crate) fuzz_target: Option<&'a str>,
+    /// `-v` on `burdin build` and `burdin run`: print each phase of the compilation and each codegen unit, with its
+    /// time, to standard error (`spec/build-tool.md`). Quiet output (`-q`) is in the diagnostic options.
+    pub(crate) verbose: bool,
 }
 
 /// What a successful compilation produced: the executable, its `test` blocks and `bench` blocks (empty for a
@@ -962,12 +1083,39 @@ pub(crate) struct FrontEnd {
     /// The parsed files, in `FileId` order.
     pub(crate) parsed: Vec<(burdin_diag::FileId, burdin_syntax::ast::File)>,
     pub(crate) sources: SourceMap,
-    /// `None` when parsing failed: checking a tree with syntax errors would mostly report follow-on errors.
+    /// `None` when a file has syntax errors: the other modules are still checked and reported, but the tree is partial.
     pub(crate) program: Option<burdin_tir::Program>,
     pub(crate) diags: Diagnostics,
     pub(crate) script_inputs: Vec<String>,
     /// The shim libraries of the bound Rust crates, which the program links after `--link-lib`'s.
     pub(crate) rust_libs: Vec<String>,
+}
+
+/// `-v`: the wall time of each phase of one compilation, printed to standard error as the phase ends. Made at the
+/// start of a sequence of phases; each [`Phases::mark`] ends the phase that began at the previous mark.
+pub(crate) struct Phases {
+    enabled: bool,
+    last: std::time::Instant,
+}
+
+impl Phases {
+    pub(crate) fn start(enabled: bool) -> Phases {
+        Phases { enabled, last: std::time::Instant::now() }
+    }
+
+    /// Ends the phase `name`, and with `-v` prints how long it took.
+    pub(crate) fn mark(&mut self, name: &str) {
+        let now = std::time::Instant::now();
+        if self.enabled {
+            eprintln!("phase {name}: {}", format_ms(now - self.last));
+        }
+        self.last = now;
+    }
+}
+
+/// A duration as milliseconds with two decimals, for `-v`: `12.34 ms`.
+pub(crate) fn format_ms(duration: std::time::Duration) -> String {
+    format!("{:.2} ms", duration.as_secs_f64() * 1000.0)
 }
 
 /// Resolves the dependencies of a package directory and brings its `burdin.lock` up to date before the package is
@@ -1000,7 +1148,12 @@ pub(crate) fn front_end(
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
     let mode = options.mode;
+    if options.verbose {
+        eprintln!("compiling {}", target.display());
+    }
+    let mut phases = Phases::start(options.verbose);
     sync_dependencies(target, options.locked, options.offline)?;
+    phases.mark("dependencies");
     let mut loaded = match package::load_selected(target, mode, &options.features) {
         Ok(loaded) => loaded,
         Err(message) => {
@@ -1008,6 +1161,7 @@ pub(crate) fn front_end(
             return Err(ExitCode::from(1));
         }
     };
+    phases.mark("load");
     // Build scripts run first: a generated module must exist before the modules are read (`spec/build-scripts.md`,
     // BS3-BS4). A script's own compilation sets this flag to false, so there is no recursion.
     let mut script_inputs: Vec<String> = Vec::new();
@@ -1024,6 +1178,7 @@ pub(crate) fn front_end(
             }
         }
     }
+    phases.mark("build scripts");
 
     // An override of a package's manifest is read for its edition: `burdin fix --migrate` checks the package under
     // the edition it is about to write before it writes anything (`spec/fix.md`, FX10).
@@ -1072,6 +1227,7 @@ pub(crate) fn front_end(
             return Err(ExitCode::from(1));
         }
     };
+    phases.mark("parse and check");
     let (sources, parsed) = db.into_parts();
     Ok(FrontEnd {
         loaded,
@@ -1097,7 +1253,7 @@ pub(crate) fn compile(
     let FrontEnd { loaded, files, sources, program, diags, script_inputs, rust_libs, .. } =
         front_end(target, options, &SourceOverrides::new())?;
     if diags.has_errors() {
-        report_errors("compile", target, &diags, &sources, options.diagnostics);
+        report_errors("compile", target, &diags, &sources, options.diagnostics, None);
         return Err(ExitCode::from(1));
     }
     let mut program = program.expect("no errors means checking produced a program");
@@ -1185,6 +1341,9 @@ fn write_executable(
         return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
     if plan.is_fresh() {
+        if options.verbose {
+            eprintln!("phase cache: the executable is up to date, so codegen and link are skipped");
+        }
         return copy_executable(&plan.exe, output);
     }
     let Ok(staged) = plan.staging() else {
@@ -1192,7 +1351,10 @@ fn write_executable(
         // build does.
         return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
-    if let Err(code) = emit_program(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags) {
+    let objects = burdin_codegen::ObjectCache { dir: plan.objects.clone(), identity: build::compiler_fingerprint() };
+    if let Err(code) =
+        emit_program_cached(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags, Some(objects))
+    {
         let _ = std::fs::remove_file(&staged);
         return Err(code);
     }
@@ -1261,6 +1423,21 @@ pub(crate) fn emit_program(
     rust_libs: &[String],
     package_flags: &[burdin_codegen::PackageFlags],
 ) -> Result<(), ExitCode> {
+    emit_program_cached(program, sources, stem, output, options, rust_libs, package_flags, None)
+}
+
+/// [`emit_program`] with the object cache of a cacheable build (`spec/target.md`, TG11).
+#[allow(clippy::too_many_arguments)]
+fn emit_program_cached(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    stem: &str,
+    output: &Path,
+    options: &CompileOptions,
+    rust_libs: &[String],
+    package_flags: &[burdin_codegen::PackageFlags],
+    object_cache: Option<burdin_codegen::ObjectCache>,
+) -> Result<(), ExitCode> {
     let fail = |msg: String| {
         eprintln!("error: {msg}");
         ExitCode::from(2)
@@ -1295,9 +1472,19 @@ pub(crate) fn emit_program(
         emit_asm: artifact(emit::EmitKind::Asm),
         asm_syntax: emit.map_or(Default::default(), |e| e.asm_syntax),
         sanitize: options.sanitize,
+        object_cache,
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
-    let objects = burdin_codegen::emit_object(program, sources, stem, &object, &opts).map_err(fail)?;
+    let started = std::time::Instant::now();
+    let emitted = burdin_codegen::emit_object_timed(program, sources, stem, &object, &opts).map_err(fail)?;
+    let objects = emitted.objects;
+    if options.verbose {
+        eprintln!("phase codegen: {}", format_ms(started.elapsed()));
+        let units = emitted.unit_times.len();
+        for (index, time) in emitted.unit_times.iter().enumerate() {
+            eprintln!("  codegen unit {} of {units}: {}", index + 1, format_ms(*time));
+        }
+    }
     if emit.is_some_and(|e| e.wants(emit::EmitKind::Obj)) {
         for (index, object) in objects.iter().enumerate() {
             let target = emit::object_path(output, index);
@@ -1307,6 +1494,7 @@ pub(crate) fn emit_program(
     if emit.is_some_and(|e| e.skip_link) {
         return Ok(());
     }
+    let linking = std::time::Instant::now();
     let objects = match options.pgo_use {
         Some(profile) => {
             let ir = dir.path.join("program.pgo.ll");
@@ -1325,27 +1513,48 @@ pub(crate) fn emit_program(
     };
     let libs: Vec<String> = options.link_libs.iter().chain(rust_libs).cloned().collect();
     link(&objects, output, &libs, &link_opts).map_err(fail)?;
+    if options.verbose {
+        eprintln!("phase link: {}", format_ms(linking.elapsed()));
+    }
     Ok(())
 }
 
+/// What `burdin check` adds to its JSON summary: the source files it read and the moment it started
+/// (`spec/check.md`, CK12).
+#[derive(Clone, Copy)]
+pub(crate) struct CheckStats {
+    pub(crate) files: usize,
+    pub(crate) started: std::time::Instant,
+}
+
 /// Prints the errors of a failed front end and the closing line, `could not <verb> <target> (N errors)`: `compile`
-/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error.
+/// for `build`, `run`, and `test`, `check` for `burdin check`. Everything goes to standard error. `stats` is given by
+/// `burdin check`, whose JSON summary is the check summary (CK12) rather than the build's.
 pub(crate) fn report_errors(
     verb: &str,
     target: &Path,
     diags: &Diagnostics,
     sources: &SourceMap,
     diagnostics: &DiagnosticOptions,
+    stats: Option<CheckStats>,
 ) {
+    let errors;
+    let diags = if diagnostics.quiet {
+        errors = errors_only(diags);
+        &errors
+    } else {
+        diags
+    };
     let options = render_options(diagnostics, std::io::stderr().is_terminal());
     let rendered = diags.render_with(sources, &options);
     eprint!("{}", rendered.text);
     let total = rendered.total;
     let suffix = if total == 1 { "" } else { "s" };
     match options.format {
-        DiagnosticFormat::Json => {
-            eprint!("{}", summary_json(total, rendered.shown, options.error_limit));
-        }
+        DiagnosticFormat::Json => match stats {
+            Some(stats) => eprint!("{}", check_summary_json(diags, rendered.shown, options.error_limit, stats)),
+            None => eprint!("{}", summary_json(total, rendered.shown, options.error_limit)),
+        },
         // A SARIF log is one document, so nothing may follow it.
         DiagnosticFormat::Sarif => {}
         _ => {
@@ -1365,18 +1574,37 @@ pub(crate) fn report_errors(
 
 /// Prints the warnings of a front end that found no errors; nothing when there are none. With `report_clean`, a
 /// SARIF log is written even when there is nothing to report, so a CI job always has a file to upload
-/// (`spec/diagnostics.md`, DG11).
+/// (`spec/diagnostics.md`, DG11). Returns how many diagnostics were printed, after the error limit.
 pub(crate) fn print_warnings(
     diags: &Diagnostics,
     sources: &SourceMap,
     diagnostics: &DiagnosticOptions,
     report_clean: bool,
-) {
+) -> usize {
     let render = render_options(diagnostics, std::io::stderr().is_terminal());
     let clean_log = report_clean && render.format == DiagnosticFormat::Sarif;
-    if diags.has_warnings() || clean_log {
-        eprint!("{}", diags.render_with(sources, &render).text);
+    if diagnostics.quiet {
+        // `-q` leaves the warnings out; a front end that found no errors has nothing else to print.
+        if clean_log {
+            eprint!("{}", errors_only(diags).render_with(sources, &render).text);
+        }
+        return 0;
     }
+    if diags.has_warnings() || clean_log {
+        let rendered = diags.render_with(sources, &render);
+        eprint!("{}", rendered.text);
+        return rendered.shown;
+    }
+    0
+}
+
+/// The errors among `diags`, in their order: what `-q` prints. The warnings are left out.
+fn errors_only(diags: &Diagnostics) -> Diagnostics {
+    let mut only = Diagnostics::default();
+    for diagnostic in diags.iter().filter(|d| d.severity == burdin_diag::Severity::Error) {
+        only.push(diagnostic.clone());
+    }
+    only
 }
 
 /// Reports a build-script failure at the entry package's first source line. The failure is about the package, not
@@ -1496,6 +1724,21 @@ fn summary_json(errors: usize, shown: usize, limit: Option<usize>) -> String {
     format!(
         "{{\"type\":\"summary\",\"version\":{},\"errors\":{errors},\"shown\":{shown},\"limit\":{limit}}}\n",
         burdin_diag::JSON_VERSION
+    )
+}
+
+/// The last line of `burdin check --diagnostic-format=json`, printed on every run that reaches the checks, clean or
+/// not (`spec/check.md`, CK12): the error and warning counts, how many diagnostics were shown, the source files read,
+/// and the milliseconds the run took. `shown` and `limit` mean what they do in the build's summary.
+pub(crate) fn check_summary_json(diags: &Diagnostics, shown: usize, limit: Option<usize>, stats: CheckStats) -> String {
+    let limit = limit.map_or_else(|| "null".to_string(), |limit| limit.to_string());
+    let elapsed_ms = stats.started.elapsed().as_millis();
+    format!(
+        "{{\"type\":\"check-summary\",\"version\":{},\"errors\":{},\"warnings\":{},\"shown\":{shown},\"limit\":{limit},\"files\":{},\"elapsed_ms\":{elapsed_ms}}}\n",
+        burdin_diag::JSON_VERSION,
+        diags.error_count(),
+        diags.warning_count(),
+        stats.files,
     )
 }
 
@@ -2353,8 +2596,36 @@ mod tests {
 
     #[test]
     fn test_options_are_rejected_for_other_commands() {
-        assert!(parse(&["run", "app", "--verbose"]).unwrap_err().contains("only valid for `burdin test`"));
-        assert!(parse(&["build", "app", "--workspace"]).unwrap_err().contains("only valid for `burdin test`"));
+        assert!(parse(&["fuzz", "app", "target", "--verbose"]).unwrap_err().contains("only valid for `burdin build`"));
+        assert!(
+            parse(&["fuzz", "app", "target", "--workspace"]).unwrap_err().contains("only valid for `burdin build`")
+        );
+    }
+
+    #[test]
+    fn quiet_and_verbose_are_parsed_for_build_run_and_test() {
+        let args = parse(&["build", "app", "-q"]).unwrap();
+        assert!(args.diagnostics.quiet && !args.verbose);
+        let args = parse(&["run", "app", "--verbose"]).unwrap();
+        assert!(args.verbose && !args.diagnostics.quiet);
+        assert!(parse(&["build", "app", "--quiet"]).unwrap().diagnostics.quiet);
+        assert!(parse(&["build", "app", "-v", "-q"]).unwrap_err().contains("conflict"));
+        assert!(parse(&["build", "app", "--quiet=yes"]).unwrap_err().contains("takes no value"));
+        // `-v` is the test runner's own verbosity, and `-q` belongs to the commands that compile for output.
+        assert!(parse(&["test", "app", "-v"]).unwrap().verbose);
+        assert!(parse(&["test", "app", "-q"]).unwrap_err().contains("only valid for `burdin build`"));
+        assert!(parse(&["bench", "app", "-q"]).unwrap_err().contains("only valid for `burdin build`"));
+    }
+
+    #[test]
+    fn selection_flags_are_parsed_for_building_commands() {
+        let args = parse(&["build", "root", "--package", "app", "--exclude=lib"]).unwrap();
+        assert_eq!(args.packages, ["app"]);
+        assert_eq!(args.exclude, ["lib"]);
+        assert!(!args.workspace);
+        let args = parse(&["run", "root", "-p", "app"]).unwrap();
+        assert_eq!(args.packages, ["app"]);
+        assert!(parse(&["build", "root", "--workspace", "-p", "app"]).unwrap_err().contains("cannot be used together"));
     }
 
     #[test]
@@ -2437,6 +2708,29 @@ mod tests {
     fn sarif_is_a_diagnostic_format() {
         assert_eq!(parse_format("sarif").unwrap(), DiagnosticFormat::Sarif);
         assert!(parse_format("xml").unwrap_err().contains("human, short, json, or sarif"));
+    }
+
+    #[test]
+    fn the_check_summary_counts_each_severity_and_keeps_the_field_order() {
+        let mut sources = SourceMap::default();
+        let file = sources.add("a.bd".to_string(), String::new());
+        let span = Span::new(file, 0, 0);
+        let mut diags = Diagnostics::default();
+        diags.error(burdin_diag::Code("E0003"), span, "one");
+        diags.error(burdin_diag::Code("E0003"), span, "two");
+        diags.warning(burdin_diag::Code("E0215"), span, "three");
+        let stats = CheckStats { files: 3, started: std::time::Instant::now() };
+        let line = check_summary_json(&diags, 2, Some(2), stats);
+        assert!(line.ends_with('\n'), "the summary is one line");
+        let prefix = format!(
+            "{{\"type\":\"check-summary\",\"version\":{},\"errors\":2,\"warnings\":1,\"shown\":2,\"limit\":2,\"files\":3,\"elapsed_ms\":",
+            burdin_diag::JSON_VERSION
+        );
+        assert!(line.starts_with(&prefix), "unexpected summary: {line}");
+        let elapsed = line[prefix.len()..].trim_end().trim_end_matches('}');
+        assert!(elapsed.parse::<u128>().is_ok(), "elapsed_ms is not a number: {elapsed:?}");
+        let clean = check_summary_json(&Diagnostics::default(), 0, None, stats);
+        assert!(clean.contains("\"limit\":null,\"files\":3,"), "a clean summary has no limit: {clean}");
     }
 
     #[test]

@@ -1,0 +1,43 @@
+//@ run
+//> member
+//> lowercase
+//> call
+//> shift
+
+// A `<` is a comparison, not a type-argument list, when the tokens between it and a later `>` are not all type
+// syntax (`spec/grammar.md`, rule 8.2). Before issue #847, `s.len < n && s.cap > (k)` was read as type arguments of
+// `len` and rejected. The call case shows the one shape that still reads as type arguments when unparenthesized: the
+// first comparison in parentheses is a comparison, and so is a shift inside a comparison.
+
+struct S {
+    len: i32,
+    cap: i32,
+}
+
+fn both(x: bool, y: bool): bool {
+    x && y
+}
+
+fn main() {
+    let s = S { len: 1, cap: 5 }
+    let n = 3
+    let k = 2
+    if s.len < n && s.cap > (k) {
+        println("member")
+    }
+    let a = 1
+    let b = 2
+    let c = 5
+    let d = 3
+    if a < b && c > (d) {
+        println("lowercase")
+    }
+    if both((a < b), c > (d)) {
+        println("call")
+    }
+    let e = 8
+    let big = a < e >> 1
+    if big {
+        println("shift")
+    }
+}

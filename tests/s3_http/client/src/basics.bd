@@ -1,0 +1,372 @@
+// Requests, responses, headers, and response bodies against the scripted server (spec/http-client.md, HC4 to HC10).
+
+use http
+use support.{Script, Server, body_of, error_text, fetch, header_of, ok, reply, request_line}
+
+fn get_basic() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(reply("200 OK", "X-One: 1\r\nX-One: 2\r\nContent-Type: text/plain\r\n", "hello").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/greet?name=burdin").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let content_type = response.header("content-type").unwrap()
+                    let ones = response.headers.get_all("X-ONE")
+                    let fields = response.headers.len()
+                    let reason = response.reason.clone()
+                    let status = response.status
+                    let text = response.text().unwrap()
+                    println("get_basic: {} {} content-type={} x-one={:?} fields={} body={:?}", status, reason, content_type, ones, fields, text)
+                }
+                Err(e) => println("get_basic: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println(
+        "get_basic sent: {} host={} agent={} length={}",
+        request_line(raw.as_str()),
+        server.mask(header_of(raw.as_str(), "host").as_str()),
+        header_of(raw.as_str(), "user-agent"),
+        header_of(raw.as_str(), "content-length"),
+    )
+}
+
+fn post_body() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(reply("201 Created", "", "stored").as_str()).read().write(ok("").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            let request = http.Request.post(server.url("/items").as_str())
+                .unwrap()
+                .header("Content-Type", "text/plain")
+                .header("X-Token", "abc")
+                .body_text("name=burdin")
+            match client.send(request) {
+                Ok(response) => {
+                    let mut response = response
+                    let reason = response.reason.clone()
+                    let status = response.status
+                    let text = response.text().unwrap()
+                    println("post_body: {} {} body={:?}", status, reason, text)
+                }
+                Err(e) => println("post_body: error {}", e),
+            }
+            let empty = http.Request.post(server.url("/empty").as_str()).unwrap()
+            let _ = client.send(empty)
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println(
+        "post_body sent: {} length={} type={} token={} body={:?}",
+        request_line(raw.as_str()),
+        header_of(raw.as_str(), "content-length"),
+        header_of(raw.as_str(), "content-type"),
+        header_of(raw.as_str(), "x-token"),
+        body_of(raw.as_str()),
+    )
+    let second = server.request(1)
+    println("post_empty: {} length={}", request_line(second.as_str()), header_of(second.as_str(), "content-length"))
+}
+
+fn overrides() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("x").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.user_agent = "tester/1".to_string()
+            let request = http.Request.get(server.url("/").as_str()).unwrap().header("Host", "example.test")
+            let _ = client.send(request)
+            client.close_idle()
+            server.settle()
+        })
+    })
+    let raw = server.request(0)
+    println("overrides: agent={} host={}", header_of(raw.as_str(), "user-agent"), header_of(raw.as_str(), "host"))
+}
+
+fn bad_headers() {
+    let server = Server.start(0)
+    let client = http.Client.new()
+    let value = http.Request.get(server.url("/").as_str()).unwrap().header("X-Bad", "a\r\nInjected: yes")
+    println("bad header value: {}", error_text(client.send(value)))
+    let name = http.Request.get(server.url("/").as_str()).unwrap().header("X Bad", "1")
+    println("bad header name: {}", error_text(client.send(name)))
+    println("bad header was never sent: accepted {} connections", server.accepted())
+}
+
+fn statuses() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new()
+            .read()
+            .write(reply("404 Not Found", "", "nope").as_str())
+            .read()
+            .write("HTTP/1.1 204 No Content\r\n\r\n")
+            .read()
+            .write("HTTP/1.1 304 Not Modified\r\nContent-Length: 10\r\n\r\n"),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/missing").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let status = response.status
+                    let success = response.is_success()
+                    let text = response.text().unwrap()
+                    println("status 404: {} is_success={} body={:?}", status, success, text)
+                }
+                Err(e) => println("status 404: error {}", e),
+            }
+            println("status 204: {}", fetch(client.clone(), server.url("/empty").as_str()))
+            let b = fetch(client.clone(), server.url("/cached").as_str())
+            println("status 304: {}", b)
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("statuses shared one connection: accepted {}", server.accepted())
+}
+
+fn head_request() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(
+        Script.new()
+            .read()
+            .write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n")
+            .read()
+            .write(ok("after head").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.head(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let status = response.status
+                    let text = response.text().unwrap()
+                    let next = fetch(client.clone(), server.url("/").as_str())
+                    println("head: {} body={:?} next={:?}", status, text, next.replace("200 body=\"", "").replace("\"", ""))
+                }
+                Err(e) => println("head: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("head shared one connection: accepted {}", server.accepted())
+}
+
+fn stream() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("abcdefgh").as_str()).read().write(ok("x").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let mut line = String.new()
+                    loop {
+                        let mut chunk = List<u8>.new()
+                        let n = response.body.read(mut chunk, 3).unwrap()
+                        if n == 0 {
+                            line.push_str("end")
+                            break
+                        }
+                        line.push_str(format("chunk {} ", n).as_str())
+                    }
+                    println("stream: {}", line)
+                }
+                Err(e) => println("stream: error {}", e),
+            }
+            let _ = fetch(client.clone(), server.url("/").as_str())
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("stream shared one connection: accepted {}", server.accepted())
+}
+
+fn refused_urls() {
+    let client = http.Client.new()
+    println("scheme: {}", fetch(client.clone(), "ftp://127.0.0.1/"))
+    println("userinfo: {}", fetch(client.clone(), "http://user:pw@127.0.0.1/"))
+}
+
+fn chunked_body() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+    scripts.push(
+        Script.new()
+            .read()
+            .write(head)
+            .write("5\r\nhello\r\n")
+            .write("6;note=1\r\n world\r\n")
+            .write("0\r\nX-Sum: sum-11\r\n\r\n")
+            .read()
+            .write(ok("again").as_str()),
+    )
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let text = response.text().unwrap()
+                    let trailer = response.trailers().get("x-sum").unwrap()
+                    let finished = response.body.is_finished()
+                    println("chunked: body={:?} trailer={} complete={}", text, trailer, finished)
+                }
+                Err(e) => println("chunked: error {}", e),
+            }
+            let _ = fetch(client.clone(), server.url("/").as_str())
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("chunked shared one connection: accepted {}", server.accepted())
+}
+
+fn close_delimited() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\n\r\nuntil the end").close())
+    scripts.push(Script.new().read().write(ok("second").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("close-delimited: {}", fetch(client.clone(), server.url("/").as_str()).replace("200 ", ""))
+            let _ = fetch(client.clone(), server.url("/").as_str())
+            client.close_idle()
+            server.settle()
+        })
+    })
+    println("close-delimited used two connections: accepted {}", server.accepted())
+}
+
+/// Runs one connection whose script is `steps` against one `get`, and prints the line `label: ` and the outcome.
+fn broken_body(label: str, head: str, body: str) {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(head).write(body).close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("{}: {}", label, fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+fn truncated_stream() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabcd").close())
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            match client.get(server.url("/").as_str()) {
+                Ok(response) => {
+                    let mut response = response
+                    let mut chunk = List<u8>.new()
+                    let first = response.body.read(mut chunk, 100).unwrap()
+                    match response.body.read(mut chunk, 100) {
+                        Ok(_) => println("truncated stream: no error"),
+                        Err(e) => println("truncated stream: {} after {} bytes", e, first),
+                    }
+                }
+                Err(e) => println("truncated stream: error {}", e),
+            }
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+fn interim_response() {
+    let server = Server.start(1)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write("HTTP/1.1 100 Continue\r\n\r\n").write(ok("final").as_str()))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let client = http.Client.new()
+            println("interim: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+fn body_limit() {
+    let server = Server.start(2)
+    let mut scripts = List<Script>.new()
+    scripts.push(Script.new().read().write(ok("abcdefgh").as_str()))
+    scripts.push(Script.new().read().write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nabcdefgh\r\n0\r\n\r\n"))
+    task.scope(|s| {
+        s.spawn(|| server.serve(scripts))
+        s.spawn(|| {
+            let mut client = http.Client.new()
+            client.max_body = 4
+            println("body limit: {}", fetch(client.clone(), server.url("/").as_str()))
+            println("body limit later: {}", fetch(client.clone(), server.url("/").as_str()))
+            client.close_idle()
+            server.settle()
+        })
+    })
+}
+
+fn run() {
+    println("== requests, responses, and headers (HC4 to HC7)")
+    get_basic()
+    post_body()
+    overrides()
+    bad_headers()
+    statuses()
+    head_request()
+    stream()
+    refused_urls()
+    println("== response bodies (HC8 to HC10)")
+    chunked_body()
+    close_delimited()
+    broken_body("truncated", "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", "abcd")
+    truncated_stream()
+    broken_body("chunk size", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "zz\r\n")
+    broken_body("chunk crlf", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "3\r\nabcd\r\n")
+    broken_body("chunk cut", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "5\r\nhel")
+    broken_body("both lengths", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n", "abc")
+    broken_body("two lengths", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 4\r\n\r\n", "abc")
+    broken_body("other coding", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n", "abc")
+    interim_response()
+    broken_body("garbage head", "garbage\r\n\r\n", "")
+    broken_body("folded head", "HTTP/1.1 200 OK\r\nX-A: 1\r\n  folded\r\n\r\n", "")
+    body_limit()
+}

@@ -2,7 +2,7 @@
 //! methods of built-in receivers, `sum`, the eager `List` helpers, and the lowering of `for` over a user type or
 //! an iterator value (`spec/iterators.md`).
 
-use super::{FnCx, error_expr, mk};
+use super::{FnCx, LoopScope, error_expr, mk};
 use crate::generics::{Bound, Request, SYMBOLIC_CALL};
 use crate::globals::adt_key;
 use crate::types::check_storable;
@@ -99,7 +99,7 @@ impl FnCx<'_> {
         }
         let key = (iface, method, recv_ty.clone(), vec![item.clone()]);
         if let Some(info) = self.globals.builtin_method_templates.get(&key).cloned() {
-            return Some(self.generic_method_call(info, recv, &name.name, args, span, expect));
+            return Some(self.generic_method_call(info, recv, &name.name, &[], args, span, expect));
         }
         // The template is created on the next pass; still check the arguments so their own errors show now.
         for a in args {
@@ -310,7 +310,11 @@ impl FnCx<'_> {
         );
         let arms = vec![
             tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(x, mode))), guard: None, body },
-            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
+            tir::Arm {
+                pat: Pat::None,
+                guard: None,
+                body: mk(tir::ExprKind::Break { label: None, value: None }, Ty::Never, span),
+            },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
         let looped = mk(
@@ -373,12 +377,13 @@ impl FnCx<'_> {
         iterable: tir::Expr,
         item: Ty,
         body: &ast::Block,
+        label: Option<&ast::Ident>,
         span: Span,
     ) -> tir::Expr {
         let iter_ty = iterable.ty.clone();
         let it = self.declare_hidden("__iter", iter_ty.clone(), true, LocalKind::Owned);
         self.scopes.push(Default::default());
-        self.loops.push(false);
+        self.loops.push(LoopScope::for_body(label));
         let pat = self.pattern(pattern, &item, true);
         if !self.exhaustive(&item, &[&pat]) {
             self.diags.error(
@@ -397,13 +402,22 @@ impl FnCx<'_> {
                 guard: None,
                 body: mk(tir::ExprKind::Block(body), Ty::Unit, span),
             },
-            tir::Arm { pat: Pat::None, guard: None, body: mk(tir::ExprKind::Break, Ty::Never, span) },
+            tir::Arm {
+                pat: Pat::None,
+                guard: None,
+                body: mk(tir::ExprKind::Break { label: None, value: None }, Ty::Never, span),
+            },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(next), arms), Ty::Unit, span);
-        let looped = mk(
-            tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)), close: span }),
-            Ty::Unit,
-            span,
+        // The label goes on the generated `loop`, the node the user's `break 'label`/`continue 'label` target;
+        // wrapping the whole block would leave codegen and the move checker without a loop to attach it to.
+        let looped = Self::with_label(
+            label,
+            mk(
+                tir::ExprKind::Loop(tir::Block { stmts: Vec::new(), tail: Some(Box::new(matched)), close: span }),
+                Ty::Unit,
+                span,
+            ),
         );
         let init = tir::Stmt::Let(Pat::Binding(it, self.bind_mode(&iter_ty, true)), iterable, None);
         mk(
@@ -422,14 +436,15 @@ impl FnCx<'_> {
         pattern: &ast::Pattern,
         iter: &ast::Expr,
         body: &ast::Block,
+        label: Option<&ast::Ident>,
         span: Span,
     ) -> tir::Expr {
         let name = ast::Ident { name: "iter_mut".to_string(), span: iter.span };
-        let iterator = self.method_call(iter, &name, &[], span, None);
+        let iterator = self.method_call(iter, &name, &[], &[], span, None);
         if iterator.ty == Ty::Error {
             // The iterable did not resolve; the body is still checked for its own errors.
             self.scopes.push(Default::default());
-            self.loops.push(false);
+            self.loops.push(LoopScope::for_body(label));
             let _ = self.pattern(pattern, &Ty::Error, true);
             let _ = self.block(body, None);
             self.loops.pop();
@@ -444,7 +459,7 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         };
-        self.protocol_for(pattern, iterator, item, body, span)
+        self.protocol_for(pattern, iterator, item, body, label, span)
     }
 
     /// The iterator a `for` over an `Iterable` starts: `value.iter()`, or a symbolic iterator for a type
@@ -481,6 +496,6 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let name = ast::Ident { name: "iter".to_string(), span };
-        self.method_call(iter, &name, &[], span, None)
+        self.method_call(iter, &name, &[], &[], span, None)
     }
 }

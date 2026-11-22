@@ -1,0 +1,49 @@
+struct Body {
+    text: String
+}
+
+Body {
+    /// Reads the whole body.
+    fn read_to_string(self): Option<String> {
+        Some(self.text.clone())
+    }
+
+    /// The length of the body in bytes.
+    fn size(self): usize {
+        self.text.len()
+    }
+}
+
+struct Response {
+    status: i32
+    body: Body
+}
+
+Response {
+    fn read_to_string(self): Option<String> {
+        self.body.read_to_string()
+    }
+}
+
+struct Client {
+    base: String
+}
+
+Client {
+    fn send(self, path: String): Response {
+        Response { status: 200, body: Body { text: format("{}{}", self.base, path) } }
+    }
+}
+
+fn main() {
+    let resp = Response { status: 200, body: Body { text: "hi".to_string() } }
+    let client = Client { base: "http://example.test".to_string() }
+    let req = "/".to_string()
+    let sent = client.send(req)
+    let body = resp.body.read_to_string() orelse return
+    let one = resp.read_to_string() orelse return
+    let n = resp.body.size()
+    println("{body} {one} {n} {sent.status}")
+    let body = resp.body
+    println("{}", body.size())
+}

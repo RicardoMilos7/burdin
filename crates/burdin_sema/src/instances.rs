@@ -25,6 +25,13 @@ impl<'t> Sema<'t> {
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
         let name = Globals::instance_name(&gname, &args);
         let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
+        // The bounds the instance's type parameters keep, with the instance's arguments substituted: a field may
+        // write `T.Item` through them (`spec/associated-types.md`, AT3).
+        let bounds: Vec<(String, Vec<Bound>)> = params
+            .iter()
+            .zip(&adt_bounds)
+            .map(|(p, bs)| (p.clone(), bs.iter().map(|b| self.globals.subst_bound(b, &subst)).collect()))
+            .collect();
         let second_class = args.iter().any(Ty::is_second_class);
         let adt_ref = |id| AdtRef { id, name: Rc::from(name.as_str()), second_class };
         let (key, ty) = if is_enum {
@@ -40,7 +47,12 @@ impl<'t> Sema<'t> {
             self.globals.enum_pkg.push(self.globals.package_of(gmodule));
             let private = self.globals.generic_adts[template].is_priv;
             self.globals.adt_priv.insert((true, id), private);
-            self.src.enums.push(crate::session::AdtSrcEntry { decl: self.tpl.enums[decl], subst, module: gmodule });
+            self.src.enums.push(crate::session::AdtSrcEntry {
+                decl: self.tpl.enums[decl],
+                subst,
+                bounds: bounds.clone(),
+                module: gmodule,
+            });
             ((true, id), Ty::Enum(r))
         } else {
             let id = self.globals.structs.len();
@@ -56,7 +68,12 @@ impl<'t> Sema<'t> {
             self.globals.struct_pkg.push(self.globals.package_of(gmodule));
             let private = self.globals.generic_adts[template].is_priv;
             self.globals.adt_priv.insert((false, id), private);
-            self.src.structs.push(crate::session::AdtSrcEntry { decl: self.tpl.structs[decl], subst, module: gmodule });
+            self.src.structs.push(crate::session::AdtSrcEntry {
+                decl: self.tpl.structs[decl],
+                subst,
+                bounds,
+                module: gmodule,
+            });
             ((false, id), Ty::Struct(r))
         };
         self.globals.adt_instances.insert((template, args.clone()), key);
@@ -221,6 +238,7 @@ impl<'t> Sema<'t> {
                 identity,
                 params: self.tpl.methods[index].params.clone(),
                 bounds: self.tpl.methods[index].bounds.clone(),
+                hidden: decl.generics.iter().any(|g| g.hidden),
             },
         );
     }

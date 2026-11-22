@@ -1,5 +1,6 @@
 //! The expression dispatcher.
 
+use super::conversion::lossless_from;
 use super::operators::can_cast;
 use super::{FnCx, error_expr, mk};
 use crate::types::compatible;
@@ -70,42 +71,16 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Block(b), ty, span)
             }
             K::If { cond, then_block, else_expr } => self.if_expr(cond, then_block, else_expr.as_deref(), expect, span),
-            K::While { cond, body } => {
-                let cond = self.expr(cond, Some(&Ty::Bool));
-                let cond = self.expect_ty(cond, &Ty::Bool);
-                self.loops.push(false);
-                let (body, _) = self.block(body, None);
-                self.loops.pop();
-                mk(tir::ExprKind::While(Box::new(cond), body), Ty::Unit, span)
-            }
-            K::Loop(body) => {
-                self.loops.push(false);
-                let (body, _) = self.block(body, None);
-                let has_break = self.loops.pop().unwrap_or(false);
-                mk(tir::ExprKind::Loop(body), if has_break { Ty::Unit } else { Ty::Never }, span)
-            }
-            K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, span),
+            K::While { cond, body } => self.while_expr(cond, body, None, span),
+            K::WhileLet { pattern, scrutinee, body } => self.while_let(pattern, scrutinee, body, None, span),
+            K::Loop(body) => self.loop_expr(body, None, expect, span),
+            K::Labeled { label, body } => self.labeled_loop(label, body, expect, span),
+            K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, None, span),
             K::Comptime(inner) => self.comptime_expr(inner, expect, span),
             K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),
-            K::Break | K::Continue => {
-                let word = if matches!(e.kind, K::Break) { "break" } else { "continue" };
-                if self.loops.is_empty() {
-                    self.diags.error(Code::SYNTAX, span, format!("`{word}` outside of a loop"));
-                    return error_expr(span);
-                }
-                if self.leaves_comptime_for(word, span) {
-                    return error_expr(span);
-                }
-                if matches!(e.kind, K::Break) {
-                    if let Some(has_break) = self.loops.last_mut() {
-                        *has_break = true;
-                    }
-                    mk(tir::ExprKind::Break, Ty::Never, span)
-                } else {
-                    mk(tir::ExprKind::Continue, Ty::Never, span)
-                }
-            }
+            K::Break { label, value } => self.jump(label.as_ref(), true, value.as_deref(), span),
+            K::Continue(label) => self.jump(label.as_ref(), false, None, span),
             K::Return(value) => {
                 let ret = self.ret.clone();
                 let value = match value {
@@ -123,6 +98,7 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Return(value), Ty::Never, span)
             }
             K::Assign(lhs, rhs) => self.assign(lhs, rhs, span),
+            K::CompoundAssign(op, lhs, rhs) => self.compound_assign(*op, lhs, rhs, span),
             K::Binary(op, l, r) => self.binary(*op, l, r, expect, span),
             K::Unary(op, operand) => self.unary(*op, operand, expect, span),
             K::Cast(operand, ty) => {
@@ -135,6 +111,10 @@ impl FnCx<'_> {
                         format!("cannot convert `{}` to `{target}` with `as`", operand.ty),
                     );
                     return error_expr(span);
+                }
+                // A pair with a built-in `From` impl is that conversion (FR3); the others keep the cast.
+                if lossless_from(&target, &operand.ty) {
+                    return self.primitive_from_value(target, operand, span);
                 }
                 mk(tir::ExprKind::Cast(Box::new(operand)), target, span)
             }

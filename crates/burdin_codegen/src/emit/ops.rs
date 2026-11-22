@@ -98,11 +98,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let v = self.builder.build_int_compare(pred, order, zero, "").map_err(llvm_err)?;
             return Ok(Some(v.into()));
         }
+        self.arith_values(op, operand_ty, lv, rv, &r.ty, span)
+    }
+
+    /// The value of an arithmetic, bitwise, or comparison operator on two operands that are already evaluated: the
+    /// left operand has `operand_ty` and the right one `r_ty`. The binary operators and compound assignment
+    /// (`spec/compound-assignment.md`, CA2) share it, so both give the same overflow and division behavior.
+    pub(super) fn arith_values(
+        &mut self,
+        op: BinOp,
+        operand_ty: &Ty,
+        lv: Option<BasicValueEnum<'ctx>>,
+        rv: Option<BasicValueEnum<'ctx>>,
+        r_ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         if self.llvm_ty(operand_ty).is_none() {
             return Ok(None);
         }
         let lv = self.need(lv, operand_ty);
-        let rv = self.need(rv, &r.ty);
+        let rv = self.need(rv, r_ty);
         let b = &self.builder;
         let v: BasicValueEnum<'ctx> = match operand_ty {
             Ty::Float(_) => {
@@ -324,7 +339,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.check(nonzero, "division by zero", span)?;
         let mut divisor = y;
         if i.signed() {
-            let min = t.const_int(i.min() as u64, false);
+            let min = super::types::int_const(t, i.min());
             let minus_one = t.const_all_ones();
             let is_min = self.builder.build_int_compare(IntPredicate::EQ, x, min, "").map_err(llvm_err)?;
             let is_m1 = self.builder.build_int_compare(IntPredicate::EQ, y, minus_one, "").map_err(llvm_err)?;
@@ -341,6 +356,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let what = if op == BinOp::Div { "divide" } else { "calculate the remainder" };
                 self.check(ok, &format!("attempt to {what} with overflow"), span)?;
             }
+        }
+        if t.get_bit_width() == 128 {
+            // LLVM would call a compiler runtime for a 128-bit division; the runtime's own routine does it instead
+            // (`spec/int128.md`, I128-3).
+            let rem = self.alloca(t.into(), "rem")?;
+            let f = if i.signed() { self.rt.sdivrem128 } else { self.rt.udivrem128 };
+            let call = self.builder.build_call(f, &[x.into(), divisor.into(), rem.into()], "").map_err(llvm_err)?;
+            let quotient = call.try_as_basic_value().basic().ok_or("the division routine returns a value")?;
+            if op == BinOp::Div {
+                return Ok(quotient.into_int_value());
+            }
+            return Ok(self.builder.build_load(t, rem, "").map_err(llvm_err)?.into_int_value());
         }
         let b = &self.builder;
         match (op, i.signed()) {

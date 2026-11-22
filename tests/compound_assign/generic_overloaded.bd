@@ -1,0 +1,25 @@
+//@ run
+//> 5
+
+// A type parameter with the `Add` bound takes the compound form through the bound (spec/compound-assignment.md, CA5).
+
+struct Cell {
+    n: i64
+}
+
+Cell: Add {
+    fn add(self, other: Cell): Cell {
+        Cell { n: self.n + other.n }
+    }
+}
+
+fn total<T: Add>(own x: T, y: T): T {
+    let mut r = x
+    r += y
+    r
+}
+
+fn main() {
+    let t = total(Cell { n: 2 }, Cell { n: 3 })
+    println("{t.n}")
+}

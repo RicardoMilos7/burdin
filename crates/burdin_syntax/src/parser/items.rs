@@ -10,42 +10,44 @@ impl Parser<'_> {
         let mut file = File::default();
         while !self.at_eof() {
             self.nl_stack.clear();
+            let start = self.pos;
             if self.at(&TokenKind::Use) || self.at_pub_use() {
                 let is_pub = self.at_pub_use();
                 match self.use_decl(is_pub) {
                     Ok(use_decl) => file.uses.push(use_decl),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_test_item() {
                 match self.test_decl() {
                     Ok(test) => file.tests.push(test),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_bench_item() {
                 match self.bench_decl() {
                     Ok(bench) => file.benches.push(bench),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             if self.at_fuzz_item() {
                 match self.fuzz_decl() {
                     Ok(fuzz) => file.fuzzes.push(fuzz),
-                    Err(Reported) => self.recover_item(),
+                    Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
                 }
                 continue;
             }
             match self.item() {
                 Ok(Some(item)) => file.items.push(item),
                 Ok(None) => {}
-                Err(Reported) => self.recover_item(),
+                Err(Reported) => self.recover_unparsed_item(start, &mut file.unparsed),
             }
         }
         file.bodies = std::mem::take(&mut self.bodies);
+        file.generators = std::mem::take(&mut self.generators);
         file
     }
 
@@ -113,6 +115,7 @@ impl Parser<'_> {
             TokenKind::Interface => Ok(Some(Item::Interface(self.interface_decl(is_priv, start)?))),
             TokenKind::Type => Ok(Some(Item::TypeAlias(self.type_alias(is_priv, start)?))),
             TokenKind::Const => Ok(Some(Item::Const(self.const_decl(is_priv, start)?))),
+            TokenKind::Comptime if !is_priv && self.at_generate() => Ok(Some(Item::Fn(self.generate_item(start)?))),
             TokenKind::Comptime if !is_priv => Ok(Some(Item::Const(self.comptime_assert_item(start)?))),
             TokenKind::Extern => Ok(Some(self.extern_item(is_priv, start)?)),
             TokenKind::Reserved(word) if word == "derive" => Ok(Some(Item::Derive(self.derive_decl(is_priv, start)?))),
@@ -438,20 +441,44 @@ impl Parser<'_> {
         let interface = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
         let where_clause = if self.at(&TokenKind::Where) { self.where_clause()? } else { Vec::new() };
         self.open(&TokenKind::LBrace, true)?;
+        let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.unexpected("`}`"));
             }
+            if self.at_generate() {
+                self.misplaced_generate()?;
+                continue;
+            }
+            // `type Name = Type`: the binding of an interface's associated type
+            // (`spec/associated-types.md`, AT2).
+            if self.at(&TokenKind::Type) {
+                let at = self.span();
+                self.bump();
+                let name = self.ident("an associated type name")?;
+                self.expect(&TokenKind::Eq)?;
+                let ty = self.ty()?;
+                assoc.push(AssocBinding { name, ty, span: at.to(self.prev_span()) });
+                continue;
+            }
             let fn_start = self.span();
             let is_priv = self.eat(&TokenKind::Priv);
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
-                return Err(self.unexpected("a method"));
+                return Err(self.unexpected("a method or an associated type binding"));
             }
             methods.push(self.fn_decl(is_priv, fn_start)?);
         }
         self.close(&TokenKind::RBrace)?;
-        Ok(ImplBlock { is_unsafe: false, ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
+        Ok(ImplBlock {
+            is_unsafe: false,
+            ty,
+            interface,
+            where_clause,
+            assoc,
+            methods,
+            span: start.to(self.prev_span()),
+        })
     }
 
     /// `test "name" { ... }` or `test "name" [attrs] { ... }`. The test is compiled as a function with no
@@ -626,21 +653,43 @@ impl Parser<'_> {
             Vec::new()
         };
         self.open(&TokenKind::LBrace, true)?;
+        let mut associated = Vec::new();
         let mut methods = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.unexpected("`}`"));
             }
+            // `type Name`: an associated type (`spec/associated-types.md`, AT1). Stage 1 gives it no bound and no
+            // default, so `type Name: Bound` and `type Name = Ty` are rejected here.
+            if self.at(&TokenKind::Type) {
+                let at = self.span();
+                self.bump();
+                let name = self.ident("an associated type name")?;
+                if self.at(&TokenKind::Colon) || self.at(&TokenKind::Eq) {
+                    let bad = self.span();
+                    self.bump();
+                    let _ = self.ty()?;
+                    self.diags.error(
+                        Code::SYNTAX,
+                        bad,
+                        "an associated type takes no bound and no default; write `type Name` and bind it in each \
+                         implementation (`type Name = Type`)",
+                    );
+                    continue;
+                }
+                associated.push(AssocTypeDecl { span: at.to(name.span), name });
+                continue;
+            }
             let fn_start = self.span();
             let is_priv = self.eat(&TokenKind::Priv);
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
-                return Err(self.unexpected("a method"));
+                return Err(self.unexpected("a method or an associated type"));
             }
             let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true, false)?;
             methods.push(InterfaceFn { decl, has_body });
         }
         self.close(&TokenKind::RBrace)?;
-        Ok(InterfaceDecl { is_priv, name, generics, requires, methods, span: start.to(self.prev_span()) })
+        Ok(InterfaceDecl { is_priv, name, generics, requires, associated, methods, span: start.to(self.prev_span()) })
     }
 
     /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method (`crate::lookahead`).
@@ -816,6 +865,61 @@ impl Parser<'_> {
         Ok(ConstDecl { is_priv: true, name, ty, span: start.to(value.span), value })
     }
 
+    /// At `comptime generate {`: `generate` is a keyword only right after `comptime`, so it stays an ordinary
+    /// identifier everywhere else (`spec/generate.md`, GN2).
+    pub(super) fn at_generate(&self) -> bool {
+        self.at(&TokenKind::Comptime)
+            && matches!(self.nth_kind(1), TokenKind::Ident(name) if name == "generate")
+            && self.nth_kind(2) == &TokenKind::LBrace
+    }
+
+    /// `comptime generate { ... }` at module scope. It is a private function named `comptime generate N` (a name no
+    /// written name can equal) with no parameters, the return type `String`, and the block as its body, so the
+    /// checker and the memory checks treat it like any function (`spec/generate.md`, GN2). The block is not in
+    /// `bodies`: an edit inside it is an edit to the declarations, because what it generates changes them.
+    fn generate_item(&mut self, start: Span) -> PResult<FnDecl> {
+        self.expect(&TokenKind::Comptime)?;
+        let keyword = start.to(self.bump().span);
+        let body = self.block()?;
+        let span = start.to(body.span);
+        let name = format!("comptime generate {}", self.generators.len() + 1);
+        self.generators.push(Generator { name: name.clone(), span, keyword });
+        let string = Type {
+            kind: TypeKind::Path(vec![PathSegment {
+                name: Ident { name: "String".to_string(), span: keyword },
+                args: Vec::new(),
+            }]),
+            span: keyword,
+        };
+        Ok(FnDecl {
+            is_priv: true,
+            is_unsafe: false,
+            is_blocking: false,
+            name: Ident { name, span: keyword },
+            generics: Vec::new(),
+            params: Vec::new(),
+            is_vararg: false,
+            ret: Some(string),
+            where_clause: Vec::new(),
+            body,
+            span,
+        })
+    }
+
+    /// A `comptime generate` block anywhere but module scope: E0243 at the `comptime` keyword. The block is parsed
+    /// and returned so the rest of the file is read as written (`spec/generate.md`, GN2).
+    pub(super) fn misplaced_generate(&mut self) -> PResult<Block> {
+        let span = self.span();
+        self.diags.error(
+            Code::GENERATE_SCOPE,
+            span,
+            "`comptime generate` is allowed only at module scope, not in a function, an impl block, or an expression (spec/generate.md, GN2)",
+        );
+        self.bump();
+        self.bump();
+        self.block()
+    }
+
     pub(super) fn param(&mut self) -> PResult<Param> {
         let start = self.span();
         // `comptime name: Type` (spec/comptime.md, CT4). The checker rejects it together with a convention or `self`.
@@ -874,7 +978,7 @@ impl Parser<'_> {
             };
             let name = Ident { name, span };
             ty.kind = TypeKind::Path(vec![PathSegment { name: name.clone(), args: Vec::new() }]);
-            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None, default: None });
+            generics.push(GenericParam { name, bounds: vec![*inner], const_ty: None, default: None, hidden: true });
         }
         generics
     }
@@ -895,13 +999,13 @@ impl Parser<'_> {
                 self.expect(&TokenKind::Colon)?;
                 let ty = self.ty()?;
                 let default = if self.eat(&TokenKind::Eq) { Some(self.generic_arg()?) } else { None };
-                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty), default });
+                params.push(GenericParam { name, bounds: Vec::new(), const_ty: Some(ty), default, hidden: false });
             } else {
                 let name = self.ident("a generic parameter name")?;
                 let bounds = if self.eat(&TokenKind::Colon) { self.bounds()? } else { Vec::new() };
                 // `A: Allocator = Global`: a default for an omitted type argument (`spec/allocators.md`, AL5).
                 let default = if self.eat(&TokenKind::Eq) { Some(self.ty()?) } else { None };
-                params.push(GenericParam { name, bounds, const_ty: None, default });
+                params.push(GenericParam { name, bounds, const_ty: None, default, hidden: false });
             }
             if !self.eat(&TokenKind::Comma) {
                 if !self.eat_closing_angle() {

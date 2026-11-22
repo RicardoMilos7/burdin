@@ -79,7 +79,7 @@ Tests: `m05_ownership/heap_tree_eval`, `heap_move_whole_then_field`, `move_heap_
 parameter, anything behind a reference, an element of a collection) is E0101.
 Test: `m06_conventions/move_out_of_readonly_param`.
 
-**MV8 Matching.** The scrutinee of `match`, `if let`, and `let ... else` is a place or a temporary.
+**MV8 Matching.** The scrutinee of `match`, `if let`, `while let`, and `let ... else` is a place or a temporary.
 If it is an owned place (an owned local, an `own` parameter) or a temporary, bindings in the arm that bind non-Copy parts move
 those parts out (the scrutinee becomes partially moved or moved) and Copy parts are copied. If it is a borrowed place (a read-only
 parameter, a `mut` parameter, behind a reference), bindings are views of the parts: read-only for a read-only place,
@@ -91,6 +91,14 @@ once and a failed guard restores the parts an earlier arm bound.
 Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `match_temporary_fields_drop`,
 `match_guard_temporary`, `match_guard_temporary_fields`, `match_heap_pointee_partial`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
 `m07_generics/generic_stack`.
+
+**MV9 Block values.** The value of a block, an `if`, or a `match` (including the one a `?` lowers to) is an owned
+temporary whatever uses it. Its tail or arm moves the value out, even where the expression is only borrowed: a read-only
+argument, a method receiver, a comparison operand, a `let _`. A `loop`'s value (what its `break` gives back) is owned the
+same way. A temporary scrutinee of such a value is moved into its
+compiler-made local as MV8 says, so the value drops exactly once, at the end of the statement that created it (DR5),
+and a local the tail moves out is not usable afterwards (E0100).
+Tests: `m05_ownership/temporary_question_arg` (run), `m05_ownership/move_block_value_borrowed` (E0100).
 
 ## 2. Mutability (MU)
 
@@ -247,7 +255,8 @@ declared in the same block or in an enclosing block. It may not derive from a te
 end of the statement that created it, or from a local of an inner block, which is dropped before the binding
 escapes. Violation: E0123, reported at the stored value. Bindings of a `match`, `if let`, or `for` pattern are
 not subject to RT5: their scrutinee's temporaries live until the end of the same statement, and the binding lives
-no longer than the arm or loop body.
+no longer than the arm or loop body. The same holds for a `while let` pattern: each pass evaluates the scrutinee
+again, and its bindings and temporaries end with that pass (`spec/grammar.md`, rule 8.11).
 Tests: `m06_conventions/view_lifetime_ok`, `view_of_earlier_local_ok`;
 errors: `view_outlives_temporary`, `view_outlives_inner_local`, `view_outlives_string` (all in `m06_conventions`,
 E0123).
@@ -327,7 +336,10 @@ temporary. `let _x = e` binds. The temporaries of a block's tail expression are 
 Tests: `m05_ownership/drop_temporaries`, `drop_block_tail`, `drop_params_and_let_underscore`.
 
 **DR6 Early exits.** `return`, `break`, `continue`, and `?` drop every initialized value in the scopes being left, in reverse
-order, before control transfers. A returned value is computed before the drops run.
+order, before control transfers. A returned value is computed before the drops run, and so is a `break` value (which
+the loop then gives back). A labeled `break 'l` or `continue 'l`
+leaves every loop between it and the loop labeled `'l`, and drops the scopes of all of them, innermost first (issue #275).
+Tests: `m02_basics/labeled_loops` (the drops of a labeled `break` and of a labeled `continue`).
 Tests: `m05_ownership/drop_early_return`, `m09_stdlib/question_and_from`.
 
 **DR7 Partial and conditional moves.** Remaining fields of a partially moved owner are dropped at its scope end (in field order;
@@ -437,7 +449,8 @@ the call, so no other argument of that call may mention the closure place (EX1).
 the closure value.
 
 **CL8 Returns, moves, and drops inside a closure body.** `return` inside a closure body returns from the closure, not
-from the enclosing function. `break` and `continue` cannot cross a closure boundary (E0001). The closure body is
+from the enclosing function. `break` and `continue` cannot cross a closure boundary (E0001); a labeled one that names a loop
+outside the closure is E0002, because the label is not in scope inside it. The closure body is
 checked as its own function: its own parameters are owned and dropped at its end, and for a `FnOnce` closure the
 captured values that remain are dropped there (the call consumed the capture record). A `Fn`/`FnMut` value called
 where a weakened `FnOnce` type is expected (CL5) is consumed by that call as well: once the body returns, the record
@@ -486,7 +499,7 @@ Tests: `tests/s2_tasks/scope_*.bd`.
 
 ## Summary of error codes used here
 
-E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
+E0003 IC1, RT4, CL5, CL9 · E0005 MU1, MU2, MU4 · E0100 MV2, MV5, MV8, MV9, CL6 · E0101 MV7, CV1, CV2, CL4, CL6, CL8 ·
 E0103 MV5 · E0104 MV3 · E0110 EX1 · E0111 RF3, IT1, CL7, SK1, SK3 · E0113 CV2, MU3, MU4, CL6 · E0114 CV2 · E0115 CV2 ·
 E0120 SC2, CL3 · E0121 RT3, RT3a · E0122 RT2 · E0123 RT5, CL3 · E0130 DR8, CP, CL10 · E0141 CL5, CL6 · E0161 US, CL11 ·
 E0171 CL3, CL9, CL11, SK2, SK3.

@@ -1,9 +1,10 @@
 //! Built-in functions and the methods of the primitive types.
 
+use super::fallible::{TRY_OK, TRY_OUT_OF_MEMORY};
 use super::place::is_place;
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
-use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, Method, Ty};
+use burdin_tir::{self as tir, AssertKind, BinOp, Builtin, FloatOp, FloatTy, IntTy, Method, Ty};
 use inkwell::intrinsics::Intrinsic;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
@@ -240,6 +241,83 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(done);
                 return Ok(Some(self.builder.build_load(string_t, slot, "").map_err(llvm_err)?));
             }
+            // `List<T>.try_with_capacity(n)` and `try_with_capacity_in(n, alloc)`: `with_capacity` that returns
+            // `Err(AllocError)` instead of panicking (`spec/allocators.md`, AL11).
+            Builtin::ListTryWithCapacity | Builtin::ListTryWithCapacityIn => {
+                let n = self.expr_mode(&args[0], Mode::Use)?;
+                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
+                let Ty::Result(list_ty, _) = ty else { return Err("`try_with_capacity` returns a Result".into()) };
+                let Ty::List(elem, alloc) = &**list_ty else {
+                    return Err("`try_with_capacity` on a non-list type".into());
+                };
+                let (elem, alloc) = ((**elem).clone(), alloc.clone());
+                let alloc_value =
+                    if b == Builtin::ListTryWithCapacityIn { self.expr_mode(&args[1], Mode::Move)? } else { None };
+                if b == Builtin::ListTryWithCapacityIn && !alloc.is_global() {
+                    let seq_ty = self.seq_ty(&alloc);
+                    let slot = self.alloca(seq_ty.into(), "list.try.capacity")?;
+                    let alloc_field = self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
+                    let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
+                    self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
+                    let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
+                    return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
+                }
+                let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, None, span)?;
+                return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
+            }
+            // `Map<K, V>.try_with_capacity(n)`: the empty map that `try_reserve(n)` makes.
+            Builtin::MapTryWithCapacity => {
+                let capacity = self.expr_mode(&args[0], Mode::Use)?;
+                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
+                let Ty::Result(map_ty, _) = ty else { return Err("`try_with_capacity` returns a Result".into()) };
+                let Ty::Map(key, value, _) = &**map_ty else {
+                    return Err("`Map.try_with_capacity` on a non-map type".into());
+                };
+                let (key, value) = ((**key).clone(), (**value).clone());
+                let map_t = self.llvm_ty(map_ty).expect("a map has a type");
+                let slot = self.alloca(map_t, "map.try.with_capacity")?;
+                self.builder.build_store(slot, map_t.const_zero()).map_err(llvm_err)?;
+                let status = self.map_try_reserve_at(slot, &burdin_tir::Alloc::Global, &key, &value, capacity, span)?;
+                let map = self.builder.build_load(map_t, slot, "").map_err(llvm_err)?;
+                return Ok(Some(self.try_result(status, Some(map), ty)?));
+            }
+            // `String.try_with_capacity(n)`: `with_capacity` that reports a failed allocation.
+            Builtin::StringTryWithCapacity => {
+                let capacity = self.expr_mode(&args[0], Mode::Use)?;
+                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
+                let string_t = self.string_ty;
+                let i32_ty = self.cx.i32_type();
+                let slot = self.alloca(string_t.into(), "string.try.with_capacity")?;
+                self.builder.build_store(slot, string_t.const_zero()).map_err(llvm_err)?;
+                let status = self.alloca(i32_ty.into(), "try.status")?;
+                self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+                let some = self
+                    .builder
+                    .build_int_compare(IntPredicate::UGT, capacity, self.usize_ty.const_zero(), "")
+                    .map_err(llvm_err)?;
+                let alloc = self.new_block("string.try.with_capacity.alloc");
+                let done = self.new_block("string.try.with_capacity.end");
+                let store = self.new_block("string.try.with_capacity.store");
+                let fail = self.new_block("string.try.with_capacity.oom");
+                self.builder.build_conditional_branch(some, alloc, done).map_err(llvm_err)?;
+                self.builder.position_at_end(alloc);
+                let data = self.global_try_alloc(capacity, Some(span))?;
+                let refused = self.builder.build_is_null(data, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(refused, fail, store).map_err(llvm_err)?;
+                self.builder.position_at_end(store);
+                let ptr_field = self.builder.build_struct_gep(string_t, slot, 0, "s.ptr").map_err(llvm_err)?;
+                let cap_field = self.builder.build_struct_gep(string_t, slot, 2, "s.cap").map_err(llvm_err)?;
+                self.builder.build_store(ptr_field, data).map_err(llvm_err)?;
+                self.builder.build_store(cap_field, capacity).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                self.builder.position_at_end(fail);
+                self.builder.build_store(status, i32_ty.const_int(TRY_OUT_OF_MEMORY, false)).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                self.builder.position_at_end(done);
+                let st = self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value();
+                let value = self.builder.build_load(string_t, slot, "").map_err(llvm_err)?;
+                return Ok(Some(self.try_result(st, Some(value), ty)?));
+            }
             // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
             Builtin::ListNewIn | Builtin::MapNewIn => {
                 let alloc_ty = args[0].ty.clone();
@@ -275,6 +353,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let new_size = self.need_int(new_size, &Ty::Int(burdin_tir::IntTy::Usize));
                 let _align = self.expr_mode(&args[3], Mode::Use)?;
                 let p = self.global_realloc(p, new_size, Some(span))?;
+                return Ok(Some(p.into()));
+            }
+            // The fallible `Global` primitives: a null pointer instead of the out-of-memory panic (AL11).
+            Builtin::RawTryAlloc => {
+                let size = self.expr_mode(&args[0], Mode::Use)?;
+                let size = self.need_int(size, &Ty::Int(burdin_tir::IntTy::Usize));
+                let _align = self.expr_mode(&args[1], Mode::Use)?;
+                let p = self.global_try_alloc(size, Some(span))?;
+                return Ok(Some(p.into()));
+            }
+            Builtin::RawTryRealloc => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let _old = self.expr_mode(&args[1], Mode::Use)?;
+                let new_size = self.expr_mode(&args[2], Mode::Use)?;
+                let new_size = self.need_int(new_size, &Ty::Int(burdin_tir::IntTy::Usize));
+                let _align = self.expr_mode(&args[3], Mode::Use)?;
+                let p = self.global_try_realloc(p, new_size, Some(span))?;
                 return Ok(Some(p.into()));
             }
             Builtin::RawDealloc => {
@@ -1628,6 +1724,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::ListIsEmpty
                 | Method::ListReserve
                 | Method::ListReserveExact
+                | Method::ListTryReserve
+                | Method::ListTryReserveExact
                 | Method::ListShrinkToFit
                 | Method::ListSwap
                 | Method::ListSwapRemove
@@ -1653,6 +1751,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::MapRemoveEntry
                 | Method::MapRetain
                 | Method::MapReserve
+                | Method::MapTryReserve
                 | Method::MapShrinkToFit
                 | Method::MapContainsKey
         ) {
@@ -1666,6 +1765,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             m,
             Method::StringCapacity
                 | Method::StringReserve
+                | Method::StringTryReserve
                 | Method::StringShrinkToFit
                 | Method::StringInsertStr
                 | Method::StringReplaceRange
@@ -1959,6 +2059,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let out = self.alloca(self.string_ty.into(), "string")?;
         let i64_ty = self.cx.i64_type();
         match ty {
+            Ty::Int(i @ (IntTy::I128 | IntTy::U128)) => {
+                let f = if i.signed() { self.rt.i128_to_string } else { self.rt.u128_to_string };
+                self.builder.build_call(f, &[v.into(), out.into()], "").map_err(llvm_err)?;
+            }
             Ty::Int(i) => {
                 let wide = self
                     .builder

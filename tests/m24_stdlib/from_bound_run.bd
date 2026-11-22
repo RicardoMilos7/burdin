@@ -1,0 +1,32 @@
+//@ run
+//> 5 42
+//> 14
+
+// `T: From<S>` (spec/stdlib.md, FR7): `T.from(v)` and `v.into()` in the body of a generic function. The function is
+// instantiated for a built-in pair (`i64` from `i32`) and for a user `From` block (`Meters`).
+
+struct Meters {
+    value: i32
+}
+
+Meters: From<i32> {
+    fn from(v: i32): Meters {
+        Meters { value: v * 2 }
+    }
+}
+
+fn widen<T: From<i32>>(v: i32): T {
+    T.from(v)
+}
+
+fn convert<T: From<i32>>(v: i32): T {
+    v.into()
+}
+
+fn main() {
+    let a: i64 = widen<i64>(5)
+    let m: Meters = widen<Meters>(21)
+    println("{} {}", a, m.value)
+    let c: Meters = convert<Meters>(7)
+    println("{}", c.value)
+}

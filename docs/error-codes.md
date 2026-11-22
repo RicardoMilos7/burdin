@@ -68,8 +68,20 @@ fn main() {
 ```
 <!-- /error-example -->
 
+A generic type named without the type arguments it needs is also E0003: `Map.new()` for `Map<K, V>`, or `let xs: List`
+in a type position. The message names the missing parameters and the form to write.
+
+<!-- error-example: E0003 -->
+```burdin
+fn main() {
+    let m = Map.new() //~ E0003
+}
+```
+<!-- /error-example -->
+
 **How to fix:** make the two types agree. Convert explicitly, for example with `to_string`, `parse`, or `as` for a
-numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position.
+numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position. For
+a generic type, write its type arguments, as in `Map<String, i32>.new()`, or give the context that determines them.
 
 ## E0004: Wrong number of arguments
 
@@ -664,6 +676,57 @@ fn main() {}
 overlap (`Stack<i32>` and `Stack<bool>`). An inherent impl on `Stack<i32>` cannot repeat a method the general impl
 already gives that instance (E0007): give it another name.
 
+## E0144: Interface implementation's associated type bindings are wrong
+
+An interface may declare associated types with `type Name`, and a `Type: Interface` block must bind each of them
+exactly once with `type Name = Type`. The diagnostic covers a missing binding (reported at the impl line), a binding
+of a name the interface does not declare (reported at the binding), and a `type` entry in an impl block that names
+no interface at all, such as an inherent or `Drop` block (reported at each entry).
+
+<!-- error-example: E0144 -->
+```burdin
+interface Shape {
+    type Item
+    fn area(self): i32
+}
+
+struct Sq {
+    n: i32
+}
+
+Sq: Shape { //~ E0144
+    fn area(self): i32 { self.n }
+}
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** bind every associated type the interface declares (`type Item = i32`), remove bindings for names
+the interface does not declare, and keep `type` entries only in `Type: Interface` blocks.
+
+## E0145: An associated type projection that cannot be resolved
+
+A projection (`Self.Item`, `T.Item`, or `<T as Interface>.Item`) needs exactly one interface to answer it. The
+shorthand `T.Item` is ambiguous when more than one interface gives `T` that associated type, and a projection on a
+type no interface gives that associated type has no answer. When more than one interface applies, name the one you
+mean.
+
+<!-- error-example: E0145 -->
+```burdin
+struct Sq {
+    n: i32
+}
+
+fn f(a: Sq): Sq.Missing { 0 } //~ E0145
+
+fn main() {}
+```
+<!-- /error-example -->
+
+**How to fix:** write `<Sq as Interface>.Item` to name the interface, or use a type (or a bound) that an interface
+implements with that associated type. An interface's own method can use `Self.Item` freely.
+
 ## E0150: Use of a `priv` item from another package
 
 The item exists but is package-private: another package may not import it, read or write a private field,
@@ -1081,7 +1144,8 @@ concrete type.
 An interface used as `any Interface` must be object-safe, because its methods are reached through a fixed vtable:
 no method may have its own type parameters, every method needs a `self` receiver, `own self` is not allowed (the
 boxed value is reached through a pointer), no method may mention `Self` outside its receiver, no method may return
-a view, and every interface it `requires` must itself be object-safe.
+a view, no interface may declare an associated type (a vtable cannot answer `Self.Item` for a value whose concrete
+type it does not name), and every interface it `requires` must itself be object-safe.
 
 <!-- error-example: E0202 -->
 ```burdin
@@ -1097,7 +1161,7 @@ fn main() {}
 
 **How to fix:** make the interface object-safe: remove the type parameters from the method or move the operation to
 a `where`-bounded generic function, give every method a `self` or `mut self` receiver, return an owned value instead
-of a view, and make the `requires` interfaces object-safe too. When a vtable is not needed, `impl Interface` or a
+of a view, remove or move out its associated types, and make the `requires` interfaces object-safe too. When a vtable is not needed, `impl Interface` or a
 generic bound dispatches statically and does not require object safety.
 
 ## E0204: Boxing a type whose implementation is compiler-provided
@@ -1138,10 +1202,11 @@ fn main() {}
 **How to fix:** give a `from` variant exactly one tuple field, use only payload field names or positions in the
 message, and write no `from` on a generic error enum. `spec/errors.md` ERR1-ERR3.
 
-## E0211: Duplicate `from` conversion
+## E0211: Duplicate conversion source
 
-One error enum may convert from a given source type only once: the generated `Type: From<Source>` blocks would
-collide, and `?` would not know which variant to build.
+A type may convert from a given source type only once, whether the conversion is a `From` or a `TryFrom` block or a
+`from` variant of an error enum: the blocks would collide, and `?` and `Type.from(v)` would not know which one to
+call.
 
 <!-- error-example: E0211 -->
 ```burdin
@@ -1154,8 +1219,9 @@ fn main() {}
 ```
 <!-- /error-example -->
 
-**How to fix:** keep one `from` variant per source type; convert the other source types with a hand-written
-`Type: From<Source>` block if they must map to a different variant.
+**How to fix:** keep one conversion per source type. Convert the other source types with a `From` or `TryFrom`
+block for a different source, or with a hand-written `Type: From<Source>` block if they must map to a different
+variant.
 
 ## E0212: Missing error conversion
 
@@ -1544,6 +1610,44 @@ fn main() {
 
 **How to fix:** write the path as a string literal inside the source directory, and give `[u8; N]` the file's
 length.
+
+## E0242: Invalid generated text
+
+A `comptime generate` block at module scope returns the Burdin source of declarations, and the compiler parses that
+text as module items. The text must parse, and it may declare only `struct`, `enum`, and `fn` items. A constant,
+`use`, impl block, interface, derive, type alias, test, or another `comptime generate` in it is this error, reported
+at the block, with the parser's message for a text that does not parse. `spec/generate.md` GN4.
+
+<!-- error-example: E0242 -->
+```burdin
+comptime generate { //~ E0242
+    String.from("const LIMIT: i32 = 3\n")
+}
+
+fn main() {
+}
+```
+<!-- /error-example -->
+
+**How to fix:** generate only `struct`, `enum`, and `fn` declarations, and check that the text parses (write its
+braces as `{{` and `}}`).
+
+## E0243: `comptime generate` outside module scope
+
+A `comptime generate` block declares items for its module, so it stands at module scope. Inside a function body, an
+impl block, or an expression it is this error, reported at the `comptime` keyword. `spec/generate.md` GN2.
+
+<!-- error-example: E0243 -->
+```burdin
+fn main() {
+    comptime generate { //~ E0243
+        String.new()
+    }
+}
+```
+<!-- /error-example -->
+
+**How to fix:** move the block to module scope.
 
 ## E0250: Invalid const generic parameter or argument
 
