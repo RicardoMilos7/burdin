@@ -631,7 +631,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         K::Builtin(b, args) => match b {
             tir::Builtin::HeapNew | tir::Builtin::BlackBox => walk(&args[0], captures, globals, usage, Mode::Move),
             // `with_capacity_in(n, alloc)` moves the allocator value into the list it makes.
-            tir::Builtin::ListWithCapacityIn => {
+            tir::Builtin::ListWithCapacityIn | tir::Builtin::ListTryWithCapacityIn => {
                 walk(&args[0], captures, globals, usage, Mode::Use);
                 walk(&args[1], captures, globals, usage, Mode::Move);
             }

@@ -1,0 +1,43 @@
+//@ run
+//> out of memory
+//> OutOfMemory
+//> true
+//> out of memory
+//> OutOfMemory
+//> out of memory
+//> OutOfMemory
+//> still running
+
+// A request the C heap cannot satisfy is `Err(AllocError.OutOfMemory)`, not a panic, and the program goes on
+// (spec/allocators.md, AL11). Each request here asks for 2^60 elements or bytes, which no heap can give: the
+// `List<i64>` request is 2^63 bytes.
+
+fn main() {
+    let n: usize = 1152921504606846976
+    match List<i64>.try_with_capacity(n) {
+        Ok(_) => println("allocated"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+            println((e == AllocError.OutOfMemory).to_string())
+        }
+    }
+    match String.try_with_capacity(n) {
+        Ok(_) => println("allocated"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+        }
+    }
+    let mut ys = List<u8>.new()
+    ys.push(7)
+    match ys.try_reserve(n) {
+        Ok(_) => println("reserved"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+        }
+    }
+    // The program keeps working after the failures.
+    println("still running")
+}

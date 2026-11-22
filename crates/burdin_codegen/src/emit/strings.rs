@@ -1,5 +1,6 @@
 //! Strings, string literals, and slices.
 
+use super::fallible::{TRY_OK, TRY_OUT_OF_MEMORY, TRY_OVERFLOW};
 use super::place::is_place;
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_diag::Span;
@@ -162,6 +163,57 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
+    /// `try_reserve(additional)` on a string (`spec/allocators.md`, AL11): grows the buffer the way `text_grow` does,
+    /// through the default allocator, and returns the status word. The string is unchanged unless the status is
+    /// `TRY_OK`.
+    fn text_try_reserve(
+        &mut self,
+        t: &mut Text<'ctx>,
+        additional: IntValue<'ctx>,
+        span: Span,
+    ) -> GenResult<IntValue<'ctx>> {
+        let usize_ty = self.usize_ty;
+        let i32_ty = self.cx.i32_type();
+        let status = self.alloca(i32_ty.into(), "try.status")?;
+        self.builder.build_store(status, i32_ty.const_int(TRY_OK, false)).map_err(llvm_err)?;
+        let needed = self.builder.build_int_add(t.len, additional, "try.needed").map_err(llvm_err)?;
+        let done = self.new_block("text.try.end");
+        let overflow = self.new_block("text.try.overflow");
+        let fits = self.new_block("text.try.fits");
+        let grow = self.new_block("text.try.grow");
+        let oom = self.new_block("text.try.oom");
+        let took = self.new_block("text.try.took");
+        let wrapped = self.builder.build_int_compare(IntPredicate::ULT, needed, t.len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(wrapped, overflow, fits).map_err(llvm_err)?;
+        self.builder.position_at_end(fits);
+        let enough = self.builder.build_int_compare(IntPredicate::ULE, needed, t.cap, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(enough, done, grow).map_err(llvm_err)?;
+        self.builder.position_at_end(grow);
+        let half = self.builder.build_right_shift(t.cap, usize_ty.const_int(1, false), false, "").map_err(llvm_err)?;
+        let extra = self.builder.build_int_add(half, usize_ty.const_int(8, false), "").map_err(llvm_err)?;
+        let grown = self.builder.build_int_add(t.cap, extra, "").map_err(llvm_err)?;
+        let too_small = self.builder.build_int_compare(IntPredicate::ULT, grown, needed, "").map_err(llvm_err)?;
+        let new_cap = self.builder.build_select(too_small, needed, grown, "").map_err(llvm_err)?.into_int_value();
+        let data = self.global_try_realloc(t.data, new_cap, Some(span))?;
+        let refused = self.builder.build_is_null(data, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(refused, oom, took).map_err(llvm_err)?;
+        self.builder.position_at_end(took);
+        self.builder.build_store(t.ptr_field, data).map_err(llvm_err)?;
+        self.builder.build_store(t.cap_field, new_cap).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(oom);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OUT_OF_MEMORY, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(overflow);
+        self.builder.build_store(status, i32_ty.const_int(TRY_OVERFLOW, false)).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        // The success path wrote new words; read them back after the join.
+        t.data = self.builder.build_load(self.ptr_ty(), t.ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+        t.cap = self.builder.build_load(usize_ty, t.cap_field, "").map_err(llvm_err)?.into_int_value();
+        Ok(self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value())
+    }
+
     /// Panics with `message` unless byte offset `at` is a character boundary of the text at `data` (0, the length,
     /// or a byte that does not continue a character).
     fn check_text_boundary(
@@ -201,7 +253,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         &mut self,
         m: Method,
         args: &'a [tir::Expr],
-        _ty: &Ty,
+        ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         match m {
@@ -220,6 +272,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.check(fits, "String reserve: capacity overflow", span)?;
                 self.text_grow(&mut t, needed, span)?;
                 Ok(None)
+            }
+            // `try_reserve(additional)`: the fallible `reserve`, which leaves the string unchanged on failure.
+            Method::StringTryReserve => {
+                let additional = self.expr_mode(&args[1], Mode::Use)?;
+                let additional = self.need_int(additional, &Ty::Int(tir::IntTy::Usize));
+                let Some(mut t) = self.text(&args[0])? else { return Ok(None) };
+                let status = self.text_try_reserve(&mut t, additional, span)?;
+                Ok(Some(self.try_result(status, None, ty)?))
             }
             Method::StringShrinkToFit => {
                 let Some(t) = self.text(&args[0])? else { return Ok(None) };

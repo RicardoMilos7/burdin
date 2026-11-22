@@ -12,6 +12,7 @@ mod collections;
 mod control;
 mod debug;
 mod expr;
+mod fallible;
 mod frames;
 mod function;
 mod glue;

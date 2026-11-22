@@ -238,7 +238,7 @@ fn build<A: Allocator>(own a: A): List<i32, A> { List<i32>.new_in(a) }
 
 `Global` is zero-sized and stored nowhere; any other allocator is stored in the container as a value the container owns, so an arena and everything it allocated live exactly as long as the containers that use it. `Arena` owns its memory and frees everything when dropped or reset. Stage 1 has no replaceable program-wide allocator and no per-arena handles yet; those remain later-stage ideas. A `burdin test` build uses a checking allocator that reports leaks and double frees (not use-after-free yet), and ordinary builds use the C heap.
 
-**Failure behavior.** Panics abort the process (no unwinding). Out-of-memory also aborts; fallible `try_` variants can be added later if a program needs them.
+**Failure behavior.** Panics abort the process (no unwinding). Out-of-memory aborts in the infallible operations; the `try_` forms of the `List`, `Map`, and `String` operations return `Result<_, AllocError>` instead, so a program can survive a refused allocation (`spec/allocators.md`, AL11).
 
 **`unsafe`.** `unsafe { ... }` blocks and `unsafe fn` allow raw pointer dereferences, calls to `extern` functions, unchecked accessors, and low-level casts. Safe wrappers are responsible for upholding the invariants.
 
@@ -675,7 +675,6 @@ The design is settled at the level of ideas, and these details still need decisi
 
 - Declaration generation in comptime (new types and functions).
 - Compiler-inserted preemption checks for tasks.
-- Fallible allocation (`try_` variants) if a program needs to survive out-of-memory.
 - Doc tests and `bench` blocks.
 - Direct Rust interop through generated C-ABI shims.
 - A custom fast debug backend.

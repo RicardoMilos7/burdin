@@ -1,11 +1,17 @@
 // Allocators: the interface, the default `Global` allocator, and `Arena` (`spec/allocators.md`).
 //
-// The compiler provides the primitives that reach the C heap (`__alloc`, `__realloc`, and `__dealloc`); the
-// allocators a program sees are ordinary Burdin values. A container stores the allocator value it was given, so
-// an arena (and everything allocated in it) lives exactly as long as the containers that own it.
+// The compiler provides the primitives that reach the C heap (`__alloc`, `__realloc`, `__dealloc`, and the
+// `__try_alloc` and `__try_realloc` forms that return null instead of panicking); the allocators a program sees
+// are ordinary Burdin values. A container stores the allocator value it was given, so an arena (and everything
+// allocated in it) lives exactly as long as the containers that own it.
 
 /// An allocator: where a container's buffer comes from. `size` is at least one byte and `align` is a power of
 /// two no larger than eight (every Burdin type's alignment).
+///
+/// `allocate` and `reallocate` return a null pointer when they have no block to give (`spec/allocators.md`,
+/// AL11). A container that stores its allocator treats that as out of memory and panics; the `try_` forms of the
+/// container methods report it as `AllocError.OutOfMemory` instead. `reallocate` leaves the old block valid when
+/// it returns null.
 interface Allocator {
     fn allocate(mut self, size: usize, align: usize): CPtr<u8>
     fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8>
@@ -17,12 +23,14 @@ interface Allocator {
 struct Global { }
 
 Global: Allocator {
+    /// Returns null when the C heap has no block of `size` bytes.
     fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
-        unsafe { __alloc(size, align) }
+        unsafe { __try_alloc(size, align) }
     }
 
+    /// Returns null when the C heap cannot resize the block; the old block is still valid then.
     fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
-        unsafe { __realloc(ptr, old_size, new_size, align) }
+        unsafe { __try_realloc(ptr, old_size, new_size, align) }
     }
 
     fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize) {
@@ -88,11 +96,15 @@ Arena {
 }
 
 Arena: Allocator {
-    /// Bump-allocates `size` bytes rounded up to eight, growing by a block when the current one is exhausted.
+    /// Bump-allocates `size` bytes rounded up to eight, growing by a block when the current one is exhausted. It
+    /// returns null, and changes nothing, when the request cannot be rounded or the C heap has no block to give.
     fn allocate(mut self, size: usize, align: usize): CPtr<u8> {
         let mut need = size
         if need == 0 {
             need = 1
+        }
+        if need > usize.MAX - 7 {
+            return unsafe { CPtr.null() }
         }
         // Every Burdin type's alignment is at most eight, and `malloc` returns sixteen-aligned memory.
         need = (need + 7) / 8 * 8
@@ -102,9 +114,9 @@ Arena: Allocator {
                 if block_size < need {
                     block_size = need
                 }
-                let block = __alloc(block_size, align)
+                let block = __try_alloc(block_size, align)
                 if block.is_null() {
-                    panic("arena: allocation failed")
+                    return CPtr.null()
                 }
                 if !self.block.is_null() {
                     self.blocks.push(self.block)
@@ -122,10 +134,13 @@ Arena: Allocator {
     }
 
     /// Allocates a new block and copies the smaller of the two sizes into it; the old memory stays part of its
-    /// block and is released with it.
+    /// block and is released with it. Returns null, like `allocate`, when the new block cannot be had.
     fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8> {
         unsafe {
             let p = self.allocate(new_size, align)
+            if p.is_null() {
+                return p
+            }
             let mut n = old_size
             if new_size < old_size {
                 n = new_size

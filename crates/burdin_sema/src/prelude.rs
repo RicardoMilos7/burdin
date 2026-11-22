@@ -97,6 +97,7 @@ impl Sema<'_> {
         }
         self.globals.io_error_kind_ty = self.globals.std_adt_ty("IoErrorKind");
         self.globals.parse_int_error_ty = self.globals.std_adt_ty("ParseIntError");
+        self.globals.alloc_error_ty = self.globals.std_adt_ty("AllocError");
         self.globals.try_from_int_error_ty = self.globals.std_adt_ty("TryFromIntError");
         self.globals.de_error_ty = self.globals.std_adt_ty("DeError");
         // The one-segment standard modules are usable as modules: `env.args()`, `mem.swap(...)`.

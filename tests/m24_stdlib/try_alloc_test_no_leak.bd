@@ -1,0 +1,22 @@
+//@ burdin-test passed=2 failed=0
+
+// A refused allocation has no block to leak: under the checking allocator in `burdin test`, the failed `try_` calls
+// and the refused arena request report no leak, and the successful reserve is freed with its list
+// (spec/allocators.md, AL9 and AL11).
+
+test "refused arena request" {
+    let n: usize = 4611686018427387904
+    let mut arena = Arena.new()
+    let p = unsafe { arena.allocate(n, 8) }
+    let p_null = unsafe { p.is_null() }
+    assert(p_null)?
+}
+
+test "refused list reserve" {
+    let mut xs = List<i64>.new()
+    xs.push(1)
+    let huge: usize = 1152921504606846976
+    let refused = xs.try_reserve(huge).is_err()
+    assert(refused)?
+    assert_eq(xs.len(), 1)?
+}

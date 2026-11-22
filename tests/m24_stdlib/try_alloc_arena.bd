@@ -1,0 +1,44 @@
+//@ run
+//> true
+//> 0
+//> true
+//> 16
+//> true
+//> out of memory
+//> OutOfMemory
+//> true
+//> 0
+
+// `Arena.allocate` and `Global.allocate` return null, and change nothing, when the heap has no block to give
+// (spec/allocators.md, AL11). A container with an arena stored in it reports the refusal through `try_` as
+// `AllocError.OutOfMemory`.
+
+fn main() {
+    let n: usize = 4611686018427387904
+    let mut arena = Arena.new()
+    let p = unsafe { arena.allocate(n, 8) }
+    let p_null = unsafe { p.is_null() }
+    println(p_null.to_string())
+    println(arena.bytes_allocated().to_string())
+    let q = unsafe { arena.allocate(16, 8) }
+    let q_null = unsafe { q.is_null() }
+    println((!q_null).to_string())
+    println(arena.bytes_allocated().to_string())
+
+    let mut g = Global { }
+    let r = unsafe { g.allocate(n, 8) }
+    let r_null = unsafe { r.is_null() }
+    println(r_null.to_string())
+
+    let big: usize = 1152921504606846976
+    match List<i64, Arena>.try_with_capacity_in(big, Arena.new()) {
+        Ok(_) => println("allocated"),
+        Err(e) => {
+            println("{}", e)
+            println("{:?}", e)
+            println((e == AllocError.OutOfMemory).to_string())
+        }
+    }
+    let mut empty = Arena.new()
+    println(empty.bytes_allocated().to_string())
+}
