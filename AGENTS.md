@@ -60,6 +60,7 @@ python3 tests/check_features.py          check dependency tables, features, and 
 python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
 python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
 python3 tests/check_crypto.py            check the `crypto` official package: known-answer vectors, error messages, `burdin add crypto`, and its official pin
+python3 tests/check_math.py              check the `math` official package: known-answer fixtures (tests/math), the runner, `burdin add math`, and its official pin
 python3 tests/check_link.py              check the `[link]` manifest table: a dependency's libraries reach the link by name, target tables, and the manifest errors
 python3 tests/check_tls.py               check the `tls` official package: test certificates, conformance program, declared OpenSSL symbols, README examples, `burdin add tls`, and its pin
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)

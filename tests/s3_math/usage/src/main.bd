@@ -1,0 +1,136 @@
+//@ run
+//> gcd 12 lcm 12
+//> lcm overflow true
+//> mod_pow 3 24
+//> prime true false true
+//> factorial 2432902008176640000 overflow true
+//> binomial 2598960 759510004936100355 0
+//> lerp 3 approx true
+//> poly 9
+//> gamma 24 ln_gamma 3.141593
+//> root 1.414214
+//> simpson 9
+//> bisect no sign change true
+//> mean 5 variance 4 std 2
+//> sample variance 4.571429
+//> median 4.5 quantile 7.6
+//> correlation 1
+//> empty mean is none true
+//> norm 3 dot 6
+//> cross 22 2 -13
+//> sum 5 -3 8
+//> distance 8.602325
+//> normalized 1
+//> zero normalized is none true
+//> dyn det 13 trace 8
+//> dyn inverse 0.384615 -0.076923 -0.153846 0.230769
+//> dyn solve 0.076923 0.769231
+//> fixed product 14 32 32 77
+//> fixed det -6 trace 7
+//> fixed singular is none true
+
+// The `math` package end to end (issue #268; spec/math.md): integers and number theory, the scalar functions,
+// closures passed to bisect and simpson, statistics, vectors, a heap-backed matrix, and a fixed-size matrix. The
+// known answers are in tests/math and are checked by tests/check_math.py; this case shows the calls a program makes.
+// Floats are printed rounded to six places, so the output does not depend on the last bit.
+
+use math.{
+    DynMatrix,
+    Matrix,
+    Vector,
+    approx_eq,
+    bisect,
+    binomial,
+    correlation,
+    factorial,
+    gamma,
+    gcd,
+    is_prime,
+    lcm,
+    lerp,
+    mean,
+    median,
+    mod_pow,
+    poly_eval,
+    quantile,
+    sample_variance,
+    simpson,
+    std_dev,
+    variance,
+}
+
+fn round6(x: f64): f64 {
+    (x * 1000000.0).round() / 1000000.0
+}
+
+fn list_of(values: [f64]): List<f64> {
+    let mut out = List<f64>.new()
+    for v in values {
+        out.push(v)
+    }
+    out
+}
+
+fn main() {
+    // Integers.
+    println("gcd {} lcm {}", gcd(84, 36), lcm(4, 6).unwrap())
+    println("lcm overflow {}", lcm(2, 18446744073709551615).is_none())
+    println("mod_pow {} {}", mod_pow(7, 128, 13), mod_pow(2, 10, 1000))
+    println("prime {} {} {}", is_prime(1000000007), is_prime(1000000008), is_prime(18446744073709551557))
+    println("factorial {} overflow {}", factorial(20).unwrap(), factorial(21).is_none())
+    println("binomial {} {} {}", binomial(52, 5).unwrap(), binomial(63, 29).unwrap(), binomial(3, 5).unwrap())
+
+    // Scalars and special functions.
+    println("lerp {} approx {}", lerp(2.0, 6.0, 0.25), approx_eq(0.1 + 0.2, 0.3, 1e-12, 0.0))
+    println("poly {}", poly_eval([1.0, -2.0, 3.0][0..3], 2.0))
+    println("gamma {} ln_gamma {}", round6(gamma(5.0)), round6(gamma(0.5) * gamma(0.5)))
+
+    // Closures: a root of x^2 - 2 and the integral of x^2 over 0..3.
+    let root = bisect(|x: f64| x * x - 2.0, 0.0, 2.0, 1e-9).unwrap()
+    println("root {}", round6(root))
+    println("simpson {}", round6(simpson(|x: f64| x * x, 0.0, 3.0, 10)))
+    println("bisect no sign change {}", bisect(|x: f64| x * x + 1.0, -1.0, 1.0, 1e-9).is_none())
+
+    // Statistics over a slice.
+    let data = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+    println("mean {} variance {} std {}", mean(data[0..8]).unwrap(), variance(data[0..8]).unwrap(), std_dev(data[0..8]).unwrap())
+    println("sample variance {}", round6(sample_variance(data[0..8]).unwrap()))
+    println("median {} quantile {}", median(data[0..8]).unwrap(), round6(quantile(data[0..8], 0.9).unwrap()))
+    let xs = [1.0, 2.0, 3.0, 4.0]
+    let ys = [2.0, 4.0, 6.0, 8.0]
+    println("correlation {}", round6(correlation(xs[0..4], ys[0..4]).unwrap()))
+    println("empty mean is none {}", mean(data[0..0]).is_none())
+
+    // Vectors: the operators, the products, and indexing.
+    let a: Vector<3> = Vector.from_array([1.0, 2.0, 2.0])
+    let b: Vector<3> = Vector.from_array([4.0, -5.0, 6.0])
+    println("norm {} dot {}", a.norm(), a.dot(b))
+    let c = a.cross(b)
+    println("cross {} {} {}", c[0], c[1], c[2])
+    let sum = a + b
+    println("sum {} {} {}", sum[0], sum[1], sum[2])
+    println("distance {}", round6(a.distance(b)))
+    println("normalized {}", round6(a.normalized().unwrap()[0] * 3.0))
+    let zero: Vector<2> = Vector.zero()
+    println("zero normalized is none {}", zero.normalized().is_none())
+
+    // A heap-backed matrix: its shape is a run-time value.
+    let heap_values = [3.0, 1.0, 2.0, 5.0]
+    let heap = DynMatrix.from_list(2, 2, list_of(heap_values[0..4]))
+    println("dyn det {} trace {}", heap.det(), heap.trace())
+    let inverse = heap.inverse().unwrap()
+    println("dyn inverse {} {} {} {}", round6(inverse.get(0, 0)), round6(inverse.get(0, 1)), round6(inverse.get(1, 0)), round6(inverse.get(1, 1)))
+    let rhs = [1.0, 4.0]
+    let solved = heap.solve(DynMatrix.from_list(2, 1, list_of(rhs[0..2]))).unwrap()
+    println("dyn solve {} {}", round6(solved.get(0, 0)), round6(solved.get(1, 0)))
+
+    // A fixed-size matrix: its shape is part of the type.
+    let f: Matrix<2, 3> = Matrix.from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    let g: Matrix<3, 2> = f.transpose()
+    let product: Matrix<2, 2> = f.times(g)
+    println("fixed product {} {} {} {}", product.get(0, 0), product.get(0, 1), product.get(1, 0), product.get(1, 1))
+    let square: Matrix<2, 2> = Matrix.from_array([4.0, 3.0, 6.0, 3.0])
+    println("fixed det {} trace {}", square.det(), square.trace())
+    let singular: Matrix<2, 2> = Matrix.from_array([1.0, 2.0, 2.0, 4.0])
+    println("fixed singular is none {}", singular.inverse().is_none())
+}

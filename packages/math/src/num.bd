@@ -1,0 +1,225 @@
+// Integer number theory and scalar functions (spec/math.md, MA3 and MA4).
+
+/// The greatest common divisor; `gcd(0, 0)` is `0`.
+fn gcd(a: u64, b: u64): u64 {
+    let mut x = a
+    let mut y = b
+    while y != 0 {
+        let r = x % y
+        x = y
+        y = r
+    }
+    x
+}
+
+/// The least common multiple, or `None` when it does not fit in a `u64`.
+fn lcm(a: u64, b: u64): Option<u64> {
+    if a == 0 || b == 0 {
+        return Some(0)
+    }
+    let g = gcd(a, b)
+    (a / g).checked_mul(b)
+}
+
+/// The product of `a` and `b` modulo `m`, computed in `u128` so it cannot overflow. `m` must not be zero.
+fn mulmod(a: u64, b: u64, m: u64): u64 {
+    let wide = (a as u128) * (b as u128)
+    ((wide % (m as u128)) as u64)
+}
+
+/// `base` to the power `exp`, modulo `modulus`. Panics when the modulus is zero.
+fn mod_pow(base: u64, exp: u64, modulus: u64): u64 {
+    if modulus == 0 {
+        panic("mod_pow: the modulus is zero")
+    }
+    let mut result: u64 = 1 % modulus
+    let mut b = base % modulus
+    let mut e = exp
+    while e > 0 {
+        if e % 2 == 1 {
+            result = mulmod(result, b, modulus)
+        }
+        b = mulmod(b, b, modulus)
+        e = e / 2
+    }
+    result
+}
+
+/// One Miller-Rabin round for `n`, with `n - 1 = d * 2^r` and `d` odd. True when `a` shows that `n` is composite.
+fn miller_rabin_composite(n: u64, d: u64, r: u64, a: u64): bool {
+    let mut x = mod_pow(a, d, n)
+    if x == 1 || x == n - 1 {
+        return false
+    }
+    let mut i: u64 = 1
+    while i < r {
+        x = mulmod(x, x, n)
+        if x == n - 1 {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+/// Whether `n` is prime. The Miller-Rabin test with the first twelve primes as witnesses is exact for every `u64`.
+fn is_prime(n: u64): bool {
+    if n < 2 {
+        return false
+    }
+    let witnesses: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    let mut i: usize = 0
+    while i < 12 {
+        let p = witnesses[i]
+        if n % p == 0 {
+            return n == p
+        }
+        i = i + 1
+    }
+    let mut d = n - 1
+    let mut r: u64 = 0
+    while d % 2 == 0 {
+        d = d / 2
+        r = r + 1
+    }
+    let mut j: usize = 0
+    while j < 12 {
+        if miller_rabin_composite(n, d, r, witnesses[j]) {
+            return false
+        }
+        j = j + 1
+    }
+    true
+}
+
+/// `n!`, or `None` when it does not fit in a `u64` (from `21!` on).
+fn factorial(n: u64): Option<u64> {
+    let mut result: u64 = 1
+    let mut i: u64 = 2
+    while i <= n {
+        match result.checked_mul(i) {
+            Some(next) => {
+                result = next
+            }
+            None => {
+                return None
+            }
+        }
+        i = i + 1
+    }
+    Some(result)
+}
+
+/// `n` choose `k`: `Some(0)` when `k > n`, and `None` when the value does not fit in a `u64`.
+fn binomial(n: u64, k: u64): Option<u64> {
+    if k > n {
+        return Some(0)
+    }
+    let j = if k < n - k { k } else { n - k }
+    let mut result: u64 = 1
+    let mut i: u64 = 1
+    while i <= j {
+        // result is C(n - j + i - 1, i - 1), so result * (n - j + i) is divisible by i: the division is exact. The
+        // product is taken in u128, because it can exceed a u64 when the quotient does not.
+        let product = (result as u128) * ((n - j + i) as u128)
+        let next = product / (i as u128)
+        if next > (u64.MAX as u128) {
+            return None
+        }
+        result = next as u64
+        i = i + 1
+    }
+    Some(result)
+}
+
+/// The point `(1 - t) * a + t * b`: `t = 0` gives `a` and `t = 1` gives `b` exactly.
+fn lerp(a: f64, b: f64, t: f64): f64 {
+    (1.0 - t) * a + t * b
+}
+
+/// Whether `a` and `b` are within `abs_tol`, or within `rel_tol` of the larger magnitude. Panics on a negative tolerance.
+fn approx_eq(a: f64, b: f64, rel_tol: f64, abs_tol: f64): bool {
+    if rel_tol < 0.0 || abs_tol < 0.0 {
+        panic("approx_eq: a tolerance is negative")
+    }
+    if a == b {
+        return true
+    }
+    if a.is_nan() || b.is_nan() || a.is_infinite() || b.is_infinite() {
+        return false
+    }
+    let diff = (a - b).abs()
+    let largest = if a.abs() > b.abs() { a.abs() } else { b.abs() }
+    diff <= (rel_tol * largest).max(abs_tol)
+}
+
+/// The polynomial `c[0] + c[1] x + c[2] x^2 + ...` at `x`, by Horner's rule. Zero for no coefficients.
+fn poly_eval(coefficients: [f64], x: f64): f64 {
+    let mut acc = 0.0
+    let mut i = coefficients.len()
+    while i > 0 {
+        i = i - 1
+        acc = acc * x + coefficients[i]
+    }
+    acc
+}
+
+/// A root of `f` between `low` and `high`, found by halving the interval. `None` when `f` has the same sign at both
+/// ends. Panics when `tolerance` is not positive.
+fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f64> {
+    if !(tolerance > 0.0) {
+        panic("bisect: the tolerance must be positive")
+    }
+    let mut a = low
+    let mut b = high
+    let mut fa = f(a)
+    let fb = f(b)
+    if fa == 0.0 {
+        return Some(a)
+    }
+    if fb == 0.0 {
+        return Some(b)
+    }
+    if (fa > 0.0) == (fb > 0.0) {
+        return None
+    }
+    let mut mid = a * 0.5 + b * 0.5
+    let mut steps: usize = 0
+    while steps < 2100 {
+        mid = a * 0.5 + b * 0.5
+        let fm = f(mid)
+        if fm == 0.0 || (b - a).abs() * 0.5 <= tolerance {
+            return Some(mid)
+        }
+        if (fm > 0.0) == (fa > 0.0) {
+            a = mid
+            fa = fm
+        } else {
+            b = mid
+        }
+        steps = steps + 1
+    }
+    Some(mid)
+}
+
+/// The composite Simpson rule for the integral of `f` over `a..b`. An odd `intervals` is rounded up to even. Panics
+/// when `intervals` is zero.
+fn simpson<F: Fn(f64): f64>(f: F, a: f64, b: f64, intervals: usize): f64 {
+    if intervals == 0 {
+        panic("simpson: needs at least one interval")
+    }
+    let n = if intervals % 2 == 1 { intervals + 1 } else { intervals }
+    let h = (b - a) / (n as f64)
+    let mut sum = f(a) + f(b)
+    let mut i: usize = 1
+    while i < n {
+        let x = a + (i as f64) * h
+        if i % 2 == 1 {
+            sum = sum + 4.0 * f(x)
+        } else {
+            sum = sum + 2.0 * f(x)
+        }
+        i = i + 1
+    }
+    h / 3.0 * sum
+}

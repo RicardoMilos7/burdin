@@ -1,0 +1,201 @@
+use dyn_matrix.{DynMatrix, copy_slice}
+use vector.Vector
+
+// Fixed-size matrices of `f64` (spec/math.md, MA7). The shape is part of the type, and the storage is inline, so a
+// matrix is a value and needs no allocation.
+
+/// A matrix with `R` rows and `C` columns, stored row-major in `data`. It is copied like a number.
+struct Matrix<const R: usize, const C: usize>: Copy, Clone {
+    data: [f64; R * C]
+}
+
+/// Converts a `DynMatrix` of the shape `RR` by `CC` into a fixed-size matrix. The caller has checked the shape.
+fn matrix_from_dyn<const RR: usize, const CC: usize>(d: DynMatrix): Matrix<RR, CC> {
+    let mut out: Matrix<RR, CC> = Matrix { data: [0.0; RR * CC] }
+    for i in 0..RR * CC {
+        out.data[i] = d.data[i]
+    }
+    out
+}
+
+Matrix<R, C> {
+    /// The matrix whose elements are all zero.
+    fn zero(): Matrix<R, C> {
+        Matrix { data: [0.0; R * C] }
+    }
+
+    /// The matrix with the given row-major elements.
+    fn from_array(data: [f64; R * C]): Matrix<R, C> {
+        Matrix { data: data }
+    }
+
+    /// The identity matrix. Panics when `R` differs from `C`, since only a square matrix has one.
+    fn identity(): Matrix<R, C> {
+        if R != C {
+            panic("Matrix: the matrix is not square")
+        }
+        let mut out = Matrix<R, C>.zero()
+        for i in 0..R {
+            out.data[i * C + i] = 1.0
+        }
+        out
+    }
+
+    /// The number of rows.
+    fn rows(self): usize {
+        R
+    }
+
+    /// The number of columns.
+    fn cols(self): usize {
+        C
+    }
+
+    /// The element at row `row` and column `col`. Panics when either index is out of range.
+    fn get(self, row: usize, col: usize): f64 {
+        if row >= R || col >= C {
+            panic("Matrix.get: index out of range")
+        }
+        self.data[row * C + col]
+    }
+
+    /// Writes the element at row `row` and column `col`. Panics when either index is out of range.
+    fn set(mut self, row: usize, col: usize, value: f64) {
+        if row >= R || col >= C {
+            panic("Matrix.set: index out of range")
+        }
+        self.data[row * C + col] = value
+    }
+
+    /// The transpose: `C` rows and `R` columns.
+    fn transpose(self): Matrix<C, R> {
+        let mut out: Matrix<C, R> = Matrix { data: [0.0; C * R] }
+        for r in 0..R {
+            for c in 0..C {
+                out.data[c * R + r] = self.data[r * C + c]
+            }
+        }
+        out
+    }
+
+    /// The matrix product, with `K` columns in the result.
+    fn times<const K: usize>(self, other: Matrix<C, K>): Matrix<R, K> {
+        let mut out: Matrix<R, K> = Matrix { data: [0.0; R * K] }
+        for r in 0..R {
+            for c in 0..K {
+                let mut s = 0.0
+                for k in 0..C {
+                    s = s + self.data[r * C + k] * other.data[k * K + c]
+                }
+                out.data[r * K + c] = s
+            }
+        }
+        out
+    }
+
+    /// The matrix times the column vector `v`.
+    fn mul_vector(self, v: Vector<C>): Vector<R> {
+        let mut out = Vector<R>.zero()
+        for r in 0..R {
+            let mut s = 0.0
+            for c in 0..C {
+                s = s + self.data[r * C + c] * v.data[c]
+            }
+            out.data[r] = s
+        }
+        out
+    }
+
+    /// Each element times `k`.
+    fn scale(self, k: f64): Matrix<R, C> {
+        let mut out = Matrix<R, C>.zero()
+        for i in 0..R * C {
+            out.data[i] = self.data[i] * k
+        }
+        out
+    }
+
+    /// The square root of the sum of the squares of the elements.
+    fn frobenius_norm(self): f64 {
+        let mut s = 0.0
+        for i in 0..R * C {
+            s = s + self.data[i] * self.data[i]
+        }
+        s.sqrt()
+    }
+
+    /// The sum of the diagonal. Panics when the matrix is not square.
+    fn trace(self): f64 {
+        if R != C {
+            panic("Matrix: the matrix is not square")
+        }
+        self.to_dyn().trace()
+    }
+
+    /// The determinant. Panics when the matrix is not square.
+    fn det(self): f64 {
+        if R != C {
+            panic("Matrix: the matrix is not square")
+        }
+        self.to_dyn().det()
+    }
+
+    /// The inverse, or `None` when the matrix is singular. Panics when the matrix is not square.
+    fn inverse(self): Option<Matrix<R, C>> {
+        if R != C {
+            panic("Matrix: the matrix is not square")
+        }
+        match self.to_dyn().inverse() {
+            Some(d) => {
+                let out: Matrix<R, C> = matrix_from_dyn(d)
+                Some(out)
+            }
+            None => None,
+        }
+    }
+
+    /// The `x` with `self * x = b`, or `None` when the matrix is singular. Panics when the matrix is not square.
+    fn solve<const K: usize>(self, b: Matrix<R, K>): Option<Matrix<R, K>> {
+        if R != C {
+            panic("Matrix: the matrix is not square")
+        }
+        match self.to_dyn().solve(b.to_dyn()) {
+            Some(d) => {
+                let out: Matrix<R, K> = matrix_from_dyn(d)
+                Some(out)
+            }
+            None => None,
+        }
+    }
+
+    /// The same matrix as a heap-backed `DynMatrix` (spec/math.md, MA8).
+    fn to_dyn(self): DynMatrix {
+        DynMatrix { nrows: R, ncols: C, data: copy_slice(self.data[0..R * C]) }
+    }
+}
+
+Matrix<R, C>: Add {
+    fn add(self, other: Matrix<R, C>): Matrix<R, C> {
+        let mut out = Matrix<R, C>.zero()
+        for i in 0..R * C {
+            out.data[i] = self.data[i] + other.data[i]
+        }
+        out
+    }
+}
+
+Matrix<R, C>: Sub {
+    fn sub(self, other: Matrix<R, C>): Matrix<R, C> {
+        let mut out = Matrix<R, C>.zero()
+        for i in 0..R * C {
+            out.data[i] = self.data[i] - other.data[i]
+        }
+        out
+    }
+}
+
+Matrix<R, C>: Neg {
+    fn neg(self): Matrix<R, C> {
+        self.scale(-1.0)
+    }
+}

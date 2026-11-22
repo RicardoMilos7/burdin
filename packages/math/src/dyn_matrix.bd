@@ -1,0 +1,362 @@
+// Heap-backed matrices of `f64` whose shape is known only at run time (spec/math.md, MA8). The linear algebra here
+// serves the fixed-size matrices of matrix.bd too, which convert to this type.
+
+/// A matrix with `nrows` rows and `ncols` columns, stored row-major in `data`.
+struct DynMatrix: Clone {
+    nrows: usize,
+    ncols: usize,
+    data: List<f64>
+}
+
+/// `count` zeros.
+fn zeros_list(count: usize): List<f64> {
+    let mut out = List<f64>.with_capacity(count)
+    let mut i: usize = 0
+    while i < count {
+        out.push(0.0)
+        i = i + 1
+    }
+    out
+}
+
+/// A new list holding the values of `xs`.
+fn copy_slice(xs: [f64]): List<f64> {
+    let mut out = List<f64>.with_capacity(xs.len())
+    for x in xs {
+        out.push(x)
+    }
+    out
+}
+
+/// Swaps rows `r1` and `r2` of a row-major list with `rows` rows and `cols` columns.
+fn swap_rows(mut m: List<f64>, cols: usize, r1: usize, r2: usize) {
+    let mut c: usize = 0
+    while c < cols {
+        let a = m[r1 * cols + c]
+        m[r1 * cols + c] = m[r2 * cols + c]
+        m[r2 * cols + c] = a
+        c = c + 1
+    }
+}
+
+/// The determinant of the `n` by `n` row-major matrix `a`, by elimination with partial pivoting (MA8). It is zero when
+/// a pivot is exactly zero.
+fn determinant_of(n: usize, a: [f64]): f64 {
+    let mut m = copy_slice(a)
+    let mut sign = 1.0
+    let mut det = 1.0
+    let mut col: usize = 0
+    while col < n {
+        let mut pivot = col
+        let mut best = m[col * n + col].abs()
+        let mut r = col + 1
+        while r < n {
+            let candidate = m[r * n + col].abs()
+            if candidate > best {
+                best = candidate
+                pivot = r
+            }
+            r = r + 1
+        }
+        if best == 0.0 {
+            return 0.0
+        }
+        if pivot != col {
+            swap_rows(mut m, n, pivot, col)
+            sign = -sign
+        }
+        let p = m[col * n + col]
+        det = det * p
+        r = col + 1
+        while r < n {
+            let f = m[r * n + col] / p
+            let mut c = col
+            while c < n {
+                m[r * n + c] = m[r * n + c] - f * m[col * n + c]
+                c = c + 1
+            }
+            r = r + 1
+        }
+        col = col + 1
+    }
+    sign * det
+}
+
+/// The solution `x` of `a * x = b`, where `a` is `n` by `n` and `b` is `n` by `k`, both row-major. Gaussian
+/// elimination with partial pivoting, then back substitution. `None` when a pivot is exactly zero (MA8).
+fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<List<f64>> {
+    let mut m = copy_slice(a)
+    let mut x = copy_slice(b)
+    let mut col: usize = 0
+    while col < n {
+        let mut pivot = col
+        let mut best = m[col * n + col].abs()
+        let mut r = col + 1
+        while r < n {
+            let candidate = m[r * n + col].abs()
+            if candidate > best {
+                best = candidate
+                pivot = r
+            }
+            r = r + 1
+        }
+        if best == 0.0 {
+            return None
+        }
+        if pivot != col {
+            swap_rows(mut m, n, pivot, col)
+            swap_rows(mut x, k, pivot, col)
+        }
+        let p = m[col * n + col]
+        r = col + 1
+        while r < n {
+            let f = m[r * n + col] / p
+            let mut c = col
+            while c < n {
+                m[r * n + c] = m[r * n + c] - f * m[col * n + c]
+                c = c + 1
+            }
+            let mut j: usize = 0
+            while j < k {
+                x[r * k + j] = x[r * k + j] - f * x[col * k + j]
+                j = j + 1
+            }
+            r = r + 1
+        }
+        col = col + 1
+    }
+    // Back substitution: row `i` gives `x[i]` once the rows below it are known.
+    let mut i = n
+    while i > 0 {
+        i = i - 1
+        let mut j: usize = 0
+        while j < k {
+            let mut s = x[i * k + j]
+            let mut c = i + 1
+            while c < n {
+                s = s - m[i * n + c] * x[c * k + j]
+                c = c + 1
+            }
+            x[i * k + j] = s / m[i * n + i]
+            j = j + 1
+        }
+    }
+    Some(x)
+}
+
+DynMatrix {
+    /// The matrix of zeros with `rows` rows and `cols` columns.
+    fn zeros(rows: usize, cols: usize): DynMatrix {
+        DynMatrix { nrows: rows, ncols: cols, data: zeros_list(rows * cols) }
+    }
+
+    /// The identity matrix of size `n`.
+    fn identity(n: usize): DynMatrix {
+        let mut out = DynMatrix.zeros(n, n)
+        let mut i: usize = 0
+        while i < n {
+            out.data[i * n + i] = 1.0
+            i = i + 1
+        }
+        out
+    }
+
+    /// The matrix with `rows` rows and `cols` columns and the given row-major values. Panics when the number of
+    /// values is not `rows * cols`.
+    fn from_list(rows: usize, cols: usize, own data: List<f64>): DynMatrix {
+        let count = data.len()
+        if count != rows * cols {
+            panic("DynMatrix.from_list: the number of values is not rows * cols")
+        }
+        DynMatrix { nrows: rows, ncols: cols, data: data }
+    }
+
+    /// The number of rows.
+    fn rows(self): usize {
+        self.nrows
+    }
+
+    /// The number of columns.
+    fn cols(self): usize {
+        self.ncols
+    }
+
+    /// Whether the number of rows equals the number of columns.
+    fn is_square(self): bool {
+        self.nrows == self.ncols
+    }
+
+    /// The element at row `row` and column `col`. Panics when either index is out of range.
+    fn get(self, row: usize, col: usize): f64 {
+        if row >= self.nrows || col >= self.ncols {
+            panic("DynMatrix.get: index out of range")
+        }
+        self.data[row * self.ncols + col]
+    }
+
+    /// Writes the element at row `row` and column `col`. Panics when either index is out of range.
+    fn set(mut self, row: usize, col: usize, value: f64) {
+        if row >= self.nrows || col >= self.ncols {
+            panic("DynMatrix.set: index out of range")
+        }
+        self.data[row * self.ncols + col] = value
+    }
+
+    /// The transpose: `cols` rows and `rows` columns.
+    fn transpose(self): DynMatrix {
+        let mut out = DynMatrix.zeros(self.ncols, self.nrows)
+        let mut r: usize = 0
+        while r < self.nrows {
+            let mut c: usize = 0
+            while c < self.ncols {
+                out.data[c * self.nrows + r] = self.data[r * self.ncols + c]
+                c = c + 1
+            }
+            r = r + 1
+        }
+        out
+    }
+
+    /// Each element times `k`.
+    fn scale(self, k: f64): DynMatrix {
+        let mut out = DynMatrix.zeros(self.nrows, self.ncols)
+        let mut i: usize = 0
+        while i < self.data.len() {
+            out.data[i] = self.data[i] * k
+            i = i + 1
+        }
+        out
+    }
+
+    /// The matrix product `self * other`. Panics when `self.cols()` differs from `other.rows()`.
+    fn times(self, other: DynMatrix): DynMatrix {
+        if self.ncols != other.nrows {
+            panic("DynMatrix.times: the columns of the left side differ from the rows of the right side")
+        }
+        let mut out = DynMatrix.zeros(self.nrows, other.ncols)
+        let mut r: usize = 0
+        while r < self.nrows {
+            let mut c: usize = 0
+            while c < other.ncols {
+                let mut s = 0.0
+                let mut k: usize = 0
+                while k < self.ncols {
+                    s = s + self.data[r * self.ncols + k] * other.data[k * other.ncols + c]
+                    k = k + 1
+                }
+                out.data[r * other.ncols + c] = s
+                c = c + 1
+            }
+            r = r + 1
+        }
+        out
+    }
+
+    /// The product of the matrix and the column vector `v`. Panics when `v` has the wrong length.
+    fn mul_vector(self, v: [f64]): List<f64> {
+        if v.len() != self.ncols {
+            panic("DynMatrix.mul_vector: the vector length differs from the number of columns")
+        }
+        let mut out = zeros_list(self.nrows)
+        let mut r: usize = 0
+        while r < self.nrows {
+            let mut s = 0.0
+            let mut c: usize = 0
+            while c < self.ncols {
+                s = s + self.data[r * self.ncols + c] * v[c]
+                c = c + 1
+            }
+            out[r] = s
+            r = r + 1
+        }
+        out
+    }
+
+    /// The sum of the diagonal. Panics when the matrix is not square.
+    fn trace(self): f64 {
+        if self.nrows != self.ncols {
+            panic("DynMatrix.trace: the matrix is not square")
+        }
+        let mut s = 0.0
+        let mut i: usize = 0
+        while i < self.nrows {
+            s = s + self.data[i * self.ncols + i]
+            i = i + 1
+        }
+        s
+    }
+
+    /// The determinant. Panics when the matrix is not square.
+    fn det(self): f64 {
+        if self.nrows != self.ncols {
+            panic("DynMatrix.det: the matrix is not square")
+        }
+        determinant_of(self.nrows, self.data.as_slice())
+    }
+
+    /// The inverse, or `None` when the matrix is singular. Panics when the matrix is not square.
+    fn inverse(self): Option<DynMatrix> {
+        if self.nrows != self.ncols {
+            panic("DynMatrix.inverse: the matrix is not square")
+        }
+        let n = self.nrows
+        let identity = DynMatrix.identity(n)
+        match solve_by_elimination(n, self.data.as_slice(), n, identity.data.as_slice()) {
+            Some(x) => Some(DynMatrix { nrows: n, ncols: n, data: x }),
+            None => None,
+        }
+    }
+
+    /// The matrix `x` with `self * x = b`, or `None` when `self` is singular. Panics when the matrix is not square
+    /// or `b` does not have as many rows as it does.
+    fn solve(self, b: DynMatrix): Option<DynMatrix> {
+        if self.nrows != self.ncols {
+            panic("DynMatrix.solve: the matrix is not square")
+        }
+        if b.nrows != self.nrows {
+            panic("DynMatrix.solve: the right side has a different number of rows")
+        }
+        let n = self.nrows
+        let k = b.ncols
+        match solve_by_elimination(n, self.data.as_slice(), k, b.data.as_slice()) {
+            Some(x) => Some(DynMatrix { nrows: n, ncols: k, data: x }),
+            None => None,
+        }
+    }
+}
+
+DynMatrix: Add {
+    fn add(self, other: DynMatrix): DynMatrix {
+        if self.nrows != other.nrows || self.ncols != other.ncols {
+            panic("DynMatrix add: the shapes differ")
+        }
+        let mut out = DynMatrix.zeros(self.nrows, self.ncols)
+        let mut i: usize = 0
+        while i < self.data.len() {
+            out.data[i] = self.data[i] + other.data[i]
+            i = i + 1
+        }
+        out
+    }
+}
+
+DynMatrix: Sub {
+    fn sub(self, other: DynMatrix): DynMatrix {
+        if self.nrows != other.nrows || self.ncols != other.ncols {
+            panic("DynMatrix sub: the shapes differ")
+        }
+        let mut out = DynMatrix.zeros(self.nrows, self.ncols)
+        let mut i: usize = 0
+        while i < self.data.len() {
+            out.data[i] = self.data[i] - other.data[i]
+            i = i + 1
+        }
+        out
+    }
+}
+
+DynMatrix: Neg {
+    fn neg(self): DynMatrix {
+        self.scale(-1.0)
+    }
+}
