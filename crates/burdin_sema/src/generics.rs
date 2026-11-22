@@ -72,6 +72,9 @@ pub(crate) struct InterfaceInfo {
     pub params: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
     pub requires: Vec<Bound>,
+    /// The associated types declared as `type Name` in the interface body, in declaration order
+    /// (`spec/associated-types.md`, AT1).
+    pub assoc: Vec<String>,
     pub methods: Vec<IfaceMethod>,
 }
 
@@ -131,6 +134,9 @@ pub(crate) struct ImplInfo {
     /// is not generic.
     pub args: Vec<Ty>,
     pub wheres: Vec<(String, Vec<Bound>)>,
+    /// The associated type bindings of the block (`type Item = T`), resolved with the impl's type parameters as
+    /// `Ty::Param` (`spec/associated-types.md`, AT2).
+    pub assoc: Vec<(String, Ty)>,
     pub span: Span,
 }
 
@@ -224,6 +230,8 @@ impl Globals {
     pub(crate) fn ty_has_param(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Param(_) => true,
+            // An unresolved projection belongs to symbolic code; it is resolved once the self type is concrete.
+            Ty::Projection { .. } => true,
             Ty::Const(v) => *v >= crate::consteval::SYM_CONST,
             Ty::Array(inner, n) => *n >= crate::consteval::SYM_LEN || self.ty_has_param(inner),
             Ty::Ref { inner, .. }
@@ -372,6 +380,28 @@ impl Globals {
                 send: send.clone(),
             },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
+            // A projection normalizes to the implementation's binding once the self type is concrete
+            // (`spec/associated-types.md`, AT3, AT4). With a bare parameter (or an error) it stays opaque.
+            Ty::Projection { self_ty, iface, iface_name, args, name } => {
+                let new_self = self.subst_ty(self_ty, env);
+                let new_args: Vec<Ty> = args.iter().map(|a| self.subst_ty(a, env)).collect();
+                if !matches!(new_self, Ty::Param(_) | Ty::Error) {
+                    match self.impl_assoc(*iface, &new_args, &new_self, name) {
+                        Some(Some(ty)) => return ty,
+                        // The impl exists but does not bind the associated type: E0144 was already reported, so
+                        // this stays silent.
+                        Some(None) => return Ty::Error,
+                        None => {}
+                    }
+                }
+                Ty::Projection {
+                    self_ty: Box::new(new_self),
+                    iface: *iface,
+                    iface_name: iface_name.clone(),
+                    args: new_args,
+                    name: name.clone(),
+                }
+            }
             Ty::Any(a) => {
                 let args: Vec<Ty> = a.args.iter().map(|t| self.subst_ty(t, env)).collect();
                 if args == a.args { ty.clone() } else { Ty::Any(self.any_iface(a.iface, args)) }
@@ -856,6 +886,103 @@ impl Globals {
         })
     }
 
+    /// The substitution of an impl block's parameters when the block covers the concrete type `ty`, or `None` when
+    /// it does not apply (`spec/impls.md`, IM1-IM2).
+    fn impl_match(&self, info: &ImplInfo, ty: &Ty) -> Option<Vec<(String, Ty)>> {
+        let key = adt_key(ty)?;
+        match info.head {
+            Head::Plain(k) => (k == key).then(Vec::new),
+            Head::Generic(template) => {
+                let (t, cargs) = self.adt_origin.get(&key)?;
+                if *t != template {
+                    return None;
+                }
+                self.match_impl_args(&info.params, &info.args, cargs)
+            }
+        }
+    }
+
+    /// Whether an impl block's `where` clauses hold for a substitution of its parameters.
+    fn impl_wheres_hold(&self, info: &ImplInfo, subst: &[(String, Ty)]) -> bool {
+        info.wheres.iter().all(|(n, bounds)| {
+            match info.params.iter().position(|p| p == n).and_then(|i| subst.get(i)) {
+                // A bound on an argument that still mentions a type parameter is assumed met in symbolic code;
+                // the concrete instance checks it again (`spec/impls.md`, IM2).
+                Some((_, arg)) => {
+                    self.ty_has_param(arg) || bounds.iter().all(|b| self.satisfies_with(arg, b, &[], subst))
+                }
+                None => true,
+            }
+        })
+    }
+
+    /// The binding an impl of `iface` gives its associated type `name` for `self_ty`, with the block's parameters
+    /// substituted (`spec/associated-types.md`, AT3). `Some(Some(ty))` when an impl applies and binds it,
+    /// `Some(None)` when an impl applies but does not bind it (E0144 was reported on the block), and `None` when no
+    /// impl applies.
+    pub(crate) fn impl_assoc(&self, iface: usize, iface_args: &[Ty], self_ty: &Ty, name: &str) -> Option<Option<Ty>> {
+        for info in &self.impls {
+            if info.iface != iface {
+                continue;
+            }
+            let Some(subst) = self.impl_match(info, self_ty) else { continue };
+            if !self.impl_wheres_hold(info, &subst) {
+                continue;
+            }
+            let have: Vec<Ty> = info.iface_args.iter().map(|a| self.subst_ty(a, &subst)).collect();
+            if !self.bound_args_match(&have, iface_args) {
+                continue;
+            }
+            return Some(info.assoc.iter().find(|(n, _)| n == name).map(|(_, ty)| self.subst_ty(ty, &subst)));
+        }
+        None
+    }
+
+    /// The interfaces the program implements for the concrete type `self_ty` that declare the associated type
+    /// `name`, with their type arguments and the binding each impl gives it. Used by an unqualified projection
+    /// (`spec/associated-types.md`, AT3); one entry per interface.
+    pub(crate) fn assoc_candidates_for(&self, self_ty: &Ty, name: &str) -> Vec<(usize, Vec<Ty>, Option<Ty>)> {
+        let mut out: Vec<(usize, Vec<Ty>, Option<Ty>)> = Vec::new();
+        for info in &self.impls {
+            if !self.interfaces[info.iface].assoc.iter().any(|n| n == name) {
+                continue;
+            }
+            let Some(subst) = self.impl_match(info, self_ty) else { continue };
+            if !self.impl_wheres_hold(info, &subst) {
+                continue;
+            }
+            if out.iter().any(|(i, _, _)| *i == info.iface) {
+                continue;
+            }
+            let args: Vec<Ty> = info.iface_args.iter().map(|a| self.subst_ty(a, &subst)).collect();
+            let binding = info.assoc.iter().find(|(n, _)| n == name).map(|(_, ty)| self.subst_ty(ty, &subst));
+            out.push((info.iface, args, binding));
+        }
+        out
+    }
+
+    /// The interfaces among the bounds of type parameter `param` (their `requires` closure included) that declare
+    /// the associated type `name`, with their type arguments (`spec/associated-types.md`, AT3).
+    pub(crate) fn assoc_candidates_in_env(&self, param: &str, name: &str, env: &Env) -> Vec<(usize, Vec<Ty>)> {
+        let mut out: Vec<(usize, Vec<Ty>)> = Vec::new();
+        for (n, bounds) in env {
+            if n != param {
+                continue;
+            }
+            for bound in bounds {
+                for b in self.bound_closure(bound) {
+                    if let Bound::User(i, args) = b
+                        && self.interfaces[i].assoc.iter().any(|a| a == name)
+                        && !out.iter().any(|(j, _)| *j == i)
+                    {
+                        out.push((i, args));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Whether the box's interface is `iface`, or requires it with matching arguments (AN2, AN8).
     fn any_satisfies(&self, any: &AnyRef, iface: usize, args: &[Ty]) -> bool {
         let Some((stored_iface, stored_args)) = self.any.borrow().ifaces.get(any.id).cloned() else {
@@ -1291,6 +1418,24 @@ mod tests {
     }
 
     #[test]
+    fn projections_stay_symbolic_until_the_self_type_is_known() {
+        let g = Globals::default();
+        let projection = Ty::Projection {
+            self_ty: Box::new(param("T")),
+            iface: 0,
+            iface_name: Rc::from("Container"),
+            args: Vec::new(),
+            name: Rc::from("Item"),
+        };
+        assert!(g.ty_has_param(&projection), "a projection belongs to symbolic code");
+        assert!(!projection.is_second_class(), "a projection is opaque, not a view");
+        assert_eq!(projection.to_string(), "<T as Container>.Item");
+        // No impl is known, so substituting the self type keeps the projection for the concrete instance to
+        // resolve.
+        assert_eq!(g.subst_ty(&projection, &[("T".to_string(), i32_())]).to_string(), "<i32 as Container>.Item");
+    }
+
+    #[test]
     fn instance_names_spell_their_arguments() {
         assert_eq!(Globals::instance_name("Stack", &[i32_()]), "Stack<i32>");
         assert_eq!(Globals::instance_name("Pair", &[i32_(), bool_()]), "Pair<i32, bool>");
@@ -1310,6 +1455,7 @@ mod tests {
             params: Vec::new(),
             bounds: Vec::new(),
             requires: vec![Bound::Eq],
+            assoc: Vec::new(),
             methods: Vec::new(),
         });
         assert_eq!(g.bound_closure(&Bound::User(0, Vec::new())), vec![Bound::User(0, Vec::new()), Bound::Eq]);
@@ -1361,6 +1507,7 @@ mod tests {
             params: vec!["T".into()],
             bounds: vec![Vec::new()],
             requires: Vec::new(),
+            assoc: Vec::new(),
             methods: vec![
                 method("get", false, Vec::new(), Vec::new()),
                 method(

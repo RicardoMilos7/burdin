@@ -77,7 +77,8 @@ Tests: `lib_tests` and `tests_error` packages, the `test-compile-fail` and `burd
 **CK6. The profile.** The profile changes what the front end does in two places: error trace frames are recorded only
 when the profile's `debug-assertions` is on (`spec/errors.md`, ERR7), and compile-time evaluation follows its
 `overflow-checks` and `debug-assertions` (`spec/comptime.md`). `--profile <name>` selects one
-(`spec/profiles.md`); `--release` is `--profile release`, and the default is `dev`.
+(`spec/profiles.md`); `--release` is `--profile release`, and the default is `dev`. `-O<n>` is accepted
+for the same reason, and changes nothing: a check generates no code, so no optimization level applies (BP4).
 Tests: `--release on a clean program`, the `release-only` conformance tests.
 
 **CK7. `--comptime-steps <n>`.** Sets the step budget of each compile-time evaluation, as for a build

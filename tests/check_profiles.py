@@ -9,6 +9,8 @@ What it checks:
   * `debug-assertions` decides whether `debug_assert` runs, in a build and in `burdin test`;
   * a per-package override changes only that package's functions;
   * `debug = true` and `opt-level` change the generated IR, and the same profile produces the same IR twice;
+  * `-O0` to `-O3` (and `-O <n>`) replace a profile's `opt-level` for one build, and `dev -O3` keeps the overflow
+    check while `--release -O0` wraps (issue #289);
   * an unknown profile, an unknown setting, a bad value, `panic = "unwind"`, a per-package `opt-level`, and an
     inheritance cycle fail with the documented message and exit status;
   * `--help` documents `--profile`.
@@ -246,6 +248,59 @@ fn main() {
     check("DILocation" not in harness.read_text(plain_ir), "the default build emitted debug metadata")
     check("DILocation" in harness.read_text(traced_ir), "`debug = true` emitted no debug metadata")
 
+    # BP3-BP5 (issue #289): `-O<n>` replaces the optimization level and nothing else. The IR embeds the source path,
+    # so every comparison here is between builds of one package.
+    levels = package(work, "levels", ir_program)
+
+    def emit_opt(*flags, name):
+        target = work / f"levels-{name}"
+        built = run("build", levels, *flags, "--emit", "llvm-ir-opt", "-o", str(target), cwd=work)
+        expect_ok(built, f"`build {' '.join(flags)}`")
+        return harness.read_text(Path(str(target) + ".opt.ll"))
+
+    default_ir = emit_opt(name="default")
+    o0_ir = emit_opt("-O0", name="o0")
+    o2_ir = emit_opt("-O2", name="o2")
+    o2_spaced_ir = emit_opt("-O", "2", name="o2s")
+    check(default_ir == o0_ir, "`-O0` is not the default `dev` IR")
+    check(o2_ir != o0_ir, "`-O2` did not change the optimized IR")
+    check(o2_ir == o2_spaced_ir, "`-O 2` and `-O2` wrote different IR")
+
+    # BP3/BP4: `opt-level` in a manifest is the level a build uses, and `-O` replaces it for one invocation.
+    configured = package(work, "configured", ir_program, "\n[profile.dev]\nopt-level = 2\n")
+
+    def emit_configured(*flags, name):
+        target = work / f"configured-{name}"
+        built = run("build", configured, *flags, "--emit", "llvm-ir-opt", "-o", str(target), cwd=work)
+        expect_ok(built, f"`build {' '.join(flags)}` with `[profile.dev] opt-level = 2`")
+        return harness.read_text(Path(str(target) + ".opt.ll"))
+
+    configured_ir = emit_configured(name="default")
+    check(configured_ir == emit_configured("-O2", name="o2"), "`[profile.dev] opt-level = 2` is not level 2")
+    check(configured_ir != emit_configured("-O0", name="o0"), "`-O0` did not replace the manifest's level")
+    check(
+        emit_configured("-O0", name="o0b") == emit_configured("--profile", "test", name="test"),
+        "`-O0` is not the `test` profile's level 0 build",
+    )
+
+    # BP5: the level leaves the checks alone, in both directions.
+    overflow_o3 = run("run", overflow, "-O3", cwd=work)
+    check(
+        overflow_o3.returncode != 0 and "attempt to add with overflow" in stderr(overflow_o3),
+        f"`dev -O3` did not keep the overflow check:\n{stderr(overflow_o3)[:300]}",
+    )
+    wrap_o0 = run("run", overflow, "--release", "-O0", cwd=work)
+    expect_ok(wrap_o0, "`--release -O0`")
+    check(stdout(wrap_o0).strip() == "-2147483648", f"`--release -O0` printed {stdout(wrap_o0)!r}")
+    test_o1 = run("test", test_wrap, "-O1", cwd=work)
+    expect_ok(test_o1, "`burdin test -O1`")
+    check("1 passed" in stdout(test_o1), f"`burdin test -O1` printed {stdout(test_o1)!r}")
+
+    # BP4: the usage errors.
+    expect_failure(run("build", levels, "-O4", cwd=work), 2, "needs an optimization level", "`-O4`")
+    expect_failure(run("build", levels, "-O", cwd=work), 2, "needs an optimization level", "`-O` with no level")
+    expect_failure(run("build", levels, "-O1", "-O2", cwd=work), 2, "conflicts with `-O1`", "`-O1 -O2`")
+
     # BP3/BP4: the failure paths.
     unknown = run("build", overflow, "--profile", "nope", cwd=work)
     expect_failure(unknown, 2, "unknown profile `nope`", "an unknown profile")
@@ -289,6 +344,7 @@ fn main() {
     # BP4: the command line documents the option.
     help_text = stdout(run("build", "--help"))
     check("--profile <name>" in help_text, "`burdin build --help` does not document `--profile`")
+    check("-O <n>" in help_text, "`burdin build --help` does not document `-O`")
 
 print(f"check_profiles: {checks} checks")
 sys.exit(harness.report_problems(problems))

@@ -5,6 +5,7 @@ use crate::globals::{Globals, TypeName};
 use burdin_diag::{Code, Diagnostics, Span};
 use burdin_syntax::ast;
 use burdin_tir::{Ty, TypeDefs};
+use std::rc::Rc;
 
 /// The type parameters a built-in generic type must be written with, in order (`K` and `V` for `Map`). The
 /// allocator a container takes after them may be left out, so it is not listed. `None` for any other name.
@@ -70,6 +71,20 @@ impl Globals {
         module: usize,
         diags: &mut Diagnostics,
     ) -> Ty {
+        self.resolve_type_bounded(ty, self_ty, subst, &[], module, diags)
+    }
+
+    /// Like `resolve_type_in`, with the bounds of the type parameters in scope. They are what an unqualified
+    /// associated type projection (`T.Item`) resolves through (`spec/associated-types.md`, AT3).
+    pub(crate) fn resolve_type_bounded(
+        &self,
+        ty: &ast::Type,
+        self_ty: Option<&Ty>,
+        subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Ty {
         match &ty.kind {
             ast::TypeKind::Unit => Ty::Unit,
             ast::TypeKind::Never => Ty::Never,
@@ -100,10 +115,19 @@ impl Globals {
                     Ty::Error
                 }
             },
+            ast::TypeKind::Projection(p) => {
+                let base = self.resolve_type_bounded(&p.self_ty, self_ty, subst, bounds, module, diags);
+                self.resolve_assoc_projection(base, p.iface.as_deref(), &p.name, subst, bounds, module, diags)
+            }
             ast::TypeKind::Fn { kind, params, ret } => {
-                let params = params.iter().map(|p| self.resolve_type_in(p, self_ty, subst, module, diags)).collect();
-                let ret =
-                    ret.as_ref().map(|r| self.resolve_type_in(r, self_ty, subst, module, diags)).unwrap_or(Ty::Unit);
+                let params = params
+                    .iter()
+                    .map(|p| self.resolve_type_bounded(p, self_ty, subst, bounds, module, diags))
+                    .collect();
+                let ret = ret
+                    .as_ref()
+                    .map(|r| self.resolve_type_bounded(r, self_ty, subst, bounds, module, diags))
+                    .unwrap_or(Ty::Unit);
                 Ty::Fn {
                     sig: std::rc::Rc::new(burdin_tir::FnSig { params, ret: Box::new(ret) }),
                     kind: crate::generics::ast_kind(*kind),
@@ -112,12 +136,18 @@ impl Globals {
                 }
             }
             ast::TypeKind::Path(segments) if segments.len() == 1 => {
-                self.resolve_path_segment(module, &segments[0], ty.span, self_ty, subst, diags)
+                self.resolve_path_segment(module, &segments[0], ty.span, self_ty, subst, bounds, diags)
             }
-            // `geometry.shapes.Square`, through a module: the last segment is the type.
+            // `geometry.shapes.Square`, through a module: the last segment is the type. When the prefix is not a
+            // module, `T.Name` may be the shorthand for an associated type projection (`spec/associated-types.md`,
+            // AT3).
             ast::TypeKind::Path(segments) => {
                 let names: Vec<String> = segments[..segments.len() - 1].iter().map(|s| s.name.name.clone()).collect();
                 let Some(target) = self.resolve_module_path(module, &names) else {
+                    if let Some(ty) = self.resolve_shorthand_projection(segments, self_ty, subst, bounds, module, diags)
+                    {
+                        return ty;
+                    }
                     diags.error(Code::UNKNOWN_NAME, ty.span, format!("unknown module `{}`", names.join(".")));
                     return Ty::Error;
                 };
@@ -129,20 +159,20 @@ impl Globals {
                         format!("type `{}` is `priv` in another package", last.name.name),
                     );
                 }
-                self.resolve_exported_segment(target, last, ty.span, self_ty, subst, diags)
+                self.resolve_exported_segment(target, last, ty.span, self_ty, subst, bounds, diags)
             }
             ast::TypeKind::Ref { mutable, ty: inner } => {
-                let inner = self.resolve_type_in(inner, self_ty, subst, module, diags);
+                let inner = self.resolve_type_bounded(inner, self_ty, subst, bounds, module, diags);
                 Ty::Ref { mutable: *mutable, inner: Box::new(inner) }
             }
             ast::TypeKind::Slice(elem) => {
-                Ty::Slice(Box::new(self.resolve_type_in(elem, self_ty, subst, module, diags)))
+                Ty::Slice(Box::new(self.resolve_type_bounded(elem, self_ty, subst, bounds, module, diags)))
             }
-            ast::TypeKind::Tuple(elems) => {
-                Ty::Tuple(elems.iter().map(|e| self.resolve_type_in(e, self_ty, subst, module, diags)).collect())
-            }
+            ast::TypeKind::Tuple(elems) => Ty::Tuple(
+                elems.iter().map(|e| self.resolve_type_bounded(e, self_ty, subst, bounds, module, diags)).collect(),
+            ),
             ast::TypeKind::Array(elem, len) => {
-                let elem = self.resolve_type_in(elem, self_ty, subst, module, diags);
+                let elem = self.resolve_type_bounded(elem, self_ty, subst, bounds, module, diags);
                 match self.eval_array_len(len, subst, module, diags) {
                     Some(n) => Ty::Array(Box::new(elem), n),
                     None => Ty::Error,
@@ -151,7 +181,186 @@ impl Globals {
         }
     }
 
+    /// `T.Name`, written as a type path whose prefix is not a module: a shorthand for the unqualified associated
+    /// type projection (`spec/associated-types.md`, AT3). Returns `None` when the prefix is not a type at all.
+    fn resolve_shorthand_projection(
+        &self,
+        segments: &[ast::PathSegment],
+        self_ty: Option<&Ty>,
+        subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<Ty> {
+        let [base, name] = segments else { return None };
+        // The prefix is a type parameter or a type name; a module path was already tried and failed.
+        let is_type = subst.iter().any(|(n, _)| *n == base.name.name)
+            || self.type_name(module, &base.name.name).is_some()
+            || crate::builtins::builtin_type(&base.name.name).is_some()
+            || matches!(base.name.name.as_str(), "Option" | "Result" | "List" | "Map" | "Heap" | "CPtr");
+        if !is_type || !base.args.is_empty() {
+            return None;
+        }
+        let base_ty = self.resolve_path_segment(module, base, base.name.span, self_ty, subst, bounds, diags);
+        if !name.args.is_empty() {
+            diags.error(
+                Code::TYPE_MISMATCH,
+                name.name.span,
+                format!("the associated type `{}` takes no type arguments", name.name.name),
+            );
+        }
+        Some(self.resolve_assoc_projection(base_ty, None, &name.name, subst, bounds, module, diags))
+    }
+
+    /// Resolves `self_ty.Name` or `<self_ty as Interface>.Name` (`spec/associated-types.md`, AT3).
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_assoc_projection(
+        &self,
+        self_ty: Ty,
+        iface_ast: Option<&ast::Type>,
+        name: &ast::Ident,
+        subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Ty {
+        use crate::generics::Bound;
+        if self_ty == Ty::Error {
+            return Ty::Error;
+        }
+        let assoc = name.name.as_str();
+        if let Some(iface_ast) = iface_ast {
+            // `resolve_bound` reports an unknown or malformed interface itself; a built-in bound (`Copy`) is a
+            // valid bound but not an interface with associated types.
+            let Some(bound) = self.resolve_bound(iface_ast, subst, module, diags) else {
+                return Ty::Error;
+            };
+            let Bound::User(iface, args) = bound else {
+                diags.error(
+                    Code::ASSOC_PROJECTION,
+                    name.span,
+                    format!("the type after `as` is not an interface, so it declares no associated type `{assoc}`"),
+                );
+                return Ty::Error;
+            };
+            let iface_name = &self.interfaces[iface].name;
+            if !self.interfaces[iface].assoc.iter().any(|n| n == assoc) {
+                diags.error(
+                    Code::ASSOC_PROJECTION,
+                    name.span,
+                    format!("interface `{iface_name}` has no associated type `{assoc}`"),
+                );
+                return Ty::Error;
+            }
+            if let Ty::Param(p) = &self_ty {
+                // A qualified projection on a type parameter needs the parameter to promise the interface; the
+                // `requires` closure counts.
+                let want = Bound::User(iface, args.clone());
+                if !self.bound_in_env(p, &want, bounds) {
+                    diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        name.span,
+                        format!(
+                            "`{p}` does not implement `{}`, so `{p}.{assoc}` is not available",
+                            self.bound_name(&want)
+                        ),
+                    );
+                    return Ty::Error;
+                }
+                return Ty::Projection {
+                    self_ty: Box::new(self_ty),
+                    iface,
+                    iface_name: Rc::from(iface_name.as_str()),
+                    args,
+                    name: Rc::from(assoc),
+                };
+            }
+            return match self.impl_assoc(iface, &args, &self_ty, assoc) {
+                Some(Some(ty)) => ty,
+                // The implementation exists but does not bind the type: E0144 was already reported.
+                Some(None) => Ty::Error,
+                None => {
+                    diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        name.span,
+                        format!(
+                            "`{self_ty}` does not implement `{iface_name}`, so it has no associated type `{assoc}`"
+                        ),
+                    );
+                    Ty::Error
+                }
+            };
+        }
+        // An unqualified projection (`Self.Name`, `T.Name`).
+        if let Ty::Param(p) = &self_ty {
+            let candidates = self.assoc_candidates_in_env(p, assoc, bounds);
+            return match candidates.as_slice() {
+                [] => {
+                    diags.error(
+                        Code::ASSOC_PROJECTION,
+                        name.span,
+                        format!("no interface among the bounds of `{p}` declares the associated type `{assoc}`"),
+                    );
+                    Ty::Error
+                }
+                [(iface, args)] => Ty::Projection {
+                    self_ty: Box::new(self_ty),
+                    iface: *iface,
+                    iface_name: Rc::from(self.interfaces[*iface].name.as_str()),
+                    args: args.clone(),
+                    name: Rc::from(assoc),
+                },
+                many => {
+                    let names: Vec<&str> = many.iter().map(|(i, _)| self.interfaces[*i].name.as_str()).collect();
+                    diags.error(
+                        Code::ASSOC_PROJECTION,
+                        name.span,
+                        format!(
+                            "more than one interface among the bounds of `{p}` declares the associated type \
+                             `{assoc}` (`{}`); name the interface to disambiguate, as in `<{p} as {}>.{assoc}`",
+                            names.join("`, `"),
+                            names[0]
+                        ),
+                    );
+                    Ty::Error
+                }
+            };
+        }
+        // A concrete type, or an instance with parameters: the interfaces the program implements.
+        let candidates = self.assoc_candidates_for(&self_ty, assoc);
+        match candidates.as_slice() {
+            [] => {
+                diags.error(
+                    Code::ASSOC_PROJECTION,
+                    name.span,
+                    format!("no interface implemented for `{self_ty}` declares the associated type `{assoc}`"),
+                );
+                Ty::Error
+            }
+            [(_, _, binding)] => match binding {
+                Some(ty) => ty.clone(),
+                // E0144 was already reported on the implementation.
+                None => Ty::Error,
+            },
+            many => {
+                let names: Vec<&str> = many.iter().map(|(i, _, _)| self.interfaces[*i].name.as_str()).collect();
+                diags.error(
+                    Code::ASSOC_PROJECTION,
+                    name.span,
+                    format!(
+                        "more than one interface implemented for `{self_ty}` declares the associated type `{assoc}` \
+                         (`{}`); name the interface to disambiguate, as in `<{self_ty} as {}>.{assoc}`",
+                        names.join("`, `"),
+                        names[0]
+                    ),
+                );
+                Ty::Error
+            }
+        }
+    }
+
     /// One segment of a type path, resolved in `module`: a type parameter, a user type, or a built-in type.
+    #[allow(clippy::too_many_arguments)]
     fn resolve_path_segment(
         &self,
         module: usize,
@@ -159,6 +368,7 @@ impl Globals {
         span: Span,
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         diags: &mut Diagnostics,
     ) -> Ty {
         let name = seg.name.name.as_str();
@@ -170,7 +380,7 @@ impl Globals {
             return t.clone();
         }
         if self.type_name(module, name).is_none()
-            && let Some(ty) = self.builtin_generic_type(name, &seg.args, self_ty, subst, module, diags)
+            && let Some(ty) = self.builtin_generic_type(name, &seg.args, self_ty, subst, bounds, module, diags)
         {
             return ty;
         }
@@ -183,10 +393,10 @@ impl Globals {
             return Ty::Error;
         }
         if let Some(TypeName::GenericAdt(g)) = self.type_name(module, name) {
-            return self.generic_adt_type(g, span, &seg.args, self_ty, subst, module, diags);
+            return self.generic_adt_type(g, span, &seg.args, self_ty, subst, bounds, module, diags);
         }
         if let Some(TypeName::GenericAlias(a)) = self.type_name(module, name) {
-            return self.generic_alias_type(a, span, &seg.args, self_ty, subst, module, diags);
+            return self.generic_alias_type(a, span, &seg.args, self_ty, subst, bounds, module, diags);
         }
         if !seg.args.is_empty() {
             diags.error(Code::NOT_A_GENERIC_TYPE, span, format!("`{name}` is not a generic type"));
@@ -201,6 +411,7 @@ impl Globals {
 
     /// One segment of a type path that is qualified by a module: only the names the target module *declares* are
     /// visible (a module's `use` items are private to it).
+    #[allow(clippy::too_many_arguments)]
     fn resolve_exported_segment(
         &self,
         target: usize,
@@ -208,13 +419,16 @@ impl Globals {
         span: Span,
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         diags: &mut Diagnostics,
     ) -> Ty {
         let name = seg.name.name.as_str();
         match self.exported_type(target, name) {
-            Some(TypeName::GenericAdt(g)) => self.generic_adt_type(g, span, &seg.args, self_ty, subst, target, diags),
+            Some(TypeName::GenericAdt(g)) => {
+                self.generic_adt_type(g, span, &seg.args, self_ty, subst, bounds, target, diags)
+            }
             Some(TypeName::GenericAlias(a)) => {
-                self.generic_alias_type(a, span, &seg.args, self_ty, subst, target, diags)
+                self.generic_alias_type(a, span, &seg.args, self_ty, subst, bounds, target, diags)
             }
             Some(TypeName::Struct(_) | TypeName::Enum(_) | TypeName::Alias(_)) => {
                 if !seg.args.is_empty() {
@@ -241,6 +455,7 @@ impl Globals {
         args: &[ast::Type],
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         module: usize,
         diags: &mut Diagnostics,
     ) -> Ty {
@@ -273,9 +488,9 @@ impl Globals {
         let mut resolved: Vec<Ty> = args
             .iter()
             .zip(&info.bounds)
-            .map(|(a, bounds)| match Globals::const_param_ty(bounds) {
+            .map(|(a, param_bounds)| match Globals::const_param_ty(param_bounds) {
                 Some(declared) => self.eval_const_arg(a, declared, subst, module, diags),
-                None => self.resolve_type_in(a, self_ty, subst, module, diags),
+                None => self.resolve_type_bounded(a, self_ty, subst, bounds, module, diags),
             })
             .collect();
         // A trailing type argument left out takes the parameter's default (`spec/allocators.md`, AL5). The
@@ -286,7 +501,7 @@ impl Globals {
         }
         for i in resolved.len()..info.params.len() {
             let Some(default) = &info.defaults[i] else { break };
-            let ty = self.resolve_type_in(default, self_ty, &env, info.module, diags);
+            let ty = self.resolve_type_bounded(default, self_ty, &env, bounds, info.module, diags);
             resolved.push(ty.clone());
             env.push((info.params[i].clone(), ty));
         }
@@ -312,21 +527,23 @@ impl Globals {
     }
 
     /// The type a path with generic arguments stands for, as written in an expression (`List<i32>.new()`).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn generic_type(
         &self,
         name: &ast::Ident,
         args: &[ast::Type],
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         module: usize,
         diags: &mut Diagnostics,
     ) -> Ty {
         let n = name.name.as_str();
         if let Some(TypeName::GenericAdt(g)) = self.type_name(module, n) {
-            return self.generic_adt_type(g, name.span, args, self_ty, subst, module, diags);
+            return self.generic_adt_type(g, name.span, args, self_ty, subst, bounds, module, diags);
         }
         if let Some(TypeName::GenericAlias(a)) = self.type_name(module, n) {
-            return self.generic_alias_type(a, name.span, args, self_ty, subst, module, diags);
+            return self.generic_alias_type(a, name.span, args, self_ty, subst, bounds, module, diags);
         }
         if self.type_name(module, n).is_some() {
             diags.error(Code::NOT_A_GENERIC_TYPE, name.span, format!("`{n}` is not a generic type"));
@@ -338,7 +555,7 @@ impl Globals {
             generic_args_missing(n, &required[args.len()..], required, name.span, diags);
             return Ty::Error;
         }
-        self.builtin_generic_type(n, args, self_ty, subst, module, diags).unwrap_or_else(|| {
+        self.builtin_generic_type(n, args, self_ty, subst, bounds, module, diags).unwrap_or_else(|| {
             diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{n}`"));
             Ty::Error
         })
@@ -346,54 +563,60 @@ impl Globals {
 
     /// The built-in generic types written with arguments (`Option<T>`, `Heap<T>`, and the standard-library
     /// containers), or `None` if `name` is not one of them with this many arguments.
+    #[allow(clippy::too_many_arguments)]
     fn builtin_generic_type(
         &self,
         name: &str,
         args: &[ast::Type],
         self_ty: Option<&Ty>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         module: usize,
         diags: &mut Diagnostics,
     ) -> Option<Ty> {
         Some(match (name, args.len()) {
-            ("Option", 1) => Ty::Option(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
+            ("Option", 1) => {
+                Ty::Option(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
+            }
             ("Result", 2) => Ty::Result(
-                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
-                Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
+                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
+                Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
             ),
             // `Result<T>` is the default-error form: `Result<T, Error>` (`spec/errors.md`, ERR5).
             ("Result", 1) => Ty::Result(
-                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
+                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
                 Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),
             ),
             ("Heap", 1) | ("Heap", 2) => {
-                let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);
-                let alloc = self.container_alloc(args.get(1), subst, module, diags);
+                let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
                 Ty::Heap(Box::new(inner), alloc)
             }
             ("Shared", 1) => {
-                let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 check_storable(&inner, args[0].span, "a `Shared` value", diags);
                 Ty::Shared(Box::new(inner))
             }
             // The iterator `map.iter()` returns, which yields `(&K, &V)`. `std` needs its name to write the
             // iterator of a type built on a map (`Set`); `MapIter` itself is the standard library's adapter.
             ("MapEntries", 2) => Ty::MapIter(
-                Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags)),
-                Box::new(self.resolve_type_in(&args[1], self_ty, subst, module, diags)),
+                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
+                Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
             ),
             // The owning iterator `map.into_iter()` returns, which yields `(K, V)`. `std` names it for the
             // `into_keys` and `into_values` views of issue #712.
             ("MapIntoEntries", 2) | ("MapIntoEntries", 3) => {
-                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
-                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
-                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
+                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
+                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
                 Ty::MapIntoIter(Box::new(key), Box::new(value), alloc)
             }
-            ("CPtr", 1) => Ty::CPtr(Box::new(self.resolve_type_in(&args[0], self_ty, subst, module, diags))),
+            ("CPtr", 1) => {
+                Ty::CPtr(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
+            }
             ("Range", 1) | ("RangeInclusive", 1) => {
-                let inner = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 if !matches!(inner, Ty::Int(_) | Ty::Error) {
                     diags.error(
                         Code::TYPE_MISMATCH,
@@ -405,27 +628,27 @@ impl Globals {
                 Ty::Range(Box::new(inner), name == "RangeInclusive")
             }
             ("List", 1) | ("List", 2) => {
-                let elem = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
+                let elem = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 check_storable(&elem, args[0].span, "a `List` element", diags);
-                let alloc = self.container_alloc(args.get(1), subst, module, diags);
+                let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
                 Ty::List(Box::new(elem), alloc)
             }
             ("Map", 2) | ("Map", 3) => {
-                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
-                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
+                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
+                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
                 check_storable(&key, args[0].span, "a `Map` key", diags);
                 check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
                 Ty::Map(Box::new(key), Box::new(value), alloc)
             }
             // The type `map.entry(key)` returns (`spec/stdlib.md`, "Map entry operations"). The entry itself is
             // second-class; its key and value are the map's, so they must be storable.
             ("MapEntry", 2) | ("MapEntry", 3) => {
-                let key = self.resolve_type_in(&args[0], self_ty, subst, module, diags);
-                let value = self.resolve_type_in(&args[1], self_ty, subst, module, diags);
+                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
+                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
                 check_storable(&key, args[0].span, "a `Map` key", diags);
                 check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, module, diags);
+                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
                 Ty::MapEntry(Box::new(key), Box::new(value), alloc)
             }
             _ => return None,
@@ -438,11 +661,12 @@ impl Globals {
         &self,
         arg: Option<&ast::Type>,
         subst: &[(String, Ty)],
+        bounds: &[(String, Vec<crate::generics::Bound>)],
         module: usize,
         diags: &mut Diagnostics,
     ) -> burdin_tir::Alloc {
         let Some(arg) = arg else { return burdin_tir::Alloc::Global };
-        let ty = self.resolve_type_in(arg, None, subst, module, diags);
+        let ty = self.resolve_type_bounded(arg, None, subst, bounds, module, diags);
         if ty == Ty::Error {
             return burdin_tir::Alloc::Global;
         }
@@ -509,6 +733,7 @@ impl Globals {
             | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
+            | Ty::Projection { .. }
             | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }

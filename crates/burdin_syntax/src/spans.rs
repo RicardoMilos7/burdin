@@ -103,6 +103,11 @@ impl Mapper<'_> {
                     self.ty(i);
                 }
                 self.wheres(&mut b.where_clause);
+                for a in &mut b.assoc {
+                    self.ident(&mut a.name);
+                    self.ty(&mut a.ty);
+                    (self.f)(&mut a.span);
+                }
                 b.methods.iter_mut().for_each(|m| self.fn_decl(m));
                 (self.f)(&mut b.span);
             }
@@ -110,6 +115,10 @@ impl Mapper<'_> {
                 self.ident(&mut i.name);
                 self.generics(&mut i.generics);
                 i.requires.iter_mut().for_each(|t| self.ty(t));
+                for a in &mut i.associated {
+                    self.ident(&mut a.name);
+                    (self.f)(&mut a.span);
+                }
                 i.methods.iter_mut().for_each(|m| self.fn_decl(&mut m.decl));
                 (self.f)(&mut i.span);
             }
@@ -220,6 +229,13 @@ impl Mapper<'_> {
                 }
             }
             TypeKind::SelfType | TypeKind::Unit | TypeKind::Never => {}
+            TypeKind::Projection(p) => {
+                self.ty(&mut p.self_ty);
+                if let Some(iface) = &mut p.iface {
+                    self.ty(iface);
+                }
+                self.ident(&mut p.name);
+            }
             TypeKind::Tuple(ts) => ts.iter_mut().for_each(|x| self.ty(x)),
             TypeKind::Array(elem, len) => {
                 self.ty(elem);

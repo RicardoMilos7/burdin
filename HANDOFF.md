@@ -29,6 +29,29 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 (919 passed, 0 failed); `cargo clippy --all-targets -- -D warnings` (clean after one collapsible-`if` fix); `cargo fmt
 --all --check`; `check_tests.py`, `check_e9000.py`, `check_unit_tests.py`, `check_ci.py`, `check_error_docs.py`, and
 `check_fmt.py` (427 checks).
+**Associated types (issue #393, 2026-11-22).** An interface may declare `type Name` (`spec/associated-types.md`,
+AT1-AT6); a `Type: Interface` block binds each one exactly once (`type Name = Ty`), and a projection reads it back
+as `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The parser gives `InterfaceDecl` an `associated` list and
+`ImplBlock` an `assoc` list, and adds `TypeKind::Projection` (`Self.Name` and `<T as Interface>.Name`); `T.Name`
+stays a two-segment type path and is reinterpreted in sema when its prefix is not a module. `InterfaceInfo::assoc`
+holds the declared names and `ImplInfo::assoc` the resolved bindings; `resolve_type_bounded` (with the bounds of the
+type parameters in scope) resolves a projection through the bound environment for `Ty::Param` and through
+`Globals::impls` for any other type, producing the new opaque `Ty::Projection` in symbolic code. `subst_ty`
+substitutes and normalizes it through the implementation's binding, so `check_impl_signatures` compares an
+interface's `Self.Item` with an implementation after `Self` is substituted, and monomorphization replaces it before
+code generation (the backend crates treat it as having no runtime value). A missing, unknown, duplicate, or
+interface-less binding is E0144/E0007; a projection no interface can answer, or that two answer, is E0145; an
+interface with an associated type makes `any I` E0202. `Iterator<T>` stays generic (the m13 decision is unchanged).
+Errors: E0144 and E0145 are registered in `tests/README.md` and have `docs/error-codes.md` sections. Tests:
+`tests/m21_reflect/associated_types.bd`, `associated_types_errors.bd`, and `associated_type_projection_errors.bd`;
+unit tests for the projection display and symbolic substitution. `burdin fmt` understands `type Name`,
+`type Name = Ty`, `Self.Name`, and `<T as I>.Name`, and the span mapper visits the new lists. Verification:
+`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`, `python3 tests/run_tests.py`
+(1184 passed, 5 failed, 6 skipped), `python3 tests/run_tests.py --release` (1171 passed, 5 failed, 19 skipped),
+`python3 tests/check_fmt.py`, `python3 tests/check_error_docs.py`, `python3 tests/check_tests.py`,
+`python3 tests/check_unit_tests.py`, `python3 tests/check_e9000.py`, and `python3 tests/check_docs.py`. The five
+failures are the `s3_http`/`s3_tls` cases, which fail to link in this WSL image because the OpenSSL development
+symlinks (`libssl.so`, `libcrypto.so`) are absent; they are unrelated to this change.
 
 **Method-level type parameters (issue #391, 2026-11-22).** A method, associated function, or extension method
 declares parameters of its own after its name (`fn zip<U>(own self, own u: U): (A, U)`), with inline `const`
@@ -257,6 +280,14 @@ options now carry an optimization level and the two flags instead of one `releas
 interpreter takes the same two flags. `tests/check_profiles.py` proves the observable differences and every failure
 path. Not done: `opt-level` `s`/`z`, `panic = "unwind"`, per-package `opt-level`, and per-package flags in the
 comptime interpreter.
+
+**Optimization level flags (issue #289).** `-O0` to `-O3` (and `-O <n>`) on the commands that take `--profile` replace
+the profile's `opt-level` for one invocation; `[profile.<name>] opt-level` in `burdin.toml` is the level that profile
+builds with. The level changes only the LLVM pipeline and the target machine. The checks are decided by the profile
+alone (`overflow-checks`, `debug-assertions`), at every level: `release` and `bench` turn them off, and a profile that
+wants them in an optimized build sets them. Rules: `spec/profiles.md` BP4 and BP5; tests in
+`tests/check_profiles.py` and the `profile.rs` unit tests. Not done: `-O` on `repl`, `asm`, and `bloat` (they keep
+`--debug`/`--release`).
 
 **Build-script integration (issue #362, 2026-11-20).** The `build.bd` behavior of milestone 22 is now exercised end to
 end through the command line. A declared input in `<out>/inputs` — the `rerun-if-changed` equivalent — may be a file
@@ -716,16 +747,17 @@ Issue #867 (a write to a closed peer). Fixed on Linux: a write to a peer that ha
 `SIGPIPE` (exit 141), because `send` passed no `MSG_NOSIGNAL`. `send` and `sendto` now pass `MSG_NOSIGNAL` on Linux, and
 a macOS socket sets `SO_NOSIGPIPE` at creation. `tests/s2_io/net_write_peer_closed` covers a peer closed before the
 write, a peer closed during the wait, and a silent peer under a write timeout; it exits 141 on the old runtime and passes
-now (debug and release on Linux). Still open, for Windows: a probe of `WSAPoll` (PowerShell, a half-closed peer with a
-full send buffer) shows the socket reporting `POLLHUP` at once for a `POLLWRNORM`-only request, with no room to write.
-`reactor_iocp.ll` claims any nonzero `revents`, so the writer wakes, its `send` gets `WSAEWOULDBLOCK`, and it waits
-again: a spin rather than a sleep. That does not account for a hang that survives a write timeout, so the reported
-hang needs a Windows run to reproduce. The fix taken is a pause rather than a change to the reactor: `TcpStream.write`
-now sleeps 10 ms (`WRITE_BACKOFF_NANOS`, capped by the deadline) after a wake that made no room, so a half-closed peer
-costs one wake per 10 ms instead of a tight loop. `WSAPoll` still returns at once for such a socket, so the reactor
-itself is not idle while one is parked; a fallback re-poll or `WSAEventSelect` would remove that, and is the next step
-if the pause is not enough. `s2_io/net_write_waits_for_room` covers the wake-up path on every platform. Whether the spin
-is gone is confirmed only by the Windows CI run, not by a measurement.
+now (debug and release on Linux). On Windows the hang did not reproduce. Scenarios run on a local x86-64 build did not
+hang: a peer closed before the write, closed while the writer waited (five rounds), shut its write side and never read
+(with and without a write timeout), and a writer on the main thread. Every write returned `failed` or `timed out`
+promptly. `tests/s2_io` passed 23 of 23 on Windows with HEAD (one test skipped on Windows), and
+`net_write_peer_closed` and `net_write_waits_for_room` passed 10 times in a row. The OS side of the earlier suspicion
+is real: a `WSAPoll` probe on a socket whose peer shut its write side, with a full send buffer, returns at once with
+`POLLHUP` (`revents` 0x2) for a `POLLWRNORM`-only request. But the Burdin programs did not spin: the half-closed case
+used 0.02 s of CPU over a 4 s wait with the compiler as of `7db57e4` (before the #867 commits, no pause), so the
+reactor path that turns that `POLLHUP` into a wake does not, in these programs, become a tight loop. The 10 ms pause in
+`TcpStream.write` (`WRITE_BACKOFF_NANOS`, capped by the deadline) is therefore a guard against an unobserved spin.
+`s2_io/net_write_waits_for_room` covers the wake-up path on every platform.
 
 The forty-second session started stage 3 with `burdin new` (issue #228). `crates/burdin_driver/src/new.rs` creates the
 package directory (`burdin.toml`, `src/main.bd`, `.gitignore`), takes the package name from the last path component

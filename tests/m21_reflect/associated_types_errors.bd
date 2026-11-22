@@ -1,0 +1,58 @@
+//@ compile-fail
+
+// An interface may not declare the same member twice (E0007); an implementation must bind every associated type
+// exactly once and may not bind a name the interface does not declare (E0144, E0007); an impl block with no
+// interface has no associated types to bind (E0144). See spec/associated-types.md, AT1-AT2.
+
+interface Shape {
+    type Item
+    type Item //~ E0007
+    fn area(self): i32
+}
+
+interface Plain {
+    type Item
+    fn area(self): i32
+}
+
+struct Sq {
+    n: i32
+}
+
+// The implementation does not bind `Item`.
+Sq: Plain { //~ E0144
+    fn area(self): i32 { self.n }
+}
+
+struct Other {
+    n: i32
+}
+
+Other: Plain {
+    type Item = i32
+    // `Plain` declares no associated type named `Nope`.
+    type Nope = bool //~ E0144
+    fn area(self): i32 { self.n }
+}
+
+struct Third {
+    n: i32
+}
+
+Third: Plain {
+    type Item = i32
+    // The second binding of `Item` (E0007); the first is used.
+    type Item = bool //~ E0007
+    fn area(self): i32 { self.n }
+}
+
+struct Fourth {
+    n: i32
+}
+
+// An inherent impl block names no interface, so it cannot bind an associated type.
+Fourth {
+    type Item = i32 //~ E0144
+}
+
+fn main() {}

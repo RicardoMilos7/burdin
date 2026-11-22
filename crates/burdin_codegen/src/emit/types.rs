@@ -32,7 +32,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The LLVM type of a value of `ty`, or `None` for types without a runtime value.
     pub(super) fn llvm_ty(&self, ty: &Ty) -> Option<BasicTypeEnum<'ctx>> {
         Some(match ty {
-            Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) => return None,
+            Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => return None,
             Ty::Bool => self.cx.bool_type().into(),
             Ty::Char => self.cx.i32_type().into(),
             Ty::Int(i) => self.int_ty(*i).into(),

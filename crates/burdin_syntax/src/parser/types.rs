@@ -40,9 +40,47 @@ impl Parser<'_> {
                 }
                 Ok(Type { kind: TypeKind::Path(segments), span: start.to(self.prev_span()) })
             }
+            // `Self`, or `Self.Name` for an associated type of the interface or impl block
+            // (`spec/associated-types.md`, AT3).
             TokenKind::SelfType => {
                 self.bump();
+                if self.at(&TokenKind::Dot) && matches!(self.nth_kind(1), TokenKind::Ident(_)) {
+                    self.bump();
+                    let name = self.ident("an associated type name")?;
+                    let span = start.to(name.span);
+                    let self_ty = Type { kind: TypeKind::SelfType, span: start };
+                    return Ok(Type {
+                        kind: TypeKind::Projection(Box::new(ProjectionType {
+                            self_ty: Box::new(self_ty),
+                            iface: None,
+                            name,
+                        })),
+                        span,
+                    });
+                }
                 Ok(Type { kind: TypeKind::SelfType, span: start })
+            }
+            // `<T as Interface>.Name`: a qualified associated type projection.
+            TokenKind::Lt => {
+                self.open(&TokenKind::Lt, false)?;
+                let self_ty = self.ty()?;
+                self.expect(&TokenKind::As)?;
+                let iface = self.ty()?;
+                if !self.eat_closing_angle() {
+                    return Err(self.unexpected("`>`"));
+                }
+                self.nl_stack.pop();
+                self.expect(&TokenKind::Dot)?;
+                let name = self.ident("an associated type name")?;
+                let span = start.to(name.span);
+                Ok(Type {
+                    kind: TypeKind::Projection(Box::new(ProjectionType {
+                        self_ty: Box::new(self_ty),
+                        iface: Some(Box::new(iface)),
+                        name,
+                    })),
+                    span,
+                })
             }
             // `any Interface` and `impl Interface`: the interface is written after the keyword, as a type so
             // that a wrong form gets a semantic diagnostic rather than a parse error.
