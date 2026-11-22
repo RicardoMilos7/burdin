@@ -120,7 +120,12 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         K::Interp(parts) => walk_interp(v, parts),
         K::Name { args, .. } => args.iter().for_each(|a| v.ty(a)),
         K::Tuple(es) | K::Array(es) => es.iter().for_each(|x| v.expr(x)),
-        K::ArrayRepeat(a, b) | K::Assign(a, b) | K::Binary(_, a, b) | K::OrElse(a, b) | K::Index(a, b) => {
+        K::ArrayRepeat(a, b)
+        | K::Assign(a, b)
+        | K::CompoundAssign(_, a, b)
+        | K::Binary(_, a, b)
+        | K::OrElse(a, b)
+        | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }

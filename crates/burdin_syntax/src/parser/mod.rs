@@ -195,7 +195,7 @@ impl Parser<'_> {
         Ok(t)
     }
 
-    /// Consumes a `>` that closes generic arguments, splitting `>>` and `>=`.
+    /// Consumes a `>` that closes generic arguments, splitting `>>`, `>=`, and `>>=`.
     fn eat_closing_angle(&mut self) -> bool {
         let span = self.span();
         let rest = match self.kind() {
@@ -205,6 +205,8 @@ impl Parser<'_> {
             }
             TokenKind::Shr => TokenKind::Gt,
             TokenKind::Ge => TokenKind::Eq,
+            // `>>=` closes one list and leaves `>=` for the enclosing one.
+            TokenKind::ShrEq => TokenKind::Ge,
             _ => return false,
         };
         let t = &mut self.toks[self.pos];
@@ -891,6 +893,38 @@ struct Point { x: i32 }
         assert!(matches!(lhs.kind, ExprKind::DynField(..)));
         let ExprKind::Field(inner, _) = &rhs.kind else { unreachable!() };
         assert!(matches!(inner.kind, ExprKind::DynField(..)));
+    }
+
+    #[test]
+    fn a_compound_assignment_takes_its_operator_and_stops_at_a_line_break() {
+        // `spec/compound-assignment.md`, CA1: one token per operator, and a line break before it ends the statement.
+        let (file, out) = render(
+            "fn main() {
+    a <<= b + 1
+    c
+    >>= d
+}
+",
+        );
+        assert!(out.contains("E0001"), "{out}");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(shift) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::CompoundAssign(op, lhs, rhs) = &shift.kind else { unreachable!() };
+        assert_eq!(*op, BinOp::Shl);
+        assert!(matches!(lhs.kind, ExprKind::Name { .. }));
+        assert!(matches!(rhs.kind, ExprKind::Binary(BinOp::Add, ..)));
+    }
+
+    #[test]
+    fn a_shift_assignment_closes_nested_generic_arguments() {
+        // `>>=` closes the inner list and leaves `>=` for the outer one, as `>>` and `>=` do (grammar.md).
+        let (_, out) = render(
+            "fn main() {
+    let grid: List<List<i32>>= List<List<i32>>.new()
+}
+",
+        );
+        assert_eq!(out, "");
     }
 
     #[test]

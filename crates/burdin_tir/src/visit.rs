@@ -83,7 +83,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::ArrayRepeat(inner, _)
         | K::Comptime(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
-        K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }
@@ -224,7 +224,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::ArrayRepeat(inner, _)
         | K::Comptime(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
-        K::Assign(a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
             v.expr(b);
         }

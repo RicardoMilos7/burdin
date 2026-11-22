@@ -551,6 +551,8 @@ pub enum ExprKind {
     /// `continue`, or `continue 'label` to go on with the loop with that label.
     Continue(Option<Ident>),
     Assign(Box<Expr>, Box<Expr>),
+    /// `place op= value`, with the binary operator `op` (`spec/compound-assignment.md`, CA1).
+    CompoundAssign(BinOp, Box<Expr>, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     Cast(Box<Expr>, Type),

@@ -18,7 +18,34 @@ impl Parser<'_> {
             let span = lhs.span.to(rhs.span);
             return Ok(Expr { kind: ExprKind::Assign(Box::new(lhs), Box::new(rhs)), span });
         }
+        if let Some(op) = self.compound_op()
+            && !self.nl()
+        {
+            self.bump();
+            let rhs = self.expr_r(r)?;
+            let span = lhs.span.to(rhs.span);
+            return Ok(Expr { kind: ExprKind::CompoundAssign(op, Box::new(lhs), Box::new(rhs)), span });
+        }
         Ok(lhs)
+    }
+
+    /// The binary operator of the compound assignment token at the current position, if there is one
+    /// (`spec/compound-assignment.md`, CA1).
+    fn compound_op(&self) -> Option<BinOp> {
+        use TokenKind as T;
+        Some(match self.kind() {
+            T::PlusEq => BinOp::Add,
+            T::MinusEq => BinOp::Sub,
+            T::StarEq => BinOp::Mul,
+            T::SlashEq => BinOp::Div,
+            T::PercentEq => BinOp::Rem,
+            T::AmpEq => BinOp::BitAnd,
+            T::PipeEq => BinOp::BitOr,
+            T::CaretEq => BinOp::BitXor,
+            T::ShlEq => BinOp::Shl,
+            T::ShrEq => BinOp::Shr,
+            _ => return None,
+        })
     }
 
     pub(super) fn orelse(&mut self, r: Restriction) -> PResult<Expr> {

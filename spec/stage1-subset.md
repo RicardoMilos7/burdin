@@ -391,9 +391,11 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 #274); the remaining items below are still wanted.
 
 `i128`/`u128` have landed too (issue #273, `spec/int128.md`), and so has `break` with a value (issue #276,
-`spec/grammar.md` rule 8.10). The remaining items are compound assignment, doc tests, `bench` blocks,
-fallible allocation, compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
-slip past stage 1, and a package registry.
+`spec/grammar.md` rule 8.10), and compound assignment has landed for the built-in types (issue #277,
+`spec/compound-assignment.md`). The remaining items are doc tests, `bench` blocks, fallible allocation,
+compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
+slip past stage 1, and a package registry. Compound assignment on a user type is the one open decision left from the
+issue (#277).
 
 ## Working on stage 1
 

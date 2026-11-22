@@ -600,6 +600,11 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
     `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
     `m18_extension/method_type_params`.
+34. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
+    and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
+    A user type on the left is E0001 until its overloaded form is decided (issue #277, which the spec and the issue
+    disagree on). Rules CA1-CA6 in `spec/compound-assignment.md`; `compound_assign/`, `fmt/compound_assign`, and
+    `m19_operators/compound_assignment`.
 
 ## Review of the expected outputs
 

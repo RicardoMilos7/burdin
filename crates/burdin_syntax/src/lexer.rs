@@ -558,6 +558,8 @@ impl Lexer<'_> {
         let three = match (a, b, c) {
             (b'.', b'.', b'.') => Some(DotDotDot),
             (b'.', b'.', b'=') => Some(DotDotEq),
+            (b'<', b'<', b'=') => Some(ShlEq),
+            (b'>', b'>', b'=') => Some(ShrEq),
             _ => None,
         };
         if let Some(k) = three {
@@ -574,6 +576,14 @@ impl Lexer<'_> {
             (b'!', b'=') => Some(NotEq),
             (b'<', b'=') => Some(Le),
             (b'>', b'=') => Some(Ge),
+            (b'+', b'=') => Some(PlusEq),
+            (b'-', b'=') => Some(MinusEq),
+            (b'*', b'=') => Some(StarEq),
+            (b'/', b'=') => Some(SlashEq),
+            (b'%', b'=') => Some(PercentEq),
+            (b'&', b'=') => Some(AmpEq),
+            (b'|', b'=') => Some(PipeEq),
+            (b'^', b'=') => Some(CaretEq),
             _ => None,
         };
         if let Some(k) = two {
@@ -688,6 +698,16 @@ mod tests {
             ("=>", FatArrow),
             ("<<", Shl),
             (">>", Shr),
+            ("<<=", ShlEq),
+            (">>=", ShrEq),
+            ("+=", PlusEq),
+            ("-=", MinusEq),
+            ("*=", StarEq),
+            ("/=", SlashEq),
+            ("%=", PercentEq),
+            ("&=", AmpEq),
+            ("|=", PipeEq),
+            ("^=", CaretEq),
             ("&&", AndAnd),
             ("||", OrOr),
             ("==", EqEq),

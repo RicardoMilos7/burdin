@@ -139,7 +139,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(callee, out);
             args.iter().for_each(|x| place_mentions(x, out));
         }
-        K::Binary(_, l, r) | K::Assign(l, r) => {
+        K::Binary(_, l, r) | K::Assign(l, r) | K::CompoundAssign(_, l, r) => {
             place_mentions(l, out);
             place_mentions(r, out);
         }

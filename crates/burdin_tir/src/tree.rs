@@ -341,6 +341,9 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     /// The left side is a place: a local, or an index into a place.
     Assign(Box<Expr>, Box<Expr>),
+    /// `place op= value` on a built-in type: the value is evaluated first, then the place once, and the place is
+    /// updated with the binary operator (`spec/compound-assignment.md`, CA2). The type is `()`.
+    CompoundAssign(BinOp, Box<Expr>, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     /// Converts the operand to this expression's type.

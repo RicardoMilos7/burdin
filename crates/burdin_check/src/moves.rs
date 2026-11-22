@@ -1126,6 +1126,12 @@ impl<'a> Checker<'a> {
                     self.expr(place, Mode::Use);
                 }
             }
+            // A built-in place has no drop and is read, then written, in place: the value is used first, as for `=`,
+            // and the place must be initialized (spec/compound-assignment.md, CA2).
+            K::CompoundAssign(_, place, value) => {
+                self.expr(value, Mode::Use);
+                self.expr(place, Mode::Use);
+            }
             K::Binary(_, l, r) => {
                 self.expr(l, Mode::Use);
                 self.expr(r, Mode::Use);

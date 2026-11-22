@@ -32,7 +32,9 @@ These operators resolve to an interface method for a user type:
 
 These are not overloadable and keep their stage 0 meaning: `&&`, `||`, `=` (the design document says so), `as`, `?`,
 unary `&`/`&mut`, and `<<`/`>>` (shifts remain integer-only). Compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`,
-`&=`, `|=`, `^=`) is not part of stage 1: the lexer has no such token, so it is a syntax error (E0001).
+`&=`, `|=`, `^=`, `<<=`, `>>=`) is part of the language for the built-in types (issue #277, `spec/compound-assignment.md`).
+Whether a user type may use it, through `Add` or a new interface, is still open: until that is decided, a user type on
+the left is E0001 (`spec/compound-assignment.md`, CA5).
 
 ## OP2: The interface set
 
@@ -225,7 +227,7 @@ still short-circuit and accept only `bool`.
 | E0113 | `IndexMut` is needed through an immutable place, or an index expression is the receiver of a `mut self` method through the read-only `index` view |
 | E0101 | A non-`Copy` element is moved out of `x[i]` |
 | E0003 | Operands or the index have the wrong type; the type has no built-in operator and no overload; a failed `Eq`/`Ord` derive keeps the stage 0 code |
-| E0001 | Compound assignment (`+=` and friends), which stage 1 does not include |
+| E0001 | Compound assignment on a user type (a struct, an enum, or a type parameter): overloading it is not decided yet (issue #277, `spec/compound-assignment.md`, CA5) |
 
 Missing interface methods and wrong impl signatures keep E0140 and E0003, like every other interface.
 
@@ -241,4 +243,4 @@ Missing interface methods and wrong impl signatures keep E0140 and E0003, like e
 | OP10 (write mode) | `index_write_place`, `nested_index` |
 | OP11 | `vector_add_index` (the std interfaces are visible without `use`) |
 | OP12 | `builtin_operators`, `builtin_overflow_aborts`, `builtin_division_by_zero_aborts`, `builtin_shift_overflow_aborts`, `builtin_index_errors`, `and_or_not_overloadable` |
-| OP1 (compound assignment) | `compound_assignment` |
+| OP1 (compound assignment) | `compound_assignment` (a user type, E0001); the built-in forms are in `tests/compound_assign/` (`spec/compound-assignment.md`) |

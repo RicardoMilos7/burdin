@@ -93,7 +93,7 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
             out.push(Child::Expr(Role::Plain, a));
             out.push(Child::Expr(Role::Plain, b));
         }
-        K::Assign(a, b) => {
+        K::Assign(a, b) | K::CompoundAssign(_, a, b) => {
             out.push(Child::Expr(Role::Plain, a));
             out.push(Child::Expr(Role::Plain, b));
         }

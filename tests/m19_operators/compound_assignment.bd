@@ -1,6 +1,7 @@
 //@ compile-fail
 
-// Compound assignment is not part of stage 1, so `+=` is a syntax error (E0001, spec/operators.md OP1).
+// Compound assignment on a user type is not decided yet (issue #277), so it is E0001 (spec/compound-assignment.md, CA5).
+// The built-in forms are in tests/compound_assign/.
 
 struct Counter {
     n: i32

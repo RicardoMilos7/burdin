@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// The left side of a compound assignment is a mutable place, as for `=` (spec/compound-assignment.md, CA4). A
+// parameter that is not `mut` is read-only, and an expression that is not a place cannot be assigned.
+
+fn add(x: i32): i32 {
+    x += 1 //~ E0005
+    x
+}
+
+fn one(): i32 {
+    1
+}
+
+fn main() {
+    let n = 1
+    n += 1 //~ E0005
+    one() += 1 //~ E0005
+    println("{add(n)}")
+}

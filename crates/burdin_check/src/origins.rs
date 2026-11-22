@@ -811,6 +811,12 @@ impl<'a> Analyzer<'a> {
                 self.place_origin(place);
                 Origin::default()
             }
+            K::CompoundAssign(_, place, value) => {
+                // A built-in value holds no view, so nothing is stored; the operands are still walked.
+                self.expr(value);
+                self.place_origin(place);
+                Origin::default()
+            }
             K::Binary(_, l, r) => {
                 self.expr(l);
                 self.expr(r);

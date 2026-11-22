@@ -325,6 +325,7 @@ impl Mapper<'_> {
             ExprKind::Tuple(es) | ExprKind::Array(es) => es.iter_mut().for_each(|x| self.expr(x)),
             ExprKind::ArrayRepeat(a, b)
             | ExprKind::Assign(a, b)
+            | ExprKind::CompoundAssign(_, a, b)
             | ExprKind::Binary(_, a, b)
             | ExprKind::OrElse(a, b)
             | ExprKind::DynField(a, b)

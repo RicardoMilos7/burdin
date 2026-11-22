@@ -4,6 +4,32 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Compound assignment (issue #277, 2026-11-22).** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the
+built-in integers, floats, and `bool` (`spec/compound-assignment.md`, CA1-CA6). The value is evaluated first, then the
+place's address once, then the place is read, the operator applied, and the result stored, so `v[next()] += 1` calls
+`next` once. The operator has the binary operator's rules: overflow wraps in release and panics in debug, division by
+zero panics, and a shift amount out of range panics in debug. Implementation: the ten operators are tokens
+(`crates/burdin_syntax/src/token.rs`, `lexer.rs`), the parser builds `ExprKind::CompoundAssign` in `parser/expr.rs`
+(a line break before it ends the statement; `>>=` splits inside generic arguments), and the typed tree has
+`ExprKind::CompoundAssign`. Sema checks it in `compound_assign` (`fncx/operators.rs`), sharing the place checks with
+`=` (`check_assign_target`). The move, borrow, and origin checkers, the closure capture analysis, codegen
+(`compound_assign` in `emit/place.rs`, sharing `arith_values` with the binary operators in `emit/ops.rs`), and the
+comptime interpreter (`binary_values` in `prims.rs`, shared with the binary operators) each handle the new node. The
+formatter, the linter, the refactoring engine, and `burdin expand` know the operator too.
+**Open decision, not implemented:** a user type on the left is E0001. The issue asks for the overloaded form too (`a += b`
+on a type with `Add`), but `spec/operators.md` OP1 says compound assignment is not overloadable, so the two disagree and
+the compiler does not pick one. The choices are (a) `a += b` means `a = a + b` through the existing `Add` interface (no
+new interface), (b) new `AddAssign`-style interfaces, or (c) keep it rejected. Changing OP1 and the E0001 test
+(`tests/m19_operators/compound_assignment.bd`) is the first step of whichever is chosen. Tests:
+`tests/compound_assign/` (run, abort, compile-fail, comptime, raw pointer, and the release wrap), `tests/fmt/compound_assign`
+(the formatter golden), the parser unit tests `a_compound_assignment_takes_its_operator_and_stops_at_a_line_break` and
+`a_shift_assignment_closes_nested_generic_arguments`, and the lexer's punctuation test. Decision 34 in `tests/README.md`.
+Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 failed, 7 skipped) and release (1213 passed,
+0 failed, 20 skipped), with `LIBRARY_PATH` pointing at unversioned OpenSSL symlinks on this VM; `cargo test --workspace`
+(919 passed, 0 failed); `cargo clippy --all-targets -- -D warnings` (clean after one collapsible-`if` fix); `cargo fmt
+--all --check`; `check_tests.py`, `check_e9000.py`, `check_unit_tests.py`, `check_ci.py`, `check_error_docs.py`, and
+`check_fmt.py` (427 checks).
+
 **Method-level type parameters (issue #391, 2026-11-22).** A method, associated function, or extension method
 declares parameters of its own after its name (`fn zip<U>(own self, own u: U): (A, U)`), with inline `const`
 parameters and bounds, and `where` for its own parameters. The decisions: the impl block's parameters stay in scope
