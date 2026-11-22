@@ -1,0 +1,18 @@
+//@ run
+//> first: 1
+//> second: 2
+
+// Two generators at module scope, each adding its own function, in source order (spec/generate.md, GN3).
+
+comptime generate {
+    String.from("fn first(): i32 {{ 1 }}\n")
+}
+
+comptime generate {
+    String.from("fn second(): i32 {{ 2 }}\n")
+}
+
+fn main() {
+    println(format("first: {}", first()))
+    println(format("second: {}", second()))
+}

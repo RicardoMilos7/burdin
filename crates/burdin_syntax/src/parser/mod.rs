@@ -35,6 +35,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
+        generators: Vec::new(),
     };
     p.file()
 }
@@ -58,6 +59,7 @@ pub fn parse_block(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> O
         comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
+        generators: Vec::new(),
     };
     let block = p.block().ok()?;
     let clean = p.at_eof() && p.diags.len() == before;
@@ -83,6 +85,8 @@ pub(super) struct Parser<'a> {
     select_count: usize,
     /// The block of every function and test body the file wrote, in source order ([`File::bodies`]).
     bodies: Vec<Span>,
+    /// The module-scope `comptime generate` items this file has parsed ([`File::generators`]).
+    generators: Vec<Generator>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -669,6 +673,51 @@ struct Point { x: i32 }
         assert_eq!(fn_names(&file), ["good"]);
         assert_eq!(file.benches.len(), 1);
         assert_eq!(file.benches[0].name, "one");
+    }
+
+    #[test]
+    fn generate_items_are_functions_returning_a_string() {
+        // `comptime generate { ... }` at module scope is a private function with no parameters and the return type
+        // `String`, named so that no written name can refer to it, and recorded in `generators` for the front end
+        // (`spec/generate.md`, GN2). Its block is not one of the file's `bodies`.
+        let src = "comptime generate {\n    String.new()\n}\ncomptime generate { String.new() }\nfn good() {}\n";
+        let (file, out) = render(src);
+        assert_eq!(out, "");
+        assert_eq!(fn_names(&file), ["comptime generate 1", "comptime generate 2", "good"]);
+        assert_eq!(file.generators.len(), 2);
+        let Item::Fn(generator) = &file.items[0] else { panic!("expected a function") };
+        assert!(generator.is_priv && generator.params.is_empty());
+        assert!(
+            matches!(generator.ret.as_ref().map(|t| &t.kind), Some(TypeKind::Path(p)) if p[0].name.name == "String")
+        );
+        assert_eq!(file.generators[0].name, "comptime generate 1");
+        assert_eq!(file.generators[0].span, generator.span);
+        let keyword = &src[file.generators[0].keyword.lo as usize..file.generators[0].keyword.hi as usize];
+        assert_eq!(keyword, "comptime generate");
+        assert_eq!(file.bodies.len(), 1, "only `good`'s body is a function body");
+
+        // `generate` is a keyword only right after `comptime`.
+        let (_, out) = render("fn f(): i32 {\n    let generate = 1\n    generate\n}\n");
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn generate_outside_module_scope_is_e0243_and_the_rest_parses() {
+        let (file, out) = render(
+            "fn main() {\n    comptime generate {\n        String.new()\n    }\n    let x = 1\n}\n\
+             Point: Display {\n    comptime generate { String.new() }\n    fn f(self) {}\n}\n\
+             fn good() {}\n",
+        );
+        let codes: Vec<&str> = out.lines().filter(|l| l.contains("error[")).collect();
+        assert_eq!(codes.len(), 2, "{out}");
+        assert!(codes.iter().all(|l| l.contains("E0243")), "{out}");
+        assert!(out.contains("t.bd:2:5:") && out.contains("t.bd:8:5:"), "{out}");
+        assert_eq!(fn_names(&file), ["main", "good"]);
+        assert!(file.generators.is_empty());
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert!(binding_names(&main.body).contains(&"x"), "the statements after the block still parse");
+        let Item::Impl(block) = &file.items[1] else { panic!("expected an impl block") };
+        assert_eq!(block.methods.len(), 1, "the method after the block still parses");
     }
 
     #[test]

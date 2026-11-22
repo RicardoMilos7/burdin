@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #280: declaration generation in comptime. A module-scope `comptime generate { ... }` block is evaluated at
+  compile time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations it
+  holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its
+  names are not hygienic, as derives are, and errors in generated code are reported at the block. Other item kinds,
+  a generator that fails, and `comptime generate` outside module scope are E0242, E0222/E0224/E0225, and E0243.
+  Rules: `spec/generate.md` GN1-GN10; tests `tests/generate/`; decision 34 in `tests/README.md`.
 - Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
   type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
   each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,

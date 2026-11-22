@@ -283,6 +283,8 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
 | E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
+| E0242 | Invalid generated text from a `comptime generate` block (`spec/generate.md`): it does not parse, or it declares an item other than a `struct`, `enum`, or `fn` (a `const`, `use`, `impl`, `interface`, `derive`, `type`, test, bench, `comptime assert`, or a nested `comptime generate`) |
+| E0243 | `comptime generate` outside module scope (in a function body, an impl block, or an expression) |
 | E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
 | E0251 | A const expression (an array length or const argument) that cannot be computed: an unknown name, overflow, a division by zero, or a length out of range |
 | E0252 | A const generic argument that cannot be inferred from the call |
@@ -600,6 +602,15 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
     `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
     `m18_extension/method_type_params`.
+34. **Declaration generation (first slice).** A module-scope `comptime generate { ... }` block is evaluated at compile
+    time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations the text
+    holds to its module. The mechanism is source text, parsed like a derive body, not typed item values. Generated
+    names are not hygienic, as derives are (decision 24), and every generated token carries the block's span. The
+    front end runs generation before the whole-program check: generators are checked against the hand-written
+    declarations only, evaluated in module and source order, and their text is then declared. A generator that
+    fails stops generation, and its errors are reported without the rest of the program's. Other items in the text
+    (constants, impls, interfaces, derives, aliases, tests) are E0242, and `comptime generate` outside module scope is
+    E0243. Issue #280; `spec/generate.md` GN1-GN10, `tests/generate/`.
 
 ## Review of the expected outputs
 

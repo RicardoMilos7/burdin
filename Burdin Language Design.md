@@ -417,7 +417,7 @@ for order in orders { ... }
 - `comptime assert(...)` and `embed("file")` (the compiler records the file as a build input).
 - Comptime may call any normal function and may allocate with a comptime allocator.
 
-**Constraints.** Comptime is pure and deterministic. It has no file, network, command, or environment access apart from `embed`, so caching and reproducible builds stay simple and the language server can run it safely. A configurable step budget turns an infinite loop into a compile error. Comptime cannot generate new declarations (types or functions); it fills in bodies and computes values. Declaration generation may be added later.
+**Constraints.** Comptime is pure and deterministic. It has no file, network, command, or environment access apart from `embed`, so caching and reproducible builds stay simple and the language server can run it safely. A configurable step budget turns an infinite loop into a compile error. Comptime fills in bodies and computes values. A module-scope `comptime generate` block may also produce source text for new `struct`, `enum`, and `fn` declarations, which the compiler adds to its module (`spec/generate.md`, issue #280). Hygiene and the other item kinds are not yet designed.
 
 **Examples**
 
@@ -673,7 +673,7 @@ The design is settled at the level of ideas, and these details still need decisi
 
 **Possible later additions**
 
-- Declaration generation in comptime (new types and functions).
+- Declaration generation in comptime beyond structs, enums, and functions, and hygiene (`spec/generate.md`, issue #280).
 - Compiler-inserted preemption checks for tasks.
 - Fallible allocation (`try_` variants) if a program needs to survive out-of-memory.
 - Doc tests and `bench` blocks.

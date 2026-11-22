@@ -1559,6 +1559,44 @@ fn main() {
 **How to fix:** write the path as a string literal inside the source directory, and give `[u8; N]` the file's
 length.
 
+## E0242: Invalid generated text
+
+A `comptime generate` block at module scope returns the Burdin source of declarations, and the compiler parses that
+text as module items. The text must parse, and it may declare only `struct`, `enum`, and `fn` items. A constant,
+`use`, impl block, interface, derive, type alias, test, or another `comptime generate` in it is this error, reported
+at the block, with the parser's message for a text that does not parse. `spec/generate.md` GN4.
+
+<!-- error-example: E0242 -->
+```burdin
+comptime generate { //~ E0242
+    String.from("const LIMIT: i32 = 3\n")
+}
+
+fn main() {
+}
+```
+<!-- /error-example -->
+
+**How to fix:** generate only `struct`, `enum`, and `fn` declarations, and check that the text parses (write its
+braces as `{{` and `}}`).
+
+## E0243: `comptime generate` outside module scope
+
+A `comptime generate` block declares items for its module, so it stands at module scope. Inside a function body, an
+impl block, or an expression it is this error, reported at the `comptime` keyword. `spec/generate.md` GN2.
+
+<!-- error-example: E0243 -->
+```burdin
+fn main() {
+    comptime generate { //~ E0243
+        String.new()
+    }
+}
+```
+<!-- /error-example -->
+
+**How to fix:** move the block to module scope.
+
 ## E0250: Invalid const generic parameter or argument
 
 A const parameter (`const N: usize`) takes a value of its own type, which is an integer type, `bool`, or `char`; a

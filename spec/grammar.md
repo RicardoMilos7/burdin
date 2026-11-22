@@ -109,7 +109,7 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert
+Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert | ComptimeGenerate
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
@@ -351,6 +351,10 @@ UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | ComptimeExpr | P
    literal (E0220). *)
 ComptimeExpr  = ComptimeAssert | "comptime" UnaryExpr ;
 ComptimeAssert = "comptime" "assert" "(" Expr [ "," Expr ] [ "," ] ")" ;
+(* `comptime generate { ... }` is an item, and only at module scope (E0243 elsewhere): its block is the body of a
+   function that returns the `String` of source text the compiler parses as declarations (`spec/generate.md`, GN2).
+   `generate` is a keyword only right after `comptime`, and is not reserved. *)
+ComptimeGenerate = "comptime" "generate" Block ;
 PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." "{" Expr "}" | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
                                                         (* `x.{name}`: a field chosen by a compile-time string, `spec/reflection.md` RFL5 *)
 ArgList       = Arg { "," Arg } [ "," ] ;

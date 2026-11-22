@@ -371,8 +371,15 @@ impl Fmt<'_> {
         Ok(concat(parts))
     }
 
-    /// `comptime assert(condition, "message")` at module scope.
+    /// `comptime assert(condition, "message")` or `comptime generate { ... }` at module scope. The block is laid
+    /// out as a function body (`spec/generate.md`, GN9).
     fn comptime_item(&mut self) -> R<D> {
+        if matches!(self.nth(1), TokenKind::Ident(name) if name == "generate") && self.nth(2) == &TokenKind::LBrace {
+            let comptime = self.tok_doc();
+            let generate = self.tok_doc();
+            let block = self.block_parts()?;
+            return Ok(concat(vec![comptime, space(), generate, space(), self.block_doc(block, false)]));
+        }
         Ok(self.expr_r(Restriction::None)?.doc)
     }
 
