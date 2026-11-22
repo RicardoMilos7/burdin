@@ -1,0 +1,99 @@
+<section class="section" aria-labelledby="coming-title">
+	<h2 id="coming-title">Coming from another language?</h2>
+	<p class="intro">Each guide puts the same program side by side in your language and in Burdin.</p>
+	<ul class="langs">
+		<li>
+			<a href="/coming-from/rust/">
+				<span class="name">Rust</span>
+				<span class="note">Ownership without lifetime annotations, and the Option and Result you already know.</span>
+			</a>
+		</li>
+		<li>
+			<a href="/coming-from/go/">
+				<span class="name">Go</span>
+				<span class="note">Small structs and interfaces, with errors as values and no collector.</span>
+			</a>
+		</li>
+		<li>
+			<a href="/coming-from/python/">
+				<span class="name">Python</span>
+				<span class="note">Interpolated strings and for loops, with every type checked before the program runs.</span>
+			</a>
+		</li>
+		<li>
+			<a href="/coming-from/c-and-cpp/">
+				<span class="name">C and C++</span>
+				<span class="note">Value semantics, destructors as Drop, and no raw pointers in ordinary code.</span>
+			</a>
+		</li>
+	</ul>
+</section>
+
+<style>
+	.section {
+		padding: clamp(3rem, 7vw, 5rem) 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	h2 {
+		margin: 0;
+		font-family: var(--burdin-display);
+		font-weight: 400;
+		font-size: clamp(1.55rem, 3.3vw, 2.25rem);
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		color: var(--sl-color-white);
+	}
+
+	.intro {
+		margin: 0.75rem 0 2rem;
+		max-width: 36rem;
+		color: var(--sl-color-gray-3);
+	}
+
+	.langs {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		border-bottom: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.langs li {
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.langs a {
+		display: grid;
+		gap: 0.25rem 2rem;
+		padding: 1.1rem 0;
+		text-decoration: none;
+		color: inherit;
+	}
+
+	@media (min-width: 48rem) {
+		.langs a {
+			grid-template-columns: 11rem minmax(0, 1fr);
+			align-items: baseline;
+		}
+	}
+
+	.name {
+		font-family: var(--sl-font-mono);
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+
+	.note {
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+	}
+
+	.langs a:hover .name {
+		color: var(--sl-color-accent-high);
+	}
+
+	.langs a:hover .note {
+		color: var(--sl-color-white);
+	}
+</style>

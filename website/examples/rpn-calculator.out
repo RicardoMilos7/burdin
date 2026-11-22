@@ -1,0 +1,6 @@
+3 4 + 2 * = 14
+5 1 2 + 4 * + 3 - = 14
+10 0 / : error: division by zero
+1 + : error: not enough operands for an operator
+2 3 : error: 2 values were left on the stack
+7 2 % : error: unknown operator '%'

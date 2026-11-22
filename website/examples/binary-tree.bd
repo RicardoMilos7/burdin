@@ -1,0 +1,40 @@
+// Arithmetic expressions as a tree. Each child is a Heap<Expr>, so the tree owns its nodes and
+// frees them when the root is dropped. eval and show take the tree by value, so they consume it.
+
+enum Expr {
+    Num(i32)
+    Add(Heap<Expr>, Heap<Expr>)
+    Mul(Heap<Expr>, Heap<Expr>)
+    Neg(Heap<Expr>)
+}
+
+fn eval(e: Expr): i32 {
+    match e {
+        Expr.Num(n) => n,
+        Expr.Add(a, b) => eval(*a) + eval(*b),
+        Expr.Mul(a, b) => eval(*a) * eval(*b),
+        Expr.Neg(a) => -eval(*a),
+    }
+}
+
+fn show(e: Expr): String {
+    match e {
+        Expr.Num(n) => n.to_string(),
+        Expr.Add(a, b) => "({show(*a)} + {show(*b)})",
+        Expr.Mul(a, b) => "({show(*a)} * {show(*b)})",
+        Expr.Neg(a) => "-{show(*a)}",
+    }
+}
+
+fn main() {
+    // 2 + 3 * -4
+    let e = Expr.Add(
+        Heap.new(Expr.Num(2)),
+        Heap.new(Expr.Mul(
+            Heap.new(Expr.Num(3)),
+            Heap.new(Expr.Neg(Heap.new(Expr.Num(4)))),
+        )),
+    )
+    println("{show(e)}")
+    println("= {eval(e)}")
+}

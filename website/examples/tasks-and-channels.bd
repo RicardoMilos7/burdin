@@ -1,0 +1,34 @@
+// Tasks run closures on a pool of worker threads. Here four tasks each sum a quarter of 0 to 999
+// and send their partial result through a channel. The main task receives the four results as
+// they arrive, then waits for the tasks to finish.
+
+fn sum_range(start: i32, end: i32): i32 {
+    let mut total = 0
+    for n in start..end {
+        total = total + n
+    }
+    total
+}
+
+fn main() {
+    let results = Channel<i32>.unbounded()
+
+    let mut handles = List<JoinHandle<()>>.new()
+    for part in 0..4 {
+        let out = results.clone()
+        handles.push(task.spawn(|| {
+            let partial = sum_range(part * 250, (part + 1) * 250)
+            let _queued = out.send(partial)
+        }))
+    }
+
+    let mut total = 0
+    for _ in 0..4 {
+        total = total + results.recv().unwrap()
+    }
+    for handle in handles.into_iter() {
+        handle.join()
+    }
+
+    println("sum of 0..1000 = {total}")
+}

@@ -1,0 +1,4 @@
+after transfer: ana=70 ben=50
+refused: needed 500, but only 50 is available
+refused: no account named cy
+refused: not a number: invalid integer

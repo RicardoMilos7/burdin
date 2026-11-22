@@ -1,0 +1,30 @@
+---
+title: Shapes
+description: Two shapes that implement one interface, a generic function, and a list that holds both.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/shapes.bd?raw';
+import output from '../../../../examples/shapes.out?raw';
+
+Two shapes implement one interface. A generic function accepts either one, and a `List<any Shape>` holds both at once.
+
+<Code code={source} lang="burdin" title="shapes.bd" />
+
+## Run it
+
+```console
+$ burdin run shapes.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `Circle: Shape { ... }` says the type implements the interface. Nothing else makes the methods available on `Circle`.
+- `describe<T: Shape>` is compiled once for each type it is called with. `List<any Shape>` stores each value in a heap box and calls through the interface at run time.
+- `{shape.area():.2}` is a format specifier with two digits after the point. See [strings and formatting](/guide/strings-and-formatting/).
+
+The source is in the repository at [`website/examples/shapes.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/shapes.bd). The checker compares its output with the compiler every time the site is checked.

@@ -1,0 +1,30 @@
+---
+title: Tasks and channels
+description: Four tasks each sum a quarter of a range and send the result through a channel.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/tasks-and-channels.bd?raw';
+import output from '../../../../examples/tasks-and-channels.out?raw';
+
+Four tasks sum parts of a range in parallel, and each sends its partial result through a shared channel. The main task adds the four results, then waits for the tasks to finish.
+
+<Code code={source} lang="burdin" title="tasks-and-channels.bd" />
+
+## Run it
+
+```console
+$ burdin run tasks-and-channels.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `results.clone()` makes another handle to the same channel, so each task has its own sender.
+- The task's closure takes `part` and `out` by move. Each iteration makes its own copies, so each task gets its own values.
+- `recv()` waits until a value is available, and `join()` waits for a task to finish. See [concurrency](/guide/concurrency/).
+
+The source is in the repository at [`website/examples/tasks-and-channels.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/tasks-and-channels.bd). The checker compares its output with the compiler every time the site is checked.

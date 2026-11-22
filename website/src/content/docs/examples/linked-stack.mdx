@@ -1,0 +1,30 @@
+---
+title: A persistent stack
+description: A generic stack in which each node holds the rest of the stack in a Heap, and push and pop consume the old stack.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/linked-stack.bd?raw';
+import output from '../../../../examples/linked-stack.out?raw';
+
+A stack built from nodes, where each node holds the rest of the stack in a `Heap`. `push` and `pop` take the stack by value (`own self`), so the old stack cannot be used after the change.
+
+<Code code={source} lang="burdin" title="linked-stack.bd" />
+
+## Run it
+
+```console
+$ burdin run linked-stack.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `Stack<T>` is generic, and the recursive part is a `Heap<Stack<T>>`. Without the `Heap`, the type would contain itself and have no size.
+- `own value: T` takes the value into the stack. A borrowed parameter could not be stored, and the compiler says so.
+- `match rest.pop()` moves the rest of the stack out of the popped node. See [ownership](/guide/ownership/) and [generics](/guide/generics-and-interfaces/).
+
+The source is in the repository at [`website/examples/linked-stack.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/linked-stack.bd). The checker compares its output with the compiler every time the site is checked.

@@ -1,0 +1,125 @@
+<section class="section" aria-labelledby="toolchain-title">
+	<div class="split">
+		<div>
+			<h2 id="toolchain-title">One command for the whole loop</h2>
+			<p class="intro">
+				<code>burdin</code> builds, runs, tests, formats, lints, and documents a package. The same program also runs the language
+				server that editors use for errors, navigation, and completion.
+			</p>
+			<a class="text-link" href="/reference/cli/">Full command reference</a>
+		</div>
+
+		<div class="terminal" role="table" aria-label="Common burdin commands">
+			<div class="row" role="row">
+				<code role="cell">$ burdin check</code>
+				<span role="cell">Type-check and borrow-check, without building</span>
+			</div>
+			<div class="row" role="row">
+				<code role="cell">$ burdin test</code>
+				<span role="cell">Run the test blocks</span>
+			</div>
+			<div class="row" role="row">
+				<code role="cell">$ burdin run</code>
+				<span role="cell">Build the program and run it</span>
+			</div>
+			<div class="row" role="row">
+				<code role="cell">$ burdin fmt</code>
+				<span role="cell">Format in the one style</span>
+			</div>
+			<div class="row" role="row">
+				<code role="cell">$ burdin lint</code>
+				<span role="cell">Report common mistakes, with fixes</span>
+			</div>
+			<div class="row" role="row">
+				<code role="cell">$ burdin explain E0100</code>
+				<span role="cell">Reference entry for an error code</span>
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	.section {
+		padding: clamp(3rem, 7vw, 5rem) 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+
+	.split {
+		display: grid;
+		gap: 2.5rem;
+	}
+
+	@media (min-width: 60rem) {
+		.split {
+			grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+			align-items: start;
+		}
+	}
+
+	h2 {
+		margin: 0;
+		font-family: var(--burdin-display);
+		font-weight: 400;
+		font-size: clamp(1.55rem, 3.3vw, 2.25rem);
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		color: var(--sl-color-white);
+	}
+
+	.intro {
+		margin: 1rem 0 1.5rem;
+		max-width: 32rem;
+		line-height: 1.65;
+		color: var(--sl-color-gray-2);
+	}
+
+	.intro code {
+		color: var(--sl-color-white);
+	}
+
+	.text-link {
+		color: var(--sl-color-white);
+		text-decoration: underline;
+		text-decoration-color: var(--burdin-oxide);
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 0.3em;
+	}
+
+	.terminal {
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 2px;
+		background: var(--burdin-code-bg);
+		overflow: hidden;
+	}
+
+	.row {
+		display: grid;
+		gap: 0.25rem 1.25rem;
+		padding: 0.9rem 1.25rem;
+		border-top: 1px solid var(--sl-color-gray-6);
+		font-size: 0.92rem;
+	}
+
+	.row:first-child {
+		border-top: 0;
+	}
+
+	@media (min-width: 40rem) {
+		.row {
+			grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+			align-items: baseline;
+		}
+	}
+
+	.row code {
+		font-family: var(--sl-font-mono);
+		color: var(--sl-color-white);
+		background: none;
+		white-space: nowrap;
+	}
+
+	.row span {
+		color: var(--sl-color-gray-3);
+		line-height: 1.5;
+	}
+</style>

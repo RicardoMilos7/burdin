@@ -1,0 +1,19 @@
+// FizzBuzz: print the numbers 1 to 30, with a word in place of each multiple of 3 and 5.
+
+fn label(n: i32): String {
+    if n % 15 == 0 {
+        String.from("FizzBuzz")
+    } else if n % 3 == 0 {
+        String.from("Fizz")
+    } else if n % 5 == 0 {
+        String.from("Buzz")
+    } else {
+        n.to_string()
+    }
+}
+
+fn main() {
+    for n in 1..=30 {
+        println(label(n))
+    }
+}

@@ -1,0 +1,214 @@
+/*
+ * Burdin's theme. "Burdin" is Basque for iron, so the palette is cold metal: a graphite ink on a
+ * steel-gray paper, with iron-oxide orange kept for a few marks only (link underlines, focus, the
+ * current page, keywords, and the rail beside a program's output). Text is Schibsted Grotesk;
+ * titles and code are Fragment Mono, so the headings read like the programs. Starlight reads
+ * these tokens on every page, so the landing page and the docs share one palette.
+ */
+
+:root {
+	--sl-font: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font-mono: 'Fragment Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+	--burdin-display: var(--sl-font-mono);
+	--sl-hue-orange: 20;
+	--sl-text-h1: 2.1rem;
+	--sl-text-h2: 1.5rem;
+	--sl-text-h3: 1.18rem;
+	--sl-line-height: 1.7;
+}
+
+:root[data-theme='dark'] {
+	--sl-color-black: #111416;
+	--sl-color-gray-7: #171b1e;
+	--sl-color-gray-6: #1f2427;
+	--sl-color-gray-5: #2c3236;
+	--sl-color-gray-4: #5d676c;
+	--sl-color-gray-3: #939ea3;
+	--sl-color-gray-2: #bcc5c8;
+	--sl-color-gray-1: #dfe4e6;
+	--sl-color-white: #f1f4f4;
+
+	--sl-color-accent-low: #2a1a11;
+	--sl-color-accent: #ff7a33;
+	--sl-color-accent-high: #ffb48a;
+	--sl-color-text-accent: #ff9a62;
+	--sl-color-bg-nav: #111416;
+	--sl-color-bg-sidebar: #111416;
+	--sl-color-hairline-light: #2c3236;
+	--sl-color-hairline: #23292c;
+	--sl-color-hairline-shade: #171b1e;
+
+	--burdin-oxide: #ff7a33;
+	--burdin-code-bg: #171b1e;
+	--burdin-button-bg: #f1f4f4;
+	--burdin-button-fg: #111416;
+}
+
+:root[data-theme='light'] {
+	--sl-color-black: #eef0ef;
+	--sl-color-gray-7: #e4e8e7;
+	--sl-color-gray-6: #d7dcdb;
+	--sl-color-gray-5: #c3cac9;
+	--sl-color-gray-4: #7b8588;
+	--sl-color-gray-3: #535e62;
+	--sl-color-gray-2: #343c40;
+	--sl-color-gray-1: #1d2326;
+	--sl-color-white: #111518;
+
+	--sl-color-accent-low: #f6dccd;
+	--sl-color-accent: #d4470b;
+	--sl-color-accent-high: #8a2c04;
+	--sl-color-text-accent: #a83806;
+	--sl-color-bg-nav: #eef0ef;
+	--sl-color-bg-sidebar: #eef0ef;
+	--sl-color-hairline-light: #c3cac9;
+	--sl-color-hairline: #d2d8d7;
+	--sl-color-hairline-shade: #e4e8e7;
+
+	--burdin-oxide: #d4470b;
+	--burdin-code-bg: #e3e7e6;
+	--burdin-button-bg: #111518;
+	--burdin-button-fg: #eef0ef;
+}
+
+/* Headings: set in the code face at its one weight, tightened, so titles read like the programs. */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top {
+	font-family: var(--burdin-display);
+	font-weight: 400;
+	letter-spacing: -0.03em;
+	line-height: 1.2;
+	color: var(--sl-color-white);
+}
+
+.sl-markdown-content h2 {
+	margin-top: 2.4em;
+	padding-top: 0.9em;
+	border-top: 1px solid var(--sl-color-hairline-light);
+}
+
+/* Links in prose: ink text with an oxide underline, so color marks the link without tinting the text. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+	color: var(--sl-color-white);
+	text-decoration-color: var(--burdin-oxide);
+	text-decoration-thickness: 1.5px;
+	text-underline-offset: 0.22em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+	color: var(--sl-color-text-accent);
+}
+
+/* Inline code: a flat steel tint in the text color. */
+.sl-markdown-content :not(pre) > code {
+	padding: 0.1em 0.35em;
+	border: 0;
+	border-radius: 2px;
+	font-size: 0.9em;
+	color: var(--sl-color-white);
+	background: var(--sl-color-gray-6);
+}
+
+/* Focus is always visible, in the accent. */
+:where(a, button, input, select, summary):focus-visible {
+	outline: 2px solid var(--burdin-oxide);
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+
+/* The header and sidebar sit on the page color, divided by a hairline, with no blur or tint. */
+header.header {
+	border-bottom-color: var(--sl-color-hairline-light);
+}
+
+.site-title {
+	font-family: var(--burdin-display);
+	font-weight: 400;
+	letter-spacing: -0.03em;
+	color: var(--sl-color-white);
+}
+
+/* The current sidebar entry: ink text, medium weight, and an oxide rail. No filled block. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	color: var(--sl-color-white);
+	font-weight: 600;
+	background: transparent;
+	box-shadow: inset 2px 0 0 var(--burdin-oxide);
+}
+
+.sidebar-content .group-label {
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+/* Callouts: a hairline frame on the page color and a colored rule, not a filled panel. */
+.starlight-aside {
+	background: transparent;
+	border: 1px solid var(--sl-color-hairline-light);
+	border-inline-start: 3px solid var(--sl-color-asides-border);
+	border-radius: 2px;
+}
+
+.starlight-aside--note {
+	--sl-color-asides-border: var(--sl-color-gray-4);
+	--sl-color-asides-text-accent: var(--sl-color-white);
+}
+
+.starlight-aside--tip {
+	--sl-color-asides-border: var(--burdin-oxide);
+	--sl-color-asides-text-accent: var(--sl-color-white);
+}
+
+/* Cards from Starlight's own components follow the same flat style. */
+.card,
+.sl-link-card {
+	border-radius: 2px;
+	box-shadow: none;
+}
+
+/* Fragment Mono draws ligatures and contextual alternates by default (=> becomes an arrow, and < >
+   change shape next to other symbols). Code must show the characters as they are typed, so both are
+   off wherever the mono face is used. */
+code,
+pre,
+kbd,
+samp,
+.expressive-code,
+.expressive-code pre,
+.expressive-code code,
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top,
+.site-title {
+	font-variant-ligatures: none;
+	font-feature-settings: 'liga' 0, 'calt' 0, 'dlig' 0;
+}
+
+/* The header on wide screens: the title on the left, the search box in the middle of the window, and
+   the section links and switches on the right. The two outer columns share the leftover space
+   equally, so the search box sits at the exact centre; each can still grow to fit its content, so a
+   narrower window moves the box toward the left rather than overlapping the links. */
+@media (min-width: 50rem) {
+	div.header {
+		grid-template-columns: minmax(max-content, 1fr) minmax(12rem, 18rem) minmax(max-content, 1fr);
+	}
+
+	div.header > :nth-child(2) {
+		justify-content: center;
+	}
+
+	div.header > :nth-child(2) site-search,
+	div.header > :nth-child(2) button[data-open-modal] {
+		width: 100%;
+		max-width: none;
+	}
+
+	div.header > :last-child {
+		justify-self: end;
+	}
+}

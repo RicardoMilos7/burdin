@@ -1,0 +1,30 @@
+---
+title: Fibonacci
+description: "Fibonacci numbers, computed two ways: by recursion and by a loop that keeps the last two values."
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/fibonacci.bd?raw';
+import output from '../../../../examples/fibonacci.out?raw';
+
+The same sequence computed two ways. The recursive version reads like the definition; the loop version is fast enough for large inputs and shows mutable locals at work.
+
+<Code code={source} lang="burdin" title="fibonacci.bd" />
+
+## Run it
+
+```console
+$ burdin run fibonacci.bd
+```
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- Integer types are written where they matter. The bound `last` is a `u32`, so the range `0..=last` gives `u32` values, and `fib_loop(n)` takes a `u32` without a cast.
+- `fib_loop(90)` fits in a `u64`. A larger input overflows it: in a debug build that is a panic, not a silent wrap. See [basics](/guide/basics/).
+- `for _ in 0..n` repeats `n` times without naming the counter.
+
+The source is in the repository at [`website/examples/fibonacci.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/fibonacci.bd). The checker compares its output with the compiler every time the site is checked.

@@ -1,0 +1,124 @@
+---
+title: Quickstart
+description: Write, run, test, and format your first Burdin program.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+This page assumes `burdin` is installed. If it is not, start with [installation](/getting-started/installation/).
+
+<Steps>
+
+1. **Write a program.** Create `hello.bd` with this text:
+
+   ```burdin
+   fn main() {
+       println("hello, world")
+   }
+   ```
+
+2. **Run it.**
+
+   ```console
+   $ burdin run hello.bd
+   hello, world
+   ```
+
+   `burdin run` compiles the file and runs the program. Nothing else is written to disk.
+
+3. **Build an executable.**
+
+   ```console
+   $ burdin build hello.bd -o hello
+   $ ./hello
+   hello, world
+   ```
+
+   `burdin build` writes a native executable. On Windows the output name ends in `.exe`.
+
+</Steps>
+
+## A package
+
+A single file is fine for experiments. For anything larger, make a *package*: a folder with a `burdin.toml` manifest and
+a `src/` folder.
+
+```console
+$ burdin new greeter
+Created package `greeter` in greeter
+$ cd greeter
+$ burdin run .
+```
+
+`burdin new` writes three files: `burdin.toml`, `src/main.bd`, and a `.gitignore`. The manifest looks like this:
+
+```toml
+[package]
+name = "greeter"
+version = "0.1.0"
+```
+
+Replace `src/main.bd` with a program that has a function and a test:
+
+```burdin
+fn greeting(name: str): String {
+    "hello, {name}"
+}
+
+fn main() {
+    println(greeting("Burdin"))
+}
+
+test "greets by name" {
+    assert_eq(greeting("Ana").as_str(), "hello, Ana")?
+}
+```
+
+`assert_eq` compares two values of the same type. A `String` is not a `str`, so the test views the `String` as a `str` with
+`as_str()` before comparing. The `?` at the end passes a failed assertion up as a test failure.
+
+Then run the program, and then its tests:
+
+```console
+$ burdin run .
+hello, Burdin
+$ burdin test .
+test result: 1 passed, 0 failed
+```
+
+A `test` block is ignored by `burdin run` and by `burdin build`. `burdin test` runs every test block in the package.
+
+## Check, format, and document
+
+Three more commands cover the everyday loop:
+
+```console
+$ burdin check .          # type-check and memory-check, without building
+$ burdin fmt .            # rewrite the sources in the one standard style
+$ burdin fmt --check .    # the same check, without writing: fails if a file would change
+```
+
+`burdin fmt` has one style, so there is nothing to configure. `burdin lint .` reports common mistakes, such as unused
+names, and `burdin lint --fix .` applies the safe fixes. `burdin doc .` builds an HTML documentation site from `///`
+doc comments.
+
+## What the compiler tells you
+
+Burdin reports every error in a file, not just the first one. Each error has a code, a location, and a note. Here is
+what a use-after-move looks like:
+
+```text
+main.bd:12:10: error[E0100]: use of moved value `b`
+  = note: main.bd:10:9: `b` is declared here
+  = note: main.bd:11:10: value moved here
+  = help: run `burdin check --explain` to trace the path to this error
+```
+
+Run `burdin explain E0100` for the reference entry, with an example and a fix. The full list of error codes is on the
+[GitHub repository](https://github.com/RicardoMilos7/burdin/blob/main/docs/error-codes.md).
+
+## Where next
+
+- Learn the language in the [guide](/guide/basics/), one chapter at a time.
+- Put the [editor support](/getting-started/editors/) in place so you see errors as you type.
+- Look at the [examples](/examples/) for complete programs to read and change.

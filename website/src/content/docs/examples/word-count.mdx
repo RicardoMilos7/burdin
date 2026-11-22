@@ -1,0 +1,35 @@
+---
+title: Word count
+description: Count the words in the standard input and print them in sorted order, with a map and a line-reading loop.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import source from '../../../../examples/word-count.bd?raw';
+import output from '../../../../examples/word-count.out?raw';
+import input from '../../../../examples/word-count.in?raw';
+
+Reads standard input a line at a time, counts the words in a `Map`, and prints the words in sorted order. The input used below is the small text shown underneath.
+
+<Code code={source} lang="burdin" title="word-count.bd" />
+
+## Run it
+
+```console
+$ burdin run word-count.bd < word-count.in
+```
+
+The input file is:
+
+<Code code={input} lang="text" title="word-count.in" />
+
+## Expected output
+
+<Code code={output} lang="text" title="standard output" />
+
+## What to notice
+
+- `read_line()` returns `Ok(Some(line))` for each line, `Ok(None)` at the end, and an error if reading fails. The loop handles all three.
+- `bump(mut counts, word)` takes the word with `own`, so the map can keep it. A borrowed word could not be stored.
+- A map has no order, so the program copies the keys into a `List`, sorts it, and then looks each count up.
+
+The source is in the repository at [`website/examples/word-count.bd`](https://github.com/RicardoMilos7/burdin/blob/main/website/examples/word-count.bd). The checker compares its output with the compiler every time the site is checked.

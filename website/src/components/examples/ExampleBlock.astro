@@ -1,0 +1,37 @@
+---
+import ProgramPanel from './ProgramPanel.astro';
+import { commandFor, type Example } from '../../data/examples';
+
+interface Props {
+	example: Example;
+}
+
+const { example } = Astro.props;
+---
+
+<section class="block" id={example.slug}>
+	<h2>{example.title}</h2>
+	<p class="description">{example.description}</p>
+	<ProgramPanel file={example.file} source={example.source} output={example.output} command={commandFor(example)} layout="stack" />
+	<p class="walkthrough"><a href={`/examples/${example.slug}/`}>Read the walkthrough →</a></p>
+</section>
+
+<style>
+	.block {
+		padding: 2.5rem 0 0.5rem;
+		border-top: 1px solid var(--sl-color-gray-5);
+	}
+
+	.block h2 {
+		margin: 0 0 0.5rem;
+	}
+
+	.description {
+		margin: 0 0 1.5rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.walkthrough {
+		margin: 1rem 0 0;
+	}
+</style>
