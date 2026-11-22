@@ -1,6 +1,7 @@
 //@ compile-fail
 
-// A type parameter list may not repeat a name, in a type or in an impl block (E0007).
+// A type parameter list may not repeat a name, in a type, an impl block, a function, a method, or an interface
+// method (E0007).
 
 struct Pair<T, T> { //~ E0007
     a: T
@@ -10,6 +11,14 @@ Pair<T, T> { //~ E0007
     fn first(self): T {
         self.a
     }
+}
+
+fn twice<T, T>(x: T): T { //~ E0007
+    x
+}
+
+interface Pick {
+    fn pick<T, T>(self): T //~ E0007
 }
 
 fn main() {}

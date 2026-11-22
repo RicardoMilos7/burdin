@@ -765,14 +765,7 @@ impl FnCx<'_> {
         for pname in &params {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
-                None => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        span,
-                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
-                    );
-                    return error_expr(span);
-                }
+                None => return inference_hole(name, &params, &bounds, pname, span, self.diags),
             }
         }
         if targs.contains(&Ty::Error) {
@@ -876,14 +869,7 @@ impl FnCx<'_> {
         for pname in &params {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
-                None => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        span,
-                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
-                    );
-                    return error_expr(span);
-                }
+                None => return inference_hole(name, &params, &bounds, pname, span, self.diags),
             }
         }
         if targs.contains(&Ty::Error) {
@@ -1007,14 +993,7 @@ impl FnCx<'_> {
         for pname in &params {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
-                None => {
-                    self.diags.error(
-                        Code::TYPE_MISMATCH,
-                        span,
-                        format!("cannot tell what `{pname}` stands for in this call to `{name}`"),
-                    );
-                    return error_expr(span);
-                }
+                None => return inference_hole(name, &params, &bounds, pname, span, self.diags),
             }
         }
         if targs.contains(&Ty::Error) {
@@ -1089,6 +1068,17 @@ fn generic_hint(
             send: tir::FnSend::unknown(),
         });
     }
+    // A closure parameter written as a function type with an open return (`f: Fn(i32): U` in `fn apply<U>`)
+    // still supplies the closure's parameter types. The closure checker treats an open return as an inference
+    // hole, so only the return may stay open: an open parameter type cannot type the closure's parameter.
+    if let Ty::Fn { .. } = param {
+        let hint = globals.subst_ty(param, bindings);
+        if let Ty::Fn { sig, .. } = &hint
+            && !sig.params.iter().any(|t| globals.ty_has_param(t))
+        {
+            return Some(hint);
+        }
+    }
     if globals.ty_has_param(param) {
         let hint = globals.subst_ty(param, bindings);
         // A hint that still names one of the callee's own open parameters (`Option<U>` before `U` is known) would
@@ -1103,6 +1093,23 @@ fn generic_hint(
         return Some(hint);
     }
     Some(param.clone())
+}
+
+/// Reports a type or const argument of a call that nothing determined. A const parameter that nothing determines
+/// is E0252 (`spec/const-generics.md`, CG6); a type parameter is E0003. The diagnostic's span is the call.
+fn inference_hole(
+    name: &str,
+    params: &[String],
+    bounds: &[Vec<Bound>],
+    pname: &str,
+    span: Span,
+    diags: &mut burdin_diag::Diagnostics,
+) -> tir::Expr {
+    let k = params.iter().position(|p| p == pname).unwrap_or(0);
+    let is_const = bounds.get(k).is_some_and(|bs| crate::globals::Globals::const_param_ty(bs).is_some());
+    let (code, what) = if is_const { (Code::CONST_INFER, "const argument ") } else { (Code::TYPE_MISMATCH, "") };
+    diags.error(code, span, format!("cannot tell what {what}`{pname}` stands for in this call to `{name}`"));
+    error_expr(span)
 }
 
 /// Infers the method type parameters that appear only in a closure bound (`fn map<U, F: Fn(T): U>`) by matching
@@ -1178,7 +1185,7 @@ fn bound_iterator_inference(
 mod tests {
     use super::*;
     use crate::generics::param_ty;
-    use burdin_tir::IntTy;
+    use burdin_tir::{FnSig, IntTy};
 
     fn i32_() -> Ty {
         Ty::Int(IntTy::I32)
@@ -1190,6 +1197,50 @@ mod tests {
 
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| n.to_string()).collect()
+    }
+
+    fn fn_ty(params: Vec<Ty>, ret: Ty) -> Ty {
+        Ty::Fn {
+            sig: Rc::new(FnSig { params, ret: Box::new(ret) }),
+            kind: FnKind::Fn,
+            borrowed: true,
+            send: tir::FnSend::unknown(),
+        }
+    }
+
+    #[test]
+    fn a_closure_parameter_with_an_open_return_still_supplies_its_parameters() {
+        // `fn apply<U>(self, f: Fn(i32): U)`: `U` is open, but the closure's parameter type is known.
+        let param = fn_ty(vec![i32_()], param_ty("U"));
+        let hint = generic_hint(&globals(), &param, &names(&["U"]), &[Vec::new()], &[]);
+        let Some(Ty::Fn { sig, .. }) = hint else { panic!("expected a closure hint") };
+        assert_eq!(sig.params, vec![i32_()]);
+        assert_eq!(*sig.ret, param_ty("U"));
+    }
+
+    #[test]
+    fn a_closure_hint_substitutes_an_impl_parameter() {
+        // `Box<A> { fn apply<U>(self, f: Fn(A): U) }`: `A` comes from the receiver, `U` stays open.
+        let param = fn_ty(vec![param_ty("A")], param_ty("U"));
+        let bindings = vec![("A".to_string(), i32_())];
+        let hint = generic_hint(&globals(), &param, &names(&["U"]), &[Vec::new()], &bindings);
+        let Some(Ty::Fn { sig, .. }) = hint else { panic!("expected a closure hint") };
+        assert_eq!(sig.params, vec![i32_()]);
+        assert_eq!(*sig.ret, param_ty("U"));
+    }
+
+    #[test]
+    fn a_closure_parameter_with_an_open_parameter_type_is_no_hint() {
+        // `fn apply<U>(f: Fn(U): i32)`: `U` cannot type the closure's parameter, so the closure gets no hint.
+        let param = fn_ty(vec![param_ty("U")], i32_());
+        assert_eq!(generic_hint(&globals(), &param, &names(&["U"]), &[Vec::new()], &[]), None);
+    }
+
+    #[test]
+    fn an_open_non_closure_type_is_still_no_hint() {
+        // `fn f<U>(x: Option<U>)`: a literal must not adopt the open parameter as its type.
+        let param = Ty::Option(Box::new(param_ty("U")));
+        assert_eq!(generic_hint(&globals(), &param, &names(&["U"]), &[Vec::new()], &[]), None);
     }
 
     #[test]

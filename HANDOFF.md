@@ -4,6 +4,44 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Method-level type parameters (issue #391, 2026-11-22).** A method, associated function, or extension method
+declares parameters of its own after its name (`fn zip<U>(own self, own u: U): (A, U)`), with inline `const`
+parameters and bounds, and `where` for its own parameters. The decisions: the impl block's parameters stay in scope
+in the method's signature and body (`A` in `Pair<A>.zip<U>`), with the bounds its impl header declares; the method's
+own list is a separate scope, and one of its names hides an impl parameter of the same name. Each call infers the
+method's arguments like a generic function's: from the receiver, the arguments in parameter order, a parameter that
+appears only in another parameter's `Fn` bound (matched against the closure's signature), and the expected type, in
+that order. Each argument is checked against its bounds (E0141) and monomorphized per distinct instantiation; a
+parameter nothing determines is E0003, a const parameter E0252, and an interface with a generic method is not
+object-safe (E0202). The machinery landed with milestone 13; this change closed two inference gaps it left.
+`generic_hint` (`crates/burdin_sema/src/fncx/generic.rs`) now supplies a closure's parameter types from a
+function-typed parameter whose return is still open (`fn apply<U>(self, f: Fn(i32): U)`), instead of dropping the
+whole hint, so `h.apply(|n| n + 1)` needs no annotation and binds `U`. `Globals::unify`
+(`crates/burdin_sema/src/generics.rs`) now applies CL5's capability order in the right direction (an actual `Fn`
+value meets a declared `FnMut` or `FnOnce`), so `fn consume<U>(own f: FnOnce(i32): U)` infers `U` too. A method-level
+const parameter that nothing determines reports E0252 like a function's, not E0003 (`inference_hole` in the same
+file). A generic parameter list that repeats a name is now E0007 for a function, a method, and an interface method
+(`check_duplicate_generics` in `crates/burdin_sema/src/declare.rs`, called from `declare_values`,
+`declare_type_item`, and `register_impl`), because only a struct and an impl block were checked before. Tests:
+`tests/m07_generics/generic_methods.bd` (run: impl parameters in scope, inference from arguments, the
+expected type, closures, and explicit arguments, bounds inline and in `where`, const parameters, an enum method, an
+interface method through a bound, and two instantiations of one method) and `generic_methods_errors.bd`
+(E0003/E0141/E0252/E0007); `tests/m07_generics/duplicate_type_parameter.bd` now also covers a function and an
+interface method; Rust unit tests `a_closure_parameter_with_an_open_return_still_supplies_its_parameters`,
+`a_closure_hint_substitutes_an_impl_parameter`, `a_closure_parameter_with_an_open_parameter_type_is_no_hint`, and
+`an_open_non_closure_type_is_still_no_hint` in `fncx::generic::tests`, and
+`a_closure_unifies_with_its_signature_at_a_higher_capability` in `generics::tests`. Rules GM1-GM6 in
+`spec/arguments.md`; decision 33 in `tests/README.md`. Not done: explicit type arguments on an extension method
+(`h.pair<i64>(7)` is E0003; TA5 names methods and associated functions, not extensions), and a method `where`
+predicate on an impl parameter (E9000, the `declare-where-non-param` site owned by #394; write the bound on the impl
+header). **Found but not fixed:** a method (or any generic function) whose return type nests an instance of its own
+generic type grows symbolic instances without end — `struct Rec<A> { fn nest(self): Rec<(A, i32)> }` hangs the front
+end rather than reporting the `instances-limit` E9000. Verification: the full suite in debug (1188 passed, 0 failed,
+6 skipped) and release (1175 passed, 0 failed, 19 skipped); the five TLS/HTTP cases needed the unversioned
+`libssl.so`/`libcrypto.so` symlinks because this VM has no `libssl-dev`, and pass with `LIBRARY_PATH` pointing at
+them. `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `check_tests.py`,
+`check_e9000.py`, `check_unit_tests.py`, and `check_docs.py` pass; `cargo test --workspace` passes (916 tests).
+
 **`break` with a value (issue #276, 2026-11-21).** A `loop` gives back the value of its `break`
 (`spec/grammar.md`, rule 8.10), so `let x = loop { break 42 }` binds `i32` and `break` with no value is `break ()`.
 The loop's type is the expected type when the context gives one, otherwise the type of the first break value, and

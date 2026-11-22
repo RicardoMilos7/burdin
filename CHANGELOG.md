@@ -6,6 +6,16 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
+  type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
+  each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,
+  checks their bounds, and monomorphizes per instantiation. Two inference gaps are closed: a function-typed
+  parameter with an open return (`f: Fn(i32): U`) now tells the closure its parameter types, and closure capability
+  is checked in CL5's direction so an `Fn` value meets a declared `FnMut`/`FnOnce` and binds `U`. An undetermined
+  const parameter reports E0252 as for a function, and a generic parameter list that repeats a name is E0007 for a
+  function, a method, and an interface method, as it already was for a type and an impl block. Rules:
+  `spec/arguments.md` GM1-GM6; tests `tests/m07_generics/generic_methods`, `generic_methods_errors`, and
+  `duplicate_type_parameter`.
 - Issue #878: on Windows the `tls` package uses SChannel, the system's own TLS stack, so Windows needs no OpenSSL
   install and the driver downloads nothing. Linux and macOS still link the system's OpenSSL 3. The `tls` package has an
   `openssl` feature and `http` a `tls` feature, both on by default, so `http = { official = true, default-features = false }`
