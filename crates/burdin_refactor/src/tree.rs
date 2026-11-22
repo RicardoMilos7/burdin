@@ -131,6 +131,10 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
             out.push(Child::Expr(Role::LoopCond, cond));
             out.push(Child::Block(Role::LoopBody, body));
         }
+        K::WhileLet { scrutinee, body, .. } => {
+            out.push(Child::Expr(Role::LoopCond, scrutinee));
+            out.push(Child::Block(Role::LoopBody, body));
+        }
         K::For { iter, body, .. } => {
             out.push(Child::Expr(Role::Plain, iter));
             out.push(Child::Block(Role::LoopBody, body));
@@ -380,7 +384,7 @@ pub fn kind_name(e: &Expr) -> &'static str {
     match &e.kind {
         K::Call(..) => "call",
         K::Closure { .. } => "closure",
-        K::While { .. } => "while",
+        K::While { .. } | K::WhileLet { .. } => "while",
         K::For { .. } => "for",
         K::Loop(_) => "loop",
         K::Match(..) => "match",

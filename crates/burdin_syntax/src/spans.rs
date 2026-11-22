@@ -344,6 +344,11 @@ impl Mapper<'_> {
                 self.expr(cond);
                 self.block(body);
             }
+            ExprKind::WhileLet { pattern, scrutinee, body } => {
+                self.pat(pattern);
+                self.expr(scrutinee);
+                self.block(body);
+            }
             ExprKind::For { pattern, iter, body, .. } => {
                 self.pat(pattern);
                 self.expr(iter);

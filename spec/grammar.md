@@ -383,7 +383,7 @@ SelectArm     = [ SelectBind "=" ] Expr "." "recv" "(" ")" [ "if" Expr ] "=>" ( 
               | "default" "=>" ( Block | Expr ) [ Sep ] ;
 SelectBind    = "_" | [ "mut" ] IDENT ;
 LoopExpr      = "loop" Block ;
-WhileExpr     = "while" Expr Block ;
+WhileExpr     = "while" Cond Block ;                      (* a `let` condition is `while let`, rule 8.11 *)
 ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)
 LabeledExpr   = LABEL ":" ( LoopExpr | WhileExpr | ForExpr ) ;   (* the label names the loop for `break LABEL` and `continue LABEL` (rule 8.9); any other body is E0001 *)
 ```
@@ -473,6 +473,15 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
     A labeled `break` carries its value to the loop it names, which must be a `loop` when it carries a value. A
     `break`'s value is computed before the scopes it leaves are dropped, like a `return` value
     (`spec/memory-rules.md`, DR6).
+11. **`while let`** (`while let pattern = value { ... }`) runs its body for as long as the value matches the
+    pattern, and it is the `while` form of `if let`. The value is evaluated again before each pass. The pattern's
+    bindings are visible only in the body and are dropped at the end of each pass, and the scrutinee follows the
+    `if let` rules (`spec/memory-rules.md`, MV8). The loop ends when the value does not match, so it takes no `else`
+    (E0001). It is a `while` for rules 8.9 and 8.10: a label names it, and a `break` with a value is E0003. An
+    pattern that always matches is E0003, because the loop would never end (`let ... else` refuses its `else` on such a
+    pattern for the same reason). Witnesses: `tests/m02_basics/while_let.bd`
+    (runs), `while_let_errors.bd` and `while_let_else.bd` (codes and lines), `tests/m05_ownership/while_let_moves.bd`
+    (runs, drops per pass), and `while_let_moves_errors.bd` (a moved scrutinee is E0104).
 
 ## 9. What the parser does not decide
 

@@ -136,6 +136,11 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             v.expr(cond);
             v.block(body);
         }
+        K::WhileLet { pattern, scrutinee, body } => {
+            v.expr(scrutinee);
+            v.pattern(pattern);
+            v.block(body);
+        }
         K::For { pattern, iter, body, .. } => {
             v.expr(iter);
             v.pattern(pattern);

@@ -6,6 +6,9 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #487: `while let pattern = value { ... }`, the `while` form of `if let`. It repeats its body while the value
+  matches, evaluates the value again on every pass, binds the pattern in the body only, and takes no `else`; a label
+  names it, and a `break` with a value is E0003. Rules: `spec/grammar.md` rule 8.11, `spec/memory-rules.md` MV8 and RT5.
 - The `regex` official package (stage 3, issue #264; `spec/regex.md`, RX1-RX14): a Pike VM with leftmost-first matches, named
   groups, the flags `i m s x`, Unicode and POSIX classes, replacement templates, splitting, and escaping, all over byte offsets.
   Backreferences, lookaround, atomic groups, and possessive quantifiers are errors, not emulations, so every search runs in

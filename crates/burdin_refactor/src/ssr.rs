@@ -252,6 +252,10 @@ impl Pattern {
             (ExprKind::While { cond: c1, body: b1 }, ExprKind::While { cond: c2, body: b2 }) => {
                 self.matches(cx, c1, c2, bound) && self.blocks(cx, b1, b2, bound)
             }
+            (
+                ExprKind::WhileLet { scrutinee: s1, body: b1, .. },
+                ExprKind::WhileLet { scrutinee: s2, body: b2, .. },
+            ) => self.matches(cx, s1, s2, bound) && self.blocks(cx, b1, b2, bound),
             (ExprKind::Loop(b1), ExprKind::Loop(b2)) => self.blocks(cx, b1, b2, bound),
             (ExprKind::For { iter: i1, body: b1, .. }, ExprKind::For { iter: i2, body: b2, .. }) => {
                 self.matches(cx, i1, i2, bound) && self.blocks(cx, b1, b2, bound)

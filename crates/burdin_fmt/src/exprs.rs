@@ -462,10 +462,23 @@ impl Fmt<'_> {
             TokenKind::If => self.if_expr(),
             TokenKind::While => {
                 let kw = self.tok_doc();
+                let mut head = vec![kw, space()];
+                // `while let pattern = value { ... }`: the same head as `if let`.
+                if self.at(&TokenKind::Let) {
+                    head.push(self.tok_doc());
+                    head.push(space());
+                    head.push(self.pattern()?);
+                    head.push(space());
+                    head.push(self.take(&TokenKind::Eq)?);
+                    head.push(space());
+                }
                 let cond = self.expr_r(Restriction::NoStructLiteral)?;
                 let body = self.block_parts()?;
                 let body = self.block_doc(body, false);
-                Ok(Ex { block_like: true, ..Ex::plain(concat(vec![kw, space(), cond.doc, space(), body])) })
+                head.push(cond.doc);
+                head.push(space());
+                head.push(body);
+                Ok(Ex { block_like: true, ..Ex::plain(concat(head)) })
             }
             TokenKind::Loop => {
                 let kw = self.tok_doc();

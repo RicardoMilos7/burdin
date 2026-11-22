@@ -1,0 +1,81 @@
+//@ run
+//> 3
+//> 2
+//> 1
+//> done
+//> 6
+//> 10
+//> 7
+//> 0
+
+// `while let pattern = value { ... }` repeats its body for as long as the value matches the pattern (issue #487,
+// `spec/grammar.md` rule 8.11). The value is evaluated again before each pass, the pattern binds only in the body, a
+// `continue` goes on with the next value, a `break` leaves the loop, and a label names the loop.
+
+fn show(n: i32) {
+    println(n.to_string())
+}
+
+// The numbers below `limit` in order, from `n`: `Some(n)` while `n` is below `limit`.
+fn below(limit: i32, n: i32): Option<i32> {
+    if n < limit { Some(n) } else { None }
+}
+
+fn main() {
+    // A stack, popped until it is empty.
+    let mut stack = List<i32>.new()
+    stack.push(1)
+    stack.push(2)
+    stack.push(3)
+    while let Some(top) = stack.pop() {
+        show(top)
+    }
+    println("done")
+
+    // The value is evaluated again before each pass: `i` is read by every call. The odd values are skipped with
+    // `continue`; the first pass that takes the total past 5 is the last one.
+    let mut i = 0
+    let mut total = 0
+    while let Some(v) = below(10, i) {
+        i = i + 1
+        if v % 2 == 1 {
+            continue
+        }
+        total = total + v
+        if total > 5 {
+            break
+        }
+    }
+    show(total)
+
+    // A labeled `while let` is left by a `continue` from a loop nested in it: the inner loop stops at the first
+    // column past the row, and the outer loop then goes on with the next row.
+    let mut row = 0
+    let mut pairs = 0
+    'rows: while let Some(r) = below(4, row) {
+        row = row + 1
+        let mut col = 0
+        while let Some(c) = below(4, col) {
+            col = col + 1
+            if c > r {
+                continue 'rows
+            }
+            pairs = pairs + 1
+        }
+    }
+    show(pairs)
+
+    // A place is a scrutinee too: the body changes it, and the next pass matches the new value.
+    let mut slot = Some(7)
+    while let Some(x) = slot {
+        show(x)
+        slot = None
+    }
+
+    // A pattern that never matches runs no pass.
+    let mut runs = 0
+    while let Some(_) = below(0, 0) {
+        runs = runs + 1
+    }
+    show(runs)
+}

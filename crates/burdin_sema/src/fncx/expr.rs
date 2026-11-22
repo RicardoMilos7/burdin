@@ -72,6 +72,7 @@ impl FnCx<'_> {
             }
             K::If { cond, then_block, else_expr } => self.if_expr(cond, then_block, else_expr.as_deref(), expect, span),
             K::While { cond, body } => self.while_expr(cond, body, None, span),
+            K::WhileLet { pattern, scrutinee, body } => self.while_let(pattern, scrutinee, body, None, span),
             K::Loop(body) => self.loop_expr(body, None, expect, span),
             K::Labeled { label, body } => self.labeled_loop(label, body, expect, span),
             K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, None, span),
