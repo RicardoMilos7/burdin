@@ -439,20 +439,40 @@ impl Parser<'_> {
         let interface = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
         let where_clause = if self.at(&TokenKind::Where) { self.where_clause()? } else { Vec::new() };
         self.open(&TokenKind::LBrace, true)?;
+        let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.unexpected("`}`"));
             }
+            // `type Name = Type`: the binding of an interface's associated type
+            // (`spec/associated-types.md`, AT2).
+            if self.at(&TokenKind::Type) {
+                let at = self.span();
+                self.bump();
+                let name = self.ident("an associated type name")?;
+                self.expect(&TokenKind::Eq)?;
+                let ty = self.ty()?;
+                assoc.push(AssocBinding { name, ty, span: at.to(self.prev_span()) });
+                continue;
+            }
             let fn_start = self.span();
             let is_priv = self.eat(&TokenKind::Priv);
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
-                return Err(self.unexpected("a method"));
+                return Err(self.unexpected("a method or an associated type binding"));
             }
             methods.push(self.fn_decl(is_priv, fn_start)?);
         }
         self.close(&TokenKind::RBrace)?;
-        Ok(ImplBlock { is_unsafe: false, ty, interface, where_clause, methods, span: start.to(self.prev_span()) })
+        Ok(ImplBlock {
+            is_unsafe: false,
+            ty,
+            interface,
+            where_clause,
+            assoc,
+            methods,
+            span: start.to(self.prev_span()),
+        })
     }
 
     /// `test "name" { ... }` or `test "name" [attrs] { ... }`. The test is compiled as a function with no
@@ -627,21 +647,43 @@ impl Parser<'_> {
             Vec::new()
         };
         self.open(&TokenKind::LBrace, true)?;
+        let mut associated = Vec::new();
         let mut methods = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.unexpected("`}`"));
             }
+            // `type Name`: an associated type (`spec/associated-types.md`, AT1). Stage 1 gives it no bound and no
+            // default, so `type Name: Bound` and `type Name = Ty` are rejected here.
+            if self.at(&TokenKind::Type) {
+                let at = self.span();
+                self.bump();
+                let name = self.ident("an associated type name")?;
+                if self.at(&TokenKind::Colon) || self.at(&TokenKind::Eq) {
+                    let bad = self.span();
+                    self.bump();
+                    let _ = self.ty()?;
+                    self.diags.error(
+                        Code::SYNTAX,
+                        bad,
+                        "an associated type takes no bound and no default; write `type Name` and bind it in each \
+                         implementation (`type Name = Type`)",
+                    );
+                    continue;
+                }
+                associated.push(AssocTypeDecl { span: at.to(name.span), name });
+                continue;
+            }
             let fn_start = self.span();
             let is_priv = self.eat(&TokenKind::Priv);
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
-                return Err(self.unexpected("a method"));
+                return Err(self.unexpected("a method or an associated type"));
             }
             let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true, false)?;
             methods.push(InterfaceFn { decl, has_body });
         }
         self.close(&TokenKind::RBrace)?;
-        Ok(InterfaceDecl { is_priv, name, generics, requires, methods, span: start.to(self.prev_span()) })
+        Ok(InterfaceDecl { is_priv, name, generics, requires, associated, methods, span: start.to(self.prev_span()) })
     }
 
     /// Whether the `fn` (or `unsafe fn`) at the current position is an extension method (`crate::lookahead`).

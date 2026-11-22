@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Associated types (issue #393; `spec/associated-types.md`, AT1-AT6). An interface may declare `type Name`; a
+  `Type: Interface` block binds each one exactly once with `type Name = Ty`, and a projection reads it back as
+  `Self.Name`, `T.Name`, or `<T as Interface>.Name`. The checker resolves a projection through the bound environment
+  (on a type parameter) or the program's impl blocks (on any other type), normalizes it during substitution with
+  `Self`, and monomorphization replaces it with the binding, so no projection reaches code generation. A missing,
+  unknown, duplicate, or interface-less binding is E0144/E0007; a projection no interface can answer, or that two
+  answer, is E0145; an interface with an associated type is not object-safe, so `any I` on it is E0202. `Iterator<T>`
+  stays generic. Tests: `tests/m21_reflect/associated_types.bd`, `associated_types_errors.bd`, and
+  `associated_type_projection_errors.bd`; the error reference has E0144 and E0145 entries.
 - Method-level type parameters (issue #391): a method, associated function, or extension method declares its own
   type and `const` parameters after its name. The impl block's parameters stay in scope in its signature and body,
   each call infers the method's arguments from the receiver, the arguments, closure bounds, and the expected type,

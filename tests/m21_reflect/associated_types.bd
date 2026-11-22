@@ -1,0 +1,180 @@
+//@ run
+//> 5
+//> 5
+//> 5
+//> 42
+//> 42
+//> 3
+//> 12
+//> 11
+//> 13
+//> 6
+//> 2
+//> 9
+//> 4
+
+// Associated types: an interface declares `type Name`, each implementation binds it with `type Name = Ty`, and a
+// projection (`Self.Name`, `T.Name`, or `<T as Interface>.Name`) reads it back (spec/associated-types.md, AT1-AT4).
+
+interface Container {
+    type Item
+    // An interface method's signature may return its own associated type.
+    fn get(self): Self.Item
+    // A default method may use `Self.Item` in its signature and in its body.
+    fn again(self): Self.Item { self.get() }
+}
+
+struct Counter {
+    n: i32
+}
+
+// A concrete implementation binds the associated type to a concrete type; its own method may write `Self.Item`.
+Counter: Container {
+    type Item = i32
+    fn get(self): Self.Item { self.n }
+}
+
+struct Holder<T> {
+    value: T
+}
+
+// A generic implementation binds the associated type to its type parameter.
+Holder<T>: Container where T: Copy {
+    type Item = T
+    fn get(self): Self.Item { self.value }
+}
+
+// A generic function returns a projection on its bound; each instantiation normalizes it to the binding.
+fn describe<T: Container>(c: T): T.Item {
+    c.get()
+}
+
+// A qualified projection names the interface whose associated type it means.
+fn make(): <Counter as Container>.Item {
+    3
+}
+
+// A projection may be a field's type or a generic alias's body.
+struct Slot<I: Container> {
+    value: I.Item
+}
+
+type ItemOf<T: Container> = T.Item
+
+fn from_slot(s: Slot<Counter>): ItemOf<Counter> {
+    s.value
+}
+
+// A generic interface's associated type is the implementation's type parameter.
+interface Pair<T> {
+    type Left
+    fn left(self): Self.Left
+}
+
+struct One<T> {
+    value: T
+}
+
+One<T>: Pair<T> {
+    type Left = T
+    fn left(self): Self.Left { self.value }
+}
+
+fn left_of<P: Pair<i32>>(p: P): P.Left {
+    p.left()
+}
+
+// A `requires` interface's associated type is visible through the derived interface's bound.
+interface Base {
+    type Item
+    fn get(self): Self.Item
+}
+
+interface Derived requires Base {
+    fn name(self): i32
+    fn twice(self): Self.Item { self.get() }
+}
+
+struct Both {
+    n: i32
+}
+
+Both: Base {
+    type Item = i32
+    fn get(self): Self.Item { self.n }
+}
+
+Both: Derived {
+    fn name(self): i32 { 1 }
+}
+
+fn read<D: Derived>(d: D): D.Item {
+    d.get()
+}
+
+// Two interfaces give one type an `Item`; the qualified form chooses between them.
+interface A {
+    type Item
+    fn a(self): i32
+}
+
+interface B {
+    type Item
+    fn b(self): i32
+}
+
+struct Two {
+    n: i32
+}
+
+Two: A {
+    type Item = i32
+    fn a(self): i32 { self.n }
+}
+
+Two: B {
+    type Item = bool
+    fn b(self): i32 { self.n }
+}
+
+fn chosen(t: Two): <Two as A>.Item {
+    t.n
+}
+
+// A binding may be `Self` itself.
+struct Mirror: Copy, Clone {
+    n: i32
+}
+
+Mirror: A {
+    type Item = Self
+    fn a(self): i32 { self.n }
+}
+
+fn mirrored(m: Mirror): <Mirror as A>.Item {
+    m
+}
+
+fn main() {
+    let c = Counter { n: 5 }
+    println("{}", c.get())
+    println("{}", c.again())
+    println("{}", describe(c))
+
+    let h = Holder { value: 42 }
+    println("{}", describe(h))
+    println("{}", h.get())
+    println("{}", make())
+
+    let d = Counter { n: 6 }
+    println("{}", d.get() + d.again())
+
+    let s: Slot<Counter> = Slot { value: 11 }
+    println("{}", from_slot(s))
+    println("{}", left_of(One { value: 13 }))
+
+    println("{}", read(Both { n: 6 }))
+    println("{}", Both { n: 2 }.twice())
+    println("{}", chosen(Two { n: 9 }))
+    println("{}", mirrored(Mirror { n: 4 }).n)
+}
