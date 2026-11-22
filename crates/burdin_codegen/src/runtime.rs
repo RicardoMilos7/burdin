@@ -1568,6 +1568,30 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(self.b.build_call(f, args, "").map_err(llvm_err)?.try_as_basic_value().basic())
     }
 
+    /// A call to libc's `malloc` or `realloc`. LLVM knows these as allocators and may delete an allocation whose only
+    /// uses are a null check and a `free`, which folds the null check away: a refused request would then look like a
+    /// success and an infallible allocation would not panic (`spec/allocators.md`, AL11). The result is passed to
+    /// [`Gen::escape_pointer`], so the allocation is kept.
+    fn call_libc_alloc(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let site = self.b.build_call(f, args, "").map_err(llvm_err)?;
+        let p = site.try_as_basic_value().basic().expect("malloc and realloc return a pointer").into_pointer_value();
+        self.escape_pointer(p)?;
+        Ok(Some(p.into()))
+    }
+
+    /// Hands `p` to an empty inline assembly block that may read and write memory. LLVM cannot see what the block does
+    /// with the pointer, so it keeps the code that produced `p` and the null check on it.
+    fn escape_pointer(&self, p: PointerValue<'ctx>) -> GenResult<()> {
+        let ty = self.cx.void_type().fn_type(&[self.ptr_ty.into()], false);
+        let asm = self.cx.create_inline_asm(ty, String::new(), "r,~{memory}".to_string(), true, false, None, false);
+        self.b.build_indirect_call(ty, asm, &[p.into()], "").map_err(llvm_err)?;
+        Ok(())
+    }
+
     /// `ptr + offset` bytes.
     fn offset(&self, ptr: PointerValue<'ctx>, offset: IntValue<'ctx>) -> GenResult<PointerValue<'ctx>> {
         unsafe { self.b.build_in_bounds_gep(self.i8(), ptr, &[offset], "") }.map_err(llvm_err)
@@ -3086,7 +3110,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let done = self.block(f, "done");
         self.b.build_conditional_branch(wrap, oom, take).map_err(llvm_err)?;
         self.b.position_at_end(take);
-        let p = self.call(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
+        let p = self.call_libc_alloc(malloc, &[total.into()])?.expect("malloc returns a pointer").into_pointer_value();
         let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
         self.b.build_conditional_branch(null, oom, init).map_err(llvm_err)?;
 
@@ -3307,7 +3331,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             self.b.build_select(zero, usize_ty.const_int(1, false), size, "").map_err(llvm_err)?.into_int_value();
         if !self.checking {
             let p = self
-                .call(libc_realloc, &[ptr.into(), size.into()])?
+                .call_libc_alloc(libc_realloc, &[ptr.into(), size.into()])?
                 .expect("realloc returns a pointer")
                 .into_pointer_value();
             let null = self.b.build_is_null(p, "").map_err(llvm_err)?;
