@@ -76,10 +76,10 @@ use schannel.{
 }
 
 /// How much one OpenSSL call moves: the size of the engine's scratch buffer (and of a TLS record's plaintext).
-const SCRATCH: usize = 16384
+priv const SCRATCH: usize = 16384
 
 /// What an engine call needs next.
-enum Step {
+priv enum Step {
     /// The call finished: the handshake is complete.
     Done,
     /// The call moved this many bytes.
@@ -92,7 +92,7 @@ enum Step {
     Eof,
 }
 
-struct Engine {
+priv struct Engine {
     ssl: CPtr<Ssl>,
     incoming: CPtr<Bio>,
     outgoing: CPtr<Bio>,
@@ -105,7 +105,7 @@ struct Engine {
 unsafe Engine: Send {}
 
 /// The step a `win_*` call of schannel.bd asked for.
-fn step_of(next: u32, count: usize): Step {
+priv fn step_of(next: u32, count: usize): Step {
     if next == NEXT_DONE {
         Step.Done
     } else if next == NEXT_DATA {
@@ -120,7 +120,7 @@ fn step_of(next: u32, count: usize): Step {
 }
 
 /// Whether `host` is an IP address literal (IPv4 dotted quad or anything with a colon) and not a DNS name.
-fn is_ip_address(host: str): bool {
+priv fn is_ip_address(host: str): bool {
     if host.contains(":") {
         return true
     }
@@ -137,7 +137,7 @@ fn is_ip_address(host: str): bool {
 
 Engine {
     /// A connection over `ctx`: a client (`server` false) or a server.
-    fn new(ctx: CPtr<SslCtx>, server: bool): Result<Engine, TlsError> {
+    priv fn new(ctx: CPtr<SslCtx>, server: bool): Result<Engine, TlsError> {
         comptime if target.os() == target.Os.Windows {
             // On Windows `ssl` holds the connection of schannel.bd, and the BIO pointers stay null.
             unsafe {
@@ -204,7 +204,7 @@ Engine {
 
     /// A client's server name: sent as SNI (a DNS name only) and, when `verify`, the name the certificate must carry
     /// (a DNS name against its names, an IP address against its IP entries). Both come from this one value.
-    fn set_server_name(mut self, host: str, verify: bool): Result<(), TlsError> {
+    priv fn set_server_name(mut self, host: str, verify: bool): Result<(), TlsError> {
         comptime if target.os() == target.Os.Windows {
             if host.len() == 0 || host.contains("\0") {
                 return Err(TlsError.Config("the server name is empty or holds a NUL".to_string()))
@@ -247,7 +247,7 @@ Engine {
     }
 
     /// Puts bytes received from the peer into the input BIO.
-    fn feed(mut self, data: [u8]): Result<(), TlsError> {
+    priv fn feed(mut self, data: [u8]): Result<(), TlsError> {
         comptime if target.os() == target.Os.Windows {
             unsafe {
                 let conn = self.ssl as CPtr<WinConn>
@@ -280,7 +280,7 @@ Engine {
     }
 
     /// Appends every byte OpenSSL wants sent to `out`, and returns how many.
-    fn drain(mut self, mut out: List<u8>): usize {
+    priv fn drain(mut self, mut out: List<u8>): usize {
         comptime if target.os() == target.Os.Windows {
             unsafe { win_drain(self.ssl as CPtr<WinConn>, mut out, mut self.scratch) }
         } else if features.openssl {
@@ -302,7 +302,7 @@ Engine {
     }
 
     /// The failure an OpenSSL call reported with `code` (`SSL_get_error`). `handshake` says which phase it was in.
-    fn failure(self, code: i32, handshake: bool): TlsError {
+    priv fn failure(self, code: i32, handshake: bool): TlsError {
         comptime if features.openssl {
             let reason = error_text()
             if code == SSL_ERROR_ZERO_RETURN {
@@ -331,7 +331,7 @@ Engine {
     }
 
     /// Runs the handshake as far as it can go with the bytes fed so far.
-    fn handshake(mut self): Result<Step, TlsError> {
+    priv fn handshake(mut self): Result<Step, TlsError> {
         comptime if target.os() == target.Os.Windows {
             unsafe {
                 match win_handshake(self.ssl as CPtr<WinConn>, self.host.as_str()) {
@@ -361,7 +361,7 @@ Engine {
     }
 
     /// Appends up to `max` decrypted bytes to `out`.
-    fn read(mut self, mut out: List<u8>, max: usize): Result<Step, TlsError> {
+    priv fn read(mut self, mut out: List<u8>, max: usize): Result<Step, TlsError> {
         comptime if target.os() == target.Os.Windows {
             if max == 0 {
                 return Ok(Step.Data(0))
@@ -402,7 +402,7 @@ Engine {
     }
 
     /// Encrypts a prefix of `data` (one record's worth at most) and returns how many bytes it took.
-    fn write(mut self, data: [u8]): Result<Step, TlsError> {
+    priv fn write(mut self, data: [u8]): Result<Step, TlsError> {
         comptime if target.os() == target.Os.Windows {
             if data.len() == 0 {
                 return Ok(Step.Data(0))
@@ -439,7 +439,7 @@ Engine {
     }
 
     /// Queues a `close_notify` (once). Its bytes are in `drain`'s output afterwards.
-    fn shutdown(mut self) {
+    priv fn shutdown(mut self) {
         comptime if target.os() == target.Os.Windows {
             unsafe { win_shutdown(self.ssl as CPtr<WinConn>) }
         } else if features.openssl {
@@ -452,7 +452,7 @@ Engine {
     }
 
     /// The protocol the peer chose by ALPN, if any.
-    fn alpn_protocol(self): Option<String> {
+    priv fn alpn_protocol(self): Option<String> {
         comptime if target.os() == target.Os.Windows {
             unsafe { win_alpn(self.ssl as CPtr<WinConn>) }
         } else if features.openssl {
@@ -475,7 +475,7 @@ Engine {
     }
 
     /// The negotiated protocol version (`TLSv1.3`).
-    fn version(self): String {
+    priv fn version(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { win_version(self.ssl as CPtr<WinConn>) }
         } else if features.openssl {
@@ -486,7 +486,7 @@ Engine {
     }
 
     /// The negotiated cipher suite.
-    fn cipher(self): String {
+    priv fn cipher(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { win_cipher(self.ssl as CPtr<WinConn>) }
         } else if features.openssl {
@@ -503,7 +503,7 @@ Engine {
     }
 
     /// The server name a client sent in SNI, as a server sees it.
-    fn server_name(self): Option<String> {
+    priv fn server_name(self): Option<String> {
         comptime if target.os() == target.Os.Windows {
             // SChannel does not report the name a client sent; `feed` read it from the ClientHello.
             if self.host.is_empty() {
@@ -524,7 +524,7 @@ Engine {
     }
 
     /// The peer's leaf certificate, if it sent one.
-    fn peer_certificate(self): Option<Certificate> {
+    priv fn peer_certificate(self): Option<Certificate> {
         comptime if target.os() == target.Os.Windows {
             unsafe {
                 let handle = win_peer_cert(self.ssl as CPtr<WinConn>)

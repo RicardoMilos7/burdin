@@ -20,6 +20,17 @@ body may call a function that returns `impl I` (`impl_return_generic.bd`). Gap: 
 signature is reported as E0163 (an extern function cannot be generic), not E0201 as the spec's list says; left as it
 was.
 
+**Documentation consistency pass (issues #946-#967, 2026-11-23).** The spec, the tests README, the design, and the
+HANDOFF now agree with the compiler on the points those issues named: `derive`, `blocking`, slice receivers, and closures
+are in the grammar; a const-specific impl (`Grid<3> { ... }`) is implemented and tested (`m21_reflect/const_impl_specific`),
+so CG8 no longer lists it; the comptime file rule is `embed` alone (CT15); there is no MIR (decision 6); decision 34 is
+generation and decision 35 compound assignment; the stage 0 count is 294 (`run_tests.py --list m01_ ... m11_`); and the
+stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
+now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
+(`m13_iterators/generic_bound_default_methods`). Still open, and the spec states the current behavior with these numbers:
+the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
+struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
+(`m15_any/impl_not_parameter` pins the E0201 until then).
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
 view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
 a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
@@ -85,7 +96,7 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
 `fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
 text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
-hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+hygienic (as user derives are, decision 26 in `tests/README.md`), and generation before the whole-program check: step 1 checks each
 generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
 parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
 `fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
@@ -304,9 +315,13 @@ The call dispatch is `call`, `method_call`, `method_call_on_with`, `module_call`
 `fncx/call.rs`; `reject_type_args` and `user_generic_method` are the refusals. `GenericParam.hidden` marks an `impl`
 parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it to sema. Tests:
 `tests/m07_generics/explicit_type_args.bd` (runs), `explicit_type_args_errors.bd` (codes and lines),
-`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. Not done: explicit
-arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
-`it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
+`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. `it.collect<C>()` takes
+its target as the explicit argument (issue #922, `iterators.md` IT17): `method_call_on_with` admits it through
+`iterator_collect`, `iterator_method` passes the list to the `Iterator<T>` default, and `param_method_call` passes it to
+`generic_bound_args` for a value of a type parameter bounded by `Iterator`, checking `C`'s bounds. Tests:
+`tests/m24_stdlib/collect_explicit.bd` and `collect_explicit_errors.bd`. Not done: explicit arguments on other methods
+reached through a type parameter's bound, and on other built-in methods (refused, TA5). A generic method called as an
+associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
 its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
 **Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
 `self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`

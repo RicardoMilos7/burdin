@@ -80,7 +80,7 @@ The most common adapters and consumers:
 | `fold(start, f)` | Combines all items into one value, starting from `start` |
 | `sum()` | Adds the items up |
 | `any(f)`, `all(f)` | Whether some, or every, item satisfies `f` |
-| `collect()` | Gathers the items into a collection, such as a `List` |
+| `collect()` | Gathers the items into a collection, such as a `List`. The type comes from the context, or from the list: `collect<List<i32>>()` |
 
 Adapters are lazy. `take(2)` pulls only two items from the chain before it stops, so a `map` after it runs only twice.
 

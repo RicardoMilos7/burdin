@@ -164,8 +164,8 @@ note at the operation:
 The check is dynamic: a function that prints can be called at compile time as long as the path taken does not print.
 Nothing else observable depends on the machine, the time, or the order of compilation, so a comptime result depends
 only on the source, the target, and the profile (`--release` changes overflow behavior, CT1). `Map` iteration order
-at compile time is insertion order, which is one of the orders `spec/stdlib.md` allows. There is no comptime file
-access yet; `embed` belongs to milestone 21.
+at compile time is insertion order, which is one of the orders `spec/stdlib.md` allows. Reading a file at compile
+time is `embed` alone (CT15); CT9 rejects every other file operation.
 
 ## CT10. Panics
 

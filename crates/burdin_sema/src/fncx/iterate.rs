@@ -19,6 +19,7 @@ impl FnCx<'_> {
         &mut self,
         recv: tir::Expr,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
@@ -99,7 +100,7 @@ impl FnCx<'_> {
         }
         let key = (iface, method, recv_ty.clone(), vec![item.clone()]);
         if let Some(info) = self.globals.builtin_method_templates.get(&key).cloned() {
-            return Some(self.generic_method_call(info, recv, &name.name, &[], args, span, expect));
+            return Some(self.generic_method_call(info, recv, &name.name, explicit, args, span, expect));
         }
         // The template is created on the next pass; still check the arguments so their own errors show now.
         for a in args {
@@ -112,6 +113,26 @@ impl FnCx<'_> {
             iface_args: vec![item],
         });
         Some(error_expr(span))
+    }
+
+    /// Whether `name` on a value of type `ty` (through references) is the `collect` of an iterator, which takes its
+    /// target as an explicit type argument (`spec/iterators.md`, IT17). The value must be an iterator the compiler
+    /// knows, and no method of its own may have that name, so the call reaches the `Iterator<T>` default.
+    pub(super) fn iterator_collect(&self, ty: &Ty, name: &str) -> bool {
+        if name != "collect" {
+            return false;
+        }
+        let mut base = ty;
+        while let Ty::Ref { inner, .. } = base {
+            base = inner;
+        }
+        if matches!(base, Ty::Any(_) | Ty::Error) || crate::builtins::method(name, base).is_some() {
+            return false;
+        }
+        if adt_key(base).is_some_and(|key| self.globals.methods.contains_key(&(key, name.to_string()))) {
+            return false;
+        }
+        self.globals.iterator_item(base, &self.bounds).is_some()
     }
 
     /// `from_iter` on a built-in collection (`List`, `Map`, `String`, `Option`, `Result`) and `from` on a `List` or a

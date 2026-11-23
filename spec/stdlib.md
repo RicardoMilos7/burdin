@@ -1889,10 +1889,11 @@ Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_ex
 `std.iter` declares `FromIterator<T>` and `Iterator<T>.collect`; every collection takes the items of an iterator with
 `extend_iter` and an array with `from`. The rules, with IDs, are `iterators.md` IT16-IT22, and the decisions are:
 
-- **Naming the target.** A built-in method takes no explicit type arguments (`arguments.md`, TA5), so `it.collect()`
-  takes its target from the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a return type, a field. With no
-  expected type it is E0003 ("cannot tell what `C` stands for"); a target that is not `FromIterator` for the items is
-  E0141. A type can also be named on the call itself, `Set<i32>.from_iter(it)`.
+- **Naming the target.** `it.collect` takes its target in one of two ways: the explicit type argument, `it.collect<Set<i32>>()`
+  (`arguments.md`, TA5; `iterators.md`, IT17), or the **expected type**: `let s: Set<i32> = it.collect()`, a parameter, a
+  return type, a field. With neither it is E0003 ("cannot tell what `C` stands for"); a target that is not `FromIterator`
+  for the items is E0141, and an explicit list of another length is E0003. A type can also be named on the call itself,
+  `Set<i32>.from_iter(it)`. No other built-in method takes explicit type arguments.
 - **The protocol.** `FromIterator<T>` has one method, `from_iter<I: Iterator<T>>(own iter: I): Self`. A user type
   implements it (IT16); `Set`, `Deque`, and `PriorityHeap` do in `std`; `List`, `Map`, `String`, `Option`, and
   `Result` do in the compiler (IT18, IT19).
@@ -1923,7 +1924,9 @@ an extension cannot pick its body by item type. A `Map` built from pairs keeps t
 Tests: `m24_stdlib/collect_basic`, `collect_adapters`, `collect_result_option`, `collect_drops`, `collect_user_type`,
 `collect_allocator`, `collect_comptime`, `collect_views`, `extend_iter`, `from_array`, and the compile-fail cases
 `collect_needs_target` (E0003), `collect_not_from_iterator` (E0141), `collect_allocator_target` (E0272, E0141),
-`collect_map_needs_eq` (E0141), `collect_view_target` (E0141), and `from_array_view_key` (E0120).
+`collect_map_needs_eq` (E0141), `collect_view_target` (E0141), and `from_array_view_key` (E0120). The explicit target
+(`it.collect<C>()`) is `m24_stdlib/collect_explicit` (runs), with the refusals in `collect_explicit_errors` (E0003 for
+the arity and a closure value, E0141 for a target that is not `FromIterator`).
 
 ## Errors
 

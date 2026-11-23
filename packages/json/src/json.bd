@@ -14,7 +14,7 @@
 // ----- the writer ----------------------------------------------------------------------------------------------
 
 /// One open container in the writer.
-struct Frame {
+priv struct Frame {
     // 0 = array, 1 = object, 2 = transparent (an `Option` payload or a unit variant).
     kind: i32,
     count: usize,
@@ -22,24 +22,60 @@ struct Frame {
 }
 
 /// The JSON writer. `pretty` selects two-space indentation; `out` is the text being built.
+///
+/// ```
+/// # use json
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let mut writer = json.Writer.new()
+/// Item { name: "Ink".to_string(), qty: 12 }.serialize(mut writer).unwrap()
+/// assert_eq(writer.finish().as_str(), "{{\"name\":\"Ink\",\"qty\":12}}")
+/// ```
 struct Writer {
-    out: String,
-    pretty: bool,
-    frames: List<Frame>,
+    priv out: String,
+    priv pretty: bool,
+    priv frames: List<Frame>,
 }
 
 Writer {
     /// A compact writer.
+    ///
+    /// ```
+    /// # use json
+    /// let mut writer = json.Writer.new()
+    /// serialize_bool(mut writer, true).unwrap()
+    /// assert_eq(writer.finish().as_str(), "true")
+    /// ```
     fn new(): Writer {
         Writer { out: String.new(), pretty: false, frames: List<Frame>.new() }
     }
 
     /// A writer with two-space indentation.
+    ///
+    /// ```
+    /// # use json
+    /// struct Item: Serialize {
+    ///     qty: u32,
+    /// }
+    /// let mut writer = json.Writer.new_pretty()
+    /// Item { qty: 3 }.serialize(mut writer).unwrap()
+    /// assert_eq(writer.finish().as_str(), "{{\n  \"qty\": 3\n}}")
+    /// ```
     fn new_pretty(): Writer {
         Writer { out: String.new(), pretty: true, frames: List<Frame>.new() }
     }
 
     /// The text written so far, ending the writer.
+    ///
+    /// ```
+    /// # use json
+    /// let mut writer = json.Writer.new()
+    /// serialize_str(mut writer, "hi").unwrap()
+    /// let text = writer.finish()
+    /// assert_eq(text.as_str(), "\"hi\"")
+    /// ```
     fn finish(own self): String {
         self.out
     }
@@ -381,7 +417,7 @@ Writer: Serializer {
 // ----- the reader ----------------------------------------------------------------------------------------------
 
 /// One open array or object in the reader.
-struct ReaderFrame {
+priv struct ReaderFrame {
     // 0 = array, 1 = object.
     kind: i32,
     close: u8,
@@ -390,7 +426,7 @@ struct ReaderFrame {
 }
 
 /// One open enum in the reader. They nest (a variant's payload may hold another enum), so they are a stack.
-struct EnumFrame {
+priv struct EnumFrame {
     // Whether this enum is `Option`, and whether the input was `null` there.
     option: bool,
     none: bool,
@@ -402,15 +438,30 @@ struct EnumFrame {
 
 /// The JSON reader: a copy of the input and the byte offset of the next unread byte. The line and column of an
 /// error are computed from the offset when it is reported (SER10).
+///
+/// ```
+/// # use json
+/// let mut parser = json.Parser.new("42")
+/// let first = deserialize_i32(mut parser).unwrap()
+/// assert_eq(first, 42)
+/// ```
 struct Parser {
-    text: String,
-    pos: usize,
-    enums: List<EnumFrame>,
-    frames: List<ReaderFrame>,
+    priv text: String,
+    priv pos: usize,
+    priv enums: List<EnumFrame>,
+    priv frames: List<ReaderFrame>,
 }
 
 Parser {
     /// A reader over `text`. The text is copied once.
+    ///
+    /// ```
+    /// # use json
+    /// let mut parser = json.Parser.new("true")
+    /// let flag = deserialize_bool(mut parser).unwrap()
+    /// assert_eq(flag, true)
+    /// parser.end().unwrap()
+    /// ```
     fn new(text: str): Parser {
         Parser {
             text: text.to_string(),
@@ -421,6 +472,14 @@ Parser {
     }
 
     /// Checks that no non-whitespace text is left.
+    ///
+    /// ```
+    /// # use json
+    /// let mut parser = json.Parser.new("1 2")
+    /// let one = deserialize_i32(mut parser).unwrap()
+    /// assert_eq(one, 1)
+    /// assert(parser.end().is_err())
+    /// ```
     fn end(mut self): Result<(), DeError> {
         self.skip_ws()
         if self.pos < self.text.len() {
@@ -1138,6 +1197,16 @@ Parser: Deserializer {
 // ----- the public surface ---------------------------------------------------------------------------------------
 
 /// Writes `value` as compact JSON.
+///
+/// ```
+/// # use json
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let text = json.to_string(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+/// assert_eq(text.as_str(), "{{\"name\":\"Ink\",\"qty\":12}}")
+/// ```
 fn to_string<T: Serialize>(value: T): Result<String, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
@@ -1145,6 +1214,16 @@ fn to_string<T: Serialize>(value: T): Result<String, DeError> {
 }
 
 /// Writes `value` as JSON with two-space indentation and a final newline.
+///
+/// ```
+/// # use json
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let text = json.to_string_pretty(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+/// assert_eq(text.as_str(), "{{\n  \"name\": \"Ink\",\n  \"qty\": 12\n}}\n")
+/// ```
 fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
     let mut writer = Writer.new_pretty()
     value.serialize(mut writer)?
@@ -1154,6 +1233,16 @@ fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
 }
 
 /// Reads a value of type `T` from `text`. The whole text must be consumed.
+///
+/// ```
+/// # use json
+/// struct Item: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let item = json.from_str<Item>("{{\"name\": \"Ink\", \"qty\": 12}}").unwrap()
+/// assert_eq(item.qty, 12)
+/// ```
 fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
     let mut parser = Parser.new(text)
     let value = T.deserialize(mut parser)?

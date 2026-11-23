@@ -75,8 +75,11 @@ A derive on a generic type holds for the instances whose parts allow it: `Wrappe
 needs them is an error at the use (E0003, E0002, E0141). A requirement that mentions no parameter is checked once, at the
 derive (E0130). The rule for `Debug`, `Hash`, `Ord`, and `Default` is the same (`spec/derives.md`).
 
-A built-in interface other than `Drop` written by hand (`Wrapper<T>: Eq where T: Eq { ... }`) is not implemented, for a
-generic type or a plain one: it is E9000 under issue #402, whose rule applies to both. When it lands, the `where` clauses
+The built-in derive-only interfaces are `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` (`spec/derives.md`). Writing one
+by hand (`Wrapper<T>: Eq where T: Eq { ... }`) is not implemented, for a generic type or a plain one: it is E9000 under
+issue #402, whose rule applies to both. The other interfaces are written by hand as ordinary interfaces: `Debug`,
+`Display`, `From`, `TryFrom`, `Drop` (IM7), and `Serialize`/`Deserialize`, which a program writes by hand as
+`serialization.md` describes. When #402 lands, the `where` clauses
 of such a block follow IM2: the block covers an instance when the bounds hold, which is the conditional rule (`T: Eq`).
 
 ## IM9. Errors

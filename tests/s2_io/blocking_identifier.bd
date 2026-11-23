@@ -1,0 +1,21 @@
+//@ run
+//> 3
+//> 7
+
+// `blocking` is a marker only before `fn` or `unsafe fn` inside an `extern "C"` block (spec/io.md, IO4); everywhere
+// else it is an ordinary identifier, so a variable, a parameter, and a field can all be named `blocking`.
+
+struct Gate {
+    blocking: i32
+}
+
+fn scale(blocking: i32): i32 {
+    blocking * 2
+}
+
+fn main() {
+    let blocking = 2
+    println((blocking + 1).to_string())
+    let gate = Gate { blocking: 7 }
+    println(gate.blocking.to_string())
+}

@@ -1,5 +1,15 @@
 // The error every fallible function in this package reports.
 
+/// The error every fallible function of this package reports. Each variant says what was wrong: a length, a padding, an
+/// authentication tag, a signature, or a curve point.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{CryptoError}
+/// let err = CryptoError.AuthenticationFailed
+/// assert(err == CryptoError.AuthenticationFailed)
+/// assert(err != CryptoError.InvalidPadding)
+/// ```
 error enum CryptoError: Eq, Debug {
     InvalidKeyLength { expected: usize, got: usize } "invalid key length: expected {expected} bytes, got {got}",
     InvalidNonceLength { expected: usize, got: usize } "invalid nonce length: expected {expected} bytes, got {got}",
