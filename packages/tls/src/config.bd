@@ -48,6 +48,14 @@ use schannel.{
 }
 
 /// A protocol version a configuration can require. SSL 3, TLS 1.0, and TLS 1.1 are not available.
+///
+/// ```
+/// # use tls
+/// # use tls.{TlsVersion}
+/// let version = TlsVersion.Tls13
+/// assert(version == TlsVersion.Tls13)
+/// assert(TlsVersion.Tls12 != TlsVersion.Tls13)
+/// ```
 enum TlsVersion: Copy, Clone, Eq, Debug {
     Tls12,
     Tls13,
@@ -63,7 +71,7 @@ TlsVersion {
 }
 
 /// A new context with TLS 1.2 as the lowest version. The library must be OpenSSL 3 or later.
-unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
+priv unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
     comptime if target.os() == target.Os.Windows {
         // On Windows the "context" is the configuration of schannel.bd.
         let cfg = config_new(server)
@@ -90,7 +98,7 @@ unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
 }
 
 /// Gives `ctx` the roots of `trust`.
-unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), TlsError> {
+priv unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), TlsError> {
     comptime if target.os() == target.Os.Windows {
         let mut roots = List<CPtr<CertContext>>.new()
         for cert in trust.roots.iter() {
@@ -119,7 +127,7 @@ unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), TlsError
     }
 }
 
-unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion): Result<(), TlsError> {
+priv unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion): Result<(), TlsError> {
     comptime if target.os() == target.Os.Windows {
         let code: u32 = if version.code() == TLS1_2_VERSION { 0 } else { 1 }
         if !config_set_version(ctx as CPtr<WinConfig>, command == SSL_CTRL_SET_MIN_PROTO_VERSION, code) {
@@ -138,7 +146,7 @@ unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion): Res
 }
 
 /// The ALPN protocol list in its wire form: each name preceded by its length.
-fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
+priv fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
     let mut wire = List<u8>.new()
     for name in protocols.iter() {
         let bytes = name.as_bytes()
@@ -151,7 +159,7 @@ fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
     Ok(wire)
 }
 
-unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsError> {
+priv unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsError> {
     comptime if target.os() == target.Os.Windows {
         let wire = alpn_wire(protocols)?
         if !config_set_alpn(ctx as CPtr<WinConfig>, wire[0..wire.len()]) {
@@ -175,7 +183,7 @@ unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsEr
 }
 
 /// Installs a certificate chain (leaf first) and its key, and checks that they belong together.
-unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
+priv unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
     comptime if target.os() == target.Os.Windows {
         let mut contexts = List<CPtr<CertContext>>.new()
         for cert in chain.iter() {
@@ -224,6 +232,14 @@ unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: Private
 ///
 /// WARNING: `insecure_skip_verify` turns verification off. A connection made with it is encrypted but talks to
 /// anyone. It exists to prove that verification is what rejects the connections in this package's tests.
+///
+/// ```
+/// # use tls
+/// # use tls.{ClientConfig, TlsVersion}
+/// let mut config = ClientConfig.new().unwrap()
+/// config.min_version(TlsVersion.Tls12).unwrap()
+/// assert(!config.skips_verification())
+/// ```
 struct ClientConfig {
     priv ctx: CPtr<SslCtx>,
     priv skip_verify: bool,
@@ -234,11 +250,28 @@ unsafe ClientConfig: Sync {}
 
 ClientConfig {
     /// A configuration that trusts the system's authorities.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig}
+    /// let config = ClientConfig.new().unwrap()
+    /// assert(!config.skips_verification())
+    /// ```
     fn new(): Result<ClientConfig, TlsError> {
         ClientConfig.with_trust(TrustStore.system())
     }
 
     /// A configuration that trusts exactly the authorities of `trust`.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig, TrustStore}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let mut trust = TrustStore.empty()
+    /// trust.add_pem(cert_pem).unwrap()
+    /// let config = ClientConfig.with_trust(trust).unwrap()
+    /// assert(!config.skips_verification())
+    /// ```
     fn with_trust(trust: TrustStore): Result<ClientConfig, TlsError> {
         comptime if target.os() == target.Os.Windows {
             unsafe {
@@ -271,27 +304,70 @@ ClientConfig {
     }
 
     /// The lowest protocol version the client accepts (TLS 1.2 unless raised).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsVersion}
+    /// let mut config = ClientConfig.new().unwrap()
+    /// config.min_version(TlsVersion.Tls13).unwrap()
+    /// ```
     fn min_version(mut self, version: TlsVersion): Result<(), TlsError> {
         unsafe { set_version(self.ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, version) }
     }
 
     /// The highest protocol version the client offers.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsVersion}
+    /// let mut config = ClientConfig.new().unwrap()
+    /// config.max_version(TlsVersion.Tls13).unwrap()
+    /// ```
     fn max_version(mut self, version: TlsVersion): Result<(), TlsError> {
         unsafe { set_version(self.ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, version) }
     }
 
     /// The application protocols to offer, most preferred first (`h2`, `http/1.1`). `TlsStream.alpn_protocol` reports
     /// the one the server chose, if any.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig}
+    /// let mut config = ClientConfig.new().unwrap()
+    /// let mut protocols = List<String>.new()
+    /// protocols.push("h2".to_string())
+    /// protocols.push("http/1.1".to_string())
+    /// config.alpn(protocols).unwrap()
+    /// ```
     fn alpn(mut self, protocols: List<String>): Result<(), TlsError> {
         unsafe { set_alpn(self.ctx, protocols) }
     }
 
     /// The certificate chain (leaf first) and key to present when the server asks for a client certificate.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate, ClientConfig, PrivateKey}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let mut config = ClientConfig.new().unwrap()
+    /// let chain = Certificate.chain_from_pem(cert_pem).unwrap()
+    /// let key = PrivateKey.from_pem(key_pem).unwrap()
+    /// config.client_certificate(chain, key).unwrap()
+    /// ```
     fn client_certificate(mut self, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
         unsafe { use_identity(self.ctx, chain, key) }
     }
 
     /// Turns certificate and hostname verification off. See the warning on `ClientConfig`.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig}
+    /// let mut config = ClientConfig.new().unwrap()
+    /// config.insecure_skip_verify()
+    /// assert(config.skips_verification())
+    /// ```
     fn insecure_skip_verify(mut self) {
         comptime if target.os() == target.Os.Windows {
             unsafe { (*(self.ctx as CPtr<WinConfig>)).mode = MODE_SKIP }
@@ -303,6 +379,13 @@ ClientConfig {
     }
 
     /// Whether verification was turned off.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ClientConfig}
+    /// let config = ClientConfig.new().unwrap()
+    /// assert(!config.skips_verification())
+    /// ```
     fn skips_verification(self): bool {
         self.skip_verify
     }
@@ -326,6 +409,16 @@ ClientConfig: Drop {
 
 /// How a server connection is set up: one certificate chain and its key. A server speaks no ALPN and serves one
 /// certificate per configuration (spec/tls.md, TLS8: both need callbacks the C bridge cannot pass).
+///
+/// ```
+/// # use tls
+/// # use tls.{Certificate, PrivateKey, ServerConfig}
+/// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+/// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+/// let chain = Certificate.chain_from_pem(cert_pem).unwrap()
+/// let key = PrivateKey.from_pem(key_pem).unwrap()
+/// let _config = ServerConfig.new(chain, key).unwrap()
+/// ```
 struct ServerConfig {
     priv ctx: CPtr<SslCtx>,
 }
@@ -336,6 +429,16 @@ unsafe ServerConfig: Sync {}
 ServerConfig {
     /// A configuration serving `chain` (leaf first) with `key`. A key that does not belong to the leaf is
     /// `TlsError.KeyMismatch`.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate, PrivateKey, ServerConfig}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let chain = Certificate.chain_from_pem(cert_pem).unwrap()
+    /// let key = PrivateKey.from_pem(key_pem).unwrap()
+    /// let _config = ServerConfig.new(chain, key).unwrap()
+    /// ```
     fn new(chain: List<Certificate>, key: PrivateKey): Result<ServerConfig, TlsError> {
         comptime if target.os() == target.Os.Windows {
             unsafe {
@@ -367,6 +470,14 @@ ServerConfig {
     }
 
     /// `new` from PEM texts: the chain (leaf first, then intermediates) and an unencrypted key.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ServerConfig}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let _config = ServerConfig.from_pem(cert_pem, key_pem).unwrap()
+    /// ```
     fn from_pem(chain_pem: str, key_pem: str): Result<ServerConfig, TlsError> {
         let chain = Certificate.chain_from_pem(chain_pem)?
         let key = PrivateKey.from_pem(key_pem)?
@@ -374,16 +485,45 @@ ServerConfig {
     }
 
     /// The lowest protocol version the server accepts (TLS 1.2 unless raised).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ServerConfig, TlsVersion}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let mut config = ServerConfig.from_pem(cert_pem, key_pem).unwrap()
+    /// config.min_version(TlsVersion.Tls13).unwrap()
+    /// ```
     fn min_version(mut self, version: TlsVersion): Result<(), TlsError> {
         unsafe { set_version(self.ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, version) }
     }
 
     /// The highest protocol version the server offers.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ServerConfig, TlsVersion}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let mut config = ServerConfig.from_pem(cert_pem, key_pem).unwrap()
+    /// config.max_version(TlsVersion.Tls13).unwrap()
+    /// ```
     fn max_version(mut self, version: TlsVersion): Result<(), TlsError> {
         unsafe { set_version(self.ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, version) }
     }
 
     /// Requires every client to present a certificate that chains to `roots` (mutual TLS).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{ServerConfig, TrustStore}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let mut config = ServerConfig.from_pem(cert_pem, key_pem).unwrap()
+    /// let mut roots = TrustStore.empty()
+    /// roots.add_pem(cert_pem).unwrap()
+    /// config.require_client_certificate(roots).unwrap()
+    /// ```
     fn require_client_certificate(mut self, roots: TrustStore): Result<(), TlsError> {
         comptime if target.os() == target.Os.Windows {
             unsafe {

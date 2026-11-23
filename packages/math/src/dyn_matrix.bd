@@ -2,6 +2,14 @@
 // serves the fixed-size matrices of matrix.bd too, which convert to this type.
 
 /// A matrix with `nrows` rows and `ncols` columns, stored row-major in `data`.
+///
+/// ```
+/// # use math
+/// # use math.{DynMatrix, Matrix, Vector}
+/// let m = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+/// assert_eq(m.get(1, 0), 3.0)
+/// assert_eq(m.rows(), 2)
+/// ```
 struct DynMatrix: Clone {
     nrows: usize,
     ncols: usize,
@@ -9,7 +17,7 @@ struct DynMatrix: Clone {
 }
 
 /// `count` zeros.
-fn zeros_list(count: usize): List<f64> {
+priv fn zeros_list(count: usize): List<f64> {
     let mut out = List<f64>.with_capacity(count)
     let mut i: usize = 0
     while i < count {
@@ -20,7 +28,7 @@ fn zeros_list(count: usize): List<f64> {
 }
 
 /// A new list holding the values of `xs`.
-fn copy_slice(xs: [f64]): List<f64> {
+priv fn copy_slice(xs: [f64]): List<f64> {
     let mut out = List<f64>.with_capacity(xs.len())
     for x in xs {
         out.push(x)
@@ -29,7 +37,7 @@ fn copy_slice(xs: [f64]): List<f64> {
 }
 
 /// Swaps rows `r1` and `r2` of a row-major list with `rows` rows and `cols` columns.
-fn swap_rows(mut m: List<f64>, cols: usize, r1: usize, r2: usize) {
+priv fn swap_rows(mut m: List<f64>, cols: usize, r1: usize, r2: usize) {
     let mut c: usize = 0
     while c < cols {
         let a = m[r1 * cols + c]
@@ -41,7 +49,7 @@ fn swap_rows(mut m: List<f64>, cols: usize, r1: usize, r2: usize) {
 
 /// The determinant of the `n` by `n` row-major matrix `a`, by elimination with partial pivoting (MA8). It is zero when
 /// a pivot is exactly zero.
-fn determinant_of(n: usize, a: [f64]): f64 {
+priv fn determinant_of(n: usize, a: [f64]): f64 {
     let mut m = copy_slice(a)
     let mut sign = 1.0
     let mut det = 1.0
@@ -84,7 +92,7 @@ fn determinant_of(n: usize, a: [f64]): f64 {
 
 /// The solution `x` of `a * x = b`, where `a` is `n` by `n` and `b` is `n` by `k`, both row-major. Gaussian
 /// elimination with partial pivoting, then back substitution. `None` when a pivot is exactly zero (MA8).
-fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<List<f64>> {
+priv fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<List<f64>> {
     let mut m = copy_slice(a)
     let mut x = copy_slice(b)
     let mut col: usize = 0
@@ -146,11 +154,28 @@ fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<List<f64
 
 DynMatrix {
     /// The matrix of zeros with `rows` rows and `cols` columns.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let z = DynMatrix.zeros(2, 3)
+    /// assert_eq(z.rows(), 2)
+    /// assert_eq(z.cols(), 3)
+    /// assert_eq(z.get(1, 2), 0.0)
+    /// ```
     fn zeros(rows: usize, cols: usize): DynMatrix {
         DynMatrix { nrows: rows, ncols: cols, data: zeros_list(rows * cols) }
     }
 
     /// The identity matrix of size `n`.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let i = DynMatrix.identity(3)
+    /// assert_eq(i.get(1, 1), 1.0)
+    /// assert_eq(i.get(0, 1), 0.0)
+    /// ```
     fn identity(n: usize): DynMatrix {
         let mut out = DynMatrix.zeros(n, n)
         let mut i: usize = 0
@@ -163,6 +188,13 @@ DynMatrix {
 
     /// The matrix with `rows` rows and `cols` columns and the given row-major values. Panics when the number of
     /// values is not `rows * cols`.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// assert_eq(m.get(0, 1), 2.0)
+    /// ```
     fn from_list(rows: usize, cols: usize, own data: List<f64>): DynMatrix {
         let count = data.len()
         if count != rows * cols {
@@ -172,21 +204,49 @@ DynMatrix {
     }
 
     /// The number of rows.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.zeros(3, 2)
+    /// assert_eq(m.rows(), 3)
+    /// ```
     fn rows(self): usize {
         self.nrows
     }
 
     /// The number of columns.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.zeros(3, 2)
+    /// assert_eq(m.cols(), 2)
+    /// ```
     fn cols(self): usize {
         self.ncols
     }
 
     /// Whether the number of rows equals the number of columns.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// assert(DynMatrix.identity(2).is_square())
+    /// assert(!DynMatrix.zeros(2, 3).is_square())
+    /// ```
     fn is_square(self): bool {
         self.nrows == self.ncols
     }
 
     /// The element at row `row` and column `col`. Panics when either index is out of range.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// assert_eq(m.get(1, 1), 4.0)
+    /// ```
     fn get(self, row: usize, col: usize): f64 {
         if row >= self.nrows || col >= self.ncols {
             panic("DynMatrix.get: index out of range")
@@ -195,6 +255,14 @@ DynMatrix {
     }
 
     /// Writes the element at row `row` and column `col`. Panics when either index is out of range.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let mut m = DynMatrix.zeros(2, 2)
+    /// m.set(0, 1, 5.0)
+    /// assert_eq(m.get(0, 1), 5.0)
+    /// ```
     fn set(mut self, row: usize, col: usize, value: f64) {
         if row >= self.nrows || col >= self.ncols {
             panic("DynMatrix.set: index out of range")
@@ -203,6 +271,15 @@ DynMatrix {
     }
 
     /// The transpose: `cols` rows and `rows` columns.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.from_list(2, 3, List.from([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
+    /// let t = m.transpose()
+    /// assert_eq(t.rows(), 3)
+    /// assert_eq(t.get(2, 1), 6.0)
+    /// ```
     fn transpose(self): DynMatrix {
         let mut out = DynMatrix.zeros(self.ncols, self.nrows)
         let mut r: usize = 0
@@ -218,6 +295,13 @@ DynMatrix {
     }
 
     /// Each element times `k`.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let m = DynMatrix.identity(2).scale(3.0)
+    /// assert_eq(m.get(1, 1), 3.0)
+    /// ```
     fn scale(self, k: f64): DynMatrix {
         let mut out = DynMatrix.zeros(self.nrows, self.ncols)
         let mut i: usize = 0
@@ -229,6 +313,14 @@ DynMatrix {
     }
 
     /// The matrix product `self * other`. Panics when `self.cols()` differs from `other.rows()`.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// let p = a.times(DynMatrix.identity(2))
+    /// assert_eq(p.get(1, 0), 3.0)
+    /// ```
     fn times(self, other: DynMatrix): DynMatrix {
         if self.ncols != other.nrows {
             panic("DynMatrix.times: the columns of the left side differ from the rows of the right side")
@@ -253,6 +345,15 @@ DynMatrix {
     }
 
     /// The product of the matrix and the column vector `v`. Panics when `v` has the wrong length.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// let v = a.mul_vector(List.from([1.0, 1.0]).as_slice())
+    /// assert_eq(v[0], 3.0)
+    /// assert_eq(v[1], 7.0)
+    /// ```
     fn mul_vector(self, v: [f64]): List<f64> {
         if v.len() != self.ncols {
             panic("DynMatrix.mul_vector: the vector length differs from the number of columns")
@@ -273,6 +374,13 @@ DynMatrix {
     }
 
     /// The sum of the diagonal. Panics when the matrix is not square.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// assert_eq(a.trace(), 5.0)
+    /// ```
     fn trace(self): f64 {
         if self.nrows != self.ncols {
             panic("DynMatrix.trace: the matrix is not square")
@@ -287,6 +395,13 @@ DynMatrix {
     }
 
     /// The determinant. Panics when the matrix is not square.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([1.0, 2.0, 3.0, 4.0]))
+    /// assert_eq(a.det(), -2.0)
+    /// ```
     fn det(self): f64 {
         if self.nrows != self.ncols {
             panic("DynMatrix.det: the matrix is not square")
@@ -295,6 +410,14 @@ DynMatrix {
     }
 
     /// The inverse, or `None` when the matrix is singular. Panics when the matrix is not square.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([2.0, 0.0, 0.0, 4.0]))
+    /// assert_eq(a.inverse().unwrap().get(1, 1), 0.25)
+    /// assert(DynMatrix.zeros(2, 2).inverse().is_none())
+    /// ```
     fn inverse(self): Option<DynMatrix> {
         if self.nrows != self.ncols {
             panic("DynMatrix.inverse: the matrix is not square")
@@ -309,6 +432,16 @@ DynMatrix {
 
     /// The matrix `x` with `self * x = b`, or `None` when `self` is singular. Panics when the matrix is not square
     /// or `b` does not have as many rows as it does.
+    ///
+    /// ```
+    /// # use math
+    /// # use math.{DynMatrix, Matrix, Vector}
+    /// let a = DynMatrix.from_list(2, 2, List.from([2.0, 0.0, 0.0, 4.0]))
+    /// let b = DynMatrix.from_list(2, 1, List.from([2.0, 8.0]))
+    /// let x = a.solve(b).unwrap()
+    /// assert_eq(x.get(0, 0), 1.0)
+    /// assert_eq(x.get(1, 0), 2.0)
+    /// ```
     fn solve(self, b: DynMatrix): Option<DynMatrix> {
         if self.nrows != self.ncols {
             panic("DynMatrix.solve: the matrix is not square")

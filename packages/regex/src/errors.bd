@@ -1,12 +1,31 @@
 // The error every pattern the package rejects reports (spec/regex.md, RX3).
 
 /// A pattern that is not valid. `at` is the byte offset in the pattern of the token the error is about.
+///
+/// ```
+/// # use regex.{Regex}
+/// match Regex.new("(") {
+///     Ok(_) => assert(false),
+///     Err(err) => {
+///         assert_eq(err.offset(), 0)
+///         assert_eq(err.reason().as_str(), "unclosed group")
+///     }
+/// }
+/// ```
 error enum RegexError: Eq, Debug {
     Syntax { at: usize, message: String } "invalid regex at byte {at}: {message}",
 }
 
 RegexError {
     /// The byte offset in the pattern of the token the error is about.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// match Regex.new("a(b") {
+    ///     Ok(_) => assert(false),
+    ///     Err(err) => assert_eq(err.offset(), 1),
+    /// }
+    /// ```
     fn offset(self): usize {
         match self {
             RegexError.Syntax { at, message } => at,
@@ -14,6 +33,14 @@ RegexError {
     }
 
     /// What is wrong, without the position.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// match Regex.new("a)") {
+    ///     Ok(_) => assert(false),
+    ///     Err(err) => assert_eq(err.reason().as_str(), "unopened group"),
+    /// }
+    /// ```
     fn reason(self): String {
         match self {
             RegexError.Syntax { at, message } => message.clone(),

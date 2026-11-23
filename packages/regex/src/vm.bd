@@ -9,7 +9,7 @@ use parse.Assertion
 
 /// The threads of one step: their program counters in priority order, their capture slots (`slots` per thread, in a
 /// flat list), and the program counters already visited this step. `seen[pc] == gen` means visited.
-struct Threads {
+priv struct Threads {
     pcs: List<usize>,
     slots: List<Option<usize>>,
     seen: List<usize>,
@@ -17,7 +17,7 @@ struct Threads {
 }
 
 Threads {
-    fn new(size: usize): Threads {
+    priv fn new(size: usize): Threads {
         let mut seen = List<usize>.new()
         let mut i: usize = 0
         while i < size {
@@ -27,31 +27,31 @@ Threads {
         Threads { pcs: List<usize>.new(), slots: List<Option<usize>>.new(), seen: seen, gen: 1 }
     }
 
-    fn clear(mut self) {
+    priv fn clear(mut self) {
         self.pcs.clear()
         self.slots.clear()
         self.gen = self.gen + 1
     }
 
-    fn contains(self, pc: usize): bool {
+    priv fn contains(self, pc: usize): bool {
         self.seen[pc] == self.gen
     }
 
-    fn mark(mut self, pc: usize) {
+    priv fn mark(mut self, pc: usize) {
         self.seen[pc] = self.gen
     }
 }
 
 /// A step of the empty-transition walk: follow an instruction, or restore a capture slot when the walk returns from
 /// the branch that set it.
-enum Work: Copy, Clone, Eq, Debug {
+priv enum Work: Copy, Clone, Eq, Debug {
     Visit(usize)
     Restore(usize, Option<usize>)
 }
 
 /// The scratch state of one search: two thread lists (the current one and the next one, chosen by index), the
 /// capture slots of the walk, and its stack.
-struct Pike {
+priv struct Pike {
     lists: List<Threads>,
     caps: List<Option<usize>>,
     stack: List<Work>,
@@ -59,7 +59,7 @@ struct Pike {
 }
 
 Pike {
-    fn new(size: usize, slots: usize): Pike {
+    priv fn new(size: usize, slots: usize): Pike {
         let mut lists = List<Threads>.new()
         lists.push(Threads.new(size))
         lists.push(Threads.new(size))
@@ -72,7 +72,7 @@ Pike {
         Pike { lists: lists, caps: caps, stack: List<Work>.new(), slots: slots }
     }
 
-    fn reset_caps(mut self) {
+    priv fn reset_caps(mut self) {
         let mut k: usize = 0
         while k < self.slots {
             self.caps[k] = None
@@ -81,7 +81,7 @@ Pike {
     }
 
     /// Loads the capture slots of thread `index` of list `which` into the walk's slots.
-    fn load(mut self, which: usize, index: usize) {
+    priv fn load(mut self, which: usize, index: usize) {
         let base = index * self.slots
         let mut k: usize = 0
         while k < self.slots {
@@ -91,7 +91,7 @@ Pike {
     }
 
     /// The capture slots of thread `index` of list `which`, as a copy.
-    fn thread_slots(self, which: usize, index: usize): List<Option<usize>> {
+    priv fn thread_slots(self, which: usize, index: usize): List<Option<usize>> {
         let mut out = List<Option<usize>>.new()
         let base = index * self.slots
         let mut k: usize = 0
@@ -104,7 +104,7 @@ Pike {
 
     /// Adds a thread for `pc` and for every instruction it reaches without consuming a character, in priority order.
     /// `prev` and `next` are the characters on either side of `pos`, for the assertions.
-    fn add(mut self, prog: &Program, which: usize, start_pc: usize, pos: usize, prev: Option<char>, next: Option<char>) {
+    priv fn add(mut self, prog: &Program, which: usize, start_pc: usize, pos: usize, prev: Option<char>, next: Option<char>) {
         self.stack.push(Work.Visit(start_pc))
         loop {
             match self.stack.pop() {
@@ -142,7 +142,7 @@ Pike {
     }
 
     /// Appends a consuming (or `Match`) thread with the walk's current slots.
-    fn push_thread(mut self, which: usize, pc: usize) {
+    priv fn push_thread(mut self, which: usize, pc: usize) {
         self.lists[which].pcs.push(pc)
         let mut k: usize = 0
         while k < self.slots {
@@ -154,7 +154,7 @@ Pike {
 }
 
 /// Whether a zero-width test holds at `pos`, given the characters before and after it (RX5, RX6, RX14).
-fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>, pos: usize): bool {
+priv fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>, pos: usize): bool {
     match kind {
         Assertion.TextStart => pos == 0,
         Assertion.TextEnd => next.is_none(),
@@ -171,7 +171,7 @@ fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>, pos:
     }
 }
 
-fn word_at(c: Option<char>): bool {
+priv fn word_at(c: Option<char>): bool {
     match c {
         None => false,
         Some(x) => is_word_char(x),
@@ -179,7 +179,7 @@ fn word_at(c: Option<char>): bool {
 }
 
 /// Whether the instruction's character test holds for `c` (a `Char` with a folded flag compares lower case).
-fn char_matches(c: char, want: char, fold: bool): bool {
+priv fn char_matches(c: char, want: char, fold: bool): bool {
     if fold {
         c.to_lowercase() == want
     } else {
@@ -189,7 +189,7 @@ fn char_matches(c: char, want: char, fold: bool): bool {
 
 /// The character that starts at byte `pos` and its width in bytes, or None at the end of the text. The text is valid
 /// UTF-8 (RX14), so the lead byte says how many bytes follow.
-fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
+priv fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
     if pos >= bytes.len() {
         return None
     }
@@ -224,7 +224,7 @@ fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
 }
 
 /// The character that ends at byte `pos`, or None at the start of the text.
-fn char_before(bytes: [u8], pos: usize): Option<char> {
+priv fn char_before(bytes: [u8], pos: usize): Option<char> {
     if pos == 0 || pos > bytes.len() {
         return None
     }
@@ -242,7 +242,7 @@ fn char_before(bytes: [u8], pos: usize): Option<char> {
 /// slots of the match (`2 * (groups + 1)` of them, `None` for a slot that did not take part), or None when nothing
 /// matches. With `forbid_empty`, an empty match at `start` does not count (RX10): the search goes on to the next
 /// match in priority order, which may be a non-empty one at the same position.
-fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Option<List<Option<usize>>> {
+priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Option<List<Option<usize>>> {
     let size = prog.code.len()
     let mut vm = Pike.new(size, prog.slots)
     let mut cur: usize = 0

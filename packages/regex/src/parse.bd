@@ -7,12 +7,12 @@ use classes.{CharClass, ClassItem, posix_items}
 use errors.RegexError
 
 /// The repetition count the pattern may use (RX7).
-const MAX_REPEAT: u32 = 1000
+priv const MAX_REPEAT: u32 = 1000
 /// The deepest nesting of groups the pattern may use (RX7).
-const MAX_DEPTH: usize = 100
+priv const MAX_DEPTH: usize = 100
 
 /// A zero-width test (RX5, RX14).
-enum Assertion: Copy, Clone, Eq, Debug {
+priv enum Assertion: Copy, Clone, Eq, Debug {
     TextStart
     TextEnd
     LineStart
@@ -22,7 +22,7 @@ enum Assertion: Copy, Clone, Eq, Debug {
 }
 
 /// One node of the tree. `Char` holds the lower-case form of the character when `fold` is set (RX6).
-enum Node: Copy, Clone, Eq, Debug {
+priv enum Node: Copy, Clone, Eq, Debug {
     Empty
     Char(char, bool)
     Any(bool)
@@ -35,7 +35,7 @@ enum Node: Copy, Clone, Eq, Debug {
 }
 
 /// A parsed pattern: the arena, the classes, the root, and the groups. `names[i]` names group `i + 1`.
-struct Parsed {
+priv struct Parsed {
     nodes: List<Node>,
     refs: List<usize>,
     classes: List<CharClass>,
@@ -46,12 +46,12 @@ struct Parsed {
 }
 
 /// One item of a bracket class: a single character (which may start a range), or a set of items.
-enum ClassAtom {
+priv enum ClassAtom {
     Char(char)
     Items(List<ClassItem>)
 }
 
-struct Parser {
+priv struct Parser {
     chars: List<char>,
     offsets: List<usize>,
     total: usize,
@@ -69,7 +69,7 @@ struct Parser {
 }
 
 Parser {
-    fn new(pattern: str): Parser {
+    priv fn new(pattern: str): Parser {
         let mut chars = List<char>.new()
         let mut offsets = List<usize>.new()
         for (offset, c) in pattern.char_indices() {
@@ -94,11 +94,11 @@ Parser {
         }
     }
 
-    fn at_end(self): bool {
+    priv fn at_end(self): bool {
         self.pos >= self.chars.len()
     }
 
-    fn peek(self): Option<char> {
+    priv fn peek(self): Option<char> {
         if self.pos < self.chars.len() {
             Some(self.chars[self.pos])
         } else {
@@ -106,7 +106,7 @@ Parser {
         }
     }
 
-    fn peek_at(self, ahead: usize): Option<char> {
+    priv fn peek_at(self, ahead: usize): Option<char> {
         let index = self.pos + ahead
         if index < self.chars.len() {
             Some(self.chars[index])
@@ -116,7 +116,7 @@ Parser {
     }
 
     /// The byte offset of the current character, or the length of the pattern at its end.
-    fn offset(self): usize {
+    priv fn offset(self): usize {
         if self.pos < self.offsets.len() {
             self.offsets[self.pos]
         } else {
@@ -124,21 +124,21 @@ Parser {
         }
     }
 
-    fn bump(mut self) {
+    priv fn bump(mut self) {
         self.pos = self.pos + 1
     }
 
-    fn fail(self, at: usize, message: str): RegexError {
+    priv fn fail(self, at: usize, message: str): RegexError {
         RegexError.Syntax { at: at, message: message.to_string() }
     }
 
-    fn add(mut self, node: Node): usize {
+    priv fn add(mut self, node: Node): usize {
         self.nodes.push(node)
         self.nodes.len() - 1
     }
 
     /// Stores the items of a sequence or an alternation and returns the node that names them.
-    fn sequence(mut self, items: List<usize>, alternation: bool): usize {
+    priv fn sequence(mut self, items: List<usize>, alternation: bool): usize {
         let start = self.refs.len()
         let count = items.len()
         let mut i: usize = 0
@@ -154,7 +154,7 @@ Parser {
     }
 
     /// A literal character, folded to lower case under `i` (RX6).
-    fn literal(self, c: char): Node {
+    priv fn literal(self, c: char): Node {
         if self.icase {
             Node.Char(c.to_lowercase(), true)
         } else {
@@ -163,7 +163,7 @@ Parser {
     }
 
     /// Skips white space and `#` comments under `x` (RX6).
-    fn skip_verbose(mut self) {
+    priv fn skip_verbose(mut self) {
         if !self.verbose {
             return
         }
@@ -194,7 +194,7 @@ Parser {
     }
 
     /// Alternatives separated by `|`.
-    fn parse_alt(mut self): Result<usize, RegexError> {
+    priv fn parse_alt(mut self): Result<usize, RegexError> {
         let first = self.parse_concat()?
         if self.peek() != Some('|') {
             return Ok(first)
@@ -210,7 +210,7 @@ Parser {
     }
 
     /// Repeated atoms up to a `|`, a `)`, or the end. An empty run is an `Empty` node.
-    fn parse_concat(mut self): Result<usize, RegexError> {
+    priv fn parse_concat(mut self): Result<usize, RegexError> {
         let mut items = List<usize>.new()
         loop {
             self.skip_verbose()
@@ -233,7 +233,7 @@ Parser {
     }
 
     /// An atom with at most one quantifier after it (RX2). A second quantifier is an error.
-    fn parse_repeat(mut self): Result<usize, RegexError> {
+    priv fn parse_repeat(mut self): Result<usize, RegexError> {
         let atom = self.parse_atom()?
         self.skip_verbose()
         let quantifier_at = self.offset()
@@ -276,7 +276,7 @@ Parser {
     }
 
     /// Whether `node` is one a quantifier may not apply to: an empty group, a flag group, or an assertion.
-    fn is_zero_width(self, node: usize): bool {
+    priv fn is_zero_width(self, node: usize): bool {
         match self.nodes[node] {
             Node.Empty => true,
             Node.Assert(_) => true,
@@ -285,7 +285,7 @@ Parser {
     }
 
     /// The bounds of `{n}`, `{n,}`, or `{n,m}` at the current `{` (RX2, RX7).
-    fn brace(mut self): Result<(u32, Option<u32>), RegexError> {
+    priv fn brace(mut self): Result<(u32, Option<u32>), RegexError> {
         let at = self.offset()
         self.bump()
         let min = match self.number() {
@@ -317,7 +317,7 @@ Parser {
 
     /// The decimal number at the current position, if there is one. A count past 100000 stops growing, which is
     /// still past the limit.
-    fn number(mut self): Option<u32> {
+    priv fn number(mut self): Option<u32> {
         let mut value: u32 = 0
         let mut saw_digit = false
         loop {
@@ -343,7 +343,7 @@ Parser {
     }
 
     /// One atom: a group, a class, an escape, an anchor, `.`, or a literal (RX2).
-    fn parse_atom(mut self): Result<usize, RegexError> {
+    priv fn parse_atom(mut self): Result<usize, RegexError> {
         let c = match self.peek() {
             Some(c) => c,
             None => return Ok(self.add(Node.Empty)),
@@ -385,7 +385,7 @@ Parser {
     }
 
     /// A group after its `(`: a capture, a named capture, a non-capturing group, or a flag setting (RX2, RX6).
-    fn parse_group(mut self): Result<usize, RegexError> {
+    priv fn parse_group(mut self): Result<usize, RegexError> {
         let open = self.offset()
         self.bump()
         let icase = self.icase
@@ -457,7 +457,7 @@ Parser {
     }
 
     /// The body of a group: the alternatives up to the closing `)`, with the nesting checked (RX7).
-    fn body(mut self, open: usize): Result<usize, RegexError> {
+    priv fn body(mut self, open: usize): Result<usize, RegexError> {
         self.depth = self.depth + 1
         if self.depth > MAX_DEPTH {
             return Err(self.fail(open, "nesting is too deep"))
@@ -472,7 +472,7 @@ Parser {
     }
 
     /// The name of a named group: `<name>` at the current `<`, with the `>` consumed.
-    fn group_name(mut self, open: usize): Result<String, RegexError> {
+    priv fn group_name(mut self, open: usize): Result<String, RegexError> {
         if self.peek() != Some('<') {
             return Err(self.fail(open, "invalid group name"))
         }
@@ -509,7 +509,7 @@ Parser {
     }
 
     /// The flags after `(?` up to `)` or `:` (RX6), applied to the parser. Returns true for `:`, which opens a group.
-    fn flags(mut self, open: usize): Result<bool, RegexError> {
+    priv fn flags(mut self, open: usize): Result<bool, RegexError> {
         let mut on = true
         loop {
             let at = self.offset()
@@ -548,7 +548,7 @@ Parser {
     }
 
     /// An escape outside a class (RX2).
-    fn parse_escape(mut self): Result<usize, RegexError> {
+    priv fn parse_escape(mut self): Result<usize, RegexError> {
         let at = self.offset()
         self.bump()
         let c = match self.peek() {
@@ -578,7 +578,7 @@ Parser {
     }
 
     /// The item of a class escape whose letter `c` was just read (`d`, `W`, `p{L}`, ...).
-    fn class_escape(mut self, at: usize, c: char): Result<ClassItem, RegexError> {
+    priv fn class_escape(mut self, at: usize, c: char): Result<ClassItem, RegexError> {
         match c {
             'd' => Ok(ClassItem.Digit(false)),
             'D' => Ok(ClassItem.Digit(true)),
@@ -602,7 +602,7 @@ Parser {
     }
 
     /// The name of a `\p` property: `{Name}`, or the one letter after the `p`.
-    fn property_name(mut self, at: usize): Result<String, RegexError> {
+    priv fn property_name(mut self, at: usize): Result<String, RegexError> {
         let mut name = String.new()
         if self.peek() == Some('{') {
             self.bump()
@@ -632,7 +632,7 @@ Parser {
     }
 
     /// The character an escape stands for, after its letter `c` was read: `\n`, `\x41`, or punctuation (RX2).
-    fn escape_char(mut self, at: usize, c: char): Result<char, RegexError> {
+    priv fn escape_char(mut self, at: usize, c: char): Result<char, RegexError> {
         match c {
             'n' => Ok(code_char(10)),
             't' => Ok(code_char(9)),
@@ -654,7 +654,7 @@ Parser {
     }
 
     /// The code point of `\xHH` or `\x{H...}`, after the `x` (RX2).
-    fn hex_escape(mut self, at: usize): Result<char, RegexError> {
+    priv fn hex_escape(mut self, at: usize): Result<char, RegexError> {
         let mut value: u32 = 0
         if self.peek() == Some('{') {
             self.bump()
@@ -705,7 +705,7 @@ Parser {
     }
 
     /// A bracket class from its `[` to its `]` (RX5).
-    fn parse_class(mut self): Result<usize, RegexError> {
+    priv fn parse_class(mut self): Result<usize, RegexError> {
         let open = self.offset()
         self.bump()
         let mut negated = false
@@ -755,7 +755,7 @@ Parser {
     }
 
     /// One item of a class: a POSIX set, a class escape, an escaped character, or a plain character.
-    fn class_atom(mut self, at: usize): Result<ClassAtom, RegexError> {
+    priv fn class_atom(mut self, at: usize): Result<ClassAtom, RegexError> {
         if self.peek() == Some('[') && self.peek_at(1) == Some(':') {
             if let Some(end) = self.posix_end() {
                 return self.posix(at, end)
@@ -786,7 +786,7 @@ Parser {
 
     /// The position after `:]` when the text at `[:` is a POSIX class name, with an optional `^`. Otherwise None, and
     /// the `[` is a literal character.
-    fn posix_end(self): Option<usize> {
+    priv fn posix_end(self): Option<usize> {
         let mut k = self.pos + 2
         if k < self.chars.len() && self.chars[k] == '^' {
             k = k + 1
@@ -803,7 +803,7 @@ Parser {
     }
 
     /// The POSIX class from the current `[:` to `end` (RX5).
-    fn posix(mut self, at: usize, end: usize): Result<ClassAtom, RegexError> {
+    priv fn posix(mut self, at: usize, end: usize): Result<ClassAtom, RegexError> {
         self.bump()
         self.bump()
         let mut negated = false
@@ -825,7 +825,7 @@ Parser {
 }
 
 /// The character with code point `code`. The callers pass only the ASCII control codes they name, which are valid.
-fn code_char(code: u32): char {
+priv fn code_char(code: u32): char {
     match code.to_char() {
         Some(c) => c,
         None => '\0',
@@ -833,7 +833,7 @@ fn code_char(code: u32): char {
 }
 
 /// Parses `pattern` into a tree (RX2 to RX7), or reports the first error.
-fn parse(pattern: str): Result<Parsed, RegexError> {
+priv fn parse(pattern: str): Result<Parsed, RegexError> {
     let mut parser = Parser.new(pattern)
     let root = parser.parse_alt()?
     if !parser.at_end() {

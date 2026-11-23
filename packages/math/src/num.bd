@@ -1,6 +1,12 @@
 // Integer number theory and scalar functions (spec/math.md, MA3 and MA4).
 
 /// The greatest common divisor; `gcd(0, 0)` is `0`.
+///
+/// ```
+/// # use math
+/// assert_eq(math.gcd(12, 18), 6)
+/// assert_eq(math.gcd(0, 0), 0)
+/// ```
 fn gcd(a: u64, b: u64): u64 {
     let mut x = a
     let mut y = b
@@ -13,6 +19,12 @@ fn gcd(a: u64, b: u64): u64 {
 }
 
 /// The least common multiple, or `None` when it does not fit in a `u64`.
+///
+/// ```
+/// # use math
+/// assert_eq(math.lcm(4, 6).unwrap(), 12)
+/// assert(math.lcm(0, 5).unwrap() == 0)
+/// ```
 fn lcm(a: u64, b: u64): Option<u64> {
     if a == 0 || b == 0 {
         return Some(0)
@@ -22,12 +34,17 @@ fn lcm(a: u64, b: u64): Option<u64> {
 }
 
 /// The product of `a` and `b` modulo `m`, computed in `u128` so it cannot overflow. `m` must not be zero.
-fn mulmod(a: u64, b: u64, m: u64): u64 {
+priv fn mulmod(a: u64, b: u64, m: u64): u64 {
     let wide = (a as u128) * (b as u128)
     ((wide % (m as u128)) as u64)
 }
 
 /// `base` to the power `exp`, modulo `modulus`. Panics when the modulus is zero.
+///
+/// ```
+/// # use math
+/// assert_eq(math.mod_pow(2, 10, 1000), 24)
+/// ```
 fn mod_pow(base: u64, exp: u64, modulus: u64): u64 {
     if modulus == 0 {
         panic("mod_pow: the modulus is zero")
@@ -46,7 +63,7 @@ fn mod_pow(base: u64, exp: u64, modulus: u64): u64 {
 }
 
 /// One Miller-Rabin round for `n`, with `n - 1 = d * 2^r` and `d` odd. True when `a` shows that `n` is composite.
-fn miller_rabin_composite(n: u64, d: u64, r: u64, a: u64): bool {
+priv fn miller_rabin_composite(n: u64, d: u64, r: u64, a: u64): bool {
     let mut x = mod_pow(a, d, n)
     if x == 1 || x == n - 1 {
         return false
@@ -63,6 +80,12 @@ fn miller_rabin_composite(n: u64, d: u64, r: u64, a: u64): bool {
 }
 
 /// Whether `n` is prime. The Miller-Rabin test with the first twelve primes as witnesses is exact for every `u64`.
+///
+/// ```
+/// # use math
+/// assert(math.is_prime(97))
+/// assert(!math.is_prime(91))
+/// ```
 fn is_prime(n: u64): bool {
     if n < 2 {
         return false
@@ -93,6 +116,12 @@ fn is_prime(n: u64): bool {
 }
 
 /// `n!`, or `None` when it does not fit in a `u64` (from `21!` on).
+///
+/// ```
+/// # use math
+/// assert_eq(math.factorial(5).unwrap(), 120)
+/// assert(math.factorial(21).is_none())
+/// ```
 fn factorial(n: u64): Option<u64> {
     let mut result: u64 = 1
     let mut i: u64 = 2
@@ -111,6 +140,12 @@ fn factorial(n: u64): Option<u64> {
 }
 
 /// `n` choose `k`: `Some(0)` when `k > n`, and `None` when the value does not fit in a `u64`.
+///
+/// ```
+/// # use math
+/// assert_eq(math.binomial(5, 2).unwrap(), 10)
+/// assert_eq(math.binomial(2, 5).unwrap(), 0)
+/// ```
 fn binomial(n: u64, k: u64): Option<u64> {
     if k > n {
         return Some(0)
@@ -133,11 +168,23 @@ fn binomial(n: u64, k: u64): Option<u64> {
 }
 
 /// The point `(1 - t) * a + t * b`: `t = 0` gives `a` and `t = 1` gives `b` exactly.
+///
+/// ```
+/// # use math
+/// assert_eq(math.lerp(0.0, 10.0, 0.5), 5.0)
+/// assert_eq(math.lerp(2.0, 4.0, 1.0), 4.0)
+/// ```
 fn lerp(a: f64, b: f64, t: f64): f64 {
     (1.0 - t) * a + t * b
 }
 
 /// Whether `a` and `b` are within `abs_tol`, or within `rel_tol` of the larger magnitude. Panics on a negative tolerance.
+///
+/// ```
+/// # use math
+/// assert(math.approx_eq(0.3, 0.30000000001, 0.000000001, 0.0))
+/// assert(!math.approx_eq(1.0, 1.1, 0.01, 0.0))
+/// ```
 fn approx_eq(a: f64, b: f64, rel_tol: f64, abs_tol: f64): bool {
     if rel_tol < 0.0 || abs_tol < 0.0 {
         panic("approx_eq: a tolerance is negative")
@@ -154,6 +201,11 @@ fn approx_eq(a: f64, b: f64, rel_tol: f64, abs_tol: f64): bool {
 }
 
 /// The polynomial `c[0] + c[1] x + c[2] x^2 + ...` at `x`, by Horner's rule. Zero for no coefficients.
+///
+/// ```
+/// # use math
+/// assert_eq(math.poly_eval(List.from([1.0, 2.0, 3.0]).as_slice(), 2.0), 17.0)
+/// ```
 fn poly_eval(coefficients: [f64], x: f64): f64 {
     let mut acc = 0.0
     let mut i = coefficients.len()
@@ -166,6 +218,12 @@ fn poly_eval(coefficients: [f64], x: f64): f64 {
 
 /// A root of `f` between `low` and `high`, found by halving the interval. `None` when `f` has the same sign at both
 /// ends. Panics when `tolerance` is not positive.
+///
+/// ```
+/// # use math
+/// let root = math.bisect(|x: f64| x * x - 2.0, 0.0, 2.0, 0.000001).unwrap()
+/// assert(math.approx_eq(root, 1.41421356, 0.00001, 0.0))
+/// ```
 fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f64> {
     if !(tolerance > 0.0) {
         panic("bisect: the tolerance must be positive")
@@ -204,6 +262,12 @@ fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f6
 
 /// The composite Simpson rule for the integral of `f` over `a..b`. An odd `intervals` is rounded up to even. Panics
 /// when `intervals` is zero.
+///
+/// ```
+/// # use math
+/// let area = math.simpson(|x: f64| x * x, 0.0, 3.0, 10)
+/// assert(math.approx_eq(area, 9.0, 0.000001, 0.0))
+/// ```
 fn simpson<F: Fn(f64): f64>(f: F, a: f64, b: f64, intervals: usize): f64 {
     if intervals == 0 {
         panic("simpson: needs at least one interval")

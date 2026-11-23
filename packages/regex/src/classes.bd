@@ -2,7 +2,7 @@
 // sets, and the case-insensitive test. A class is a list of items; a character is in it when one item holds it.
 
 /// One member of a class. A predicate item's `bool` is whether it is negated (`\D`, `\P{L}`).
-enum ClassItem: Copy, Clone, Eq, Debug {
+priv enum ClassItem: Copy, Clone, Eq, Debug {
     Range(u32, u32)
     Digit(bool)
     Word(bool)
@@ -14,11 +14,11 @@ enum ClassItem: Copy, Clone, Eq, Debug {
 }
 
 /// The word characters: a letter or a digit (as `std` classifies them), or `_`.
-fn is_word_char(c: char): bool {
+priv fn is_word_char(c: char): bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn item_matches(item: ClassItem, c: char): bool {
+priv fn item_matches(item: ClassItem, c: char): bool {
     match item {
         ClassItem.Range(lo, hi) => {
             let code = c as u32
@@ -35,19 +35,19 @@ fn item_matches(item: ClassItem, c: char): bool {
 }
 
 /// A bracket class, or a single escape such as `\d`. `fold` makes the test case-insensitive.
-struct CharClass {
+priv struct CharClass {
     items: List<ClassItem>,
     negated: bool,
     fold: bool,
 }
 
 CharClass {
-    fn new(negated: bool, fold: bool): CharClass {
+    priv fn new(negated: bool, fold: bool): CharClass {
         CharClass { items: List<ClassItem>.new(), negated: negated, fold: fold }
     }
 
     /// Whether some item holds `c`, without the negation or the case folding.
-    fn any_item(self, c: char): bool {
+    priv fn any_item(self, c: char): bool {
         let mut i: usize = 0
         while i < self.items.len() {
             if item_matches(self.items[i], c) {
@@ -60,7 +60,7 @@ CharClass {
 
     /// Whether the class holds `c`. With `fold`, the lower and upper forms of `c` count as `c`, and a negated class
     /// excludes them too.
-    fn matches(self, c: char): bool {
+    priv fn matches(self, c: char): bool {
         let mut hit = self.any_item(c)
         if !hit && self.fold {
             hit = self.any_item(c.to_lowercase()) || self.any_item(c.to_uppercase())
@@ -70,7 +70,7 @@ CharClass {
 }
 
 /// The ranges of a POSIX class, sorted and without overlap, so a negated one is their complement.
-fn posix_ranges(name: str): Option<List<(u32, u32)>> {
+priv fn posix_ranges(name: str): Option<List<(u32, u32)>> {
     let mut r = List<(u32, u32)>.new()
     match name {
         "alpha" => {
@@ -124,7 +124,7 @@ fn posix_ranges(name: str): Option<List<(u32, u32)>> {
 
 /// The items of the POSIX class `name` (`[:alpha:]`), or of its complement when `negated` (`[:^alpha:]`). None when
 /// the name is not a POSIX class.
-fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
+priv fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
     let ranges = match posix_ranges(name) {
         Some(r) => r,
         None => return None,

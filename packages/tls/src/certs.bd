@@ -60,7 +60,7 @@ use schannel.{
 }
 
 /// The bytes of a file as text.
-fn read_text(path: str): Result<String, TlsError> {
+priv fn read_text(path: str): Result<String, TlsError> {
     let bytes = fs.read(path)?
     Ok(String.from_utf8_lossy(bytes[0..bytes.len()]))
 }
@@ -68,6 +68,14 @@ fn read_text(path: str): Result<String, TlsError> {
 // ----- certificates ---------------------------------------------------------------------------------------------
 
 /// An X.509 certificate. `duplicate` makes a second owner of the same certificate.
+///
+/// ```
+/// # use tls
+/// # use tls.{Certificate}
+/// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+/// let cert = Certificate.from_pem(cert_pem).unwrap()
+/// assert_eq(cert.subject(), "/CN=localhost".to_string())
+/// ```
 struct Certificate {
     priv handle: CPtr<X509>,
 }
@@ -77,7 +85,7 @@ unsafe Certificate: Send {}
 unsafe Certificate: Sync {}
 
 /// Every certificate in a PEM text, in order. Text with no certificate gives an empty list.
-fn read_pem_certificates(pem: str): List<Certificate> {
+priv fn read_pem_certificates(pem: str): List<Certificate> {
     comptime if target.os() == target.Os.Windows {
         let mut found = List<Certificate>.new()
         unsafe {
@@ -117,6 +125,15 @@ fn read_pem_certificates(pem: str): List<Certificate> {
 
 Certificate {
     /// Reads the first certificate of a PEM text. Text that holds none is `TlsError.BadCertificate`.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert_eq(cert.subject(), "/CN=localhost".to_string())
+    /// assert(Certificate.from_pem("not a certificate").is_err())
+    /// ```
     fn from_pem(pem: str): Result<Certificate, TlsError> {
         let all = read_pem_certificates(pem)
         for cert in all.into_iter() {
@@ -126,6 +143,16 @@ Certificate {
     }
 
     /// Reads every certificate of a PEM text (a chain or a bundle), in order. At least one is required.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let mut chain = Certificate.chain_from_pem(cert_pem).unwrap()
+    /// assert_eq(chain.len(), 1)
+    /// let leaf = chain.pop().unwrap()
+    /// assert_eq(leaf.subject(), "/CN=localhost".to_string())
+    /// ```
     fn chain_from_pem(pem: str): Result<List<Certificate>, TlsError> {
         let all = read_pem_certificates(pem)
         if all.is_empty() {
@@ -135,6 +162,15 @@ Certificate {
     }
 
     /// Reads one certificate from its DER encoding.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let der = Certificate.from_pem(cert_pem).unwrap().to_der()
+    /// let cert = Certificate.from_der(der.as_slice()).unwrap()
+    /// assert_eq(cert.subject(), "/CN=localhost".to_string())
+    /// ```
     fn from_der(data: [u8]): Result<Certificate, TlsError> {
         comptime if target.os() == target.Os.Windows {
             if data.len() == 0 {
@@ -166,18 +202,39 @@ Certificate {
     }
 
     /// Reads the first certificate of a PEM file.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// let cert = Certificate.load_pem_file("certs/self_signed.pem").unwrap()
+    /// ```
     fn load_pem_file(path: str): Result<Certificate, TlsError> {
         let text = read_text(path)?
         Certificate.from_pem(text.as_str())
     }
 
     /// Reads every certificate of a PEM file.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// let chain = Certificate.load_chain_file("certs/chain.pem").unwrap()
+    /// ```
     fn load_chain_file(path: str): Result<List<Certificate>, TlsError> {
         let text = read_text(path)?
         Certificate.chain_from_pem(text.as_str())
     }
 
     /// A second owner of the same certificate (the library's `Clone` cannot be written by hand yet).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// let copy = cert.duplicate()
+    /// assert_eq(copy.fingerprint(), cert.fingerprint())
+    /// ```
     fn duplicate(self): Certificate {
         comptime if target.os() == target.Os.Windows {
             unsafe {
@@ -194,6 +251,15 @@ Certificate {
     }
 
     /// The DER encoding.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// let der = cert.to_der()
+    /// assert_eq(der[0], 48)
+    /// ```
     fn to_der(self): List<u8> {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_der(self.handle as CPtr<CertContext>) }
@@ -217,6 +283,14 @@ Certificate {
     }
 
     /// The subject in OpenSSL's one-line form (`/CN=localhost`).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert_eq(cert.subject(), "/CN=localhost".to_string())
+    /// ```
     fn subject(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_subject(self.handle as CPtr<CertContext>) }
@@ -228,6 +302,14 @@ Certificate {
     }
 
     /// The issuer in OpenSSL's one-line form.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert_eq(cert.issuer(), "/CN=localhost".to_string())
+    /// ```
     fn issuer(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_issuer(self.handle as CPtr<CertContext>) }
@@ -239,6 +321,14 @@ Certificate {
     }
 
     /// The start of the validity period (`Jan  1 00:00:00 2020 GMT`).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert(cert.not_before().len() > 0)
+    /// ```
     fn not_before(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_not_before(self.handle as CPtr<CertContext>) }
@@ -250,6 +340,14 @@ Certificate {
     }
 
     /// The end of the validity period.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert(cert.not_after().len() > 0)
+    /// ```
     fn not_after(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_not_after(self.handle as CPtr<CertContext>) }
@@ -261,6 +359,14 @@ Certificate {
     }
 
     /// The SHA-256 of the DER encoding, as 64 lower-case hex digits.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let cert = Certificate.from_pem(cert_pem).unwrap()
+    /// assert_eq(cert.fingerprint().len(), 64)
+    /// ```
     fn fingerprint(self): String {
         comptime if target.os() == target.Os.Windows {
             unsafe { cert_fingerprint(self.handle as CPtr<CertContext>) }
@@ -302,7 +408,7 @@ Certificate: Drop {
 }
 
 /// An `X509_NAME` as OpenSSL's one-line text.
-unsafe fn name_text(name: CPtr<X509Name>): String {
+priv unsafe fn name_text(name: CPtr<X509Name>): String {
     comptime if features.openssl {
         let mut buffer = List<u8>.new()
         for _ in 0..512 {
@@ -316,7 +422,7 @@ unsafe fn name_text(name: CPtr<X509Name>): String {
 }
 
 /// An `ASN1_TIME` as OpenSSL prints it.
-unsafe fn time_text(time: CPtr<Asn1Time>): String {
+priv unsafe fn time_text(time: CPtr<Asn1Time>): String {
     comptime if features.openssl {
         let bio = BIO_new(BIO_s_mem())
         if bio.is_null() {
@@ -341,6 +447,13 @@ unsafe fn time_text(time: CPtr<Asn1Time>): String {
 // ----- private keys ---------------------------------------------------------------------------------------------
 
 /// A private key: RSA, ECDSA, or Ed25519, unencrypted (an encrypted key is refused; spec/tls.md, TLS4).
+///
+/// ```
+/// # use tls
+/// # use tls.{PrivateKey}
+/// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+/// let _key = PrivateKey.from_pem(key_pem).unwrap()
+/// ```
 struct PrivateKey {
     priv handle: CPtr<EvpPkey>,
 }
@@ -351,6 +464,14 @@ unsafe PrivateKey: Sync {}
 PrivateKey {
     /// Reads a PEM private key (PKCS#8, or the older RSA and EC forms). An encrypted key is `TlsError.BadKey`: the
     /// package has no way to ask for a password.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{PrivateKey}
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let _key = PrivateKey.from_pem(key_pem).unwrap()
+    /// assert(PrivateKey.from_pem("not a key").is_err())
+    /// ```
     fn from_pem(pem: str): Result<PrivateKey, TlsError> {
         comptime if target.os() == target.Os.Windows {
             if pem.as_bytes().len() == 0 {
@@ -402,6 +523,14 @@ PrivateKey {
     }
 
     /// Reads a private key from its DER encoding (PKCS#8, or the RSA and EC forms).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{PrivateKey}
+    /// # let key_b64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf"
+    /// let der = base64_decode(key_b64).unwrap()
+    /// let _key = PrivateKey.from_der(der.as_slice()).unwrap()
+    /// ```
     fn from_der(data: [u8]): Result<PrivateKey, TlsError> {
         comptime if target.os() == target.Os.Windows {
             if data.len() == 0 {
@@ -462,6 +591,12 @@ PrivateKey {
     }
 
     /// Reads a PEM private key file.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{PrivateKey}
+    /// let _key = PrivateKey.load_pem_file("certs/self_signed.key").unwrap()
+    /// ```
     fn load_pem_file(path: str): Result<PrivateKey, TlsError> {
         let text = read_text(path)?
         PrivateKey.from_pem(text.as_str())
@@ -495,6 +630,15 @@ PrivateKey: Drop {
 
 /// The certificate authorities a client trusts: the system's, some of your own, or both. A store with neither trusts
 /// nothing, so every verification against it fails.
+///
+/// ```
+/// # use tls
+/// # use tls.{TrustStore}
+/// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+/// let mut store = TrustStore.empty()
+/// store.add_pem(cert_pem).unwrap()
+/// assert_eq(store.len(), 1)
+/// ```
 struct TrustStore {
     use_system: bool,
     roots: List<Certificate>,
@@ -503,21 +647,53 @@ struct TrustStore {
 TrustStore {
     /// The system's trust store (OpenSSL's default certificate file and directory, or `SSL_CERT_FILE` and
     /// `SSL_CERT_DIR`).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TrustStore}
+    /// let store = TrustStore.system()
+    /// assert_eq(store.len(), 0)
+    /// ```
     fn system(): TrustStore {
         TrustStore { use_system: true, roots: List<Certificate>.new() }
     }
 
     /// A store with no authority at all; add the ones to trust.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TrustStore}
+    /// assert_eq(TrustStore.empty().len(), 0)
+    /// ```
     fn empty(): TrustStore {
         TrustStore { use_system: false, roots: List<Certificate>.new() }
     }
 
     /// Trusts `cert` too.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{Certificate, TrustStore}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let mut store = TrustStore.empty()
+    /// store.add(Certificate.from_pem(cert_pem).unwrap())
+    /// assert_eq(store.len(), 1)
+    /// ```
     fn add(mut self, own cert: Certificate) {
         self.roots.push(cert)
     }
 
     /// Trusts every certificate of a PEM text (one certificate or a bundle). Text with none is an error.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TrustStore}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let mut store = TrustStore.empty()
+    /// store.add_pem(cert_pem).unwrap()
+    /// assert(store.add_pem("no certificate here").is_err())
+    /// assert_eq(store.len(), 1)
+    /// ```
     fn add_pem(mut self, pem: str): Result<(), TlsError> {
         let all = Certificate.chain_from_pem(pem)?
         for cert in all.into_iter() {
@@ -527,12 +703,29 @@ TrustStore {
     }
 
     /// Trusts every certificate of a PEM file.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{TrustStore}
+    /// let mut store = TrustStore.empty()
+    /// store.add_pem_file("certs/root.pem").unwrap()
+    /// ```
     fn add_pem_file(mut self, path: str): Result<(), TlsError> {
         let text = read_text(path)?
         self.add_pem(text.as_str())
     }
 
     /// How many certificates were added (the system's are not counted).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TrustStore}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// let mut store = TrustStore.empty()
+    /// assert_eq(store.len(), 0)
+    /// store.add_pem(cert_pem).unwrap()
+    /// assert_eq(store.len(), 1)
+    /// ```
     fn len(self): usize {
         self.roots.len()
     }

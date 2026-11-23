@@ -7,7 +7,7 @@
 use errors.CryptoError
 use util.constant_time_eq
 
-const AES_SBOX: [u8; 256] = [
+priv const AES_SBOX: [u8; 256] = [
     0x63,
     0x7c,
     0x77,
@@ -266,7 +266,7 @@ const AES_SBOX: [u8; 256] = [
     0x16,
 ]
 
-const AES_INV_SBOX: [u8; 256] = [
+priv const AES_INV_SBOX: [u8; 256] = [
     0x52,
     0x09,
     0x6a,
@@ -525,11 +525,11 @@ const AES_INV_SBOX: [u8; 256] = [
     0x7d,
 ]
 
-const GCM_ONE: [u8; 4] = [0, 0, 0, 1]
-const GCM_TWO: [u8; 4] = [0, 0, 0, 2]
-const AES_RCON: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+priv const GCM_ONE: [u8; 4] = [0, 0, 0, 1]
+priv const GCM_TWO: [u8; 4] = [0, 0, 0, 2]
+priv const AES_RCON: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
 
-fn xtime(a: u8): u8 {
+priv fn xtime(a: u8): u8 {
     let doubled = (a << 1) as u8
     if (a & 0x80) != 0 {
         return doubled ^ 0x1b
@@ -537,7 +537,7 @@ fn xtime(a: u8): u8 {
     doubled
 }
 
-fn gmul(a: u8, b: u8): u8 {
+priv fn gmul(a: u8, b: u8): u8 {
     let mut x = a
     let mut y = b
     let mut r: u8 = 0
@@ -554,6 +554,15 @@ fn gmul(a: u8, b: u8): u8 {
 }
 
 /// An AES key schedule for a 128-, 192-, or 256-bit key.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Aes}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let aes = Aes.new(key.as_slice()).unwrap()
+/// let block = aes.encrypt_block(hex_decode("00112233445566778899aabbccddeeff").unwrap().as_slice())
+/// assert_eq(block.to_hex().as_str(), "69c4e0d86a7b0430d8cdb78070b4c55a")
+/// ```
 struct Aes {
     rk: List<u8>,
     rounds: usize,
@@ -561,6 +570,13 @@ struct Aes {
 
 Aes {
     /// Expands a 16-, 24-, or 32-byte key.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Aes}
+    /// assert(Aes.new("0123456789abcdef".as_bytes()).is_ok())
+    /// assert(Aes.new("short".as_bytes()).is_err())
+    /// ```
     fn new(key: [u8]): Result<Aes, CryptoError> {
         if key.len() != 16 && key.len() != 24 && key.len() != 32 {
             return Err(CryptoError.InvalidLength { what: "an AES key is 16, 24, or 32 bytes".to_string() })
@@ -604,7 +620,7 @@ Aes {
         Ok(Aes { rk: w, rounds: rounds })
     }
 
-    fn add_round_key(self, mut s: [u8; 16], round: usize) {
+    priv fn add_round_key(self, mut s: [u8; 16], round: usize) {
         let mut i: usize = 0
         while i < 16 {
             s[i] = s[i] ^ self.rk[round * 16 + i]
@@ -613,6 +629,14 @@ Aes {
     }
 
     /// Encrypts one 16-byte block.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Aes}
+    /// let aes = Aes.new(hex_decode("000102030405060708090a0b0c0d0e0f").unwrap().as_slice()).unwrap()
+    /// let block = aes.encrypt_block(hex_decode("00112233445566778899aabbccddeeff").unwrap().as_slice())
+    /// assert_eq(block.to_hex().as_str(), "69c4e0d86a7b0430d8cdb78070b4c55a")
+    /// ```
     fn encrypt_block(self, block: [u8]): List<u8> {
         let mut s: [u8; 16] = [0; 16]
         let mut i: usize = 0
@@ -630,7 +654,7 @@ Aes {
         out
     }
 
-    fn encrypt_state(self, mut s: [u8; 16]) {
+    priv fn encrypt_state(self, mut s: [u8; 16]) {
         self.add_round_key(mut s, 0)
         let mut round: usize = 1
         while round <= self.rounds {
@@ -671,6 +695,14 @@ Aes {
     }
 
     /// Decrypts one 16-byte block.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Aes}
+    /// let aes = Aes.new(hex_decode("000102030405060708090a0b0c0d0e0f").unwrap().as_slice()).unwrap()
+    /// let block = aes.decrypt_block(hex_decode("69c4e0d86a7b0430d8cdb78070b4c55a").unwrap().as_slice())
+    /// assert_eq(block.to_hex().as_str(), "00112233445566778899aabbccddeeff")
+    /// ```
     fn decrypt_block(self, block: [u8]): List<u8> {
         let mut s: [u8; 16] = [0; 16]
         let mut i: usize = 0
@@ -727,7 +759,7 @@ Aes {
 
 // ----- CTR ----------------------------------------------------------------------------------------------------
 
-fn increment_be(mut counter: List<u8>, from: usize) {
+priv fn increment_be(mut counter: List<u8>, from: usize) {
     // Adds one to the big-endian number in counter[from..], wrapping at its width.
     let mut i = counter.len()
     while i > from {
@@ -742,6 +774,16 @@ fn increment_be(mut counter: List<u8>, from: usize) {
 /// AES-CTR (SP 800-38A): XORs `data` with the keystream of a 16-byte initial counter block, incremented as a
 /// big-endian 128-bit number. Encryption and decryption are the same call. CTR does not authenticate: pair it with
 /// a MAC, or use `aes_gcm_seal`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{aes_ctr_xor}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let iv = hex_decode("00000000000000000000000000000000").unwrap()
+/// let sealed = aes_ctr_xor(key.as_slice(), iv.as_slice(), "hello".as_bytes()).unwrap()
+/// let plain = aes_ctr_xor(key.as_slice(), iv.as_slice(), sealed.as_slice()).unwrap()
+/// assert_eq(plain.to_hex().as_str(), "68656c6c6f")
+/// ```
 fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
@@ -769,6 +811,16 @@ fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
 /// AES-CBC with PKCS#7 padding. The result is the ciphertext, a multiple of 16 bytes, longer than `plaintext`.
 /// CBC does not authenticate: a decryptor that reveals padding errors is a padding oracle, so MAC the ciphertext
 /// (encrypt-then-MAC) or use `aes_gcm_seal`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{aes_cbc_encrypt, aes_cbc_decrypt}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let iv = hex_decode("00000000000000000000000000000000").unwrap()
+/// let ciphertext = aes_cbc_encrypt(key.as_slice(), iv.as_slice(), "hello".as_bytes()).unwrap()
+/// assert_eq(ciphertext.len(), 16)
+/// assert_eq(aes_cbc_decrypt(key.as_slice(), iv.as_slice(), ciphertext.as_slice()).unwrap().to_hex().as_str(), "68656c6c6f")
+/// ```
 fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
@@ -799,6 +851,16 @@ fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, Crypt
 }
 
 /// Decrypts `aes_cbc_encrypt` output and removes the padding; bad padding is `InvalidPadding`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{aes_cbc_encrypt, aes_cbc_decrypt}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let iv = hex_decode("00000000000000000000000000000000").unwrap()
+/// let ciphertext = aes_cbc_encrypt(key.as_slice(), iv.as_slice(), "secret".as_bytes()).unwrap()
+/// let plain = aes_cbc_decrypt(key.as_slice(), iv.as_slice(), ciphertext.as_slice()).unwrap()
+/// assert_eq(plain.to_hex().as_str(), "736563726574")
+/// ```
 fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
@@ -843,7 +905,7 @@ fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, Cryp
 
 // ----- GCM ----------------------------------------------------------------------------------------------------
 
-fn be64(data: [u8], at: usize): u64 {
+priv fn be64(data: [u8], at: usize): u64 {
     let mut v: u64 = 0
     let mut i: usize = 0
     while i < 8 {
@@ -853,7 +915,7 @@ fn be64(data: [u8], at: usize): u64 {
     v
 }
 
-fn push_be64(mut out: List<u8>, v: u64) {
+priv fn push_be64(mut out: List<u8>, v: u64) {
     let mut i: u32 = 8
     while i > 0 {
         i = i - 1
@@ -862,7 +924,7 @@ fn push_be64(mut out: List<u8>, v: u64) {
 }
 
 /// Multiplies two elements of GF(2^128) as GCM defines (bit-reflected), without secret-dependent branches.
-fn ghash_mul(xh: u64, xl: u64, yh: u64, yl: u64): (u64, u64) {
+priv fn ghash_mul(xh: u64, xl: u64, yh: u64, yl: u64): (u64, u64) {
     let mut zh: u64 = 0
     let mut zl: u64 = 0
     let mut vh = yh
@@ -889,7 +951,7 @@ fn ghash_mul(xh: u64, xl: u64, yh: u64, yl: u64): (u64, u64) {
     (zh, zl)
 }
 
-fn ghash(hh: u64, hl: u64, aad: [u8], ciphertext: [u8]): (u64, u64) {
+priv fn ghash(hh: u64, hl: u64, aad: [u8], ciphertext: [u8]): (u64, u64) {
     let mut yh: u64 = 0
     let mut yl: u64 = 0
     let mut part: usize = 0
@@ -924,7 +986,7 @@ fn ghash(hh: u64, hl: u64, aad: [u8], ciphertext: [u8]): (u64, u64) {
     product
 }
 
-fn gcm_tag(aes: Aes, nonce: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
+priv fn gcm_tag(aes: Aes, nonce: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
     let zero: [u8; 16] = [0; 16]
     let h = aes.encrypt_block(zero[0..16])
     let hh = be64(h.as_slice(), 0)
@@ -945,7 +1007,7 @@ fn gcm_tag(aes: Aes, nonce: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
     tag
 }
 
-fn gcm_crypt(aes: Aes, nonce: [u8], data: [u8]): List<u8> {
+priv fn gcm_crypt(aes: Aes, nonce: [u8], data: [u8]): List<u8> {
     let mut counter = nonce.to_list()
     counter.extend_from_slice(GCM_TWO[0..4])
     let mut out = List<u8>.new()
@@ -967,6 +1029,16 @@ fn gcm_crypt(aes: Aes, nonce: [u8], data: [u8]): List<u8> {
 /// AES-GCM (SP 800-38D) with a 12-byte nonce and a 16-byte tag: encrypts `plaintext` and authenticates it together
 /// with `aad`. The result is the ciphertext followed by the tag. Never reuse a (key, nonce) pair: that breaks both
 /// confidentiality and authenticity.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{aes_gcm_seal, aes_gcm_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000").unwrap()
+/// let sealed = aes_gcm_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert_eq(sealed.len(), 22)
+/// assert_eq(aes_gcm_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), sealed.as_slice()).unwrap().to_hex().as_str(), "736563726574")
+/// ```
 fn aes_gcm_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if nonce.len() != 12 {
@@ -979,6 +1051,15 @@ fn aes_gcm_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List
 }
 
 /// Verifies and decrypts `aes_gcm_seal` output; a wrong tag is `AuthenticationFailed` and no plaintext is released.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{aes_gcm_seal, aes_gcm_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000").unwrap()
+/// let sealed = aes_gcm_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert(aes_gcm_open(key.as_slice(), nonce.as_slice(), "other".as_bytes(), sealed.as_slice()).is_err())
+/// ```
 fn aes_gcm_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if nonce.len() != 12 {

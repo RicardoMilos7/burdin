@@ -6,12 +6,12 @@ use features
 use openssl.{ERR_clear_error, ERR_get_error, ERR_reason_error_string}
 
 /// A pointer to the first byte of `data`. `data` must not be empty. The pointer is valid as long as the bytes are.
-unsafe fn bytes_ptr(data: [u8]): CPtr<u8> {
+priv unsafe fn bytes_ptr(data: [u8]): CPtr<u8> {
     (&data[0]) as CPtr<u8>
 }
 
 /// The text a NUL-terminated C string holds, or an empty string for a null pointer.
-unsafe fn c_text(text: CPtr<CChar>): String {
+priv unsafe fn c_text(text: CPtr<CChar>): String {
     if text.is_null() {
         return String.new()
     }
@@ -19,7 +19,7 @@ unsafe fn c_text(text: CPtr<CChar>): String {
 }
 
 /// The text of an OpenSSL error code: its short reason ("certificate verify failed"), or `error code N`.
-unsafe fn code_text(code: u32): String {
+priv unsafe fn code_text(code: u32): String {
     comptime if target.os() == target.Os.Windows {
         String.new()
     } else if features.openssl {
@@ -35,7 +35,7 @@ unsafe fn code_text(code: u32): String {
 
 /// Empties the error queue of this thread and returns the reason of its first entry, or "" when it was empty. A failing
 /// OpenSSL call is followed by this on the same thread with no task switch in between (spec/tls.md, TLS2).
-fn error_text(): String {
+priv fn error_text(): String {
     comptime if target.os() == target.Os.Windows {
         String.new()
     } else if features.openssl {
@@ -58,7 +58,7 @@ fn error_text(): String {
 }
 
 /// Forgets the errors a previous call left behind, so the queue holds only what the next call reports.
-fn clear_errors() {
+priv fn clear_errors() {
     comptime if target.os() == target.Os.Windows {} else if features.openssl {
         unsafe { ERR_clear_error() }
     } else {}
@@ -66,12 +66,12 @@ fn clear_errors() {
 
 /// The failure of every TLS call in a build whose `openssl` feature is off: no OpenSSL is linked, so none is called
 /// (spec/tls.md, TLS7).
-fn no_openssl(): TlsError {
+priv fn no_openssl(): TlsError {
     TlsError.Unsupported("no OpenSSL in this build: the `openssl` feature of the tls package is off".to_string())
 }
 
 /// `text` with a fallback for the empty string.
-fn or_else(own text: String, fallback: str): String {
+priv fn or_else(own text: String, fallback: str): String {
     if text.is_empty() {
         return fallback.to_string()
     }
