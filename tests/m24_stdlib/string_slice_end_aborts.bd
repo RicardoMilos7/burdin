@@ -1,0 +1,15 @@
+//@ run-abort
+//@ stderr: slice: the index is not a character boundary
+//> before
+
+// The end of a slice that splits a multi-byte character panics instead of making a half-character `str` (issue
+// #916). `s[1..2]` ends inside `ñ`, so `chars()` never sees a non-UTF-8 text.
+
+fn main() {
+    let s = "añb"
+    println("before")
+    let bad = s[1..2]
+    for c in bad.chars() {
+        println(c.to_string())
+    }
+}

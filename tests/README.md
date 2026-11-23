@@ -797,9 +797,11 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   signatures the tests exercise. In particular `List.last` and `Map.get` return `Option<&T>`/`Option<&V>`, `List.pop`
   returns `Option<T>`, `List.remove` and `Map.remove` return owned values, and `List.contains` takes a value.
   Unknown names are E0002 and wrong arities E0004.
-- **`String` length and slicing are byte-based.** `s.len()` is bytes and `s[a..b]` slices bytes; `chars()` iterates
-  Unicode scalar values. The design says UTF-8 but does not define `len`. `m09_stdlib/string_ops.bd`,
-  `m09_stdlib/file_io.bd`, `file_io_binary.bd`; decision 7.
+- **`String` length is byte-based, and slicing keeps the text valid UTF-8.** `s.len()` is bytes and `chars()` iterates
+  Unicode scalar values. `s[a..b]` on `str` or `String` panics unless both ends are character boundaries (issue #916),
+  so a `str` is always valid UTF-8; `get(a, b)` is the `None` form. The design says UTF-8 but does not define `len`.
+  `m09_stdlib/string_ops.bd`, `m09_stdlib/file_io.bd`, `file_io_binary.bd`, `m24_stdlib/string_slice_boundary`,
+  `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_comptime_aborts`; decision 7.
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
   type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
   `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).
