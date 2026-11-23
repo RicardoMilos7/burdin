@@ -280,7 +280,8 @@ interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
 `lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
-(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+(FR7). An integer literal given to `T.from(v)` takes an integer `T` as its type, so `u8.from(5)` is valid and
+`u8.from(300)` is E0008 (FR2, issue #937); `into` on a literal receiver is not changed (FR4). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
 Tests: `tests/m24_stdlib/from_*` and `into_*`.
 
 **`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
