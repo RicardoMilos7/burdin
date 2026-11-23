@@ -31,7 +31,9 @@ interface Iterator<T> {
     /// ```
     fn next(mut self): Option<T>
 
-    /// A lazy chain that applies `f` to every item.
+    /// A lazy chain that applies `f` to every item. `f` receives each item itself, not a view. The eager form
+    /// on a `List` is `xs.map(f)`, which takes a view and builds a list at once; `to_list()` on this chain gives
+    /// the eager result.
     ///
     /// ```
     /// assert_eq([1, 2].into_iter().map(|x| x * 3).count(), 2)
@@ -40,7 +42,9 @@ interface Iterator<T> {
         MapIter { inner: self, f: f }
     }
 
-    /// A lazy chain that keeps the items `f` accepts. `f` receives a view so the item can still be returned.
+    /// A lazy chain that keeps the items `f` accepts. `f` receives a view so the item can still be returned, and
+    /// the chain never clones. The eager form on a `List` is `xs.filter(f)`, which clones the items it keeps and
+    /// needs `Clone`; for owned items from this chain, use `cloned()` before `to_list()`.
     ///
     /// ```
     /// assert_eq([1, 2, 3, 4].into_iter().filter(|x| *x > 2).count(), 2)
@@ -166,7 +170,8 @@ interface Iterator<T> {
         PeekIter { inner: self, buffer: List<T>.new(), looked: false }
     }
 
-    /// Folds the items into an accumulator, left to right.
+    /// Folds the items into an accumulator, left to right. The eager form on a `List` is `xs.fold(init, f)`, whose
+    /// closure takes a view of each element rather than the element.
     ///
     /// ```
     /// assert_eq([1, 2, 3].into_iter().fold(10, |acc, x| acc + x), 16)
@@ -206,12 +211,13 @@ interface Iterator<T> {
     }
 
     /// Whether `f` accepts any item. Stops at the first one it does. The adapter is spelled `.any(...)`; the
-    /// method is named `any_item` because `any` is reserved until milestone 15 (spec/iterators.md, IT9).
+    /// method is named `any_item` because `any` is reserved until milestone 15 (spec/iterators.md, IT9). The eager
+    /// form on a `List` is `xs.any(f)`, whose closure takes a view of each element.
     ///
     /// ```
-    /// assert([1, 2].into_iter().any_item(|x| x == 2))
+    /// assert([1, 2].into_iter().any(|x| x == 2))
     /// ```
-    fn any_item<F: FnMut(T): bool>(mut self, own f: F): bool {
+    fn any<F: FnMut(T): bool>(mut self, own f: F): bool {
         let mut f = f
         loop {
             match self.next() {
@@ -227,7 +233,8 @@ interface Iterator<T> {
         }
     }
 
-    /// Whether `f` accepts every item. Stops at the first one it does not.
+    /// Whether `f` accepts every item. Stops at the first one it does not. The eager form on a `List` is
+    /// `xs.all(f)`, whose closure takes a view of each element.
     ///
     /// ```
     /// assert([2, 4].into_iter().all(|x| x % 2 == 0))
@@ -248,7 +255,8 @@ interface Iterator<T> {
         }
     }
 
-    /// The first item `f` accepts, with the iterator still holding the source's view.
+    /// The first item `f` accepts, with the iterator still holding the source's view. The eager form on a `List` is
+    /// `xs.find(f)`, which clones the item it returns and needs `Clone`; this lazy form never clones.
     ///
     /// ```
     /// assert_eq([5, 6, 7].into_iter().find(|x| *x > 5), Some(6))
@@ -597,7 +605,9 @@ interface Iterator<T> {
     }
 
     /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
-    /// views, which cannot be stored; clone the items first to get an owned list.
+    /// views, which cannot be stored; clone the items first to get an owned list. This is how a lazy chain gives
+    /// the eager result: `xs.iter().map(f).to_list()` has the items of `xs.map(f)`, which is the eager `List`
+    /// method (spec/iterators.md, IT10).
     ///
     /// ```
     /// let xs = [1, 2].into_iter().to_list()
@@ -1440,7 +1450,9 @@ priv fn __iter_cycle<I: Iterator<T> + Clone, T>(own it: I): CycleIter<I, T> {
 
 // The eager `List` methods. They borrow the list and return owned results, and their closures receive views
 // (Burdin Language Design, "Collections and iteration"). The compiler resolves `xs.map(f)` and the other names
-// below to these functions (spec/iterators.md, IT9).
+// below to these functions (spec/iterators.md, IT10). Each has a lazy namesake on an iterator (IT9), and each
+// pairs with it: `xs.map(f)` is `xs.iter().map(f).to_list()`, with the closure taking the item instead of a view;
+// `filter` and `find` clone the items they keep, while the lazy `filter` and `find` never clone.
 
 /// `xs.map(f)`: a new list of the closure's results.
 priv fn __list_map<T, U, F: FnMut(&T): U>(list: List<T>, own f: F): List<U> {

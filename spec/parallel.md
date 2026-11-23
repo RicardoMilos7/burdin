@@ -10,7 +10,7 @@ let xs: List<i64> = ...
 let total = xs.par_iter().fold(0, |sum, x| sum + *x, |a, b| a + b)
 let evens = xs.par_iter().filter(|x| **x % 2 == 0).map(|x| *x).collect()
 let longest = words.par_iter().map(|w| w.clone()).max_by_key(|w| w.len())
-let any_bad = checks.par_iter().any_item(|c| c.is_bad())
+let any_bad = checks.par_iter().any(|c| c.is_bad())
 xs.par_iter_mut().for_each(|x| { *x = *x * 2 })
 let squares = par_range(0, 1000).map(|i| i * i).collect()
 ```
@@ -25,11 +25,12 @@ rewritten.
 | --- | --- |
 | Sources | `[T].par_iter()` and `List<T>.par_iter()` (items `&T`), `par_iter_mut()` (items `&mut T`, PR6), `List<T>.par_into_iter()` (items `T`, moved out), `par_range(start, end)` (items `i64`) |
 | Adapters | `map`, `filter`, `filter_map`, `enumerate`, `take`, `skip` |
-| Consumers | `for_each`, `count`, `fold`, `any_item`, `all` on every pipeline; `reduce`, `find`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `collect` on a pipeline of owned items (PR3) |
+| Consumers | `for_each`, `count`, `fold`, `any`, `all` on every pipeline; `reduce`, `find`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `collect` on a pipeline of owned items (PR3) |
 
 Differences from the first cut in the issue, each forced by the language as it is:
 
-* **`any` is `any_item`.** `any` is a reserved word, so the method is spelled as on `Iterator` (`spec/iterators.md`).
+* **`any` is spelled `any`.** As on `Iterator` (`spec/iterators.md`, IT9), the method is called `any`. It was
+  `any_item` until issue #933 let a keyword name a declared method.
 * **`fold` takes three arguments**: `fold(init, op, combine)`. A chunk starts from a clone of `init` (`A: Clone`) and
   folds its items with `op(acc, item)`; the chunks' results are then combined in source order with `combine(a, b)`.
   `fold(|| 0, |sum, x| sum + x)` with two closures cannot combine two chunks when the accumulator and the item differ,
@@ -42,8 +43,8 @@ Differences from the first cut in the issue, each forced by the language as it i
 
 The interfaces are `ParallelIterator<T>` (every pipeline), `ParallelValues<T>` (PR3), and `IndexedParallelIterator<T>`
 (PR5). Their `__`-prefixed methods are the protocol between a source and a consumer, not part of the surface. Names do
-not collide with the eager `List` methods of #934: `map` and `filter` here are methods of the pipeline interfaces,
-which only a pipeline value has.
+not collide with the eager `List` methods (`iterators.md`, IT10): `map` and `filter` here are methods of the pipeline
+interfaces, which only a pipeline value has.
 
 Tests: `s3_parallel/ordered_basic`, `sources_adapters`.
 
@@ -52,7 +53,7 @@ Tests: `s3_parallel/ordered_basic`, `sources_adapters`.
 * `collect` preserves source order, and so does `enumerate`'s numbering.
 * `find` returns the lowest-index match, `min_by`/`min_by_key` the first of equal items, `max_by`/`max_by_key` the last,
   as `Iterator` does (`spec/iterators.md`).
-* `for_each` promises no order, and `any_item`/`all` may stop early without visiting every item.
+* `for_each` promises no order, and `any`/`all` may stop early without visiting every item.
 * `fold` and `reduce` promise only that an associative operation gives the sequential answer: the grouping is not
   promised. Chunks are combined left to right, so a merely associative (not commutative) operation is also right.
 
@@ -64,7 +65,7 @@ Tests: `s3_parallel/ordered_basic`, `sources_adapters`, `stress`.
 items (`collect`, `find`, `reduce`, `min_*`, `max_*`) exists only on pipelines whose items are owned values:
 `par_into_iter`, `par_range`, and anything after a `map`/`filter_map` that makes owned items. `par_iter().collect()` is
 E0002 ("no method"); write `par_iter().map(|x| x.clone()).collect()` (so `T: Clone` is explicit) or `par_into_iter()`.
-`count`, `for_each`, `fold`, `any_item`, and `all` never keep an item, so they work on views.
+`count`, `for_each`, `fold`, `any`, and `all` never keep an item, so they work on views.
 
 A `par_iter` or `par_iter_mut` pipeline views its list: it is second-class like a slice (`spec/memory-rules.md`, SC2), so
 the list cannot change while the pipeline is alive (E0111) and the pipeline cannot be stored in a field or collection.
@@ -141,7 +142,7 @@ Test: `s3_parallel/in_comptime`.
 
 Under `burdin test` the checking allocator (`spec/tasks.md` TK12) tracks the workers' allocations like any task's, and a
 pipeline frees what it allocates, so a test that uses one reports no leak. `par_into_iter` keeps each item in a mutex
-slot (`Mutex<Option<T>>`): a chunk takes its items out, and what a `take` or an early `any_item` never asks for is dropped
+slot (`Mutex<Option<T>>`): a chunk takes its items out, and what a `take` or an early `any` never asks for is dropped
 with the list.
 
 `tests/s3_parallel/bench.bd` measures a `map`/`filter`/`reduce` pipeline against its sequential twin. Scaling is advisory:
@@ -190,7 +191,7 @@ Tests: `s3_parallel/sources_adapters`, `ordered_basic` (the calls), and `tests/i
 
 * Chunks run as scoped tasks that borrow the pipeline, so a consumer's closure cannot capture a value that is not `Sync`
   even when only one chunk would run. The error is at the adapter, not at the consumer.
-* `find`, `any_item`, and `all` stop their own chunk early, and `any_item`/`all` stop the other chunks through a flag, but
+* `find`, `any`, and `all` stop their own chunk early, and `any`/`all` stop the other chunks through a flag, but
   a chunk that has not started yet still starts (and returns at once).
 * An instance-naming bug that made two same-spelled closure instances share one function was found by this feature and
   fixed with it (`m12_closures/closure_same_spelling_instances`).

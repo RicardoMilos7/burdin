@@ -6,6 +6,26 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #933: a keyword can name a method declared in an `impl` block, an `interface`, or a `derive` body, so `std`
+  declares the `Iterator` default method as `fn any` and the `any_item` workaround is gone (`spec/grammar.md`,
+  "Keywords"; `spec/iterators.md`, IT9). The words are the ones a `.` already lets stand as names: `any`, `impl`,
+  `error`, `comptime`, and `derive`. A free function and an `extern` function keep their identifier names. Tests:
+  `tests/m15_any/keyword_member_declaration`, `keyword_fn_name_free`, `keyword_member_other`, `any_item_removed`,
+  and the `any` call sites in `tests/s3_parallel` and `tests/m13_iterators`; parser unit tests in
+  `crates/burdin_syntax/src/parser/mod.rs`.
+- Issue #934: the eager `List` methods (`xs.map`, `xs.filter`, `xs.fold`, `xs.any`, `xs.all`, `xs.find`) and the lazy
+  `Iterator` methods of the same names are both kept, and each is documented with a pointer to the other. The
+  decision and the table that tells them apart are in `spec/iterators.md` (IT10): the eager form builds a list at
+  once and takes views, the lazy form is an adapter and takes items, and only the eager `filter` and `find` need
+  `Clone`. `to_list()` gives the eager result of a lazy chain, and `xs.iter()` gives the lazy chain of a list. The
+  doc comments in `std/src/iter.bd` and the List section of `spec/stdlib.md` carry the same pointers. Tests:
+  `tests/m13_iterators/eager_lazy_same_items`, `lazy_no_clone_plain`, `eager_filter_needs_clone`, and
+  `eager_find_needs_clone`.
+- Issue #932: the standard library's dynamic error struct is `AnyError`, and `Error` is only the marker interface
+  (`std/src/std.bd`). `Result<T>` means `Result<T, AnyError>`, an error type boxes implicitly into `AnyError`, and
+  `.context` returns `Result<T, AnyError>`; `error enum` still lowers to `Name: Error` impls. This is a breaking change
+  for a program that named the dynamic type `Error`. Rules: `spec/errors.md` ERR4-ERR6; tests `tests/m16_errors/*`.
+
 - Issue #938: every public item of the standard library has a doc comment and at least one example, and every
   example is built and run with its doc-test attributes. `tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25):
   it fails on an undocumented item, an item with no example outside `tests/std_docs/no_example.txt` (now empty), an

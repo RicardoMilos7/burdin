@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// Only `String + str` and the comparisons between a `String` and a `str` mix types (spec/operators.md, OP14). Every
+// other mixed or same-type text operator stays E0003: `str + String`, `String + String`, `str + str`, a number on
+// either side, and compound assignment.
+
+fn main() {
+    let s = String.from("a")
+    let t = String.from("b")
+    let a = "x" + s //~ E0003
+    let b = s + t //~ E0003
+    let c = "a" + "b" //~ E0003
+    let d = s + 1 //~ E0003
+    let e = s == 1 //~ E0003
+    let mut f = String.from("c")
+    f += "d" //~ E0003
+    println("{a}{b}{c}{d}{e}{f}")
+}

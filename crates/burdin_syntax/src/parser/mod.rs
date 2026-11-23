@@ -186,6 +186,21 @@ impl Parser<'_> {
         }
     }
 
+    /// The name of a method declared in an `impl` block, an `interface`, or a `derive` body. Besides an identifier, it
+    /// may be a word a `.` lets stand as a member name (`spec/grammar.md`, "Keywords"; issue #933): `any`, `impl`,
+    /// `error`, `comptime`, or the reserved `derive`.
+    fn member_name(&mut self, what: &str) -> PResult<Ident> {
+        let name = match self.kind().clone() {
+            TokenKind::Reserved(word) => word,
+            kind @ (TokenKind::Any | TokenKind::Impl | TokenKind::Error | TokenKind::Comptime) => {
+                kind.text().to_string()
+            }
+            _ => return self.ident(what),
+        };
+        let span = self.bump().span;
+        Ok(Ident { name, span })
+    }
+
     /// Opens a bracket and records whether line breaks matter inside it.
     fn open(&mut self, kind: &TokenKind, newlines_matter: bool) -> PResult<Token> {
         let t = self.expect(kind)?;
@@ -989,5 +1004,63 @@ struct Point { x: i32 }
         let Item::Fn(main) = &file.items[0] else { unreachable!() };
         let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
         assert!(matches!(call.kind, ExprKind::Call(..)));
+    }
+
+    #[test]
+    fn a_member_name_may_be_a_keyword_a_dot_accepts() {
+        // A method of an impl block, an interface, or a derive body takes `any`, `impl`, `error`, `comptime`, and
+        // `derive` as its name, the words a `.` lets stand as names (spec/grammar.md, "Keywords"; issue #933).
+        let (file, diags) = parse_str(
+            "struct S { x: i32 }
+             S {
+    fn any(self): bool { true }
+    fn impl(self): i32 { 1 }
+    fn comptime(self) {}
+}
+             interface I {
+    fn error(self): bool
+    fn derive(self) {}
+}
+             derive D {
+    fn any(self): bool { false }
+}
+",
+        );
+        assert!(diags.is_empty(), "{:?}", diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>());
+        let Item::Impl(block) = &file.items[1] else { panic!("expected an impl block") };
+        let names: Vec<&str> = block.methods.iter().map(|m| m.name.name.as_str()).collect();
+        assert_eq!(names, ["any", "impl", "comptime"]);
+        let Item::Interface(iface) = &file.items[2] else { panic!("expected an interface") };
+        let names: Vec<&str> = iface.methods.iter().map(|m| m.decl.name.name.as_str()).collect();
+        assert_eq!(names, ["error", "derive"]);
+        let Item::Derive(derive) = &file.items[3] else { panic!("expected a derive") };
+        assert_eq!(derive.methods[0].name.name, "any");
+    }
+
+    #[test]
+    fn a_keyword_stays_rejected_as_a_free_function_name() {
+        // No `.` reaches a free function, so only a member position takes a keyword name (issue #933).
+        let (_, diags) = parse_str(
+            "fn any(): i32 { 1 }
+",
+        );
+        let messages: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("expected a function name, found `any`"), "{messages:?}");
+    }
+
+    #[test]
+    fn a_keyword_outside_the_member_list_stays_rejected_as_a_method_name() {
+        // `if` is a keyword that no `.` lets stand as a name, so it is not a method name either.
+        let (_, diags) = parse_str(
+            "struct S { x: i32 }
+S {
+    fn if(self) {}
+}
+",
+        );
+        let messages: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(messages[0].contains("expected a method name, found `if`"), "{messages:?}");
     }
 }

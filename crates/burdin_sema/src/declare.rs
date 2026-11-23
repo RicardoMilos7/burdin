@@ -55,8 +55,8 @@ impl<'t> Sema<'t> {
         if let ast::Item::Interface(i) = item {
             let name = &i.name.name;
             let module_info = &self.globals.modules[module];
-            // Types and interfaces are separate namespaces: `Error` may be both a struct and an interface
-            // (spec/errors.md, ERR4). A repeated name inside one namespace is still E0007.
+            // Types and interfaces are separate namespaces, so one name may be both. A repeated name inside one
+            // namespace is still E0007.
             if module_info.ifaces.contains_key(name)
                 || builtin_type(name).is_some()
                 || BUILTIN_INTERFACES.contains(&name.as_str())

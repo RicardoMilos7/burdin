@@ -1,0 +1,88 @@
+//@ run
+//> true
+//> 4
+//> false
+//> true
+//> true
+//> true
+//> false
+
+// A method may be declared under a keyword name (spec/grammar.md, "Keywords"; issue #933). `any`, `impl`, and `error`
+// are declared with `fn` in an impl block, an interface, and a derive body, and are called after a `.` like any
+// method. The `Iterator` default method `any` is one of them, and an extension method's name, which follows a `.` in its
+// declaration, may be one too.
+
+struct Flag {
+    on: bool
+}
+
+Flag {
+    fn any(self): bool {
+        self.on
+    }
+
+    fn impl(self, n: i32): i32 {
+        n + 3
+    }
+
+    // A keyword method calls another one through `self.`.
+    fn both(self): bool {
+        self.any() && self.any()
+    }
+}
+
+interface Probe {
+    fn get(self): i32
+
+    // A default method with a keyword name.
+    fn error(self): bool {
+        self.get() > 0
+    }
+}
+
+struct Cell {
+    v: i32
+}
+
+Cell: Probe {
+    fn get(self): i32 {
+        self.v
+    }
+}
+
+interface Marker {
+    fn any(self): bool
+}
+
+derive Marker {
+    fn any(self): bool {
+        true
+    }
+}
+
+struct Tagged: Marker {
+    n: i32
+}
+
+// The keyword name works through a bound, and through an `any I` value.
+fn probe<P: Probe>(p: P): bool {
+    p.error()
+}
+
+// An extension method named by a keyword (`fn Type.name`).
+fn Flag.error(self): bool {
+    !self.on
+}
+
+fn main() {
+    let f = Flag { on: true }
+    println("{}", f.any())
+    println("{}", f.impl(1))
+    println("{}", probe(Cell { v: 0 }))
+    let boxed: any Probe = Cell { v: 3 }
+    println("{}", boxed.error())
+    println("{}", f.both())
+    let t = Tagged { n: 1 }
+    println("{}", t.any())
+    println("{}", f.error())
+}

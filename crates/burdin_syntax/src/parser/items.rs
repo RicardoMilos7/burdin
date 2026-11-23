@@ -189,7 +189,7 @@ impl Parser<'_> {
                 if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                     return Err(self.unexpected("a function signature"));
                 }
-                let (mut decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true, blocking)?;
+                let (mut decl, has_body) = self.fn_decl_opt(fn_priv, fn_start, true, blocking, false)?;
                 if has_body {
                     self.diags.error(Code::SYNTAX, decl.body.span, "an `extern` function has no body");
                 }
@@ -216,7 +216,7 @@ impl Parser<'_> {
         if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
             return Err(self.unexpected("`{` or a function signature"));
         }
-        let (mut decl, _) = self.fn_decl_opt(fn_priv, fn_start, false, false)?;
+        let (mut decl, _) = self.fn_decl_opt(fn_priv, fn_start, false, false, false)?;
         // `priv extern "C" fn` and `extern "C" priv fn` both mark the function package-private.
         decl.is_priv |= is_priv;
         Ok(Item::ExternFn(ExternFnDecl { abi, abi_span, decl }))
@@ -430,7 +430,7 @@ impl Parser<'_> {
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                 return Err(self.unexpected("a method"));
             }
-            methods.push(self.fn_decl(method_priv, fn_start)?);
+            methods.push(self.member_fn_decl(method_priv, fn_start)?);
         }
         self.close(&TokenKind::RBrace)?;
         Ok(DeriveDecl { is_priv, name, methods, span: start.to(self.prev_span()) })
@@ -467,7 +467,7 @@ impl Parser<'_> {
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                 return Err(self.unexpected("a method or an associated type binding"));
             }
-            methods.push(self.fn_decl(is_priv, fn_start)?);
+            methods.push(self.member_fn_decl(is_priv, fn_start)?);
         }
         self.close(&TokenKind::RBrace)?;
         Ok(ImplBlock {
@@ -685,7 +685,7 @@ impl Parser<'_> {
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                 return Err(self.unexpected("a method or an associated type"));
             }
-            let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true, false)?;
+            let (decl, has_body) = self.fn_decl_opt(is_priv, fn_start, true, false, true)?;
             methods.push(InterfaceFn { decl, has_body });
         }
         self.close(&TokenKind::RBrace)?;
@@ -749,21 +749,28 @@ impl Parser<'_> {
     }
 
     pub(super) fn fn_decl(&mut self, is_priv: bool, start: Span) -> PResult<FnDecl> {
-        Ok(self.fn_decl_opt(is_priv, start, false, false)?.0)
+        Ok(self.fn_decl_opt(is_priv, start, false, false, false)?.0)
+    }
+
+    /// A method of an `impl` block or a `derive` body: a function whose name may be a member name (issue #933).
+    pub(super) fn member_fn_decl(&mut self, is_priv: bool, start: Span) -> PResult<FnDecl> {
+        Ok(self.fn_decl_opt(is_priv, start, false, false, true)?.0)
     }
 
     /// A function. With `body_optional`, a signature without a body is accepted (an interface method); the flag
     /// says whether a body was present. `is_blocking` carries the `blocking` marker of an `extern` declaration.
+    /// With `member`, the name may be a member name (`member_name`), as a method of an impl block or an interface.
     pub(super) fn fn_decl_opt(
         &mut self,
         is_priv: bool,
         start: Span,
         body_optional: bool,
         is_blocking: bool,
+        member: bool,
     ) -> PResult<(FnDecl, bool)> {
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         self.expect(&TokenKind::Fn)?;
-        let name = self.ident("a function name")?;
+        let name = if member { self.member_name("a method name")? } else { self.ident("a function name")? };
         let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
         self.fn_rest(is_priv, is_unsafe, is_blocking, start, name, generics, body_optional)
     }

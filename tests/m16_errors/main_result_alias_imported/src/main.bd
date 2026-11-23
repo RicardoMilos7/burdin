@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An alias of `Result<...>` imported from another module is not renamed by the parser, so it is still E0003 as
+// main's return type (spec/errors.md, ERR8; spec/type-aliases.md, AL7). Write the `Result` in main's file.
+
+use types.Res
+
+fn main(): Res { //~ E0003
+    Ok(())
+}

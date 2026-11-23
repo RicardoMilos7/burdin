@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A keyword is a method name only inside an impl block, an interface, or a derive body (issue #933). A free function
+// named `any` could never be called, since no `.` reaches it, so it stays rejected.
+
+fn any(): i32 { //~ E0001
+    1
+}
+
+fn main() {}

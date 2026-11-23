@@ -260,7 +260,7 @@ impl Code {
     /// Two variants of one error enum converting from the same source type.
     pub const DUPLICATE_FROM: Code = Code("E0211");
     /// A missing error conversion: `?` between two error types with no `From` block, or a conversion into the
-    /// dynamic `Error` from a type that does not implement it.
+    /// dynamic `AnyError` from a type that does not implement it.
     pub const ERROR_CONVERSION: Code = Code("E0212");
     /// An invalid default argument: a default before a required parameter, on a `mut` parameter, in an
     /// interface signature, depending on a type parameter, or not a constant expression.

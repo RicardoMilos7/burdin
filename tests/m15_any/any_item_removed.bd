@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `any` is the method's only name: `std` no longer provides `any_item` (issue #933).
+
+fn main() {
+    let xs = [1, 2, 3]
+    let hit: bool = xs.iter().any_item(|x: i32| x == 2) //~ E0002
+    println("{}", hit)
+}
