@@ -14,6 +14,11 @@ close-out checklist in `AGENTS.md`).
   doc comments in `std/src/iter.bd` and the List section of `spec/stdlib.md` carry the same pointers. Tests:
   `tests/m13_iterators/eager_lazy_same_items`, `lazy_no_clone_plain`, `eager_filter_needs_clone`, and
   `eager_find_needs_clone`.
+- Issue #932: the standard library's dynamic error struct is `AnyError`, and `Error` is only the marker interface
+  (`std/src/std.bd`). `Result<T>` means `Result<T, AnyError>`, an error type boxes implicitly into `AnyError`, and
+  `.context` returns `Result<T, AnyError>`; `error enum` still lowers to `Name: Error` impls. This is a breaking change
+  for a program that named the dynamic type `Error`. Rules: `spec/errors.md` ERR4-ERR6; tests `tests/m16_errors/*`.
+
 - Issue #938: every public item of the standard library has a doc comment and at least one example, and every
   example is built and run with its doc-test attributes. `tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25):
   it fails on an undocumented item, an item with no example outside `tests/std_docs/no_example.txt` (now empty), an

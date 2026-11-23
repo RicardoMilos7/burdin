@@ -11,6 +11,7 @@ use crate::ast::*;
 use crate::lexer::lex;
 use crate::parser::parse_file;
 use burdin_diag::{Code, Diagnostics, FileId, Span};
+use std::collections::{HashMap, HashSet};
 
 const INVALID_ERROR: Code = Code::INVALID_ERROR;
 const DUPLICATE_FROM: Code = Code::DUPLICATE_FROM;
@@ -403,27 +404,15 @@ fn render_type(ty: &Type) -> Option<String> {
 // ----- main and test wrappers ----------------------------------------------
 
 /// `fn main(): Result<T>`: renames the function and appends a wrapper that prints an `Err` to standard error and
-/// exits 1 (spec/errors.md, ERR8). The return type must be written directly, so only a syntactic `Result` path is
-/// wrapped; an alias is left for the checker's main signature rule.
+/// exits 1 (spec/errors.md, ERR8). The return type is wrapped when it names `Result` directly or through the type
+/// aliases of this file that expand to one (spec/type-aliases.md, AL7). An alias imported from another module is not
+/// seen here, so it is left for the checker's main signature rule, which reports it as E0003.
 pub fn wrap_result_main(file: &mut File, id: FileId, diags: &mut Diagnostics) {
     let _ = &diags;
-    let mut name_span = None;
-    for item in &mut file.items {
-        let Item::Fn(f) = item else { continue };
-        // A `main` with parameters is still E0003, so it stays a `main` for the checker to reject.
-        if f.name.name != "main" || !f.params.is_empty() || f.body.stmts.is_empty() {
-            continue;
-        }
-        let Some(ret) = &f.ret else { continue };
-        let TypeKind::Path(segments) = &ret.kind else { continue };
-        if segments.len() != 1 || segments[0].name.name != "Result" || segments[0].args.is_empty() {
-            continue;
-        }
-        name_span = Some(f.name.span);
-        f.name.name = "__burdin_main_result".to_string();
-        break;
-    }
-    let Some(name_span) = name_span else { return };
+    let Some(index) = result_main_index(file) else { return };
+    let Item::Fn(f) = &mut file.items[index] else { return };
+    let name_span = f.name.span;
+    f.name.name = "__burdin_main_result".to_string();
     let text = "\
 fn main() {
     match __burdin_main_result() {
@@ -437,6 +426,48 @@ fn main() {
 }
 ";
     file.items.extend(parse_generated(text, id, name_span));
+}
+
+/// The position of the `main` that `wrap_result_main` renames: a parameterless `main` with a body whose return type
+/// names `Result` (spec/errors.md, ERR8). A `main` with parameters is still E0003, so it stays a `main` for the
+/// checker to reject.
+fn result_main_index(file: &File) -> Option<usize> {
+    let aliases: HashMap<&str, &Type> = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::TypeAlias(alias) => Some((alias.name.name.as_str(), &alias.ty)),
+            _ => None,
+        })
+        .collect();
+    file.items.iter().position(|item| {
+        let Item::Fn(f) = item else { return false };
+        f.name.name == "main"
+            && f.params.is_empty()
+            && !f.body.stmts.is_empty()
+            && f.ret.as_ref().is_some_and(|ret| names_result(ret, &aliases))
+    })
+}
+
+/// Whether `ty` names `Result<...>` with arguments, directly or through the aliases of the file (spec/type-aliases.md,
+/// AL7). The walk stops at a name it has already seen: an alias cycle is E0009 at its declaration, which the checker
+/// reports, so the cycle is not `Result` here.
+fn names_result(ty: &Type, aliases: &HashMap<&str, &Type>) -> bool {
+    let mut seen = HashSet::new();
+    let mut ty = ty;
+    loop {
+        let TypeKind::Path(segments) = &ty.kind else { return false };
+        let [segment] = segments.as_slice() else { return false };
+        let name = segment.name.name.as_str();
+        if name == "Result" {
+            return !segment.args.is_empty();
+        }
+        if !seen.insert(name) {
+            return false;
+        }
+        let Some(&target) = aliases.get(name) else { return false };
+        ty = target;
+    }
 }
 
 /// Typed test failures (spec/errors.md, ERR9): the parsed test function becomes `__burdin_test_N_body`, and a
@@ -801,10 +832,31 @@ mod tests {
     }
 
     #[test]
+    fn wraps_a_main_returning_a_result_alias_of_this_file() {
+        for src in [
+            "type R = Result<(), MyError>\nfn main(): R {\n    work()\n}\n",
+            "type R<T> = Result<T>\ntype S = R<()>\nfn main(): S {\n    work()\n}\n",
+        ] {
+            let (file, out) = parse_src(src);
+            assert_eq!(out, "", "{src}");
+            let names: Vec<&str> = file
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Fn(f) => Some(f.name.name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(names, ["__burdin_main_result", "main"], "{src}");
+        }
+    }
+
+    #[test]
     fn does_not_wrap_other_mains() {
         for (src, names) in [
             ("fn main() {\n    work()\n}\n", vec!["main"]),
-            ("type R = Result<(), MyError>\nfn main(): R {\n    work()\n}\n", vec!["main"]),
+            ("type R = i32\nfn main(): R {\n    work()\n}\n", vec!["main"]),
+            ("type A = B\ntype B = A\nfn main(): A {\n    work()\n}\n", vec!["main"]),
             ("fn main(): Result<(), MyError> {\n}\n", vec!["main"]),
             ("fn main(n: i32): Result<(), MyError> {\n    work()\n}\n", vec!["main"]),
             ("fn other(): Result<(), MyError> {\n    work()\n}\n", vec!["other"]),

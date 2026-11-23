@@ -507,7 +507,7 @@ impl FnCx<'_> {
         (condition, format!("{path}:{line}:{col}"))
     }
 
-    /// `res.context(message)`: `Ok` passes through; `Err(e)` becomes an `Err` whose dynamic `Error` wraps `e` and
+    /// `res.context(message)`: `Ok` passes through; `Err(e)` becomes an `Err` whose dynamic `AnyError` wraps `e` and
     /// prints `message: e`. The message is checked in the `Err` arm only, so it is evaluated only on an error, and
     /// the source error's trace frames are kept (`spec/errors.md`, ERR6).
     fn context_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
@@ -522,7 +522,7 @@ impl FnCx<'_> {
             return self.args_then_error(args, span);
         }
         let Some(error_ty) = self.globals.error_ty.clone() else {
-            self.diags.error(Code::ERROR_CONVERSION, span, "`.context` needs the standard library's `Error` type");
+            self.diags.error(Code::ERROR_CONVERSION, span, "`.context` needs the standard library's `AnyError` type");
             return self.args_then_error(args, span);
         };
         let Some(context) = self.globals.error_context else {
@@ -1082,7 +1082,7 @@ impl FnCx<'_> {
             .is_some_and(|f| self.globals.method_templates.contains_key(f))
     }
 
-    /// Whether `ty` (through references) is an `any` value or the dynamic `Error`, whose `is` and `downcast` take a
+    /// Whether `ty` (through references) is an `any` value or the dynamic `AnyError`, whose `is` and `downcast` take a
     /// type argument (AN6).
     pub(super) fn is_any_like(&self, ty: &Ty) -> bool {
         let mut base = ty;

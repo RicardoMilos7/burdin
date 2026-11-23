@@ -72,7 +72,7 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         self.reject_named_args(&name.name, args);
         let recv = self.auto_deref(recv);
-        // The dynamic `Error` is a struct wrapping `any Error`: `is` and `downcast` inspect the box
+        // The dynamic `AnyError` is a struct wrapping `any Error`: `is` and `downcast` inspect the box
         // (spec/errors.md, ERR4), so they delegate to the field.
         if self.globals.is_error_ty(&recv.ty)
             && (name.name == "is" || name.name == "downcast")

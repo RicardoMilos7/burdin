@@ -14,7 +14,7 @@ impl FnCx<'_> {
     pub(super) fn expr(&mut self, e: &ast::Expr, expect: Option<&Ty>) -> tir::Expr {
         let checked = self.expr_inner(e, expect);
         // A value used where `any Interface` is expected is boxed (spec/existentials.md, AN3), and an error type
-        // used where the dynamic `Error` is expected becomes one (spec/errors.md, ERR4). The dynamic error value
+        // used where the dynamic `AnyError` is expected becomes one (spec/errors.md, ERR4). The dynamic error value
         // is a struct, not `Ty::Any`, so the two cases are separate.
         let checked = match expect {
             Some(want @ Ty::Any(_)) => self.coerce_any(checked, want),

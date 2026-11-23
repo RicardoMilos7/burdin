@@ -215,8 +215,9 @@ whose value mentions it, a type alias that resolves to itself, and a struct or e
 are E0009 (put a recursive value behind `Heap<T>`).
 
 **`main`.** The entry point is an ordinary function `fn main()` that takes no parameters and returns nothing, or
-`fn main(): Result<...>` (written directly, not through an alias): an `Err` prints its message to standard error and
-exits 1 (`spec/errors.md`, ERR8). A parameter or any other return type is E0003.
+`fn main(): Result<...>` (written directly, or an alias declared in the same file that expands to one, `spec/type-aliases.md`
+AL7): an `Err` prints its message to standard error and exits 1 (`spec/errors.md`, ERR8). A parameter or any other return
+type is E0003, and so is an alias of a `Result` imported from another module.
 
 **`Drop`.** The only way to declare a drop method is `Type: Drop { fn drop(mut self) { ... } }`. The block has
 exactly one method named `drop`; anything else is E0131. `drop` takes `mut self` and returns nothing, and any other

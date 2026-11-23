@@ -1,0 +1,39 @@
+//@ run
+//> ok 1
+//> err missing key port
+//> err-type ok
+
+// The dynamic error is `AnyError` (spec/errors.md, ERR4): a `Result<T>` holds it, `.context` returns it, and a
+// function may name it directly. `Error` stays the marker interface that `any Error` and the bounds use.
+
+error enum ConfigError {
+    Missing(String) "missing key {0}"
+}
+
+fn load(ok: bool): Result<i32, ConfigError> {
+    if ok { Ok(1) } else { Err(ConfigError.Missing("port".to_string())) }
+}
+
+fn direct(ok: bool): Result<i32, AnyError> {
+    let n = load(ok)?
+    Ok(n)
+}
+
+fn describe(e: AnyError): String {
+    if e.is<ConfigError>() { "err-type ok".to_string() } else { "err-type bad".to_string() }
+}
+
+fn main() {
+    match direct(true) {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("err {e}"),
+    }
+    match direct(false) {
+        Ok(n) => println("ok {n}"),
+        Err(e) => println("err {e}"),
+    }
+    match load(false).context("reading") {
+        Ok(_) => println("unexpected"),
+        Err(e) => println(describe(e)),
+    }
+}
