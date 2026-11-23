@@ -550,8 +550,8 @@ struct String {
 `push*`, `from`, or `clone`. `Chars` is only iterable: `for c in s.chars()`.
 
 Slicing `s[a..b]` and `s[a..=b]` yields a `str` view of the bytes in the range; it works on `str`, `String`, arrays,
-and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics. `len` counts bytes, and a slice may
-split a multi-byte character: the language does not check UTF-8 boundaries.
+and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, and so does a slice of `str` or `String`
+either of whose ends is not a character boundary (see "Slicing and character boundaries" below). `len` counts bytes.
 
 `==` and `!=` compare two `str` values or two `String` values byte for byte. `<`, `<=`, `>`, `>=` compare two `str`
 values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
@@ -596,10 +596,16 @@ requires an `unsafe` block (E0161); `std` calls it only after validating the byt
 make a `str` that is not UTF-8. `str.from_utf8` and `String.from_utf8` are associated functions resolved by name;
 `as_bytes` is a compiler-provided method.
 
-**The slicing rule does not change.** `s[a..b]` stays the unchecked byte slice: it panics on a reversed or
-out-of-range range and may split a character. Byte slicing is the primitive the UTF-8 algorithms above are written
-with, and `get(from, to)` is the checked, boundary-aware form. A program that needs a character boundary asks
-`is_char_boundary` (or uses `get`).
+**Slicing and character boundaries (issue #916).** On `str` and `String`, `s[a..b]` and `s[a..=b]` panic unless both
+ends are character boundaries: the start of the text, the end of the text, or a byte that does not continue a
+multi-byte character. A slice therefore never breaks a character, so every `str` stays valid UTF-8, which the
+character functions (`chars`, `trim`, the case conversions) and `__view_as_text` rely on. The panic reads
+`slice: the index is not a character boundary`. A reversed or out-of-range range panics as before. Slicing an
+array or a slice of `[u8]` checks only the range, since its elements are not characters.
+
+`get(from, to)` is the same slice without the panic: it returns `None` when the range is reversed, out of range, or
+an end is not a character boundary. `as_bytes()` is the byte view for byte-level work, and `is_char_boundary` tests a
+single offset.
 
 Tests: `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`,
 `string_find_all`, `string_checked_slice`, and the compile-fail cases `string_bytes_second_class` (E0120) and
