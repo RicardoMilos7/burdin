@@ -1,0 +1,23 @@
+//@ compile-fail
+
+// A `[u8]` view has no length to check, so its errors are the file's: a missing file is E0240, and a path that is not
+// a literal, is absolute, or has `..` is E0241 (spec/comptime.md, CT15). A constant may not have type `[u8]` (CT3,
+// E0221).
+
+const DATA: [u8] = embed("data/bytes.bin") //~ E0221
+
+fn missing(): [u8] {
+    embed("data/missing.bin") //~ E0240
+}
+
+fn outside(): [u8] {
+    embed("../m20_comptime/comptime_block.bd") //~ E0241
+}
+
+fn main() {
+    let name = "data/bytes.bin"
+    let a: [u8] = embed(name) //~ E0241
+    println("{}", missing().len())
+    println("{}", outside().len())
+    println("{}", a.len())
+}

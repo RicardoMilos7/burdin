@@ -124,6 +124,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             },
             K::Char(c) => Some(self.cx.i32_type().const_int(u64::from(*c as u32), false).into()),
             K::Str(s) => Some(self.str_literal(s.as_bytes()).into()),
+            K::Bytes(b) => Some(self.str_literal(b).into()),
             K::Local(id) => {
                 let v = match (self.slots[id.0], self.llvm_ty(&e.ty)) {
                     (Some(slot), Some(t)) => {

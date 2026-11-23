@@ -17,6 +17,11 @@ close-out checklist in `AGENTS.md`).
   scans open documents, reopens a package when an edit adds an official import, and offers every official package in
   `use` completion. Rules: `spec/packages.md` PKG15, PKG17, PKG18 and `spec/lsp.md` LS4, LS12; tests:
   `tests/check_packages.py`, `tests/check_lsp.py`, and the loader's and language server's unit tests.
+- Issue #969: `embed("path")` with the expected type `[u8]` is a static byte view of the file, so the length is
+  never written. It can be a `let` annotation, a parameter, or a return type, and a function may return it, as it may
+  return a string literal (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). A constant may not have that type
+  (E0221, CT3). The `[u8; N]` form and E0240/E0241 are unchanged. Tests: `tests/m21_reflect/embed_slice` and
+  `embed_slice_invalid`.
 - Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
   integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
   binary operator's overflow and division rules in both profiles. On a user type or a type parameter, `a op= b` is

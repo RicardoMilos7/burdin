@@ -377,6 +377,9 @@ impl<'p, 'c> Interp<'p, 'c> {
             }),
             K::Char(c) => Value::Char(*c),
             K::Str(s) => Value::str(s),
+            K::Bytes(b) => {
+                Value::Slice(std::rc::Rc::new(b.iter().map(|x| Value::Int(i128::from(*x))).collect()), 0, b.len())
+            }
             K::Local(_) | K::Field(..) | K::Index(..) | K::Deref(_) | K::DerefRef(_) => {
                 let take = mode == Mode::Move && !self.is_copy(&e.ty);
                 // A view of a temporary that a reference produced reads through the reference.
