@@ -1,0 +1,54 @@
+//@ run
+//> 2
+//> 4
+//> 6
+//> 2
+//> 4
+//> 6
+//> 2
+//> 3
+//> 2
+//> 3
+//> 6
+//> 6
+//> true
+//> true
+//> 3
+//> 3
+
+// The eager `List` methods and their lazy namesakes (`xs.iter().map(f)`) give the same items. The eager closure
+// takes a view (`*x` reads the `i32`), the lazy closure takes the item (`x` is the `i32`), and `to_list()` turns a
+// lazy chain into the eager result (spec/iterators.md, IT10).
+fn show(xs: List<i32>) {
+    for x in xs {
+        println(x.to_string())
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+
+    show(xs.map(|x| *x * 2))
+    show(xs.iter().map(|x| x * 2).to_list())
+
+    show(xs.filter(|x| *x > 1))
+    show(xs.iter().filter(|x| *x > 1).to_list())
+
+    println(xs.fold(0, |acc, x| acc + *x).to_string())
+    println(xs.iter().fold(0, |acc, x| acc + x).to_string())
+
+    println(xs.any(|x| *x == 2).to_string())
+    println(xs.iter().any(|x| x == 2).to_string())
+
+    match xs.find(|x| *x == 3) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+    match xs.iter().find(|x| *x == 3) {
+        Some(v) => println(v.to_string()),
+        None => println("none"),
+    }
+}

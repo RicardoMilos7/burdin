@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The eager `find` clones the item it returns, so the element type must be `Clone` (E0141). The lazy
+// `iter().find` never clones (lazy_no_clone_plain).
+
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let mut xs = List<Plain>.new()
+    xs.push(Plain { v: 1 })
+    let found = xs.find(|p| p.v == 1) //~ E0141
+    println(found.is_some().to_string())
+}

@@ -1,0 +1,30 @@
+//@ run
+//> 2
+//> 2
+//> 3
+
+// The lazy `filter` and `find` keep views and never clone, so a struct that is not `Clone` works with them. The
+// eager `filter` and `find` need `Clone` (eager_filter_needs_clone, eager_find_needs_clone).
+struct Plain {
+    v: i32
+}
+
+fn main() {
+    let mut xs = List<Plain>.new()
+    xs.push(Plain { v: 1 })
+    xs.push(Plain { v: 2 })
+    xs.push(Plain { v: 3 })
+
+    println(xs.iter().filter(|p| p.v > 1).count().to_string())
+
+    match xs.iter().find(|p| p.v == 2) {
+        Some(p) => println(p.v.to_string()),
+        None => println("none"),
+    }
+
+    let mut kept = 0
+    for p in xs.iter().filter(|p| p.v < 3) {
+        kept = kept + 1
+    }
+    println((kept + 1).to_string())
+}
