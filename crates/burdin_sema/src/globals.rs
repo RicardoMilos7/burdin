@@ -155,6 +155,10 @@ pub(crate) struct OpIfaces {
 
 #[derive(Default)]
 pub(crate) struct Globals {
+    /// How many instances of each spelled name were made. Two instances can spell alike and still differ (a borrowing
+    /// closure and an owning one are both `Fn(i64): i64`), and code generation names a function or type by its
+    /// name, so the later one gets a suffix.
+    pub(crate) instance_name_counts: HashMap<String, usize>,
     pub(crate) modules: Vec<ModuleInfo>,
     pub(crate) packages: Vec<PackageInfo>,
     /// `(package, module path joined with '.')` to the module index.

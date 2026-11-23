@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A `par_iter` pipeline views the list, so it is second-class like a slice: the list cannot change while the pipeline is
+// alive, and a pipeline of views has no `collect`, `find`, or `reduce` because a view cannot be a list element or
+// outlive the call. `map` to owned items first (spec/parallel.md, PR3).
+
+fn main() {
+    let mut xs = List<i64>.new()
+    xs.push(1)
+    let p = xs.par_iter()
+    xs.push(2) //~ E0111
+    let n = p.count()
+    let views = xs.par_iter().collect() //~ E0002
+    let owned = xs.par_iter().map(|x| *x).collect()
+}

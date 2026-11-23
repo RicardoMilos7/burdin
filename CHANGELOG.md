@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #971: parallel iteration in the standard library (`std.parallel`). `par_iter()`, `par_iter_mut()`,
+  `par_into_iter()`, and `par_range(start, end)` start a pipeline of `map`, `filter`, `filter_map`, `enumerate`, `take`,
+  and `skip`, consumed by `for_each`, `count`, `fold`, `reduce`, `any_item`, `all`, `find`, `min_by`, `max_by`,
+  `min_by_key`, `max_by_key`, or `collect`, on the scheduler's own workers (a chunk is a scoped task; chunks merge in
+  source order). It needed one compiler rule: an `Fn` closure is `Sync` when every capture is (`spec/shared.md` SH4,
+  which said a closure is never `Sync`). Along the way it found and fixed a code generation bug: two instances that
+  spell alike but differ (a borrowing closure and an owning one, both `Fn(i64): i64`) shared one function name, so
+  the first one's body was emitted into the second's symbol. Rules: `spec/parallel.md` PR1-PR12; tests
+  `tests/s3_parallel/`, `tests/s2_shared/closure_*`, and `tests/m12_closures/closure_same_spelling_instances`.
 - Official packages are part of the standard library's surface: `use json` reaches `packages/json`, and an official
   package is never declared in `burdin.toml` (`json = true`, `json = { official = true }`, and `burdin add json` are
   errors that point at `use json`). The compiler scans each loaded package's `.bd` files for `use` declarations and

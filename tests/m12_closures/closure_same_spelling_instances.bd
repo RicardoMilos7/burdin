@@ -1,0 +1,66 @@
+//@ run
+//> 95 10
+
+// Two closures with the same signature, one that borrows a local and one that owns nothing, make two instances of the
+// same generic type and of its default methods. They spell alike (`Mapped<Nums, Fn(i64): i64>`), but each is its own
+// instance, so each gets its own function: the first used to be emitted into the second's symbol (issue #971).
+
+interface Source {
+    fn size(self): usize
+    fn at(self, i: usize): i64
+    fn mapped<F: Fn(i64): i64>(own self, own f: F): Mapped<Self, F> {
+        Mapped { inner: self, f: f }
+    }
+    fn total(self): i64 {
+        let mut t: i64 = 0
+        let mut i: usize = 0
+        while i < self.size() {
+            t = t + self.at(i)
+            i = i + 1
+        }
+        t
+    }
+    fn gather(self): List<i64> {
+        let mut out = List<i64>.new()
+        let mut i: usize = 0
+        while i < self.size() {
+            out.push(self.at(i))
+            i = i + 1
+        }
+        out
+    }
+}
+
+struct Nums {
+    n: usize,
+}
+
+Nums: Source {
+    fn size(self): usize {
+        self.n
+    }
+    fn at(self, i: usize): i64 {
+        i as i64
+    }
+}
+
+struct Mapped<I, F: Fn(i64): i64> {
+    inner: I,
+    f: F,
+}
+
+Mapped<I, F>: Source where I: Source, F: Fn(i64): i64 {
+    fn size(self): usize {
+        self.inner.size()
+    }
+    fn at(self, i: usize): i64 {
+        self.f(self.inner.at(i))
+    }
+}
+
+fn main() {
+    let r: i64 = 5
+    let t = Nums { n: 10 }.mapped(|x| x + r).total()
+    let g = Nums { n: 10 }.mapped(|x| x * 3).gather()
+    println("{} {}", t, g.len())
+}

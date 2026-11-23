@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// Only an `Fn` closure is `Sync`: an `FnMut` closure writes what it captures, so two tasks calling it at once would
+// race (spec/shared.md, SH4).
+
+fn needs_sync<F: Sync>(f: &F) {}
+
+fn main() {
+    let mut n = 0
+    let counts = || { n += 1 }
+    needs_sync(&counts) //~ E0280
+    let reads = || 1
+    needs_sync(&reads)
+}

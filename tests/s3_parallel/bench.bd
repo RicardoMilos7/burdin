@@ -1,0 +1,39 @@
+//@ burdin-bench measured=3 failed=0
+
+// The scaling bench of spec/parallel.md (PR11): a large `map`/`filter`/`fold` pipeline and its sequential twin. Scaling is
+// advisory evidence, not a conformance assertion: run it with `task.set_workers(1|2|4|8)` changed in the source to see
+// it. It only has to run here.
+
+fn main() {}
+
+fn work(x: i64): i64 {
+    let mut a = x
+    let mut i = 0
+    while i < 200 {
+        a = (a * 31 + 7) % 1000003
+        i = i + 1
+    }
+    a
+}
+
+bench "parallel pipeline" {
+    let total = par_range(0, 20000).map(|x| work(x)).filter(|v| *v % 2 == 0).reduce(|| 0, |a, b| a + b)
+    black_box(total)
+}
+
+bench "parallel count filter" {
+    black_box(par_range(0, 50000).filter(|x| *x % 3 == 0).count())
+}
+
+bench "sequential pipeline" {
+    let mut total: i64 = 0
+    let mut x: i64 = 0
+    while x < 20000 {
+        let v = work(x)
+        if v % 2 == 0 {
+            total = total + v
+        }
+        x = x + 1
+    }
+    black_box(total)
+}

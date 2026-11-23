@@ -341,6 +341,16 @@ impl FnCx<'_> {
             })
             .map(tir::FnSend::no)
             .unwrap_or_else(tir::FnSend::yes);
+        // Whether several tasks may call it at once: an `Fn` closure only reads its captures, so a shared view of the
+        // closure is a shared view of each capture, and each one must be `Sync` however it was captured (SH4).
+        let sync_why = ctx.captures.iter().find_map(|c| {
+            let why = child.globals.marker_violation(&c.ty, true, &child.bounds)?;
+            Some(format!(
+                "the closure captures `{}` of type `{}`, which is not `Sync`: {why}",
+                child.locals[c.local.0].name, c.ty
+            ))
+        });
+        let send = send.with_sync(sync_why);
         let sig = FnSig { params: param_tys, ret: Box::new(ret_ty.clone()) };
         if let Some((_, expected_kind, _)) = &expected
             && !kind.at_least(*expected_kind)

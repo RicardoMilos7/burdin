@@ -1,0 +1,29 @@
+//@ burdin-test passed=2 failed=0
+
+// Under `burdin test` the checking allocator tracks every allocation, the workers' too, and a pipeline frees what it
+// allocates, including the items a `take` never asked `par_into_iter` for (spec/parallel.md, PR11).
+
+fn main() {}
+
+test "owned items are dropped" {
+    let mut words = List<String>.new()
+    let mut i = 0
+    while i < 4000 {
+        words.push(i.to_string())
+        i = i + 1
+    }
+    let lens = words.par_into_iter().map(|w| w.len()).reduce(|| 0, |a, b| a + b)
+    assert_eq(lens, 10 + 90 * 2 + 900 * 3 + 3000 * 4)
+}
+
+test "unconsumed items and collected lists are dropped" {
+    let mut words = List<String>.new()
+    let mut i = 0
+    while i < 4000 {
+        words.push(i.to_string())
+        i = i + 1
+    }
+    let firsts = words.par_into_iter().take(10).map(|w| format("{}!", w)).collect()
+    assert_eq(firsts.len(), 10)
+    assert_eq(firsts[3], "3!".to_string())
+}

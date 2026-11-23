@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A `par_iter_mut` pipeline borrows the list exclusively until it ends, so using the list again while the pipeline is
+// alive is an overlapping borrow (spec/parallel.md, PR6; spec/memory-rules.md).
+
+fn main() {
+    let mut xs = List<i64>.new()
+    xs.push(1)
+    let p = xs.par_iter_mut()
+    xs.push(2) //~ E0111
+    p.for_each(|x| { *x = 0 })
+}

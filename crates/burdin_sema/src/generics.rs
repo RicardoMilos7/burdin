@@ -1187,6 +1187,13 @@ impl Globals {
         None
     }
 
+    /// `name` for one more instance: the spelling itself the first time, and `name#2`, `name#3`, ... after that.
+    pub(crate) fn unique_instance_name(&mut self, name: String) -> String {
+        let count = self.instance_name_counts.entry(name.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 { name } else { format!("{name}#{count}") }
+    }
+
     /// `Self`-free spelling of a type for names of instances: `Stack<i32>`.
     pub(crate) fn instance_name(name: &str, args: &[Ty]) -> String {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();

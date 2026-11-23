@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// An `Fn` closure is `Sync` only when every value it captures is `Sync`, whether it borrows or moves it
+// (spec/shared.md, SH4). `Counter` is `Send` but not `Sync`.
+
+struct Counter {
+    cell: CPtr<i32>,
+}
+
+unsafe Counter: Send {}
+
+fn needs_sync<F: Sync>(f: &F) {}
+
+fn takes_sync<F: Fn(): bool + Sync>(own f: F) {}
+
+fn main() {
+    let c = Counter { cell: unsafe { CPtr.null() } }
+    let borrows = || unsafe { c.cell.is_null() }
+    needs_sync(&borrows) //~ E0280
+    let d = Counter { cell: unsafe { CPtr.null() } }
+    takes_sync(|| unsafe { d.cell.is_null() }) //~ E0280
+}
