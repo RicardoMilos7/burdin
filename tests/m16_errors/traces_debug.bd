@@ -6,7 +6,7 @@
 
 // A debug build records the creation site and the propagation site of a dynamic error (spec/errors.md, ERR7),
 // and each frame also names the function the error passed through (`spec/debug.md`, DBG3): here the error is
-// boxed into the dynamic `Error` by `.context` in `load` and propagated by the `?` in `load`, so both frames
+// boxed into the dynamic `AnyError` by `.context` in `load` and propagated by the `?` in `load`, so both frames
 // name `load`. Only the line and column are printed as text, because the file path is a temporary path.
 
 fn read(): Result<i32, IoError> {

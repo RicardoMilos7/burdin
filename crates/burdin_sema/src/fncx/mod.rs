@@ -603,7 +603,7 @@ impl<'a> FnCx<'a> {
         mk(tir::ExprKind::BoxAny { value: Box::new(e), vtable }, ty, span)
     }
 
-    /// Converts an error type into the dynamic `Error` where that type is expected (`spec/errors.md`, ERR4): the
+    /// Converts an error type into the dynamic `AnyError` where that type is expected (`spec/errors.md`, ERR4): the
     /// value is boxed as `any Error`, and a debug build records the conversion's source location (ERR7). A value
     /// that is not an error type is returned unchanged, so the caller reports the ordinary mismatch.
     pub(super) fn coerce_error(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {

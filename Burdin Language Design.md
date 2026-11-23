@@ -163,10 +163,10 @@ enum Tree {
 
 ```
 enum Option<T> { Some(T), None }
-enum Result<T, E = Error> { Ok(T), Err(E) }
+enum Result<T, E = AnyError> { Ok(T), Err(E) }
 ```
 
-`Result<T>` with one parameter uses the dynamic `Error` type (see Error handling). There are no nulls and no exceptions.
+`Result<T>` with one parameter uses the dynamic `AnyError` type (see Error handling). There are no nulls and no exceptions.
 
 **Operator overloading** goes through interfaces (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Index`, and so on). There are no custom operators, and `&&`, `||`, and `=` cannot be overloaded.
 
@@ -329,7 +329,7 @@ error enum ConfigError {
 }
 ```
 
-**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `Error` type that any error converts into, so applications can use `?` everywhere without naming error types. An `Error` is inspected or downcast with `is` and `downcast`, not with `match`: a pattern cannot name a boxed type
+**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `AnyError` type that any error converts into, so applications can use `?` everywhere without naming error types. An `AnyError` is inspected or downcast with `is` and `downcast`, not with `match`: a pattern cannot name a boxed type
 (`spec/existentials.md`, AN10).
 
 **Context** wraps an error with a message and keeps the original as its source:
