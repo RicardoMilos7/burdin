@@ -72,12 +72,20 @@ impl Globals {
             }
             Ty::CPtr(_) => Some(format!("a raw pointer is never `{name}`")),
             Ty::Any(_) => Some(format!("an `any` value may hold a type that is not `{name}`")),
-            Ty::Fn { send, .. } => {
-                // A closure type does not list its captures. The closure expression decided `Send`; nothing decides
-                // `Sync`, because a closure shared by several tasks would need every capture to be `Sync` and the
-                // type does not say.
+            Ty::Fn { send, kind, .. } => {
+                // A closure type does not list its captures. The closure expression decided both answers from the
+                // captures it found. Only an `Fn` closure is `Sync`: `FnMut` and `FnOnce` change or consume what
+                // they capture, so they cannot be shared.
                 if sync {
-                    Some("a closure is not `Sync`".to_string())
+                    if *kind != burdin_tir::FnKind::Fn {
+                        Some(format!("a closure used as `{}` is not `Sync`; only an `Fn` closure is", kind.name()))
+                    } else if send.sync_ok {
+                        None
+                    } else {
+                        Some(send.sync_why.as_deref().map(str::to_string).unwrap_or_else(|| {
+                            "a closure type written as an annotation does not say what its closure captures".to_string()
+                        }))
+                    }
                 } else if send.ok {
                     None
                 } else {

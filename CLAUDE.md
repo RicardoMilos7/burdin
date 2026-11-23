@@ -41,7 +41,7 @@ not updated and may disagree with the repository.
    statistics, baselines, `black_box`, and the profiler hook), `spec/fmt.md` is the behavior of `burdin fmt` (the one style, comments, `use`
    sorting, doc-comment code blocks, and the command line), `spec/tasks.md` is tasks, the scheduler, scoped tasks, panics in tasks, and
    threads, `spec/channels.md` is `Channel<T>` and `select`, `spec/shared.md` is `Send`, `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and
-   the atomic `Shared<T>`, `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
+   the atomic `Shared<T>`, `spec/parallel.md` is parallel iteration (`std.parallel`: sources, adapters, consumers, order, splitting, and the `Sync` closure), `spec/io.md` is the reactor, the helper pool, `blocking` extern functions, sockets, name
    resolution, and timers, `spec/build-scripts.md` is `build.bd`, dependency grants, generated
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
    import rules, layout checks, wrappers, and `--export`; `spec/rust-interop.md` is Rust interop: rustdoc JSON, the C-ABI

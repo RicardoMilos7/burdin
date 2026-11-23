@@ -44,6 +44,9 @@ tests/
   s2_io/               stage 2.4: the reactor, timers, the file helper pool, `blocking` extern functions, TCP and
                        UDP sockets, name resolution, and their stress tests
   s3_bench/            stage 3: `bench` blocks, `black_box`, and `burdin bench` (spec/bench.md)
+  s3_parallel/         stage 3: parallel iteration in `std.parallel` (`spec/parallel.md`): ordered pipelines, owned and
+                       borrowed sources, `par_iter_mut`, nested pipelines, stress, `Send`/`Sync` and comptime errors,
+                       a panic abort, a leak check under `burdin test`, and the scaling bench
   s3_scripts/          stage 3: the shebang line of a single-file script and its inline dependency manifest
   s3_serialize/        stage 3: the serialization framework's data model, error paths, test format, and the
                        `Serialize`/`Deserialize` derives (spec/serialization.md); `s3_serialize/json` and

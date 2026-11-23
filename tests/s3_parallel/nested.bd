@@ -1,0 +1,27 @@
+//@ run
+//> 9000000
+//> 1000
+//> 8000
+
+// A pipeline inside a task, inside another pipeline's closure, and from several tasks at once: each parks on its
+// scope instead of blocking a worker, and the pool is the scheduler's own (spec/parallel.md, PR7).
+
+fn digit_sum(n: i64): i64 {
+    par_range(0, n).map(|j| j % 10).reduce(|| 0, |a, b| a + b)
+}
+
+fn main() {
+    task.set_workers(2)
+    // Inside a task: 2000 positions, each worth the digit sum of 2000 (9 * 200 * 5 = 9000)... summed: 2000 * 9000 / 2.
+    let h = task.spawn(|| par_range(0, 2000).map(|i| digit_sum(2000)).reduce(|| 0, |a, b| a + b))
+    println("{}", h.join() / 2)
+    // Inside another pipeline's closure: each outer position counts itself once in an inner pipeline.
+    let hits = par_range(0, 1000)
+        .map(|i| par_range(0, 1000).filter(|j| *j == i).count() as i64)
+        .reduce(|| 0, |a, b| a + b)
+    println("{}", hits)
+    // Several tasks, each running its own pipeline.
+    let a = task.spawn(|| par_range(0, 4000).count() as i64)
+    let b = task.spawn(|| par_range(0, 4000).count() as i64)
+    println("{}", a.join() + b.join())
+}

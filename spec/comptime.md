@@ -159,7 +159,8 @@ note at the operation:
 - the system's clocks, entropy, and sleeping: `Instant.now`, `SystemTime.now` (so `SystemClock`'s methods), `sleep`,
   and `random_seed` (so `Random.from_entropy`); a `Duration`, a `DateTime`, a `ManualClock`, and a seeded `Random`
   are pure and work at compile time;
-- C: calling an `extern` function, `CPtr` values and dereferences, `CString`, and `CStr.to_string`.
+- C: calling an `extern` function, `CPtr` values and dereferences, `CString`, and `CStr.to_string`;
+- parallel iteration: running a `std.parallel` pipeline (`spec/parallel.md`, PR10), whatever its size.
 
 The check is dynamic: a function that prints can be called at compile time as long as the path taken does not print.
 Nothing else observable depends on the machine, the time, or the order of compilation, so a comptime result depends

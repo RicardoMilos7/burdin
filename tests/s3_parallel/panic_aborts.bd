@@ -1,0 +1,19 @@
+//@ run-abort
+//> before
+//@ stderr: boom
+
+// A panic inside an adapter aborts the process like any task panic: there is no unwinding and no error channel
+// (spec/tasks.md, TK8; spec/parallel.md, PR8).
+
+fn main() {
+    println("before")
+    let n = par_range(0, 5000)
+        .map(|x| {
+            if x == 4000 {
+                panic("boom")
+            }
+            x
+        })
+        .count()
+    println("never {}", n)
+}

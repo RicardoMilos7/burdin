@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// A closure that captures a value that is not `Sync` cannot be an adapter: every worker calls it at once, so the
+// capture is shared (spec/parallel.md, PR9; spec/shared.md, SH4). A `Send`-only capture is E0280 too, and a closure
+// that writes its capture is not an `Fn` closure at all.
+
+struct Counter {
+    cell: CPtr<i32>,
+}
+
+unsafe Counter: Send {}
+
+fn main() {
+    let c = Counter { cell: unsafe { CPtr.null() } }
+    let n = par_range(0, 10) //~ E0280
+        .map(|x| {
+            if unsafe { c.cell.is_null() } {
+                x
+            } else {
+                0
+            }
+        })
+        .count()
+    let mut seen: i64 = 0
+    let m = par_range(0, 10) //~ E0141 //~ E0280
+        .map(|x| { //~ E0141
+            seen = seen + x
+            x
+        })
+        .count()
+}

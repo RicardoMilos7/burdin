@@ -1,0 +1,34 @@
+//@ run
+//> 100000 true
+//> true true
+//> 3
+
+// `par_iter_mut` hands each item to one worker, so every position is written exactly once; the borrow of the list
+// ends when the pipeline does (spec/parallel.md, PR6).
+
+fn main() {
+    let mut xs = List<i64>.new()
+    let mut i: i64 = 0
+    while i < 100000 {
+        xs.push(i)
+        i = i + 1
+    }
+    xs.par_iter_mut().for_each(|x| { *x = *x * 2 })
+    let mut ok = true
+    let mut j: usize = 0
+    while j < xs.len() {
+        if xs[j] != j as i64 * 2 {
+            ok = false
+        }
+        j = j + 1
+    }
+    println("{} {}", xs.len(), ok)
+    xs.par_iter_mut().for_each_indexed(|k, x| { *x = k as i64 })
+    println("{} {}", xs.par_iter().enumerate().all(|p| *p.1 == p.0 as i64), xs.par_iter().all(|x| *x >= 0))
+    let mut small = List<i64>.new()
+    small.push(1)
+    small.push(1)
+    small.push(1)
+    small.par_iter_mut().for_each(|x| { *x = *x + 1 })
+    println("{}", small.par_iter().map(|x| *x).reduce(|| 0, |a, b| a + b) / 2)
+}

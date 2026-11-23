@@ -4,6 +4,25 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Parallel iteration (issue #971, 2026-11-23).** `std.parallel` (`std/src/parallel.bd`, `spec/parallel.md`, PR1-PR12)
+adds Rayon-style pipelines on the scheduler's own workers: sources `par_iter`, `par_iter_mut`, `par_into_iter`, and
+`par_range`; adapters `map`, `filter`, `filter_map`, `enumerate`, `take`, `skip`; consumers `for_each`, `count`, `fold`,
+`reduce`, `any_item`, `all`, `find`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `collect`. A consumer splits the
+positions into at most 64 chunks of at least 1024 (a smaller pipeline runs on the caller), runs each chunk as a scoped
+task (`__chunks`), and merges the partial results in source order. Three things the issue left open were decided here:
+(1) SH4 now says an `Fn` closure is `Sync` when every capture is (`FnSend` carries `sync_ok`/`sync_why`; `marker_why`
+in `burdin_sema/src/markers.rs` answers it), (2) consumers that keep items are on `ParallelValues<T>`, implemented only
+for owned-item pipelines, because a default method on the one interface instantiates for a view item and fails (E0120),
+and `indexed` adapters are on `IndexedParallelIterator<T>`, and (3) `fold` takes `(init, op, combine)`, `any` is
+`any_item`, a range source is `par_range` (a `Range` hides its endpoints from library code), and `par_iter_mut` has its
+own `for_each`/`for_each_indexed` because a `&mut` made from an address cannot be returned from a method (E0122). The
+feature also found a code generation bug and fixed it (`Globals::unique_instance_name`): two instances that spell alike
+but differ (a borrowing closure and an owning one, both `Fn(i64): i64`) shared one LLVM function name, so one body was
+emitted into the other's symbol (`tests/m12_closures/closure_same_spelling_instances`). A pipeline touches a raw pointer
+first so `comptime` reports E0224 (PR10). Not done: `flat_map`, `rev`, user sources, `Set`/`Map` targets, `par_sort`
+(PR12). `s3_parallel` runs in CI on all three OSes, and its stress tests repeat 20 times like the stage 2 ones. Verified
+here on Linux x86-64 only: `s3_parallel` (14 tests), `s2_shared`, `m12_closures`, the full conformance suite, clippy,
+fmt, and `cargo test --workspace`.
 **Return-position `impl I` (issues #959 and #926, 2026-11-23).** `fn make(): impl Shape` returns one concrete type that
 the body determines, and callers see only `Shape` (`spec/existentials.md` AN4). The compiler does this with an opaque
 wrapper struct per function (`crates/burdin_sema/src/opaque.rs`): the struct has no name and one field, the concrete

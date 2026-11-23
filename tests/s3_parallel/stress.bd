@@ -1,0 +1,32 @@
+//@ run
+//> 200 pipelines, 1000000 items, all sums right: true
+//> ordered collect of 50000 items intact: true
+
+// Many pipelines back to back on a few workers, each checked against the closed-form answer, and a large ordered
+// collect (spec/parallel.md, PR2, PR7).
+
+fn main() {
+    task.set_workers(3)
+    let mut right = true
+    let mut round: i64 = 0
+    while round < 200 {
+        let n: i64 = 5000
+        let r: i64 = round
+        let total = par_range(0, n).map(|x| x + r).reduce(|| 0, |a, b| a + b)
+        if total != n * (n - 1) / 2 + n * r {
+            right = false
+        }
+        round = round + 1
+    }
+    println("200 pipelines, {} items, all sums right: {}", 200 * 5000, right)
+    let out = par_range(0, 50000).map(|x| x * 3).collect()
+    let mut intact = out.len() == 50000
+    let mut k: usize = 0
+    while k < out.len() {
+        if out[k] != k as i64 * 3 {
+            intact = false
+        }
+        k = k + 1
+    }
+    println("ordered collect of 50000 items intact: {}", intact)
+}

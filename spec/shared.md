@@ -83,11 +83,13 @@ the compiler derives them from what the type is made of:
 * A raw pointer `CPtr<T>` is never `Send` and never `Sync`. This is the one primitive reason a type is not.
 * `any I` (a boxed existential) is never `Send` and never `Sync`: the compiler does not know the type behind it.
   (`impl I` is the concrete type, and follows it.)
-* A closure is `Send` when each value it moves is `Send` and each value it borrows is `Sync`; a closure is never
-  `Sync`. The closure expression decides this where it is written, from the captures the compiler found, so a closure
-  passed straight to `task.spawn` or kept in a variable carries its answer. A closure type written as an annotation
-  (`f: Fn(): i32`) says nothing about what the closure behind it captured, so it is not `Send`
-  (`s2_shared/closure_annotation_not_send`).
+* A closure is `Send` when each value it moves is `Send` and each value it borrows is `Sync`. A closure is `Sync` when
+  it is an `Fn` closure and every value it captures, moved or borrowed, is `Sync` (decision, issue #971): an `Fn`
+  closure cannot change its captures, so a shared view of the closure only reads them. An `FnMut` or `FnOnce`
+  closure is never `Sync`. The closure expression decides both from the captures the compiler found, so a closure
+  passed straight to `task.spawn` or a parallel adapter, or kept in a variable, carries its answer. A closure type
+  written as an annotation (`f: Fn(): i32`) says nothing about what the closure behind it captured, so it is neither
+  `Send` nor `Sync` (`s2_shared/closure_annotation_not_send`). A function used as a value is both.
 * A type parameter `T` is `Send` or `Sync` only through a bound, `fn run<T: Send>(own value: T)`; calling such a
   function with a type that is not is E0280 at the call (`s2_shared/generic_send_bound`).
 * `Shared<T>` follows SH2, `Mutex<T>` and `RwLock<T>` follow SH8 and SH10, and the atomics, `Channel<T>` (when `T` is
@@ -107,7 +109,7 @@ An error caused by a failed requirement does not cascade: a type that was reject
 inside the library code that uses it.
 
 Tests: `s2_shared/send_derived` (accepted), `spawn_non_send`, `spawn_result_non_send`, `thread_non_send`,
-`channel_non_send`, `generic_send_bound`, `closure_annotation_not_send` (E0280).
+`channel_non_send`, `generic_send_bound`, `closure_annotation_not_send` (E0280); `closure_fn_is_sync` (accepted), `closure_fnmut_not_sync`, `closure_capture_not_sync` (E0280).
 
 ## SH5. Declaring them yourself: `unsafe` impl blocks (decision, issue #218)
 
