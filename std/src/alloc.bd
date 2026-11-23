@@ -12,14 +12,55 @@
 /// AL11). A container that stores its allocator treats that as out of memory and panics; the `try_` forms of the
 /// container methods report it as `AllocError.OutOfMemory` instead. `reallocate` leaves the old block valid when
 /// it returns null.
+///
+/// ```
+/// let mut xs = List<i32, Global>.new_in(Global { })
+/// xs.extend_iter([1, 2].into_iter())
+/// assert_eq(xs.len(), 2)
+/// ```
 interface Allocator {
+    /// A block of at least `size` bytes, aligned to `align`, or a null pointer when there is none to give (AL11).
+    ///
+    /// ```
+    /// unsafe {
+    ///     let mut g = Global { }
+    ///     let block = g.allocate(8, 8)
+    ///     g.deallocate(block, 8, 8)
+    /// }
+    /// ```
     fn allocate(mut self, size: usize, align: usize): CPtr<u8>
+    /// A block of `new_size` bytes that holds the first `old_size` bytes of `ptr`. When a new block is returned,
+    /// `ptr` is given up; a null pointer means `ptr` stays valid.
+    ///
+    /// ```
+    /// unsafe {
+    ///     let mut g = Global { }
+    ///     let block = g.allocate(8, 8)
+    ///     let bigger = g.reallocate(block, 8, 32, 8)
+    ///     g.deallocate(bigger, 32, 8)
+    /// }
+    /// ```
     fn reallocate(mut self, ptr: CPtr<u8>, old_size: usize, new_size: usize, align: usize): CPtr<u8>
+    /// Gives back a block that `allocate` or `reallocate` returned, with the `size` and `align` it was made with.
+    ///
+    /// ```
+    /// unsafe {
+    ///     let mut g = Global { }
+    ///     let block = g.allocate(16, 8)
+    ///     g.deallocate(block, 16, 8)
+    /// }
+    /// ```
     fn deallocate(mut self, ptr: CPtr<u8>, size: usize, align: usize)
 }
 
 /// The default allocator, stored nowhere: a container made with `.new()` uses it, and its buffer belongs to the
 /// C heap. It is zero-sized, so `List<T>` has the same layout as `List<T, Global>`.
+///
+/// ```
+/// let mut xs = List<i32, Global>.new_in(Global { })
+/// xs.push(3)
+/// assert_eq(xs[0], 3)
+/// ```
 struct Global { }
 
 Global: Allocator {
@@ -41,6 +82,13 @@ Global: Allocator {
 /// A bump allocator: `allocate` hands out the next bytes of a block, and `deallocate` does nothing. Dropping or
 /// resetting the arena frees every block at once, so the cost of freeing is paid once and no allocation is
 /// tracked individually. A container keeps the arena alive by owning it.
+///
+/// ```
+/// let mut xs = List<i32, Arena>.new_in(Arena.new())
+/// xs.push(1)
+/// xs.push(2)
+/// assert_eq(xs.len(), 2)
+/// ```
 struct Arena {
     /// The blocks that are already full of handed-out memory.
     blocks: List<CPtr<u8>>
@@ -58,6 +106,11 @@ struct Arena {
 
 Arena {
     /// An empty arena. Its first block is allocated on the first `allocate`.
+    ///
+    /// ```
+    /// let a = Arena.new()
+    /// assert_eq(a.bytes_allocated(), 0)
+    /// ```
     fn new(): Arena {
         unsafe {
             Arena {
@@ -72,12 +125,23 @@ Arena {
     }
 
     /// The number of bytes this arena has handed out since the last reset.
+    ///
+    /// ```
+    /// let a = Arena.new()
+    /// assert_eq(a.bytes_allocated(), 0)
+    /// ```
     fn bytes_allocated(self): usize {
         self.used
     }
 
     /// Frees every block and leaves the arena empty but usable. Any buffer it handed out is invalid after this
     /// call; a container that owns the arena keeps it from being called while the buffer is alive.
+    ///
+    /// ```
+    /// let mut a = Arena.new()
+    /// a.reset()
+    /// assert_eq(a.bytes_allocated(), 0)
+    /// ```
     fn reset(mut self) {
         unsafe {
             if !self.block.is_null() {

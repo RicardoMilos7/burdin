@@ -9,6 +9,12 @@ use iter.{DoubleEndedIterator, FromIterator, Iterable, Iterator}
 use ops.{Index, IndexMut, PartialEq}
 
 /// A double-ended queue. Its default is the empty deque.
+///
+/// ```
+/// let mut d: Deque<i32> = Deque<i32>.default()
+/// d.push_back(1)
+/// assert_eq(d.len(), 1)
+/// ```
 struct Deque<T>: Default {
     front: List<T>
     back: List<T>
@@ -16,6 +22,15 @@ struct Deque<T>: Default {
 
 /// The iterator of `deque.iter()`: it yields a view of each element from the front to the back. `D` is the view of
 /// the deque it walks, so the iterator is second-class like every iterator over borrowed storage.
+///
+/// ```
+/// let d = Deque<i32>.from([1, 2, 3])
+/// let mut total = 0
+/// for x in d.iter() {
+///     total = total + *x
+/// }
+/// assert_eq(total, 6)
+/// ```
 struct DequeIter<D, T> {
     source: D
     next_index: usize
@@ -24,13 +39,32 @@ struct DequeIter<D, T> {
 
 /// The iterator of `deque.iter_mut()`: it yields a writable view of each element from the front to the back. `D` is
 /// the exclusive view of the deque it walks (spec/iterators.md, IT15).
+///
+/// ```
+/// let mut d = Deque<i32>.from([1, 2])
+/// for x in d.iter_mut() {
+///     *x = *x + 1
+/// }
+/// assert_eq(*d.front().unwrap(), 2)
+/// ```
 struct DequeIterMut<D, T> {
     source: D
     next_index: usize
 }
 
 /// What `DequeIter` needs from the deque it walks.
+///
+/// ```
+/// let d = Deque<i32>.from([1, 2])
+/// assert_eq(d.len(), 2)
+/// ```
 interface DequeLen {
+    /// The number of elements the deque holds.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([1])
+    /// assert_eq(d.deque_len(), 1)
+    /// ```
     fn deque_len(self): usize
 }
 
@@ -42,11 +76,23 @@ Deque<T>: DequeLen {
 
 Deque<T> {
     /// An empty deque.
+    ///
+    /// ```
+    /// let d = Deque<i32>.new()
+    /// assert(d.is_empty())
+    /// ```
     fn new(): Deque<T> {
         Deque { front: List<T>.new(), back: List<T>.new() }
     }
 
     /// A deque holding the elements of `items`, in order.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(4)
+    /// let d = Deque<i32>.from_list(l)
+    /// assert_eq(d.len(), 1)
+    /// ```
     fn from_list(own items: List<T>): Deque<T> {
         let mut out = Deque<T>.new()
         out.extend(items)
@@ -54,6 +100,11 @@ Deque<T> {
     }
 
     /// A deque holding the elements of an array, in order: `Deque.from([1, 2, 3])`.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([1, 2, 3])
+    /// assert_eq(*d.front().unwrap(), 1)
+    /// ```
     fn from<const N: usize>(own items: [T; N]): Deque<T> {
         let mut out = Deque<T>.new()
         out.extend_iter(items.into_iter())
@@ -61,26 +112,56 @@ Deque<T> {
     }
 
     /// The number of elements.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([1, 2, 3])
+    /// assert_eq(d.len(), 3)
+    /// ```
     fn len(self): usize {
         self.front.len() + self.back.len()
     }
 
     /// Whether the deque has no elements.
+    ///
+    /// ```
+    /// let d = Deque<i32>.new()
+    /// assert(d.is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.len() == 0
     }
 
     /// Adds `value` before the first element.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.new()
+    /// d.push_front(1)
+    /// d.push_front(2)
+    /// assert_eq(*d.front().unwrap(), 2)
+    /// ```
     fn push_front(mut self, own value: T) {
         self.front.push(value)
     }
 
     /// Adds `value` after the last element.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.new()
+    /// d.push_back(1)
+    /// d.push_back(2)
+    /// assert_eq(*d.back().unwrap(), 2)
+    /// ```
     fn push_back(mut self, own value: T) {
         self.back.push(value)
     }
 
     /// Removes and returns the first element.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.from([5, 6])
+    /// assert_eq(d.pop_front(), Some(5))
+    /// assert_eq(d.len(), 1)
+    /// ```
     fn pop_front(mut self): Option<T> {
         if self.front.len() == 0 {
             loop {
@@ -94,6 +175,12 @@ Deque<T> {
     }
 
     /// Removes and returns the last element.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.from([5, 6])
+    /// assert_eq(d.pop_back(), Some(6))
+    /// assert_eq(d.len(), 1)
+    /// ```
     fn pop_back(mut self): Option<T> {
         if self.back.len() == 0 {
             loop {
@@ -107,11 +194,21 @@ Deque<T> {
     }
 
     /// A view of the first element.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([5, 6])
+    /// assert_eq(*d.front().unwrap(), 5)
+    /// ```
     fn front(self): Option<&T> {
         self.get(0)
     }
 
     /// A view of the last element.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([5, 6])
+    /// assert_eq(*d.back().unwrap(), 6)
+    /// ```
     fn back(self): Option<&T> {
         if self.len() == 0 {
             return None
@@ -120,6 +217,12 @@ Deque<T> {
     }
 
     /// A view of the element at `i`, counting from the front, or `None` when `i` is past the end.
+    ///
+    /// ```
+    /// let d = Deque<i32>.from([5, 6])
+    /// assert_eq(*d.get(1).unwrap(), 6)
+    /// assert(d.get(2).is_none())
+    /// ```
     fn get(self, i: usize): Option<&T> {
         let f = self.front.len()
         if i < f {
@@ -132,12 +235,26 @@ Deque<T> {
     }
 
     /// Removes every element.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.from([1, 2])
+    /// d.clear()
+    /// assert(d.is_empty())
+    /// ```
     fn clear(mut self) {
         self.front.clear()
         self.back.clear()
     }
 
     /// Adds every element of `items` at the back, in order.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.new()
+    /// let mut l = List<i32>.new()
+    /// l.push(3)
+    /// d.extend(l)
+    /// assert_eq(*d.front().unwrap(), 3)
+    /// ```
     fn extend(mut self, own items: List<T>) {
         for x in items.into_iter() {
             self.back.push(x)
@@ -145,6 +262,12 @@ Deque<T> {
     }
 
     /// Adds every item `iter` yields at the back, in order.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.new()
+    /// d.extend_iter([1, 2].into_iter())
+    /// assert_eq(d.len(), 2)
+    /// ```
     fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
         let mut iter = iter
         loop {
@@ -156,6 +279,14 @@ Deque<T> {
     }
 
     /// The elements as a list, from the front to the back. The deque is consumed.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.new()
+    /// d.push_back(1)
+    /// d.push_back(2)
+    /// let l = d.into_list()
+    /// assert_eq(l[1], 2)
+    /// ```
     fn into_list(own self): List<T> {
         let mut out = List<T>.new()
         let mut deque = self
@@ -215,6 +346,14 @@ Deque<T> {
     /// An iterator over writable views of the elements, from the front to the back. The deque is borrowed
     /// exclusively until the iterator's last use, so `for x in mut deque` can write every element but cannot push,
     /// pop, or read the deque inside the loop.
+    ///
+    /// ```
+    /// let mut d = Deque<i32>.from([1, 2])
+    /// for x in d.iter_mut() {
+    ///     *x = *x * 10
+    /// }
+    /// assert_eq(*d.back().unwrap(), 20)
+    /// ```
     fn iter_mut(mut self): DequeIterMut<&mut Deque<T>, T> {
         DequeIterMut { source: &mut self, next_index: 0 }
     }
@@ -254,6 +393,13 @@ DequeIter<D, T>: DoubleEndedIterator<&T> where D: Index<T> + DequeLen {
 
 Deque<T> where T: Clone {
     /// A copy of the deque.
+    ///
+    /// ```
+    /// let mut a = Deque<i32>.new()
+    /// a.push_back(1)
+    /// let b = a.clone()
+    /// assert_eq(b.len(), 1)
+    /// ```
     fn clone(self): Deque<T> {
         let mut out = Deque<T>.new()
         for x in self {

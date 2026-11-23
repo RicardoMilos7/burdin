@@ -11,6 +11,13 @@ use target.{Os, os}
 use text.to_char_list
 
 /// A file system path and the rules it follows.
+///
+/// ```
+/// let p = Path.unix("/home/user/notes.txt")
+/// assert_eq(p.file_name(), Some(String.from("notes.txt")))
+/// let parent = p.parent().unwrap()
+/// assert_eq(parent.as_str(), "/home/user")
+/// ```
 struct Path: Clone, Eq {
     text: String
     is_windows: bool
@@ -113,32 +120,65 @@ priv fn __extension(name: str): Option<String> {
 
 Path {
     /// A path that follows the rules of the system the program is compiled for.
+    ///
+    /// ```
+    /// let p = Path.new("a/b")
+    /// assert_eq(p.as_str(), "a/b")
+    /// ```
     fn new(text: str): Path {
         Path { text: String.from(text), is_windows: os() == Os.Windows }
     }
 
     /// A path that follows Unix rules.
+    ///
+    /// ```
+    /// let p = Path.unix("/home/user")
+    /// assert_eq(p.as_str(), "/home/user")
+    /// assert(p.is_absolute())
+    /// ```
     fn unix(text: str): Path {
         Path { text: String.from(text), is_windows: false }
     }
 
     /// A path that follows Windows rules.
+    ///
+    /// ```
+    /// let p = Path.windows("C:\\dir\\f.txt")
+    /// assert_eq(p.separator(), '\\')
+    /// assert(p.is_absolute())
+    /// ```
     fn windows(text: str): Path {
         Path { text: String.from(text), is_windows: true }
     }
 
     /// The path as text.
+    ///
+    /// ```
+    /// let p = Path.unix("docs/readme.md")
+    /// assert_eq(p.as_str(), "docs/readme.md")
+    /// ```
     fn as_str(self): str {
         self.text.as_str()
     }
 
     /// The separator the rules write: `/`, or `\` on Windows.
+    ///
+    /// ```
+    /// assert_eq(Path.unix("a").separator(), '/')
+    /// assert_eq(Path.windows("a").separator(), '\\')
+    /// ```
     fn separator(self): char {
         if self.is_windows { '\\' } else { '/' }
     }
 
     /// Whether the path names a place without needing a working directory: it starts with `/` on Unix; on Windows it
     /// is a drive and a separator (`C:\`) or a share (`\\server`). `\temp` and `C:temp` are not absolute.
+    ///
+    /// ```
+    /// assert(Path.unix("/etc").is_absolute())
+    /// assert(!Path.unix("etc").is_absolute())
+    /// assert(!Path.windows("\\temp").is_absolute())
+    /// ```
     fn is_absolute(self): bool {
         let chars = self.text.to_char_list()
         if !self.is_windows {
@@ -152,11 +192,21 @@ Path {
     }
 
     /// The opposite of `is_absolute`.
+    ///
+    /// ```
+    /// assert(Path.unix("src/main.bd").is_relative())
+    /// assert(!Path.unix("/src").is_relative())
+    /// ```
     fn is_relative(self): bool {
         !self.is_absolute()
     }
 
     /// The drive of a Windows path, such as `C:`.
+    ///
+    /// ```
+    /// assert_eq(Path.windows("C:\\dir\\f.txt").drive(), Some(String.from("C:")))
+    /// assert_eq(Path.unix("/a").drive(), None)
+    /// ```
     fn drive(self): Option<String> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
@@ -167,6 +217,12 @@ Path {
     }
 
     /// The names in the path, in order, without separators, empty pieces, or `.`. `..` is kept.
+    ///
+    /// ```
+    /// let parts = Path.unix("/usr//lib/./x").components()
+    /// assert_eq(parts.len(), 3)
+    /// assert_eq(parts[2], String.from("x"))
+    /// ```
     fn components(self): List<String> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
@@ -183,6 +239,13 @@ Path {
     /// The path with `other` added. An absolute `other` (or, on Windows, one with a drive) replaces the path; on
     /// Windows a rooted `other` such as `\x` keeps the drive. Nothing is added for an empty `other`, and no
     /// separator is added after an empty path, one that ends with a separator, or a bare drive.
+    ///
+    /// ```
+    /// let p = Path.unix("/usr").join("lib")
+    /// assert_eq(p.as_str(), "/usr/lib")
+    /// let q = Path.unix("a").join("/b")
+    /// assert_eq(q.as_str(), "/b")
+    /// ```
     fn join(self, other: str): Path {
         let w = self.is_windows
         let given = Path { text: String.from(other), is_windows: w }
@@ -215,6 +278,11 @@ Path {
 
     /// The path without its last name: `a/b` is `a`, `/a` is `/`, and `a` is the empty path. A path with no names
     /// (`/`, `C:\`, `.`, or the empty path) has none.
+    ///
+    /// ```
+    /// let p = Path.unix("a/b/c").parent().unwrap()
+    /// assert_eq(p.as_str(), "a/b")
+    /// ```
     fn parent(self): Option<Path> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
@@ -232,6 +300,11 @@ Path {
     }
 
     /// The last name, unless the path ends in `..` or has no names.
+    ///
+    /// ```
+    /// assert_eq(Path.unix("a/b.txt").file_name(), Some(String.from("b.txt")))
+    /// assert_eq(Path.unix("a/..").file_name(), None)
+    /// ```
     fn file_name(self): Option<String> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
@@ -247,6 +320,10 @@ Path {
     }
 
     /// The last name without its extension: `archive.tar.gz` is `archive.tar`, `.profile` is `.profile`.
+    ///
+    /// ```
+    /// assert_eq(Path.unix("archive.tar.gz").file_stem(), Some(String.from("archive.tar")))
+    /// ```
     fn file_stem(self): Option<String> {
         match self.file_name() {
             Some(name) => Some(__stem(name.as_str())),
@@ -256,6 +333,11 @@ Path {
 
     /// The extension of the last name, without the dot: `archive.tar.gz` is `gz`. `.profile` and `Makefile` have
     /// none, and `file.` has the empty one.
+    ///
+    /// ```
+    /// assert_eq(Path.unix("archive.tar.gz").extension(), Some(String.from("gz")))
+    /// assert_eq(Path.unix("Makefile").extension(), None)
+    /// ```
     fn extension(self): Option<String> {
         match self.file_name() {
             Some(name) => __extension(name.as_str()),
@@ -264,6 +346,11 @@ Path {
     }
 
     /// The path with its last name replaced by `name`. A path with no names is joined with `name` instead.
+    ///
+    /// ```
+    /// let p = Path.unix("src/old.bd").with_file_name("new.bd")
+    /// assert_eq(p.as_str(), "src/new.bd")
+    /// ```
     fn with_file_name(self, name: str): Path {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
@@ -278,6 +365,11 @@ Path {
 
     /// The path with the extension of its last name replaced by `extension` (no leading dot), or removed when
     /// `extension` is empty. A path with no file name is unchanged.
+    ///
+    /// ```
+    /// let p = Path.unix("notes.txt").with_extension("md")
+    /// assert_eq(p.as_str(), "notes.md")
+    /// ```
     fn with_extension(self, extension: str): Path {
         match self.file_name() {
             None => self.clone(),
@@ -295,6 +387,11 @@ Path {
     /// The path with `.` and empty pieces removed and each `name/..` pair cancelled, written with the rules'
     /// separator. A `..` at the start of a relative path stays; one at the root is dropped. An empty result is `.`.
     /// This reads the text only: it does not follow symbolic links, so it can change what a path names.
+    ///
+    /// ```
+    /// let p = Path.unix("a/./b/../c//d").normalize()
+    /// assert_eq(p.as_str(), "a/c/d")
+    /// ```
     fn normalize(self): Path {
         let w = self.is_windows
         let chars = self.text.to_char_list()
@@ -340,6 +437,11 @@ Path {
 
     /// Whether something exists at the path. This asks the operating system, so it follows the host's rules (use a
     /// path made with `Path.new`), and it does not run at compile time.
+    ///
+    /// ```
+    /// assert(Path.new(".").exists())
+    /// assert(!Path.unix("burdin-doc-no-such-file").exists())
+    /// ```
     fn exists(self): bool {
         let text = CString.from(self.text.as_str())
         comptime if os() == Os.Windows {

@@ -10,23 +10,50 @@ use iter.{FromIterator, Iterable, Iterator}
 use ops.PartialEq
 
 /// A set of distinct values.
+///
+/// ```
+/// let mut s = Set<i32>.new()
+/// s.insert(3)
+/// assert(s.contains(3))
+/// ```
 struct Set<T: Eq, A: Allocator = Global> {
     map: Map<T, bool, A>
 }
 
 /// The iterator of `set.iter()`: it yields a view of each element, once, in no particular order. It borrows the
 /// set, so it is second-class like every iterator over borrowed storage.
+///
+/// ```
+/// let s = Set<i32>.from([1, 2, 3])
+/// let mut total = 0
+/// for x in s.iter() {
+///     total = total + *x
+/// }
+/// assert_eq(total, 6)
+/// ```
 struct SetIter<I, T> {
     inner: I
 }
 
 Set<T> where T: Eq {
     /// An empty set that uses the default allocator.
+    ///
+    /// ```
+    /// let s = Set<i32>.new()
+    /// assert(s.is_empty())
+    /// ```
     fn new(): Set<T> {
         Set { map: Map<T, bool>.new() }
     }
 
     /// A set of the elements of `items`; a repeated element is stored once.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(4)
+    /// let s = Set<i32>.from_list(l)
+    /// assert(s.contains(4))
+    /// ```
     fn from_list(own items: List<T>): Set<T> {
         let mut set = Set<T>.new()
         set.extend(items)
@@ -34,6 +61,11 @@ Set<T> where T: Eq {
     }
 
     /// A set of the elements of an array: `Set.from([1, 2, 3])`. A repeated element is stored once.
+    ///
+    /// ```
+    /// let s = Set<i32>.from([1, 2, 1])
+    /// assert_eq(s.len(), 2)
+    /// ```
     fn from<const N: usize>(own items: [T; N]): Set<T> {
         let mut set = Set<T>.new()
         set.extend_iter(items.into_iter())
@@ -51,27 +83,55 @@ Set<T>: FromIterator<T> where T: Eq {
 
 Set<T, A> where T: Eq, A: Allocator {
     /// An empty set that stores `alloc` and takes its memory from it.
+    ///
+    /// ```
+    /// let mut s = Set<i32, Global>.new_in(Global { })
+    /// s.insert(4)
+    /// assert_eq(s.len(), 1)
+    /// ```
     fn new_in(own alloc: A): Set<T, A> {
         Set { map: Map<T, bool, A>.new_in(alloc) }
     }
 
     /// The number of elements.
+    ///
+    /// ```
+    /// let s = Set<i32>.from([1, 2, 2])
+    /// assert_eq(s.len(), 2)
+    /// ```
     fn len(self): usize {
         self.map.len()
     }
 
     /// Whether the set has no elements.
+    ///
+    /// ```
+    /// let s = Set<i32>.new()
+    /// assert(s.is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.map.len() == 0
     }
 
     /// Whether `value` is an element.
+    ///
+    /// ```
+    /// let s = Set<i32>.from([1])
+    /// assert(s.contains(1))
+    /// assert(!s.contains(2))
+    /// ```
     fn contains(self, value: T): bool {
         self.map.contains_key(value)
     }
 
     /// Adds `value`. Returns `true` when it was not there yet; an element that is already there is kept and the
     /// new value is dropped.
+    ///
+    /// ```
+    /// let mut s = Set<i32>.new()
+    /// assert(s.insert(1))
+    /// assert(!s.insert(1))
+    /// ```
     fn insert(mut self, own value: T): bool {
         let present = self.map.contains_key(value)
         if present {
@@ -82,6 +142,12 @@ Set<T, A> where T: Eq, A: Allocator {
     }
 
     /// Removes `value`. Returns `true` when it was an element.
+    ///
+    /// ```
+    /// let mut s = Set<i32>.from([1])
+    /// assert(s.remove(1))
+    /// assert(!s.remove(1))
+    /// ```
     fn remove(mut self, value: T): bool {
         match self.map.remove(value) {
             Some(_) => true,
@@ -90,11 +156,26 @@ Set<T, A> where T: Eq, A: Allocator {
     }
 
     /// Removes every element.
+    ///
+    /// ```
+    /// let mut s = Set<i32>.from([1, 2])
+    /// s.clear()
+    /// assert(s.is_empty())
+    /// ```
     fn clear(mut self) {
         self.map.clear()
     }
 
     /// Adds every element of `items`.
+    ///
+    /// ```
+    /// let mut s = Set<i32>.new()
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(1)
+    /// s.extend(l)
+    /// assert_eq(s.len(), 1)
+    /// ```
     fn extend(mut self, own items: List<T>) {
         let mut items = items
         loop {
@@ -109,6 +190,12 @@ Set<T, A> where T: Eq, A: Allocator {
 
     /// Adds every item `iter` yields; a repeated element is stored once. `set.extend_iter(other.into_iter())` moves
     /// the elements of another collection in, and `set.extend_iter(xs.iter().map(...))` feeds a chain.
+    ///
+    /// ```
+    /// let mut s = Set<i32>.new()
+    /// s.extend_iter([1, 2, 2].into_iter())
+    /// assert_eq(s.len(), 2)
+    /// ```
     fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
         let mut iter = iter
         loop {
@@ -122,6 +209,11 @@ Set<T, A> where T: Eq, A: Allocator {
     }
 
     /// The elements as a list, in no particular order. The set is consumed.
+    ///
+    /// ```
+    /// let s = Set<i32>.from([5, 6])
+    /// assert_eq(s.into_list().len(), 2)
+    /// ```
     fn into_list(own self): List<T> {
         let mut out = List<T>.new()
         let mut entries = self.map.into_iter()
@@ -154,6 +246,13 @@ SetIter<I, T>: Iterator<&T> where I: Iterator<(&T, &bool)> {
 // Operations that build a new set copy elements, so they need `Clone`; the result uses the default allocator.
 Set<T> where T: Eq + Clone {
     /// The elements of `self`, as a list of clones.
+    ///
+    /// ```
+    /// let s = Set<i32>.from([5])
+    /// let l = s.to_list()
+    /// assert_eq(l.len(), 1)
+    /// assert_eq(l[0], 5)
+    /// ```
     fn to_list(self): List<T> {
         let mut out = List<T>.new()
         for (key, _) in self.map {
@@ -163,6 +262,13 @@ Set<T> where T: Eq + Clone {
     }
 
     /// A copy of the set.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1])
+    /// let b = a.clone()
+    /// assert_eq(b.len(), 1)
+    /// assert(b.contains(1))
+    /// ```
     fn clone(self): Set<T> {
         let mut out = Set<T>.new()
         for (key, _) in self.map {
@@ -172,6 +278,12 @@ Set<T> where T: Eq + Clone {
     }
 
     /// The elements that are in `self`, in `other`, or in both.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2])
+    /// let b = Set<i32>.from([2, 3])
+    /// assert_eq(a.union(b).len(), 3)
+    /// ```
     fn union(self, other: Set<T>): Set<T> {
         let mut out = self.clone()
         for (key, _) in other.map {
@@ -181,6 +293,14 @@ Set<T> where T: Eq + Clone {
     }
 
     /// The elements that are in both sets.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2])
+    /// let b = Set<i32>.from([2, 3])
+    /// let both = a.intersection(b)
+    /// assert_eq(both.len(), 1)
+    /// assert(both.contains(2))
+    /// ```
     fn intersection(self, other: Set<T>): Set<T> {
         let mut out = Set<T>.new()
         for (key, _) in self.map {
@@ -192,6 +312,14 @@ Set<T> where T: Eq + Clone {
     }
 
     /// The elements of `self` that are not in `other`.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2])
+    /// let b = Set<i32>.from([2, 3])
+    /// let d = a.difference(b)
+    /// assert_eq(d.len(), 1)
+    /// assert(d.contains(1))
+    /// ```
     fn difference(self, other: Set<T>): Set<T> {
         let mut out = Set<T>.new()
         for (key, _) in self.map {
@@ -203,6 +331,14 @@ Set<T> where T: Eq + Clone {
     }
 
     /// The elements that are in exactly one of the two sets.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2])
+    /// let b = Set<i32>.from([2, 3])
+    /// let d = a.symmetric_difference(b)
+    /// assert_eq(d.len(), 2)
+    /// assert(d.contains(1) && d.contains(3))
+    /// ```
     fn symmetric_difference(self, other: Set<T>): Set<T> {
         let mut out = self.difference(other)
         for (key, _) in other.map {
@@ -216,6 +352,12 @@ Set<T> where T: Eq + Clone {
 
 Set<T> where T: Eq {
     /// Whether every element of `self` is in `other`.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([2])
+    /// let b = Set<i32>.from([1, 2])
+    /// assert(a.is_subset(b))
+    /// ```
     fn is_subset(self, other: Set<T>): bool {
         if self.map.len() > other.map.len() {
             return false
@@ -229,11 +371,23 @@ Set<T> where T: Eq {
     }
 
     /// Whether every element of `other` is in `self`.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2, 3])
+    /// let b = Set<i32>.from([2, 3])
+    /// assert(a.is_superset(b))
+    /// ```
     fn is_superset(self, other: Set<T>): bool {
         other.is_subset(self)
     }
 
     /// Whether the two sets have no element in common.
+    ///
+    /// ```
+    /// let a = Set<i32>.from([1, 2])
+    /// let b = Set<i32>.from([3, 4])
+    /// assert(a.is_disjoint(b))
+    /// ```
     fn is_disjoint(self, other: Set<T>): bool {
         for (key, _) in self.map {
             if other.contains(key) {

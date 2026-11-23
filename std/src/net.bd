@@ -23,6 +23,11 @@ priv const BACKLOG: i32 = 128
 priv const CHUNK: usize = 4096
 
 /// An IPv4 address and a port.
+///
+/// ```
+/// let a = SocketAddr.new(127, 0, 0, 1, 8080)
+/// assert_eq(format("{}", a), String.from("127.0.0.1:8080"))
+/// ```
 struct SocketAddr: Copy, Clone, Eq, Debug {
     priv ip: u32
     priv port: u16
@@ -30,25 +35,48 @@ struct SocketAddr: Copy, Clone, Eq, Debug {
 
 SocketAddr {
     /// The address `a.b.c.d` and a port.
+    ///
+    /// ```
+    /// let a = SocketAddr.new(10, 0, 0, 1, 80)
+    /// assert_eq(a.octets().0, 10)
+    /// assert_eq(a.to_text(), String.from("10.0.0.1:80"))
+    /// ```
     fn new(a: u8, b: u8, c: u8, d: u8, port: u16): SocketAddr {
         SocketAddr { ip: ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32), port: port }
     }
 
     /// The address as one number, `a` in the highest byte.
+    ///
+    /// ```
+    /// assert_eq(SocketAddr.new(1, 2, 3, 4, 5).ip(), 16909060)
+    /// ```
     fn ip(self): u32 {
         self.ip
     }
 
+    /// The port number.
+    ///
+    /// ```
+    /// assert_eq(SocketAddr.new(127, 0, 0, 1, 8080).port(), 8080)
+    /// ```
     fn port(self): u16 {
         self.port
     }
 
     /// The four bytes of the address.
+    ///
+    /// ```
+    /// assert_eq(SocketAddr.new(192, 168, 0, 1, 1).octets().0, 192)
+    /// ```
     fn octets(self): (u8, u8, u8, u8) {
         ((self.ip >> 24) as u8, (self.ip >> 16) as u8, (self.ip >> 8) as u8, self.ip as u8)
     }
 
     /// The text `a.b.c.d:port`.
+    ///
+    /// ```
+    /// assert_eq(SocketAddr.new(127, 0, 0, 1, 80).to_text(), String.from("127.0.0.1:80"))
+    /// ```
     fn to_text(self): String {
         let (a, b, c, d) = self.octets()
         let mut out = a.to_string()
@@ -64,8 +92,21 @@ SocketAddr {
     }
 
     /// Parses a numeric `a.b.c.d:port`. A name is not accepted: `lookup_host` resolves names.
+    ///
+    /// ```
+    /// let a = SocketAddr.parse("10.1.2.3:443").unwrap()
+    /// assert_eq(a.port(), 443)
+    /// assert(SocketAddr.parse("nope").is_err())
+    /// ```
     fn parse(text: str): Result<SocketAddr, IoError> {
-        match __parse_v4(text) {
+        let parsed = match __split_addr(text) {
+            Some((host, port)) => match __parse_v4(host) {
+                Some(addr) => Some(SocketAddr { ip: addr.ip, port: port }),
+                None => None,
+            },
+            None => None,
+        }
+        match parsed {
             Some(addr) => Ok(addr),
             None => Err(IoError.Net {
                 op: "parse".to_string(),
@@ -228,12 +269,25 @@ priv fn __wait_socket(fd: i64, events: i32, deadline: u64, op: str, addr: str): 
 // ---- TCP listeners ----------------------------------------------------------------------------------------------
 
 /// A listening TCP socket. Dropping it closes the socket; `close` does the same and reports the failure.
+///
+/// ```
+/// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+/// let text = listener.local_addr().unwrap().to_text()
+/// let client = TcpStream.connect(text.as_str()).unwrap()
+/// let (conn, peer) = listener.accept().unwrap()
+/// assert_eq(peer.ip(), 2130706433)
+/// ```
 struct TcpListener {
     priv fd: i64
 }
 
 TcpListener {
     /// Binds `host:port`. Port 0 asks the system for a free port, which `local_addr` reports.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// assert(listener.local_addr().unwrap().port() > 0)
+    /// ```
     fn bind(addr: str): Result<TcpListener, IoError> {
         match __split_addr(addr) {
             Some((host, port)) => unsafe {
@@ -258,6 +312,14 @@ TcpListener {
     }
 
     /// Waits for a connection and returns it with its peer's address.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let client = TcpStream.connect(text.as_str()).unwrap()
+    /// let (conn, peer) = listener.accept().unwrap()
+    /// assert(peer.port() > 0)
+    /// ```
     fn accept(self): Result<(TcpStream, SocketAddr), IoError> {
         let addr = match self.local_addr() {
             Ok(a) => a.to_text(),
@@ -282,6 +344,11 @@ TcpListener {
     }
 
     /// The address the listener is bound to, with the port the system chose.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// assert_eq(listener.local_addr().unwrap().ip(), 2130706433)
+    /// ```
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
@@ -292,6 +359,11 @@ TcpListener {
     }
 
     /// Closes the socket and reports a failure.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// listener.close().unwrap()
+    /// ```
     fn close(own self): Result<(), IoError> {
         let mut me = self
         unsafe {
@@ -322,6 +394,18 @@ TcpListener: Drop {
 // ---- TCP streams ------------------------------------------------------------------------------------------------
 
 /// A connected TCP socket. Dropping it closes the socket; `close` does the same and reports the failure.
+///
+/// ```
+/// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+/// let text = listener.local_addr().unwrap().to_text()
+/// let mut client = TcpStream.connect(text.as_str()).unwrap()
+/// let accepted = listener.accept().unwrap()
+/// let mut server = accepted.0
+/// client.write("ping".as_bytes()).unwrap()
+/// let mut buf = List<u8>.new()
+/// server.read(mut buf, 16).unwrap()
+/// assert_eq(buf.len(), 4)
+/// ```
 struct TcpStream {
     priv fd: i64
     /// Zero for no timeout; otherwise the time one read or write may wait.
@@ -331,12 +415,26 @@ struct TcpStream {
 
 TcpStream {
     /// Connects to `host:port`, waiting until the connection is established or refused.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let port = listener.local_addr().unwrap().port()
+    /// let client = TcpStream.connect(listener.local_addr().unwrap().to_text().as_str()).unwrap()
+    /// assert_eq(client.peer_addr().unwrap().port(), port)
+    /// ```
     fn connect(addr: str): Result<TcpStream, IoError> {
         TcpStream.__connect(addr, 0)
     }
 
     /// Connects like `connect`, but gives up with `IoErrorKind.TimedOut` when the connection is not established
     /// within `timeout`. The connection attempt is abandoned and its socket closed.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let client = TcpStream.connect_timeout(text.as_str(), Duration.from_secs(5)).unwrap()
+    /// assert(client.peer_addr().is_ok())
+    /// ```
     fn connect_timeout(addr: str, timeout: Duration): Result<TcpStream, IoError> {
         let mut nanos = timeout.as_nanos()
         if nanos == 0 {
@@ -387,6 +485,13 @@ TcpStream {
     }
 
     /// The address of the other end.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let port = listener.local_addr().unwrap().port()
+    /// let client = TcpStream.connect(listener.local_addr().unwrap().to_text().as_str()).unwrap()
+    /// assert_eq(client.peer_addr().unwrap().port(), port)
+    /// ```
     fn peer_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_peer_addr(self.fd)) {
@@ -397,6 +502,13 @@ TcpStream {
     }
 
     /// The address of this end.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let client = TcpStream.connect(text.as_str()).unwrap()
+    /// assert(client.local_addr().unwrap().port() > 0)
+    /// ```
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
@@ -407,6 +519,19 @@ TcpStream {
     }
 
     /// How long one read may wait for bytes; `None` waits forever.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let mut client = TcpStream.connect(text.as_str()).unwrap()
+    /// let accepted = listener.accept().unwrap()
+    /// client.set_read_timeout(Some(Duration.from_millis(10)))
+    /// let mut buf = List<u8>.new()
+    /// match client.read(mut buf, 4) {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
+    /// }
+    /// ```
     fn set_read_timeout(mut self, timeout: Option<Duration>) {
         self.read_timeout = match timeout {
             Some(d) => d.as_nanos(),
@@ -415,6 +540,14 @@ TcpStream {
     }
 
     /// How long one write may wait for room; `None` waits forever.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let mut client = TcpStream.connect(text.as_str()).unwrap()
+    /// client.set_write_timeout(Some(Duration.from_secs(1)))
+    /// assert_eq(client.write("x".as_bytes()).unwrap(), 1)
+    /// ```
     fn set_write_timeout(mut self, timeout: Option<Duration>) {
         self.write_timeout = match timeout {
             Some(d) => d.as_nanos(),
@@ -423,6 +556,13 @@ TcpStream {
     }
 
     /// Disables Nagle's algorithm when `on` is true.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let client = TcpStream.connect(text.as_str()).unwrap()
+    /// client.set_nodelay(true).unwrap()
+    /// ```
     fn set_nodelay(self, on: bool): Result<(), IoError> {
         unsafe {
             if __net_set_nodelay(self.fd, if on { 1 } else { 0 }) < 0 {
@@ -443,16 +583,41 @@ TcpStream {
     }
 
     /// Tells the other end that nothing more will be written.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let mut client = TcpStream.connect(text.as_str()).unwrap()
+    /// let accepted = listener.accept().unwrap()
+    /// let mut server = accepted.0
+    /// client.shutdown_write().unwrap()
+    /// let mut buf = List<u8>.new()
+    /// assert_eq(server.read(mut buf, 4).unwrap(), 0)
+    /// ```
     fn shutdown_write(mut self): Result<(), IoError> {
         self.__shutdown(2, "shutdown")
     }
 
     /// Tells the other end that nothing more will be read.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let mut client = TcpStream.connect(text.as_str()).unwrap()
+    /// client.shutdown_read().unwrap()
+    /// ```
     fn shutdown_read(mut self): Result<(), IoError> {
         self.__shutdown(1, "shutdown")
     }
 
     /// Closes the socket and reports a failure.
+    ///
+    /// ```
+    /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
+    /// let text = listener.local_addr().unwrap().to_text()
+    /// let client = TcpStream.connect(text.as_str()).unwrap()
+    /// client.close().unwrap()
+    /// ```
     fn close(own self): Result<(), IoError> {
         let mut me = self
         unsafe {
@@ -532,6 +697,16 @@ TcpStream: Drop {
 // ---- UDP sockets ------------------------------------------------------------------------------------------------
 
 /// A UDP socket. Dropping it closes the socket; `close` does the same and reports the failure.
+///
+/// ```
+/// let sender = UdpSocket.bind("127.0.0.1:0").unwrap()
+/// let mut receiver = UdpSocket.bind("127.0.0.1:0").unwrap()
+/// let target = receiver.local_addr().unwrap().to_text()
+/// sender.send_to("hi".as_bytes(), target.as_str()).unwrap()
+/// let mut buf = List<u8>.new()
+/// let (n, from) = receiver.recv_from(mut buf, 16).unwrap()
+/// assert_eq(n, 2)
+/// ```
 struct UdpSocket {
     priv fd: i64
     priv read_timeout: u64
@@ -539,6 +714,11 @@ struct UdpSocket {
 
 UdpSocket {
     /// Binds `host:port`. Port 0 asks the system for a free port.
+    ///
+    /// ```
+    /// let s = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// assert_eq(s.local_addr().unwrap().ip(), 2130706433)
+    /// ```
     fn bind(addr: str): Result<UdpSocket, IoError> {
         match __split_addr(addr) {
             Some((host, port)) => unsafe {
@@ -558,6 +738,11 @@ UdpSocket {
     }
 
     /// The address the socket is bound to.
+    ///
+    /// ```
+    /// let s = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// assert(s.local_addr().unwrap().port() > 0)
+    /// ```
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
@@ -568,6 +753,16 @@ UdpSocket {
     }
 
     /// How long one receive may wait for a datagram; `None` waits forever.
+    ///
+    /// ```
+    /// let mut s = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// s.set_read_timeout(Some(Duration.from_millis(10)))
+    /// let mut buf = List<u8>.new()
+    /// match s.recv_from(mut buf, 8) {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
+    /// }
+    /// ```
     fn set_read_timeout(mut self, timeout: Option<Duration>) {
         self.read_timeout = match timeout {
             Some(d) => d.as_nanos(),
@@ -576,6 +771,13 @@ UdpSocket {
     }
 
     /// Sends one datagram to `host:port` and returns how many bytes the socket took.
+    ///
+    /// ```
+    /// let sender = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// let receiver = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// let target = receiver.local_addr().unwrap().to_text()
+    /// assert_eq(sender.send_to("abc".as_bytes(), target.as_str()).unwrap(), 3)
+    /// ```
     fn send_to(self, data: [u8], addr: str): Result<usize, IoError> {
         match __split_addr(addr) {
             Some((host, port)) => unsafe {
@@ -598,6 +800,17 @@ UdpSocket {
     }
 
     /// Receives one datagram into `buf` and returns its length and the sender's address.
+    ///
+    /// ```
+    /// let sender = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// let mut receiver = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// let target = receiver.local_addr().unwrap().to_text()
+    /// sender.send_to("hi".as_bytes(), target.as_str()).unwrap()
+    /// let mut buf = List<u8>.new()
+    /// let (n, from) = receiver.recv_from(mut buf, 16).unwrap()
+    /// assert_eq(n, 2)
+    /// assert_eq(buf.len(), 2)
+    /// ```
     fn recv_from(mut self, mut buf: List<u8>, max: usize): Result<(usize, SocketAddr), IoError> {
         let deadline = __deadline(self.read_timeout)
         loop {
@@ -619,6 +832,11 @@ UdpSocket {
     }
 
     /// Closes the socket and reports a failure.
+    ///
+    /// ```
+    /// let s = UdpSocket.bind("127.0.0.1:0").unwrap()
+    /// s.close().unwrap()
+    /// ```
     fn close(own self): Result<(), IoError> {
         let mut me = self
         unsafe {
@@ -650,6 +868,11 @@ UdpSocket: Drop {
 
 /// Resolves `host` to its IPv4 addresses with `port`. The lookup runs on the helper pool, so a slow resolver parks
 /// the task instead of holding a worker (`spec/io.md`, IO6).
+///
+/// ```
+/// let addrs = lookup_host("127.0.0.1", 80).unwrap()
+/// assert(addrs.len() > 0)
+/// ```
 fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError> {
     let text = match __offload(|| __dns_lookup(host)) {
         Ok(text) => text,

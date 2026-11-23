@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #938: every public item of the standard library has a doc comment and at least one example, and every
+  example is built and run with its doc-test attributes. `tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25):
+  it fails on an undocumented item, an item with no example outside `tests/std_docs/no_example.txt` (now empty), an
+  example that does not build or run as its attributes say. The reference is the website's API section, built from
+  `burdin doc --std`, and the module guide is `docs/standard-library.md`. Fixes made while documenting:
+  `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`; `tests/m24_stdlib/socket_addr_parse_port`),
+  `swap_bytes` panicked on 8-bit integers (`tests/m24_stdlib/swap_bytes_one_byte`), and `burdin doc --std` listed the
+  compiler-internal `__` methods, which DC7 says it must not (`crates/burdin_doc/src/extract.rs`). The atomic module
+  is generated, so its examples live in `tests/gen_atomic_std.py`.
 - Issue #971: parallel iteration in the standard library (`std.parallel`). `par_iter()`, `par_iter_mut()`,
   `par_into_iter()`, and `par_range(start, end)` start a pipeline of `map`, `filter`, `filter_map`, `enumerate`, `take`,
   and `skip`, consumed by `for_each`, `count`, `fold`, `reduce`, `any_item`, `all`, `find`, `min_by`, `max_by`,

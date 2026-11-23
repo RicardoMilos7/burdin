@@ -6,7 +6,21 @@
 // `Channel`, and `Shared` ask for them.
 
 /// A type whose values may move to another task or thread.
+///
+/// ```
+/// fn send_to_task<T: Send>(own value: T): T {
+///     value
+/// }
+/// assert_eq(send_to_task(String.from("moved")), String.from("moved"))
+/// ```
 interface Send { }
 
 /// A type that several tasks or threads may use at once through shared views (`&T`).
+///
+/// ```
+/// fn share<T: Sync>(own value: T): T {
+///     value
+/// }
+/// assert_eq(share(5), 5)
+/// ```
 interface Sync { }

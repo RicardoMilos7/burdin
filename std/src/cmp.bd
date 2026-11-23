@@ -11,6 +11,12 @@ use ops.PartialOrd
 /// The result of comparing two values: `Less` when the left one sorts first, `Equal` when neither does, and
 /// `Greater` when the right one sorts first. The variants are declared in that order, so `Ord` compares
 /// `Less < Equal < Greater`.
+///
+/// ```
+/// let o = Ordering.Less
+/// assert(o != Ordering.Greater)
+/// assert(o.is_lt())
+/// ```
 enum Ordering: Copy, Clone, Eq, Ord, Hash, Debug {
     Less
     Equal
@@ -19,6 +25,10 @@ enum Ordering: Copy, Clone, Eq, Ord, Hash, Debug {
 
 Ordering {
     /// The opposite order: `Less` becomes `Greater` and the other way round; `Equal` stays `Equal`.
+    ///
+    /// ```
+    /// assert_eq(Ordering.Less.reverse(), Ordering.Greater)
+    /// ```
     fn reverse(self): Ordering {
         match self {
             Ordering.Less => Ordering.Greater,
@@ -28,6 +38,11 @@ Ordering {
     }
 
     /// `self` unless it is `Equal`, in which case `other`. Chains comparisons of several keys.
+    ///
+    /// ```
+    /// assert_eq(Ordering.Equal.then(Ordering.Greater), Ordering.Greater)
+    /// assert_eq(Ordering.Less.then(Ordering.Greater), Ordering.Less)
+    /// ```
     fn then(self, other: Ordering): Ordering {
         match self {
             Ordering.Equal => other,
@@ -36,6 +51,11 @@ Ordering {
     }
 
     /// Like `then`, but `f` runs only when `self` is `Equal`.
+    ///
+    /// ```
+    /// assert_eq(Ordering.Equal.then_with(|| Ordering.Less), Ordering.Less)
+    /// assert_eq(Ordering.Greater.then_with(|| Ordering.Less), Ordering.Greater)
+    /// ```
     fn then_with<F: FnOnce(): Ordering>(self, own f: F): Ordering {
         match self {
             Ordering.Equal => f(),
@@ -44,31 +64,61 @@ Ordering {
     }
 
     /// Whether the order is `Less`.
+    ///
+    /// ```
+    /// assert(Ordering.Less.is_lt())
+    /// assert(!Ordering.Equal.is_lt())
+    /// ```
     fn is_lt(self): bool {
         self == Ordering.Less
     }
 
     /// Whether the order is `Less` or `Equal`.
+    ///
+    /// ```
+    /// assert(Ordering.Less.is_le())
+    /// assert(!Ordering.Greater.is_le())
+    /// ```
     fn is_le(self): bool {
         self != Ordering.Greater
     }
 
     /// Whether the order is `Equal`.
+    ///
+    /// ```
+    /// assert(Ordering.Equal.is_eq())
+    /// assert(!Ordering.Less.is_eq())
+    /// ```
     fn is_eq(self): bool {
         self == Ordering.Equal
     }
 
     /// Whether the order is not `Equal`.
+    ///
+    /// ```
+    /// assert(Ordering.Less.is_ne())
+    /// assert(!Ordering.Equal.is_ne())
+    /// ```
     fn is_ne(self): bool {
         self != Ordering.Equal
     }
 
     /// Whether the order is `Greater`.
+    ///
+    /// ```
+    /// assert(Ordering.Greater.is_gt())
+    /// assert(!Ordering.Equal.is_gt())
+    /// ```
     fn is_gt(self): bool {
         self == Ordering.Greater
     }
 
     /// Whether the order is `Greater` or `Equal`.
+    ///
+    /// ```
+    /// assert(Ordering.Equal.is_ge())
+    /// assert(!Ordering.Less.is_ge())
+    /// ```
     fn is_ge(self): bool {
         self != Ordering.Less
     }
@@ -86,16 +136,29 @@ priv fn __ord_cmp<T: Ord>(a: T, b: T): Ordering {
 }
 
 /// The smaller of two values; `a` when they compare equal.
+///
+/// ```
+/// assert_eq(min(3, 7), 3)
+/// ```
 fn min<T: Ord>(own a: T, own b: T): T {
     if b < a { b } else { a }
 }
 
 /// The larger of two values; `b` when they compare equal.
+///
+/// ```
+/// assert_eq(max(3, 7), 7)
+/// ```
 fn max<T: Ord>(own a: T, own b: T): T {
     if b < a { a } else { b }
 }
 
 /// `value` limited to the range `low..=high`. Panics when `low` is greater than `high`.
+///
+/// ```
+/// assert_eq(clamp(15, 0, 10), 10)
+/// assert_eq(clamp(-4, 0, 10), 0)
+/// ```
 fn clamp<T: Ord>(own value: T, own low: T, own high: T): T {
     if high < low {
         panic("clamp: low is greater than high")
@@ -110,6 +173,10 @@ fn clamp<T: Ord>(own value: T, own low: T, own high: T): T {
 }
 
 /// The smaller of two values by `compare`; `a` when it reports `Equal`.
+///
+/// ```
+/// assert_eq(min_by(3, 9, |x, y| (*x).cmp(*y)), 3)
+/// ```
 fn min_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T {
     let mut compare = compare
     match compare(&a, &b) {
@@ -119,6 +186,10 @@ fn min_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T 
 }
 
 /// The larger of two values by `compare`; `b` when it reports `Equal`.
+///
+/// ```
+/// assert_eq(max_by(3, 9, |x, y| (*x).cmp(*y)), 9)
+/// ```
 fn max_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T {
     let mut compare = compare
     match compare(&a, &b) {
@@ -128,6 +199,10 @@ fn max_by<T, F: FnMut(&T, &T): Ordering>(own a: T, own b: T, own compare: F): T 
 }
 
 /// The smaller of two values by the key `key` computes; `a` when the keys are equal.
+///
+/// ```
+/// assert_eq(min_by_key(3, -5, |v| v.abs()), 3)
+/// ```
 fn min_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
     let mut key = key
     let ka = key(&a)
@@ -136,6 +211,10 @@ fn min_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
 }
 
 /// The larger of two values by the key `key` computes; `b` when the keys are equal.
+///
+/// ```
+/// assert_eq(max_by_key(3, -5, |v| v.abs()), -5)
+/// ```
 fn max_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
     let mut key = key
     let ka = key(&a)
@@ -145,6 +224,16 @@ fn max_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
 
 /// A value whose order is reversed: `Reverse(a) < Reverse(b)` exactly when `b < a`. It turns a max-ordered
 /// container into a min-ordered one and lets a sort by key run descending.
+///
+/// ```
+/// let mut heap = PriorityHeap<Reverse<i32>>.new()
+/// heap.push(Reverse { value: 5 })
+/// heap.push(Reverse { value: 2 })
+/// match heap.pop() {
+///     Some(r) => assert_eq(r.value, 2),
+///     None => panic("empty"),
+/// }
+/// ```
 struct Reverse<T>: Copy, Clone, Eq, Debug {
     value: T
 }
@@ -156,6 +245,12 @@ Reverse<T>: PartialOrd where T: Ord {
 }
 
 /// `Option` is ordered with `None` before every `Some`, and two `Some` values by their contents.
+///
+/// ```
+/// let a: Option<i32> = None
+/// let b: Option<i32> = Some(1)
+/// assert_eq(a.cmp(b), Ordering.Less)
+/// ```
 fn Option<T>.cmp(self, other: Option<T>): Ordering where T: Ord {
     match self {
         None => match other {
@@ -170,6 +265,12 @@ fn Option<T>.cmp(self, other: Option<T>): Ordering where T: Ord {
 }
 
 /// `Result` is ordered with every `Ok` before every `Err`, and two values of one kind by their contents.
+///
+/// ```
+/// let a: Result<i32, i32> = Ok(1)
+/// let b: Result<i32, i32> = Err(0)
+/// assert_eq(a.cmp(b), Ordering.Less)
+/// ```
 fn Result<T, E>.cmp(self, other: Result<T, E>): Ordering where T: Ord, E: Ord {
     match self {
         Ok(a) => match other {

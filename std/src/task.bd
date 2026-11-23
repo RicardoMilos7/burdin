@@ -21,14 +21,16 @@ extern "C" {
 
 /// The usable stack of a task, in bytes. The system reserves it as address space and commits pages as they are
 /// touched, and a guard region below it turns an overflow into a clean abort (spec/tasks.md, TK3).
-const TASK_STACK: usize = 262144
+priv const TASK_STACK: usize = 262144
 /// What a task asked its worker to do when it switched back to it.
-const ACTION_YIELD: usize = 1
-const ACTION_PARK: usize = 2
-const ACTION_DONE: usize = 3
+priv const ACTION_YIELD: usize = 1
+/// The task is waiting for an event and must not run until something wakes it.
+priv const ACTION_PARK: usize = 2
+/// The task has returned, so its worker drops it and its stack.
+priv const ACTION_DONE: usize = 3
 /// Every Nth pick, a worker looks at the shared queue before its own, so tasks that were spawned from outside the
 /// pool cannot starve behind a busy worker.
-const FAIRNESS: usize = 61
+priv const FAIRNESS: usize = 61
 
 /// A task's record. A task spawned with a handle has the slot for its result right after the record, in the same
 /// allocation. `next` links the record into a queue.
@@ -99,6 +101,12 @@ priv struct ScopeState repr(C) {
 
 /// Sets the number of worker threads the scheduler will use. It must be called before the first task is spawned: it
 /// panics when the scheduler is already running. The default is the number of processors, and at least two.
+///
+/// ```
+/// task.set_workers(2)
+/// let h = task.spawn(|| 3)
+/// assert_eq(h.join(), 3)
+/// ```
 fn set_workers(count: usize) {
     unsafe {
         __spin_lock()
@@ -415,6 +423,12 @@ priv fn __switch_out(w: CPtr<Worker>, action: usize, unlock: CPtr<u8>) {
 
 /// Gives the worker to another task. The caller is queued behind the tasks that are ready, and nothing is promised
 /// about when it runs again. Outside a task it yields the thread.
+///
+/// ```
+/// let h = task.spawn(|| 5)
+/// task.yield()
+/// assert_eq(h.join(), 5)
+/// ```
 fn yield() {
     unsafe {
         let w = __current_worker()
@@ -470,6 +484,11 @@ priv fn __park(w: CPtr<Worker>, unlock: CPtr<u8>) {
 
 /// The handle of a task spawned by `spawn`. `join` waits for the task and returns its result. Dropping the handle
 /// detaches the task: it keeps running and its result is dropped.
+///
+/// ```
+/// let h = task.spawn(|| 3 * 3)
+/// assert_eq(h.join(), 9)
+/// ```
 struct JoinHandle<T> {
     task: CPtr<u8>
     joined: bool
@@ -478,6 +497,11 @@ struct JoinHandle<T> {
 /// Runs `f` as a task on the scheduler and returns its handle. The closure moves its captures into the task, and the
 /// task ends when `f` returns. A panic in the task aborts the process. The closure and its result move to another
 /// thread, so both must be `Send` (spec/shared.md, SH4).
+///
+/// ```
+/// let h = task.spawn(|| 2 + 2)
+/// assert_eq(h.join(), 4)
+/// ```
 fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): JoinHandle<T> {
     unsafe {
         let t = __new_task(Option<T>.size())
@@ -513,6 +537,11 @@ fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): JoinHandle<T> {
 JoinHandle<T> {
     /// Waits for the task to finish and returns what it returned. Inside a task this parks the task, so its worker
     /// runs others; on another thread it blocks the thread.
+    ///
+    /// ```
+    /// let h = task.spawn(|| String.from("x"))
+    /// assert_eq(h.join(), String.from("x"))
+    /// ```
     fn join(own self): T {
         let mut me = self
         unsafe {
@@ -549,6 +578,14 @@ JoinHandle<T> {
     }
 
     /// Whether the task has finished.
+    ///
+    /// ```
+    /// let h = task.spawn(|| 1)
+    /// while !h.is_finished() {
+    ///     task.yield()
+    /// }
+    /// assert_eq(h.join(), 1)
+    /// ```
     fn is_finished(self): bool {
         unsafe {
             let t = self.task as CPtr<Task>
@@ -597,6 +634,17 @@ JoinHandle<T>: Drop {
 
 /// The handle `scope` gives its body. `spawn` starts a task that may borrow places of the code around the scope, and
 /// `scope` does not return until every task started through the handle has finished (spec/tasks.md, TK7).
+///
+/// ```
+/// let base = 10
+/// let total = task.scope(|s| {
+///     s.spawn(|| {
+///         assert(base > 0)
+///     })
+///     base + 1
+/// })
+/// assert_eq(total, 11)
+/// ```
 struct Scope {
     state: CPtr<u8>
 }
@@ -604,6 +652,17 @@ struct Scope {
 /// Runs `f` with a handle for starting scoped tasks, then waits for all of them. The tasks may borrow what `f` may
 /// borrow, because they cannot outlive the scope; the compiler keeps what a task borrows unavailable to the rest of
 /// `f` until `f` ends. Returns what `f` returns.
+///
+/// ```
+/// let base = 10
+/// let total = task.scope(|s| {
+///     s.spawn(|| {
+///         assert(base > 0)
+///     })
+///     base + 1
+/// })
+/// assert_eq(total, 11)
+/// ```
 fn scope<R, F: FnMut(Scope): R>(own f: F): R {
     unsafe {
         let state = __alloc(ScopeState.size(), 8) as CPtr<ScopeState>
@@ -627,6 +686,17 @@ Scope {
     /// Starts a task that runs `f`. Unlike `spawn`, `f` may borrow: the scope waits for the task, so the borrowed
     /// places outlive it. Two tasks (or a task and the rest of the scope body) cannot use the same place unless
     /// both only read it; the compiler checks that with the same rules as two closures in one function.
+    ///
+    /// ```
+    /// let base = 10
+    /// let total = task.scope(|s| {
+    ///     s.spawn(|| {
+    ///         assert(base > 0)
+    ///     })
+    ///     base + 1
+    /// })
+    /// assert_eq(total, 11)
+    /// ```
     fn spawn<F: FnMut(): () + Send>(self, own f: F) {
         unsafe {
             __spawn_scoped(self.state as CPtr<ScopeState>, __closure_own(f))

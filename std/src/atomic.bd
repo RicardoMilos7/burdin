@@ -14,12 +14,23 @@
 use marker.{Send, Sync}
 
 /// A flag that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let flag = AtomicBool.new(false)
+/// flag.store(true)
+/// assert(flag.load())
+/// ```
 struct AtomicBool {
     cell: CPtr<u32>
 }
 
 AtomicBool {
     /// A new flag holding `value`.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(true)
+    /// assert(flag.load())
+    /// ```
     fn new(value: bool): AtomicBool {
         unsafe {
             let cell = __alloc(4, 4) as CPtr<u32>
@@ -29,6 +40,11 @@ AtomicBool {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(true)
+    /// assert(flag.load())
+    /// ```
     fn load(self): bool {
         unsafe {
             __atomic_load_u32(self.cell) != 0
@@ -36,6 +52,12 @@ AtomicBool {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(false)
+    /// flag.store(true)
+    /// assert(flag.load())
+    /// ```
     fn store(self, value: bool) {
         unsafe {
             __atomic_store_u32(self.cell, if value { 1 } else { 0 })
@@ -43,6 +65,12 @@ AtomicBool {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(false)
+    /// assert_eq(flag.swap(true), false)
+    /// assert(flag.load())
+    /// ```
     fn swap(self, value: bool): bool {
         unsafe {
             __atomic_swap_u32(self.cell, if value { 1 } else { 0 }) != 0
@@ -51,6 +79,12 @@ AtomicBool {
 
     /// Writes `new` if the flag holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it held
     /// something else and was left alone.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(false)
+    /// assert_eq(flag.compare_exchange(false, true), Ok(false))
+    /// assert_eq(flag.compare_exchange(false, true), Err(true))
+    /// ```
     fn compare_exchange(self, current: bool, new: bool): Result<bool, bool> {
         unsafe {
             let c: u32 = if current { 1 } else { 0 }
@@ -65,6 +99,12 @@ AtomicBool {
     }
 
     /// Sets the flag to `old && value` and returns the old value.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(true)
+    /// assert_eq(flag.fetch_and(false), true)
+    /// assert(!flag.load())
+    /// ```
     fn fetch_and(self, value: bool): bool {
         unsafe {
             __atomic_and_u32(self.cell, if value { 1 } else { 0 }) != 0
@@ -72,6 +112,12 @@ AtomicBool {
     }
 
     /// Sets the flag to `old || value` and returns the old value.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(false)
+    /// assert_eq(flag.fetch_or(true), false)
+    /// assert(flag.load())
+    /// ```
     fn fetch_or(self, value: bool): bool {
         unsafe {
             __atomic_or_u32(self.cell, if value { 1 } else { 0 }) != 0
@@ -79,6 +125,12 @@ AtomicBool {
     }
 
     /// Sets the flag to `old != value` and returns the old value.
+    ///
+    /// ```
+    /// let flag = AtomicBool.new(true)
+    /// assert_eq(flag.fetch_xor(true), true)
+    /// assert(!flag.load())
+    /// ```
     fn fetch_xor(self, value: bool): bool {
         unsafe {
             __atomic_xor_u32(self.cell, if value { 1 } else { 0 }) != 0
@@ -99,12 +151,23 @@ unsafe AtomicBool: Send { }
 unsafe AtomicBool: Sync { }
 
 /// A `i32` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicI32.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicI32 {
     cell: CPtr<u32>
 }
 
 AtomicI32 {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: i32): AtomicI32 {
         unsafe {
             let cell = __alloc(4, 4) as CPtr<u32>
@@ -114,6 +177,11 @@ AtomicI32 {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): i32 {
         unsafe {
             __atomic_load_u32(self.cell) as i32
@@ -121,6 +189,12 @@ AtomicI32 {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: i32) {
         unsafe {
             __atomic_store_u32(self.cell, value as u32)
@@ -128,6 +202,12 @@ AtomicI32 {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: i32): i32 {
         unsafe {
             __atomic_swap_u32(self.cell, value as u32) as i32
@@ -136,6 +216,12 @@ AtomicI32 {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: i32, new: i32): Result<i32, i32> {
         unsafe {
             let old = __atomic_cas_u32(self.cell, current as u32, new as u32) as i32
@@ -148,6 +234,12 @@ AtomicI32 {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: i32): i32 {
         unsafe {
             __atomic_add_u32(self.cell, value as u32) as i32
@@ -155,6 +247,12 @@ AtomicI32 {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: i32): i32 {
         unsafe {
             __atomic_sub_u32(self.cell, value as u32) as i32
@@ -162,6 +260,12 @@ AtomicI32 {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: i32): i32 {
         unsafe {
             __atomic_and_u32(self.cell, value as u32) as i32
@@ -169,6 +273,12 @@ AtomicI32 {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: i32): i32 {
         unsafe {
             __atomic_or_u32(self.cell, value as u32) as i32
@@ -176,6 +286,12 @@ AtomicI32 {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: i32): i32 {
         unsafe {
             __atomic_xor_u32(self.cell, value as u32) as i32
@@ -183,6 +299,13 @@ AtomicI32 {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: i32): i32 {
         loop {
             let current = self.load()
@@ -197,6 +320,12 @@ AtomicI32 {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI32.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: i32): i32 {
         loop {
             let current = self.load()
@@ -224,12 +353,23 @@ unsafe AtomicI32: Send { }
 unsafe AtomicI32: Sync { }
 
 /// A `u32` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicU32.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicU32 {
     cell: CPtr<u32>
 }
 
 AtomicU32 {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: u32): AtomicU32 {
         unsafe {
             let cell = __alloc(4, 4) as CPtr<u32>
@@ -239,6 +379,11 @@ AtomicU32 {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): u32 {
         unsafe {
             __atomic_load_u32(self.cell) as u32
@@ -246,6 +391,12 @@ AtomicU32 {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: u32) {
         unsafe {
             __atomic_store_u32(self.cell, value as u32)
@@ -253,6 +404,12 @@ AtomicU32 {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: u32): u32 {
         unsafe {
             __atomic_swap_u32(self.cell, value as u32) as u32
@@ -261,6 +418,12 @@ AtomicU32 {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: u32, new: u32): Result<u32, u32> {
         unsafe {
             let old = __atomic_cas_u32(self.cell, current as u32, new as u32) as u32
@@ -273,6 +436,12 @@ AtomicU32 {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: u32): u32 {
         unsafe {
             __atomic_add_u32(self.cell, value as u32) as u32
@@ -280,6 +449,12 @@ AtomicU32 {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: u32): u32 {
         unsafe {
             __atomic_sub_u32(self.cell, value as u32) as u32
@@ -287,6 +462,12 @@ AtomicU32 {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: u32): u32 {
         unsafe {
             __atomic_and_u32(self.cell, value as u32) as u32
@@ -294,6 +475,12 @@ AtomicU32 {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: u32): u32 {
         unsafe {
             __atomic_or_u32(self.cell, value as u32) as u32
@@ -301,6 +488,12 @@ AtomicU32 {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: u32): u32 {
         unsafe {
             __atomic_xor_u32(self.cell, value as u32) as u32
@@ -308,6 +501,13 @@ AtomicU32 {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: u32): u32 {
         loop {
             let current = self.load()
@@ -322,6 +522,12 @@ AtomicU32 {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU32.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: u32): u32 {
         loop {
             let current = self.load()
@@ -349,12 +555,23 @@ unsafe AtomicU32: Send { }
 unsafe AtomicU32: Sync { }
 
 /// A `i64` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicI64.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicI64 {
     cell: CPtr<u64>
 }
 
 AtomicI64 {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: i64): AtomicI64 {
         unsafe {
             let cell = __alloc(8, 8) as CPtr<u64>
@@ -364,6 +581,11 @@ AtomicI64 {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): i64 {
         unsafe {
             __atomic_load_u64(self.cell) as i64
@@ -371,6 +593,12 @@ AtomicI64 {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: i64) {
         unsafe {
             __atomic_store_u64(self.cell, value as u64)
@@ -378,6 +606,12 @@ AtomicI64 {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: i64): i64 {
         unsafe {
             __atomic_swap_u64(self.cell, value as u64) as i64
@@ -386,6 +620,12 @@ AtomicI64 {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: i64, new: i64): Result<i64, i64> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as i64
@@ -398,6 +638,12 @@ AtomicI64 {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: i64): i64 {
         unsafe {
             __atomic_add_u64(self.cell, value as u64) as i64
@@ -405,6 +651,12 @@ AtomicI64 {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: i64): i64 {
         unsafe {
             __atomic_sub_u64(self.cell, value as u64) as i64
@@ -412,6 +664,12 @@ AtomicI64 {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: i64): i64 {
         unsafe {
             __atomic_and_u64(self.cell, value as u64) as i64
@@ -419,6 +677,12 @@ AtomicI64 {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: i64): i64 {
         unsafe {
             __atomic_or_u64(self.cell, value as u64) as i64
@@ -426,6 +690,12 @@ AtomicI64 {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: i64): i64 {
         unsafe {
             __atomic_xor_u64(self.cell, value as u64) as i64
@@ -433,6 +703,13 @@ AtomicI64 {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: i64): i64 {
         loop {
             let current = self.load()
@@ -447,6 +724,12 @@ AtomicI64 {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicI64.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: i64): i64 {
         loop {
             let current = self.load()
@@ -474,12 +757,23 @@ unsafe AtomicI64: Send { }
 unsafe AtomicI64: Sync { }
 
 /// A `u64` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicU64.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicU64 {
     cell: CPtr<u64>
 }
 
 AtomicU64 {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: u64): AtomicU64 {
         unsafe {
             let cell = __alloc(8, 8) as CPtr<u64>
@@ -489,6 +783,11 @@ AtomicU64 {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): u64 {
         unsafe {
             __atomic_load_u64(self.cell) as u64
@@ -496,6 +795,12 @@ AtomicU64 {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: u64) {
         unsafe {
             __atomic_store_u64(self.cell, value as u64)
@@ -503,6 +808,12 @@ AtomicU64 {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: u64): u64 {
         unsafe {
             __atomic_swap_u64(self.cell, value as u64) as u64
@@ -511,6 +822,12 @@ AtomicU64 {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: u64, new: u64): Result<u64, u64> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as u64
@@ -523,6 +840,12 @@ AtomicU64 {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: u64): u64 {
         unsafe {
             __atomic_add_u64(self.cell, value as u64) as u64
@@ -530,6 +853,12 @@ AtomicU64 {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: u64): u64 {
         unsafe {
             __atomic_sub_u64(self.cell, value as u64) as u64
@@ -537,6 +866,12 @@ AtomicU64 {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: u64): u64 {
         unsafe {
             __atomic_and_u64(self.cell, value as u64) as u64
@@ -544,6 +879,12 @@ AtomicU64 {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: u64): u64 {
         unsafe {
             __atomic_or_u64(self.cell, value as u64) as u64
@@ -551,6 +892,12 @@ AtomicU64 {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: u64): u64 {
         unsafe {
             __atomic_xor_u64(self.cell, value as u64) as u64
@@ -558,6 +905,13 @@ AtomicU64 {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: u64): u64 {
         loop {
             let current = self.load()
@@ -572,6 +926,12 @@ AtomicU64 {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicU64.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: u64): u64 {
         loop {
             let current = self.load()
@@ -599,12 +959,23 @@ unsafe AtomicU64: Send { }
 unsafe AtomicU64: Sync { }
 
 /// A `isize` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicIsize.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicIsize {
     cell: CPtr<u64>
 }
 
 AtomicIsize {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: isize): AtomicIsize {
         unsafe {
             let cell = __alloc(8, 8) as CPtr<u64>
@@ -614,6 +985,11 @@ AtomicIsize {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): isize {
         unsafe {
             __atomic_load_u64(self.cell) as isize
@@ -621,6 +997,12 @@ AtomicIsize {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: isize) {
         unsafe {
             __atomic_store_u64(self.cell, value as u64)
@@ -628,6 +1010,12 @@ AtomicIsize {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: isize): isize {
         unsafe {
             __atomic_swap_u64(self.cell, value as u64) as isize
@@ -636,6 +1024,12 @@ AtomicIsize {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: isize, new: isize): Result<isize, isize> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as isize
@@ -648,6 +1042,12 @@ AtomicIsize {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: isize): isize {
         unsafe {
             __atomic_add_u64(self.cell, value as u64) as isize
@@ -655,6 +1055,12 @@ AtomicIsize {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: isize): isize {
         unsafe {
             __atomic_sub_u64(self.cell, value as u64) as isize
@@ -662,6 +1068,12 @@ AtomicIsize {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: isize): isize {
         unsafe {
             __atomic_and_u64(self.cell, value as u64) as isize
@@ -669,6 +1081,12 @@ AtomicIsize {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: isize): isize {
         unsafe {
             __atomic_or_u64(self.cell, value as u64) as isize
@@ -676,6 +1094,12 @@ AtomicIsize {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: isize): isize {
         unsafe {
             __atomic_xor_u64(self.cell, value as u64) as isize
@@ -683,6 +1107,13 @@ AtomicIsize {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: isize): isize {
         loop {
             let current = self.load()
@@ -697,6 +1128,12 @@ AtomicIsize {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicIsize.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: isize): isize {
         loop {
             let current = self.load()
@@ -724,12 +1161,23 @@ unsafe AtomicIsize: Send { }
 unsafe AtomicIsize: Sync { }
 
 /// A `usize` that tasks and threads can read and write without a lock.
+///
+/// ```
+/// let counter = AtomicUsize.new(0)
+/// counter.fetch_add(2)
+/// assert_eq(counter.load(), 2)
+/// ```
 struct AtomicUsize {
     cell: CPtr<u64>
 }
 
 AtomicUsize {
     /// A new atomic holding `value`.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn new(value: usize): AtomicUsize {
         unsafe {
             let cell = __alloc(8, 8) as CPtr<u64>
@@ -739,6 +1187,11 @@ AtomicUsize {
     }
 
     /// The current value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(3)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn load(self): usize {
         unsafe {
             __atomic_load_u64(self.cell) as usize
@@ -746,6 +1199,12 @@ AtomicUsize {
     }
 
     /// Writes `value`.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(0)
+    /// x.store(9)
+    /// assert_eq(x.load(), 9)
+    /// ```
     fn store(self, value: usize) {
         unsafe {
             __atomic_store_u64(self.cell, value as u64)
@@ -753,6 +1212,12 @@ AtomicUsize {
     }
 
     /// Writes `value` and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(1)
+    /// assert_eq(x.swap(4), 1)
+    /// assert_eq(x.load(), 4)
+    /// ```
     fn swap(self, value: usize): usize {
         unsafe {
             __atomic_swap_u64(self.cell, value as u64) as usize
@@ -761,6 +1226,12 @@ AtomicUsize {
 
     /// Writes `new` if the atomic holds `current`. `Ok(old)` when it did (and `old == current`), `Err(actual)` when it
     /// held something else and was left alone.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(1)
+    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// ```
     fn compare_exchange(self, current: usize, new: usize): Result<usize, usize> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as usize
@@ -773,6 +1244,12 @@ AtomicUsize {
     }
 
     /// Adds `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(5)
+    /// assert_eq(x.fetch_add(2), 5)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_add(self, value: usize): usize {
         unsafe {
             __atomic_add_u64(self.cell, value as u64) as usize
@@ -780,6 +1257,12 @@ AtomicUsize {
     }
 
     /// Subtracts `value` (wrapping around on overflow) and returns the value that was there.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(5)
+    /// assert_eq(x.fetch_sub(2), 5)
+    /// assert_eq(x.load(), 3)
+    /// ```
     fn fetch_sub(self, value: usize): usize {
         unsafe {
             __atomic_sub_u64(self.cell, value as u64) as usize
@@ -787,6 +1270,12 @@ AtomicUsize {
     }
 
     /// Sets the atomic to `old & value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(6)
+    /// assert_eq(x.fetch_and(3), 6)
+    /// assert_eq(x.load(), 2)
+    /// ```
     fn fetch_and(self, value: usize): usize {
         unsafe {
             __atomic_and_u64(self.cell, value as u64) as usize
@@ -794,6 +1283,12 @@ AtomicUsize {
     }
 
     /// Sets the atomic to `old | value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(4)
+    /// assert_eq(x.fetch_or(1), 4)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_or(self, value: usize): usize {
         unsafe {
             __atomic_or_u64(self.cell, value as u64) as usize
@@ -801,6 +1296,12 @@ AtomicUsize {
     }
 
     /// Sets the atomic to `old ^ value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(6)
+    /// assert_eq(x.fetch_xor(3), 6)
+    /// assert_eq(x.load(), 5)
+    /// ```
     fn fetch_xor(self, value: usize): usize {
         unsafe {
             __atomic_xor_u64(self.cell, value as u64) as usize
@@ -808,6 +1309,13 @@ AtomicUsize {
     }
 
     /// Sets the atomic to the larger of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(3)
+    /// assert_eq(x.fetch_max(7), 3)
+    /// assert_eq(x.fetch_max(1), 7)
+    /// assert_eq(x.load(), 7)
+    /// ```
     fn fetch_max(self, value: usize): usize {
         loop {
             let current = self.load()
@@ -822,6 +1330,12 @@ AtomicUsize {
     }
 
     /// Sets the atomic to the smaller of its value and `value` and returns the old value.
+    ///
+    /// ```
+    /// let x = AtomicUsize.new(3)
+    /// assert_eq(x.fetch_min(1), 3)
+    /// assert_eq(x.load(), 1)
+    /// ```
     fn fetch_min(self, value: usize): usize {
         loop {
             let current = self.load()

@@ -15,6 +15,13 @@ use std.{IoError, IoErrorKind}
 use text.to_char_list
 
 /// The kind of entry a path names.
+///
+/// ```
+/// create_dir("burdin-doc-kind").unwrap()
+/// let kind = metadata("burdin-doc-kind").unwrap().kind
+/// assert(kind == FileKind.Dir)
+/// remove_dir("burdin-doc-kind").unwrap()
+/// ```
 enum FileKind: Copy, Clone, Eq, Debug {
     File
     Dir
@@ -23,6 +30,14 @@ enum FileKind: Copy, Clone, Eq, Debug {
 }
 
 /// What the system reports about one path: the entry itself, without following a symbolic link.
+///
+/// ```
+/// write("burdin-doc-meta-struct.txt", "abcd".as_bytes()).unwrap()
+/// let m = metadata("burdin-doc-meta-struct.txt").unwrap()
+/// assert_eq(m.size, 4)
+/// assert(m.kind == FileKind.File)
+/// remove_file("burdin-doc-meta-struct.txt").unwrap()
+/// ```
 struct Metadata: Clone, Copy, Eq, Debug {
     /// The size in bytes.
     size: u64
@@ -37,16 +52,35 @@ struct Metadata: Clone, Copy, Eq, Debug {
 
 Metadata {
     /// Whether the entry is a regular file.
+    ///
+    /// ```
+    /// write("burdin-doc-is-file.txt", "x".as_bytes()).unwrap()
+    /// assert(metadata("burdin-doc-is-file.txt").unwrap().is_file())
+    /// remove_file("burdin-doc-is-file.txt").unwrap()
+    /// ```
     fn is_file(self): bool {
         self.kind == FileKind.File
     }
 
     /// Whether the entry is a directory.
+    ///
+    /// ```
+    /// create_dir("burdin-doc-is-dir").unwrap()
+    /// assert(metadata("burdin-doc-is-dir").unwrap().is_dir())
+    /// remove_dir("burdin-doc-is-dir").unwrap()
+    /// ```
     fn is_dir(self): bool {
         self.kind == FileKind.Dir
     }
 
     /// Whether the entry is a symbolic link.
+    ///
+    /// ```
+    /// write("burdin-doc-symlink-check.txt", "x".as_bytes()).unwrap()
+    /// let m = metadata("burdin-doc-symlink-check.txt").unwrap()
+    /// assert(!m.is_symlink())
+    /// remove_file("burdin-doc-symlink-check.txt").unwrap()
+    /// ```
     fn is_symlink(self): bool {
         self.kind == FileKind.Symlink
     }
@@ -54,6 +88,15 @@ Metadata {
 
 /// The names of the entries in the directory `path`, in the order the system returns them, without `.` and `..`.
 /// Sort the list for a deterministic order. The names are not paths; join them with `Path.join`.
+///
+/// ```
+/// create_dir("burdin-doc-list").unwrap()
+/// write("burdin-doc-list/one.txt", "x".as_bytes()).unwrap()
+/// let names = read_dir("burdin-doc-list").unwrap()
+/// assert_eq(names.len(), 1)
+/// assert_eq(names[0], String.from("one.txt"))
+/// remove_dir_all("burdin-doc-list").unwrap()
+/// ```
 fn read_dir(path: str): Result<List<String>, IoError> {
     match __offload(|| __read_dir(path)) {
         Ok(names) => Ok(names),
@@ -67,6 +110,12 @@ fn read_dir(path: str): Result<List<String>, IoError> {
 
 /// Creates one directory. The parent must exist, and an existing directory is an error (`create_dir_all` treats
 /// an existing directory as success).
+///
+/// ```
+/// create_dir("burdin-doc-make-dir").unwrap()
+/// assert(metadata("burdin-doc-make-dir").unwrap().is_dir())
+/// remove_dir("burdin-doc-make-dir").unwrap()
+/// ```
 fn create_dir(path: str): Result<(), IoError> {
     match __offload(|| __create_dir(path)) {
         Ok(_) => Ok(()),
@@ -80,6 +129,12 @@ fn create_dir(path: str): Result<(), IoError> {
 
 /// Creates `path` and every missing parent. An existing directory is success; a path that exists as a file is an
 /// error.
+///
+/// ```
+/// create_dir_all("burdin-doc-make/a/b").unwrap()
+/// assert(exists("burdin-doc-make/a/b"))
+/// remove_dir_all("burdin-doc-make").unwrap()
+/// ```
 fn create_dir_all(path: str): Result<(), IoError> {
     match create_dir(path) {
         Ok(()) => Ok(()),
@@ -100,6 +155,12 @@ fn create_dir_all(path: str): Result<(), IoError> {
 }
 
 /// Removes an empty directory. A non-empty directory is an error; `remove_dir_all` removes it with its contents.
+///
+/// ```
+/// create_dir("burdin-doc-remove-dir").unwrap()
+/// remove_dir("burdin-doc-remove-dir").unwrap()
+/// assert(!exists("burdin-doc-remove-dir"))
+/// ```
 fn remove_dir(path: str): Result<(), IoError> {
     match __offload(|| __remove_dir(path)) {
         Ok(_) => Ok(()),
@@ -112,6 +173,12 @@ fn remove_dir(path: str): Result<(), IoError> {
 }
 
 /// Removes a file or a symbolic link. A directory is an error; `remove_dir_all` removes a directory.
+///
+/// ```
+/// write("burdin-doc-remove.txt", "x".as_bytes()).unwrap()
+/// remove_file("burdin-doc-remove.txt").unwrap()
+/// assert(!exists("burdin-doc-remove.txt"))
+/// ```
 fn remove_file(path: str): Result<(), IoError> {
     match __offload(|| __remove_file(path)) {
         Ok(_) => Ok(()),
@@ -124,6 +191,13 @@ fn remove_file(path: str): Result<(), IoError> {
 }
 
 /// Removes a directory and everything under it. A symbolic link is removed as a link, never followed.
+///
+/// ```
+/// create_dir_all("burdin-doc-rm-all/inner").unwrap()
+/// write("burdin-doc-rm-all/inner/f.txt", "x".as_bytes()).unwrap()
+/// remove_dir_all("burdin-doc-rm-all").unwrap()
+/// assert(!exists("burdin-doc-rm-all"))
+/// ```
 fn remove_dir_all(path: str): Result<(), IoError> {
     let info = match metadata(path) {
         Ok(info) => info,
@@ -166,6 +240,14 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
 }
 
 /// Renames a file or a directory, replacing an existing `to`. The error names `to`.
+///
+/// ```
+/// write("burdin-doc-old-name.txt", "x".as_bytes()).unwrap()
+/// rename("burdin-doc-old-name.txt", "burdin-doc-new-name.txt").unwrap()
+/// assert(!exists("burdin-doc-old-name.txt"))
+/// assert(exists("burdin-doc-new-name.txt"))
+/// remove_file("burdin-doc-new-name.txt").unwrap()
+/// ```
 fn rename(from: str, to: str): Result<(), IoError> {
     match __offload(|| __rename(from, to)) {
         Ok(_) => Ok(()),
@@ -179,6 +261,14 @@ fn rename(from: str, to: str): Result<(), IoError> {
 
 /// What the system reports about `path`. The entry itself is read (`lstat` on Unix), so a symbolic link reports
 /// its own kind; on Windows the CRT's `_stat64` follows a link, so its size and times may describe the target.
+///
+/// ```
+/// write("burdin-doc-metadata.txt", "abc".as_bytes()).unwrap()
+/// let m = metadata("burdin-doc-metadata.txt").unwrap()
+/// assert_eq(m.size, 3)
+/// assert(m.is_file())
+/// remove_file("burdin-doc-metadata.txt").unwrap()
+/// ```
 fn metadata(path: str): Result<Metadata, IoError> {
     match __offload(|| __metadata(path)) {
         Ok((size, mode, modified, accessed, flags)) => Ok(Metadata {
@@ -211,6 +301,11 @@ priv fn __file_kind(flags: u64): FileKind {
 /// The absolute path that names `path`, with `.` and `..` resolved and the system's separators. The path must
 /// exist. On Unix this is `realpath`, which also resolves symbolic links; on Windows it is `_fullpath`, which
 /// only normalizes the text and keeps a link's name.
+///
+/// ```
+/// let p = canonicalize(".").unwrap()
+/// assert(p.len() > 0)
+/// ```
 fn canonicalize(path: str): Result<String, IoError> {
     match __offload(|| __canonicalize(path)) {
         Ok(text) => Ok(text),
@@ -225,6 +320,14 @@ fn canonicalize(path: str): Result<String, IoError> {
 /// Every file and directory under `root`, recursively, as a path relative to `root` with the system's separator.
 /// `root` itself is not included, a symbolic link is listed but not followed, and the result is sorted. A
 /// directory that cannot be read makes the whole walk fail.
+///
+/// ```
+/// create_dir_all("burdin-doc-walk/sub").unwrap()
+/// write("burdin-doc-walk/a.bd", "x".as_bytes()).unwrap()
+/// write("burdin-doc-walk/sub/b.bd", "y".as_bytes()).unwrap()
+/// assert_eq(walk("burdin-doc-walk").unwrap().len(), 3)
+/// remove_dir_all("burdin-doc-walk").unwrap()
+/// ```
 fn walk(root: str): Result<List<String>, IoError> {
     let mut out = List<String>.new()
     match __walk(root, "", mut out) {
@@ -239,6 +342,15 @@ fn walk(root: str): Result<List<String>, IoError> {
 /// `*` matches any run of characters inside one path segment, `?` matches one character inside a segment, and
 /// `**` matches across segments; a `**` followed by a separator also matches no segment at all, so `**/*.bd`
 /// finds a file at the top level too. Both `/` and `\` are separators in a pattern.
+///
+/// ```
+/// create_dir_all("burdin-doc-glob/sub").unwrap()
+/// write("burdin-doc-glob/a.bd", "x".as_bytes()).unwrap()
+/// write("burdin-doc-glob/sub/b.bd", "y".as_bytes()).unwrap()
+/// write("burdin-doc-glob/sub/c.txt", "z".as_bytes()).unwrap()
+/// assert_eq(walk_glob("burdin-doc-glob", "**/*.bd").unwrap().len(), 2)
+/// remove_dir_all("burdin-doc-glob").unwrap()
+/// ```
 fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
     let all = walk(root)?
     let pat = pattern.to_char_list()
@@ -337,26 +449,60 @@ priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize
 
 Path {
     /// The names in this directory (`read_dir`).
+    ///
+    /// ```
+    /// create_dir("burdin-doc-path-list").unwrap()
+    /// write("burdin-doc-path-list/one.txt", "x".as_bytes()).unwrap()
+    /// assert_eq(Path.unix("burdin-doc-path-list").read_dir().unwrap().len(), 1)
+    /// remove_dir_all("burdin-doc-path-list").unwrap()
+    /// ```
     fn read_dir(self): Result<List<String>, IoError> {
         read_dir(self.as_str())
     }
 
     /// This path's metadata (`metadata`).
+    ///
+    /// ```
+    /// write("burdin-doc-path-metadata.txt", "abc".as_bytes()).unwrap()
+    /// let m = Path.unix("burdin-doc-path-metadata.txt").metadata().unwrap()
+    /// assert(m.is_file())
+    /// remove_file("burdin-doc-path-metadata.txt").unwrap()
+    /// ```
     fn metadata(self): Result<Metadata, IoError> {
         metadata(self.as_str())
     }
 
     /// This path's absolute, normalized form (`canonicalize`).
+    ///
+    /// ```
+    /// let p = Path.unix(".").canonicalize().unwrap()
+    /// assert(p.len() > 0)
+    /// ```
     fn canonicalize(self): Result<String, IoError> {
         canonicalize(self.as_str())
     }
 
     /// Every entry under this path (`walk`).
+    ///
+    /// ```
+    /// create_dir_all("burdin-doc-pwalk/sub").unwrap()
+    /// write("burdin-doc-pwalk/a.bd", "x".as_bytes()).unwrap()
+    /// assert_eq(Path.unix("burdin-doc-pwalk").walk().unwrap().len(), 2)
+    /// remove_dir_all("burdin-doc-pwalk").unwrap()
+    /// ```
     fn walk(self): Result<List<String>, IoError> {
         walk(self.as_str())
     }
 
     /// The entries under this path that match `pattern` (`walk_glob`).
+    ///
+    /// ```
+    /// create_dir_all("burdin-doc-pglob/sub").unwrap()
+    /// write("burdin-doc-pglob/a.bd", "x".as_bytes()).unwrap()
+    /// write("burdin-doc-pglob/sub/b.bd", "y".as_bytes()).unwrap()
+    /// assert_eq(Path.unix("burdin-doc-pglob").walk_glob("**/*.bd").unwrap().len(), 2)
+    /// remove_dir_all("burdin-doc-pglob").unwrap()
+    /// ```
     fn walk_glob(self, pattern: str): Result<List<String>, IoError> {
         walk_glob(self.as_str(), pattern)
     }
@@ -377,6 +523,12 @@ priv fn __io_error_code(code: i32): Option<i32> {
 
 /// The options that open a file. Every option starts off; `open` rejects a set with no access and the combinations
 /// the systems disagree on (`IoError.InvalidInput`).
+///
+/// ```
+/// let mut options = OpenOptions.new()
+/// options.read(true)
+/// assert(options.open("burdin-doc-missing-file.txt").is_err())
+/// ```
 struct OpenOptions {
     priv read: bool
     priv write: bool
@@ -388,38 +540,103 @@ struct OpenOptions {
 
 OpenOptions {
     /// No options: `open` reports `IoError.InvalidInput` until an access mode is set.
+    ///
+    /// ```
+    /// let options = OpenOptions.new()
+    /// assert(options.open("burdin-doc-no-access.txt").is_err())
+    /// ```
     fn new(): OpenOptions {
         OpenOptions { read: false, write: false, append: false, truncate: false, create: false, create_new: false }
     }
 
     /// Allows reading.
+    ///
+    /// ```
+    /// write("burdin-doc-options-read.txt", "hi".as_bytes()).unwrap()
+    /// let mut options = OpenOptions.new()
+    /// options.read(true)
+    /// let f = options.open("burdin-doc-options-read.txt").unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-options-read.txt").unwrap()
+    /// ```
     fn read(mut self, on: bool) {
         self.read = on
     }
 
     /// Allows writing.
+    ///
+    /// ```
+    /// let mut options = OpenOptions.new()
+    /// options.write(true)
+    /// options.create(true)
+    /// let f = options.open("burdin-doc-options-write.txt").unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-options-write.txt").unwrap()
+    /// ```
     fn write(mut self, on: bool) {
         self.write = on
     }
 
     /// Every write goes to the end of the file. A file opened only for appending is opened for writing.
+    ///
+    /// ```
+    /// write("burdin-doc-options-append.txt", "a".as_bytes()).unwrap()
+    /// let mut options = OpenOptions.new()
+    /// options.append(true)
+    /// let mut f = options.open("burdin-doc-options-append.txt").unwrap()
+    /// f.write("b".as_bytes()).unwrap()
+    /// f.close().unwrap()
+    /// assert_eq(read_to_string("burdin-doc-options-append.txt").unwrap(), String.from("ab"))
+    /// remove_file("burdin-doc-options-append.txt").unwrap()
+    /// ```
     fn append(mut self, on: bool) {
         self.append = on
     }
 
     /// Empties an existing file when it is opened. Needs write or append access, and cannot be combined with
     /// append.
+    ///
+    /// ```
+    /// write("burdin-doc-truncate.txt", "long text".as_bytes()).unwrap()
+    /// let mut options = OpenOptions.new()
+    /// options.write(true)
+    /// options.truncate(true)
+    /// let f = options.open("burdin-doc-truncate.txt").unwrap()
+    /// f.close().unwrap()
+    /// assert_eq(read_to_string("burdin-doc-truncate.txt").unwrap(), String.from(""))
+    /// remove_file("burdin-doc-truncate.txt").unwrap()
+    /// ```
     fn truncate(mut self, on: bool) {
         self.truncate = on
     }
 
     /// Creates the file when it is missing.
+    ///
+    /// ```
+    /// let mut options = OpenOptions.new()
+    /// options.create(true)
+    /// options.write(true)
+    /// let f = options.open("burdin-doc-options-create.txt").unwrap()
+    /// f.close().unwrap()
+    /// assert(exists("burdin-doc-options-create.txt"))
+    /// remove_file("burdin-doc-options-create.txt").unwrap()
+    /// ```
     fn create(mut self, on: bool) {
         self.create = on
     }
 
     /// Creates the file when it is missing and fails when it exists. It implies `create`, so `create` need not be
     /// set too.
+    ///
+    /// ```
+    /// let mut options = OpenOptions.new()
+    /// options.create_new(true)
+    /// options.write(true)
+    /// let f = options.open("burdin-doc-create-new.txt").unwrap()
+    /// f.close().unwrap()
+    /// assert(options.open("burdin-doc-create-new.txt").is_err())
+    /// remove_file("burdin-doc-create-new.txt").unwrap()
+    /// ```
     fn create_new(mut self, on: bool) {
         self.create_new = on
     }
@@ -427,6 +644,15 @@ OpenOptions {
     /// Opens `path` with these options. A set with no access mode, `truncate` without write or append access, and
     /// `append` with `truncate` are `IoError.InvalidInput`. A failure of the system call is `IoError.Read` when the
     /// options only read, and `IoError.Write` otherwise.
+    ///
+    /// ```
+    /// let mut options = OpenOptions.new()
+    /// options.create(true)
+    /// options.write(true)
+    /// let f = options.open("burdin-doc-options-open.txt").unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-options-open.txt").unwrap()
+    /// ```
     fn open(self, path: str): Result<File, IoError> {
         if !self.read && !self.write && !self.append {
             return Err(IoError.InvalidInput)
@@ -469,6 +695,14 @@ OpenOptions {
 /// An open file. It reads and writes through the unbuffered system descriptor, so wrap it in a `BufReader` or a
 /// `BufWriter` for many small operations. Dropping it closes it (`Drop`); `close` reports the error the drop would
 /// discard. The bytes are never translated: on every system the file is binary.
+///
+/// ```
+/// let mut f = File.create("burdin-doc-file.txt").unwrap()
+/// f.write("abc".as_bytes()).unwrap()
+/// f.close().unwrap()
+/// assert_eq(read_to_string("burdin-doc-file.txt").unwrap(), String.from("abc"))
+/// remove_file("burdin-doc-file.txt").unwrap()
+/// ```
 struct File {
     priv fd: i32
     /// The path the handle was opened with, named by every error the handle reports.
@@ -477,6 +711,13 @@ struct File {
 
 File {
     /// Opens `path` for reading.
+    ///
+    /// ```
+    /// write("burdin-doc-file-open.txt", "x".as_bytes()).unwrap()
+    /// let f = File.open("burdin-doc-file-open.txt").unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-file-open.txt").unwrap()
+    /// ```
     fn open(path: str): Result<File, IoError> {
         let mut options = OpenOptions.new()
         options.read(true)
@@ -484,6 +725,13 @@ File {
     }
 
     /// Opens `path` for writing, creating it when it is missing and emptying it when it exists.
+    ///
+    /// ```
+    /// let f = File.create("burdin-doc-file-create.txt").unwrap()
+    /// f.close().unwrap()
+    /// assert(exists("burdin-doc-file-create.txt"))
+    /// remove_file("burdin-doc-file-create.txt").unwrap()
+    /// ```
     fn create(path: str): Result<File, IoError> {
         let mut options = OpenOptions.new()
         options.write(true)
@@ -493,6 +741,13 @@ File {
     }
 
     /// Makes the file's contents durable: `fsync` on Unix, `_commit` on Windows.
+    ///
+    /// ```
+    /// let f = File.create("burdin-doc-sync.txt").unwrap()
+    /// f.sync_all().unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-sync.txt").unwrap()
+    /// ```
     fn sync_all(self): Result<(), IoError> {
         let fd = self.fd
         match __offload(|| __file_sync(fd)) {
@@ -509,6 +764,15 @@ File {
     }
 
     /// Sets the file's length. The bytes past `size` are removed, and a shorter file is extended with zero bytes.
+    ///
+    /// ```
+    /// let mut f = File.create("burdin-doc-set-len.txt").unwrap()
+    /// f.write("hello".as_bytes()).unwrap()
+    /// f.set_len(2).unwrap()
+    /// f.close().unwrap()
+    /// assert_eq(read_to_string("burdin-doc-set-len.txt").unwrap(), String.from("he"))
+    /// remove_file("burdin-doc-set-len.txt").unwrap()
+    /// ```
     fn set_len(mut self, size: u64): Result<(), IoError> {
         let fd = self.fd
         match __offload(|| __file_set_len(fd, size)) {
@@ -527,6 +791,12 @@ File {
     /// Closes the file and reports a failure that `Drop` would discard. The handle is moved, so it cannot be used
     /// again. The rebinding marks the descriptor closed, so the drop that follows does not close it a second time
     /// (a second close is an invalid descriptor, which the Windows CRT treats as a fatal parameter error).
+    ///
+    /// ```
+    /// let f = File.create("burdin-doc-close.txt").unwrap()
+    /// f.close().unwrap()
+    /// remove_file("burdin-doc-close.txt").unwrap()
+    /// ```
     fn close(own self): Result<(), IoError> {
         let mut me = self
         let fd = me.fd
@@ -617,6 +887,13 @@ File: Drop {
 }
 
 /// Reads the whole file at `path` as bytes.
+///
+/// ```
+/// write("burdin-doc-read-bytes.txt", "hi".as_bytes()).unwrap()
+/// let bytes = read("burdin-doc-read-bytes.txt").unwrap()
+/// assert_eq(bytes.to_text(), Ok(String.from("hi")))
+/// remove_file("burdin-doc-read-bytes.txt").unwrap()
+/// ```
 fn read(path: str): Result<List<u8>, IoError> {
     let mut file = File.open(path)?
     let mut bytes = List<u8>.new()
@@ -625,12 +902,25 @@ fn read(path: str): Result<List<u8>, IoError> {
 }
 
 /// Writes `data` to `path`, creating the file when it is missing and replacing its contents when it exists.
+///
+/// ```
+/// write("burdin-doc-write.txt", "hi".as_bytes()).unwrap()
+/// assert_eq(read_to_string("burdin-doc-write.txt").unwrap(), String.from("hi"))
+/// remove_file("burdin-doc-write.txt").unwrap()
+/// ```
 fn write(path: str, data: [u8]): Result<(), IoError> {
     let mut file = File.create(path)?
     file.write_all(data)
 }
 
 /// Appends `data` to `path`. The file is created when it is missing.
+///
+/// ```
+/// write("burdin-doc-append.txt", "a".as_bytes()).unwrap()
+/// append("burdin-doc-append.txt", "b".as_bytes()).unwrap()
+/// assert_eq(read_to_string("burdin-doc-append.txt").unwrap(), String.from("ab"))
+/// remove_file("burdin-doc-append.txt").unwrap()
+/// ```
 fn append(path: str, data: [u8]): Result<(), IoError> {
     let mut options = OpenOptions.new()
     options.write(true)
@@ -643,6 +933,15 @@ fn append(path: str, data: [u8]): Result<(), IoError> {
 /// Copies every byte of `from` to `to`, creating or replacing `to`, and returns how many bytes it copied. The
 /// destination's permissions are not copied; only the bytes are. It is `copy_file` rather than `copy` because the
 /// reader/writer `copy` in `std.rw` already owns the unqualified name in the prelude.
+///
+/// ```
+/// write("burdin-doc-copy-from.txt", "copy me".as_bytes()).unwrap()
+/// let n = copy_file("burdin-doc-copy-from.txt", "burdin-doc-copy-to.txt").unwrap()
+/// assert_eq(n, 7)
+/// assert_eq(read_to_string("burdin-doc-copy-to.txt").unwrap(), String.from("copy me"))
+/// remove_file("burdin-doc-copy-from.txt").unwrap()
+/// remove_file("burdin-doc-copy-to.txt").unwrap()
+/// ```
 fn copy_file(from: str, to: str): Result<u64, IoError> {
     let mut source = File.open(from)?
     let mut destination = File.create(to)?
@@ -660,6 +959,13 @@ fn copy_file(from: str, to: str): Result<u64, IoError> {
 }
 
 /// Whether something exists at `path` (`Path.exists`).
+///
+/// ```
+/// assert(!exists("burdin-doc-exists.txt"))
+/// write("burdin-doc-exists.txt", "x".as_bytes()).unwrap()
+/// assert(exists("burdin-doc-exists.txt"))
+/// remove_file("burdin-doc-exists.txt").unwrap()
+/// ```
 fn exists(path: str): bool {
     Path.new(path).exists()
 }

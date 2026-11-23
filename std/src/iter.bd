@@ -13,67 +13,130 @@ use option.take
 // (memory-rules SC2/SC3) and cannot be stored in a field or a collection.
 
 /// A stateful iterator. `next` borrows the iterator exclusively and advances it.
+///
+/// ```
+/// fn sum_all<I: Iterator<i32>>(mut iter: I): i32 {
+///     iter.fold(0, |acc, x| acc + x)
+/// }
+/// let mut it = [1, 2, 3].into_iter()
+/// assert_eq(sum_all(mut it), 6)
+/// ```
 interface Iterator<T> {
     /// The next item, or `None` when the iterator is exhausted.
+    ///
+    /// ```
+    /// let mut it = [7].into_iter()
+    /// assert_eq(it.next(), Some(7))
+    /// assert(it.next().is_none())
+    /// ```
     fn next(mut self): Option<T>
 
     /// A lazy chain that applies `f` to every item.
+    ///
+    /// ```
+    /// assert_eq([1, 2].into_iter().map(|x| x * 3).count(), 2)
+    /// ```
     fn map<U, F: FnMut(T): U>(own self, own f: F): MapIter<Self, T, U, F> {
         MapIter { inner: self, f: f }
     }
 
     /// A lazy chain that keeps the items `f` accepts. `f` receives a view so the item can still be returned.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3, 4].into_iter().filter(|x| *x > 2).count(), 2)
+    /// ```
     fn filter<F: FnMut(&T): bool>(own self, own f: F): FilterIter<Self, T, F> {
         FilterIter { inner: self, f: f }
     }
 
     /// A lazy chain of at most `count` items.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3].into_iter().take(2).count(), 2)
+    /// ```
     fn take(own self, count: usize): TakeIter<Self, T> {
         TakeIter { inner: self, remaining: count }
     }
 
     /// A lazy chain that drops the first `count` items.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3].into_iter().skip(2).count(), 1)
+    /// ```
     fn skip(own self, count: usize): SkipIter<Self, T> {
         SkipIter { inner: self, remaining: count }
     }
 
     /// A lazy chain of `(index, item)` pairs, counting from 0.
+    ///
+    /// ```
+    /// assert_eq(['a'].into_iter().enumerate().count(), 1)
+    /// ```
     fn enumerate(own self): EnumerateIter<Self, T> {
         EnumerateIter { inner: self, index: 0 }
     }
 
     /// A lazy chain of pairs, one item from this iterator and one from `other`, ending when either one ends.
+    ///
+    /// ```
+    /// assert_eq([1, 2].into_iter().zip([3, 4].into_iter()).count(), 2)
+    /// ```
     fn zip<U, J: Iterator<U>>(own self, own other: J): ZipIter<Self, T, J, U> {
         ZipIter { first: self, second: other }
     }
 
     /// A lazy chain of this iterator's items followed by the items of `other`.
+    ///
+    /// ```
+    /// assert_eq([1].into_iter().chain([2].into_iter()).count(), 2)
+    /// ```
     fn chain<J: Iterator<T>>(own self, own other: J): ChainIter<Self, J, T> {
         ChainIter { first: self, second: other, first_done: false }
     }
 
     /// A lazy chain of the items of the iterators `f` returns for each item, one after another.
+    ///
+    /// ```
+    /// assert_eq([1, 2].into_iter().flat_map(|x| [x, x].into_iter()).count(), 4)
+    /// ```
     fn flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F): FlatMapIter<Self, T, J, U, F> {
         let current: Option<J> = None
         FlatMapIter { inner: self, f: f, current: current }
     }
 
     /// A lazy chain of the items up to, not including, the first one `f` rejects.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3, 1].into_iter().take_while(|x| *x < 3).count(), 2)
+    /// ```
     fn take_while<F: FnMut(&T): bool>(own self, own f: F): TakeWhileIter<Self, T, F> {
         TakeWhileIter { inner: self, f: f, done: false }
     }
 
     /// A lazy chain that drops items while `f` accepts them, then yields the rest.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3, 1].into_iter().skip_while(|x| *x < 2).count(), 3)
+    /// ```
     fn skip_while<F: FnMut(&T): bool>(own self, own f: F): SkipWhileIter<Self, T, F> {
         SkipWhileIter { inner: self, f: f, skipping: true }
     }
 
     /// A lazy chain that applies `f` and stops at the first `None` it returns.
+    ///
+    /// ```
+    /// let v = [1, 2, 0, 4].into_iter().map_while(|x| if x > 0 { Some(x) } else { None }).to_list()
+    /// assert_eq(v.len(), 2)
+    /// ```
     fn map_while<U, F: FnMut(T): Option<U>>(own self, own f: F): MapWhileIter<Self, T, U, F> {
         MapWhileIter { inner: self, f: f, done: false }
     }
 
     /// A lazy chain of every `step`th item, starting with the first. A `step` of 0 panics.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3, 4].into_iter().step_by(2).count(), 2)
+    /// ```
     fn step_by(own self, step: usize): StepByIter<Self, T> {
         if step == 0 {
             panic("step_by: the step is 0")
@@ -82,16 +145,32 @@ interface Iterator<T> {
     }
 
     /// A lazy chain that calls `f` on a view of each item and passes the item on.
+    ///
+    /// ```
+    /// let mut total = 0
+    /// let kept = [1, 2].into_iter().inspect(|x| total = total + *x).to_list()
+    /// assert_eq(kept.len(), 2)
+    /// assert_eq(total, 3)
+    /// ```
     fn inspect<F: FnMut(&T)>(own self, own f: F): InspectIter<Self, T, F> {
         InspectIter { inner: self, f: f }
     }
 
     /// A lazy chain whose next item can be looked at with `peek` before it is taken.
+    ///
+    /// ```
+    /// let mut it = [1].into_iter().peekable()
+    /// assert(it.peek().is_some())
+    /// ```
     fn peekable(own self): PeekIter<Self, T> {
         PeekIter { inner: self, buffer: List<T>.new(), looked: false }
     }
 
     /// Folds the items into an accumulator, left to right.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3].into_iter().fold(10, |acc, x| acc + x), 16)
+    /// ```
     fn fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F): A {
         let mut acc = init
         let mut f = f
@@ -108,6 +187,10 @@ interface Iterator<T> {
     }
 
     /// The number of items left.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3].into_iter().count(), 3)
+    /// ```
     fn count(mut self): usize {
         let mut n: usize = 0
         loop {
@@ -124,6 +207,10 @@ interface Iterator<T> {
 
     /// Whether `f` accepts any item. Stops at the first one it does. The adapter is spelled `.any(...)`; the
     /// method is named `any_item` because `any` is reserved until milestone 15 (spec/iterators.md, IT9).
+    ///
+    /// ```
+    /// assert([1, 2].into_iter().any_item(|x| x == 2))
+    /// ```
     fn any_item<F: FnMut(T): bool>(mut self, own f: F): bool {
         let mut f = f
         loop {
@@ -141,6 +228,10 @@ interface Iterator<T> {
     }
 
     /// Whether `f` accepts every item. Stops at the first one it does not.
+    ///
+    /// ```
+    /// assert([2, 4].into_iter().all(|x| x % 2 == 0))
+    /// ```
     fn all<F: FnMut(T): bool>(mut self, own f: F): bool {
         let mut f = f
         loop {
@@ -158,6 +249,10 @@ interface Iterator<T> {
     }
 
     /// The first item `f` accepts, with the iterator still holding the source's view.
+    ///
+    /// ```
+    /// assert_eq([5, 6, 7].into_iter().find(|x| *x > 5), Some(6))
+    /// ```
     fn find<F: FnMut(&T): bool>(mut self, own f: F): Option<T> {
         let mut f = f
         loop {
@@ -175,6 +270,10 @@ interface Iterator<T> {
     }
 
     /// The last item, or `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([5, 6, 7].into_iter().last(), Some(7))
+    /// ```
     fn last(mut self): Option<T> {
         let mut result: Option<T> = None
         loop {
@@ -190,6 +289,11 @@ interface Iterator<T> {
     }
 
     /// The item `n` places on (counting from 0), or `None` when the iterator is shorter; it consumes the items before.
+    ///
+    /// ```
+    /// assert_eq([5, 6, 7].into_iter().nth(1), Some(6))
+    /// assert(([5].into_iter()).nth(3).is_none())
+    /// ```
     fn nth(mut self, n: usize): Option<T> {
         let mut left = n
         loop {
@@ -208,6 +312,10 @@ interface Iterator<T> {
     }
 
     /// The index of the first item `f` accepts.
+    ///
+    /// ```
+    /// assert_eq([5, 6, 7].into_iter().position(|x| x == 6), Some(1))
+    /// ```
     fn position<F: FnMut(T): bool>(mut self, own f: F): Option<usize> {
         let mut f = f
         let mut i: usize = 0
@@ -227,6 +335,12 @@ interface Iterator<T> {
     }
 
     /// Calls `f` on every item.
+    ///
+    /// ```
+    /// let mut total = 0
+    /// [1, 2, 3].into_iter().for_each(|x| total = total + x)
+    /// assert_eq(total, 6)
+    /// ```
     fn for_each<F: FnMut(T)>(mut self, own f: F) {
         let mut f = f
         loop {
@@ -242,6 +356,10 @@ interface Iterator<T> {
     }
 
     /// Combines the items into one with `f`, left to right; `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([1, 2, 3].into_iter().reduce(|a, b| a + b), Some(6))
+    /// ```
     fn reduce<F: FnMut(T, T): T>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
@@ -263,6 +381,12 @@ interface Iterator<T> {
     }
 
     /// Splits the items into the ones `f` accepts and the ones it rejects, keeping their order.
+    ///
+    /// ```
+    /// let (even, odd) = [1, 2, 3, 4].into_iter().partition(|x| *x % 2 == 0)
+    /// assert_eq(even.len(), 2)
+    /// assert_eq(odd.len(), 2)
+    /// ```
     fn partition<F: FnMut(&T): bool>(mut self, own f: F): (List<T>, List<T>) {
         let mut f = f
         let mut yes = List<T>.new()
@@ -284,6 +408,10 @@ interface Iterator<T> {
     }
 
     /// The least item under the comparator `f`; the first of equal items. `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([1, 3, 2].into_iter().min_by(|a, b| (*a).cmp(*b)), Some(1))
+    /// ```
     fn min_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
@@ -307,6 +435,10 @@ interface Iterator<T> {
     }
 
     /// The greatest item under the comparator `f`; the last of equal items. `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([1, 3, 2].into_iter().max_by(|a, b| (*a).cmp(*b)), Some(3))
+    /// ```
     fn max_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
@@ -330,6 +462,10 @@ interface Iterator<T> {
     }
 
     /// The item with the least key; the first of equal ones. `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([1, -5, 3].into_iter().min_by_key(|x| (*x).abs()), Some(1))
+    /// ```
     fn min_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
@@ -356,6 +492,10 @@ interface Iterator<T> {
     }
 
     /// The item with the greatest key; the last of equal ones. `None` when the iterator is empty.
+    ///
+    /// ```
+    /// assert_eq([1, -5, 3].into_iter().max_by_key(|x| (*x).abs()), Some(-5))
+    /// ```
     fn max_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
@@ -382,6 +522,14 @@ interface Iterator<T> {
     }
 
     /// Folds the items like `fold`, but `f` returns a `Result` and the first `Err` ends the fold and is returned.
+    ///
+    /// ```
+    /// fn add_checked(acc: i32, x: i32): Result<i32, String> {
+    ///     Ok(acc + x)
+    /// }
+    /// let r: Result<i32, String> = [1, 2, 3].into_iter().try_fold(0, add_checked)
+    /// assert_eq(r.unwrap(), 6)
+    /// ```
     fn try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F): Result<A, E> {
         let mut acc = init
         let mut f = f
@@ -405,6 +553,18 @@ interface Iterator<T> {
     }
 
     /// Calls `f` on every item, stopping at the first `Err` and returning it.
+    ///
+    /// ```
+    /// fn check_small(x: i32): Result<(), String> {
+    ///     if x < 5 {
+    ///         Ok(())
+    ///     } else {
+    ///         Err(String.from("big"))
+    ///     }
+    /// }
+    /// let r: Result<(), String> = [1, 2].into_iter().try_for_each(check_small)
+    /// assert(r.is_ok())
+    /// ```
     fn try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F): Result<(), E> {
         let mut f = f
         loop {
@@ -427,12 +587,22 @@ interface Iterator<T> {
     /// Collects the remaining items into the collection the context asks for: `let names: Set<String> =
     /// it.collect()`. The target type comes from the expected type (the annotation, the parameter, or the return
     /// type), and any type that implements `FromIterator<T>` can be a target (spec/iterators.md, IT17).
+    ///
+    /// ```
+    /// let s: Set<i32> = [1, 2, 2].into_iter().collect()
+    /// assert_eq(s.len(), 2)
+    /// ```
     fn collect<C: FromIterator<T>>(own self): C {
         C.from_iter(self)
     }
 
     /// Collects the remaining items into a list. A chain over borrowed items produces a second-class list of
     /// views, which cannot be stored; clone the items first to get an owned list.
+    ///
+    /// ```
+    /// let xs = [1, 2].into_iter().to_list()
+    /// assert_eq(xs.len(), 2)
+    /// ```
     fn to_list(mut self): List<T> {
         let mut out: List<T> = List<T>.new()
         loop {
@@ -562,23 +732,59 @@ priv fn __accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
 
 /// An iterator that can also take items from its back. `rev` walks such an iterator backwards. The built-in
 /// slice, range, and `Chars` iterators implement it in the compiler (spec/iterators.md, IT14).
+///
+/// ```
+/// let xs = [1, 2, 3]
+/// let mut it = xs.iter()
+/// assert_eq(it.next().unwrap(), 1)
+/// assert_eq(it.next_back().unwrap(), 3)
+/// ```
 interface DoubleEndedIterator<T> {
     /// The last item, or `None` when the iterator is exhausted.
+    ///
+    /// ```
+    /// let xs = [1, 2, 3]
+    /// let mut it = xs.iter()
+    /// assert_eq(it.next_back().unwrap(), 3)
+    /// ```
     fn next_back(mut self): Option<T>
 }
 
 /// A collection that `for` can iterate through `iter(self)`.
+///
+/// ```
+/// let mut total = 0
+/// for x in [1, 2, 3] {
+///     total = total + x
+/// }
+/// assert_eq(total, 6)
+/// ```
 interface Iterable<T> {
 }
 
 /// A type that can be built from the items of an iterator. `Iterator.collect` calls `from_iter`; the built-in
 /// `List`, `Map`, `String`, `Option`, and `Result` implement it in the compiler (spec/iterators.md, IT16).
+///
+/// ```
+/// let s: Set<i32> = [3, 3].into_iter().collect()
+/// assert_eq(s.len(), 1)
+/// ```
 interface FromIterator<T> {
     /// Builds the collection from every item `iter` yields, in order.
+    ///
+    /// ```
+    /// let s = Set<i32>.from_iter([1, 1, 2].into_iter())
+    /// assert_eq(s.len(), 2)
+    /// ```
     fn from_iter<I: Iterator<T>>(own iter: I): Self
 }
 
 /// The lazy `map` chain: `inner` and the closure.
+///
+/// ```
+/// let tripled = [1, 2].into_iter().map(|x| x * 3).to_list()
+/// assert_eq(tripled[1], 6)
+/// ```
 struct MapIter<I, T, U, F: FnMut(T): U> {
     inner: I
     f: F
@@ -594,6 +800,11 @@ MapIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): U {
 }
 
 /// The lazy `filter` chain.
+///
+/// ```
+/// let evens = [1, 2, 3, 4].into_iter().filter(|x| *x % 2 == 0).to_list()
+/// assert_eq(evens.len(), 2)
+/// ```
 struct FilterIter<I, T, F: FnMut(&T): bool> {
     inner: I
     f: F
@@ -617,6 +828,11 @@ FilterIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 }
 
 /// The lazy `take` chain.
+///
+/// ```
+/// let head = [1, 2, 3].into_iter().take(2).to_list()
+/// assert_eq(head.len(), 2)
+/// ```
 struct TakeIter<I, T>: Clone {
     inner: I
     remaining: usize
@@ -633,6 +849,11 @@ TakeIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `skip` chain.
+///
+/// ```
+/// let rest = [1, 2, 3].into_iter().skip(1).to_list()
+/// assert_eq(rest[0], 2)
+/// ```
 struct SkipIter<I, T>: Clone {
     inner: I
     remaining: usize
@@ -656,6 +877,12 @@ SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `enumerate` chain.
+///
+/// ```
+/// let pairs = ['a', 'b'].into_iter().enumerate().to_list()
+/// assert_eq(pairs[1].0, 1)
+/// assert_eq(pairs[1].1, 'b')
+/// ```
 struct EnumerateIter<I, T>: Clone {
     inner: I
     index: usize
@@ -675,6 +902,12 @@ EnumerateIter<I, T>: Iterator<(usize, T)> where I: Iterator<T> {
 }
 
 /// The lazy `zip` chain.
+///
+/// ```
+/// let pairs = [1, 2].into_iter().zip(['a', 'b'].into_iter()).to_list()
+/// assert_eq(pairs[1].0, 2)
+/// assert_eq(pairs[1].1, 'b')
+/// ```
 struct ZipIter<I, T, J, U>: Clone {
     first: I
     second: J
@@ -695,6 +928,11 @@ ZipIter<I, T, J, U>: Iterator<(T, U)> where I: Iterator<T>, J: Iterator<U> {
 }
 
 /// The lazy `chain` chain.
+///
+/// ```
+/// let all = [1].into_iter().chain([2, 3].into_iter()).to_list()
+/// assert_eq(all.len(), 3)
+/// ```
 struct ChainIter<I, J, T>: Clone {
     first: I
     second: J
@@ -718,6 +956,12 @@ ChainIter<I, J, T>: Iterator<T> where I: Iterator<T>, J: Iterator<T> {
 }
 
 /// The lazy `flat_map` chain: `current` is the inner iterator being drained, if any.
+///
+/// ```
+/// let pairs = [1, 2].into_iter().flat_map(|x| [x, x * 10].into_iter()).to_list()
+/// assert_eq(pairs.len(), 4)
+/// assert_eq(pairs[3], 20)
+/// ```
 struct FlatMapIter<I, T, J, U, F: FnMut(T): J> {
     inner: I
     f: F
@@ -754,6 +998,14 @@ FlatMapIter<I, T, J, U, F>: Iterator<U> where I: Iterator<T>, J: Iterator<U>, F:
 }
 
 /// The lazy `flatten` chain: `current` is the inner iterator being drained, if any.
+///
+/// ```
+/// let mut total = 0
+/// for x in (0..3).iter().map(|k| (0..k).iter()).flatten() {
+///     total = total + x
+/// }
+/// assert_eq(total, 1)
+/// ```
 struct FlattenIter<I, J, U>: Clone {
     inner: I
     current: Option<J>
@@ -789,6 +1041,12 @@ FlattenIter<I, J, U>: Iterator<U> where I: Iterator<J>, J: Iterator<U> {
 }
 
 /// The lazy `cloned` chain: an owned copy of each viewed item.
+///
+/// ```
+/// let names = [String.from("a")]
+/// let copies = names.iter().cloned().to_list()
+/// assert_eq(copies[0], String.from("a"))
+/// ```
 struct ClonedIter<I, U>: Clone {
     inner: I
 }
@@ -803,6 +1061,15 @@ ClonedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Clone {
 }
 
 /// The lazy `copied` chain: a copy of each viewed item.
+///
+/// ```
+/// let d = Deque<i32>.from([1, 2])
+/// let mut total = 0
+/// for x in d.iter().copied() {
+///     total = total + x
+/// }
+/// assert_eq(total, 3)
+/// ```
 struct CopiedIter<I, U>: Clone {
     inner: I
 }
@@ -817,6 +1084,15 @@ CopiedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Copy {
 }
 
 /// The lazy `cycle` chain: `current` is the pass being walked and `original` is the pristine copy of the source.
+///
+/// ```
+/// let xs = [1, 2]
+/// let mut total = 0
+/// for x in xs.iter().cycle().take(5) {
+///     total = total + x
+/// }
+/// assert_eq(total, 7)
+/// ```
 struct CycleIter<I, T>: Clone {
     original: I
     current: I
@@ -835,6 +1111,15 @@ CycleIter<I, T>: Iterator<T> where I: Iterator<T> + Clone {
 }
 
 /// The lazy `rev` chain: the source's items from the back.
+///
+/// ```
+/// let xs = [1, 2, 3]
+/// let mut seen = List<i32>.new()
+/// for x in xs.iter().rev() {
+///     seen.push(x)
+/// }
+/// assert_eq(seen[0], 3)
+/// ```
 struct RevIter<I, T>: Clone {
     inner: I
 }
@@ -917,6 +1202,11 @@ CopiedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Co
 }
 
 /// The lazy `take_while` chain.
+///
+/// ```
+/// let head = [1, 2, 3, 1].into_iter().take_while(|x| *x < 3).to_list()
+/// assert_eq(head.len(), 2)
+/// ```
 struct TakeWhileIter<I, T, F: FnMut(&T): bool> {
     inner: I
     f: F
@@ -942,6 +1232,11 @@ TakeWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 }
 
 /// The lazy `skip_while` chain.
+///
+/// ```
+/// let rest = [1, 2, 3, 1].into_iter().skip_while(|x| *x < 2).to_list()
+/// assert_eq(rest.len(), 3)
+/// ```
 struct SkipWhileIter<I, T, F: FnMut(&T): bool> {
     inner: I
     f: F
@@ -968,6 +1263,11 @@ SkipWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 }
 
 /// The lazy `map_while` chain.
+///
+/// ```
+/// let doubled = [1, 2, -1, 4].into_iter().map_while(|x| if x > 0 { Some(x * 2) } else { None }).to_list()
+/// assert_eq(doubled.len(), 2)
+/// ```
 struct MapWhileIter<I, T, U, F: FnMut(T): Option<U>> {
     inner: I
     f: F
@@ -993,6 +1293,12 @@ MapWhileIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): Option<
 }
 
 /// The lazy `step_by` chain.
+///
+/// ```
+/// let picked = [1, 2, 3, 4, 5].into_iter().step_by(2).to_list()
+/// assert_eq(picked.len(), 3)
+/// assert_eq(picked[1], 3)
+/// ```
 struct StepByIter<I, T>: Clone {
     inner: I
     step: usize
@@ -1020,6 +1326,13 @@ StepByIter<I, T>: Iterator<T> where I: Iterator<T> {
 }
 
 /// The lazy `inspect` chain.
+///
+/// ```
+/// let mut seen = 0
+/// let count = [1, 2, 3].into_iter().inspect(|x| seen = seen + *x).count()
+/// assert_eq(seen, 6)
+/// assert_eq(count, 3)
+/// ```
 struct InspectIter<I, T, F: FnMut(&T)> {
     inner: I
     f: F
@@ -1038,6 +1351,12 @@ InspectIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T) {
 }
 
 /// The lazy `peekable` chain: `buffer` holds the item that was looked at, if any.
+///
+/// ```
+/// let mut it = [5].into_iter().peekable()
+/// assert_eq(it.next(), Some(5))
+/// assert(it.peek().is_none())
+/// ```
 struct PeekIter<I, T> {
     inner: I
     buffer: List<T>
@@ -1046,6 +1365,12 @@ struct PeekIter<I, T> {
 
 PeekIter<I, T> where I: Iterator<T> {
     /// A view of the next item without taking it, or `None` when there is none.
+    ///
+    /// ```
+    /// let mut it = [1, 2].into_iter().peekable()
+    /// assert_eq(*it.peek().unwrap(), 1)
+    /// assert_eq(it.next(), Some(1))
+    /// ```
     fn peek(mut self): Option<&T> {
         if !self.looked {
             match self.inner.next() {

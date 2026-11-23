@@ -100,6 +100,16 @@ priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F):
 
 /// Sorts the list with the comparator `f`, which returns how its first argument orders against its second. The sort is
 /// stable.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(3)
+/// l.push(2)
+/// l.sort_by(|a, b| (*b).cmp(*a))
+/// assert_eq(l[0], 3)
+/// assert_eq(l[2], 1)
+/// ```
 fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
     let mut f = f
     let mut less = |a: &T, b: &T| f(a, b).is_lt()
@@ -108,6 +118,16 @@ fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
 }
 
 /// Sorts the list by the key `key` computes for each element; keys compare with `Ord`. The sort is stable.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(3)
+/// l.push(-5)
+/// l.push(1)
+/// l.sort_by_key(|x| x.abs())
+/// assert_eq(l[0], 1)
+/// assert_eq(l[2], -5)
+/// ```
 fn List<T>.sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
     let mut key = key
     let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
@@ -116,11 +136,31 @@ fn List<T>.sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
 }
 
 /// Like `sort_by`, with no promise about the order of equal elements.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(3)
+/// l.push(2)
+/// l.sort_unstable_by(|a, b| (*b).cmp(*a))
+/// assert_eq(l[0], 3)
+/// assert_eq(l[2], 1)
+/// ```
 fn List<T>.sort_unstable_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
     self.sort_by(f)
 }
 
 /// Like `sort_by_key`, with no promise about the order of equal elements.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(3)
+/// l.push(-5)
+/// l.push(1)
+/// l.sort_unstable_by_key(|x| x.abs())
+/// assert_eq(l[0], 1)
+/// assert_eq(l[2], -5)
+/// ```
 fn List<T>.sort_unstable_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
     let mut key = key
     let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
@@ -129,6 +169,16 @@ fn List<T>.sort_unstable_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
 }
 
 /// Whether every element is not greater than the next one under the comparator `f`.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(2)
+/// l.push(2)
+/// assert(l.is_sorted_by(|a, b| (*a).cmp(*b)))
+/// l.push(0)
+/// assert(!l.is_sorted_by(|a, b| (*a).cmp(*b)))
+/// ```
 fn List<T>.is_sorted_by<F: FnMut(&T, &T): Ordering>(self, own f: F): bool {
     let mut f = f
     let mut i: usize = 1

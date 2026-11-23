@@ -344,6 +344,7 @@ required_steps = [
     "tests/check_ssr.py",
     "tests/check_refactor.py",
     "tests/check_doc.py",
+    "tests/check_std_docs.py",
     "tests/check_check.py",
     "tests/check_inspect.py",
     "tests/check_lsp.py",

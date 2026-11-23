@@ -37,6 +37,15 @@ priv fn __test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
 }
 
 /// Keeps the elements `f` accepts, in order, and drops the rest. `f` sees a view of each element.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(2)
+/// l.push(3)
+/// l.retain(|x| *x % 2 == 1)
+/// assert_eq(l.len(), 2)
+/// ```
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
     let mut f = f
     let mut items = __reversed(mem.replace(mut self, List<T>.new()))
@@ -54,6 +63,13 @@ fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
 }
 
 /// The index of the first element `f` accepts.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(2)
+/// assert_eq(l.position(|x| *x == 2), Some(1))
+/// ```
 fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
     let mut f = f
     let mut i: usize = 0
@@ -67,6 +83,14 @@ fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
 }
 
 /// The index of the last element `f` accepts.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(2)
+/// l.push(1)
+/// assert_eq(l.rposition(|x| *x == 1), Some(2))
+/// ```
 fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
     let mut f = f
     let mut i = self.len()
@@ -80,12 +104,29 @@ fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
 }
 
 /// Reverses the order of the elements in place.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(2)
+/// l.reverse()
+/// assert_eq(l[0], 2)
+/// ```
 fn List<T>.reverse(mut self) {
     let mut reversed = __reversed(mem.replace(mut self, List<T>.new()))
     mem.swap(mut self, mut reversed)
 }
 
 /// Removes every element that equals the one before it, keeping the first of each run.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.push(1)
+/// l.push(2)
+/// l.dedup()
+/// assert_eq(l.len(), 2)
+/// ```
 fn List<T>.dedup(mut self) where T: Eq {
     let mut items = __reversed(mem.replace(mut self, List<T>.new()))
     loop {
@@ -102,6 +143,16 @@ fn List<T>.dedup(mut self) where T: Eq {
 }
 
 /// Moves every element of `other` to the end of the list, in order.
+///
+/// ```
+/// let mut a = List<i32>.new()
+/// a.push(1)
+/// let mut b = List<i32>.new()
+/// b.push(2)
+/// b.push(3)
+/// a.extend(b)
+/// assert_eq(a.len(), 3)
+/// ```
 fn List<T>.extend(mut self, own other: List<T>) {
     let mut items = __reversed(other)
     loop {
@@ -113,6 +164,12 @@ fn List<T>.extend(mut self, own other: List<T>) {
 }
 
 /// Appends every item `iter` yields to the end of the list, in order: `list.extend_iter(set.into_iter())`.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.extend_iter([1, 2, 3].into_iter())
+/// assert_eq(l.len(), 3)
+/// ```
 fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, own iter: I) where A: Allocator {
     let mut iter = iter
     loop {
@@ -124,6 +181,15 @@ fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, own iter: I) where A: Alloca
 }
 
 /// Appends a clone of every element of `other`.
+///
+/// ```
+/// let mut a = List<i32>.new()
+/// a.push(1)
+/// let mut b = List<i32>.new()
+/// b.push(2)
+/// a.extend_from(b)
+/// assert_eq(a.len(), 2)
+/// ```
 fn List<T>.extend_from(mut self, other: List<T>) where T: Clone {
     for x in other {
         self.push(x.clone())
@@ -131,6 +197,14 @@ fn List<T>.extend_from(mut self, other: List<T>) where T: Clone {
 }
 
 /// Makes the list `new_len` long: drops elements past it, or appends clones of `value` until it is long enough.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// l.resize(3, 0)
+/// assert_eq(l.len(), 3)
+/// assert_eq(l[2], 0)
+/// ```
 fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone {
     while self.len() > new_len {
         let _ = self.pop()

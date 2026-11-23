@@ -1,21 +1,48 @@
 // Memory helpers.
 
 /// Exchanges the values of two places.
+///
+/// ```
+/// let mut a: i32 = 1
+/// let mut b: i32 = 2
+/// swap(mut a, mut b)
+/// assert_eq(a, 2)
+/// assert_eq(b, 1)
+/// ```
 fn swap<T>(mut a: T, mut b: T) {
     __swap(mut a, mut b)
 }
 
 /// Stores `value` in `place` and returns the value that was there.
+///
+/// ```
+/// let mut n: i32 = 5
+/// let old = replace(mut n, 8)
+/// assert_eq(old, 5)
+/// assert_eq(n, 8)
+/// ```
 fn replace<T>(mut place: T, own value: T): T {
     __replace(mut place, value)
 }
 
 /// Replaces the value in `place` with `T.default()` and returns the old value.
+///
+/// ```
+/// let mut n: i32 = 5
+/// let old = take(mut n)
+/// assert_eq(old, 5)
+/// assert_eq(n, 0)
+/// ```
 fn take<T: Default>(mut place: T): T {
     replace(mut place, T.default())
 }
 
 /// Drops `value` now instead of at the end of its scope.
+///
+/// ```
+/// let name = String.from("bye")
+/// drop(name)
+/// ```
 fn drop<T>(own value: T) {
     let _ = value
 }

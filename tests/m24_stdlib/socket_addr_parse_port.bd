@@ -1,0 +1,13 @@
+//@ run
+//> 443 127.0.0.1:80
+//> true true true
+
+// `SocketAddr.parse` reads `a.b.c.d:port`: it splits the port off the end, which must be a number that fits in 16 bits,
+// and parses the dotted address before it. Without a port, or with an empty address, the text is an error. (It was
+// rejecting every text with a port; found while documenting the standard library, issue #938.)
+
+fn main() {
+    let a = SocketAddr.parse("10.1.2.3:443").unwrap()
+    println("{} {}", a.port(), SocketAddr.parse("127.0.0.1:80").unwrap())
+    println("{} {} {}", SocketAddr.parse("10.1.2.3").is_err(), SocketAddr.parse("10.1.2.3:70000").is_err(), SocketAddr.parse(":80").is_err())
+}

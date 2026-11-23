@@ -1,0 +1,13 @@
+//@ run
+//> 1 -128 255 255
+
+// `swap_bytes` on an 8-bit integer is the identity: there is no byte order to reverse. It used to shift a `u8` by 8
+// and panic in a debug build (issue #938, found while writing the documentation examples).
+
+fn main() {
+    let a: i8 = 1
+    let b: i8 = -128
+    let c: u8 = 255
+    let d: u8 = 255
+    println("{a.swap_bytes()} {b.swap_bytes()} {c.swap_bytes()} {d.swap_bytes().swap_bytes()}")
+}
