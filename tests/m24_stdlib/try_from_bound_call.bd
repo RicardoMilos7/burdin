@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A call checks its `TryFrom` bound (spec/stdlib.md, TF7): `String` has no conversion from an `i32`, so E0141.
+
+fn convert<T: TryFrom<i32>>(v: i32): Result<T, <T as TryFrom<i32>>.Error> {
+    T.try_from(v)
+}
+
+fn main() {
+    let r = convert<String>(1) //~ E0141
+}

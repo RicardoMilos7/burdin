@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// The result of `T.try_from` has the error type of the conversion, not `i32`, so returning it as `Result<T, i32>` is
+// E0003 at the body (spec/stdlib.md, TF7 and TF9).
+
+fn convert<T: TryFrom<i32>>(v: i32): Result<T, i32> {
+    T.try_from(v) //~ E0003
+}
+
+fn main() {}

@@ -387,9 +387,20 @@ same function for every integer source, written `T.try_from(v)` and returning `R
 - **TF6.** The `Result` of `try_from` is an ordinary `Result`, so `?` converts its error through `From` like any other
   (ERR3). A function whose error type has no `From` block from `TryFromIntError` or from the block's error type is
   E0212 at the `?`.
-- **TF7.** `TryFrom` is not a bound yet: `T: TryFrom<i32>` is not implemented in this compiler (E9000, the
-  `bound-drop-from` site, `e9000-audit.md`). `From<S>` is a bound (FR7). `TryFrom` cannot be used as `any` (E0200), and
-  it cannot be listed after a type's name, since its method has no default (E0234).
+- **TF7.** `TryFrom<S>` is a bound, as `From<S>` is (FR7). `T: TryFrom<S>` is met by an integer `T` and any integer
+  `S` (TF4), or by a type `T` with a `TryFrom` block whose source is `S` (TF1). It takes exactly one type argument, and
+  any other count is E0003. A bare `TryFrom` with no argument is E0003. In the body of a function with the bound,
+  `T.try_from(v)` with `v` of type `S` is a conversion with the result `Result<T, <T as TryFrom<S>>.Error>`, and `v`
+  of another type is E0003 at `v`. `T.try_from` with no such bound is E0141. A call is checked against the bound, with
+  E0141 when it is not met.
+- **TF9.** `<T as TryFrom<S>>.Error` is the error type of the conversion from `S` into `T`. A type parameter `T` must
+  have the bound `TryFrom<S>` (E0141 otherwise), and the projection stays symbolic until `T` is concrete. A concrete
+  type resolves at once: `TryFromIntError` for an integer `T` (TF5), otherwise the `E` of the block's `Result<T, E>`,
+  and a concrete type with no conversion from `S` is E0141. A type that still mentions a parameter stays symbolic.
+  `Error` is the only name the conversion has, and any other name is E0145. The shorthand `T.Error` is not a projection
+  of this kind: no interface among the bounds declares it, so it is E0145. Its display is `<T as TryFrom<S>>.Error`.
+- **TF10.** `TryFrom` cannot be used as `any` (E0200), and it cannot be listed after a type's name, since its method
+  has no default (E0234). `Drop` as a bound is still E9000 (`e9000-audit.md`).
 
 - **TF8.** Not done: a `From` or `TryFrom` block on a generic type (`Holder<i32>: TryFrom<i64>`) is accepted as an
   ordinary impl, so its method is a member of each instance. `?` does not use it, and its signature and source are
@@ -397,7 +408,8 @@ same function for every integer source, written `T.try_from(v)` and returning `R
 
 Conversions from `char`, and a `try_from` for other primitive types, are not part of this section.
 
-Tests: `m24_stdlib/try_from_int`, `try_from_user`, `try_from_from_sources`, `try_from_str`, `try_from_error`,
+Tests: `m24_stdlib/try_from_bound_run`, `try_from_bound_arity`, `try_from_bound_body_mismatch`, `try_from_bound_call`,
+`try_from_bound_no_bound`, `try_from_bound_projection`, `try_from_bound_wrong_source`; `m24_stdlib/try_from_int`, `try_from_user`, `try_from_from_sources`, `try_from_str`, `try_from_error`,
 `try_from_expect_aborts`, `try_from_bad_return`, `try_from_missing_method`, `try_from_orphan`, `try_from_bad_source`,
 `try_from_arity`, `try_from_duplicate`, `try_from_member_clash`, `try_from_int_float`, `try_from_int_arity`,
 `try_from_no_source`, `try_from_no_impl`, `try_from_derive`, `try_from_any`, `try_from_question_missing`.

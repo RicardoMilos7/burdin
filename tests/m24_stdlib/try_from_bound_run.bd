@@ -1,0 +1,51 @@
+//@ run
+//> Ok(5)
+//> true
+//> TooLarge
+//> Err(OutOfRange)
+//> true false true false
+
+// `T: TryFrom<S>` (spec/stdlib.md, TF7): `T.try_from(v)` in a generic body, and its error named through the bound as
+// `<T as TryFrom<i32>>.Error` (TF9). The function is instantiated for an integer target (`i64`, `u8`) and for a user
+// `TryFrom` block (`Percent`).
+
+struct Percent {
+    value: u8
+}
+
+enum PercentError: Debug {
+    Negative
+    TooLarge
+}
+
+Percent: TryFrom<i32> {
+    fn try_from(v: i32): Result<Percent, PercentError> {
+        if v < 0 { return Err(PercentError.Negative) }
+        if v > 100 { return Err(PercentError.TooLarge) }
+        Ok(Percent { value: v as u8 })
+    }
+}
+
+fn convert<T: TryFrom<i32>>(v: i32): Result<T, <T as TryFrom<i32>>.Error> {
+    T.try_from(v)
+}
+
+fn fits<T: TryFrom<i32>>(v: i32): bool {
+    match T.try_from(v) {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
+fn main() {
+    let a: Result<i64, TryFromIntError> = convert<i64>(5)
+    println("{:?}", a)
+    let b: Result<Percent, PercentError> = convert<Percent>(50)
+    println("{}", b.is_ok())
+    match convert<Percent>(150) {
+        Ok(_) => println("ok"),
+        Err(e) => println("{:?}", e),
+    }
+    println("{:?}", convert<u8>(300))
+    println("{} {} {} {}", fits<u8>(200), fits<u8>(300), fits<Percent>(100), fits<Percent>(-1))
+}
