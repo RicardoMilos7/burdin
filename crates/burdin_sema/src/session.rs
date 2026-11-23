@@ -394,7 +394,9 @@ impl<'t> Sema<'t> {
             Some(&Global::Func(id)) => {
                 let f = self.fn_items[id.0].decl;
                 // `fn main(): Result<...>` is the other accepted form (`spec/errors.md`, ERR8), but only when the
-                // `Result` is written directly: an alias that resolves to one is still E0003.
+                // `Result` is written directly. An alias declared in this file is renamed by the parser
+                // (`burdin_syntax::error_item`), so `main` here is the unit wrapper and passes; an alias of a `Result`
+                // imported from another module is not renamed, so it is still E0003 (`spec/type-aliases.md`, AL7).
                 let result_main = f.ret.as_ref().is_some_and(|ty| {
                     matches!(&ty.kind, ast::TypeKind::Path(segs)
                         if segs.len() == 1 && segs[0].name.name == "Result")
