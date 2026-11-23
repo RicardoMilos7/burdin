@@ -14,8 +14,7 @@ What it checks:
   * the error fixture: the message of every failing call (wrong key or nonce length, a bad tag, bad padding,
     a low-order X25519 point, a malformed signature), so no failure is a crash;
   * the runner itself notices a wrong vector (a fixture with one flipped digit must report a failure);
-  * `burdin add crypto` writes `crypto = true`, prints the official-package line, and pins the package in
-    `burdin.lock` with `source = "official"` and the PKG7 checksum of its files;
+  * `use crypto` loads the package with no manifest entry, and `burdin.lock` pins it with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
 
@@ -74,7 +73,7 @@ KNOWN_ANSWERS.update(
         "errors/scenarios.kat": ("errors", 28),
     }
 )
-MANIFEST = '[package]\nname = "cryptokat"\nversion = "0.1.0"\n\n[dependencies]\ncrypto = true\n'
+MANIFEST = '[package]\nname = "cryptokat"\nversion = "0.1.0"\n'
 
 
 def tree_checksum(directory: Path) -> str:
@@ -109,7 +108,7 @@ check(re.search(r'^name = "crypto"$', manifest_text, re.M) is not None, "package
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/crypto has no version")
 check((PACKAGES / "crypto" / "src" / "crypto.bd").is_file(), "packages/crypto has no src/crypto.bd")
 readme = PACKAGES / "crypto" / "README.md"
-check(readme.is_file() and "crypto = true" in harness.read_text(readme), "packages/crypto/README.md is missing or does not say how to depend on crypto")
+check(readme.is_file() and "use crypto" in harness.read_text(readme), "packages/crypto/README.md is missing or does not show `use crypto`")
 check(
     readme.is_file() and "experiment" in harness.read_text(readme).lower(),
     "packages/crypto/README.md does not say that the package is an experiment, not a security claim",
@@ -177,21 +176,6 @@ with harness.temporary_dir("burdin-crypto-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the crypto package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add crypto` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use crypto\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "crypto")
-    check(added.returncode == 0, f"`burdin add crypto` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `crypto` (official)\n", f"`burdin add crypto` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\ncrypto = true\n',
-        f"`burdin add crypto` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add crypto` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add crypto` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

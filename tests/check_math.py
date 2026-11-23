@@ -12,7 +12,7 @@ What it checks:
     and the runner ends with `failures=0`. The fixtures hold the exact rational answers, the integer number theory, the
     statistics, the vectors, and the fixed-size and heap-backed matrices (MA3-MA8);
   * the runner notices a wrong vector: a fixture with one flipped digit must report a failure;
-  * `burdin add math` writes `math = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * `use math` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 
@@ -57,7 +57,7 @@ KNOWN_ANSWERS = {
     "linalg.kat": ("dyn", 80),
 }
 MODULES = ["math.bd", "num.bd", "special.bd", "stats.bd", "vector.bd", "matrix.bd", "dyn_matrix.bd"]
-MANIFEST = '[package]\nname = "mathkat"\nversion = "0.1.0"\n\n[dependencies]\nmath = true\n'
+MANIFEST = '[package]\nname = "mathkat"\nversion = "0.1.0"\n'
 
 
 def tree_checksum(directory: Path) -> str:
@@ -93,7 +93,7 @@ check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None
 for module in MODULES:
     check((PACKAGE / "src" / module).is_file(), f"packages/math has no src/{module}")
 readme = PACKAGE / "README.md"
-check(readme.is_file() and "math = true" in harness.read_text(readme), "packages/math/README.md is missing or does not say how to depend on math")
+check(readme.is_file() and "use math" in harness.read_text(readme), "packages/math/README.md is missing or does not show `use math`")
 check(
     not any(path.suffix == ".bd" and "f32" in harness.read_text(path) for path in (PACKAGE / "src").glob("*.bd")),
     "packages/math mentions f32, which spec/math.md (MA1) leaves out",
@@ -176,21 +176,6 @@ with harness.temporary_dir("burdin-math-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the math package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add math` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use math\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "math")
-    check(added.returncode == 0, f"`burdin add math` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `math` (official)\n", f"`burdin add math` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\nmath = true\n',
-        f"`burdin add math` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add math` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add math` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

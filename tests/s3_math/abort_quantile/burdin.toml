@@ -1,6 +1,3 @@
 [package]
 name = "abort_quantile"
 version = "0.1.0"
-
-[dependencies]
-math = true

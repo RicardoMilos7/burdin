@@ -377,7 +377,7 @@ every git dependency to an exact commit and the SHA-256 checksum of its files; a
 build keeps `burdin.lock` current (git checkouts are cached under `BURDIN_HOME`), and `--locked` on `build`, `run`,
 `test`, `bench`, and `check` fails with exit status 1, naming each difference, when the lockfile does not match the
 manifests. A third source is the official packages that ship with the compiler, which live in
-[`packages/`](packages/README.md): `json = true` in `[dependencies]` (or `burdin add json`) declares one, it is versioned
+[`packages/`](packages/README.md): `use json` reaches one, and it is never declared in `burdin.toml`; it is versioned
 with the compiler, and `burdin.lock` pins the checksum of its files. The first one is `json`, the JSON format on the
 serialization framework (`packages/json/README.md`). The compiler finds them through `BURDIN_PACKAGES`, then
 `packages/` beside the directory of its executable (or one level up), and the release archive and the installers put the folder

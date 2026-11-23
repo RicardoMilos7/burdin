@@ -78,6 +78,8 @@ pub struct Use {
     /// The names of a `.{...}` list.
     pub items: Vec<(String, (u32, u32))>,
     pub alias: Option<(String, (u32, u32))>,
+    /// `pub use`: the names are re-exported from this module.
+    pub is_pub: bool,
     pub span: (u32, u32),
 }
 
@@ -214,6 +216,7 @@ impl FileIndex {
                 path: u.path.iter().map(ident).collect(),
                 items: u.items.iter().map(ident).collect(),
                 alias: u.alias.as_ref().map(ident),
+                is_pub: u.is_pub,
                 span: (u.span.lo, u.span.hi),
             });
         }

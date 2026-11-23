@@ -4,6 +4,29 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Official packages are implicit (2026-11-23).** `use json` reaches `packages/json` with no `[dependencies]` line
+(`spec/packages.md`, PKG15, PKG17, PKG18): `burdin_query::package::implicit_official_deps` scans each loaded package's
+`src/*.bd` for `use` first names, skips the package's own name, a same-named dep, and a same-named top-level module,
+and adds the rest as dependencies with default features. The loader (`add_root`, `dependency`, the script branch) and
+`burdin_pkg`'s lockfile resolver use it, so only imported official packages are loaded, checked, linked, and pinned;
+the lockfile lists the implicit dependency. Manifest declarations are gone: `json = true`, `{ official = true }`, and
+`burdin add json` are errors pointing at `use json`. One-file targets and in-memory sessions scan their text, and the
+REPL reopens its database when a new `use` names an official package; `burdin fmt` groups such an import with the
+dependencies. Generated modules are not on disk at load time, so a generated module cannot bring an official package
+in on its own; a hand-written file of the package that imports it loads it for all its modules (PKG18 keeps the help
+line for that). The LSP threads open documents through the loader's scan, so an unsaved `use json` counts; it reopens
+a package when an edit adds an official import, and `use` completion offers every official package. It also indexes
+every official package's public API (`crates/burdin_lsp/src/official.rs`): `json.` lists its items and re-exported
+modules before anything imports it, and typing `Client` offers `http.Client` with an `additionalTextEdits` entry that
+inserts `use http` when the package is not in the graph; a local module or a path or git dependency of the same name
+shadows the official package. Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module
+shadowing, unknown non-official name, the refused declarations), `tests/check_repl.py`, and the loader's and language
+server's unit tests. Verified:
+`cargo test --workspace`, clippy and fmt clean, the full conformance suite (1258 passed, 0 failed, 7 skipped; the
+`LIBRARY_PATH` OpenSSL symlinks this VM needs), and `check_lsp`, `check_packages`, `check_repl`, `check_scripts`,
+`check_fmt`, `check_json`, `check_toml`, `check_docs`, `check_unit_tests`, `check_ci`, `check_e9000`, `check_features`,
+`check_workspace`, and `check_package_tools`.
+
 **Compound assignment (issue #277, 2026-11-22).** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the
 built-in integers, floats, and `bool` (`spec/compound-assignment.md`, CA1-CA6). The value is evaluated first, then the
 place's address once, then the place is read, the operator applied, and the result stored, so `v[next()] += 1` calls

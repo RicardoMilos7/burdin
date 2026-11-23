@@ -44,6 +44,24 @@ fn hover_shows_signatures_types_and_docs() {
 /// Hover on the callee of a call that is still being written (issue #848): a method named without its call, a call
 /// whose arguments are not closed yet, a module's function named without arguments. The signature shows, never
 /// `{error}`.
+/// A `use json` added to an open file loads the official package, even though the database opened without it: the
+/// package set is fixed when it opens, and no manifest line exists to trigger a reload (`spec/packages.md`, PKG15).
+#[test]
+fn a_new_official_use_reloads_the_package() {
+    let root = fixture("geometry");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    // The fixture imports no official package, so its first publication reports nothing.
+    let first = client.diagnostics(&uri, |_| true);
+    assert!(first.is_empty(), "the fixture starts with diagnostics: {first:?}");
+    let edited = format!("use json\n\n{text}\nfn __official_probe() {{\n    let _ = json.to_string(1);\n}}\n");
+    client.change(&uri, 2, &edited);
+    // Without the reload this publication would carry E0002 `unknown module `json``.
+    let after = client.diagnostics(&uri, |p| p.get("diagnostics").as_array().is_empty());
+    assert!(after.is_empty(), "the new official import did not load: {after:?}");
+    assert_eq!(client.shutdown(), 0);
+}
+
 #[test]
 fn hover_shows_the_callee_of_an_incomplete_call() {
     let root = fixture("incomplete");

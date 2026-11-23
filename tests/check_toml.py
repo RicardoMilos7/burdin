@@ -12,7 +12,7 @@ What it checks:
   * `write` (writing a `Config` with `to_string`, reading it back) against `tests/toml/write/sample.expected`;
   * every valid `roundtrip` and `spans` fixture again with CRLF line endings, which must print the same output;
   * a malformed or mismatched fixture never aborts the process: the exit status is 0 and the error is text;
-  * `burdin add toml` writes `toml = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * `use toml` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
@@ -41,7 +41,7 @@ burdin = harness.require_burdin()
 
 FIXTURES = harness.TESTS / "toml"
 PACKAGES = harness.ROOT / "packages"
-MANIFEST = '[package]\nname = "tomlcheck"\nversion = "0.1.0"\n\n[dependencies]\ntoml = true\n'
+MANIFEST = '[package]\nname = "tomlcheck"\nversion = "0.1.0"\n'
 
 # The program the fixtures drive. The first argument is the mode and the second the fixture (`write` takes none).
 # `roundtrip` prints the canonical text or the syntax error, `spans` prints each key and value with its position,
@@ -238,7 +238,7 @@ check(re.search(r'^name = "toml"$', manifest_text, re.M) is not None, "packages/
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/toml has no version")
 check((PACKAGES / "toml" / "src" / "toml.bd").is_file(), "packages/toml has no src/toml.bd")
 readme = PACKAGES / "toml" / "README.md"
-check(readme.is_file() and "toml = true" in harness.read_text(readme), "packages/toml/README.md is missing or does not say how to depend on toml")
+check(readme.is_file() and "use toml" in harness.read_text(readme), "packages/toml/README.md is missing or does not show `use toml`")
 check((harness.ROOT / "spec" / "toml.md").is_file(), "spec/toml.md is missing")
 
 with harness.temporary_dir("burdin-toml-") as work:
@@ -312,21 +312,6 @@ with harness.temporary_dir("burdin-toml-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the toml package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add toml` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use toml\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "toml")
-    check(added.returncode == 0, f"`burdin add toml` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `toml` (official)\n", f"`burdin add toml` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\ntoml = true\n',
-        f"`burdin add toml` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add toml` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add toml` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

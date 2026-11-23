@@ -93,7 +93,7 @@ Commands:
   check     Type-check a program and run the memory checks, without generating code [alias: c]
   new       Create a new package [alias: n]
   init      Create a package in an existing directory [alias: i]
-  add       Add a path, git, or official dependency to burdin.toml [alias: a]
+  add       Add a path or git dependency to burdin.toml [alias: a]
   fmt       Format source files [alias: f]
   lint      Report common mistakes and style issues, and fix them [alias: l]
   fix       Apply the machine-applicable fixes of the compiler and the linter across a package [alias: fx]

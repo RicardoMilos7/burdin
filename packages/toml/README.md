@@ -1,12 +1,7 @@
 # toml
 
 TOML 1.0.0 reading and writing (stage 3, issue #256; `spec/toml.md`) on the serialization framework
-(`spec/serialization.md`). Declare it in `burdin.toml` and `use toml`:
-
-```toml
-[dependencies]
-toml = true
-```
+(`spec/serialization.md`). Use it with `use toml`; no `burdin.toml` entry is needed.
 
 ```burdin
 use toml

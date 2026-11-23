@@ -1,12 +1,7 @@
 # json
 
 JSON reading and writing on the serialization framework (issue #255; the framework is `spec/serialization.md`).
-Declare it in `burdin.toml` and `use json`:
-
-```toml
-[dependencies]
-json = true
-```
+Use it with `use json`; no `burdin.toml` entry is needed.
 
 ```burdin
 use json

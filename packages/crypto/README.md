@@ -1,12 +1,7 @@
 # crypto
 
 Hashing and the common cryptographic algorithms, written in pure Burdin (issue #266; the behavior is
-`spec/crypto.md`). Declare it in `burdin.toml` and `use crypto`:
-
-```toml
-[dependencies]
-crypto = true
-```
+`spec/crypto.md`). Use it with `use crypto`; no `burdin.toml` entry is needed.
 
 ```burdin
 use crypto.{sha256, hmac, HashAlg, chacha20_poly1305_seal, chacha20_poly1305_open, random_bytes}

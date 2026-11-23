@@ -116,14 +116,15 @@ impl Sema<'_> {
         self.unknown_module(module, &names, u.span, diags);
     }
 
-    /// `unknown module`. When its first name is an official package the importing package does not declare, the
-    /// error says how to declare it (`spec/packages.md`, PKG18).
+    /// `unknown module`. When its first name is an official package the importing package does not load, the error
+    /// says how to load it (`spec/packages.md`, PKG18).
     fn unknown_module(&self, module: usize, names: &[String], span: burdin_diag::Span, diags: &mut Diagnostics) {
         let error = diags.error(Code::UNKNOWN_NAME, span, format!("unknown module `{}`", names.join(".")));
         if self.globals.packages[self.globals.package_of(module)].official.contains(&names[0]) {
             let name = &names[0];
             error.help(format!(
-                "`{name}` is an official package: add `{name} = true` to [dependencies] or run `burdin add {name}`"
+                "`{name}` is an official package: `use {name}` in a hand-written file of this package loads it for \
+                 the whole package (a generated module cannot load it on its own)"
             ));
         }
     }

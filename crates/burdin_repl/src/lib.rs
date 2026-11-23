@@ -19,6 +19,7 @@ mod text;
 use burdin_comptime::{Bindings, SessionFault};
 use burdin_diag::{Code, Diagnostics, RenderOptions, SourceMap, Span};
 use burdin_query::{Analysis, Db, MoveEvent, StmtKind};
+use std::collections::BTreeSet;
 use std::io::{IsTerminal, Write};
 use text::{Input, SESSION_FILE, SESSION_FN, Session};
 
@@ -139,6 +140,11 @@ pub fn run(config: &mut Config) -> i32 {
 struct Repl<'a, 'n> {
     config: &'a mut Config<'n>,
     db: Db,
+    /// The options a session database is opened with.
+    options: burdin_query::Options,
+    /// The official packages the current database has loaded. A session's layout is fixed when its database opens,
+    /// so a new `use json` reopens it (`spec/packages.md`, PKG15).
+    official: BTreeSet<String>,
     session: Session,
     bindings: Bindings,
     /// How many statements of the session function have been evaluated.
@@ -158,7 +164,9 @@ impl<'a, 'n> Repl<'a, 'n> {
         };
         let mut repl = Repl {
             config,
-            db: Db::from_files(&[(SESSION_FILE, "")], options).expect("the session package loads"),
+            db: Db::from_files(&[(SESSION_FILE, "")], options.clone()).expect("the session package loads"),
+            options,
+            official: BTreeSet::new(),
             session: Session::default(),
             bindings: Bindings::default(),
             done: 0,
@@ -181,6 +189,16 @@ impl<'a, 'n> Repl<'a, 'n> {
     /// `burdin build` reports.
     fn analyze(&mut self) -> Analysis {
         let text = text::text(&self.session);
+        // A session's package layout is fixed when its database opens, so a `use json` that the layout lacks reopens
+        // it with the text as it now stands; the official package then joins the build as it does from a file
+        // (`spec/packages.md`, PKG15).
+        let wanted = burdin_query::package::official_uses(&text);
+        if wanted.iter().any(|name| !self.official.contains(name))
+            && let Ok(db) = Db::from_files(&[(SESSION_FILE, &text)], self.options.clone())
+        {
+            self.db = db;
+            self.official.extend(wanted);
+        }
         self.db.set_file(SESSION_FILE, &text);
         match self.db.analyze() {
             Ok(analysis) => analysis,
@@ -388,6 +406,12 @@ impl<'a, 'n> Repl<'a, 'n> {
         self.session = Session::default();
         self.bindings = Bindings::default();
         self.done = 0;
+        // The new session imports nothing, so the database starts over too: an official package an old session
+        // loaded is not in the new one's graph.
+        self.official.clear();
+        if let Ok(db) = Db::from_files(&[(SESSION_FILE, "")], self.options.clone()) {
+            self.db = db;
+        }
         if failed { Outcome::Failed } else { Outcome::Ok }
     }
 

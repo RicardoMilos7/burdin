@@ -72,7 +72,8 @@ pub fn default_caps() -> Json {
         "window": {"workDoneProgress": true},
         "workspace": {"configuration": true, "didChangeWatchedFiles": {"dynamicRegistration": true},
                       "codeLens": {"refreshSupport": true}, "inlayHint": {"refreshSupport": true}},
-        "textDocument": {"documentSymbol": {"hierarchicalDocumentSymbolSupport": true}}
+        "textDocument": {"documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
+                         "completion": {"completionItem": {"additionalTextEditsSupport": true}}}
     }"#,
     )
     .unwrap()

@@ -17,6 +17,7 @@ the session unchanged, drops on `:reset`, multi-line input decided by the parser
 What is checked outside the goldens:
   * `:ir` prints a `define` block for the named function, and `:compile` builds the session and runs it (its output
     appears in addition to the interpreted one);
+  * `use shout.loud` in a session loads the official package with no manifest (PKG15);
   * a session that ends inside an incomplete input reports it instead of hanging;
   * standard input that is not a terminal prints no prompt or banner.
 """
@@ -114,6 +115,19 @@ with harness.temporary_dir("burdin-repl-ir-") as work:
     check("  %" in out or "ret i32" in out, f":ir printed no body:\n{out}")
     # The interpreted call printed `3`; `:compile` builds the session and runs it, printing the same again.
     check(out.split("\n").count("3") == 2, f":compile did not run the session again:\n{out}")
+
+# ---- an official package needs no manifest entry, even in a session -----------
+with harness.temporary_dir("burdin-repl-official-") as work:
+    env = dict(os.environ)
+    env["BURDIN_HOME"] = str(work / "home")
+    env["BURDIN_PACKAGES"] = str(harness.TESTS / "packages" / "official")
+    result = harness.run([burdin, "repl"], cwd=work, env=env, input=b"use shout.loud\nloud()\n")
+    out = normalize(result.stdout)
+    check(
+        result.returncode == 0 and out == "34\n",
+        f"an official package in a session did not load: exit {result.returncode}, out {out!r}, "
+        f"err {normalize(result.stderr)[:400]!r}",
+    )
 
 # ---- an incomplete input at the end of input is reported, not swallowed --------
 with harness.temporary_dir("burdin-repl-eof-") as work:

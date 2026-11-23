@@ -9,6 +9,7 @@ use burdin_query::CancelHandle;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -120,6 +121,9 @@ pub struct ClientCaps {
     pub inlay_hint_refresh: bool,
     /// `textDocument.completion.completionItem.snippetSupport`: completion may insert snippets (LS12).
     pub snippets: bool,
+    /// `textDocument.completion.completionItem.additionalTextEditsSupport`: completion may insert a `use` alongside
+    /// the item it completes (LS12).
+    pub additional_edits: bool,
 }
 
 /// An open document.
@@ -191,6 +195,8 @@ pub struct Server {
     published: HashMap<PathBuf, u64>,
     /// Package roots that failed to load, with the message; the error is shown on the open files under them.
     broken: HashMap<PathBuf, String>,
+    /// The official packages' public API, indexed on first use (`spec/lsp.md`, LS12).
+    pub official: Option<Rc<crate::official::OfficialIndex>>,
 }
 
 /// Runs the server over a byte stream until `exit` or the end of the input. Returns the process exit code: 0 after
@@ -274,6 +280,7 @@ impl Server {
             tests: HashMap::new(),
             published: HashMap::new(),
             broken: HashMap::new(),
+            official: None,
         }
     }
 
@@ -540,6 +547,7 @@ impl Server {
             code_lens_refresh: flag(&["workspace", "codeLens", "refreshSupport"]),
             inlay_hint_refresh: flag(&["workspace", "inlayHint", "refreshSupport"]),
             snippets: flag(&["textDocument", "completion", "completionItem", "snippetSupport"]),
+            additional_edits: flag(&["textDocument", "completion", "completionItem", "additionalTextEditsSupport"]),
         };
         self.config = self.config.apply(params.get("initializationOptions"));
         let mut folders: Vec<PathBuf> = params
@@ -622,6 +630,11 @@ impl Server {
                 Json::obj()
                     .with("workspaceFolders", Json::obj().with("supported", true).with("changeNotifications", true)),
             )
+    }
+
+    /// The official packages' public API, indexed the first time completion asks for it (`spec/lsp.md`, LS12).
+    pub fn official(&mut self) -> Rc<crate::official::OfficialIndex> {
+        self.official.get_or_insert_with(|| Rc::new(crate::official::OfficialIndex::load())).clone()
     }
 
     fn on_initialized(&mut self) {
@@ -757,6 +770,7 @@ impl Server {
             return;
         }
         self.set_text_everywhere(&key, text);
+        self.reload_missing_official_imports(&key);
         // A newly opened file gets its diagnostics even when its package was analyzed before and nothing changed.
         for i in self.packages_with(&key) {
             let root = self.packages[i].root.clone();
@@ -787,6 +801,7 @@ impl Server {
         let text = doc.text.clone();
         if !key.starts_with("<std>/") {
             self.set_text_everywhere(&key, &text);
+            self.reload_missing_official_imports(&key);
         }
     }
 
@@ -798,7 +813,10 @@ impl Server {
             return;
         }
         match std::fs::read_to_string(&key) {
-            Ok(text) => self.set_text_everywhere(&key, &text),
+            Ok(text) => {
+                self.set_text_everywhere(&key, &text);
+                self.reload_missing_official_imports(&key);
+            }
             Err(_) => self.reload_containing(&key),
         }
         // A package nobody opened a file of and no workspace folder holds goes away with its diagnostics.
@@ -822,6 +840,21 @@ impl Server {
     fn set_text_everywhere(&mut self, path: &str, text: &str) {
         for p in &mut self.packages {
             p.set_text(path, text);
+        }
+    }
+
+    /// Reloads the packages whose current texts import an official package their layout lacks. A database's package
+    /// set is fixed when it opens, and an official package has no manifest line whose change would reload it, so a
+    /// new `use json` in an open file is noticed here (`spec/packages.md`, PKG15).
+    fn reload_missing_official_imports(&mut self, path: &str) {
+        let roots: Vec<PathBuf> = self
+            .packages
+            .iter()
+            .filter(|p| p.has_file(path) && p.missing_official_import())
+            .map(|p| p.root.clone())
+            .collect();
+        for root in roots {
+            self.load_package(&root);
         }
     }
 

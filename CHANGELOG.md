@@ -6,6 +6,17 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Official packages are part of the standard library's surface: `use json` reaches `packages/json`, and an official
+  package is never declared in `burdin.toml` (`json = true`, `json = { official = true }`, and `burdin add json` are
+  errors that point at `use json`). The compiler scans each loaded package's `.bd` files for `use` declarations and
+  loads only the official packages they name, with default features; an official package the program never imports is
+  not loaded, checked, linked, or pinned. A generated module cannot bring one in on its own, since the dependency
+  belongs to the package; a hand-written file of the package that imports it loads it for all its modules. The
+  language server indexes every official package's public API, `pub use` re-exports included: `json.` completes even
+  when nothing imports json, and typing `Client` offers `http.Client` with the `use http` that loads it. It also
+  scans open documents, reopens a package when an edit adds an official import, and offers every official package in
+  `use` completion. Rules: `spec/packages.md` PKG15, PKG17, PKG18 and `spec/lsp.md` LS4, LS12; tests:
+  `tests/check_packages.py`, `tests/check_lsp.py`, and the loader's and language server's unit tests.
 - Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
   integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
   binary operator's overflow and division rules in both profiles. On a user type or a type parameter, `a op= b` is

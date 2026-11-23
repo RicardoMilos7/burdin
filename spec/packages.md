@@ -1,7 +1,7 @@
 # Packages: dependencies, `burdin.lock`, and `burdin add`
 
 A package's `burdin.toml` names its dependencies; a dependency comes from a directory (`path`), from a git
-repository (`git`), or from the official packages that ship with the compiler (`name = true`), and `burdin.lock`
+repository (`git`), or from the official packages that ship with the compiler (`use <name>`), and `burdin.lock`
 records the exact packages a build used, so the same checkout builds the same program tomorrow and on another
 machine. `burdin add` edits the manifest and the lockfile together (stage 3; issues
 #238 and #239). Features, dev-dependencies, and platform-specific dependencies (issues #340 and #341) select which of
@@ -22,7 +22,7 @@ tests of both crates run under `cargo test --workspace`.
   central registry is a later possibility". A `version` with no `path` or `git` is an error that says there is no
   registry yet (PKG2, PKG11), so the syntax is free for one. The third source is the official packages (PKG15): the
   formats and other libraries that live in this repository's `packages/` folder and ship with the compiler, so
-  their version is the compiler's version and `json = true` needs no registry and no network.
+  their version is the compiler's version and `use json` needs no registry, no network, and no manifest line.
 - **Git is run, not linked.** Resolution runs the `git` executable, as cargo can. No new Rust dependency, and every
   URL form and credential helper git understands works.
 - **The lockfile pins commits and hashes files.** A commit id already names a tree, but a checkout in the cache is
@@ -149,31 +149,30 @@ does not know are ignored. Tests: `lockfile.rs` (`malformed_lockfiles_are_reject
 ```text
 burdin add [<name>] --path <dir> [--manifest-path <path>]
 burdin add [<name>] --git <url> [--branch <b> | --tag <t> | --rev <commit>] [--manifest-path <path>]
-burdin add <name> [--manifest-path <path>]
 ```
 
-**PKG11. The command line.** Exactly one of `--path` and `--git`, or, with neither, a `<name>` that is an official
-package (PKG15); at most one of `--branch`, `--tag`, and `--rev`, and only with `--git`. `<name>` is the `use` name
-and defaults to the dependency's package name; it must be an identifier that is not a reserved word and not `std`.
-A bare name that is not an official package (`burdin add json` when there is no official `json`, `json@1.0`) is a
-usage error that says there is no package registry yet, names the official packages (or says there are none), and
-asks for `--path` or `--git`. `--manifest-path` names the `burdin.toml` to edit or its directory;
-without it, the nearest `burdin.toml` at or above the working directory. Usage errors exit 2 and `--help` exits 0.
-Tests: `tests/check_packages.py`, `crates/burdin_driver/src/add.rs` unit tests.
+**PKG11. The command line.** Exactly one of `--path` and `--git`; at most one of `--branch`, `--tag`, and `--rev`,
+and only with `--git`. `<name>` is the `use` name and defaults to the dependency's package name; it must be an
+identifier that is not a reserved word and not `std`. A bare name with neither source is refused: if it is an
+official package, the usage error says official packages are not declared and `use <name>` loads it (PKG15);
+otherwise, it says there is no package registry yet, names the official packages (or says there are none), and asks
+for `--path` or `--git`. `--manifest-path` names the `burdin.toml` to edit or its directory; without it, the nearest
+`burdin.toml` at or above the working directory. Usage errors exit 2 and `--help` exits 0. Tests:
+`tests/check_packages.py`, `crates/burdin_driver/src/add.rs` unit tests.
 
 **PKG12. The manifest edit.** `--path` is relative to the working directory and is written relative to the
 manifest, with `/` separators: `greet = { path = "../greet" }`. `--git` writes the URL and the reference as given:
-`colors = { git = "<url>", tag = "v1" }`. An official package writes `json = true`. The line goes after the last entry of `[dependencies]`, or the section is
+`colors = { git = "<url>", tag = "v1" }`. The line goes after the last entry of `[dependencies]`, or the section is
 appended to the end of the file; a dependency of the same name has its line replaced in place. Every other line,
 comment, and blank line stays, and a file with `\r\n` line endings keeps them. Tests: `add.rs` unit tests,
 `tests/check_packages.py` (golden manifests).
 
 **PKG13. Resolution and the report.** The dependency is resolved (a git reference to a commit, which is checked
-out; an official package to the compiler's directory for it), it must be a package (a `burdin.toml` at its root), and the whole graph is then resolved against the new
+out), it must be a package (a `burdin.toml` at its root), and the whole graph is then resolved against the new
 manifest, keeping every commit the lockfile already pins except the added dependency's, which builds the commit
 just resolved (so adding a branch dependency again moves it to the branch's head). Then `burdin.toml` and `burdin.lock` are written and one
-line is printed: `Added dependency `greet` (path ../greet)`, `Added dependency `colors` (git <url>, tag v1,
-commit 4f6c0a7e4f1f)`, or `Added dependency `json` (official)`; `Replaced` when the name was already a dependency. Tests: `tests/check_packages.py`.
+line is printed: `Added dependency `greet` (path ../greet)` or `Added dependency `colors` (git <url>, tag v1,
+commit 4f6c0a7e4f1f)`; `Replaced` when the name was already a dependency. Tests: `tests/check_packages.py`.
 
 **PKG14. A failed `add` changes nothing.** A missing path, a directory that is not a package, a reference the
 repository does not have, an invalid name, a package that would depend on itself, and any error resolving the graph
@@ -183,32 +182,37 @@ exit 1 and leave `burdin.toml` and `burdin.lock` as they were. Tests: `tests/che
 
 The packages in this repository's `packages/` folder (formats such as `json` and `toml`, and later libraries) are
 official: each is an ordinary Burdin package with its own `burdin.toml` and `src/`, and they ship with the compiler
-(the release archive and the installers put the folder beside the executable, PKG16). Their version is the
-compiler's version.
+(the release archive and the installers put the folder beside the executable, PKG16). They are part of the standard
+library's surface: a source imports one with `use <name>` and needs no `[dependencies]` entry (PKG15). Their version
+is the compiler's version.
 
-**PKG15. The official source.** `name = true` in `[dependencies]` (of any package, official or not) is the official
-package `name`; `name` is also how `use` reaches it. `name = false` is an error (`json = false` means nothing:
-remove the line). `name = true` for a name that is not an official package is an error that names the official
-packages the compiler has (or says it has none) and suggests `path` or `git`:
+**PKG15. The official source.** An official package is never declared in `burdin.toml`: `name = true`,
+`name = { official = true }`, and every other attempt to name one in a dependency table are errors that say how to
+reach it instead:
 
 ```text
-error: burdin.toml: dependency `jsn = true`: it is not an official package; the official packages are: json, toml;
-for any other package give `{ path = "..." }` or `{ git = "..." }`
+error: burdin.toml:4: dependency `json`: official packages are not declared in `burdin.toml`; `use json` loads it
 ```
 
-The same official package may be written as a table that takes the keys of PKG25: `name = { official = true, default-features = false, features = ["a"] }`
-(`official = false` is an error: remove the line, or give `path` or `git`). A table with `official = true` and a `path` or `git` key is an error.
-`official = true` alone is `name = true`. This is how a package turns an official dependency's default features off, as `http` does for `tls` (`spec/http-client.md`, HC17).
+**Implicit official dependencies.** A package that writes `use json` reaches the official `json` with no
+`[dependencies]` line; the same holds with `use json.{Value}`, `use json as j`, and `pub use json`. The compiler
+reads every `.bd` file under each loaded package's `src/` and keeps the first name of every `use` declaration that is
+an official package, is not a path or git dependency the manifest already declares under that name, is not the
+package's own name, and is not one of the package's own top-level modules (a local `src/json.bd` wins). Each such name
+becomes a dependency of the package with default features. Only the packages a
+source imports join the build: an official package the program never imports is not loaded, checked, linked, or
+pinned. A one-file target is scanned by its own text. A module produced by `comptime generate` or a build script is
+not on disk when the package is loaded, so a generated module cannot bring an official package in on its own; a
+hand-written file of the package that imports it loads the package for all its modules (PKG18).
 
-A script's inline manifest (`spec/scripts.md`, SC3) and `[rust.crates]` take only paths, so `true` is an error
-there. A version string alone stays reserved for a future registry (PKG2). Package names are unique in a graph
-(PKG1), so an official package and a path or git package of the same name cannot be used together. An official package
-may depend on another: `http` declares `tls = { official = true, default-features = false }` and turns the feature on by
-default (`spec/http-client.md`, HC17), so a program that uses `http` has `tls`
-in its graph, pinned in `burdin.lock` beside `http` (both with `source = "official"` and their own checksums), and links
-`tls`'s native libraries (PKG34); the program names `tls` itself only to `use` its types. Tests: the loader's unit tests
-(`official_dependency_forms`), `tests/check_packages.py`, `tests/check_http.py` (the lockfile of a program that depends
-on `http` pins `tls` too).
+An official package may import another the same way: `http`'s source writes `use tls`, so a program that uses `http`
+has `tls` in its graph, pinned in `burdin.lock` beside `http` (both with `source = "official"` and their own
+checksums), and links `tls`'s native libraries (PKG34); the program names `tls` itself only to `use` its types.
+A script's inline manifest (`spec/scripts.md`, SC3) and `[rust.crates]` take only paths. A version string alone stays
+reserved for a future registry (PKG2). Package names are unique in a graph (PKG1), so an official package and a path
+or git package of the same name cannot be used together. Tests: the loader's unit tests
+(`official_packages_are_not_declared`), `tests/check_packages.py`, `tests/check_http.py` (the lockfile of a program
+that uses `http` pins `tls` too).
 
 **PKG16. Where the official packages are.** The first of these that is a directory is the root; each of its
 subdirectories that has a `burdin.toml` is the official package of that name, and no later place is searched:
@@ -232,7 +236,9 @@ from the compiler's directory for it. A graph with an official package has somet
 lockfile when there is none (PKG6). The files are not immutable the way a checkout is (a newer compiler brings
 newer packages), so a checksum that differs is not an error in itself: it is a difference like a changed version.
 A build without `--locked` rewrites the lockfile; `--locked` fails and says that the official package is not the
-one `burdin.lock` pinned. Tests: `tests/check_packages.py` (golden lockfile and `--locked`), `lockfile.rs`
+one `burdin.lock` pinned. An official package a source imports implicitly (PKG15) is a dependency of the graph just
+like a declared one, so the lockfile pins it too, and the entry package's own `dependencies` list names it. Tests:
+`tests/check_packages.py` (golden lockfile, `--locked`, and the implicit dependency), `lockfile.rs`
 (`render_is_the_documented_text`), `resolve.rs` (`an_official_package_is_pinned_by_its_files`).
 
 ```toml
@@ -245,10 +251,14 @@ dependencies = []
 ```
 
 **PKG18. The missing-dependency help.** A `use` of a name that resolves to nothing, when the name is an official
-package that the importing package does not declare, keeps its error (E0002, `unknown module `json``) and gains a
-help line: `` `json` is an official package: add `json = true` to [dependencies] or run `burdin add json` ``. A
-one-file target and a script have no manifest to add it to, so they get no such help. Tests:
-`tests/check_packages.py`, the checker's unit tests (`unknown_module_names_an_official_package`).
+package that the importing package does not load, keeps its error (E0002, `unknown module `json``) and gains a help
+line: `` `json` is an official package: `use json` in a hand-written file of this package loads it for the whole
+package (a generated module cannot load it on its own) ``. An ordinary `use` no longer reaches this, because the scan
+of PKG15 loads the package; it happens when the only reference is in a module a `comptime generate` block or a build
+script produced. The dependency edge belongs to the package, not to one module, so once any hand-written file imports
+the package, a generated module may use it too. A one-file target and a script have no other file to add it in, so
+they get no such help. Tests: `tests/check_packages.py`, the checker's unit tests
+(`unknown_module_names_an_official_package`).
 
 ## Cleaning, packaging, vendoring, and offline builds
 
@@ -322,7 +332,8 @@ of a test build, and the dependencies of its own platform. The lockfile does not
 **PKG25. The dependency tables.** A manifest has three kinds of dependency table: `[dependencies]` (every build),
 `[dev-dependencies]` (the entry package's test, bench, and fuzz builds, PKG26), and `[target.'cfg(<predicate>)'.dependencies]`
 or `[target.'cfg(<predicate>)'.dev-dependencies]` (the builds on the platforms the predicate holds for, PKG27). An entry
-takes the source of PKG1-PKG2 and PKG15, and the optional keys `optional = true|false` (default `false`),
+takes the source of PKG1-PKG2 (an official package is not a dependency source; PKG15), and the optional keys
+`optional = true|false` (default `false`),
 `default-features = true|false` (default `true`), and `features = ["a", "b"]` (default none). Other keys are ignored.
 A name may be declared once per manifest, in any table: a second declaration is an error naming its line. `optional`
 on a dev-dependency is an error, because a feature cannot enable a dev-dependency. A `features` list or a

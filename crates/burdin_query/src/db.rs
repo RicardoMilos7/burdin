@@ -207,7 +207,7 @@ impl Db {
     /// A program held in memory: `files` are `(path inside src, text)` pairs of one package, the entry point
     /// being `main.bd` (or the only file). The embedded standard library is attached.
     pub fn from_files(files: &[(&str, &str)], options: Options) -> Result<Db, String> {
-        let workspace = package::in_memory(files.iter().map(|(path, _)| *path));
+        let workspace = package::in_memory(files.iter().copied())?;
         let texts: HashMap<PathBuf, String> =
             files.iter().map(|(path, text)| (PathBuf::from(path), (*text).to_string())).collect();
         Db::from_workspace(&workspace, &texts, options)

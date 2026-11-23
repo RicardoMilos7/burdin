@@ -11,7 +11,7 @@ What it checks:
     message, line, and column of every rejection, including every DOCTYPE, external entity, and entity bomb);
   * a malformed fixture never aborts the process: the exit status is 0 and the error is reported as text, and every
     prefix of a document, and the document with any one character removed, parses to a value or an error;
-  * `burdin add xml` writes `xml = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * `use xml` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
@@ -40,7 +40,7 @@ burdin = harness.require_burdin()
 
 FIXTURES = harness.TESTS / "xml"
 PACKAGES = harness.ROOT / "packages"
-MANIFEST = '[package]\nname = "xmlcheck"\nversion = "0.1.0"\n\n[dependencies]\nxml = true\n'
+MANIFEST = '[package]\nname = "xmlcheck"\nversion = "0.1.0"\n'
 
 # The program the fixtures drive. It reads a fixture's path from the command line (so a non-ASCII fixture never
 # depends on how a platform spells an argument). The first mode set drives the serialization mapping with a
@@ -256,7 +256,7 @@ check(re.search(r'^name = "xml"$', manifest_text, re.M) is not None, "packages/x
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/xml has no version")
 check((PACKAGES / "xml" / "src" / "xml.bd").is_file(), "packages/xml has no src/xml.bd")
 readme = PACKAGES / "xml" / "README.md"
-check(readme.is_file() and "xml = true" in harness.read_text(readme), "packages/xml/README.md is missing or does not say how to depend on xml")
+check(readme.is_file() and "use xml" in harness.read_text(readme), "packages/xml/README.md is missing or does not show `use xml`")
 
 with harness.temporary_dir("burdin-xml-") as work:
     env = dict(os.environ)
@@ -307,21 +307,6 @@ with harness.temporary_dir("burdin-xml-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the xml package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add xml` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use xml\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "xml")
-    check(added.returncode == 0, f"`burdin add xml` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `xml` (official)\n", f"`burdin add xml` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\nxml = true\n',
-        f"`burdin add xml` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add xml` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add xml` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

@@ -1,12 +1,7 @@
 # regex
 
-Regular expressions for Burdin (stage 3, issue #264; the exact behavior is `spec/regex.md`). Declare it in
-`burdin.toml` and `use regex`:
-
-```toml
-[dependencies]
-regex = true
-```
+Regular expressions for Burdin (stage 3, issue #264; the exact behavior is `spec/regex.md`).
+`use regex` loads it; no `burdin.toml` entry is needed.
 
 ```burdin
 use regex.{Regex}

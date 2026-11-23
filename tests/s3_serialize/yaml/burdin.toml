@@ -1,6 +1,3 @@
 [package]
 name = "yaml_conformance"
 version = "0.1.0"
-
-[dependencies]
-yaml = true

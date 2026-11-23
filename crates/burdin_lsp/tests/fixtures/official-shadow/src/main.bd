@@ -1,0 +1,5 @@
+use json
+
+fn main() {
+    let _ = json.local_only()
+}

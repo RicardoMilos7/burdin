@@ -74,8 +74,14 @@ analysis checked). Workspace folders can be added and removed (`workspace/didCha
 folder's packages are dropped unless a file of theirs is open. The server registers a watcher for `**/*.bd` and
 `**/burdin.toml` when the client allows dynamic registration: a module created or deleted on disk reloads its package,
 a changed manifest reloads the packages that use it, and a changed file that is not open replaces its text.
-Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
-`folders_come_and_go_and_new_files_are_picked_up`, `workspace_symbols_match_fuzzily_across_files`.
+
+An official package needs no manifest entry (`spec/packages.md`, PKG15), so the server loads it the way the compiler
+does: it scans the package's sources for `use <name>`, and the text of an open document replaces the file on disk, so
+an unsaved `use json` counts. A database's package set is fixed when it opens, so when an edit adds an official import
+the server reopens that package; a `use` completion offers every official package the compiler has, not only the ones
+already loaded. Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
+`folders_come_and_go_and_new_files_are_picked_up`, `workspace_symbols_match_fuzzily_across_files`,
+`a_new_official_use_reloads_the_package`, `a_use_offers_every_official_package`.
 
 **LS5. Configuration.** The settings live under `burdin` and arrive as `initializationOptions`, in
 `workspace/didChangeConfiguration`, or, when that notification carries no `burdin` settings and the client supports
@@ -211,7 +217,11 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   (issue #852). A member chain whose last member is still missing (`resp.body.`, `client.send(req).`) is typed from the
   declarations when the typed tree does not hold its receiver (the analysis of the text with the dangling dot types it
   `{error}`): the root's type (a local, a parameter, or `self`), then each field's declared type and each method's
-  return type, so the list appears on the keystroke that types the dot (issue #879).
+  return type, so the list appears on the keystroke that types the dot (issue #879). A name that is an official
+  package (`json.`, `crypto.`) lists its public API even when no file of the package imports it: the items its root
+  declares and the ones its `pub use` declarations re-export, transitively, and the modules it re-exports by name
+  (`crypto.hash`). The package itself, a local module of that name, or a path or git dependency of it shadows the
+  official package (`spec/packages.md`, PKG15).
 - **In a `use` path**, the modules and the public items below the path written so far, from the package and its
   dependencies (a dependency's `priv` items are left out).
 - **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a
@@ -237,7 +247,14 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   nothing else. A module stays offered in both, as a path prefix.
 - **Anywhere else**, the locals and parameters declared before the cursor (nearest first), the file's items, the
   imported names, the built-in functions, the prelude (every public item of every standard-library module, and the
-  one-segment standard modules by name, such as `env`, `fs`, and `mem`), the built-in types, and the keywords.
+  one-segment standard modules by name, such as `env`, `fs`, and `mem`), the built-in types, the keywords, and, while
+  a name is being typed, the items of every official package the package does not shadow, by their qualified name
+  (`http.Client`). Such an item filters by its own name (`filterText`), and carries an `additionalTextEdits` entry
+  inserting `use <package>` — after the file's last `use`, or at the top with a blank line after when it has none —
+  when the package is not already in the graph and the client advertises
+  `textDocument.completion.completionItem.additionalTextEditsSupport`; once the package is in the graph, the
+  qualified name compiles as written and no edit is sent. Only official packages are indexed this way: a path or git
+  dependency offers nothing until the manifest declares it (`spec/packages.md`, PKG15).
 
 **Snippets.** When the client advertises `textDocument.completion.completionItem.snippetSupport`, the server adds
 snippet items (kind `Snippet`, `insertTextFormat` 2, tab stops `${n:...}` and the final `$0`). A snippet replaces the
@@ -271,8 +288,10 @@ Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_
 (`fixtures/nested`), `builtins_and_the_standard_library_answer_definition_hover_signatures_and_completion`,
 `self_is_offered_only_as_the_first_parameter_of_a_method`, `snippets_follow_the_position_and_the_client`,
 `completing_a_function_inserts_the_call`, `derives_and_the_derivable_interfaces`,
-`self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`; the
-`builtins.rs` unit test.
+`self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`,
+`a_dependency_completes_without_a_use_in_the_file`, `a_use_offers_every_official_package`,
+`official_packages_complete_before_any_file_imports_them`, `a_local_module_shadows_an_official_package`
+(`fixtures/official-shadow`); the `builtins.rs` unit test and the `official.rs` unit test.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
 with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is

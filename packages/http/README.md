@@ -1,12 +1,7 @@
 # http
 
 An HTTP/1.1 client over `std`'s `TcpStream`, and over TLS for `https` (issue #260, with #328, #329, and #330; the
-behavior is `spec/http-client.md`). Declare it in `burdin.toml` and `use http`:
-
-```toml
-[dependencies]
-http = true
-```
+behavior is `spec/http-client.md`). Use it with `use http`; no `burdin.toml` entry is needed.
 
 ```burdin
 use http
@@ -23,25 +18,15 @@ fn main(): Result<()> {
 ## https
 
 `https` URLs work the same way as `http` ones: `client.get("https://example.test/")`. The connection is TLS provided by
-the official `tls` package (`spec/tls.md`). That is the `tls` feature of `http`, **on by default**, so a program that
-uses `http` links OpenSSL 3 (`libssl-dev` on Linux, `brew install openssl@3` with `LIBRARY_PATH` on macOS; on Windows
-the driver finds an installation itself, and `packages/tls/README.md` has the table).
+the official `tls` package (`spec/tls.md`), which `http` imports, so a program that uses `http` links OpenSSL 3
+(`libssl-dev` on Linux, `brew install openssl@3` with `LIBRARY_PATH` on macOS; on Windows the driver finds an
+installation itself, and `packages/tls/README.md` has the table). There is no switch to leave TLS out: `tls` is part of
+`http`'s graph whenever `http` is used.
 
-A program that never makes an `https` request can leave TLS out, and then it needs no OpenSSL at all:
-
-```toml
-[dependencies]
-http = { official = true, default-features = false }
-```
-
-With the feature off, plain `http` URLs work as before and every `https` URL fails with `HttpError.Tls`, saying that
-no OpenSSL is in the build. The feature is the same kind of switch as `reqwest`'s `default-tls` and `ureq`'s `tls`.
-
-By default the server is verified: its certificate chain against the system's trust store, and its name against the
-host in the URL (which is also sent as SNI). A failure is `HttpError.Tls(TlsError)` with the reason, it is never
-retried, and the request is never sent, in plain text or otherwise. A program that names `tls` types (`TrustStore`,
-`ClientConfig`) declares `tls = true` itself; `http` does not re-export them (the program then has `tls` in its graph
-with the `openssl` feature on, as it does with `http`):
+The server is verified: its certificate chain against the system's trust store, and its name against the host in the
+URL (which is also sent as SNI). A failure is `HttpError.Tls(TlsError)` with the reason, it is never retried, and the
+request is never sent, in plain text or otherwise. A program that names `tls` types (`TrustStore`, `ClientConfig`)
+imports `tls` too; `http` does not re-export them (both packages are in the program's graph):
 
 ```burdin
 // example: https
@@ -132,5 +117,5 @@ reuses it. A body that is dropped unread closes the connection instead.
 `tests/http/` holds golden fixtures for the parts that need no socket: URLs, headers, request and response heads, and
 the body decoders. `tests/s3_http/client` runs the client against a scripted server in the same process, on port 0 of
 127.0.0.1, and `tests/s3_http/tls` does the same over TLS with the test certificates (`tests/tls/regenerate.py`), so no
-test touches the network. `python3 tests/check_http.py` runs all three and checks `burdin add http` and the official pins
+test touches the network. `python3 tests/check_http.py` runs all three and checks the implicit `use http` load and the official pins
 (of `http` and of the `tls` it depends on).

@@ -12,10 +12,9 @@ What it checks:
   * the conformance program `tests/s3_http/client`, which runs the client against a scripted server in the same
     process (requests, redirects, timeouts, retries, and connection reuse, HC11 to HC16): its output is compared with
     the `//>` lines of its `src/main.bd`, the way tests/run_tests.py does;
-  * the conformance program `tests/s3_http/tls`, the same over TLS with the test certificates (`https`, HC17); the
-    `tls` feature is on by default, and a program that turns it off links no OpenSSL and reports `https` as `Tls` (HC17);
-    `http` package depends on `tls`, so building any program that uses `http` needs OpenSSL 3 to link (spec/tls.md, TLS7);
-  * `burdin add http` writes `http = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * the conformance program `tests/s3_http/tls`, the same over TLS with the test certificates (`https`, HC17); `http`
+    imports `tls`, so building any program that uses `http` needs OpenSSL 3 to link (spec/tls.md, TLS7);
+  * `use http` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files, and pins the `tls` package it depends on too;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
@@ -44,7 +43,7 @@ burdin = harness.require_burdin()
 
 FIXTURES = harness.TESTS / "http"
 PACKAGES = harness.ROOT / "packages"
-MANIFEST = '[package]\nname = "httpcheck"\nversion = "0.1.0"\n\n[dependencies]\nhttp = true\n'
+MANIFEST = '[package]\nname = "httpcheck"\nversion = "0.1.0"\n'
 
 # The program the fixtures drive. It reads a fixture's path from the command line (so a non-ASCII fixture never
 # depends on how a platform spells an argument). The first mode set drives the serialization mapping with a
@@ -366,38 +365,7 @@ check(re.search(r'^name = "http"$', manifest_text, re.M) is not None, "packages/
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/http has no version")
 check((PACKAGES / "http" / "src" / "http.bd").is_file(), "packages/http has no src/http.bd")
 readme = PACKAGES / "http" / "README.md"
-check(readme.is_file() and "http = true" in harness.read_text(readme), "packages/http/README.md is missing or does not say how to depend on http")
-
-NO_TLS_PROGRAM = r"""use http
-use tls.TrustStore
-
-fn main() {
-    match http.Url.parse("https://example.test:8443/a?b=1") {
-        Ok(url) => println("url: {url.authority()} {url.target()}"),
-        Err(failure) => println("url error: {failure}"),
-    }
-    match http.Client.new().trust(TrustStore.empty()) {
-        Ok(_) => println("trust: ok"),
-        Err(failure) => println("trust: {failure}"),
-    }
-    match http.Client.new().insecure_skip_verify() {
-        Ok(_) => println("insecure: ok"),
-        Err(failure) => println("insecure: {failure}"),
-    }
-}
-"""
-NO_TLS_OUTPUT = (
-    "url: example.test:8443 /a?b=1\n"
-    "trust: https connection failed: unsupported: no OpenSSL in this build: the `openssl` feature of the tls package is off\n"
-    "insecure: https connection failed: unsupported: no OpenSSL in this build: the `openssl` feature of the tls package is off\n"
-)
-# On Windows the `openssl` feature has no effect: the package links SChannel (spec/tls.md, TLS1a), so the client
-# configures without a network and reports `ok`.
-NO_TLS_OUTPUT_WINDOWS = (
-    "url: example.test:8443 /a?b=1\n"
-    "trust: ok\n"
-    "insecure: ok\n"
-)
+check(readme.is_file() and "use http" in harness.read_text(readme), "packages/http/README.md is missing or does not show `use http`")
 
 with harness.temporary_dir("burdin-http-") as work:
     env = dict(os.environ)
@@ -467,81 +435,26 @@ with harness.temporary_dir("burdin-http-") as work:
             check(False, f"`burdin build .` did not produce the {folder} conformance program")
 
     # The README's https example must compile: every ```burdin block that starts with `// example: name` is
-    # type-checked as a program of its own that depends on `http` and `tls`.
+    # type-checked as a program of its own; `use http` and `use tls` load both packages with no manifest entry.
     examples = re.findall(r"```burdin\n(// example: (\w+)\n.*?)```", harness.read_text(readme), re.S)
     check(len(examples) >= 1, "packages/http/README.md has no checked example")
     for source, name in examples:
         example = work / f"example_{name}"
-        write(example / "burdin.toml", f'[package]\nname = "example_{name}"\nversion = "0.1.0"\n\n[dependencies]\nhttp = true\ntls = true\n')
+        write(example / "burdin.toml", f'[package]\nname = "example_{name}"\nversion = "0.1.0"\n')
         write(example / "src" / "main.bd", source)
         checked = run_in(example, "check", ".")
         check(checked.returncode == 0, f"the README's {name} example does not compile: {err(checked)[:500]}")
-
-    # The `tls` feature (HC17): a program that turns it off links no OpenSSL, its URLs still parse, and its https
-    # configuration calls fail with `Tls` saying why, without any network. The linker's arguments are recorded by a
-    # wrapper (Unix only). On Windows the feature has no effect (spec/tls.md, TLS1a): the program links SChannel and
-    # its configuration calls succeed.
-    no_tls = work / "no_tls"
-    write(
-        no_tls / "burdin.toml",
-        '[package]\nname = "no_tls"\nversion = "0.1.0"\n\n[dependencies]\n'
-        "http = { official = true, default-features = false }\n"
-        "tls = { official = true, default-features = false }\n",
-    )
-    write(no_tls / "src" / "main.bd", NO_TLS_PROGRAM)
-    no_tls_env = env
-    if harness.PLATFORM != "windows":
-        # Records the arguments of each link, then runs the real C compiler driver.
-        wrapper = work / "link-wrapper.sh"
-        write(wrapper, "\n".join(["#!/bin/sh", 'printf "%s\\n" "$*" >> "$TLS_LINK_LOG"', 'exec cc "$@"']) + "\n")
-        wrapper.chmod(0o755)
-        no_tls_env = dict(env, BURDIN_CC=str(wrapper), TLS_LINK_LOG=str(work / "no_tls.link.log"))
-    built_no_tls = run_in(no_tls, "build", ".", environment=no_tls_env)
-    check(built_no_tls.returncode == 0, f"the program without the tls feature did not build: {err(built_no_tls)[:400]}")
-    if harness.PLATFORM != "windows":
-        linked = (work / "no_tls.link.log").read_text(encoding="utf-8") if (work / "no_tls.link.log").is_file() else ""
-        check(bool(linked), "the linker wrapper recorded no link for the program without the tls feature")
-        check(
-            "-lssl" not in linked and "-lcrypto" not in linked,
-            f"the program without the tls feature linked OpenSSL: {linked[:300]}",
-        )
-    no_tls_binary = harness.executable_in(no_tls, "no_tls")
-    if no_tls_binary.is_file():
-        ran_no_tls = harness.run([no_tls_binary], cwd=no_tls, env=env, timeout=60)
-        check(ran_no_tls.returncode == 0, f"the program without the tls feature ended with status {ran_no_tls.returncode}")
-        expected_no_tls = NO_TLS_OUTPUT_WINDOWS if harness.PLATFORM == "windows" else NO_TLS_OUTPUT
-        check(
-            out(ran_no_tls) == expected_no_tls,
-            f"the program without the tls feature printed {out(ran_no_tls)!r}",
-        )
-    else:
-        check(False, "`burdin build .` did not produce the program without the tls feature")
 
     # The lockfile pins the package's files with the official source (PKG15, PKG17).
     lock = harness.read_text(app / "burdin.lock")
     check('source = "official"' in lock, "burdin.lock does not record the official source")
     checksum = tree_checksum(official / "http")
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the http package's files")
-    # `http` depends on `tls` (`tls = true`), so an official package reaches another and both are pinned.
+    # `http` imports `tls`, so an official package reaches another and both are pinned.
     check(f'checksum = "{tree_checksum(official / "tls")}"' in lock, "burdin.lock does not pin the tls package http depends on")
     check('dependencies = ["tls"]' in lock, "burdin.lock does not record that http depends on tls")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add http` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use http\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "http")
-    check(added.returncode == 0, f"`burdin add http` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `http` (official)\n", f"`burdin add http` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\nhttp = true\n',
-        f"`burdin add http` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add http` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add http` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)
