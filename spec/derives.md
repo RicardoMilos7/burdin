@@ -71,7 +71,9 @@ Comparison is lexicographic:
 - integers compare numerically (signed or unsigned as written), `bool` as `false < true`, `char` by scalar value,
   `String` and `str` byte by byte.
 
-`Ord` does not imply `Eq`; a type that needs both lists both. A float field has no derived ordering, so a struct with
+`Ord` does not imply `Eq` for a derive: a type that needs both lists both. A generic bound `T: Ord` is different: the
+body of `fn f<T: Ord>(a: T, b: T)` may use `a == b`, because the bound adds `Eq` (`bound_closure`). The derive and the bound
+disagree today; #918 decides one rule for both. A float field has no derived ordering, so a struct with
 an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option` orders `None`
 before `Some` and then by payload; `Result` orders `Ok` before `Err` (its declared variant order) and then by the
 payload of the same variant. References and `List` do not support `<`.

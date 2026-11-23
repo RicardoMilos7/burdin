@@ -250,7 +250,10 @@ impl FnCx<'_> {
         {
             return e;
         }
-        let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
+        // `.any(...)` is the adapter's spelling; `std` declares the method as `any_item` (spec/iterators.md, IT9),
+        // so a bound that provides `Iterator` is searched under that name here too.
+        let lookup = if name.name == "any" { "any_item" } else { name.name.as_str() };
+        let found = self.globals.bound_method(&recv.ty, lookup, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
@@ -267,7 +270,7 @@ impl FnCx<'_> {
             );
         }
         let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
-        let generic = self.globals.bound_method_generics(&recv.ty, &name.name, &self.bounds);
+        let generic = self.globals.bound_method_generics(&recv.ty, lookup, &self.bounds);
         let receiver_place = Some((&recv, receiver.exclusive));
         let checked = match generic {
             Some(generic) => {
