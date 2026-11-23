@@ -521,7 +521,7 @@ interface IndexMut<T> { fn index_mut(mut self, i: usize): &mut T }
 ```
 
 The built-in operators and the `Eq`/`Ord` derives always win over an implementation, both operands have the same
-type, and `&&`, `||`, `=`, and the shifts are not overloadable. A compound assignment (`a += b`) on a user type is `a = a + b`
+type (except a `String` with a `str`, OP14), and `&&`, `||`, `=`, and the shifts are not overloadable. A compound assignment (`a += b`) on a user type is `a = a + b`
 through `Add` and the other operator interfaces (`spec/compound-assignment.md`, CA5). `Index` names the element type
 and returns a reference; `IndexMut` is selected when the indexed place is written. The exact resolution, the
 diagnostics, and the ownership rules are in [`operators.md`](operators.md).
@@ -554,8 +554,9 @@ and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, an
 either of whose ends is not a character boundary (see "Slicing and character boundaries" below). `len` counts bytes.
 
 `==` and `!=` compare two `str` values or two `String` values byte for byte. `<`, `<=`, `>`, `>=` compare two `str`
-values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
-convert, and there is no `Ord` for a mixed pair.
+values or two `String` values lexicographically by bytes. A `String` and a `str` compare with each other in all six
+operators, in either order (`s == "x"`, `"x" < s`), by the same bytes rule (`operators.md` OP14). Any other mixed pair is
+E0003.
 
 ### Bytes, UTF-8, and checked slicing (issue #713)
 
@@ -648,13 +649,16 @@ range value because a `Range<usize>` value does not expose its endpoints to libr
 `String` implements `Default` (the empty string), `Ord` (byte order through `<`), `Clone`, `Display`, and `Debug`;
 `Hash` for `String` is part of the interface-coverage work (issue #716).
 
-**`+` on strings is not provided.** The operator interfaces take two operands of the same type, and a `String + str`
-that allocates and returns a `String` would need a second, mixed-type rule. `push_str`, `format`, the interpolated
-string literal, and `join` are the ways to build text; the rule is recorded here so a later stage can revisit it.
+**`String + str` is built in; other `+` on text is not provided.** `String + str` returns a new `String` holding both
+texts and borrows both operands. The comparisons `==`, `!=`, `<`, `<=`, `>`, `>=` accept a `String` on either side of a
+`str`. Every other pair stays same-type: `str + str` and `String + String` are E0003 (write `s + t.as_str()`), and
+`s += "x"` is E0003. `push_str`, `format`, the interpolated string literal, and `join` are the other ways to build text.
+The rule is `operators.md` OP14.
 
 Tests: `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, and the abort cases
 `string_edit_boundary_aborts` (a non-boundary insert), `string_edit_bounds_aborts` (a reversed range), and
-`string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) records the `+` decision.
+`string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) pins `"a" + "b"`, and the
+mixed forms are in `m19_operators/string_str_operators` and `string_str_mixed_compile_fail`.
 
 ### Characters of a text (issue #193)
 

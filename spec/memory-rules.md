@@ -148,10 +148,12 @@ Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_m
 already have a `str` type: the payload of `Some`, `Ok`, and `Err` and the value of `mem.replace`; `assert_eq` converts
 its second operand when the first is a `str`. It does not apply anywhere else: a `let` annotation, an assignment, a
 return type, an array or tuple element, a struct-literal field (a concrete `str` field is E0120, and #919 tracks that),
-a comparison, or a built-in name that is not an argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
-the **only** implicit conversion in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
+a built-in name that is not an argument keeps the type `String` and is E0003 when `str` is expected. A comparison
+(`==`, `!=`, `<`, `<=`, `>`, `>=`) with a `String` on one side and a `str` on the other borrows the `String` as a `str`
+too, and so does the `String` operand of `String + str` (`operators.md` OP14). `.as_str()` is the explicit conversion. These are
+the **only** implicit conversions in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
 `str`, `String` to `[u8]`, numeric widening, or user-defined conversions (all E0003).
-Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`; errors: `let_string_to_str`,
+Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`, `m19_operators/string_str_operators`; errors: `let_string_to_str`,
 `mut_ref_to_shared_ref`, `ref_string_to_str`, `string_to_slice`.
 
 ## 4. Exclusivity (EX)

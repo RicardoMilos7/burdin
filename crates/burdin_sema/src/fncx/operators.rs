@@ -175,6 +175,21 @@ impl FnCx<'_> {
     /// The type checks of a binary operator whose two operands are already checked.
     fn binary_checked(&mut self, op: ast::BinOp, l: tir::Expr, r: tir::Expr, span: Span, op_name: &str) -> tir::Expr {
         use ast::BinOp as B;
+        // The one mixed-type pair: a `String` and a `str` (`spec/operators.md`, OP14).
+        let string_str = matches!((&l.ty, &r.ty), (Ty::String, Ty::Str));
+        let str_string = matches!((&l.ty, &r.ty), (Ty::Str, Ty::String));
+        if string_str && matches!(op, B::Add) {
+            let view = string_view(l);
+            return self.std_call("__concat", vec![view, r], span);
+        }
+        let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
+        let (l, r) = if comparison && string_str {
+            (string_view(l), r)
+        } else if comparison && str_string {
+            (l, string_view(r))
+        } else {
+            (l, r)
+        };
         {
             {
                 let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
@@ -521,6 +536,13 @@ pub(super) fn is_untyped_literal(e: &ast::Expr) -> bool {
         K::Binary(op, a, b) => is_arith(*op) && is_untyped_literal(a) && is_untyped_literal(b),
         _ => false,
     }
+}
+
+/// Borrows a `String` as a `str`, the view an operand takes when a mixed `String`/`str` operator needs text
+/// (`spec/operators.md`, OP14). The operand is not moved.
+fn string_view(e: tir::Expr) -> tir::Expr {
+    let span = e.span;
+    mk(tir::ExprKind::StringAsStr(Box::new(e)), Ty::Str, span)
 }
 
 pub(super) fn is_arith(op: ast::BinOp) -> bool {
