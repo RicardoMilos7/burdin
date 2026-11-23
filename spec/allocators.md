@@ -42,7 +42,9 @@ keeps free lists. The compiler calls them on the container's stored value, so th
 allocator in place.
 
 * `size` is at least one byte: a container asks for at least one byte even for a zero-sized element. `align` is a
-  power of two from 1 to 8, because every Burdin type's alignment is at most eight.
+  power of two from 1 to 8. That is the most the compiler asks an allocator for, which is deliberately lower than the
+  alignment some types have: `i128` and `u128` are 16-aligned (`int128.md`, I128-1), but a container's storage for
+  them is requested at 8 until #917 decides whether the cap is raised.
 * `allocate` returns a block of at least `size` bytes, aligned to `align`, for the caller to write. The contents
   are unspecified; nothing is zeroed.
 * `reallocate` returns a block of at least `new_size` bytes, copies `min(old_size, new_size)` bytes from `ptr`

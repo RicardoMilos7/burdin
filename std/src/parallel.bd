@@ -1,0 +1,648 @@
+// Parallel iteration (spec/parallel.md).
+//
+// A parallel pipeline is a source (`par_iter`, `par_iter_mut`, `par_into_iter`, a range) followed by adapters and one
+// consumer. The consumer splits the source's positions into chunks, runs each chunk as a scoped task on the scheduler's
+// own workers (`task.scope`), and merges the chunks' partial results on the calling task in source order. There is no
+// second pool: `task.set_workers` is the only worker-count knob.
+//
+// A pipeline is shared by every worker, so each adapter closure is `Fn + Send + Sync` (spec/shared.md, SH4) and each
+// source is `Sync`. The `__`-prefixed methods are the protocol between a source and its consumers; they are not part of
+// the surface a program uses.
+
+use atomic.{AtomicBool, AtomicUsize}
+use cmp.Ordering
+use list.extend
+use marker.{Send, Sync}
+use option.take
+use sort.sort_by
+use sync.Mutex
+
+/// A chunk never holds fewer positions than this, and a pipeline of this many positions or fewer runs on the calling
+/// task without starting any (spec/parallel.md, PR4).
+const __CHUNK_MIN: usize = 1024
+
+/// A pipeline starts at most this many tasks.
+const __CHUNK_MAX: usize = 64
+
+/// A pipeline is neither pure nor deterministic, so `comptime` may not run one (spec/comptime.md, CT9). This touches a
+/// raw pointer, which compile-time evaluation reports as E0224 whatever the size of the pipeline; at run time it is
+/// free.
+priv fn __not_at_comptime() {
+    unsafe {
+        let p: CPtr<u8> = CPtr.null()
+        let _ = p.is_null()
+    }
+}
+
+/// Runs `f` on consecutive ranges of `0..len` and returns the results in range order. `f` runs on several workers at
+/// once when `len` is above the threshold.
+fn __chunks<Out: Send, F: Fn(usize, usize): Out + Sync>(len: usize, f: F): List<Out> {
+    __not_at_comptime()
+    let mut out = List<Out>.new()
+    if len <= __CHUNK_MIN {
+        out.push(f(0, len))
+        return out
+    }
+    let mut size: usize = (len + __CHUNK_MAX - 1) / __CHUNK_MAX
+    if size < __CHUNK_MIN {
+        size = __CHUNK_MIN
+    }
+    let count: usize = (len + size - 1) / size
+    let slots = Mutex.new(List<(usize, Out)>.new())
+    // Each task claims the next chunk, so the tasks borrow only what lives outside the scope body (E0171).
+    let ticket = AtomicUsize.new(0)
+    task.scope(|s| {
+        let mut started: usize = 0
+        while started < count {
+            s.spawn(|| {
+                let index = ticket.fetch_add(1)
+                let lo: usize = index * size
+                let mut hi: usize = lo + size
+                if hi > len {
+                    hi = len
+                }
+                let result = f(lo, hi)
+                slots.lock(|list| { list.push((index, result)) })
+            })
+            started = started + 1
+        }
+    })
+    let mut parts = slots.into_inner()
+    parts.sort_by(|a, b| a.0.cmp(b.0))
+    for part in parts.into_iter() {
+        out.push(part.1)
+    }
+    out
+}
+
+/// Whether `better` prefers `a` to `b`. The values are only read, so the caller keeps them.
+priv fn __beats<T, F: Fn(&T, &T): bool>(better: F, a: T, b: T): bool {
+    better(&a, &b)
+}
+
+/// Whether `f` accepts `x`, which the caller keeps.
+priv fn __accepts<T, F: Fn(&T): bool>(f: F, x: T): bool {
+    f(&x)
+}
+
+/// A pipeline over positions `0..__par_len()`. `__par_get(i)` is the item at source position `i`, or `None` when a
+/// filter dropped it. Each position is asked for at most once per consumer, from any worker.
+interface ParallelIterator<T> requires Sync {
+    fn __par_len(self): usize
+    fn __par_get(self, i: usize): Option<T>
+
+    /// Applies `f` to each item.
+    fn map<U, F: Fn(T): U + Send + Sync>(own self, own f: F): ParMap<Self, T, U, F> {
+        ParMap { inner: self, f: f }
+    }
+
+    /// Keeps the items `f` accepts.
+    fn filter<F: Fn(&T): bool + Send + Sync>(own self, own f: F): ParFilter<Self, T, F> {
+        ParFilter { inner: self, f: f }
+    }
+
+    /// Applies `f` and keeps the `Some` results.
+    fn filter_map<U, F: Fn(T): Option<U> + Send + Sync>(own self, own f: F): ParFilterMap<Self, T, U, F> {
+        ParFilterMap { inner: self, f: f }
+    }
+
+    /// Calls `f` on every item, in no particular order.
+    fn for_each<F: Fn(T) + Send + Sync>(self, own f: F) {
+        let _ = __chunks(self.__par_len(), |lo, hi| {
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => { f(x) }
+                    None => {}
+                }
+                i = i + 1
+            }
+        })
+    }
+
+    /// The number of items.
+    fn count(self): usize {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut n: usize = 0
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => { n = n + 1 }
+                    None => {}
+                }
+                i = i + 1
+            }
+            n
+        })
+        let mut total: usize = 0
+        for part in parts.iter() {
+            total = total + part
+        }
+        total
+    }
+
+    /// Folds each chunk with `op`, starting every chunk from a clone of `init`, then combines the chunks' results in
+    /// source order with `combine`. `op` and `combine` must be associative, and `init` must be neutral for both.
+    fn fold<A: Send + Sync + Clone, F: Fn(A, T): A + Send + Sync, G: Fn(A, A): A>(
+        self,
+        own init: A,
+        own op: F,
+        own combine: G,
+    ): A {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut acc = init.clone()
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => { acc = op(acc, x) }
+                    None => {}
+                }
+                i = i + 1
+            }
+            acc
+        })
+        let mut total = init.clone()
+        for part in parts.into_iter() {
+            total = combine(total, part)
+        }
+        total
+    }
+
+    /// Whether `f` accepts some item (`any` is a keyword, so the method is `any_item`, as on `Iterator`). It may stop early.
+    fn any_item<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
+        let found = AtomicBool.new(false)
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut i = lo
+            while i < hi && !found.load() {
+                match self.__par_get(i) {
+                    Some(x) => {
+                        if f(x) {
+                            found.store(true)
+                        }
+                    }
+                    None => {}
+                }
+                i = i + 1
+            }
+            found.load()
+        })
+        found.load()
+    }
+
+    /// Whether `f` accepts every item. It may stop early.
+    fn all<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
+        let failed = AtomicBool.new(false)
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut i = lo
+            while i < hi && !failed.load() {
+                match self.__par_get(i) {
+                    Some(x) => {
+                        if !f(x) {
+                            failed.store(true)
+                        }
+                    }
+                    None => {}
+                }
+                i = i + 1
+            }
+            !failed.load()
+        })
+        !failed.load()
+    }
+}
+
+/// A pipeline whose items are owned values, so a consumer may keep them: a view (`&T`) cannot be stored in a list, so a
+/// pipeline over `par_iter()` becomes one after a `map` that makes owned items (spec/parallel.md, PR3).
+interface ParallelValues<T: Send> requires ParallelIterator<T> {
+    /// Combines the items with the associative operation `op`, starting every chunk from `identity()`.
+    fn reduce<I: Fn(): T + Send + Sync, F: Fn(T, T): T + Send + Sync>(self, own identity: I, own op: F): T {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut acc = identity()
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => { acc = op(acc, x) }
+                    None => {}
+                }
+                i = i + 1
+            }
+            acc
+        })
+        let mut total = identity()
+        for part in parts.into_iter() {
+            total = op(total, part)
+        }
+        total
+    }
+
+    /// The first item in source order that `f` accepts.
+    fn find<F: Fn(&T): bool + Send + Sync>(self, own f: F): Option<T> {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut found: Option<T> = None
+            let mut i = lo
+            while i < hi && found.is_none() {
+                match self.__par_get(i) {
+                    Some(x) => {
+                        if f(&x) {
+                            found = Some(x)
+                        }
+                    }
+                    None => {}
+                }
+                i = i + 1
+            }
+            found
+        })
+        for part in parts.into_iter() {
+            if part.is_some() {
+                return part
+            }
+        }
+        None
+    }
+
+    /// The least item under `f`; the first of equal items.
+    fn min_by<F: Fn(&T, &T): Ordering + Send + Sync>(self, own f: F): Option<T> {
+        self.__best(|a, b| f(a, b) == Ordering.Less)
+    }
+
+    /// The greatest item under `f`; the last of equal items.
+    fn max_by<F: Fn(&T, &T): Ordering + Send + Sync>(self, own f: F): Option<T> {
+        self.__best(|a, b| f(a, b) != Ordering.Less)
+    }
+
+    /// The item with the least key; the first of equal ones.
+    fn min_by_key<K: Ord, F: Fn(&T): K + Send + Sync>(self, own f: F): Option<T> {
+        self.__best(|a, b| f(a).cmp(f(b)) == Ordering.Less)
+    }
+
+    /// The item with the greatest key; the last of equal ones.
+    fn max_by_key<K: Ord, F: Fn(&T): K + Send + Sync>(self, own f: F): Option<T> {
+        self.__best(|a, b| f(a).cmp(f(b)) != Ordering.Less)
+    }
+
+    /// The item that wins every comparison `better(candidate, best)`, where a later item replaces an earlier one
+    /// when `better` says so.
+    fn __best<F: Fn(&T, &T): bool + Send + Sync>(self, own better: F): Option<T> {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut best: Option<T> = None
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => {
+                        best = match best {
+                            Some(b) => {
+                                if __beats(better, x, b) {
+                                    Some(x)
+                                } else {
+                                    Some(b)
+                                }
+                            }
+                            None => Some(x),
+                        }
+                    }
+                    None => {}
+                }
+                i = i + 1
+            }
+            best
+        })
+        let mut best: Option<T> = None
+        for part in parts.into_iter() {
+            best = match (best, part) {
+                (Some(b), Some(x)) => {
+                    if __beats(better, x, b) {
+                        Some(x)
+                    } else {
+                        Some(b)
+                    }
+                }
+                (None, x) => x,
+                (b, None) => b,
+            }
+        }
+        best
+    }
+
+    /// Collects the items into a list, in source order.
+    fn collect(self): List<T> {
+        let parts = __chunks(self.__par_len(), |lo, hi| {
+            let mut items = List<T>.new()
+            let mut i = lo
+            while i < hi {
+                match self.__par_get(i) {
+                    Some(x) => { items.push(x) }
+                    None => {}
+                }
+                i = i + 1
+            }
+            items
+        })
+        let mut out = List<T>.new()
+        for part in parts.into_iter() {
+            out.extend(part)
+        }
+        out
+    }
+}
+
+/// A pipeline in which every source position is an item, so positions can be numbered, skipped, and cut off.
+interface IndexedParallelIterator<T> requires ParallelIterator<T> {
+    /// Pairs each item with its position.
+    fn enumerate(own self): ParEnumerate<Self, T> {
+        ParEnumerate { inner: self }
+    }
+
+    /// The first `count` items.
+    fn take(own self, count: usize): ParWindow<Self, T> {
+        ParWindow { inner: self, skip: 0, limit: count, limited: true }
+    }
+
+    /// Everything after the first `count` items.
+    fn skip(own self, count: usize): ParWindow<Self, T> {
+        ParWindow { inner: self, skip: count, limit: 0, limited: false }
+    }
+}
+
+/// The `map` pipeline.
+struct ParMap<I, T, U, F: Fn(T): U> {
+    inner: I,
+    f: F,
+}
+
+ParMap<I, T, U, F>: ParallelIterator<U> where I: ParallelIterator<T>, F: Fn(T): U + Send + Sync {
+    fn __par_len(self): usize {
+        self.inner.__par_len()
+    }
+    fn __par_get(self, i: usize): Option<U> {
+        match self.inner.__par_get(i) {
+            Some(x) => Some(self.f(x)),
+            None => None,
+        }
+    }
+}
+
+/// The `filter` pipeline.
+struct ParFilter<I, T, F: Fn(&T): bool> {
+    inner: I,
+    f: F,
+}
+
+ParFilter<I, T, F>: ParallelIterator<T> where I: ParallelIterator<T>, F: Fn(&T): bool + Send + Sync {
+    fn __par_len(self): usize {
+        self.inner.__par_len()
+    }
+    fn __par_get(self, i: usize): Option<T> {
+        match self.inner.__par_get(i) {
+            Some(x) => {
+                if __accepts(self.f, x) {
+                    Some(x)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+}
+
+/// The `filter_map` pipeline.
+struct ParFilterMap<I, T, U, F: Fn(T): Option<U>> {
+    inner: I,
+    f: F,
+}
+
+ParFilterMap<I, T, U, F>: ParallelIterator<U> where I: ParallelIterator<T>, F: Fn(T): Option<U> + Send + Sync {
+    fn __par_len(self): usize {
+        self.inner.__par_len()
+    }
+    fn __par_get(self, i: usize): Option<U> {
+        match self.inner.__par_get(i) {
+            Some(x) => self.f(x),
+            None => None,
+        }
+    }
+}
+
+/// The `enumerate` pipeline.
+struct ParEnumerate<I, T> {
+    inner: I,
+}
+
+ParEnumerate<I, T>: ParallelIterator<(usize, T)> where I: IndexedParallelIterator<T> {
+    fn __par_len(self): usize {
+        self.inner.__par_len()
+    }
+    fn __par_get(self, i: usize): Option<(usize, T)> {
+        match self.inner.__par_get(i) {
+            Some(x) => Some((i, x)),
+            None => None,
+        }
+    }
+}
+
+/// The `take` and `skip` pipeline: `skip` positions are dropped, then at most `limit` are kept. It is the one type
+/// both adapters return, so `skip(a).take(b)` and `take(b).skip(a)` chain, and its own `take` and `skip` return it
+/// again rather than a new type (spec/parallel.md, PR5).
+struct ParWindow<I, T> {
+    inner: I,
+    skip: usize,
+    limit: usize,
+    limited: bool,
+}
+
+ParWindow<I, T> where I: IndexedParallelIterator<T> {
+    /// The first `count` items of this pipeline.
+    fn take(own self, count: usize): ParWindow<I, T> {
+        let mut limit = count
+        if self.limited && self.limit < count {
+            limit = self.limit
+        }
+        ParWindow { inner: self.inner, skip: self.skip, limit: limit, limited: true }
+    }
+
+    /// Everything after the first `count` items of this pipeline.
+    fn skip(own self, count: usize): ParWindow<I, T> {
+        let mut limit = self.limit
+        if self.limited {
+            if limit > count {
+                limit = limit - count
+            } else {
+                limit = 0
+            }
+        }
+        ParWindow { inner: self.inner, skip: self.skip + count, limit: limit, limited: self.limited }
+    }
+}
+
+ParWindow<I, T>: ParallelIterator<T> where I: IndexedParallelIterator<T> {
+    fn __par_len(self): usize {
+        let n = self.inner.__par_len()
+        let mut len: usize = 0
+        if self.skip < n {
+            len = n - self.skip
+        }
+        if self.limited && self.limit < len {
+            self.limit
+        } else {
+            len
+        }
+    }
+    fn __par_get(self, i: usize): Option<T> {
+        self.inner.__par_get(i + self.skip)
+    }
+}
+
+// ---- sources ---------------------------------------------------------------------------------------------------
+
+/// The items of a slice, by shared reference. The view is a type parameter (`V` is always `[T]`), so the pipeline is
+/// second-class like the slice: it cannot outlive or be stored beside the list it views, and the list cannot change
+/// while the pipeline is alive (spec/parallel.md, PR3).
+struct ParSlice<V> {
+    xs: V,
+}
+
+ParSlice<[T]>: ParallelIterator<&T> where T: Sync {
+    fn __par_len(self): usize {
+        self.xs.len()
+    }
+    fn __par_get(self, i: usize): Option<&T> {
+        Some(&self.xs[i])
+    }
+}
+
+ParSlice<[T]>: IndexedParallelIterator<&T> where T: Sync {}
+
+/// A pipeline over the items of a slice, by shared reference.
+fn [T].par_iter(self): ParSlice<[T]> {
+    ParSlice { xs: self }
+}
+
+/// A pipeline over the items of a list, by shared reference.
+fn List<T>.par_iter(self): ParSlice<[T]> {
+    ParSlice { xs: self.as_slice() }
+}
+
+ParMap<I, T, U, F>: ParallelValues<U> where I: ParallelIterator<T>, F: Fn(T): U + Send + Sync, U: Send {}
+
+ParFilter<I, T, F>: ParallelValues<T> where I: ParallelValues<T>, F: Fn(&T): bool + Send + Sync, T: Send {}
+
+ParFilterMap<I, T, U, F>: ParallelValues<U> where I: ParallelIterator<T>, F: Fn(T): Option<U> + Send + Sync, U: Send {}
+
+/// The items of a list, moved out one by one. An item the pipeline never asks for (a `take` or an early `any_item`) is
+/// dropped with the list.
+struct ParList<T> {
+    slots: List<Mutex<Option<T>>>,
+}
+
+ParList<T>: ParallelIterator<T> where T: Send {
+    fn __par_len(self): usize {
+        self.slots.len()
+    }
+    fn __par_get(self, i: usize): Option<T> {
+        self.slots[i].lock(|slot| { slot.take() })
+    }
+}
+
+ParList<T>: IndexedParallelIterator<T> where T: Send {}
+
+ParList<T>: ParallelValues<T> where T: Send {}
+
+/// A pipeline over the items of a list, moved out of it.
+fn List<T>.par_into_iter(own self): ParList<T> where T: Send {
+    let mut slots = List<Mutex<Option<T>>>.new()
+    for item in self.into_iter() {
+        slots.push(Mutex.new(Some(item)))
+    }
+    ParList { slots: slots }
+}
+
+ParMap<I, T, U, F>: IndexedParallelIterator<U> where I: IndexedParallelIterator<T>, F: Fn(T): U + Send + Sync {}
+
+ParEnumerate<I, T>: ParallelValues<(usize, T)> where I: IndexedParallelIterator<T> + ParallelValues<T>, T: Send {}
+
+ParWindow<I, T>: ParallelValues<T> where I: IndexedParallelIterator<T> + ParallelValues<T>, T: Send {}
+
+/// The items of a slice, by exclusive reference. Every position is handed out at most once, so the references do not
+/// overlap; `xs` keeps the pipeline borrowing the slice exclusively for as long as it lives (E0111 for a second use).
+/// This is not a `ParallelIterator`: a reference made from the address cannot be returned from a method (E0122), so
+/// the two consumers below pass it to the caller's closure instead.
+struct ParSliceMut<V> {
+    xs: V,
+    addr: usize,
+}
+
+ParSliceMut<[T]> where T: Send {
+    /// Calls `f` on every item, in no particular order.
+    fn for_each<F: Fn(&mut T) + Send + Sync>(self, own f: F) {
+        let base = self.addr
+        let _ = __chunks(self.xs.len(), |lo, hi| {
+            let mut i = lo
+            while i < hi {
+                unsafe {
+                    let p = base as CPtr<T>
+                    f(&mut *(p + i))
+                }
+                i = i + 1
+            }
+        })
+    }
+
+    /// Calls `f` on every item and its position, in no particular order.
+    fn for_each_indexed<F: Fn(usize, &mut T) + Send + Sync>(self, own f: F) {
+        let base = self.addr
+        let _ = __chunks(self.xs.len(), |lo, hi| {
+            let mut i = lo
+            while i < hi {
+                unsafe {
+                    let p = base as CPtr<T>
+                    f(i, &mut *(p + i))
+                }
+                i = i + 1
+            }
+        })
+    }
+}
+
+/// A pipeline over the items of a slice, by exclusive reference: each item is handed to one worker only.
+fn [T].par_iter_mut(mut self): ParSliceMut<[T]> {
+    let mut addr: usize = 0
+    if self.len() > 0 {
+        addr = unsafe { (&self[0]) as CPtr<T> as usize }
+    }
+    ParSliceMut { xs: self, addr: addr }
+}
+
+/// A pipeline over the items of a list, by exclusive reference.
+fn List<T>.par_iter_mut(mut self): ParSliceMut<[T]> {
+    let mut view = self.as_slice()
+    view.par_iter_mut()
+}
+
+/// The integers of `start..end`. A `Range` value does not expose its endpoints to library code, so a range is a source
+/// through `par_range`, not through a method on the range.
+struct ParRange {
+    start: i64,
+    len: usize,
+}
+
+ParRange: ParallelIterator<i64> {
+    fn __par_len(self): usize {
+        self.len
+    }
+    fn __par_get(self, i: usize): Option<i64> {
+        Some(self.start + i as i64)
+    }
+}
+
+ParRange: IndexedParallelIterator<i64> {}
+
+ParRange: ParallelValues<i64> {}
+
+/// A pipeline over the integers `start..end` (empty when `end <= start`).
+fn par_range(start: i64, end: i64): ParRange {
+    if end <= start {
+        return ParRange { start: start, len: 0 }
+    }
+    ParRange { start: start, len: (end - start) as usize }
+}

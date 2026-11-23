@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `enumerate`, `take`, and `skip` number or cut by source position, so they exist only while every position is an item:
+// after a `filter` or `filter_map` they are not methods of the pipeline (spec/parallel.md, PR5).
+
+fn main() {
+    let a = par_range(0, 100).map(|x| x + 1).skip(3).take(5).count()
+    let b = par_range(0, 100).filter(|x| *x > 5).skip(3).count() //~ E0002
+    let c = par_range(0, 100).filter_map(|x| Some(x)).enumerate().count() //~ E0002
+    let d = par_range(0, 100).enumerate().enumerate().count() //~ E0002
+}

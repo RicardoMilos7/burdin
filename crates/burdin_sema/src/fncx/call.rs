@@ -1292,8 +1292,12 @@ impl FnCx<'_> {
         if recv.ty == Ty::Error {
             return self.args_then_error(args, span);
         }
-        // Only a method of the program with type parameters of its own takes explicit type arguments (TA5).
-        if !explicit.is_empty() && !self.user_generic_method(&recv.ty, &name.name) {
+        // Only a method of the program with type parameters of its own, or the `collect` of an iterator, which
+        // names its target (IT17), takes explicit type arguments (TA5).
+        if !explicit.is_empty()
+            && !self.user_generic_method(&recv.ty, &name.name)
+            && !self.iterator_collect(&recv.ty, &name.name)
+        {
             return self.reject_type_args(&name.name, explicit, args, span);
         }
         // `x.clone()`: the deep copy the compiler derives (CP). It applies to the receiver as written, before
@@ -1304,6 +1308,10 @@ impl FnCx<'_> {
         }
         // Field access and method calls see through references (RF1).
         let recv = self.auto_deref(recv);
+        // A value of an `impl Interface` return type has only the interface's methods (`fncx/opaque.rs`).
+        if self.globals.opaque_of(&recv.ty).is_some() {
+            return self.opaque_method_call(recv, explicit, name, args, span, expect);
+        }
         // `xs.get(range): Option<[T]>`: the checked form of slicing. A range expression or a range-valued
         // local picks it; any other argument is the index form the method table provides (`spec/stdlib.md`,
         // "Slices").
@@ -1330,7 +1338,7 @@ impl FnCx<'_> {
             return self.any_method_call(recv, &any, name, args, span);
         }
         if let Ty::Param(_) = recv.ty {
-            return self.param_method_call(recv, name, args, span, expect);
+            return self.param_method_call(recv, name, explicit, args, span, expect);
         }
         // `v.into()`: the conversion into the type the context expects (spec/stdlib.md, FR4), unless the receiver
         // has an `into` method of its own.
@@ -1408,7 +1416,7 @@ impl FnCx<'_> {
             return e;
         }
         // The iteration protocol: `next`, `sum`, the eager `List` helpers, and the `Iterator` default methods.
-        if let Some(e) = self.iterator_method(recv.clone(), name, args, span, expect) {
+        if let Some(e) = self.iterator_method(recv.clone(), name, explicit, args, span, expect) {
             return e;
         }
         // `res.context(message)` is compiler-known on `Result` (`spec/errors.md`, ERR6).

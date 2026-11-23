@@ -1,0 +1,55 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+struct Sq {
+    s: i32
+}
+
+Sq: Shape {
+    fn area(self): i32 {
+        self.s * self.s
+    }
+}
+
+fn make(): impl Shape {
+    Rect { w: 2, h: 3 }
+}
+
+fn other(): impl Shape {
+    Rect { w: 1, h: 1 }
+}
+
+// Two calls to different functions with `impl` returns are two different types.
+fn pick(c: bool): impl Shape { //~ E0003
+    if c {
+        return make()
+    }
+    other()
+}
+
+// Two concrete types on different paths.
+fn bad(c: bool): impl Shape { //~ E0003
+    if c {
+        return Sq { s: 1 }
+    }
+    Rect { w: 1, h: 1 }
+}
+
+fn main() {
+    println("{pick(true).area()}")
+    let _ = bad(true)
+}

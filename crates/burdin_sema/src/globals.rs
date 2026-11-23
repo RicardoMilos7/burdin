@@ -5,7 +5,7 @@
 //! simple name; internally every item is displayed with a qualified name (`math.add`, `lib.Gadget`) so that
 //! instances and LLVM symbols stay unique. Imports are copied into the importing module's maps by `imports.rs`.
 
-use crate::generics::{GenericAdt, GenericFn, ImplInfo, InterfaceInfo, Request};
+use crate::generics::{Bound, GenericAdt, GenericFn, ImplInfo, InterfaceInfo, Request};
 use burdin_diag::{FileId, Span};
 use burdin_tir::{self as tir, AdtRef, Builtin, ConstId, FuncId, Signature, Ty};
 use std::cell::RefCell;
@@ -121,6 +121,22 @@ pub(crate) struct ExternInfo {
     pub(crate) blocking: bool,
 }
 
+/// A function whose return type is `impl I` (spec/existentials.md, AN4). The function returns a struct with one
+/// field, the value of the concrete type its body determines; the struct has no name callers can write and no
+/// methods, so a caller reaches the value only through `I` (`crate::opaque`).
+pub(crate) struct OpaqueRet {
+    /// The function (an index into `Sema::fn_items`).
+    pub(crate) fn_index: usize,
+    /// The interface the return type names, as a bound (`Bound::User`).
+    pub(crate) bound: Bound,
+    /// The `impl I` type in the signature, for diagnostics.
+    pub(crate) span: Span,
+    /// The wrapper struct, an index into `Globals::structs`.
+    pub(crate) struct_id: usize,
+    /// The concrete type the body returns, once the body has been checked far enough to tell.
+    pub(crate) concrete: Option<Ty>,
+}
+
 /// One `Type: From<Source>` or `Type: TryFrom<Source>` block: the `from` or `try_from` method that converts a `Source`
 /// into the target. `?` calls a `From` one to convert an error (`spec/errors.md`, ERR3); `Type.from(v)` and
 /// `Type.try_from(v)` pick one by the type of their argument (`spec/stdlib.md`, "Conversions").
@@ -155,6 +171,10 @@ pub(crate) struct OpIfaces {
 
 #[derive(Default)]
 pub(crate) struct Globals {
+    /// How many instances of each spelled name were made. Two instances can spell alike and still differ (a borrowing
+    /// closure and an owning one are both `Fn(i64): i64`), and code generation names a function or type by its
+    /// name, so the later one gets a suffix.
+    pub(crate) instance_name_counts: HashMap<String, usize>,
     pub(crate) modules: Vec<ModuleInfo>,
     pub(crate) packages: Vec<PackageInfo>,
     /// `(package, module path joined with '.')` to the module index.
@@ -182,6 +202,8 @@ pub(crate) struct Globals {
     /// The `Drop::drop` method of a type that has a `Type: Drop` block.
     pub(crate) drop_methods: HashMap<(bool, usize), FuncId>,
     pub(crate) sigs: Vec<Signature>,
+    /// The functions whose return type is `impl I`, in the order they were resolved (`crate::opaque`).
+    pub(crate) opaques: Vec<OpaqueRet>,
     pub(crate) const_tys: Vec<Ty>,
     /// Whether each function is `unsafe` (`unsafe fn`), by function index.
     pub(crate) fn_unsafe: Vec<bool>,

@@ -3,6 +3,14 @@
 /// Every way a TLS operation can fail. The variant says what kind of failure it was, so a program can tell a failed
 /// certificate check from a transport error without parsing the message. Nothing in this package panics on what a peer
 /// sends: a hostile or broken peer is a `TlsError`.
+///
+/// ```
+/// # use tls
+/// # use tls.{TlsError}
+/// let failure = TlsError.HostnameMismatch("localhost".to_string())
+/// assert(failure.is_verification())
+/// assert(!TlsError.Closed.is_verification())
+/// ```
 error enum TlsError: Clone, Debug {
     Io(IoError) from "I/O error: {0}",
     Handshake(String) "TLS handshake failed: {0}",
@@ -20,6 +28,12 @@ error enum TlsError: Clone, Debug {
 
 TlsError {
     /// Whether the transport timed out (a read or write timeout set on the connection expired).
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TlsError}
+    /// assert(!TlsError.Closed.is_timeout())
+    /// ```
     fn is_timeout(self): bool {
         match self {
             TlsError.Io(failure) => match failure.kind() {
@@ -32,6 +46,13 @@ TlsError {
     }
 
     /// Whether this is a certificate or hostname verification failure.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TlsError}
+    /// assert(TlsError.CertificateInvalid("expired".to_string()).is_verification())
+    /// assert(!TlsError.Closed.is_verification())
+    /// ```
     fn is_verification(self): bool {
         match self {
             TlsError.CertificateInvalid(_) => true,
@@ -43,6 +64,13 @@ TlsError {
 
     /// The error as an `IoError`, which is what `Read` and `Write` report: a transport error keeps its own value, a
     /// truncated stream is `IoError.UnexpectedEof`, and every other failure is `IoError.InvalidData`.
+    ///
+    /// ```
+    /// # use tls
+    /// # use tls.{TlsError}
+    /// let io = TlsError.Closed.to_io()
+    /// println("{}", io)
+    /// ```
     fn to_io(own self): IoError {
         match self {
             TlsError.Io(failure) => failure,

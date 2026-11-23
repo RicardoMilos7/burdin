@@ -102,7 +102,7 @@ read back is identical. `read_to_string`/`write_file` treat the bytes as UTF-8 t
 | `error` declarations, dynamic `Error`, default `Result<T>`, `.context(...)`, traces | Stage 1 |
 | Extension methods, default and named arguments | Stage 1 |
 | Operator overloading, user-defined `Index` | Stage 1 |
-| Comptime, const generics, `embed`, comptime derives | Stage 1, after a MIR interpreter |
+| Comptime, const generics, `embed`, comptime derives | Stage 1, as an interpreter over the typed tree (no MIR; `comptime.md`, CT1) |
 | `build.bd` | Stage 1 |
 | Allocator parameters, `Arena`, `Shared<T>`, leak-detecting allocator | Stage 1 |
 | Tasks, channels, `select`, `Mutex`, atomics, `thread.spawn` | After stage 1 |

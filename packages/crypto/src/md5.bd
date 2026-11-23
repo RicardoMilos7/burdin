@@ -1,7 +1,7 @@
 // MD5 (RFC 1321). BROKEN: collisions are cheap. Provided only for interoperability with old formats and protocols;
 // never use it to authenticate or fingerprint anything an attacker influences.
 
-const MD5_T: [u32; 64] = [
+priv const MD5_T: [u32; 64] = [
     0xd76aa478,
     0xe8c7b756,
     0x242070db,
@@ -68,7 +68,7 @@ const MD5_T: [u32; 64] = [
     0xeb86d391,
 ]
 
-const MD5_S: [u32; 64] = [
+priv const MD5_S: [u32; 64] = [
     7,
     12,
     17,
@@ -136,6 +136,14 @@ const MD5_S: [u32; 64] = [
 ]
 
 /// An incremental MD5 hasher (insecure; see the file comment).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Md5}
+/// let mut hasher = Md5.new()
+/// hasher.update("abc".as_bytes())
+/// assert_eq(hasher.finish().to_hex().as_str(), "900150983cd24fb0d6963f7d28e17f72")
+/// ```
 struct Md5 {
     h: [u32; 4],
     buf: List<u8>,
@@ -143,21 +151,49 @@ struct Md5 {
 }
 
 Md5 {
+    /// A new MD5 hasher, which produces a 16-byte digest. MD5 is broken for collision resistance; see the file comment.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Md5}
+    /// assert_eq(Md5.new().output_len(), 16)
+    /// ```
     fn new(): Md5 {
         Md5 { h: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476], buf: List<u8>.new(), total: 0 }
     }
 
     /// The block size in bytes (64).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Md5}
+    /// assert_eq(Md5.new().block_len(), 64)
+    /// ```
     fn block_len(self): usize {
         64
     }
 
     /// The digest size in bytes (16).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Md5}
+    /// assert_eq(Md5.new().output_len(), 16)
+    /// ```
     fn output_len(self): usize {
         16
     }
 
     /// Hashes more input.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Md5}
+    /// let mut hasher = Md5.new()
+    /// hasher.update("a".as_bytes())
+    /// hasher.update("bc".as_bytes())
+    /// assert_eq(hasher.finish().to_hex().as_str(), "900150983cd24fb0d6963f7d28e17f72")
+    /// ```
     fn update(mut self, data: [u8]) {
         self.total = self.total.wrapping_add(data.len() as u64)
         let mut pos: usize = 0
@@ -183,6 +219,13 @@ Md5 {
     }
 
     /// Ends the hash and returns the digest. The hasher must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Md5}
+    /// let mut hasher = Md5.new()
+    /// assert_eq(hasher.finish().to_hex().as_str(), "d41d8cd98f00b204e9800998ecf8427e")
+    /// ```
     fn finish(mut self): List<u8> {
         let bits = self.total.wrapping_mul(8)
         let keep = self.total
@@ -211,7 +254,7 @@ Md5 {
         out
     }
 
-    fn compress(mut self, block: [u8]) {
+    priv fn compress(mut self, block: [u8]) {
         let mut m: [u32; 16] = [0; 16]
         let mut t: usize = 0
         while t < 16 {
@@ -259,6 +302,12 @@ Md5 {
 }
 
 /// The MD5 digest of `data` (insecure; see the file comment).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{md5}
+/// assert_eq(md5("abc".as_bytes()).to_hex().as_str(), "900150983cd24fb0d6963f7d28e17f72")
+/// ```
 fn md5(data: [u8]): List<u8> {
     let mut h = Md5.new()
     h.update(data)

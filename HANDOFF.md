@@ -4,6 +4,52 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Parallel iteration (issue #971, 2026-11-23).** `std.parallel` (`std/src/parallel.bd`, `spec/parallel.md`, PR1-PR12)
+adds Rayon-style pipelines on the scheduler's own workers: sources `par_iter`, `par_iter_mut`, `par_into_iter`, and
+`par_range`; adapters `map`, `filter`, `filter_map`, `enumerate`, `take`, `skip`; consumers `for_each`, `count`, `fold`,
+`reduce`, `any_item`, `all`, `find`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `collect`. A consumer splits the
+positions into at most 64 chunks of at least 1024 (a smaller pipeline runs on the caller), runs each chunk as a scoped
+task (`__chunks`), and merges the partial results in source order. Three things the issue left open were decided here:
+(1) SH4 now says an `Fn` closure is `Sync` when every capture is (`FnSend` carries `sync_ok`/`sync_why`; `marker_why`
+in `burdin_sema/src/markers.rs` answers it), (2) consumers that keep items are on `ParallelValues<T>`, implemented only
+for owned-item pipelines, because a default method on the one interface instantiates for a view item and fails (E0120),
+and `indexed` adapters are on `IndexedParallelIterator<T>`, and (3) `fold` takes `(init, op, combine)`, `any` is
+`any_item`, a range source is `par_range` (a `Range` hides its endpoints from library code), and `par_iter_mut` has its
+own `for_each`/`for_each_indexed` because a `&mut` made from an address cannot be returned from a method (E0122). The
+feature also found a code generation bug and fixed it (`Globals::unique_instance_name`): two instances that spell alike
+but differ (a borrowing closure and an owning one, both `Fn(i64): i64`) shared one LLVM function name, so one body was
+emitted into the other's symbol (`tests/m12_closures/closure_same_spelling_instances`). A pipeline touches a raw pointer
+first so `comptime` reports E0224 (PR10). Not done: `flat_map`, `rev`, user sources, `Set`/`Map` targets, `par_sort`
+(PR12). `s3_parallel` runs in CI on all three OSes, and its stress tests repeat 20 times like the stage 2 ones. Verified
+here on Linux x86-64 only: `s3_parallel` (14 tests), `s2_shared`, `m12_closures`, the full conformance suite, clippy,
+fmt, and `cargo test --workspace`.
+**Return-position `impl I` (issues #959 and #926, 2026-11-23).** `fn make(): impl Shape` returns one concrete type that
+the body determines, and callers see only `Shape` (`spec/existentials.md` AN4). The compiler does this with an opaque
+wrapper struct per function (`crates/burdin_sema/src/opaque.rs`): the struct has no name and one field, the concrete
+value. Before the bodies are checked, `Sema::resolve_opaque_returns` infers each body's type and fills the field,
+repeating until nothing changes, so a caller sees the type its callee returns. A caller's value has only the methods of
+`I` and the interfaces `I` requires (`fncx/opaque.rs`), satisfies only those, and boxes as `any` only those; the
+method call goes to the concrete value. Errors: E0003 (returns disagree), E0141 (the concrete type does not implement
+`I`), E0205 (the concrete type depends on the function itself), and E0201 still for a local, field, element, bound, or
+`extern` signature. Tests: `tests/m15_any/impl_return.bd`, `impl_return_methods.bd` (run), and `impl_return_iterator`,
+`impl_return_generic`, and `impl_return_opaque`,
+`impl_return_mismatch`, `impl_return_recursive`, `impl_return_unsatisfied`, `impl_return_move` (compile-fail).
+A `for` loop, `next`, and the adapters work on an `impl Iterator` value (`impl_return_iterator.bd`), and a generic
+body may call a function that returns `impl I` (`impl_return_generic.bd`). Gap: an `impl I` in an `extern "C"`
+signature is reported as E0163 (an extern function cannot be generic), not E0201 as the spec's list says; left as it
+was.
+
+**Documentation consistency pass (issues #946-#967, 2026-11-23).** The spec, the tests README, the design, and the
+HANDOFF now agree with the compiler on the points those issues named: `derive`, `blocking`, slice receivers, and closures
+are in the grammar; a const-specific impl (`Grid<3> { ... }`) is implemented and tested (`m21_reflect/const_impl_specific`),
+so CG8 no longer lists it; the comptime file rule is `embed` alone (CT15); there is no MIR (decision 6); decision 34 is
+generation and decision 35 compound assignment; the stage 0 count is 294 (`run_tests.py --list m01_ ... m11_`); and the
+stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
+now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
+(`m13_iterators/generic_bound_default_methods`). Still open, and the spec states the current behavior with these numbers:
+the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
+struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
+(`m15_any/impl_not_parameter` pins the E0201 until then).
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
 view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
 a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
@@ -69,7 +115,7 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
 `fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
 text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
-hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+hygienic (as user derives are, decision 26 in `tests/README.md`), and generation before the whole-program check: step 1 checks each
 generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
 parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
 `fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
@@ -288,9 +334,13 @@ The call dispatch is `call`, `method_call`, `method_call_on_with`, `module_call`
 `fncx/call.rs`; `reject_type_args` and `user_generic_method` are the refusals. `GenericParam.hidden` marks an `impl`
 parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it to sema. Tests:
 `tests/m07_generics/explicit_type_args.bd` (runs), `explicit_type_args_errors.bd` (codes and lines),
-`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. Not done: explicit
-arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
-`it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
+`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. `it.collect<C>()` takes
+its target as the explicit argument (issue #922, `iterators.md` IT17): `method_call_on_with` admits it through
+`iterator_collect`, `iterator_method` passes the list to the `Iterator<T>` default, and `param_method_call` passes it to
+`generic_bound_args` for a value of a type parameter bounded by `Iterator`, checking `C`'s bounds. Tests:
+`tests/m24_stdlib/collect_explicit.bd` and `collect_explicit_errors.bd`. Not done: explicit arguments on other methods
+reached through a type parameter's bound, and on other built-in methods (refused, TA5). A generic method called as an
+associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
 its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
 **Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
 `self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`

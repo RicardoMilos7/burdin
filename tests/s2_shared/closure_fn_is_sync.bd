@@ -1,0 +1,22 @@
+//@ run
+//> 11
+//> 12
+
+// An `Fn` closure only reads what it captures, so a shared view of it is a shared view of each capture: it is `Sync`
+// when every capture is `Sync`, whether it borrows them or moves them in (spec/shared.md, SH4).
+
+fn call_borrowed<F: Fn(): i32 + Sync>(f: &F): i32 {
+    f()
+}
+
+fn call_owned<F: Fn(): i32 + Sync>(own f: F): i32 {
+    f()
+}
+
+fn main() {
+    let base = 10
+    let borrows = || base + 1
+    println("{call_borrowed(&borrows)}")
+    let name = "twelve".to_string()
+    println("{call_owned(|| name.len() as i32 * 2)}")
+}

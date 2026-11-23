@@ -24,6 +24,7 @@ impl<'t> Sema<'t> {
         let symbolic = args.iter().any(|a| self.globals.ty_has_param(a));
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
         let name = Globals::instance_name(&gname, &args);
+        let name = self.globals.unique_instance_name(name);
         let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
         // The bounds the instance's type parameters keep, with the instance's arguments substituted: a field may
         // write `T.Item` through them (`spec/associated-types.md`, AT3).
@@ -68,12 +69,12 @@ impl<'t> Sema<'t> {
             self.globals.struct_pkg.push(self.globals.package_of(gmodule));
             let private = self.globals.generic_adts[template].is_priv;
             self.globals.adt_priv.insert((false, id), private);
-            self.src.structs.push(crate::session::AdtSrcEntry {
+            self.src.structs.push(Some(crate::session::AdtSrcEntry {
                 decl: self.tpl.structs[decl],
                 subst,
                 bounds,
                 module: gmodule,
-            });
+            }));
             ((false, id), Ty::Struct(r))
         };
         self.globals.adt_instances.insert((template, args.clone()), key);
@@ -125,16 +126,19 @@ impl<'t> Sema<'t> {
         // A generic extension method is an ordinary function whose first parameter is `self`; its instance
         // takes the receiver type with the arguments substituted (`spec/extensions.md`, EX7).
         let self_ty = g.recv.as_ref().map(|recv| self.globals.subst_ty(recv, &subst));
+        let (decl, module, is_unsafe) = (g.decl, g.module, g.is_unsafe);
+        let name = Globals::instance_name(&g.name, &args);
+        let name = self.globals.unique_instance_name(name);
         let item = FnItem {
-            decl: self.tpl.fns[g.decl],
-            name: Globals::instance_name(&g.name, &args),
-            module: g.module,
+            decl: self.tpl.fns[decl],
+            name,
+            module,
             self_ty,
             subst,
             bounds: Vec::new(),
             symbolic: false,
             check_body: true,
-            is_unsafe: g.is_unsafe,
+            is_unsafe,
             is_exported: false,
         };
         let id = self.push_fn(item);
@@ -155,16 +159,18 @@ impl<'t> Sema<'t> {
             || t.base_subst.iter().any(|(_, ty)| self.globals.ty_has_param(ty))
             || t.self_ty.as_ref().is_some_and(|ty| self.globals.ty_has_param(ty));
         let name = Globals::instance_name(&t.name, &args);
+        let (decl, module, self_ty, is_unsafe) = (t.decl, t.module, t.self_ty.clone(), t.is_unsafe);
+        let name = self.globals.unique_instance_name(name);
         let item = FnItem {
-            decl: t.decl,
+            decl,
             name,
-            module: t.module,
-            self_ty: t.self_ty.clone(),
+            module,
+            self_ty,
             subst,
             bounds,
             symbolic,
             check_body: !symbolic,
-            is_unsafe: t.is_unsafe,
+            is_unsafe,
             is_exported: false,
         };
         let id = self.push_fn(item);

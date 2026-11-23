@@ -222,6 +222,7 @@ impl FnCx<'_> {
         &mut self,
         recv: tir::Expr,
         name: &ast::Ident,
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         span: Span,
         expect: Option<&Ty>,
@@ -246,11 +247,14 @@ impl FnCx<'_> {
         // `sum`, `product`, `min`, `max`, `eq`, and `cmp` of an iterator are compiler-known or functions in `std`,
         // not interface methods, so they apply to a type parameter bounded by `Iterator` here.
         if (matches!(name.name.as_str(), "sum" | "product") || self.globals.iterator_item_fn(&name.name).is_some())
-            && let Some(e) = self.iterator_method(recv.clone(), name, args, span, expect)
+            && let Some(e) = self.iterator_method(recv.clone(), name, explicit, args, span, expect)
         {
             return e;
         }
-        let found = self.globals.bound_method(&recv.ty, &name.name, &self.bounds);
+        // `.any(...)` is the adapter's spelling; `std` declares the method as `any_item` (spec/iterators.md, IT9),
+        // so a bound that provides `Iterator` is searched under that name here too.
+        let lookup = if name.name == "any" { "any_item" } else { name.name.as_str() };
+        let found = self.globals.bound_method(&recv.ty, lookup, &self.bounds);
         let Some((sig, _, is_unsafe)) = found.filter(|(sig, _, _)| sig.has_self) else {
             self.diags.error(
                 Code::BOUND_NOT_SATISFIED,
@@ -267,12 +271,20 @@ impl FnCx<'_> {
             );
         }
         let (receiver, rest, ret) = (sig.params[0].clone(), sig.params[1..].to_vec(), sig.ret.clone());
-        let generic = self.globals.bound_method_generics(&recv.ty, &name.name, &self.bounds);
+        let generic = self.globals.bound_method_generics(&recv.ty, lookup, &self.bounds);
         let receiver_place = Some((&recv, receiver.exclusive));
         let checked = match generic {
-            Some(generic) => {
-                self.generic_bound_args(&name.name, (&rest, ret), args, receiver_place, (span, expect), &generic)
-            }
+            Some(generic) => self.generic_bound_args(
+                &name.name,
+                (&rest, ret),
+                explicit,
+                args,
+                receiver_place,
+                (span, expect),
+                &generic,
+            ),
+            // A method that is not generic takes no type arguments (TA5).
+            None if !explicit.is_empty() => return self.reject_type_args(&name.name, explicit, args, span),
             None => self.args(&name.name, &rest, args, receiver_place, span).map(|c| (c, ret)),
         };
         let Some((mut checked, ret)) = checked else { return error_expr(span) };
@@ -284,10 +296,12 @@ impl FnCx<'_> {
     /// (`C.from_iter(it)` with `C: FromIterator<T>`). Inside generic code there is no instance to call, so the
     /// method's parameters are matched against the argument types and replaced in the result type; the bounds of
     /// those parameters are checked where the call is instantiated.
+    #[allow(clippy::too_many_arguments)]
     fn generic_bound_args(
         &mut self,
         name: &str,
         (params, ret): (&[ParamSig], Ty),
+        explicit: &[ast::Type],
         args: &[ast::Arg],
         receiver_place: Option<(&tir::Expr, bool)>,
         (span, expect): (Span, Option<&Ty>),
@@ -301,6 +315,30 @@ impl FnCx<'_> {
         // The bound's arguments already stand for the interface's parameters, so a closure bound written with them
         // (`F: FnMut(T): U`) is read with them too.
         let mut bindings: Vec<(String, Ty)> = base.clone();
+        // Explicit type arguments are bindings from the start (TA3), and each one must meet the bounds of its
+        // parameter, as a call on a concrete receiver checks them (`collect<C>` needs `C: FromIterator<T>`).
+        if !explicit.is_empty() {
+            let Some(given) = self.explicit_bindings(name, own, bounds, false, explicit) else {
+                let _ = self.args(name, params, args, receiver_place, span);
+                return None;
+            };
+            bindings.extend(given.iter().cloned());
+            let mut ok = true;
+            for ((pname, t), bs) in given.iter().zip(bounds) {
+                for b in bs {
+                    if !globals.satisfies_with(t, b, &self.bounds, &bindings) {
+                        let (code, message) =
+                            globals.bound_unmet(t, b, &self.bounds, &format!("`{pname}` of `{name}`"));
+                        self.diags.error(code, span, message);
+                        ok = false;
+                    }
+                }
+            }
+            if !ok {
+                let _ = self.args(name, params, args, receiver_place, span);
+                return None;
+            }
+        }
         let mut written = Vec::new();
         for (a, p) in args.iter().zip(params) {
             let hint = generic_hint(globals, &p.ty, own, bounds, &bindings);
@@ -369,7 +407,7 @@ impl FnCx<'_> {
         let generic = self.globals.bound_method_generics(ty, &name.name, &self.bounds);
         let checked = match generic {
             Some(generic) => {
-                self.generic_bound_args(&name.name, (&sig.params, sig.ret), args, None, (span, expect), &generic)
+                self.generic_bound_args(&name.name, (&sig.params, sig.ret), &[], args, None, (span, expect), &generic)
             }
             None => self.args(&name.name, &sig.params, args, None, span).map(|c| (c, sig.ret)),
         };

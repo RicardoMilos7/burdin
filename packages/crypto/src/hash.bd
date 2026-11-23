@@ -7,6 +7,13 @@ use sha3.{sha3_224, sha3_256, sha3_384, sha3_512}
 use sha512.{sha384, sha512}
 
 /// A hash function. `Md5` and `Sha1` are broken for collision resistance and are here for old protocols only.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{HashAlg}
+/// assert_eq(HashAlg.Sha256.output_len(), 32)
+/// assert_eq(HashAlg.Sha3_512.name().as_str(), "SHA3-512")
+/// ```
 enum HashAlg: Copy, Clone, Eq, Debug {
     Md5,
     Sha1,
@@ -22,6 +29,13 @@ enum HashAlg: Copy, Clone, Eq, Debug {
 
 HashAlg {
     /// The input block size in bytes (the rate, for SHA-3). HMAC pads its key to this length.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{HashAlg}
+    /// assert_eq(HashAlg.Sha256.block_len(), 64)
+    /// assert_eq(HashAlg.Sha512.block_len(), 128)
+    /// ```
     fn block_len(self): usize {
         match self {
             HashAlg.Md5 => 64,
@@ -38,6 +52,13 @@ HashAlg {
     }
 
     /// The digest size in bytes.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{HashAlg}
+    /// assert_eq(HashAlg.Sha1.output_len(), 20)
+    /// assert_eq(HashAlg.Sha384.output_len(), 48)
+    /// ```
     fn output_len(self): usize {
         match self {
             HashAlg.Md5 => 16,
@@ -54,6 +75,12 @@ HashAlg {
     }
 
     /// The name, as in `"SHA-256"`.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{HashAlg}
+    /// assert_eq(HashAlg.Sha224.name().as_str(), "SHA-224")
+    /// ```
     fn name(self): str {
         match self {
             HashAlg.Md5 => "MD5",
@@ -70,6 +97,12 @@ HashAlg {
     }
 
     /// The digest of `data`.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{HashAlg}
+    /// assert_eq(HashAlg.Sha256.digest("abc".as_bytes()).to_hex().as_str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    /// ```
     fn digest(self, data: [u8]): List<u8> {
         match self {
             HashAlg.Md5 => md5(data),

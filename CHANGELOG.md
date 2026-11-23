@@ -15,6 +15,15 @@ close-out checklist in `AGENTS.md`).
   `swap_bytes` panicked on 8-bit integers (`tests/m24_stdlib/swap_bytes_one_byte`), and `burdin doc --std` listed the
   compiler-internal `__` methods, which DC7 says it must not (`crates/burdin_doc/src/extract.rs`). The atomic module
   is generated, so its examples live in `tests/gen_atomic_std.py`.
+- Issue #971: parallel iteration in the standard library (`std.parallel`). `par_iter()`, `par_iter_mut()`,
+  `par_into_iter()`, and `par_range(start, end)` start a pipeline of `map`, `filter`, `filter_map`, `enumerate`, `take`,
+  and `skip`, consumed by `for_each`, `count`, `fold`, `reduce`, `any_item`, `all`, `find`, `min_by`, `max_by`,
+  `min_by_key`, `max_by_key`, or `collect`, on the scheduler's own workers (a chunk is a scoped task; chunks merge in
+  source order). It needed one compiler rule: an `Fn` closure is `Sync` when every capture is (`spec/shared.md` SH4,
+  which said a closure is never `Sync`). Along the way it found and fixed a code generation bug: two instances that
+  spell alike but differ (a borrowing closure and an owning one, both `Fn(i64): i64`) shared one function name, so
+  the first one's body was emitted into the second's symbol. Rules: `spec/parallel.md` PR1-PR12; tests
+  `tests/s3_parallel/`, `tests/s2_shared/closure_*`, and `tests/m12_closures/closure_same_spelling_instances`.
 - Issue #916: slicing a `str` or `String` checks character boundaries. `s[a..b]` and `s[a..=b]` panic with
   `slice: the index is not a character boundary` when either end splits a multi-byte character, so safe code can no
   longer make a non-UTF-8 `str` (the `chars()`, `trim`, and case helpers rely on that). `get(from, to)` returns `None`

@@ -1,0 +1,20 @@
+//@ run
+//> 15
+//> Some(0)
+//> 6
+
+fn nums(): impl Iterator<i32> {
+    (0..6).iter()
+}
+
+fn main() {
+    let mut total = 0
+    for x in nums() {
+        total = total + x
+    }
+    println("{total}")
+    let mut it = nums()
+    println("{it.next():?}")
+    let doubled: List<i32> = nums().map(|x| x * 2).collect()
+    println("{doubled.len()}")
+}

@@ -1,0 +1,42 @@
+//@ run
+//> 12
+//> 10
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+fn wrap<T: Shape>(own x: T): impl Shape {
+    x
+}
+
+fn twice<T: Shape>(own x: T): i32 {
+    let w = wrap(x)
+    w.area() * 2
+}
+
+struct Holder {
+    n: i32
+}
+
+Holder {
+    fn shape(own self): impl Shape {
+        Rect { w: self.n, h: 2 }
+    }
+}
+
+fn main() {
+    println("{twice(Rect { w: 2, h: 3 })}")
+    println("{Holder { n: 5 }.shape().area()}")
+}

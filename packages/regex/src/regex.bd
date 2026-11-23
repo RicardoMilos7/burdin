@@ -11,14 +11,29 @@ use parse.parse
 use vm.run
 
 /// A compiled regular expression (RX9). It does not change after `new`, so one can serve many searches.
+///
+/// ```
+/// # use regex.{Regex}
+/// let re = Regex.new("a+b").unwrap()
+/// assert(re.is_match("xaaab"))
+/// assert(!re.is_match("ba"))
+/// ```
 struct Regex {
-    pattern: String,
-    prog: Program,
+    priv pattern: String,
+    priv prog: Program,
     /// The name of each group: `names[0]` is group 0 (the whole match), which has none.
-    names: List<Option<String>>,
+    priv names: List<Option<String>>,
 }
 
 /// One match: the byte offsets of its span in the searched text, and a copy of the matched text (RX14).
+///
+/// ```
+/// # use regex.{Regex}
+/// let m = Regex.new("b+").unwrap().find("abbc").unwrap()
+/// assert_eq(m.start(), 1)
+/// assert_eq(m.end(), 3)
+/// assert_eq(m.as_str(), "bb")
+/// ```
 struct Match: Clone, Eq, Debug {
     span_start: usize,
     span_end: usize,
@@ -26,13 +41,27 @@ struct Match: Clone, Eq, Debug {
 }
 
 /// The groups of one match (RX8). `spans[i]` is group `i`, and `None` for a group that did not take part.
+///
+/// ```
+/// # use regex.{Regex}
+/// let caps = Regex.new("(\\w)(\\w)").unwrap().captures("ab").unwrap()
+/// assert_eq(caps.len(), 3)
+/// assert_eq(caps.get(2).unwrap().as_str(), "b")
+/// ```
 struct Captures: Debug {
-    spans: List<Option<Match>>,
-    names: List<Option<String>>,
+    priv spans: List<Option<Match>>,
+    priv names: List<Option<String>>,
 }
 
 Regex {
     /// Compiles `pattern` (RX2), or reports the first problem with its byte offset (RX3).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let re = Regex.new("(\\d+)").unwrap()
+    /// assert_eq(re.group_count(), 1)
+    /// assert(Regex.new("(").is_err())
+    /// ```
     fn new(pattern: str): Result<Regex, RegexError> {
         let parsed = parse(pattern)?
         let mut names = List<Option<String>>.new()
@@ -50,6 +79,12 @@ Regex {
     }
 
     /// `text` with each metacharacter escaped, so that `Regex.new` of the result matches `text` exactly (RX13).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.escape("a.b").as_str(), "a\\.b")
+    /// assert(Regex.new(Regex.escape("1+1")).unwrap().is_match("1+1"))
+    /// ```
     fn escape(text: str): String {
         let mut out = String.new()
         for c in text.chars() {
@@ -62,26 +97,58 @@ Regex {
     }
 
     /// The pattern this regex was compiled from.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.new("a+").unwrap().as_str(), "a+")
+    /// ```
     fn as_str(self): str {
         self.pattern.as_str()
     }
 
     /// The number of capturing groups, not counting group 0.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.new("(a)(b)").unwrap().group_count(), 2)
+    /// assert_eq(Regex.new("ab").unwrap().group_count(), 0)
+    /// ```
     fn group_count(self): usize {
         self.names.len() - 1
     }
 
     /// The number of the group named `name`, if there is one.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let re = Regex.new("(?P<word>\\w+)").unwrap()
+    /// assert_eq(re.group_index("word").unwrap(), 1)
+    /// assert(re.group_index("missing").is_none())
+    /// ```
     fn group_index(self, name: str): Option<usize> {
         name_index(self.names.as_slice(), name)
     }
 
     /// Whether the pattern matches somewhere in `text`.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let re = Regex.new("^\\d+$").unwrap()
+    /// assert(re.is_match("123"))
+    /// assert(!re.is_match("12a"))
+    /// ```
     fn is_match(self, text: str): bool {
         run(&self.prog, text.as_bytes(), 0, false).is_some()
     }
 
     /// The leftmost match in `text`.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("\\d+").unwrap().find("abc 42").unwrap()
+    /// assert_eq(m.as_str(), "42")
+    /// assert_eq(m.start(), 4)
+    /// ```
     fn find(self, text: str): Option<Match> {
         match run(&self.prog, text.as_bytes(), 0, false) {
             Some(slots) => Some(whole_match(text, slots.as_slice())),
@@ -90,6 +157,13 @@ Regex {
     }
 
     /// Every match in `text`, from left to right without overlap (RX10).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let words = Regex.new("\\w+").unwrap().find_all("two words")
+    /// assert_eq(words.len(), 2)
+    /// assert_eq(words[1].as_str(), "words")
+    /// ```
     fn find_all(self, text: str): List<Match> {
         let found = self.all_slots(text, None)
         let mut out = List<Match>.new()
@@ -102,6 +176,12 @@ Regex {
     }
 
     /// The leftmost match in `text` with its groups.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let caps = Regex.new("(\\d+)-(\\d+)").unwrap().captures("released 2024-05").unwrap()
+    /// assert_eq(caps.get(2).unwrap().as_str(), "05")
+    /// ```
     fn captures(self, text: str): Option<Captures> {
         match run(&self.prog, text.as_bytes(), 0, false) {
             Some(slots) => Some(self.captures_of(text, slots.as_slice())),
@@ -110,6 +190,13 @@ Regex {
     }
 
     /// Every match in `text` with its groups (RX10).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let all = Regex.new("(\\w)=").unwrap().captures_all("a=1 b=2")
+    /// assert_eq(all.len(), 2)
+    /// assert_eq(all[1].get(1).unwrap().as_str(), "b")
+    /// ```
     fn captures_all(self, text: str): List<Captures> {
         let found = self.all_slots(text, None)
         let mut out = List<Captures>.new()
@@ -122,32 +209,60 @@ Regex {
     }
 
     /// `text` with its first match replaced by `replacement`, which may use the references of RX11.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.new("o").unwrap().replace("foo", "0").as_str(), "f0o")
+    /// ```
     fn replace(self, text: str, replacement: str): String {
         self.replace_with(text, Some(1), replacement)
     }
 
     /// `text` with its first `limit` matches replaced by `replacement` (RX11).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.new("a").unwrap().replacen("aaa", 2, "b").as_str(), "bba")
+    /// ```
     fn replacen(self, text: str, limit: usize, replacement: str): String {
         self.replace_with(text, Some(limit), replacement)
     }
 
     /// `text` with every match replaced by `replacement` (RX11).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// assert_eq(Regex.new("\\s+").unwrap().replace_all("a   b", " ").as_str(), "a b")
+    /// ```
     fn replace_all(self, text: str, replacement: str): String {
         self.replace_with(text, None, replacement)
     }
 
     /// The pieces of `text` between the matches (RX12).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let pieces = Regex.new(",\\s*").unwrap().split("a, b,c")
+    /// assert_eq(pieces.len(), 3)
+    /// assert_eq(pieces[1].as_str(), "b")
+    /// ```
     fn split(self, text: str): List<String> {
         self.split_with(text, None)
     }
 
     /// At most `limit` pieces of `text`: the last one is the rest of the text (RX12).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let pieces = Regex.new(",").unwrap().splitn("a,b,c", 2)
+    /// assert_eq(pieces[1].as_str(), "b,c")
+    /// ```
     fn splitn(self, text: str, limit: usize): List<String> {
         self.split_with(text, Some(limit))
     }
 
     /// The capture slots of every match, from left to right (RX10). At most `limit` of them when one is given.
-    fn all_slots(self, text: str, limit: Option<usize>): List<List<Option<usize>>> {
+    priv fn all_slots(self, text: str, limit: Option<usize>): List<List<Option<usize>>> {
         let bytes = text.as_bytes()
         let len = text.len()
         let mut out = List<List<Option<usize>>>.new()
@@ -177,7 +292,7 @@ Regex {
         out
     }
 
-    fn captures_of(self, text: str, slots: [Option<usize>]): Captures {
+    priv fn captures_of(self, text: str, slots: [Option<usize>]): Captures {
         let mut spans = List<Option<Match>>.new()
         let groups = self.names.len()
         let mut g: usize = 0
@@ -197,7 +312,7 @@ Regex {
         Captures { spans: spans, names: names }
     }
 
-    fn replace_with(self, text: str, limit: Option<usize>, replacement: str): String {
+    priv fn replace_with(self, text: str, limit: Option<usize>, replacement: str): String {
         let found = self.all_slots(text, limit)
         let mut out = String.new()
         let mut last: usize = 0
@@ -216,7 +331,7 @@ Regex {
         out
     }
 
-    fn split_with(self, text: str, limit: Option<usize>): List<String> {
+    priv fn split_with(self, text: str, limit: Option<usize>): List<String> {
         let mut pieces = List<String>.new()
         if let Some(n) = limit {
             if n == 0 {
@@ -244,26 +359,57 @@ Regex {
 
 Match {
     /// The byte offset where the match starts.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("c").unwrap().find("abc").unwrap()
+    /// assert_eq(m.start(), 2)
+    /// ```
     fn start(self): usize {
         self.span_start
     }
 
     /// The byte offset just past the end of the match.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("c").unwrap().find("abc").unwrap()
+    /// assert_eq(m.end(), 3)
+    /// ```
     fn end(self): usize {
         self.span_end
     }
 
     /// The matched text.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("\\d+").unwrap().find("order 66").unwrap()
+    /// assert_eq(m.as_str(), "66")
+    /// ```
     fn as_str(self): str {
         self.text.as_str()
     }
 
     /// The length of the match in bytes.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("b+").unwrap().find("abbc").unwrap()
+    /// assert_eq(m.len(), 2)
+    /// ```
     fn len(self): usize {
         self.span_end - self.span_start
     }
 
     /// Whether the match is empty.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let m = Regex.new("x*").unwrap().find("abc").unwrap()
+    /// assert(m.is_empty())
+    /// assert(!Regex.new("a").unwrap().find("a").unwrap().is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.span_end == self.span_start
     }
@@ -271,11 +417,25 @@ Match {
 
 Captures {
     /// The number of groups, including group 0 (the whole match).
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let caps = Regex.new("(\\w)(\\w)").unwrap().captures("ab").unwrap()
+    /// assert_eq(caps.len(), 3)
+    /// ```
     fn len(self): usize {
         self.spans.len()
     }
 
     /// Group `index`, or None when there is no such group or it did not take part in the match.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let caps = Regex.new("(a)(x)?").unwrap().captures("a").unwrap()
+    /// assert_eq(caps.get(1).unwrap().as_str(), "a")
+    /// assert(caps.get(2).is_none())
+    /// assert(caps.get(9).is_none())
+    /// ```
     fn get(self, index: usize): Option<Match> {
         if index < self.spans.len() {
             self.spans[index].clone()
@@ -285,6 +445,13 @@ Captures {
     }
 
     /// The group named `name`, or None when there is no such group or it did not take part.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let caps = Regex.new("(?P<key>\\w+)=").unwrap().captures("key=").unwrap()
+    /// assert_eq(caps.name("key").unwrap().as_str(), "key")
+    /// assert(caps.name("other").is_none())
+    /// ```
     fn name(self, key: str): Option<Match> {
         match name_index(self.names.as_slice(), key) {
             Some(index) => self.get(index),
@@ -294,6 +461,12 @@ Captures {
 
     /// `template` with its references replaced by the groups of this match (RX11). A reference is `$N`, `$name`,
     /// `${N}`, or `${name}`, and `$$` is a dollar sign. A reference to a missing or unset group is empty.
+    ///
+    /// ```
+    /// # use regex.{Regex}
+    /// let caps = Regex.new("(\\w)(\\w)").unwrap().captures("ab").unwrap()
+    /// assert_eq(caps.expand("$2$1").as_str(), "ba")
+    /// ```
     fn expand(self, template: str): String {
         let chars = template.to_char_list()
         let mut out = String.new()
@@ -344,7 +517,7 @@ Captures {
     }
 
     /// The text of the group a reference names by number or by name, empty when there is no such group.
-    fn reference(self, key: str): String {
+    priv fn reference(self, key: str): String {
         let index = if all_digits(key) {
             parse_index(key)
         } else {
@@ -361,7 +534,7 @@ Captures {
 }
 
 /// The span `start..end` of `text` as a match, or None when the group did not take part.
-fn span_of(text: str, start: Option<usize>, end: Option<usize>): Option<Match> {
+priv fn span_of(text: str, start: Option<usize>, end: Option<usize>): Option<Match> {
     match start {
         Some(s) => match end {
             Some(e) => Some(Match { span_start: s, span_end: e, text: text[s..e].to_string() }),
@@ -372,14 +545,14 @@ fn span_of(text: str, start: Option<usize>, end: Option<usize>): Option<Match> {
 }
 
 /// The match of group 0 in `slots`.
-fn whole_match(text: str, slots: [Option<usize>]): Match {
+priv fn whole_match(text: str, slots: [Option<usize>]): Match {
     let start = slots[0].unwrap()
     let end = slots[1].unwrap()
     Match { span_start: start, span_end: end, text: text[start..end].to_string() }
 }
 
 /// The number of the group named `name` in `names` (where `names[i]` is group `i`).
-fn name_index(names: [Option<String>], name: str): Option<usize> {
+priv fn name_index(names: [Option<String>], name: str): Option<usize> {
     let wanted = Some(name.to_string())
     let mut i: usize = 0
     while i < names.len() {
@@ -392,14 +565,14 @@ fn name_index(names: [Option<String>], name: str): Option<usize> {
 }
 
 /// The characters `Regex.escape` puts a backslash before (RX13).
-fn is_meta(c: char): bool {
+priv fn is_meta(c: char): bool {
     match c {
         '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~' => true,
         _ => false,
     }
 }
 
-fn all_digits(key: str): bool {
+priv fn all_digits(key: str): bool {
     if key.is_empty() {
         return false
     }
@@ -412,7 +585,7 @@ fn all_digits(key: str): bool {
 }
 
 /// The value of a string of decimal digits, or None when it is too large to be a group number.
-fn parse_index(key: str): Option<usize> {
+priv fn parse_index(key: str): Option<usize> {
     let mut value: usize = 0
     for c in key.chars() {
         match c.to_digit(10) {
@@ -429,7 +602,7 @@ fn parse_index(key: str): Option<usize> {
 }
 
 /// The text of the characters `from..to` of `chars`.
-fn slice_text(chars: [char], begin: usize, finish: usize): String {
+priv fn slice_text(chars: [char], begin: usize, finish: usize): String {
     let mut out = String.new()
     let mut i = begin
     while i < finish {

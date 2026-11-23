@@ -1,6 +1,6 @@
 // SHA-3 and SHAKE (FIPS 202), the Keccak-f[1600] sponge, in pure Burdin.
 
-const KECCAK_RC: [u64; 24] = [
+priv const KECCAK_RC: [u64; 24] = [
     0x0000000000000001,
     0x0000000000008082,
     0x800000000000808a,
@@ -27,7 +27,7 @@ const KECCAK_RC: [u64; 24] = [
     0x8000000080008008,
 ]
 
-const KECCAK_ROT: [u32; 24] = [
+priv const KECCAK_ROT: [u32; 24] = [
     1,
     3,
     6,
@@ -53,10 +53,10 @@ const KECCAK_ROT: [u32; 24] = [
     20,
     44,
 ]
-const KECCAK_PI: [usize; 24] = [10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1]
+priv const KECCAK_PI: [usize; 24] = [10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1]
 
 /// The Keccak-f[1600] permutation.
-fn keccak_f(mut state: [u64; 25]) {
+priv fn keccak_f(mut state: [u64; 25]) {
     let mut bc: [u64; 5] = [0; 5]
     let mut round: usize = 0
     while round < 24 {
@@ -104,6 +104,14 @@ fn keccak_f(mut state: [u64; 25]) {
 }
 
 /// An incremental SHA-3 hasher, or a SHAKE extendable-output function.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Sha3}
+/// let mut hasher = Sha3.new256()
+/// hasher.update("abc".as_bytes())
+/// assert_eq(hasher.finish().to_hex().as_str(), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+/// ```
 struct Sha3 {
     state: [u64; 25],
     buf: List<u8>,
@@ -113,51 +121,103 @@ struct Sha3 {
 }
 
 Sha3 {
-    fn with(rate: usize, out_len: usize, suffix: u8): Sha3 {
+    priv fn with(rate: usize, out_len: usize, suffix: u8): Sha3 {
         Sha3 { state: [0; 25], buf: List<u8>.new(), rate: rate, out_len: out_len, suffix: suffix }
     }
 
     /// SHA3-224 (28-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new224().output_len(), 28)
+    /// ```
     fn new224(): Sha3 {
         Sha3.with(144, 28, 0x06)
     }
 
     /// SHA3-256 (32-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new256().output_len(), 32)
+    /// ```
     fn new256(): Sha3 {
         Sha3.with(136, 32, 0x06)
     }
 
     /// SHA3-384 (48-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new384().output_len(), 48)
+    /// ```
     fn new384(): Sha3 {
         Sha3.with(104, 48, 0x06)
     }
 
     /// SHA3-512 (64-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new512().output_len(), 64)
+    /// ```
     fn new512(): Sha3 {
         Sha3.with(72, 64, 0x06)
     }
 
     /// SHAKE128 producing `out_len` bytes.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// let mut xof = Sha3.shake128(16)
+    /// xof.update("abc".as_bytes())
+    /// assert_eq(xof.finish().len(), 16)
+    /// ```
     fn shake128(out_len: usize): Sha3 {
         Sha3.with(168, out_len, 0x1f)
     }
 
     /// SHAKE256 producing `out_len` bytes.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// let mut xof = Sha3.shake256(40)
+    /// xof.update("abc".as_bytes())
+    /// assert_eq(xof.finish().len(), 40)
+    /// ```
     fn shake256(out_len: usize): Sha3 {
         Sha3.with(136, out_len, 0x1f)
     }
 
     /// The block size in bytes (the sponge rate).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new256().block_len(), 136)
+    /// ```
     fn block_len(self): usize {
         self.rate
     }
 
     /// The digest size in bytes.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// assert_eq(Sha3.new512().output_len(), 64)
+    /// ```
     fn output_len(self): usize {
         self.out_len
     }
 
-    fn absorb(mut self, block: [u8]) {
+    priv fn absorb(mut self, block: [u8]) {
         let mut i: usize = 0
         while i < self.rate / 8 {
             let mut word: u64 = 0
@@ -173,6 +233,15 @@ Sha3 {
     }
 
     /// Hashes more input.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// let mut hasher = Sha3.new256()
+    /// hasher.update("a".as_bytes())
+    /// hasher.update("bc".as_bytes())
+    /// assert_eq(hasher.finish().to_hex().as_str(), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+    /// ```
     fn update(mut self, data: [u8]) {
         let mut pos: usize = 0
         if self.buf.len() > 0 {
@@ -198,6 +267,13 @@ Sha3 {
     }
 
     /// Ends the hash and returns the digest. The hasher must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha3}
+    /// let mut hasher = Sha3.new256()
+    /// assert_eq(hasher.finish().to_hex().as_str(), "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+    /// ```
     fn finish(mut self): List<u8> {
         let mut last = self.buf.clone()
         let used = last.len()
@@ -225,6 +301,12 @@ Sha3 {
 }
 
 /// The SHA3-224 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha3_224}
+/// assert_eq(sha3_224("abc".as_bytes()).len(), 28)
+/// ```
 fn sha3_224(data: [u8]): List<u8> {
     let mut h = Sha3.new224()
     h.update(data)
@@ -232,6 +314,12 @@ fn sha3_224(data: [u8]): List<u8> {
 }
 
 /// The SHA3-256 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha3_256}
+/// assert_eq(sha3_256("abc".as_bytes()).to_hex().as_str(), "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+/// ```
 fn sha3_256(data: [u8]): List<u8> {
     let mut h = Sha3.new256()
     h.update(data)
@@ -239,6 +327,12 @@ fn sha3_256(data: [u8]): List<u8> {
 }
 
 /// The SHA3-384 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha3_384}
+/// assert_eq(sha3_384("abc".as_bytes()).len(), 48)
+/// ```
 fn sha3_384(data: [u8]): List<u8> {
     let mut h = Sha3.new384()
     h.update(data)
@@ -246,6 +340,12 @@ fn sha3_384(data: [u8]): List<u8> {
 }
 
 /// The SHA3-512 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha3_512}
+/// assert_eq(sha3_512("abc".as_bytes()).to_hex().as_str(), "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0")
+/// ```
 fn sha3_512(data: [u8]): List<u8> {
     let mut h = Sha3.new512()
     h.update(data)
@@ -253,6 +353,12 @@ fn sha3_512(data: [u8]): List<u8> {
 }
 
 /// `out_len` bytes of SHAKE128 output for `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{shake128}
+/// assert_eq(shake128("abc".as_bytes(), 16).len(), 16)
+/// ```
 fn shake128(data: [u8], out_len: usize): List<u8> {
     let mut h = Sha3.shake128(out_len)
     h.update(data)
@@ -260,6 +366,12 @@ fn shake128(data: [u8], out_len: usize): List<u8> {
 }
 
 /// `out_len` bytes of SHAKE256 output for `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{shake256}
+/// assert_eq(shake256("abc".as_bytes(), 40).len(), 40)
+/// ```
 fn shake256(data: [u8], out_len: usize): List<u8> {
     let mut h = Sha3.shake256(out_len)
     h.update(data)

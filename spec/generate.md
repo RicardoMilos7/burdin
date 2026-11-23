@@ -87,7 +87,7 @@ declares, as any two declarations do: E0007, reported at the block (GN6).
 ## GN6. Hygiene and spans
 
 Names in the generated text are not hygienic. They resolve in the module where the block stands, as the bodies of a
-user `derive` do (`spec/reflection.md`, RFL8; `HANDOFF.md` decision 24). A generated declaration can therefore name
+user `derive` do (`spec/reflection.md`, RFL8; `tests/README.md` decision 26). A generated declaration can therefore name
 a hand-written type, and a hand-written name can be shadowed only by an error, never silently.
 
 Every token of the generated text carries the span of the `comptime generate` keyword. So an error in a generated

@@ -20,6 +20,11 @@ use openssl.{OPENSSL_VERSION, OpenSSL_version}
 
 /// The TLS stack this build uses (spec/tls.md, TLS1): `SChannel` on Windows, and on the other platforms the text of the
 /// linked OpenSSL, such as `OpenSSL 3.0.13 30 Jan 2024`. With the `openssl` feature off it is `none`.
+///
+/// ```
+/// # use tls
+/// assert(tls.backend().len() > 0)
+/// ```
 fn backend(): String {
     comptime if target.os() == target.Os.Windows {
         "SChannel".to_string()

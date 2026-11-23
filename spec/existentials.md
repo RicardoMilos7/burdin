@@ -80,9 +80,10 @@ the vtable.
 
 ## AN4: `impl Interface` is a hidden generic parameter
 
-`impl I` is accepted only in a parameter list (E0201 anywhere else, including a return type, a local annotation, a
-field, a container element, a bound, or an `extern` signature). It is sugar for one hidden type parameter with the
-interface as its bound:
+`impl I` is accepted in a parameter list and as a return type (`fn make(): impl Shape`, which the caller sees through
+`Shape`; the compiler reports E0201 for a return type until #926 lands). It is E0201 anywhere else, including a local
+annotation, a field, a container element, a bound, or an `extern` signature. In a parameter it is sugar for one hidden
+type parameter with the interface as its bound:
 
 ```
 fn draw(shape: impl Shape)          // fn draw<T: Shape>(shape: T)
@@ -95,6 +96,23 @@ there is one copy of the body per concrete argument type. The parameter's conven
 call-site marker rules are unchanged. `impl I` does not require `I` to be object-safe, because no vtable is built.
 A call whose argument type does not implement `I` is E0141. Passing an `any I` where `impl I` is expected uses
 `T = any I` and is static in the parameter, dynamic in the calls the body makes through `T: I`.
+
+In a return type, `impl I` is one concrete type known at compile time, as the design document says
+(`fn make(): impl Shape`). The function's body determines that type, and the caller sees only the interface. Each
+`return` and the tail expression of the body must have the same concrete type (E0003 otherwise), and that type must
+implement `I` (E0141). A value of the return type:
+
+- calls the methods of `I` and of the interfaces `I` requires, which run the concrete type's own methods, statically
+  (a method of the concrete type that `I` does not name is E0002);
+- is passed where `I` or one of its requirements is required, including a type parameter bound by `I`;
+- is boxed as `any J` only when `J` is `I` or one of its requirements, and the box holds the concrete value;
+- cannot be named, and has none of the concrete type's own operators or built-in methods (`==`, `clone`); `{}` works
+  when `I` requires `Display`, through that requirement's method.
+
+A local cannot be annotated `impl I` (E0201). A function whose concrete type depends on itself, through a recursive
+call whose result decides its own return, has no concrete type to find (E0205). Each function with an `impl` return
+is given its concrete type before any body that calls it is checked, so a caller sees the same type the body
+returns, whatever the order of the functions in the file.
 
 ## AN5: Calling a method through `any`
 
@@ -164,8 +182,8 @@ adapter).
 `any I` cannot be used in an `extern "C"` signature (E0162), because it is not a C ABI value. It cannot be the target
 of an `impl` block or a `Drop` implementation, and it cannot be a bound (`T: any I` is E0200). It cannot be matched
 with a pattern: there is no pattern that names a boxed type; use `is`/`downcast` instead. It cannot be a type
-argument that makes a type second-class (it never does, since it is owned). `impl I` outside a parameter list is
-E0201, including a `self` type and a bound. `impl I` in an interface method's parameter list is an ordinary generic
+argument that makes a type second-class (it never does, since it is owned). `impl I` outside a parameter list and a
+return type is E0201, including a `self` type and a bound. `impl I` in an interface method's parameter list is an ordinary generic
 method, which makes that interface non-object-safe (AN2).
 
 ## AN11: The representation of a vtable
@@ -190,7 +208,7 @@ E0200-E0204 are reported at the type that names the interface, in every position
 | Situation | Code |
 | --- | --- |
 | `any X` where `X` is not an interface (a type, or a built-in bound such as `Copy`) | E0200 |
-| `impl I` outside a parameter list | E0201 |
+| `impl I` outside a parameter list or a return type | E0201 |
 | `any I` where `I` is not object-safe (AN2) | E0202 |
 | boxing a view, or downcasting to one (AN3, AN6) | E0120 |
 | `any Display`/`any Debug` of a built-in type the compiler formats directly (AN3) | E0204 |
@@ -207,7 +225,7 @@ The executable form is `tests/m15_any/`:
 | AN1, AN5, AN7 | `any_basics.bd`, `any_return_and_field.bd`, `heterogeneous_list.bd`, `containers.bd`, `drop_glue.bd` |
 | AN2, AN12 | `object_safety.bd`, `requires_methods.bd`, `any_default_method.bd` |
 | AN3 | `any_return_and_field.bd`, `heterogeneous_list.bd`, `box_view.bd` (E0120), `not_implementing.bd` (E0141), `builtin_display_box.bd` (E0204), `moved_into_box.bd` (E0100) |
-| AN4 | `impl_parameter.bd`, `impl_method.bd`, `impl_not_parameter.bd` (E0201) |
+| AN4 | `impl_parameter.bd`, `impl_method.bd`, `impl_not_parameter.bd` (E0201); the return-type run test is issue #926 |
 | AN5 | `any_basics.bd`, `generic_interface.bd`, `requires_methods.bd`, `any_default_method.bd`, `any_exclusivity.bd` (E0110/E0113), `unknown_any_method.bd` (E0002) |
 | AN6 | `downcast.bd`, `downcast_generic.bd`, `marker_interface.bd`, `not_implementing.bd` (E0141) |
 | AN8, AN9 | `display_any.bd`, `debug_any.bd`, `requires_methods.bd`, `not_interface.bd` (E0200) |

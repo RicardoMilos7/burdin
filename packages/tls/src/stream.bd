@@ -13,20 +13,30 @@ use errors.TlsError
 const NET_CHUNK: usize = 16640
 
 /// A TLS connection. One task uses it at a time. Dropping it sends a best-effort `close_notify` and closes the socket.
+///
+/// ```,no_run
+/// # use tls
+/// # use tls.{ClientConfig, TlsStream}
+/// let tcp = TcpStream.connect("localhost:8443").unwrap()
+/// let config = ClientConfig.new().unwrap()
+/// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+/// stream.send_all("GET / HTTP/1.0\r\n\r\n".to_utf8().as_slice()).unwrap()
+/// stream.close().unwrap()
+/// ```
 struct TlsStream {
-    tcp: TcpStream,
-    engine: Engine,
+    priv tcp: TcpStream,
+    priv engine: Engine,
     /// Bytes read from the socket, on their way into the engine.
-    inbuf: List<u8>,
+    priv inbuf: List<u8>,
     /// Bytes from the engine, on their way to the socket.
-    outbuf: List<u8>,
-    handshaken: bool,
+    priv outbuf: List<u8>,
+    priv handshaken: bool,
     /// The peer sent `close_notify`: reads return `Ok(0)`.
-    eof: bool,
+    priv eof: bool,
     /// `close` or `abort` ran: no `close_notify` is sent on drop, and every operation is `TlsError.Closed`.
-    closed: bool,
+    priv closed: bool,
     /// A fatal error ended the connection.
-    dead: bool,
+    priv dead: bool,
 }
 
 // The stream is one mutable state machine: it can move to another task, but two tasks cannot share it.
@@ -37,6 +47,14 @@ TlsStream {
     /// store and `server_name` against its names (an IP address is matched against its IP entries). A read timeout set
     /// on `tcp` beforehand applies to the handshake's waits and fails it with `TlsError.Io`. On any failure `tcp` is
     /// closed.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("example.test:443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let stream = TlsStream.connect(tcp, "example.test", config).unwrap()
+    /// ```
     fn connect(own tcp: TcpStream, server_name: str, config: ClientConfig): Result<TlsStream, TlsError> {
         let mut engine = Engine.new(unsafe { config.ctx }, false)?
         engine.set_server_name(server_name, !config.skip_verify)?
@@ -46,6 +64,19 @@ TlsStream {
     }
 
     /// Runs the server handshake over `tcp`.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{Certificate, PrivateKey, ServerConfig, TlsStream}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let listener = TcpListener.bind("127.0.0.1:8443").unwrap()
+    /// let (tcp, _peer) = listener.accept().unwrap()
+    /// let chain = Certificate.chain_from_pem(cert_pem).unwrap()
+    /// let key = PrivateKey.from_pem(key_pem).unwrap()
+    /// let config = ServerConfig.new(chain, key).unwrap()
+    /// let stream = TlsStream.accept(tcp, config).unwrap()
+    /// ```
     fn accept(own tcp: TcpStream, config: ServerConfig): Result<TlsStream, TlsError> {
         let engine = Engine.new(unsafe { config.ctx }, true)?
         let mut stream = TlsStream.__make(tcp, engine)
@@ -68,37 +99,110 @@ TlsStream {
 
     /// How long one socket read may wait; `None` waits forever. An expired wait is `TlsError.Io` with
     /// `IoErrorKind.TimedOut`, and the stream stays usable.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// stream.set_read_timeout(Some(Duration.from_secs(5)))
+    /// ```
     fn set_read_timeout(mut self, timeout: Option<Duration>) {
         self.tcp.set_read_timeout(timeout)
     }
 
     /// How long one socket write may wait for room.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// stream.set_write_timeout(Some(Duration.from_secs(5)))
+    /// ```
     fn set_write_timeout(mut self, timeout: Option<Duration>) {
         self.tcp.set_write_timeout(timeout)
     }
 
     /// The application protocol the server chose by ALPN. `None` when none was offered or chosen (a server of this
     /// package never chooses one: spec/tls.md, TLS8).
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let protocol = stream.alpn_protocol()
+    /// println("{:?}", protocol)
+    /// ```
     fn alpn_protocol(self): Option<String> {
         self.engine.alpn_protocol()
     }
 
     /// The negotiated protocol version, as `TLSv1.2` or `TLSv1.3`.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let version = stream.tls_version()
+    /// println("{}", version)
+    /// ```
     fn tls_version(self): String {
         self.engine.version()
     }
 
     /// The negotiated cipher suite.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let cipher = stream.cipher()
+    /// println("{}", cipher)
+    /// ```
     fn cipher(self): String {
         self.engine.cipher()
     }
 
     /// The peer's leaf certificate, if it sent one (a server always does; a client only when asked).
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let peer = stream.peer_certificate()
+    /// println("{:?}", peer.is_some())
+    /// ```
     fn peer_certificate(self): Option<Certificate> {
         self.engine.peer_certificate()
     }
 
     /// On a server, the name the client sent as SNI.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{Certificate, PrivateKey, ServerConfig, TlsStream}
+    /// # let cert_pem = "-----BEGIN CERTIFICATE-----\nMIIBczCCARigAwIBAgIBCDAKBggqhkjOPQQDAjAUMRIwEAYDVQQDDAlsb2NhbGhv\nc3QwIBcNMjUxMTIxMTYwMDQ1WhgPMjEyNjEwMjgxNjAwNDVaMBQxEjAQBgNVBAMM\nCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLNTRhI9deSqQkH/\nNiFLg+Fe/zaKJC7lI8UTOi2V68Uc3izmbXb5WUJ8AqS+A6igo5a2sQwa94QknXaZ\n83d2N1+jWTBXMAwGA1UdEwEB/wQCMAAwHQYDVR0OBBYEFOcIZAeKeTy0tqIDOlRa\nDO1kZAnzMCgGA1UdEQQhMB+CCWxvY2FsaG9zdIIMZXhhbXBsZS50ZXN0hwR/AAAB\nMAoGCCqGSM49BAMCA0kAMEYCIQDEfYToC6DvEmFBBk0+z914XNS5Vl0O/qrhwl5I\nOvX3UAIhAM64DLHDSAdQc1r4kNgrRuoIGxh+XzAM8JpUn60qQ4DQ\n-----END CERTIFICATE-----\n"
+    /// # let key_pem = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1tyNCLqQEA/R2tKM\n+KnOalrrIjLeUShT6y4KcwRTObehRANCAASzU0YSPXXkqkJB/zYhS4PhXv82iiQu\n5SPFEzotlevFHN4s5m12+VlCfAKkvgOooKOWtrEMGveEJJ12mfN3djdf\n-----END PRIVATE KEY-----\n"
+    /// let listener = TcpListener.bind("127.0.0.1:8443").unwrap()
+    /// let (tcp, _peer) = listener.accept().unwrap()
+    /// let chain = Certificate.chain_from_pem(cert_pem).unwrap()
+    /// let key = PrivateKey.from_pem(key_pem).unwrap()
+    /// let config = ServerConfig.new(chain, key).unwrap()
+    /// let stream = TlsStream.accept(tcp, config).unwrap()
+    /// let name = stream.server_name()
+    /// println("{:?}", name)
+    /// ```
     fn server_name(self): Option<String> {
         self.engine.server_name()
     }
@@ -106,6 +210,17 @@ TlsStream {
     /// Reads up to `max` decrypted bytes and appends them to `buf`. `Ok(0)` is the peer's `close_notify`, the clean end
     /// of the stream. A socket that ends without one is `TlsError.UnexpectedEof`: a connection cut by someone else
     /// must not look like an orderly end.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let mut buf: List<u8> = List<u8>.new()
+    /// let count = stream.recv(mut buf, 1024).unwrap()
+    /// println("{} bytes", count)
+    /// ```
     fn recv(mut self, mut buf: List<u8>, max: usize): Result<usize, TlsError> {
         if self.closed || self.dead {
             return Err(TlsError.Closed)
@@ -143,6 +258,16 @@ TlsStream {
     }
 
     /// Encrypts a prefix of `data` (at most one record) and sends it, and returns how many bytes it took.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// let sent = stream.send("hello".to_utf8().as_slice()).unwrap()
+    /// println("{} bytes sent", sent)
+    /// ```
     fn send(mut self, data: [u8]): Result<usize, TlsError> {
         if self.closed || self.dead {
             return Err(TlsError.Closed)
@@ -173,6 +298,15 @@ TlsStream {
     }
 
     /// Sends all of `data`.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// stream.send_all("hello".to_utf8().as_slice()).unwrap()
+    /// ```
     fn send_all(mut self, data: [u8]): Result<(), TlsError> {
         let mut done: usize = 0
         while done < data.len() {
@@ -184,6 +318,15 @@ TlsStream {
 
     /// Sends `close_notify` and flushes it. Afterwards every operation is `TlsError.Closed`; the socket closes when the
     /// stream is dropped.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// stream.close().unwrap()
+    /// ```
     fn close(mut self): Result<(), TlsError> {
         if self.closed {
             return Ok(())
@@ -214,6 +357,15 @@ TlsStream {
 
     /// Ends the connection without a `close_notify`, as a crash or an attacker would. The peer sees its stream end with
     /// `TlsError.UnexpectedEof`. It exists so a program (and this package's tests) can produce that case on purpose.
+    ///
+    /// ```,no_run
+    /// # use tls
+    /// # use tls.{ClientConfig, TlsStream}
+    /// let tcp = TcpStream.connect("localhost:8443").unwrap()
+    /// let config = ClientConfig.new().unwrap()
+    /// let mut stream = TlsStream.connect(tcp, "localhost", config).unwrap()
+    /// stream.abort()
+    /// ```
     fn abort(mut self) {
         self.closed = true
     }

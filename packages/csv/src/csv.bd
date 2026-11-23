@@ -19,26 +19,49 @@
 
 /// The CSV writer. Records are buffered one at a time (a header row needs every field name before it can be
 /// written), and a finished record is appended to `out`, which `take` and `finish` hand over.
+///
+/// ```
+/// # use csv
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let mut writer = csv.Writer.new()
+/// writer.write(Item { name: "Pen, blue".to_string(), qty: 3 }).unwrap()
+/// writer.write(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+/// assert_eq(writer.finish().as_str(), "name,qty\n\"Pen, blue\",3\nInk,12\n")
+/// ```
 struct Writer {
-    out: String,
-    delim: u8,
-    has_headers: bool,
-    crlf: bool,
+    priv out: String,
+    priv delim: u8,
+    priv has_headers: bool,
+    priv crlf: bool,
     // The header row, once written.
-    header: List<String>,
-    header_done: bool,
+    priv header: List<String>,
+    priv header_done: bool,
     // The number of fields of the first record; every record has the same.
-    width: usize,
+    priv width: usize,
     // 1 = a struct or map record, 2 = a sequence record, 3 = the payload of an `Option` or a unit variant. Only the
     // first frame is ever a record: nothing nests in CSV.
-    frames: List<i32>,
-    names: List<String>,
-    cells: List<String>,
-    pending: bool,
+    priv frames: List<i32>,
+    priv names: List<String>,
+    priv cells: List<String>,
+    priv pending: bool,
 }
 
 Writer {
     /// A writer with commas, a header row, and `\n` line endings.
+    ///
+    /// ```
+    /// # use csv
+    /// struct Item: Serialize {
+    ///     name: String,
+    ///     qty: u32,
+    /// }
+    /// let mut writer = csv.Writer.new()
+    /// writer.write(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+    /// assert_eq(writer.finish().as_str(), "name,qty\nInk,12\n")
+    /// ```
     fn new(): Writer {
         Writer {
             out: String.new(),
@@ -57,6 +80,16 @@ Writer {
 
     /// A writer with the given delimiter (an ASCII character other than a quote or a line break) and whether the
     /// first record of a struct or map writes a header row.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut writer = csv.Writer.with_options(';', false).unwrap()
+    /// let mut fields = List<String>.new()
+    /// fields.push("a,b".to_string())
+    /// fields.push("c".to_string())
+    /// writer.write_row(fields).unwrap()
+    /// assert_eq(writer.finish().as_str(), "a,b;c\n")
+    /// ```
     fn with_options(delimiter: char, has_headers: bool): Result<Writer, DeError> {
         let code = delimiter as u32
         if code >= 128 || code == 34 || code == 10 || code == 13 {
@@ -69,17 +102,48 @@ Writer {
     }
 
     /// Ends each record with `\r\n` instead of `\n`.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut writer = csv.Writer.new()
+    /// writer.use_crlf()
+    /// let mut fields = List<String>.new()
+    /// fields.push("a".to_string())
+    /// fields.push("b".to_string())
+    /// writer.write_row(fields).unwrap()
+    /// assert_eq(writer.finish().as_str(), "a,b\r\n")
+    /// ```
     fn use_crlf(mut self) {
         self.crlf = true
     }
 
     /// The text written so far, ending the writer.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut writer = csv.Writer.new()
+    /// let mut fields = List<String>.new()
+    /// fields.push("a".to_string())
+    /// writer.write_row(fields).unwrap()
+    /// let text = writer.finish()
+    /// assert_eq(text.as_str(), "a\n")
+    /// ```
     fn finish(own self): String {
         self.out
     }
 
     /// The text written since the last call, leaving the writer empty. A caller that writes a large table drains
     /// the output after each record instead of keeping it all.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut writer = csv.Writer.new()
+    /// let mut fields = List<String>.new()
+    /// fields.push("a".to_string())
+    /// writer.write_row(fields).unwrap()
+    /// assert_eq(writer.take().as_str(), "a\n")
+    /// assert_eq(writer.take().len(), 0)
+    /// ```
     fn take(mut self): String {
         let text = self.out.clone()
         self.out.clear()
@@ -87,6 +151,18 @@ Writer {
     }
 
     /// Writes one record. A failure leaves the output as it was: nothing of the record is written.
+    ///
+    /// ```
+    /// # use csv
+    /// struct Item: Serialize {
+    ///     name: String,
+    ///     qty: u32,
+    /// }
+    /// let mut writer = csv.Writer.new()
+    /// writer.write(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+    /// writer.write(Item { name: "Pen".to_string(), qty: 3 }).unwrap()
+    /// assert_eq(writer.finish().as_str(), "name,qty\nInk,12\nPen,3\n")
+    /// ```
     fn write<T: Serialize>(mut self, record: T): Result<(), DeError> {
         let result = record.serialize(mut self)
         match result {
@@ -106,6 +182,16 @@ Writer {
     }
 
     /// Writes one record of text fields, quoting what needs it. No header row is written for it.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut writer = csv.Writer.new()
+    /// let mut fields = List<String>.new()
+    /// fields.push("Pen, blue".to_string())
+    /// fields.push("3".to_string())
+    /// writer.write_row(fields).unwrap()
+    /// assert_eq(writer.finish().as_str(), "\"Pen, blue\",3\n")
+    /// ```
     fn write_row(mut self, fields: List<String>): Result<(), DeError> {
         self.reset_record()
         let mut i: usize = 0
@@ -406,14 +492,14 @@ Writer: Serializer {
 // ----- the reader ----------------------------------------------------------------------------------------------
 
 /// One field of the current record: its text, whether it was quoted, and the byte offset where it starts.
-struct Cell {
+priv struct Cell {
     text: String,
     quoted: bool,
     pos: usize,
 }
 
 /// One open enum in the reader. They nest (an `Option` payload may be an enum), so they are a stack.
-struct EnumFrame {
+priv struct EnumFrame {
     option: bool,
     none: bool,
     variant: String,
@@ -422,28 +508,48 @@ struct EnumFrame {
 
 /// The CSV reader: a copy of the input, the offset of the next unread record, and the record being read. The line
 /// and column of an error are computed from an offset when it is reported (SER10).
+///
+/// ```
+/// # use csv
+/// struct Item: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let mut reader = csv.Reader.new("name,qty\nInk,12\n")
+/// let item = reader.read<Item>().unwrap().unwrap()
+/// assert_eq(item.name.as_str(), "Ink")
+/// assert_eq(item.qty, 12)
+/// ```
 struct Reader {
-    text: String,
-    pos: usize,
+    priv text: String,
+    priv pos: usize,
     // Where the text starts, after a byte order mark.
-    start: usize,
-    delim: u8,
-    has_headers: bool,
-    headers: List<String>,
-    headers_done: bool,
+    priv start: usize,
+    priv delim: u8,
+    priv has_headers: bool,
+    priv headers: List<String>,
+    priv headers_done: bool,
     // The number of fields every record must have; 0 until the first record (or the header row) is read.
-    width: usize,
-    row: List<Cell>,
-    row_pos: usize,
-    col: usize,
+    priv width: usize,
+    priv row: List<Cell>,
+    priv row_pos: usize,
+    priv col: usize,
     // 0 = no record opened, 1 = a struct or map, 2 = a sequence.
-    depth: i32,
-    enums: List<EnumFrame>,
-    records: usize,
+    priv depth: i32,
+    priv enums: List<EnumFrame>,
+    priv records: usize,
 }
 
 Reader {
     /// A reader over `text`, with commas and a header row. The text is copied once.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut reader = csv.Reader.new("name,qty\nInk,12\nPen,3\n")
+    /// let row = reader.read_row().unwrap().unwrap()
+    /// assert_eq(row.len(), 2)
+    /// assert_eq(row[0].as_str(), "Ink")
+    /// ```
     fn new(text: str): Reader {
         let mut start: usize = 0
         let bytes = text.as_bytes()
@@ -470,6 +576,13 @@ Reader {
 
     /// A reader with the given delimiter (an ASCII character other than a quote or a line break) and whether the
     /// first record is a header row.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut reader = csv.Reader.with_options("name;qty\nInk;12\n", ';', true).unwrap()
+    /// let row = reader.read_row().unwrap().unwrap()
+    /// assert_eq(row[1].as_str(), "12")
+    /// ```
     fn with_options(text: str, delimiter: char, has_headers: bool): Result<Reader, DeError> {
         let code = delimiter as u32
         if code >= 128 || code == 34 || code == 10 || code == 13 {
@@ -483,6 +596,18 @@ Reader {
 
     /// Names the columns of a text that has no header row, so a struct can be read from it. Use it with
     /// `has_headers` false: no record is taken as the header.
+    ///
+    /// ```
+    /// # use csv
+    /// struct Item: Deserialize {
+    ///     name: String,
+    ///     qty: u32,
+    /// }
+    /// let mut reader = csv.Reader.with_options("Ink,12\n", ',', false).unwrap()
+    /// reader.set_headers(List<String>.from(["name".to_string(), "qty".to_string()]))
+    /// let item = reader.read<Item>().unwrap().unwrap()
+    /// assert_eq(item.qty, 12)
+    /// ```
     fn set_headers(mut self, own names: List<String>) {
         self.width = names.len()
         self.headers = names
@@ -490,12 +615,27 @@ Reader {
     }
 
     /// The header row, reading it if nothing has been read yet. Empty when the reader has no header row.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut reader = csv.Reader.new("name,qty\nInk,12\n")
+    /// let names = reader.headers().unwrap()
+    /// assert_eq(names.len(), 2)
+    /// assert_eq(names[1].as_str(), "qty")
+    /// ```
     fn headers(mut self): Result<List<String>, DeError> {
         self.ensure_headers()?
         Ok(self.headers.clone())
     }
 
     /// The next record as its text fields, or `None` at the end. The header row is not a record.
+    ///
+    /// ```
+    /// # use csv
+    /// let mut reader = csv.Reader.new("name,qty\nInk,12\n")
+    /// assert_eq(reader.read_row().unwrap().unwrap().len(), 2)
+    /// assert_eq(reader.read_row().unwrap().is_none(), true)
+    /// ```
     fn read_row(mut self): Result<Option<List<String>>, DeError> {
         self.ensure_headers()?
         if !self.next_record()? {
@@ -513,6 +653,21 @@ Reader {
 
     /// The next record as a `T`, or `None` at the end. An error names the record's line and column and carries the
     /// record's index, then the field, as its path.
+    ///
+    /// ```
+    /// # use csv
+    /// struct Item: Deserialize {
+    ///     name: String,
+    ///     qty: u32,
+    /// }
+    /// let mut reader = csv.Reader.new("name,qty\nInk,12\nPen,3\n")
+    /// let mut count = 0
+    /// while let Some(item) = reader.read<Item>().unwrap() {
+    ///     count = count + 1
+    ///     assert(item.qty > 0)
+    /// }
+    /// assert_eq(count, 2)
+    /// ```
     fn read<T: Deserialize>(mut self): Result<Option<T>, DeError> {
         self.ensure_headers()?
         if !self.next_record()? {
@@ -1048,6 +1203,16 @@ Reader: Deserializer {
 
 /// Writes `records` as CSV: a header row of the first record's field names (for a struct or map), then one line
 /// for each record. An empty list is empty text. An error carries the index of the record that failed.
+///
+/// ```
+/// # use csv
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let items = List<Item>.from([Item { name: "Ink".to_string(), qty: 12 }])
+/// assert_eq(csv.to_string(items).unwrap().as_str(), "name,qty\nInk,12\n")
+/// ```
 fn to_string<T: Serialize>(records: List<T>): Result<String, DeError> {
     let mut writer = Writer.new()
     __write_all(mut writer, records)?
@@ -1055,6 +1220,16 @@ fn to_string<T: Serialize>(records: List<T>): Result<String, DeError> {
 }
 
 /// Like `to_string`, with the delimiter and the header row chosen.
+///
+/// ```
+/// # use csv
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let items = List<Item>.from([Item { name: "Ink".to_string(), qty: 12 }])
+/// assert_eq(csv.to_string_with(items, ';', false).unwrap().as_str(), "Ink;12\n")
+/// ```
 fn to_string_with<T: Serialize>(records: List<T>, delimiter: char, has_headers: bool): Result<String, DeError> {
     let mut writer = Writer.with_options(delimiter, has_headers)?
     __write_all(mut writer, records)?
@@ -1062,12 +1237,33 @@ fn to_string_with<T: Serialize>(records: List<T>, delimiter: char, has_headers: 
 }
 
 /// Reads every record of `text` as a `T`. The first record is the header row.
+///
+/// ```
+/// # use csv
+/// struct Item: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let items: List<Item> = csv.from_str<Item>("name,qty\nInk,12\nPen,3\n").unwrap()
+/// assert_eq(items.len(), 2)
+/// assert_eq(items[1].qty, 3)
+/// ```
 fn from_str<T: Deserialize>(text: str): Result<List<T>, DeError> {
     let mut reader = Reader.new(text)
     __read_all(mut reader)
 }
 
 /// Like `from_str`, with the delimiter and the header row chosen.
+///
+/// ```
+/// # use csv
+/// struct Item: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let items: List<Item> = csv.from_str_with<Item>("name;qty\nInk;12\n", ';', true).unwrap()
+/// assert_eq(items[0].name.as_str(), "Ink")
+/// ```
 fn from_str_with<T: Deserialize>(text: str, delimiter: char, has_headers: bool): Result<List<T>, DeError> {
     let mut reader = Reader.with_options(text, delimiter, has_headers)?
     __read_all(mut reader)

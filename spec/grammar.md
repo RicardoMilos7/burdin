@@ -10,7 +10,7 @@ generic type aliases, impl blocks for specific type arguments, and associated ty
 `reflection.md`, `const-generics.md`, `type-aliases.md`, `impls.md`, and `associated-types.md`). It is derived from
 the conformance tests in `tests/`, so every construct
 below is used by at least one test, and every construct those tests use is here. Features deferred to later stage 1
-milestones (derive declarations, tasks) are reserved but not parsed.
+milestones (tasks) are reserved but not parsed.
 
 Notation: `"x"` is a token, `A B` a sequence, `A | B` a choice, `[A]` optional, `{A}` zero or more, `(A)` grouping.
 `NL` means a newline between two tokens (see Newlines).
@@ -31,11 +31,11 @@ and `/* ... */` (block comments do not nest).
 **Keywords** (reserved):
 
 ```
-any  as  break  comptime  const  continue  else  enum  error  extern  false  fn  for  if  impl  in  interface  let
-loop  match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
+any  as  break  comptime  const  continue  derive  else  enum  error  extern  false  fn  for  if  impl  in  interface
+let  loop  match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
-Reserved for stage 1, rejected as identifiers now: `derive`. No keyword is an identifier, except
+`derive` starts a user derive declaration (`DeriveItem`, `reflection.md`, RFL8). No keyword is an identifier, except
 immediately after a `.` in a member position, where it is a member name: that is how `.any(...)` reaches the
 `Iterator` default method declared as `any_item` (`iterators.md`, IT9), and why a member may be spelled `any` or
 `impl` now that both are keywords.
@@ -45,16 +45,17 @@ by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md),
 by a name and a parameter list; [`fuzz.md`](fuzz.md), FZ1),
 `requires` (after an interface name), `repr` (after a struct
 name), `from` (after an error variant's payload), `pub` (immediately before `use`), `select` (an expression start,
-followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), and `Fn`/`FnMut`/`FnOnce` (a
-closure type when followed by `(`). The attribute names of a test item (`ignore`, `timeout`, `should_panic`,
-`should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
+followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), `blocking` (before `fn`
+or `unsafe fn` inside an `extern "C" { ... }` block, `io.md` IO4; before a `fn` anywhere else it is reported as
+E0290), and `Fn`/`FnMut`/`FnOnce` (a closure type when followed by `(`). The attribute names of a test item (`ignore`,
+`timeout`, `should_panic`, `should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
 unknown name with E0170 ([`test-runner.md`](test-runner.md)). A bench item takes no attributes in this stage, so
 anything after its name is a syntax error.
 
 **Integer literals**: decimal `123`, hex `0xFF`, octal `0o17`, binary `0b1010`, with `_` allowed between digits. No suffixes;
-the type comes from context, or from the other operand when the literal is on the left of a binary operator, and
-defaults to `i32` otherwise. A leading `-` is the unary operator, not part of the literal. `/` and `%` truncate toward
-zero; see `stage0-subset.md` for the rest of the numeric behavior.
+the type comes from context, or from the other operand of a binary operator (on either side: `1 + b` and `b + 1` both
+take `b`'s type), and defaults to `i32` otherwise. A leading `-` is the unary operator, not part of the literal. `/` and
+`%` truncate toward zero; see `stage0-subset.md` for the rest of the numeric behavior.
 
 **Float literals**: digits `.` digits with an optional exponent (`2.5`, `3.99`, `1.0e3`), and digits with an exponent (`1e3`).
 A `.` must be followed by a digit to make a float, so `0..3` is `0`, `..`, `3`, and `t.0.1` is `t`, `.`, `0`, `.`, `1`:
@@ -117,9 +118,9 @@ FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" 
 FnItem        = FnSig Block ;
 
 (* `fn Type.name(self, ...)`: an extension method. The receiver is the type path before the last dot, including
-   the type parameters it declares (`List<T>`); `<...>` after the method name declares method-level parameters.
-   `spec/extensions.md`, EX1. *)
-ExtensionItem = [ "unsafe" ] "fn" TypePath "." IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
+   the type parameters it declares (`List<T>`), or a slice type (`fn [T].first(self)`, `fn [[T]].concat(self)`);
+   `<...>` after the method name declares method-level parameters. `spec/extensions.md`, EX1. *)
+ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 ParamList     = Param { "," Param } [ "," ] ;
 Param         = SelfParam | [ "comptime" ] [ Convention ] IDENT ":" Type [ "=" Expr ] ;
                                                         (* `comptime` takes a compile-time value: comptime.md, CT4 *)
@@ -260,7 +261,9 @@ rules are in
 Type          = TypePath
               | Projection                              (* an associated type, stage 1 (`associated-types.md`, AT3) *)
               | "any" TypePath                          (* stage 1, milestone 15 *)
-              | "impl" TypePath                         (* stage 1, milestone 15; only in a parameter list *)
+              | "impl" TypePath                         (* stage 1, milestone 15; in a parameter list or a return type, and
+                                                          nowhere else (existentials.md, AN4; the compiler still rejects a
+                                                          return type until #926 lands) *)
               | ClosureType                             (* stage 1, milestone 12 *)
               | "(" ")"                                 (* unit *)
               | "(" Type "," [ Type { "," Type } [ "," ] ] ")"   (* tuple of two or more, or one with a trailing comma *)
@@ -302,9 +305,10 @@ view return, and every `requires` interface object-safe (E0202; AN2). `I` may be
 arguments (`any Store<i32>`); `any` applied to a type, a type parameter, or a built-in bound such as `Copy` is E0200,
 and boxing a primitive's compiler-provided `Display`/`Debug` implementation is E0204 (AN12).
 
-`impl I` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden type parameter with
-`I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static, and `I` need not be object-safe
-(AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
+`impl I` is accepted in a parameter list and as a return type (E0201 anywhere else). In a parameter list it is sugar
+for one hidden type parameter with `I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static,
+and `I` need not be object-safe. As a return type it is one concrete type that the body determines; callers see only
+`I` (AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
 `is`/`downcast` instead (AN10).
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
@@ -429,8 +433,9 @@ required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are 
 A range in an index (`s[a..b]`) is a slice view: on `str` and `String` both ends must be character boundaries, or
 the slice panics (`spec/stdlib.md`, "Slicing and character boundaries").
 
-Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), and a method or associated
-function with type parameters of its own (`arguments.md`, TA1). The `<` starts a type list when one parses and its
+Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), a method or associated
+function with type parameters of its own (`arguments.md`, TA1), and the `collect` of an iterator, `it.collect<Set<i32>>()`
+(`iterators.md`, IT17). The `<` starts a type list when one parses and its
 closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without the uppercase-name requirement;
 otherwise it is a comparison. A list on a callee that takes no type arguments is E0003 (`arguments.md`, TA5).
 
@@ -473,7 +478,8 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    read-only parameter are passed plainly. Receivers of `mut self` methods are borrowed mutably implicitly
    (`c.bump()`); a `mut` marker in receiver position is a syntax error. A missing marker for a `mut` parameter is
    E0114; a `mut` marker on an argument whose parameter is not `mut` (including `own`) is E0115.
-5. **Closures** (`|x| ...`) are not parsed in stage 0; a leading `|` in expression position is a syntax error (E0001).
+5. **Closures** (`|x| ...`) are primary expressions (§6, `ClosureExpr`). At the start of an expression `||` is the
+   empty parameter list, so `|| 0` is a closure with no parameters.
 6. **An item that starts with an identifier** is an impl block. The parser decides between `Type: Interface {` and
    `Type {` by the token after the type.
 7. **`else` after `let`** (`let Some(v) = e else { ... }`) is only valid when the pattern is refutable, and the block must diverge

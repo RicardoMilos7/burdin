@@ -1,0 +1,28 @@
+//@ run
+//> 100000
+//> 99999
+//> sum 4999950000
+//> evens 50000 first 0 last 99998
+//> any true all false
+//> find Some(7)
+
+// map, filter, collect, fold, count, any, all, and find over 100000 items: results are the sequential ones, and
+// `collect` and `find` follow source order (spec/parallel.md, PR2).
+
+fn main() {
+    let mut xs = List<i64>.new()
+    let mut i: i64 = 0
+    while i < 100000 {
+        xs.push(i)
+        i = i + 1
+    }
+    println("{}", xs.par_iter().count())
+    println("{}", xs.par_iter().map(|x| *x).reduce(|| 0, |a, b| if a > b { a } else { b }))
+    let zero: i64 = 0
+    let total = xs.par_iter().fold(zero, |sum, x| sum + *x, |a, b| a + b)
+    println("sum {}", total)
+    let evens = xs.par_iter().filter(|x| **x % 2 == 0).map(|x| *x).collect()
+    println("evens {} first {} last {}", evens.len(), evens[0], evens[evens.len() - 1])
+    println("any {} all {}", xs.par_iter().any_item(|x| *x == 77777), xs.par_iter().all(|x| *x < 99999))
+    println("find {:?}", xs.par_iter().map(|x| *x).find(|x| *x % 7 == 0 && *x > 0))
+}

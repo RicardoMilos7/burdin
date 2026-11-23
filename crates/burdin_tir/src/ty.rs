@@ -190,22 +190,34 @@ pub struct FnSend {
     pub ok: bool,
     /// When not, which capture is to blame and why, for the diagnostic.
     pub why: Option<Rc<str>>,
+    /// Every capture is `Sync`, so a closure of kind `Fn` may be shared by several tasks (SH4). Only an `Fn` closure
+    /// is ever `Sync`: the type's kind decides that, this says whether the captures allow it.
+    pub sync_ok: bool,
+    /// When not, which capture is to blame and why.
+    pub sync_why: Option<Rc<str>>,
 }
 
 impl FnSend {
     /// A closure with nothing to block it: a function used as a value, or one whose captures are all `Send`.
     pub fn yes() -> FnSend {
-        FnSend { ok: true, why: None }
+        FnSend { ok: true, why: None, sync_ok: true, sync_why: None }
     }
 
     /// A closure whose captures are not known: a closure type written as an annotation or a bound.
     pub fn unknown() -> FnSend {
-        FnSend { ok: false, why: None }
+        FnSend { ok: false, why: None, sync_ok: false, sync_why: None }
+    }
+
+    /// The same closure with its `Sync` answer: `None` when every capture is `Sync`, else the reason one is not.
+    pub fn with_sync(mut self, why: Option<String>) -> FnSend {
+        self.sync_ok = why.is_none();
+        self.sync_why = why.map(Into::into);
+        self
     }
 
     /// A closure that captures something that is not `Send`.
     pub fn no(why: String) -> FnSend {
-        FnSend { ok: false, why: Some(why.into()) }
+        FnSend { ok: false, why: Some(why.into()), sync_ok: true, sync_why: None }
     }
 }
 
