@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #934: the eager `List` methods (`xs.map`, `xs.filter`, `xs.fold`, `xs.any`, `xs.all`, `xs.find`) and the lazy
+  `Iterator` methods of the same names are both kept, and each is documented with a pointer to the other. The
+  decision and the table that tells them apart are in `spec/iterators.md` (IT10): the eager form builds a list at
+  once and takes views, the lazy form is an adapter and takes items, and only the eager `filter` and `find` need
+  `Clone`. `to_list()` gives the eager result of a lazy chain, and `xs.iter()` gives the lazy chain of a list. The
+  doc comments in `std/src/iter.bd` and the List section of `spec/stdlib.md` carry the same pointers. Tests:
+  `tests/m13_iterators/eager_lazy_same_items`, `lazy_no_clone_plain`, `eager_filter_needs_clone`, and
+  `eager_find_needs_clone`.
 - Issue #938: every public item of the standard library has a doc comment and at least one example, and every
   example is built and run with its doc-test attributes. `tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25):
   it fails on an undocumented item, an item with no example outside `tests/std_docs/no_example.txt` (now empty), an

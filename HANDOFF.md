@@ -4,6 +4,16 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Eager and lazy methods with the same names (issue #934, 2026-11-23).** The decision was to keep both forms and
+document them, not to rename one. `xs.map`, `filter`, `fold`, `any`, `all`, and `find` on a `List` stay eager (they
+build a list or a value at once, take views, and `filter`/`find` clone); `Iterator`'s methods of the same names stay
+lazy. No behavior changed. What changed is the documentation: `spec/iterators.md` IT10 has the table that tells the
+two apart, IT9 points to it, `spec/stdlib.md` (List) and `std/src/iter.bd` point each form to the other (the way to get
+an eager result from a chain is `to_list()` or `collect()`, the way to get a lazy chain from a list is `xs.iter()`).
+Tests: `tests/m13_iterators/eager_lazy_same_items` and `lazy_no_clone_plain` (run), and `eager_filter_needs_clone` and
+`eager_find_needs_clone` (E0141, the eager `Clone` requirement). Not tested: the allocation of the eager and lazy forms
+beyond what the specification says; a lazy chain allocates nothing, which only a checking-allocator test could show.
+
 **Parallel iteration (issue #971, 2026-11-23).** `std.parallel` (`std/src/parallel.bd`, `spec/parallel.md`, PR1-PR12)
 adds Rayon-style pipelines on the scheduler's own workers: sources `par_iter`, `par_iter_mut`, `par_into_iter`, and
 `par_range`; adapters `map`, `filter`, `filter_map`, `enumerate`, `take`, `skip`; consumers `for_each`, `count`, `fold`,
