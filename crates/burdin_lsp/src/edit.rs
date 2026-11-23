@@ -4,9 +4,10 @@
 use crate::index::{FileIndex, Item, KEYWORDS, Kind, Tk, Tok};
 use crate::json::Json;
 use crate::nav::{Resolver, SymKind, base_type};
+use crate::official::OfficialIndex;
 use crate::project::{Loc, Package};
 use crate::server::{Reply, ReqError, Server};
-use crate::text::LineIndex;
+use crate::text::{Encoding, LineIndex, position_json};
 use burdin_query::{Analysis, DefinitionKind};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -316,6 +317,47 @@ impl Completions {
             return;
         }
         self.add(&item.name, completion_kind(item.kind), &item.detail, item.docs.as_deref(), group);
+    }
+
+    /// An item of an official package offered by its qualified name (`http.Client`), filtered by its own name, with
+    /// the edit that imports the package when the file does not (`spec/lsp.md`, LS12). `edit` is `None` when the
+    /// package's graph already holds it, so the qualified name compiles as written.
+    fn qualified(&mut self, package: &str, item: &Item, edit: Option<Json>, group: u8) {
+        let label = format!("{package}.{}", item.name);
+        // A bare name already offered (an import, a local, or the file's own item) needs no qualified duplicate.
+        if self.seen.iter().any(|seen| seen == &item.name || seen == &label) {
+            return;
+        }
+        self.seen.push(label.clone());
+        let kind = completion_kind(item.kind);
+        let mut json = Json::obj()
+            .with("label", label.as_str())
+            .with("filterText", item.name.as_str())
+            .with("kind", kind)
+            .with("detail", item.detail.as_str())
+            .with("sortText", format!("{group}{label}"));
+        if let Some(docs) = &item.docs {
+            json.set("documentation", Json::obj().with("kind", "markdown").with("value", docs.as_str()));
+        }
+        if self.calls
+            && matches!(kind, 2 | 3)
+            && let Some(parameters) = has_parameters(&item.detail)
+        {
+            json.set("insertTextFormat", 2);
+            if parameters {
+                json.set("insertText", format!("{label}($0)"));
+                json.set(
+                    "command",
+                    Json::obj().with("title", "Signature help").with("command", "editor.action.triggerParameterHints"),
+                );
+            } else {
+                json.set("insertText", format!("{label}()$0"));
+            }
+        }
+        if let Some(edit) = edit {
+            json.set("additionalTextEdits", Json::Arr(vec![edit]));
+        }
+        self.items.push(json);
     }
 
     /// Snippet items; without the client's support, nothing (the keywords are added as plain words).
@@ -715,6 +757,48 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
     }
 }
 
+/// Where an auto-imported official package's `use` is inserted (`spec/lsp.md`, LS12): after the file's last `use`, or
+/// at its top, with a blank line after, when it has none.
+struct ImportPlace {
+    offset: u32,
+    blank_after: bool,
+}
+
+/// The `use <package>` an accepted official-package completion inserts, and whether the client applies it.
+struct Imports {
+    encoding: Encoding,
+    supported: bool,
+    place: ImportPlace,
+    text: String,
+}
+
+impl Imports {
+    fn edit(&self, package: &str) -> Json {
+        let index = LineIndex::new(&self.text, self.encoding);
+        let (line, character) = index.position(self.place.offset);
+        let at = position_json(line, character);
+        let new_text = if self.place.blank_after { format!("use {package}\n\n") } else { format!("use {package}\n") };
+        Json::obj().with("range", Json::obj().with("start", at.clone()).with("end", at)).with("newText", new_text)
+    }
+}
+
+/// After the last `use` declaration's line, or at the start of a file with none. A `use` spans more than one line
+/// only for a `.{...}` list, whose `}` ends it; a trailing comment stays on its own line.
+fn import_place(text: &str, ix: &FileIndex) -> ImportPlace {
+    match ix.uses.iter().map(|u| u.span.1).max() {
+        Some(mut offset) => {
+            while (offset as usize) < text.len() && text.as_bytes()[offset as usize] != b'\n' {
+                offset += 1;
+            }
+            if (offset as usize) < text.len() {
+                offset += 1;
+            }
+            ImportPlace { offset, blank_after: false }
+        }
+        None => ImportPlace { offset: 0, blank_after: true },
+    }
+}
+
 pub fn completion(server: &mut Server, params: &Json) -> Reply {
     let (i, path) = server.document(params, false)?;
     server.analyzed(i)?;
@@ -730,8 +814,15 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
     }
     let paren_follows = text.as_bytes().get(end) == Some(&b'(');
     let snippets = server.caps.snippets;
+    let official = server.official();
+    let encoding = server.encoding;
+    let additional_edits = server.caps.additional_edits;
     let mut r = Resolver::new(&mut server.packages[i]);
     let ix = r.index(&path).unwrap_or_default();
+    let prefix = &text[start..offset as usize];
+    let imports =
+        Imports { encoding, supported: additional_edits, place: import_place(&text, &ix), text: text.clone() };
+    let site = Site { path: &path, ix: &ix, offset, prefix, imports: &imports };
     let context = context(&text, &ix, start);
     let calls = snippets && !paren_follows && !matches!(context, Context::Use);
     let mut out = Completions { items: Vec::new(), seen: Vec::new(), snippets, calls };
@@ -740,7 +831,9 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
             let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
             use_completions(&mut r, &path, text[line_start..start].trim_start(), &mut out);
         }
-        Context::Member(dot) => member_completions(&mut r, &path, &ix, &text, dot, &mut out),
+        Context::Member(dot) => {
+            member_completions(&mut r, &official, &path, &ix, &text, dot, &mut out);
+        }
         Context::Parameter { first, method } => {
             if first && method {
                 for (label, what) in [
@@ -757,21 +850,27 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         }
         Context::Derives => derive_completions(&mut r, &path, &ix, &mut out),
         Context::NewName => {}
-        Context::Type => scope_completions(&mut r, &path, &ix, offset, Scope::Types, &mut out),
-        Context::Bound => scope_completions(&mut r, &path, &ix, offset, Scope::Interfaces, &mut out),
+        Context::Type => {
+            scope_completions(&mut r, &official, &site, Scope::Types, &mut out);
+        }
+        Context::Bound => {
+            scope_completions(&mut r, &official, &site, Scope::Interfaces, &mut out);
+        }
         Context::Item => {
             out.snippets(ITEM_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
+            scope_completions(&mut r, &official, &site, Scope::Values, &mut out);
         }
         Context::MethodItem => {
             out.snippets(METHOD_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
+            scope_completions(&mut r, &official, &site, Scope::Values, &mut out);
         }
         Context::Statement => {
             out.snippets(STATEMENT_SNIPPETS);
-            scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out);
+            scope_completions(&mut r, &official, &site, Scope::Values, &mut out);
         }
-        Context::Expression => scope_completions(&mut r, &path, &ix, offset, Scope::Values, &mut out),
+        Context::Expression => {
+            scope_completions(&mut r, &official, &site, Scope::Values, &mut out);
+        }
     }
     let mut items = out.items;
     items.sort_by(|a, b| a.get("sortText").as_str().cmp(&b.get("sortText").as_str()));
@@ -821,8 +920,17 @@ fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
     }
 }
 
-/// After `x.`: a module's items, a type's variants and associated functions, or a value's fields and methods.
-fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, dot: u32, out: &mut Completions) {
+/// After `x.`: a module's items, a type's variants and associated functions, or a value's fields and methods. An
+/// official package is a module even before anything imports it: the index (`official.rs`) answers for it.
+fn member_completions(
+    r: &mut Resolver,
+    official: &OfficialIndex,
+    path: &str,
+    ix: &FileIndex,
+    text: &str,
+    dot: u32,
+    out: &mut Completions,
+) {
     let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return };
     let receiver = ix.tokens[ti].clone();
     // A name after a `.` is a member of the value before it, so it is never a local, a module, or a type.
@@ -838,7 +946,24 @@ fn member_completions(r: &mut Resolver, path: &str, ix: &FileIndex, text: &str, 
                 .is_some_and(|x| matches!(x.kind, DefinitionKind::Local | DefinitionKind::Parameter))
         });
         if !is_value {
-            if let Some(file) = module_file_named(r, path, ix, name)
+            let file = module_file_named(r, path, ix, name);
+            // An official package's root is not in the graph until something imports it; the index holds the API
+            // either way, `pub use` re-exports included. A local module or a path or git dependency of the same name
+            // resolves to another file and wins.
+            if let Some(api) = official.get(name)
+                && file.as_deref().is_none_or(|file| official.is_root(name, file))
+            {
+                for module in &api.modules {
+                    out.add(module, 9, &format!("module {name}.{module}"), None, 0);
+                }
+                for item in &api.items {
+                    if item.kind != Kind::Method {
+                        out.item(item, 0);
+                    }
+                }
+                return;
+            }
+            if let Some(file) = file
                 && let Some(mix) = r.index(&file)
             {
                 let foreign = r.p.package_of(&file) != r.p.package_of(path);
@@ -1144,6 +1269,11 @@ fn module_file_named(r: &mut Resolver, path: &str, ix: &FileIndex, name: &str) -
             return Some(f);
         }
     }
+    // A dependency is a path root by its name whether or not this file wrote a `use` for it: the package's graph
+    // already has it, and `json.from_str` compiles in a file with no `use json` (`spec/lsp.md`, LS12).
+    if let Some(f) = r.p.module_file(package, &[name.to_string()]) {
+        return Some(f);
+    }
     crate::nav::std_module(r.p, package, name)
 }
 
@@ -1167,9 +1297,22 @@ impl Scope {
     }
 }
 
+/// One completion request's place: the file, the cursor, the word being typed, and the `use` an official-package
+/// item inserts.
+#[derive(Clone, Copy)]
+struct Site<'a> {
+    path: &'a str,
+    ix: &'a FileIndex,
+    offset: u32,
+    prefix: &'a str,
+    imports: &'a Imports,
+}
+
 /// A plain name: the locals in scope, the file's items, what its `use` declarations import, the prelude, the
-/// built-ins, and the keywords, narrowed to what `scope` admits.
-fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, scope: Scope, out: &mut Completions) {
+/// built-ins, the keywords, and the official packages' items by their qualified name while a name is being typed,
+/// narrowed to what `scope` admits.
+fn scope_completions(r: &mut Resolver, official: &OfficialIndex, site: &Site<'_>, scope: Scope, out: &mut Completions) {
+    let Site { path, ix, offset, prefix, imports } = *site;
     if scope == Scope::Types {
         // A generic parameter of the function around the cursor is a type.
         for (name, _) in ix.generic_params(offset) {
@@ -1270,6 +1413,61 @@ fn scope_completions(r: &mut Resolver, path: &str, ix: &FileIndex, offset: u32, 
         for word in KEYWORDS {
             out.add(word, 14, "keyword", None, 5);
         }
+    }
+    if let Some(current) = r.p.package_of(path) {
+        official_completions(r.p, official, imports, current, prefix, scope, out);
+    }
+}
+
+/// The official packages' items by their qualified name (`http.Client`) while a name is being typed: the whole
+/// standard-library surface without loading a package the file does not use (`spec/lsp.md`, LS12). A local module or
+/// another dependency of the same name shadows the official package, and a package that is not in the graph is
+/// offered only when the client applies the `use` that loads it.
+fn official_completions(
+    p: &Package,
+    official: &OfficialIndex,
+    imports: &Imports,
+    current: usize,
+    prefix: &str,
+    scope: Scope,
+    out: &mut Completions,
+) {
+    if prefix.is_empty() {
+        return;
+    }
+    for (package, api) in official.packages() {
+        if shadows(p, official, current, package) {
+            continue;
+        }
+        let loaded = p.module_file(current, &[package.to_string()]).is_some();
+        if !loaded && !imports.supported {
+            continue;
+        }
+        let edit = (!loaded && imports.supported).then(|| imports.edit(package));
+        for item in &api.items {
+            if !scope.admits(item.kind) || !item.name.starts_with(prefix) {
+                continue;
+            }
+            if out.seen.iter().any(|seen| seen == &item.name) {
+                continue;
+            }
+            out.qualified(package, item, edit.clone(), 6);
+        }
+    }
+}
+
+/// Whether the package itself, a local module, or a path or git dependency of the same name shadows the official
+/// package `name` (`spec/packages.md`, PKG15).
+fn shadows(p: &Package, official: &OfficialIndex, current: usize, name: &str) -> bool {
+    if p.packages.get(current).is_some_and(|package| package.name == name) {
+        return true;
+    }
+    if p.modules.iter().any(|m| m.package == current && m.module.len() == 1 && m.module[0] == name) {
+        return true;
+    }
+    match p.module_file(current, &[name.to_string()]) {
+        Some(file) => !official.is_root(name, &file),
+        None => false,
     }
 }
 

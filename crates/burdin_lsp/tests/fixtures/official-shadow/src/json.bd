@@ -1,0 +1,4 @@
+/// The package's own module: it shadows the official package of the same name.
+fn local_only(): i32 {
+    1
+}

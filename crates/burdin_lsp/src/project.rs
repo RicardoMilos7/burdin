@@ -72,7 +72,9 @@ impl Package {
     /// Loads a package directory or a single file. `texts` are the open documents, by path, which replace the text
     /// on disk.
     pub fn load(root: &Path, texts: &HashMap<String, String>) -> Result<Package, String> {
-        let workspace = package::load_for_tests(root)?;
+        // The open documents are the texts an editor shows, so the loader finds the official packages they import
+        // even before the file is saved (`spec/packages.md`, PKG15).
+        let workspace = package::load_for_tests_with_texts(root, texts)?;
         let mut overrides: HashMap<PathBuf, String> = HashMap::new();
         for p in &workspace.packages {
             for m in &p.modules {
@@ -139,6 +141,33 @@ impl Package {
         if self.has_file(path) && self.db.set_file(path, text) {
             self.dirty = true;
             return true;
+        }
+        false
+    }
+
+    /// Whether a current text of a package in the database imports an official package the database's layout does
+    /// not have. A database opens with a fixed package set, so the server reloads when this is true: a new `use json`
+    /// in an open file must load `json` (`spec/packages.md`, PKG15). A dependency's open file counts too.
+    pub fn missing_official_import(&self) -> bool {
+        for (index, package) in self.packages.iter().enumerate().filter(|(_, p)| !p.embedded) {
+            let mut wanted = std::collections::BTreeSet::new();
+            let mut local = std::collections::BTreeSet::new();
+            for module in self.modules.iter().filter(|m| m.package == index) {
+                if let Some(first) = module.module.first() {
+                    local.insert(first.as_str());
+                }
+                if let Some(text) = self.db.file_text(&module.path) {
+                    wanted.extend(package::official_uses(text));
+                }
+            }
+            let missing = wanted.into_iter().any(|name| {
+                name != package.name
+                    && !local.contains(name.as_str())
+                    && !package.deps.iter().any(|(dep, _)| dep == &name)
+            });
+            if missing {
+                return true;
+            }
         }
         false
     }
@@ -256,6 +285,19 @@ impl Package {
                     if !out.iter().any(|(p, _)| *p == path) {
                         out.push((path, m.path.clone()));
                     }
+                }
+            }
+            // An official package is available to `use` without a manifest entry, so completion offers every one
+            // that is not already loaded and does not collide with a module of this package (PKG15).
+            let package_name = self.packages[from].name.clone();
+            let deps = self.packages[from].deps.clone();
+            for name in package::official_names() {
+                let taken = name == package_name
+                    || deps.iter().any(|(dep, _)| dep == &name)
+                    || self.modules.iter().any(|m| m.package == from && m.module.first() == Some(&name))
+                    || out.iter().any(|(path, _)| path.len() == 1 && path[0] == name);
+                if !taken {
+                    out.push((vec![name], String::new()));
                 }
             }
         }

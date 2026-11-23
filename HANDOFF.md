@@ -14,11 +14,17 @@ the lockfile lists the implicit dependency. Manifest declarations are gone: `jso
 REPL reopens its database when a new `use` names an official package; `burdin fmt` groups such an import with the
 dependencies. Generated modules are not on disk at load time, so a generated module cannot bring an official package
 in on its own; a hand-written file of the package that imports it loads it for all its modules (PKG18 keeps the help
-line for that). Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module shadowing, unknown
-non-official name, the refused declarations), `tests/check_repl.py`, and the loader's unit tests. Verified:
+line for that). The LSP threads open documents through the loader's scan, so an unsaved `use json` counts; it reopens
+a package when an edit adds an official import, and `use` completion offers every official package. It also indexes
+every official package's public API (`crates/burdin_lsp/src/official.rs`): `json.` lists its items and re-exported
+modules before anything imports it, and typing `Client` offers `http.Client` with an `additionalTextEdits` entry that
+inserts `use http` when the package is not in the graph; a local module or a path or git dependency of the same name
+shadows the official package. Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module
+shadowing, unknown non-official name, the refused declarations), `tests/check_repl.py`, and the loader's and language
+server's unit tests. Verified:
 `cargo test --workspace`, clippy and fmt clean, the full conformance suite (1258 passed, 0 failed, 7 skipped; the
-`LIBRARY_PATH` OpenSSL symlinks this VM needs), and `check_packages`, `check_repl`, `check_scripts`, `check_fmt`,
-`check_json`, `check_toml`, `check_docs`, `check_unit_tests`, `check_ci`, `check_e9000`, `check_features`,
+`LIBRARY_PATH` OpenSSL symlinks this VM needs), and `check_lsp`, `check_packages`, `check_repl`, `check_scripts`,
+`check_fmt`, `check_json`, `check_toml`, `check_docs`, `check_unit_tests`, `check_ci`, `check_e9000`, `check_features`,
 `check_workspace`, and `check_package_tools`.
 
 **Compound assignment (issue #277, 2026-11-22).** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the

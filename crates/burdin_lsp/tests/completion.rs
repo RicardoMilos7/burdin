@@ -7,11 +7,15 @@ mod common;
 use burdin_lsp::json::Json;
 use common::*;
 
-/// The default capabilities with `snippetSupport` on.
+/// The default capabilities with `snippetSupport` on; the additional-edit support they already declare is kept.
 fn snippet_caps() -> Json {
     let mut caps = default_caps();
     let mut text_document = caps.get("textDocument").clone();
-    text_document.set("completion", Json::obj().with("completionItem", Json::obj().with("snippetSupport", true)));
+    let mut completion = text_document.get("completion").clone();
+    let mut completion_item = completion.get("completionItem").clone();
+    completion_item.set("snippetSupport", true);
+    completion.set("completionItem", completion_item);
+    text_document.set("completion", completion);
     caps.set("textDocument", text_document);
     caps
 }
@@ -367,6 +371,82 @@ fn self_and_bounded_parameters_complete_in_an_interface_impl() {
 /// Completion narrows to what the position takes (issue #849; LS12): a type where a type is written, an interface
 /// where a bound or an impl's interface list is written, and every name where a value is. The derive list after a
 /// struct's name offers only derives.
+/// A dependency completes after `.` even in a file with no `use` for it: the package's graph already has it
+/// (`spec/lsp.md`, LS12).
+#[test]
+fn a_dependency_completes_without_a_use_in_the_file() {
+    let root = fixture("incomplete");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    let _ = client.diagnostics(&uri, |_| true);
+    // Dropping the `use json` keeps json in the package's graph: the database loaded it when the file was opened.
+    let edited = format!("{}\nfn __probe() {{\n    let _ = json.;\n}}\n", text.replacen("use json", "", 1));
+    client.change(&uri, 2, &edited);
+    let params = client.at(&uri, &edited, "json.;", 0, "json.".len());
+    let items = client.call("textDocument/completion", params).get("items").as_array().to_vec();
+    let labels: Vec<String> = items.iter().map(|i| i.get("label").as_str().unwrap().to_string()).collect();
+    assert!(labels.iter().any(|label| label == "from_str"), "{labels:?}");
+    assert_eq!(client.shutdown(), 0);
+}
+
+/// `use` offers the official packages, which a program reaches with no manifest entry (`spec/packages.md`, PKG15).
+#[test]
+fn a_use_offers_every_official_package() {
+    let mut s = open(false);
+    let edited = format!("use \n{}", s.text);
+    s.edit(&edited);
+    let labels = labels(&s.complete("use \n", "use ".len()));
+    for name in ["json", "toml", "csv", "yaml", "xml", "http", "regex", "crypto", "math", "tls"] {
+        assert!(labels.iter().any(|label| label == name), "`use` does not offer `{name}`: {labels:?}");
+    }
+}
+
+/// The official packages are indexed (`spec/lsp.md`, LS12; `spec/packages.md`, PKG15): `json.` lists its API even
+/// when nothing in the package imports json, and a bare `Client` offers `http.Client` with the `use http` that makes
+/// it compile.
+#[test]
+fn official_packages_complete_before_any_file_imports_them() {
+    let mut s = open(false);
+    let edited = s.text.replace("    println(", "    let _ = json.;\n    println(");
+    s.edit(&edited);
+    let members = s.complete("json.;", "json.".len());
+    for name in ["from_str", "to_string", "to_string_pretty"] {
+        assert!(has(&members, name), "{name}: {:?}", labels(&members));
+    }
+    assert!(!has(&members, "Client"), "another package's item: {:?}", labels(&members));
+
+    let edited = s.text.replace("    println(", "    Cl\n    println(");
+    s.edit(&edited);
+    let items = s.complete("    Cl\n", 6);
+    let client = item(&items, "http.Client");
+    assert_eq!(client.get("filterText").as_str(), Some("Client"));
+    assert_eq!(client.get("kind").as_i64(), Some(22));
+    assert!(client.get("insertText").is_null(), "a type is not called");
+    let edits = client.get("additionalTextEdits").as_array();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].get("newText").as_str(), Some("use http\n"));
+    let start = edits[0].at(&["range", "start"]);
+    assert_eq!((start.get("line").as_i64(), start.get("character").as_i64()), (Some(1), Some(0)));
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// A local module of an official package's name shadows it (`spec/packages.md`, PKG15): `json.` is the package's own
+/// module, not the official one.
+#[test]
+fn a_local_module_shadows_an_official_package() {
+    let root = fixture("official-shadow");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    let edited = text.replace("json.local_only()", "json.");
+    client.change(&uri, 2, &edited);
+    let params = client.at(&uri, &edited, "json.", 0, "json.".len());
+    let items = client.call("textDocument/completion", params).get("items").as_array().to_vec();
+    let labels = labels(&items);
+    assert!(labels.iter().any(|label| label == "local_only"), "{labels:?}");
+    assert!(!labels.iter().any(|label| label == "from_str"), "the official json leaked in: {labels:?}");
+    assert_eq!(client.shutdown(), 0);
+}
+
 #[test]
 fn completion_offers_only_what_the_position_takes() {
     let in_main = |line: &'static str| move |t: &str| t.replace("    let mut p", &format!("{line}\n    let mut p"));

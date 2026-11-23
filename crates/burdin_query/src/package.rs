@@ -100,7 +100,7 @@ impl FeatureRequest {
 /// The entry package's dev-dependencies are loaded for every other mode (PKG26), and `request` selects its features
 /// (PKG29). The features of a one-file target are not selectable: a request other than the default is an error.
 pub fn load_selected(target: &Path, mode: EntryMode, request: &FeatureRequest) -> Result<Workspace, String> {
-    load_impl(target, mode.wants_main(), mode != EntryMode::Build, request)
+    load_impl(target, mode.wants_main(), mode != EntryMode::Build, request, &HashMap::new())
 }
 
 /// Loads the target: a `.bd` file, or a directory containing `burdin.toml`. A package directory must have a
@@ -217,6 +217,13 @@ pub fn load_for_tests(target: &Path) -> Result<Workspace, String> {
     load_selected(target, EntryMode::Test, &FeatureRequest::default())
 }
 
+/// [`load_for_tests`] with the text of files that are open in an editor (`texts`, by the path a diagnostic shows).
+/// The official packages a package imports are found in that text, not in the copy on disk, so a `use json` that has
+/// not been saved yet still loads `json` (`spec/packages.md`, PKG15).
+pub fn load_for_tests_with_texts(target: &Path, texts: &HashMap<String, String>) -> Result<Workspace, String> {
+    load_impl(target, false, true, &FeatureRequest::default(), texts)
+}
+
 /// Loads the packages `dirs` as the build's roots, for a command that selects members of a workspace
 /// (`spec/workspaces.md`, WS6-WS11). The first is the entry package. A dependency that two roots reach is one package,
 /// and the lockfile is the workspace's (WS14). `dirs` are canonical package directories. Every member is a root, so
@@ -319,13 +326,20 @@ fn read_lock(dir: &Path) -> Result<Option<Lockfile>, String> {
     if dir.join(workspace::MANIFEST).is_file() { lockfile::read(dir) } else { Ok(None) }
 }
 
-fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureRequest) -> Result<Workspace, String> {
+fn load_impl(
+    target: &Path,
+    require_entry: bool,
+    dev: bool,
+    request: &FeatureRequest,
+    texts: &HashMap<String, String>,
+) -> Result<Workspace, String> {
     if target.is_dir() {
         let dir = target.canonicalize().map_err(|e| format!("cannot open {}: {e}", target.display()))?;
         // The lockfile of the workspace the package belongs to (or its own, standalone) says which commit each git
         // dependency builds with, anywhere in the graph (WS14).
         let lock = read_lock(&workspace::lock_dir(&dir)?)?;
         let mut loader = Loader::new(lock);
+        loader.texts = texts.clone();
         let root = loader.add_root(&dir)?;
         loader.activate(root, dev, request)?;
         let packages = loader.into_packages(None)?;
@@ -574,9 +588,15 @@ pub fn official_names() -> Vec<String> {
 /// The scan reads every `.bd` file under `dir/src` and keeps the first name of each `use` declaration (`use json`,
 /// `use json.{Value}`, `pub use json as j`) that names an official package, is not already declared (`deps`,
 /// `dev_deps`, and their target tables), is not the package itself, and is not one of the package's own top-level
-/// modules. The result is sorted. Generated modules are not on disk when a package is loaded, so a package that only
-/// generated code imports must declare it (`spec/packages.md`, PKG18).
+/// modules. The result is sorted. A module a build script or `comptime generate` produced is not on disk when the
+/// package is loaded, so it cannot bring one in on its own (PKG18).
 pub fn implicit_official_deps(dir: &Path, manifest: &Manifest) -> Vec<String> {
+    implicit_official_deps_with(dir, manifest, &HashMap::new())
+}
+
+/// [`implicit_official_deps`] with the text of files an editor has open, which replaces the copy on disk: the LSP
+/// must see a `use json` that has not been saved (`spec/lsp.md`).
+fn implicit_official_deps_with(dir: &Path, manifest: &Manifest, texts: &HashMap<String, String>) -> Vec<String> {
     let official = official_names();
     if official.is_empty() {
         return Vec::new();
@@ -588,7 +608,13 @@ pub fn implicit_official_deps(dir: &Path, manifest: &Manifest) -> Vec<String> {
     let mut files = Vec::new();
     collect_source_files(&src, &mut files);
     for file in files {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let text = match texts.get(&source_path_text(&file)) {
+            Some(text) => text.clone(),
+            None => match std::fs::read_to_string(&file) {
+                Ok(text) => text,
+                Err(_) => continue,
+            },
+        };
         // Most files name none of the official packages; only lex those that might.
         if official.iter().any(|name| text.contains(name.as_str())) {
             used.extend(used_package_names(&text));
@@ -670,9 +696,10 @@ fn official_dependency(name: String) -> Dependency {
     }
 }
 
-/// Adds the official packages `manifest` imports to its dependencies before the graph is activated.
-fn add_implicit_official_deps(manifest: &mut Manifest, dir: &Path) {
-    for name in implicit_official_deps(dir, manifest) {
+/// Adds the official packages `manifest` imports to its dependencies before the graph is activated. `texts` are the
+/// open documents, which replace the files on disk for the scan.
+fn add_implicit_official_deps(manifest: &mut Manifest, dir: &Path, texts: &HashMap<String, String>) {
+    for name in implicit_official_deps_with(dir, manifest, texts) {
         manifest.deps.push(official_dependency(name));
     }
 }
@@ -759,18 +786,21 @@ struct Loader {
     names: HashMap<String, PathBuf>,
     /// The entry package's `burdin.lock`, which pins every git dependency to a commit.
     lock: Option<Lockfile>,
+    /// The text of files open in an editor, by path, which replaces the text on disk when the official packages a
+    /// package imports are found (`spec/packages.md`, PKG15). Empty for a build, which reads the files.
+    texts: HashMap<String, String>,
 }
 
 impl Loader {
     fn new(lock: Option<Lockfile>) -> Loader {
-        Loader { nodes: Vec::new(), by_dir: HashMap::new(), names: HashMap::new(), lock }
+        Loader { nodes: Vec::new(), by_dir: HashMap::new(), names: HashMap::new(), lock, texts: HashMap::new() }
     }
 
     /// Adds the entry package in `dir` (canonical), read from its `burdin.toml`.
     fn add_root(&mut self, dir: &Path) -> Result<usize, String> {
         let manifest_path = dir.join("burdin.toml");
         let mut manifest = parse_manifest(&manifest_path)?;
-        add_implicit_official_deps(&mut manifest, dir);
+        add_implicit_official_deps(&mut manifest, dir, &self.texts);
         self.add_node(dir.to_path_buf(), manifest_path, manifest)
     }
 
@@ -802,7 +832,7 @@ impl Loader {
         }
         let manifest_path = dir.join("burdin.toml");
         let mut manifest = parse_manifest(&manifest_path)?;
-        add_implicit_official_deps(&mut manifest, &dir);
+        add_implicit_official_deps(&mut manifest, &dir, &self.texts);
         self.add_node(dir, manifest_path, manifest)
     }
 
@@ -2285,7 +2315,7 @@ mod tests {
         fs::create_dir_all(temp.0.join("src")).unwrap();
         fs::write(temp.0.join("src").join("lib.bd"), "fn nothing() {}\n").unwrap();
         let dir = temp.0.canonicalize().unwrap();
-        let Err(error) = load_impl(&dir, true, false, &FeatureRequest::default()) else {
+        let Err(error) = load_impl(&dir, true, false, &FeatureRequest::default(), &HashMap::new()) else {
             panic!("a package without `src/main.bd` must not load");
         };
         let expected = source_path_text(&dir.join("src/main.bd"));

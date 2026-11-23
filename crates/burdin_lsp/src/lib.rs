@@ -12,6 +12,7 @@
 //! server         the loop, lifecycle, documents, folders, configuration, cancellation, progress
 //! diagnostics    the compiler's and the linter's diagnostics, published as files change
 //! nav            definition, references, rename, implementation, call and type hierarchies
+//! official       the official packages' public API, for completion before anything imports them
 //! edit           hover, completion, signature help, inlay hints, semantic tokens, formatting
 //! outline        document and workspace symbols, folding, selection ranges, document links
 //! actions        code actions, code lenses, and the test commands
@@ -23,6 +24,7 @@ mod diagnostics;
 mod edit;
 mod index;
 mod nav;
+mod official;
 mod outline;
 mod project;
 mod server;
