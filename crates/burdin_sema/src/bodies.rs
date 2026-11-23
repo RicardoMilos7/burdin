@@ -93,6 +93,8 @@ impl Sema<'_> {
         self.fn_items.iter().for_each(|item| item.name.hash(&mut h));
         self.globals.structs.iter().for_each(|s| s.name.hash(&mut h));
         self.globals.enums.iter().for_each(|e| e.name.hash(&mut h));
+        // A body that calls an `impl Interface` function depends on the concrete type it returns.
+        self.globals.opaques.iter().for_each(|o| format!("{:?}", o.concrete).hash(&mut h));
         h.finish_fp()
     }
 

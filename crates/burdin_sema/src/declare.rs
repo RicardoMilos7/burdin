@@ -162,12 +162,12 @@ impl<'t> Sema<'t> {
                 self.globals.struct_refs.push(adt(id));
                 self.globals.struct_pkg.push(package);
                 self.globals.adt_priv.insert((false, id), is_priv);
-                self.src.structs.push(crate::session::AdtSrcEntry {
+                self.src.structs.push(Some(crate::session::AdtSrcEntry {
                     decl: s,
                     subst: Vec::new(),
                     bounds: Vec::new(),
                     module,
-                });
+                }));
             }
             ast::Item::Enum(e) if generics.is_empty() => {
                 let id = self.globals.enums.len();

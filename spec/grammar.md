@@ -305,9 +305,10 @@ view return, and every `requires` interface object-safe (E0202; AN2). `I` may be
 arguments (`any Store<i32>`); `any` applied to a type, a type parameter, or a built-in bound such as `Copy` is E0200,
 and boxing a primitive's compiler-provided `Display`/`Debug` implementation is E0204 (AN12).
 
-`impl I` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden type parameter with
-`I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static, and `I` need not be object-safe
-(AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
+`impl I` is accepted in a parameter list and as a return type (E0201 anywhere else). In a parameter list it is sugar
+for one hidden type parameter with `I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static,
+and `I` need not be object-safe. As a return type it is one concrete type that the body determines; callers see only
+`I` (AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
 `is`/`downcast` instead (AN10).
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary

@@ -26,7 +26,8 @@ impl Sema<'_> {
         // requests were allocated; resolve it before the signatures that use it (`spec/extensions.md`).
         self.refresh_extensions(diags);
         for id in 0..self.globals.structs.len() {
-            let entry = &self.src.structs[id];
+            // An `impl Interface` wrapper has no declaration: its field is set when its concrete type is known.
+            let Some(entry) = &self.src.structs[id] else { continue };
             let module = entry.module;
             let fields = entry
                 .decl
@@ -132,6 +133,7 @@ impl Sema<'_> {
                     module,
                     &self.globals,
                     false,
+                    false,
                     diags,
                 );
                 // A default argument is a call-site convenience of one concrete function; an interface's
@@ -157,6 +159,7 @@ impl Sema<'_> {
             }
         }
         for (i, item) in self.fn_items.iter().enumerate() {
+            let opaque = crate::opaque::impl_return(item.decl);
             let mut sig = fn_signature(
                 item.decl,
                 item.self_ty.as_ref(),
@@ -165,8 +168,20 @@ impl Sema<'_> {
                 item.module,
                 &self.globals,
                 item.is_exported,
+                opaque.is_some(),
                 diags,
             );
+            if let Some(ty) = opaque {
+                sig.ret = crate::opaque::return_type(
+                    &mut self.globals,
+                    &mut self.src.structs,
+                    i,
+                    ty,
+                    &item.subst,
+                    item.module,
+                    diags,
+                );
+            }
             if self.globals.from_methods.contains(&tir::FuncId(i))
                 && let Some(p) = sig.params.first_mut()
             {
@@ -361,6 +376,8 @@ pub(crate) fn fn_signature(
     module: usize,
     globals: &Globals,
     is_exported: bool,
+    // The return type is `impl Interface`, which the caller fills in (`crate::opaque`).
+    opaque_ret: bool,
     diags: &mut Diagnostics,
 ) -> Signature {
     // An exported function is checked against the C ABI by `check_export_signatures`, which rejects `...`.
@@ -450,11 +467,11 @@ pub(crate) fn fn_signature(
             }
         }
     }
-    let ret = f
-        .ret
-        .as_ref()
-        .map(|t| globals.resolve_type_bounded(t, self_ty, subst, bounds, module, diags))
-        .unwrap_or(Ty::Unit);
+    let ret = match f.ret.as_ref() {
+        Some(_) if opaque_ret => Ty::Unit,
+        Some(t) => globals.resolve_type_bounded(t, self_ty, subst, bounds, module, diags),
+        None => Ty::Unit,
+    };
     Signature { params, ret, has_self, ret_origins: Vec::new() }
 }
 

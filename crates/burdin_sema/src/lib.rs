@@ -37,6 +37,7 @@ mod imports;
 mod instances;
 mod iterators;
 mod markers;
+mod opaque;
 mod prelude;
 mod resolve;
 mod serial;

@@ -17,6 +17,7 @@ mod generic;
 mod item;
 mod iterate;
 mod literals;
+mod opaque;
 mod operators;
 mod pattern;
 mod reflect;
@@ -24,7 +25,7 @@ mod serial;
 mod stmt;
 mod suggest;
 
-pub(crate) use item::{check_const, check_defaults, check_function};
+pub(crate) use item::{check_const, check_defaults, check_function, infer_return};
 pub(crate) use reflect::RESERVED_MEMBERS;
 
 use crate::builtins::builtin_type;
@@ -131,6 +132,10 @@ struct FnCx<'a> {
     /// The variables of the `comptime for` loops over `Type.fields` and `Type.variants` that are being unrolled, and
     /// the item each one stands for (`spec/reflection.md`, RFL4).
     reflect: reflect::ReflectBindings,
+    /// The body is checked to find the concrete type of an `impl Interface` return (`crate::opaque`): the result
+    /// type is not declared, and the types of `return` values are collected in `returned`.
+    infer_returns: bool,
+    returned: Vec<Ty>,
 }
 
 /// What a path in expression position can name before its last segment: a type, or a generic type whose
@@ -188,6 +193,8 @@ impl<'a> FnCx<'a> {
             comptime_known: Vec::new(),
             comptime_loop_barrier: None,
             reflect: HashMap::new(),
+            infer_returns: false,
+            returned: Vec::new(),
         }
     }
 
@@ -486,7 +493,11 @@ impl<'a> FnCx<'a> {
 
     /// Reports E0003 unless `e` has type `want` (or a type that converts to nothing at run time, like `!`).
     fn expect_ty(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
-        if !compatible(&e.ty, want) && !self.param_meets_fn(&e.ty, want) {
+        if !compatible(&e.ty, want)
+            && !self.param_meets_fn(&e.ty, want)
+            && !self.globals.opaque_unresolved(want)
+            && !self.globals.opaque_unresolved(&e.ty)
+        {
             self.report_mismatch(e.span, want, &e.ty);
         }
         e
@@ -540,6 +551,14 @@ impl<'a> FnCx<'a> {
         let Ty::Any(any) = want else { return e };
         if matches!(e.ty, Ty::Error | Ty::Never) {
             return e;
+        }
+        // An `impl Interface` value is boxed through its concrete value, when the interface is one it names.
+        let mut e = e;
+        if self.globals.opaque_of(&e.ty).is_some() {
+            e = match self.open_opaque_for_any(e, any) {
+                Ok(inner) => inner,
+                Err(typed) => return *typed,
+            };
         }
         if let Ty::Any(have) = &e.ty {
             if have == any {

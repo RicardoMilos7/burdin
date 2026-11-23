@@ -15,12 +15,20 @@ Rect: Shape {
     }
 }
 
-fn make(): impl Shape { //~ E0201
-    Rect { w: 1, h: 2 }
+// `impl I` is valid in a parameter list and as a return type (AN4); its return-type run test is in issue #926.
+// These positions stay E0201: a field, a bound, a local annotation, and a container element.
+
+struct Holder {
+    shape: impl Shape //~ E0201
+}
+
+fn bound<T: impl Shape>(x: T) { //~ E0201
+    let _ = x
 }
 
 fn main() {
     let local: impl Shape = Rect { w: 1, h: 1 } //~ E0201
-    let _ = make()
+    let element: Option<impl Shape> = None //~ E0201
     let _ = local
+    let _ = element
 }

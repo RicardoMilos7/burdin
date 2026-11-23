@@ -1,0 +1,18 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Blob {
+    n: i32
+}
+
+// `Blob` does not implement `Shape`, so the return type cannot promise it.
+fn make(): impl Shape { //~ E0141
+    Blob { n: 1 }
+}
+
+fn main() {
+    let _ = make()
+}

@@ -1,0 +1,60 @@
+//@ run
+//> 6
+//> 6
+//> 16
+//> 6
+//> 6
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+struct Sq {
+    s: i32
+}
+
+Sq: Shape {
+    fn area(self): i32 {
+        self.s * self.s
+    }
+}
+
+fn make(): impl Shape {
+    Rect { w: 2, h: 3 }
+}
+
+fn make_sq(n: i32): impl Shape {
+    if n > 0 {
+        return Sq { s: n }
+    }
+    Sq { s: 1 }
+}
+
+fn total(s: impl Shape): i32 {
+    s.area()
+}
+
+fn chain(): impl Shape {
+    make()
+}
+
+fn main() {
+    let s = make()
+    println("{s.area()}")
+    println("{total(make())}")
+    println("{make_sq(4).area()}")
+    println("{chain().area()}")
+    let b: any Shape = make()
+    println("{b.area()}")
+}

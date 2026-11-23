@@ -1113,7 +1113,7 @@ fn main() {
 **How to fix:** name an interface after `any` or `impl`, or use the type directly if no dynamic dispatch is wanted.
 A stored boxed value is `any Interface`; a parameter that accepts any implementation statically is `impl Interface`.
 
-## E0201: `impl Interface` outside a parameter list
+## E0201: `impl Interface` outside a parameter list or a return type
 
 `impl Interface` is sugar for one hidden generic parameter with that interface as its bound, so it needs a call site
 to infer the concrete type from. A local annotation, a field, a container element, a bound, or an `extern` signature has
@@ -1136,9 +1136,9 @@ fn main() {
 ```
 <!-- /error-example -->
 
-**How to fix:** write `impl Interface` only in a parameter list (`fn draw(shape: impl Shape)`). For a value that is
-stored, returned, or put in a field and still needs dynamic dispatch, use `any Interface`; otherwise name the
-concrete type.
+**How to fix:** write `impl Interface` in a parameter list (`fn draw(shape: impl Shape)`) or as a return type
+(`fn make(): impl Shape`). For a value that is stored in a local, a field, or a container and still needs dynamic
+dispatch, use `any Interface`; otherwise name the concrete type.
 
 ## E0202: An interface that cannot be used as `any`
 
@@ -1181,6 +1181,45 @@ fn main() {
 
 **How to fix:** format the value directly (`println("{}", 3)`), or wrap it in a user type that implements the
 interface with a method and box that. `any Interface` needs a callable implementation for every vtable slot.
+
+## E0205: The concrete type of an `impl` return cannot be found
+
+A function declared `-> impl Interface` returns one concrete type, which the compiler finds from its body. The type
+cannot be found when the body's returns depend on the function itself, as a recursive call's result does, or when
+the body never returns a value. Nothing fixes the type then.
+
+<!-- error-example: E0205 -->
+```burdin
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w
+    }
+}
+
+fn rec(n: i32): impl Shape { //~ E0205
+    if n == 0 {
+        return Rect { w: 1 }
+    }
+    rec(n - 1)
+}
+
+fn main() {
+    println("{rec(2).area()}")
+}
+```
+<!-- /error-example -->
+
+**How to fix:** return a concrete value on every path that the recursive call can reach, so the type is one the body
+names directly, or make the function return a named type (`struct`), or box the value with `any Interface` when the
+callers only need the interface.
 
 ## E0210: Invalid error declaration
 

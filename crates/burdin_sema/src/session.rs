@@ -94,7 +94,8 @@ pub(crate) struct AdtSrcEntry<'t, T> {
 /// The declaration behind every struct and enum, with what its type parameters stand for.
 #[derive(Default)]
 pub(crate) struct AdtSrc<'t> {
-    pub(crate) structs: Vec<AdtSrcEntry<'t, ast::StructDecl>>,
+    /// `None` for the wrapper struct of an `impl Interface` return (`crate::opaque`), which has no declaration.
+    pub(crate) structs: Vec<Option<AdtSrcEntry<'t, ast::StructDecl>>>,
     pub(crate) enums: Vec<AdtSrcEntry<'t, ast::EnumDecl>>,
 }
 
@@ -312,6 +313,8 @@ impl<'t> Sema<'t> {
                 }
             }
             body_diags = Diagnostics::default();
+            // The concrete types of `impl Interface` returns come first: a body that calls one is checked against it.
+            self.resolve_opaque_returns(&mut body_diags);
             let checked = self.check_bodies(&mut body_diags, cache)?;
             // Impl signatures and requirements may substitute generic instances, so they run inside the loop:
             // what they request is allocated by the drain below and checked again on the next pass.
