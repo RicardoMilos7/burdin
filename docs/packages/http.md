@@ -94,7 +94,12 @@ Every public item and public method, in source order. Names are shown as `burdin
 | `http.Request.body_bytes` | `fn body_bytes(own self, data: [u8]): Request` | Sets the body to a copy of `data`. |
 | `http.Request.body_text` | `fn body_text(own self, text: str): Request` | Sets the body to the UTF-8 bytes of `text`. |
 | `http.Request.to_wire_head` | `fn to_wire_head(self, user_agent: str, close: bool): String` | The request head as it goes on the wire (HC6): the request line, `Host` (unless the caller set one), the caller's fields in order, `User-Agent` (unless the caller set one), `Content-Length` when ... |
+| `http.ResponseHead` | `struct ResponseHead: Clone, Debug` | A parsed status line and header block. |
+| `http.find_head_end` | `fn find_head_end(buffer: List<u8>): Option<usize>` | The offset just after the first blank line (`CRLF CRLF`) of `buffer`, which is where the body starts, or `None` when the head is not complete yet. |
+| `http.parse_response_head` | `fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError>` | Reads a response head (HC7): `HTTP/1.0` or `HTTP/1.1`, a three-digit status, an optional reason, and header fields that each end in CRLF. |
 | `http.Framing` | `enum Framing: Copy, Clone, Eq, Debug` | How the end of a response body is known (HC8). |
+| `http.framing_of` | `fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError>` | The framing of the response to a request with `method`, from its status and headers (RFC 9112, 6.3): no body for `HEAD`, `1xx`, `204`, and `304`; `chunked` when `Transfer-Encoding` ends in it; ... |
+| `http.keeps_alive` | `fn keeps_alive(minor: u8, headers: Headers): bool` | Whether the connection may carry another request after this response (HC16): the response has no `Connection: close`, and an `HTTP/1.0` response asked for `keep-alive`. |
 | `http.BodyReader` | `struct BodyReader<R>` | Decodes a response body from `source` according to its framing (HC8 to HC10). |
 | `http.BodyReader.new` | `fn new(own source: R, framing: Framing, own leftover: List<u8>): BodyReader<R>` | A reader over `source`. |
 | `http.BodyReader.is_complete` | `fn is_complete(self): bool` | Whether the whole body has been read. |

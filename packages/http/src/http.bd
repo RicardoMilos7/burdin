@@ -1080,7 +1080,14 @@ Request {
 // ----- the response head ---------------------------------------------------------------------------------------
 
 /// A parsed status line and header block.
-priv struct ResponseHead: Clone, Debug {
+///
+/// ```
+/// # use http
+/// let parsed = http.parse_response_head("HTTP/1.0 404 Not Found\r\n\r\n".to_utf8().as_slice()).unwrap()
+/// assert_eq(parsed.status, 404)
+/// assert_eq(parsed.minor, 0)
+/// ```
+struct ResponseHead: Clone, Debug {
     /// The minor version of `HTTP/1.x`: 0 or 1.
     minor: u8
     status: u16
@@ -1094,7 +1101,13 @@ priv fn __bad_response(reason: str): HttpError {
 
 /// The offset just after the first blank line (`CRLF CRLF`) of `buffer`, which is where the body starts, or `None`
 /// when the head is not complete yet.
-priv fn find_head_end(buffer: List<u8>): Option<usize> {
+///
+/// ```
+/// # use http
+/// assert_eq(http.find_head_end("HTTP/1.1 200 OK\r\n\r\nhi".to_utf8()).unwrap(), 19)
+/// assert(http.find_head_end("HTTP/1.1 200 OK\r\n".to_utf8()).is_none())
+/// ```
+fn find_head_end(buffer: List<u8>): Option<usize> {
     if buffer.len() < 4 {
         return None
     }
@@ -1124,7 +1137,15 @@ priv fn __tail_of(buffer: List<u8>, from: usize): List<u8> {
 /// that each end in CRLF. A bare line feed, a field that starts with a space or tab (an obsolete line fold), a field
 /// without a colon, a space before the colon, more than 128 fields, and a head that is not UTF-8 are errors. `head`
 /// is the bytes up to and including the blank line.
-priv fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
+///
+/// ```
+/// # use http
+/// let head = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n".to_utf8()
+/// let parsed = http.parse_response_head(head.as_slice()).unwrap()
+/// assert_eq(parsed.status, 200)
+/// assert_eq(parsed.reason.as_str(), "OK")
+/// ```
+fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
     if head.len() > MAX_HEAD_BYTES {
         return Err(__bad_response("the head is too large"))
     }
@@ -1245,7 +1266,15 @@ priv fn __parse_length(text: str): Result<u64, HttpError> {
 /// repeated or listed with commas only when every value is the same; otherwise the rest of the connection. A
 /// `Transfer-Encoding` that does not end in `chunked`, a `Content-Length` together with a `Transfer-Encoding`, and
 /// disagreeing lengths are errors, because they are how requests and responses get smuggled.
-priv fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError> {
+///
+/// ```
+/// # use http
+/// let mut headers = http.Headers.new()
+/// headers.add("Content-Length", "5").unwrap()
+/// assert(http.framing_of(http.Method.Get, 200, headers).unwrap() == http.Framing.Length(5))
+/// assert(http.framing_of(http.Method.Head, 200, http.Headers.new()).unwrap() == http.Framing.None)
+/// ```
+fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError> {
     if method.is_head() || status < 200 || status == 204 || status == 304 {
         return Ok(Framing.None)
     }
@@ -1285,7 +1314,15 @@ priv fn framing_of(method: Method, status: u16, headers: Headers): Result<Framin
 
 /// Whether the connection may carry another request after this response (HC16): the response has no
 /// `Connection: close`, and an `HTTP/1.0` response asked for `keep-alive`.
-priv fn keeps_alive(minor: u8, headers: Headers): bool {
+///
+/// ```
+/// # use http
+/// assert(http.keeps_alive(1, http.Headers.new()))
+/// let mut close = http.Headers.new()
+/// close.add("Connection", "close").unwrap()
+/// assert(!http.keeps_alive(1, close))
+/// ```
+fn keeps_alive(minor: u8, headers: Headers): bool {
     if headers.has_token("Connection", "close") {
         return false
     }

@@ -6,7 +6,7 @@ The official packages ship with the compiler. A program reaches one with `use <n
 | --- | --- | --- | --- | --- |
 | `crypto` | `0.1.0` | `sha256:bdcac6d2320a9856457724e6cc0138812d16ee5865463dd42b85c66a301f2347` | Nothing beyond the compiler | [crypto](crypto.md) |
 | `csv` | `0.1.0` | `sha256:19739c027c548a1551329cbea1f55ff5456e5ae256567350854db2f13de7a19b` | Nothing beyond the compiler | [csv](csv.md) |
-| `http` | `0.1.0` | `sha256:04880b4e452e584a8434a7ff3c835d49ab4ae4761235341794c700a0a91b25e6` | Nothing on Windows; on Linux and macOS, OpenSSL 3 through `tls` | [http](http.md) |
+| `http` | `0.1.0` | `sha256:8a6cb42529db52caec916e01b3bc787f925427eb27b9973121ea3a0654e9bd7d` | Nothing on Windows; on Linux and macOS, OpenSSL 3 through `tls` | [http](http.md) |
 | `json` | `0.1.0` | `sha256:0f4a42c988397521b80ded5df19343d1692a686cf1101cd366fef6311c22a1e8` | Nothing beyond the compiler | [json](json.md) |
 | `math` | `0.1.0` | `sha256:d6dee722fe0e6afa82b4cdf2e5d7187d493dbe62895fc39e783ad13de012415f` | Nothing beyond the compiler | [math](math.md) |
 | `regex` | `0.1.0` | `sha256:7d687124ec676c7c263b325c83365de7128095cf31866a441eb2283c4f1bae43` | Nothing beyond the compiler | [regex](regex.md) |
