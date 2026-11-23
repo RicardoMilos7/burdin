@@ -157,6 +157,18 @@ targets (`collect` makes a `List`), `par_sort`, `try_*` consumers, `[T; N]` and 
 the other chunks for `find`. Implicit parallelization of `for` and of the sequential adapter chains, `async`, SIMD, GPU,
 and a second pool are non-goals.
 
+## PR13. The defaults are instantiated on demand (decision)
+
+The default methods of `ParallelIterator<T>`, `ParallelValues<T>`, and `IndexedParallelIterator<T>` are instantiated
+on demand at each call, as the `Iterator<T>` defaults are (`spec/iterators.md`, IT9), and an impl block does not
+register them. A source whose impl is written in `std` (`ParRange`) would otherwise instantiate every consumer's body,
+with its `__chunks` helper and its `Mutex` per output type, in every program that names `std`, and that count counts
+against the instance limit (`spec/inspect.md`, INS12). The behavior is the same: a call finds the default by name on
+the receiver's interface, and the arguments are checked the same way.
+
+Tests: `s3_parallel/sources_adapters`, `ordered_basic` (the calls), and `tests/inspect/golden/print_instances.golden`
+(the program that uses none of them lists no parallel instance).
+
 ## Tests
 
 | Rule | Tests |

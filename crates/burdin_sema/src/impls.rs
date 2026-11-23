@@ -922,6 +922,11 @@ impl<'t> Sema<'t> {
             if Some(i) == self.globals.iterator_iface {
                 return;
             }
+            // The parallel-iteration defaults are on demand too (spec/parallel.md, PR13): a `std` source such as
+            // `ParRange` would otherwise instantiate every consumer, and its helpers, in every program.
+            if self.globals.parallel_ifaces.contains(&i) {
+                return;
+            }
             let interface: &'t ast::InterfaceDecl = self.tpl.ifaces[i];
             let iface_module = self.globals.interfaces[i].module;
             let params = self.globals.interfaces[i].params.clone();

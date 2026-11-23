@@ -145,7 +145,7 @@ impl FnCx<'_> {
         if !ok {
             return error_expr(span);
         }
-        let (params, ret, callee) = if targs.iter().any(|t| globals.ty_has_param(t)) {
+        let (params, ret, callee) = if self.symbolic || targs.iter().any(|t| globals.ty_has_param(t)) {
             // Inside symbolic code there is no instance to call; the types are all that matters.
             let env: Vec<(String, Ty)> = info.params.iter().cloned().zip(targs).collect();
             let params = pattern.params.iter().map(|p| globals.subst_param(p, &env)).collect();
@@ -847,7 +847,8 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         // Only the substituted signature decides: the identity's parameters are `Ty::Param` in every template.
-        let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
+        let symbolic = self.symbolic
+            || targs.iter().any(|t| globals.ty_has_param(t))
             || globals.ty_has_param(&recv.ty)
             || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
         if symbolic {
@@ -950,7 +951,7 @@ impl FnCx<'_> {
         if !ok {
             return error_expr(span);
         }
-        let symbolic = targs.iter().any(|t| globals.ty_has_param(t));
+        let symbolic = self.symbolic || targs.iter().any(|t| globals.ty_has_param(t));
         if symbolic {
             let ps: Vec<ParamSig> = pattern.params.iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
@@ -1075,7 +1076,8 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         // Only the substituted signature decides: the identity's parameters are `Ty::Param` in every template.
-        let symbolic = targs.iter().any(|t| globals.ty_has_param(t))
+        let symbolic = self.symbolic
+            || targs.iter().any(|t| globals.ty_has_param(t))
             || globals.ty_has_param(&recv.ty)
             || globals.ty_has_param(&globals.subst_ty(&pattern.ret, &subst));
         let receiver_place = Some((&recv, receiver.exclusive && !receiver.own));
