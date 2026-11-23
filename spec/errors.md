@@ -141,16 +141,18 @@ call it after printing the message.
 
 ## ERR8. `fn main(): Result<T>`
 
-A `main` written directly as returning `Result<...>` is accepted:
+A `main` whose return type is `Result<...>` is accepted, written directly or through a type alias declared in the same
+file that expands to one (`spec/type-aliases.md`, AL7):
 
 - `Ok(_)` prints nothing and the process exits with status 0;
 - `Err(e)` prints `e` with `Display` to standard error, then the recorded trace frames, one per line
   (`spec/debug.md`, DBG3), and exits with status 1. A release build recorded no frames, so its output is the
   message alone.
 
-The printed error needs `Display` (E0193 at the `main` declaration otherwise). The source must write the
-`Result` type directly; an alias that resolves to a `Result` is E0003 (main's signature rule). `fn main()`
-returning unit keeps working. A `main` with parameters or any other return type is still E0003.
+The printed error needs `Display` (E0193 at the `main` declaration otherwise). An alias of a `Result` that is
+imported from another module is E0003 (main's signature rule): the wrapper is written when the file that declares
+`main` is parsed, before imports resolve, so it cannot see that alias. `fn main()` returning unit keeps working. A
+`main` with parameters or any other return type, an alias that does not expand to `Result`, is still E0003.
 
 `?` inside `main(): Result<T>` converts error types into the default `Error` (ERR4/ERR5) exactly as in any other
 function.

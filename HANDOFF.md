@@ -1302,7 +1302,7 @@ how to call WSL from PowerShell.
   generated `Display`, `Error`, and `From<Source>` impl blocks written as Burdin source with the declaration name's
   span. The lowering checks each message template (a placeholder must name a payload field) and each `from` (a
   one-field tuple variant, one conversion per source type, and none on a generic error enum), reporting E0210 and
-  E0211. At parse time the same module renames a written `fn main(): Result<...>` to `__burdin_main_result` and
+  E0211. At parse time the same module renames a `fn main(): Result<...>` (written directly, or through an alias of this file, AL7) to `__burdin_main_result` and
   appends a `main` that prints an `Err` with `Display` to standard error and exits 1; it also wraps each test body
   as `__burdin_test_N_body` with a `__burdin_test_N` that prints the `AssertError` before returning it, and the
   compiler appends the condition's source text and the call's location to every test-mode assertion. Sema resolves
@@ -2132,6 +2132,22 @@ Open:
   `env_clear`) is unverified.
 
 Commands: `python3 tests/check_std_docs.py` (needs a built driver; `--no-run` skips the examples), then the website build.
+
+## Session: a type alias as `main`'s return type (issue #935)
+
+`fn main(): Name` is accepted when `Name` is an alias declared in `main`'s file that expands, through other aliases of
+that file (generic or not), to `Result<...>` (`spec/type-aliases.md` AL7, `spec/errors.md` ERR8). The parser makes the
+choice, in `crates/burdin_syntax/src/error_item.rs` (`result_main_index`, `names_result`), because it writes the wrapper
+for an `Err` while it parses the file. The checker's `main` rule is unchanged. Tests: `tests/m16_errors/main_result_alias*.bd`,
+`main_alias_not_result.bd`, and `main_result_alias_imported/`.
+
+Open:
+
+- **An alias of a `Result` imported from another module is still E0003.** The wrapper cannot see the alias before
+  imports resolve. Lifting it needs the wrapper written after name resolution (a sema-side rename), which is a
+  design change to ERR8. Ask before doing it.
+- **`fn main(): Result<(), IoError>` (a `Result` whose error is not `Error`) fails in the wrapper** with E0002 (no
+  `print_trace` on `IoError`), before and after this change. Aliases behave the same way; the wrapper only supports `Result<T>`.
 
 ## Decisions already made (do not reopen without a reason)
 

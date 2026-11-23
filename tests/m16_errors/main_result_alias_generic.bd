@@ -1,0 +1,20 @@
+//@ run-abort
+//> before
+//@ stderr: loading settings: cannot read cfg.toml: not found
+
+// A generic alias, and an alias of that alias, expand to `Result<...>` for main: an `Err` prints its chain to standard
+// error and exits non-zero (spec/errors.md, ERR8; spec/type-aliases.md, AL4 and AL7).
+
+type Outcome<T> = Result<T>
+type Done = Outcome<()>
+
+fn read(): Result<i32, IoError> {
+    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+}
+
+fn main(): Done {
+    println("before")
+    let n = read().context("loading settings")?
+    println("after {n}")
+    Ok(())
+}
