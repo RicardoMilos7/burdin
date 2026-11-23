@@ -62,6 +62,13 @@ suite with `--sanitize=address`.
   resource the sanitizer uses for its own reporting, so the sanitizer's handler is the one left in place. The runtimes read their usual
   options from the environment of `burdin run` (`ASAN_OPTIONS`, `TSAN_OPTIONS`, ...); a test process has a clean
   environment, so the defaults apply there.
+- **SAN7. Sanitized expectations.** Two behaviors differ on purpose in a sanitized build, and the suite accounts for
+  them. (a) An `address` build defines `__asan_default_options` with `allocator_may_return_null=1`, so a refused
+  allocation (AL11) is a null pointer, as in an unsanitized build, instead of AddressSanitizer's abort on a request
+  above its own size limit; an `ASAN_OPTIONS` in the environment still overrides the default. (b) A program with a
+  sanitizer runtime installs no stack-overflow guard (SAN6), so a test whose expected output is that guard's message
+  declares `//@ skip-sanitize:` with the sanitizers that remove the guard (`tests/README.md`), and the conformance
+  runner skips it, with the reason, under each named `--sanitize`.
 
 ## Tests
 
@@ -74,3 +81,5 @@ suite with `--sanitize=address`.
 | `burdin build` and `burdin test` with `--sanitize` | `tests/sanitize/tests.bd`, `tests/check_sanitizers.py` |
 | Parsing, conflicts, and the platform table (SAN1-SAN2) | unit tests in `crates/burdin_driver/src/sanitize.rs`, `tests/check_sanitizers.py` |
 | The stage 0 and stage 1 suite under `address` | `python3 tests/run_tests.py --sanitize address m01 ... m24` (the scheduled `sanitize` part of the Linux CI job) |
+| `address`: a refused allocation is null, not an abort (SAN7a) | `tests/sanitize/refused_allocation.bd`, `tests/check_sanitizers.py`; `tests/m24_stdlib/try_alloc_*.bd` under the suite |
+| The guard's message is not expected under a sanitizer (SAN7b) | `//@ skip-sanitize: address leak thread` in `tests/m02_basics/stack_overflow_aborts.bd`, `tests/run_tests.py` |

@@ -146,6 +146,23 @@ with harness.temporary_dir("burdin-sanitize-") as work:
             code, out, err = call([exe], work, timeout=60, env=sanitizer_env())
             expect(f"hello ({sanitizer}): runs clean", code == 0 and out.strip() == "finished", brief(code, err))
 
+    # A refused allocation is a null pointer under AddressSanitizer too (spec/sanitizers.md, SAN7). The host's
+    # ASAN_OPTIONS is removed, so the default the program carries is what decides it.
+    if "address" in supported:
+        exe = work / "refused_allocation.out"
+        code, _, err = run(
+            burdin, "build", str(fixtures / "refused_allocation.bd"), "--sanitize=address", "-o", str(exe), cwd=work
+        )
+        expect("refused allocation (address): builds", code == 0, brief(code, err))
+        if code == 0:
+            env = {key: value for key, value in sanitizer_env().items() if key != "ASAN_OPTIONS"}
+            code, out, err = call([exe], work, timeout=60, env=env)
+            expect(
+                "refused allocation (address): reports out of memory",
+                code == 0 and out == "out of memory\nfinished\n",
+                f"exit {code}: {out!r} {brief(code, err)}",
+            )
+
     # Safe code that borrows temporaries frees them: the program runs clean under every leak detector the host has.
     expected = "false true\n2 2\n1\n2\n1\n2\nk 1\n8\ntrue\ntrue\nfinished\n"
     for sanitizer in sorted({"address", "leak"} & supported):

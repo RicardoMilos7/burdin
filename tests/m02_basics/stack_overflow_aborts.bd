@@ -1,5 +1,6 @@
 //@ run-abort
 //@ stderr: panic: stack overflow
+//@ skip-sanitize: address leak thread
 
 // The main thread has a signal/exception guard: unbounded recursion ends with a clear message instead of a raw
 // fault. The frame is small enough that a million frames overrun the 8 MiB default stack. Dividing the recursive
