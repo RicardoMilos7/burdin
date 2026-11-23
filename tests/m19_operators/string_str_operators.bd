@@ -1,0 +1,55 @@
+//@ run
+//> abcdef
+//> abc
+//> x
+//> true
+//> true
+//> true
+//> true
+//> true
+//> true
+//> false
+//> true
+//> abcab
+//> 4
+//> matched
+//> true
+
+// OP14 (issue #936): a `String` and a `str` meet in `+` and in the comparisons. `+` builds a new `String` and
+// borrows both operands, so the left one is still usable afterwards; each comparison compares the text.
+
+fn main() {
+    let s = String.from("abc")
+    let joined = s + "def"
+    println(joined.as_str())
+    println(s.as_str())
+    println((String.new() + "x").as_str())
+
+    println((s == "abc").to_string())
+    println(("abc" == s).to_string())
+    println((s != "abd").to_string())
+    println(("abd" != s).to_string())
+    println((s < "abd").to_string())
+    println(("abd" > s).to_string())
+    println((s >= "abd").to_string())
+    println(("abc" <= s).to_string())
+
+    let mut acc = String.new()
+    let step = acc + "ab"
+    acc = step
+    let step = acc + "c"
+    acc = step
+    let step = acc + "ab"
+    acc = step
+    println(acc.as_str())
+
+    let u: String = s + "q"
+    println(u.len().to_string())
+
+    if s == "abc" {
+        println("matched")
+    }
+
+    let t = String.from("abc")
+    println((t == s).to_string())
+}

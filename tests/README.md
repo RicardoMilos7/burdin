@@ -496,7 +496,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
     non-`Copy` element out is E0101. The shifts are not overloadable, and `&&`, `||`, and `=` remain non-overloadable.
     Compound assignment on a user type takes its operator from the interface (issue #277, CA5; decision 35).
-    `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
+    `spec/operators.md` OP1-OP14, `tests/m19_operators/`. OP14 (issue #936) is the one built-in mixed-type pair: `String + str`
+    and the comparisons between a `String` and a `str` (either order); every other pair stays same-type.
 
 25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
     chosen). It runs after the memory checks and before code generation, in its own crate, and behaves like

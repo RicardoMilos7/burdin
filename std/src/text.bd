@@ -43,6 +43,15 @@ priv fn __copy(text: str, from: usize, to: usize): String {
     String.from(text[from..to])
 }
 
+/// The text of `a` followed by the text of `b`, in a new string: the built-in `String + str` (`spec/operators.md`,
+/// OP14). Both operands are borrowed.
+priv fn __concat(a: str, b: str): String {
+    let mut out = String.with_capacity(a.len() + b.len())
+    out.push_str(a)
+    out.push_str(b)
+    out
+}
+
 /// The pieces of `text` between occurrences of `sep`, in order.
 priv fn __split(text: str, sep: str): List<String> {
     if sep.len() == 0 {

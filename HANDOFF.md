@@ -4,6 +4,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Mixed `String`/`str` operators (issue #936, 2026-11-23).** Decision: the narrow rule, not a general `Add<Rhs>`.
+`String + str` is built in and returns a new `String` (both operands borrowed; it calls `__concat` in `std/src/text.bd`),
+and a `String` and a `str` compare in all six comparison operators, either order (`spec/operators.md` OP14, `IC1` in
+`spec/memory-rules.md`). The sema check is `binary_checked` (`crates/burdin_sema/src/fncx/operators.rs`). Every other pair
+stays same-type: `str + str`, `String + String`, `s += "x"`, and numbers are still E0003. Gap, left as found: a borrow made
+in a statement stays live to the statement's end (RF3), so `s = s + "x"` is E0111; `let t = s + "x"; s = t` works. Tests:
+`tests/m19_operators/string_str_operators` (run) and `string_str_mixed_compile_fail`. The `s3_http` and `s3_tls` conformance
+tests fail on a WSL machine without the OpenSSL development libraries (`-lssl`), which is unrelated to this change.
 **Eager and lazy methods with the same names (issue #934, 2026-11-23).** The decision was to keep both forms and
 document them, not to rename one. `xs.map`, `filter`, `fold`, `any`, `all`, and `find` on a `List` stay eager (they
 build a list or a value at once, take views, and `filter`/`find` clone); `Iterator`'s methods of the same names stay
