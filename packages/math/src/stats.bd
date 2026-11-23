@@ -1,6 +1,12 @@
 // Statistics over a slice of `f64` (spec/math.md, MA5). A statistic with no values, or with too few, is `None`.
 
 /// The sum of the values, added left to right. Zero for no values.
+///
+/// ```
+/// # use math
+/// assert_eq(math.sum(List.from([1.0, 2.0, 3.0]).as_slice()), 6.0)
+/// assert_eq(math.sum(List<f64>.new().as_slice()), 0.0)
+/// ```
 fn sum(xs: [f64]): f64 {
     let mut total = 0.0
     for x in xs {
@@ -10,6 +16,12 @@ fn sum(xs: [f64]): f64 {
 }
 
 /// The arithmetic mean, or `None` for no values.
+///
+/// ```
+/// # use math
+/// assert_eq(math.mean(List.from([1.0, 2.0, 3.0, 4.0]).as_slice()).unwrap(), 2.5)
+/// assert(math.mean(List<f64>.new().as_slice()).is_none())
+/// ```
 fn mean(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
         return None
@@ -18,6 +30,11 @@ fn mean(xs: [f64]): Option<f64> {
 }
 
 /// The population variance: the mean of the squared deviations from the mean. Two passes, so it stays accurate.
+///
+/// ```
+/// # use math
+/// assert_eq(math.variance(List.from([1.0, 2.0, 3.0, 4.0]).as_slice()).unwrap(), 1.25)
+/// ```
 fn variance(xs: [f64]): Option<f64> {
     match mean(xs) {
         Some(m) => {
@@ -33,6 +50,12 @@ fn variance(xs: [f64]): Option<f64> {
 }
 
 /// The sample variance, divided by `n - 1`. `None` for fewer than two values.
+///
+/// ```
+/// # use math
+/// assert(math.approx_eq(math.sample_variance(List.from([1.0, 2.0, 3.0, 4.0]).as_slice()).unwrap(), 5.0 / 3.0, 0.000000001, 0.0))
+/// assert(math.sample_variance(List.from([1.0]).as_slice()).is_none())
+/// ```
 fn sample_variance(xs: [f64]): Option<f64> {
     if xs.len() < 2 {
         return None
@@ -44,6 +67,11 @@ fn sample_variance(xs: [f64]): Option<f64> {
 }
 
 /// The population standard deviation: the square root of `variance`.
+///
+/// ```
+/// # use math
+/// assert_eq(math.std_dev(List.from([2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]).as_slice()).unwrap(), 2.0)
+/// ```
 fn std_dev(xs: [f64]): Option<f64> {
     match variance(xs) {
         Some(v) => Some(v.sqrt()),
@@ -52,6 +80,12 @@ fn std_dev(xs: [f64]): Option<f64> {
 }
 
 /// The sample standard deviation: the square root of `sample_variance`.
+///
+/// ```
+/// # use math
+/// let s = math.sample_std_dev(List.from([1.0, 2.0, 3.0]).as_slice()).unwrap()
+/// assert(math.approx_eq(s, 1.0, 0.000000001, 0.0))
+/// ```
 fn sample_std_dev(xs: [f64]): Option<f64> {
     match sample_variance(xs) {
         Some(v) => Some(v.sqrt()),
@@ -60,6 +94,12 @@ fn sample_std_dev(xs: [f64]): Option<f64> {
 }
 
 /// The least value. NaN values are skipped, so the result is NaN only when every value is NaN.
+///
+/// ```
+/// # use math
+/// assert_eq(math.minimum(List.from([3.0, -1.0, 2.0]).as_slice()).unwrap(), -1.0)
+/// assert(math.minimum(List<f64>.new().as_slice()).is_none())
+/// ```
 fn minimum(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
         return None
@@ -72,6 +112,11 @@ fn minimum(xs: [f64]): Option<f64> {
 }
 
 /// The greatest value. NaN values are skipped, so the result is NaN only when every value is NaN.
+///
+/// ```
+/// # use math
+/// assert_eq(math.maximum(List.from([3.0, -1.0, 2.0]).as_slice()).unwrap(), 3.0)
+/// ```
 fn maximum(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
         return None
@@ -85,6 +130,13 @@ fn maximum(xs: [f64]): Option<f64> {
 
 /// The value at fraction `p` of the sorted values, interpolated linearly between the two nearest ranks (the NumPy
 /// default). A NaN sorts after every number. Panics when `p` is not between 0 and 1.
+///
+/// ```
+/// # use math
+/// let xs = List.from([1.0, 2.0, 3.0, 4.0, 5.0])
+/// assert_eq(math.quantile(xs.as_slice(), 0.5).unwrap(), 3.0)
+/// assert_eq(math.quantile(xs.as_slice(), 0.0).unwrap(), 1.0)
+/// ```
 fn quantile(xs: [f64], p: f64): Option<f64> {
     if !(p >= 0.0 && p <= 1.0) {
         panic("quantile: p must be between 0 and 1")
@@ -109,11 +161,24 @@ fn quantile(xs: [f64], p: f64): Option<f64> {
 }
 
 /// The median: `quantile` at one half.
+///
+/// ```
+/// # use math
+/// assert_eq(math.median(List.from([1.0, 3.0, 2.0]).as_slice()).unwrap(), 2.0)
+/// assert_eq(math.median(List.from([1.0, 2.0, 3.0, 4.0]).as_slice()).unwrap(), 2.5)
+/// ```
 fn median(xs: [f64]): Option<f64> {
     quantile(xs, 0.5)
 }
 
 /// The population covariance of two equal-length slices. Panics when the lengths differ.
+///
+/// ```
+/// # use math
+/// let xs = List.from([1.0, 2.0, 3.0])
+/// let ys = List.from([2.0, 4.0, 6.0])
+/// assert(math.approx_eq(math.covariance(xs.as_slice(), ys.as_slice()).unwrap(), 4.0 / 3.0, 0.000000001, 0.0))
+/// ```
 fn covariance(xs: [f64], ys: [f64]): Option<f64> {
     if xs.len() != ys.len() {
         panic("covariance: the slices differ in length")
@@ -133,6 +198,13 @@ fn covariance(xs: [f64], ys: [f64]): Option<f64> {
 }
 
 /// The Pearson correlation coefficient. `None` when either side has zero variance, or when there are no values.
+///
+/// ```
+/// # use math
+/// let xs = List.from([1.0, 2.0, 3.0])
+/// let ys = List.from([2.0, 4.0, 6.0])
+/// assert(math.approx_eq(math.correlation(xs.as_slice(), ys.as_slice()).unwrap(), 1.0, 0.000000001, 0.0))
+/// ```
 fn correlation(xs: [f64], ys: [f64]): Option<f64> {
     if xs.len() != ys.len() {
         panic("correlation: the slices differ in length")

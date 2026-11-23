@@ -5,7 +5,7 @@ use hash.HashAlg
 use errors.CryptoError
 use util.constant_time_eq
 
-fn hmac_pads(alg: HashAlg, key: [u8]): (List<u8>, List<u8>) {
+priv fn hmac_pads(alg: HashAlg, key: [u8]): (List<u8>, List<u8>) {
     let block = alg.block_len()
     let mut k = List<u8>.new()
     if key.len() > block {
@@ -27,7 +27,7 @@ fn hmac_pads(alg: HashAlg, key: [u8]): (List<u8>, List<u8>) {
     (ipad, opad)
 }
 
-fn hmac_with_pads(alg: HashAlg, ipad: [u8], opad: [u8], data: [u8]): List<u8> {
+priv fn hmac_with_pads(alg: HashAlg, ipad: [u8], opad: [u8], data: [u8]): List<u8> {
     let mut inner = ipad.to_list()
     inner.extend_from_slice(data)
     let digest = alg.digest(inner.as_slice())
@@ -37,18 +37,42 @@ fn hmac_with_pads(alg: HashAlg, ipad: [u8], opad: [u8], data: [u8]): List<u8> {
 }
 
 /// The HMAC of `data` under `key`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hmac, HashAlg}
+/// let tag = hmac(HashAlg.Sha256, "key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes())
+/// assert_eq(tag.to_hex().as_str(), "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+/// ```
 fn hmac(alg: HashAlg, key: [u8], data: [u8]): List<u8> {
     let (ipad, opad) = hmac_pads(alg, key)
     hmac_with_pads(alg, ipad.as_slice(), opad.as_slice(), data)
 }
 
 /// Whether `tag` is the HMAC of `data` under `key`, compared in constant time.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hmac_verify, hmac, HashAlg}
+/// let tag = hmac(HashAlg.Sha256, "key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes())
+/// assert(hmac_verify(HashAlg.Sha256, "key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), tag.as_slice()))
+/// assert(!hmac_verify(HashAlg.Sha256, "key".as_bytes(), "The quick brown fox jumps over the lazy cat".as_bytes(), tag.as_slice()))
+/// ```
 fn hmac_verify(alg: HashAlg, key: [u8], data: [u8], tag: [u8]): bool {
     let expected = hmac(alg, key, data)
     constant_time_eq(expected.as_slice(), tag)
 }
 
 /// An incremental HMAC. It keeps the message until `finish`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Hmac, HashAlg}
+/// let mut mac = Hmac.new(HashAlg.Sha256, "key".as_bytes())
+/// mac.update("The quick brown fox ".as_bytes())
+/// mac.update("jumps over the lazy dog".as_bytes())
+/// assert_eq(mac.finish().to_hex().as_str(), "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+/// ```
 struct Hmac {
     alg: HashAlg,
     opad: List<u8>,
@@ -56,17 +80,41 @@ struct Hmac {
 }
 
 Hmac {
+    /// A new HMAC over `alg` with `key`. A key longer than the hash's block size is hashed first, as RFC 2104 says.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Hmac, HashAlg}
+    /// let mut mac = Hmac.new(HashAlg.Sha256, "key".as_bytes())
+    /// assert_eq(mac.finish().len(), 32)
+    /// ```
     fn new(alg: HashAlg, key: [u8]): Hmac {
         let (ipad, opad) = hmac_pads(alg, key)
         Hmac { alg: alg, opad: opad, data: ipad }
     }
 
     /// Adds more of the message.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Hmac, HashAlg}
+    /// let mut mac = Hmac.new(HashAlg.Sha256, "key".as_bytes())
+    /// mac.update("The quick brown fox jumps over the lazy dog".as_bytes())
+    /// assert_eq(mac.finish().to_hex().as_str(), "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+    /// ```
     fn update(mut self, data: [u8]) {
         self.data.extend_from_slice(data)
     }
 
     /// The tag. The `Hmac` must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Hmac, HashAlg}
+    /// let mut mac = Hmac.new(HashAlg.Sha256, "key".as_bytes())
+    /// mac.update("The quick brown fox jumps over the lazy dog".as_bytes())
+    /// assert_eq(mac.finish().len(), 32)
+    /// ```
     fn finish(mut self): List<u8> {
         let digest = self.alg.digest(self.data.as_slice())
         let mut outer = self.opad.clone()
@@ -76,6 +124,14 @@ Hmac {
 }
 
 /// HKDF-Extract: a pseudorandom key from input keying material. An empty `salt` means a string of zeros.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hkdf_extract, HashAlg}
+/// let ikm = hex_decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap()
+/// let salt = hex_decode("000102030405060708090a0b0c").unwrap()
+/// assert_eq(hkdf_extract(HashAlg.Sha256, salt.as_slice(), ikm.as_slice()).to_hex().as_str(), "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
+/// ```
 fn hkdf_extract(alg: HashAlg, salt: [u8], ikm: [u8]): List<u8> {
     if salt.len() == 0 {
         let mut zeros = List<u8>.new()
@@ -89,6 +145,15 @@ fn hkdf_extract(alg: HashAlg, salt: [u8], ikm: [u8]): List<u8> {
 
 /// HKDF-Expand: `length` bytes of output keying material from a pseudorandom key. `length` is at most 255 times
 /// the digest size.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hkdf_expand, HashAlg}
+/// let prk = hex_decode("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5").unwrap()
+/// let info = hex_decode("f0f1f2f3f4f5f6f7f8f9").unwrap()
+/// let okm = hkdf_expand(HashAlg.Sha256, prk.as_slice(), info.as_slice(), 42).unwrap()
+/// assert_eq(okm.to_hex().as_str(), "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+/// ```
 fn hkdf_expand(alg: HashAlg, prk: [u8], info: [u8], length: usize): Result<List<u8>, CryptoError> {
     let hash_len = alg.output_len()
     if length > 255 * hash_len {
@@ -111,6 +176,16 @@ fn hkdf_expand(alg: HashAlg, prk: [u8], info: [u8], length: usize): Result<List<
 }
 
 /// HKDF (extract, then expand).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hkdf, HashAlg}
+/// let ikm = hex_decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap()
+/// let salt = hex_decode("000102030405060708090a0b0c").unwrap()
+/// let info = hex_decode("f0f1f2f3f4f5f6f7f8f9").unwrap()
+/// let okm = hkdf(HashAlg.Sha256, salt.as_slice(), ikm.as_slice(), info.as_slice(), 42).unwrap()
+/// assert_eq(okm.to_hex().as_str(), "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+/// ```
 fn hkdf(alg: HashAlg, salt: [u8], ikm: [u8], info: [u8], length: usize): Result<List<u8>, CryptoError> {
     let prk = hkdf_extract(alg, salt, ikm)
     hkdf_expand(alg, prk.as_slice(), info, length)
@@ -119,6 +194,13 @@ fn hkdf(alg: HashAlg, salt: [u8], ikm: [u8], info: [u8], length: usize): Result<
 /// PBKDF2: `length` bytes derived from `password` and `salt` with `iterations` rounds of HMAC. `iterations` must be
 /// at least 1; use at least 600,000 rounds of HMAC-SHA-256 for new password hashes (OWASP, 2023), far more than a
 /// debug build of this package does quickly.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{pbkdf2, HashAlg}
+/// let key = pbkdf2(HashAlg.Sha1, "password".as_bytes(), "salt".as_bytes(), 1, 20).unwrap()
+/// assert_eq(key.to_hex().as_str(), "0c60c80f961f0e71f3a9b524af6012062fe037a6")
+/// ```
 fn pbkdf2(alg: HashAlg, password: [u8], salt: [u8], iterations: u32, length: usize): Result<List<u8>, CryptoError> {
     if iterations == 0 {
         return Err(CryptoError.InvalidInput { what: "PBKDF2 needs at least one iteration".to_string() })

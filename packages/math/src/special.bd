@@ -3,13 +3,13 @@
 // `gamma(x) = gamma(x + 1) / x`. Below zero the reflection formula applies.
 
 /// Whether `x` is zero or a negative whole number, where the gamma function has a pole.
-fn at_pole(x: f64): bool {
+priv fn at_pole(x: f64): bool {
     x <= 0.0 && x.floor() == x
 }
 
 /// `ln gamma(x)` for `x` of at least 15, by Stirling's series. The terms are the Bernoulli numbers over
 /// `2k(2k - 1) x^(2k - 1)`, for `k` up to 7.
-fn stirling_log_gamma(x: f64): f64 {
+priv fn stirling_log_gamma(x: f64): f64 {
     let inv = 1.0 / x
     let inv2 = inv * inv
     let series = inv * (1.0 / 12.0 + inv2 * (-1.0 / 360.0 + inv2 * (1.0 / 1260.0 + inv2 * (-1.0 / 1680.0 + inv2 * (1.0 / 1188.0 + inv2 * (-691.0 / 360360.0 + inv2 * (1.0 / 156.0)))))))
@@ -18,7 +18,7 @@ fn stirling_log_gamma(x: f64): f64 {
 
 /// `ln gamma(x)` for `x > 0`: `x` is raised to at least 15 with the recurrence, and the product of the steps is taken
 /// as a sum of logarithms, so a small `x` cannot underflow.
-fn log_gamma_positive(x: f64): f64 {
+priv fn log_gamma_positive(x: f64): f64 {
     let mut shifted = x
     let mut log_steps = 0.0
     while shifted < 15.0 {
@@ -29,6 +29,12 @@ fn log_gamma_positive(x: f64): f64 {
 }
 
 /// The gamma function. `NaN` at a non-positive integer, where it has a pole.
+///
+/// ```
+/// # use math
+/// assert(math.approx_eq(math.gamma(5.0), 24.0, 0.000000001, 0.0))
+/// assert(math.gamma(-1.0).is_nan())
+/// ```
 fn gamma(x: f64): f64 {
     if at_pole(x) {
         return f64.NAN
@@ -40,6 +46,12 @@ fn gamma(x: f64): f64 {
 }
 
 /// `ln |gamma(x)|`. `INFINITY` at a non-positive integer, where the gamma function has a pole.
+///
+/// ```
+/// # use math
+/// assert(math.approx_eq(math.ln_gamma(1.0), 0.0, 0.000000001, 0.0))
+/// assert(math.ln_gamma(0.0).is_infinite())
+/// ```
 fn ln_gamma(x: f64): f64 {
     if at_pole(x) {
         return f64.INFINITY

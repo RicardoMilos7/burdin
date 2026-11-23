@@ -14,14 +14,20 @@
 // Nothing here panics on malformed input.
 
 // The namespace the `xml` prefix is always bound to.
+/// The namespace URI the `xml` prefix is always bound to (`xml:lang` and the other reserved names belong to it). The
+/// reader resolves `xml:` names to this URI without a declaration.
 const XML_NAMESPACE: str = "http://www.w3.org/XML/1998/namespace"
 
 // The deepest element nesting the reader accepts and the serializer writes. A nesting this deep never occurs in
 // data; the limit keeps hostile input from exhausting the stack.
+/// The deepest element nesting the reader accepts and the serializer writes: 256 levels. A nesting this deep does not
+/// occur in data, and the limit keeps hostile input from exhausting the stack; a deeper document is a `DeError`.
 const MAX_DEPTH: usize = 256
 
 // The most attributes one start tag may have. Duplicate detection compares each new name with the earlier ones, so
 // the limit keeps a hostile tag from costing quadratic time.
+/// The most attributes one start tag may have: 1024. Duplicate detection compares each new name with the earlier ones, so
+/// the limit keeps a hostile tag from costing quadratic time; a tag with more is a `DeError`.
 const MAX_ATTRIBUTES: usize = 1024
 
 // ----- the DOM -------------------------------------------------------------------------------------------------
@@ -29,6 +35,13 @@ const MAX_ATTRIBUTES: usize = 1024
 /// An attribute. `name` is the qualified name as written (`id`, `xml:lang`, `xmlns:p`); `namespace` is the URI its
 /// prefix resolves to, and is empty for an unprefixed name (an attribute never takes the default namespace) and for a
 /// namespace declaration.
+///
+/// ```
+/// # use xml
+/// let attr = xml.Attribute.new("id", "a1")
+/// assert_eq(attr.name.as_str(), "id")
+/// assert_eq(attr.value.as_str(), "a1")
+/// ```
 struct Attribute: Clone {
     name: String,
     value: String,
@@ -37,33 +50,71 @@ struct Attribute: Clone {
 
 Attribute {
     /// An attribute with no namespace.
+    ///
+    /// ```
+    /// # use xml
+    /// let attr = xml.Attribute.new("id", "a1")
+    /// assert_eq(attr.value.as_str(), "a1")
+    /// assert_eq(attr.namespace.len(), 0)
+    /// ```
     fn new(name: str, value: str): Attribute {
         Attribute { name: name.to_string(), value: value.to_string(), namespace: String.new() }
     }
 
     /// Whether this attribute declares a namespace (`xmlns` or `xmlns:prefix`).
+    ///
+    /// ```
+    /// # use xml
+    /// assert(xml.Attribute.new("xmlns:p", "urn:p").is_declaration())
+    /// assert(!xml.Attribute.new("id", "1").is_declaration())
+    /// ```
     fn is_declaration(self): bool {
         self.name.as_str() == "xmlns" || self.name.starts_with("xmlns:")
     }
 
     /// The part of the name before the colon, or an empty string.
+    ///
+    /// ```
+    /// # use xml
+    /// assert_eq(xml.Attribute.new("xml:lang", "en").prefix().as_str(), "xml")
+    /// assert_eq(xml.Attribute.new("id", "1").prefix().as_str(), "")
+    /// ```
     fn prefix(self): String {
         __prefix_of(self.name.as_str())
     }
 
     /// The part of the name after the colon, or the whole name.
+    ///
+    /// ```
+    /// # use xml
+    /// assert_eq(xml.Attribute.new("xml:lang", "en").local_name().as_str(), "lang")
+    /// assert_eq(xml.Attribute.new("id", "1").local_name().as_str(), "id")
+    /// ```
     fn local_name(self): String {
         __local_of(self.name.as_str())
     }
 }
 
 /// A processing instruction: `<?target data?>`.
+///
+/// ```
+/// # use xml
+/// let pi = xml.Instruction { target: "xml-stylesheet".to_string(), data: "href=\"s.css\"".to_string() }
+/// assert_eq(pi.target.as_str(), "xml-stylesheet")
+/// assert_eq(pi.data.as_str(), "href=\"s.css\"")
+/// ```
 struct Instruction: Clone {
     target: String,
     data: String,
 }
 
 /// The XML declaration: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`.
+///
+/// ```
+/// # use xml
+/// let doc = xml.Document.new(xml.Element.new("a")).with_declaration()
+/// assert_eq(doc.to_xml().unwrap().as_str(), "<?xml version=\"1.0\" encoding=\"UTF-8\"?><a/>")
+/// ```
 struct Declaration: Clone {
     version: String,
     encoding: Option<String>,
@@ -72,6 +123,13 @@ struct Declaration: Clone {
 
 Declaration {
     /// Version 1.0 and UTF-8, the declaration a new document gets from `with_declaration`.
+    ///
+    /// ```
+    /// # use xml
+    /// let decl = xml.Declaration.new()
+    /// assert_eq(decl.version.as_str(), "1.0")
+    /// assert_eq(decl.encoding.unwrap().as_str(), "UTF-8")
+    /// ```
     fn new(): Declaration {
         Declaration { version: "1.0".to_string(), encoding: Some("UTF-8".to_string()), standalone: None }
     }
@@ -80,6 +138,14 @@ Declaration {
 /// An element. `name` is the qualified name as written (`item`, `svg:rect`); `namespace` is the URI its prefix (or the
 /// default namespace) resolves to, empty for none. `line` and `column` are where its start tag began (1-based, in
 /// Unicode scalar values) when the element was parsed, and 0 for one that was built.
+///
+/// ```
+/// # use xml
+/// let mut root = xml.Element.new("list")
+/// root.push_child(xml.Element.new("item").with_text("a"))
+/// root.set_attr("count", "1")
+/// assert_eq(root.to_xml().unwrap().as_str(), "<list count=\"1\"><item>a</item></list>")
+/// ```
 struct Element {
     name: String,
     namespace: String,
@@ -90,6 +156,16 @@ struct Element {
 }
 
 /// A child of an element. An element child sits behind a `Heap` because a tree contains itself.
+///
+/// ```
+/// # use xml
+/// let node = xml.Node.Text("hi".to_string())
+/// assert(!node.is_blank_text())
+/// match node {
+///     xml.Node.Text(text) => assert_eq(text.as_str(), "hi"),
+///     _ => assert(false),
+/// }
+/// ```
 enum Node {
     Element(Heap<Element>),
     Text(String),
@@ -100,6 +176,12 @@ enum Node {
 
 /// A document: the optional declaration, the comments and instructions before the root, the root element, and the
 /// comments and instructions after it.
+///
+/// ```
+/// # use xml
+/// let doc = xml.Document.new(xml.Element.new("a"))
+/// assert_eq(doc.to_xml().unwrap().as_str(), "<a/>")
+/// ```
 struct Document {
     declaration: Option<Declaration>,
     before: List<Node>,
@@ -109,6 +191,16 @@ struct Document {
 
 Node {
     /// A deep copy.
+    ///
+    /// ```
+    /// # use xml
+    /// let node = xml.Node.Comment("note".to_string())
+    /// let copy = node.copy()
+    /// match copy {
+    ///     xml.Node.Comment(text) => assert_eq(text.as_str(), "note"),
+    ///     _ => assert(false),
+    /// }
+    /// ```
     fn copy(self): Node {
         match self {
             Node.Element(e) => Node.Element(Heap.new((*e).copy())),
@@ -120,6 +212,12 @@ Node {
     }
 
     /// Whether this is a text node of white space only.
+    ///
+    /// ```
+    /// # use xml
+    /// assert(xml.Node.Text("  \n".to_string()).is_blank_text())
+    /// assert(!xml.Node.CData(" ".to_string()).is_blank_text())
+    /// ```
     fn is_blank_text(self): bool {
         match self {
             Node.Text(t) => __is_blank(t.as_str()),
@@ -174,6 +272,12 @@ Node {
 
 Element {
     /// An element with the qualified name `name`, no namespace, no attributes, and no children.
+    ///
+    /// ```
+    /// # use xml
+    /// let item = xml.Element.new("item")
+    /// assert_eq(item.to_xml().unwrap().as_str(), "<item/>")
+    /// ```
     fn new(name: str): Element {
         Element {
             name: name.to_string(),
@@ -186,11 +290,23 @@ Element {
     }
 
     /// The part of the name before the colon, or an empty string.
+    ///
+    /// ```
+    /// # use xml
+    /// assert_eq(xml.Element.new("svg:rect").prefix().as_str(), "svg")
+    /// assert_eq(xml.Element.new("item").prefix().as_str(), "")
+    /// ```
     fn prefix(self): String {
         __prefix_of(self.name.as_str())
     }
 
     /// The part of the name after the colon, or the whole name.
+    ///
+    /// ```
+    /// # use xml
+    /// assert_eq(xml.Element.new("svg:rect").local_name().as_str(), "rect")
+    /// assert_eq(xml.Element.new("item").local_name().as_str(), "item")
+    /// ```
     fn local_name(self): String {
         __local_of(self.name.as_str())
     }
@@ -228,6 +344,14 @@ Element {
     }
 
     /// Adds or replaces the attribute `name`.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.set_attr("id", "1")
+    /// el.set_attr("id", "2")
+    /// assert_eq(el.attr("id").unwrap().as_str(), "2")
+    /// ```
     fn set_attr(mut self, name: str, value: str) {
         match self.attr_index(name) {
             Some(i) => self.attributes[i].value = value.to_string(),
@@ -237,6 +361,13 @@ Element {
 
     /// Adds or replaces a prefixed attribute and records its namespace; the declaration `xmlns:prefix` is added when
     /// this element does not declare the prefix yet.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.set_attr_ns("p:name", "urn:p", "v")
+    /// assert_eq(el.attr_ns("urn:p", "name").unwrap().as_str(), "v")
+    /// ```
     fn set_attr_ns(mut self, name: str, namespace: str, value: str) {
         self.set_attr(name, value)
         match self.attr_index(name) {
@@ -250,6 +381,14 @@ Element {
     }
 
     /// Removes the attribute `name`; whether there was one.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.set_attr("id", "1")
+    /// assert(el.remove_attr("id"))
+    /// assert(!el.remove_attr("id"))
+    /// ```
     fn remove_attr(mut self, name: str): bool {
         match self.attr_index(name) {
             Some(i) => {
@@ -261,6 +400,13 @@ Element {
     }
 
     /// Declares a namespace on this element: `xmlns="uri"` for an empty prefix, `xmlns:prefix="uri"` otherwise.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.declare_namespace("p", "urn:p")
+    /// assert_eq(el.lookup_namespace("p").unwrap().as_str(), "urn:p")
+    /// ```
     fn declare_namespace(mut self, prefix: str, uri: str) {
         if prefix.len() == 0 {
             self.set_attr("xmlns", uri)
@@ -270,6 +416,13 @@ Element {
     }
 
     /// Puts this element in the namespace `uri` and declares it for the element's own prefix.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.set_namespace("urn:a")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a xmlns=\"urn:a\"/>")
+    /// ```
     fn set_namespace(mut self, uri: str) {
         self.namespace = uri.to_string()
         let prefix = self.prefix()
@@ -277,31 +430,72 @@ Element {
     }
 
     /// Appends a child element.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut root = xml.Element.new("list")
+    /// root.push_child(xml.Element.new("item"))
+    /// assert_eq(root.elements().len(), 1)
+    /// ```
     fn push_child(mut self, own child: Element) {
         self.children.push(Node.Element(Heap.new(child)))
     }
 
     /// Appends a text node.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.push_text("hi")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a>hi</a>")
+    /// ```
     fn push_text(mut self, text: str) {
         self.children.push(Node.Text(text.to_string()))
     }
 
     /// Appends a CDATA section.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.push_cdata("x<y")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a><![CDATA[x<y]]></a>")
+    /// ```
     fn push_cdata(mut self, text: str) {
         self.children.push(Node.CData(text.to_string()))
     }
 
     /// Appends a comment.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.push_comment("note")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a><!--note--></a>")
+    /// ```
     fn push_comment(mut self, text: str) {
         self.children.push(Node.Comment(text.to_string()))
     }
 
     /// Appends a processing instruction.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.push_instruction("pi", "data")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a><?pi data?></a>")
+    /// ```
     fn push_instruction(mut self, target: str, data: str) {
         self.children.push(Node.Pi(Instruction { target: target.to_string(), data: data.to_string() }))
     }
 
     /// The builder form of `set_attr`.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_attr("id", "1")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a id=\"1\"/>")
+    /// ```
     fn with_attr(own self, name: str, value: str): Element {
         let mut element = self
         element.set_attr(name, value)
@@ -309,6 +503,12 @@ Element {
     }
 
     /// The builder form of `set_namespace`.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_namespace("urn:a")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a xmlns=\"urn:a\"/>")
+    /// ```
     fn with_namespace(own self, uri: str): Element {
         let mut element = self
         element.set_namespace(uri)
@@ -316,6 +516,12 @@ Element {
     }
 
     /// The builder form of `push_child`.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_child(xml.Element.new("b"))
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a><b/></a>")
+    /// ```
     fn with_child(own self, own child: Element): Element {
         let mut element = self
         element.push_child(child)
@@ -323,6 +529,12 @@ Element {
     }
 
     /// The builder form of `push_text`.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_text("hi")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a>hi</a>")
+    /// ```
     fn with_text(own self, text: str): Element {
         let mut element = self
         element.push_text(text)
@@ -332,6 +544,13 @@ Element {
     // ----- reading
 
     /// The value of the attribute `name` (the qualified name as written), if there is one.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_attr("id", "1")
+    /// assert_eq(el.attr("id").unwrap().as_str(), "1")
+    /// assert(el.attr("missing").is_none())
+    /// ```
     fn attr(self, name: str): Option<String> {
         match self.attr_index(name) {
             Some(i) => Some(self.attributes[i].value.clone()),
@@ -340,12 +559,26 @@ Element {
     }
 
     /// Whether there is an attribute `name`.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_attr("id", "1")
+    /// assert(el.has_attr("id"))
+    /// assert(!el.has_attr("class"))
+    /// ```
     fn has_attr(self, name: str): bool {
         self.attr(name).is_some()
     }
 
     /// The value of the attribute whose namespace is `namespace` and whose local name is `local`. A namespace
     /// declaration is never matched.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.set_attr_ns("p:name", "urn:p", "v")
+    /// assert_eq(el.attr_ns("urn:p", "name").unwrap().as_str(), "v")
+    /// ```
     fn attr_ns(self, namespace: str, local: str): Option<String> {
         let mut i: usize = 0
         while i < self.attributes.len() {
@@ -362,6 +595,14 @@ Element {
 
     /// The URI this element's own declarations bind `prefix` to (an empty prefix is the default namespace); `xml` is
     /// always bound.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut el = xml.Element.new("a")
+    /// el.declare_namespace("", "urn:default")
+    /// assert_eq(el.lookup_namespace("").unwrap().as_str(), "urn:default")
+    /// assert(el.lookup_namespace("p").is_none())
+    /// ```
     fn lookup_namespace(self, prefix: str): Option<String> {
         if prefix == "xml" {
             return Some(XML_NAMESPACE.to_string())
@@ -373,6 +614,12 @@ Element {
     }
 
     /// The text of the text and CDATA children, joined.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_text("hi").with_child(xml.Element.new("b"))
+    /// assert_eq(el.text().as_str(), "hi")
+    /// ```
     fn text(self): String {
         let mut out = String.new()
         let mut i: usize = 0
@@ -388,6 +635,12 @@ Element {
     }
 
     /// The text of this element and all its descendants, in document order.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_text("x").with_child(xml.Element.new("b").with_text("y"))
+    /// assert_eq(el.text_content().as_str(), "xy")
+    /// ```
     fn text_content(self): String {
         let mut out = String.new()
         self.collect_text(mut out)
@@ -408,6 +661,13 @@ Element {
     }
 
     /// The first child element whose qualified name is `name`: a copy.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_child(xml.Element.new("b").with_text("1"))
+    /// assert_eq(el.child("b").unwrap().text().as_str(), "1")
+    /// assert(el.child("c").is_none())
+    /// ```
     fn child(self, name: str): Option<Element> {
         let mut i: usize = 0
         while i < self.children.len() {
@@ -425,6 +685,12 @@ Element {
     }
 
     /// The child elements whose qualified name is `name`: copies, in order.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_child(xml.Element.new("b")).with_child(xml.Element.new("c")).with_child(xml.Element.new("b"))
+    /// assert_eq(el.children_named("b").len(), 2)
+    /// ```
     fn children_named(self, name: str): List<Element> {
         let mut out = List<Element>.new()
         let mut i: usize = 0
@@ -443,6 +709,12 @@ Element {
     }
 
     /// Every child element: copies, in order.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_text("x").with_child(xml.Element.new("b"))
+    /// assert_eq(el.elements().len(), 1)
+    /// ```
     fn elements(self): List<Element> {
         let mut out = List<Element>.new()
         let mut i: usize = 0
@@ -457,6 +729,12 @@ Element {
     }
 
     /// The first child element in the namespace `namespace` with the local name `local`: a copy.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.parse("<a xmlns:p=\"urn:p\"><p:b>1</p:b></a>").unwrap()
+    /// assert_eq(doc.root.child_ns("urn:p", "b").unwrap().text().as_str(), "1")
+    /// ```
     fn child_ns(self, namespace: str, local: str): Option<Element> {
         let mut i: usize = 0
         while i < self.children.len() {
@@ -474,6 +752,12 @@ Element {
     }
 
     /// The child elements in the namespace `namespace` with the local name `local`: copies, in order.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.parse("<a xmlns:p=\"urn:p\"><p:b/><b/><p:b/></a>").unwrap()
+    /// assert_eq(doc.root.children_ns("urn:p", "b").len(), 2)
+    /// ```
     fn children_ns(self, namespace: str, local: str): List<Element> {
         let mut out = List<Element>.new()
         let mut i: usize = 0
@@ -493,6 +777,12 @@ Element {
 
     /// The first element, this one or a descendant in document order, in the namespace `namespace` with the local
     /// name `local`: a copy.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.parse("<a><x><p:b xmlns:p=\"urn:p\"/></x></a>").unwrap()
+    /// assert(doc.root.find_ns("urn:p", "b").is_some())
+    /// ```
     fn find_ns(self, namespace: str, local: str): Option<Element> {
         if self.is_named(namespace, local) {
             return Some(self.copy())
@@ -514,11 +804,24 @@ Element {
     }
 
     /// Whether this element is in the namespace `namespace` and has the local name `local`.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.parse("<a xmlns:p=\"urn:p\"><p:b/></a>").unwrap()
+    /// assert(doc.root.child_ns("urn:p", "b").unwrap().is_named("urn:p", "b"))
+    /// ```
     fn is_named(self, namespace: str, local: str): bool {
         self.namespace.as_str() == namespace && self.local_name().as_str() == local
     }
 
     /// A deep copy.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_child(xml.Element.new("b"))
+    /// let copy = el.copy()
+    /// assert_eq(copy.to_xml().unwrap().as_str(), el.to_xml().unwrap().as_str())
+    /// ```
     fn copy(self): Element {
         let mut out = Element {
             name: self.name.clone(),
@@ -541,6 +844,12 @@ Element {
     /// This element as compact XML (no declaration, no added white space). Text that XML cannot carry (a control
     /// character), a name that is not a name, and a comment, CDATA section, or instruction that cannot be written
     /// are errors.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_attr("id", "1").with_text("x < y")
+    /// assert_eq(el.to_xml().unwrap().as_str(), "<a id=\"1\">x &lt; y</a>")
+    /// ```
     fn to_xml(self): Result<String, DeError> {
         let mut out = String.new()
         self.write_to(mut out, false, 0)?
@@ -549,6 +858,12 @@ Element {
 
     /// This element as XML with two-space indentation: an element that has only element, comment, and instruction
     /// children puts each on its own line, and an element with text keeps its content as written.
+    ///
+    /// ```
+    /// # use xml
+    /// let el = xml.Element.new("a").with_child(xml.Element.new("b").with_text("1"))
+    /// assert_eq(el.to_xml_pretty().unwrap().as_str(), "<a>\n  <b>1</b>\n</a>")
+    /// ```
     fn to_xml_pretty(self): Result<String, DeError> {
         let mut out = String.new()
         self.write_to(mut out, true, 0)?
@@ -653,6 +968,13 @@ Element {
 
 Document {
     /// A document with this root element, no declaration, and nothing before or after the root.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.Document.new(xml.Element.new("a"))
+    /// assert(doc.declaration.is_none())
+    /// assert_eq(doc.root.name.as_str(), "a")
+    /// ```
     fn new(own root: Element): Document {
         Document {
             declaration: None,
@@ -663,6 +985,12 @@ Document {
     }
 
     /// The same document with the declaration `<?xml version="1.0" encoding="UTF-8"?>`.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.Document.new(xml.Element.new("a")).with_declaration()
+    /// assert(doc.declaration.is_some())
+    /// ```
     fn with_declaration(own self): Document {
         let mut document = self
         document.declaration = Some(Declaration.new())
@@ -670,12 +998,24 @@ Document {
     }
 
     /// The document as compact XML: the declaration (if any) and the nodes directly one after the other.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.Document.new(xml.Element.new("a").with_text("x"))
+    /// assert_eq(doc.to_xml().unwrap().as_str(), "<a>x</a>")
+    /// ```
     fn to_xml(self): Result<String, DeError> {
         self.write_all(false)
     }
 
     /// The document as XML with two-space indentation (see `Element.to_xml_pretty`), one line for the declaration
     /// and each node outside the root, and a final newline.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.Document.new(xml.Element.new("a").with_child(xml.Element.new("b")))
+    /// assert_eq(doc.to_xml_pretty().unwrap().as_str(), "<a>\n  <b/>\n</a>\n")
+    /// ```
     fn to_xml_pretty(self): Result<String, DeError> {
         self.write_all(true)
     }
@@ -718,20 +1058,20 @@ Document {
 // ----- the reader: text to DOM ---------------------------------------------------------------------------------
 
 /// A namespace binding in scope while parsing.
-struct Binding {
+priv struct Binding {
     prefix: String,
     uri: String,
 }
 
 /// An attribute as written, before its prefix is resolved.
-struct RawAttribute {
+priv struct RawAttribute {
     name: String,
     value: String,
     position: usize,
 }
 
 /// A parsed start tag: the element, whether it was `<a/>`, and how many namespace bindings it pushed.
-struct StartTag {
+priv struct StartTag {
     element: Element,
     empty: bool,
     declared: usize,
@@ -739,17 +1079,31 @@ struct StartTag {
 
 /// The XML reader: a copy of the input and the byte offset of the next unread byte. The line and column of an error
 /// are computed from the offset when it is reported (SER10).
+///
+/// ```
+/// # use xml
+/// let mut parser = xml.Parser.new("<a>1</a>")
+/// let doc = parser.parse_document().unwrap()
+/// assert_eq(doc.root.text().as_str(), "1")
+/// ```
 struct Parser {
-    text: String,
-    pos: usize,
-    scopes: List<Binding>,
-    mark_pos: usize,
-    mark_line: usize,
-    mark_column: usize,
+    priv text: String,
+    priv pos: usize,
+    priv scopes: List<Binding>,
+    priv mark_pos: usize,
+    priv mark_line: usize,
+    priv mark_column: usize,
 }
 
 Parser {
     /// A reader over `text`. The text is copied once; a leading byte order mark is skipped.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut parser = xml.Parser.new("<root><b/></root>")
+    /// let doc = parser.parse_document().unwrap()
+    /// assert_eq(doc.root.elements().len(), 1)
+    /// ```
     fn new(text: str): Parser {
         let bytes = text.as_bytes()
         let mut start: usize = 0
@@ -767,6 +1121,12 @@ Parser {
     }
 
     /// Reads the whole text as one document.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut parser = xml.Parser.new("<a>")
+    /// assert(parser.parse_document().is_err())
+    /// ```
     fn parse_document(mut self): Result<Document, DeError> {
         let mut declaration: Option<Declaration> = None
         if self.starts_with_at("<?xml") && self.xml_declaration_follows() {
@@ -1532,7 +1892,7 @@ Parser {
 // ----- the writer: values to a DOM -------------------------------------------------------------------------------
 
 /// One open container in the writer: the element being built and what it holds.
-struct WriterFrame {
+priv struct WriterFrame {
     element: Element,
     // 0 = sequence, 1 = struct, 2 = map, 3 = enum variant.
     kind: i32,
@@ -1544,24 +1904,62 @@ struct WriterFrame {
 
 /// The format side of serialization (`Serializer`): it builds the DOM that the README's mapping describes. `root`
 /// names the root element; without one, a struct or an enum is named after its type and anything else `root`.
+///
+/// ```
+/// # use xml
+/// struct Item: Serialize {
+///     id: u32,
+/// }
+/// let mut writer = xml.Writer.with_root("item")
+/// Item { id: 1 }.serialize(mut writer).unwrap()
+/// let root = writer.finish().unwrap()
+/// assert_eq(root.name.as_str(), "item")
+/// ```
 struct Writer {
-    frames: List<WriterFrame>,
-    root: Option<Element>,
-    root_name: String,
+    priv frames: List<WriterFrame>,
+    priv root: Option<Element>,
+    priv root_name: String,
 }
 
 Writer {
     /// A writer that names the root element after the value.
+    ///
+    /// ```
+    /// # use xml
+    /// struct Item: Serialize {
+    ///     id: u32,
+    /// }
+    /// let mut writer = xml.Writer.new()
+    /// Item { id: 1 }.serialize(mut writer).unwrap()
+    /// let root = writer.finish().unwrap()
+    /// assert_eq(root.name.as_str(), "Item")
+    /// ```
     fn new(): Writer {
         Writer { frames: List<WriterFrame>.new(), root: None, root_name: String.new() }
     }
 
     /// A writer whose root element is called `name`.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut writer = xml.Writer.with_root("n")
+    /// serialize_i32(mut writer, 5).unwrap()
+    /// let root = writer.finish().unwrap()
+    /// assert_eq(root.text().as_str(), "5")
+    /// ```
     fn with_root(name: str): Writer {
         Writer { frames: List<WriterFrame>.new(), root: None, root_name: name.to_string() }
     }
 
     /// The root element that was written, ending the writer.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut writer = xml.Writer.with_root("n")
+    /// serialize_bool(mut writer, true).unwrap()
+    /// let root = writer.finish().unwrap()
+    /// assert_eq(root.to_xml().unwrap().as_str(), "<n>true</n>")
+    /// ```
     fn finish(own self): Result<Element, DeError> {
         if !self.frames.is_empty() {
             return Err(DeError.new("a container was not closed"))
@@ -1842,7 +2240,7 @@ Writer: Serializer {
 
 /// An element flattened for the reader: its local name, its direct text, the indexes of its child elements, and where
 /// it began. The reader walks indexes into a list of these, so reading copies a string only when a value is built.
-struct Slot {
+priv struct Slot {
     name: String,
     text: String,
     kids: List<usize>,
@@ -1852,7 +2250,7 @@ struct Slot {
 
 /// An open sequence, map, or struct: the container's slot and the index of its next child. `started` is whether the
 /// first `has_next_*` call has been made, and `reads` is the reader's count of values read when the container opened.
-struct Cursor {
+priv struct Cursor {
     slot: usize,
     next: usize,
     started: bool,
@@ -1860,7 +2258,7 @@ struct Cursor {
 }
 
 /// An open enum: the enum's slot, the slot of the variant element, the payload's arity, and the next payload child.
-struct VariantFrame {
+priv struct VariantFrame {
     slot: usize,
     variant: usize,
     arity: usize,
@@ -1869,22 +2267,41 @@ struct VariantFrame {
 
 /// The format side of deserialization (`Deserializer`) over a parsed document. It matches elements by local name and
 /// ignores attributes and namespaces; the README has the mapping.
+///
+/// ```
+/// # use xml
+/// let mut reader = xml.Reader.new("<n>5</n>").unwrap()
+/// assert_eq(deserialize_i32(mut reader).unwrap(), 5)
+/// ```
 struct Reader {
-    slots: List<Slot>,
-    value: usize,
-    reads: usize,
-    cursors: List<Cursor>,
-    variants: List<VariantFrame>,
+    priv slots: List<Slot>,
+    priv value: usize,
+    priv reads: usize,
+    priv cursors: List<Cursor>,
+    priv variants: List<VariantFrame>,
 }
 
 Reader {
     /// A reader over the document in `text`: the text is parsed first, so a syntax error is reported here.
+    ///
+    /// ```
+    /// # use xml
+    /// let mut reader = xml.Reader.new("<n>true</n>").unwrap()
+    /// assert_eq(deserialize_bool(mut reader).unwrap(), true)
+    /// ```
     fn new(text: str): Result<Reader, DeError> {
         let document = parse(text)?
         Reader.from_document(document)
     }
 
     /// A reader over the root element of `document`.
+    ///
+    /// ```
+    /// # use xml
+    /// let doc = xml.parse("<n>7</n>").unwrap()
+    /// let mut reader = xml.Reader.from_document(doc).unwrap()
+    /// assert_eq(deserialize_i32(mut reader).unwrap(), 7)
+    /// ```
     fn from_document(document: Document): Result<Reader, DeError> {
         let mut slots = List<Slot>.new()
         document.root.flatten_into(mut slots, 0)?
@@ -2347,6 +2764,13 @@ Reader: Deserializer {
 // ----- the public surface ---------------------------------------------------------------------------------------
 
 /// Reads `text` as one XML document.
+///
+/// ```
+/// # use xml
+/// let doc = xml.parse("<a><b/></a>").unwrap()
+/// assert_eq(doc.root.name.as_str(), "a")
+/// assert_eq(doc.root.elements().len(), 1)
+/// ```
 fn parse(text: str): Result<Document, DeError> {
     let mut parser = Parser.new(text)
     parser.parse_document()
@@ -2354,6 +2778,15 @@ fn parse(text: str): Result<Document, DeError> {
 
 /// Writes `value` as a DOM: the tree the serialization mapping builds. The root element is named after a struct or
 /// an enum, and `root` otherwise.
+///
+/// ```
+/// # use xml
+/// struct Item: Serialize {
+///     id: u32,
+/// }
+/// let doc = xml.to_document(Item { id: 1 }).unwrap()
+/// assert_eq(doc.root.name.as_str(), "Item")
+/// ```
 fn to_document<T: Serialize>(value: T): Result<Document, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
@@ -2362,6 +2795,15 @@ fn to_document<T: Serialize>(value: T): Result<Document, DeError> {
 }
 
 /// Like `to_document`, with the root element called `root`.
+///
+/// ```
+/// # use xml
+/// struct Item: Serialize {
+///     id: u32,
+/// }
+/// let doc = xml.to_document_root(Item { id: 1 }, "row").unwrap()
+/// assert_eq(doc.root.name.as_str(), "row")
+/// ```
 fn to_document_root<T: Serialize>(value: T, root: str): Result<Document, DeError> {
     let mut writer = Writer.with_root(root)
     value.serialize(mut writer)?
@@ -2370,24 +2812,59 @@ fn to_document_root<T: Serialize>(value: T, root: str): Result<Document, DeError
 }
 
 /// Writes `value` as compact XML, with no declaration.
+///
+/// ```
+/// # use xml
+/// struct Item: Serialize {
+///     id: u32,
+/// }
+/// assert_eq(xml.to_string(Item { id: 1 }).unwrap().as_str(), "<Item><id>1</id></Item>")
+/// ```
 fn to_string<T: Serialize>(value: T): Result<String, DeError> {
     let document = to_document(value)?
     document.to_xml()
 }
 
 /// Writes `value` as XML with two-space indentation and a final newline.
+///
+/// ```
+/// # use xml
+/// struct Item: Serialize {
+///     id: u32,
+/// }
+/// assert_eq(xml.to_string_pretty(Item { id: 1 }).unwrap().as_str(), "<Item>\n  <id>1</id>\n</Item>\n")
+/// ```
 fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
     let document = to_document(value)?
     document.to_xml_pretty()
 }
 
 /// Reads a value of type `T` from the document in `text`. The root element's name is not checked.
+///
+/// ```
+/// # use xml
+/// struct Item: Deserialize {
+///     id: u32,
+/// }
+/// let item: Result<Item, DeError> = xml.from_str("<Item><id>1</id></Item>")
+/// assert_eq(item.unwrap().id, 1)
+/// ```
 fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
     let mut reader = Reader.new(text)?
     T.deserialize(mut reader)
 }
 
 /// Reads a value of type `T` from the root element of a document.
+///
+/// ```
+/// # use xml
+/// struct Item: Deserialize {
+///     id: u32,
+/// }
+/// let doc = xml.parse("<Item><id>2</id></Item>").unwrap()
+/// let item: Result<Item, DeError> = xml.from_document(doc)
+/// assert_eq(item.unwrap().id, 2)
+/// ```
 fn from_document<T: Deserialize>(document: Document): Result<T, DeError> {
     let mut reader = Reader.from_document(document)?
     T.deserialize(mut reader)

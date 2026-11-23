@@ -4,21 +4,21 @@
 use errors.CryptoError
 use util.constant_time_eq
 
-const NONCE_PREFIX: [u8; 4] = [0, 0, 0, 0]
-const CHACHA_SIGMA: [u32; 4] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]
+priv const NONCE_PREFIX: [u8; 4] = [0, 0, 0, 0]
+priv const CHACHA_SIGMA: [u32; 4] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]
 
-fn le32(data: [u8], at: usize): u32 {
+priv fn le32(data: [u8], at: usize): u32 {
     (data[at] as u32) | ((data[at + 1] as u32) << 8) | ((data[at + 2] as u32) << 16) | ((data[at + 3] as u32) << 24)
 }
 
-fn push_le32(mut out: List<u8>, word: u32) {
+priv fn push_le32(mut out: List<u8>, word: u32) {
     out.push(word as u8)
     out.push((word >> 8) as u8)
     out.push((word >> 16) as u8)
     out.push((word >> 24) as u8)
 }
 
-fn quarter_round(mut x: [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+priv fn quarter_round(mut x: [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     x[a] = x[a].wrapping_add(x[b])
     x[d] = (x[d] ^ x[a]).rotate_left(16)
     x[c] = x[c].wrapping_add(x[d])
@@ -29,7 +29,7 @@ fn quarter_round(mut x: [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     x[b] = (x[b] ^ x[c]).rotate_left(7)
 }
 
-fn chacha_rounds(mut x: [u32; 16]) {
+priv fn chacha_rounds(mut x: [u32; 16]) {
     let mut i: usize = 0
     while i < 10 {
         quarter_round(mut x, 0, 4, 8, 12)
@@ -44,7 +44,7 @@ fn chacha_rounds(mut x: [u32; 16]) {
     }
 }
 
-fn chacha_state(key: [u8], counter: u32, nonce: [u8]): [u32; 16] {
+priv fn chacha_state(key: [u8], counter: u32, nonce: [u8]): [u32; 16] {
     let mut s: [u32; 16] = [0; 16]
     let mut i: usize = 0
     while i < 4 {
@@ -64,6 +64,16 @@ fn chacha_state(key: [u8], counter: u32, nonce: [u8]): [u32; 16] {
 }
 
 /// One 64-byte ChaCha20 keystream block (`key` is 32 bytes, `nonce` 12 bytes).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{chacha20_block}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000090000004a00000000").unwrap()
+/// let block = chacha20_block(key.as_slice(), 1, nonce.as_slice())
+/// assert_eq(block.len(), 64)
+/// assert(block.to_hex().starts_with("10f1e7e4d13b5915500fdd1fa32071c4"))
+/// ```
 fn chacha20_block(key: [u8], counter: u32, nonce: [u8]): List<u8> {
     let initial = chacha_state(key, counter, nonce)
     let mut x = initial
@@ -78,6 +88,16 @@ fn chacha20_block(key: [u8], counter: u32, nonce: [u8]): List<u8> {
 }
 
 /// Encrypts or decrypts `data` with ChaCha20 (RFC 8439): XOR with the keystream starting at block `counter`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{chacha20_xor}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000004a00000000").unwrap()
+/// let sealed = chacha20_xor(key.as_slice(), nonce.as_slice(), 1, "hello".as_bytes()).unwrap()
+/// let plain = chacha20_xor(key.as_slice(), nonce.as_slice(), 1, sealed.as_slice()).unwrap()
+/// assert_eq(plain.to_hex().as_str(), "68656c6c6f")
+/// ```
 fn chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
         return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
@@ -102,6 +122,14 @@ fn chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u
 }
 
 /// HChaCha20: a 32-byte subkey from a 32-byte key and a 16-byte nonce (the first step of XChaCha20).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{hchacha20}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000004a0000000031415927").unwrap()
+/// assert_eq(hchacha20(key.as_slice(), nonce.as_slice()).unwrap().len(), 32)
+/// ```
 fn hchacha20(key: [u8], nonce: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
         return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
@@ -141,6 +169,16 @@ fn hchacha20(key: [u8], nonce: [u8]): Result<List<u8>, CryptoError> {
 }
 
 /// XChaCha20 (24-byte nonce): encrypts or decrypts `data`, starting at block `counter`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{xchacha20_xor}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000000000000000000000000000").unwrap()
+/// let sealed = xchacha20_xor(key.as_slice(), nonce.as_slice(), 0, "hello".as_bytes()).unwrap()
+/// let plain = xchacha20_xor(key.as_slice(), nonce.as_slice(), 0, sealed.as_slice()).unwrap()
+/// assert_eq(plain.to_hex().as_str(), "68656c6c6f")
+/// ```
 fn xchacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
         return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
@@ -155,6 +193,15 @@ fn xchacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<
 // ----- Poly1305 -----------------------------------------------------------------------------------------------
 
 /// An incremental Poly1305 one-time authenticator (RFC 8439). A key must never authenticate two messages.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Poly1305}
+/// let key = hex_decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b").unwrap()
+/// let mut mac = Poly1305.new(key.as_slice()).unwrap()
+/// mac.update("Cryptographic Forum Research Group".as_bytes())
+/// assert_eq(mac.finish().to_hex().as_str(), "a8061dc1305136c6c22b8baf0c0127a9")
+/// ```
 struct Poly1305 {
     r: [u64; 5],
     h: [u64; 5],
@@ -164,6 +211,13 @@ struct Poly1305 {
 
 Poly1305 {
     /// A new authenticator for a 32-byte one-time key.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Poly1305}
+    /// assert(Poly1305.new("too short".as_bytes()).is_err())
+    /// assert(Poly1305.new(List<u8>.new().as_slice()).is_err())
+    /// ```
     fn new(key: [u8]): Result<Poly1305, CryptoError> {
         if key.len() != 32 {
             return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
@@ -181,7 +235,7 @@ Poly1305 {
         })
     }
 
-    fn block(mut self, m: [u8], hibit: u64) {
+    priv fn block(mut self, m: [u8], hibit: u64) {
         let mask: u64 = 0x3ffffff
         let r0 = self.r[0]
         let r1 = self.r[1]
@@ -228,6 +282,16 @@ Poly1305 {
     }
 
     /// Authenticates more of the message.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Poly1305}
+    /// let key = hex_decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b").unwrap()
+    /// let mut mac = Poly1305.new(key.as_slice()).unwrap()
+    /// mac.update("Cryptographic ".as_bytes())
+    /// mac.update("Forum Research Group".as_bytes())
+    /// assert_eq(mac.finish().to_hex().as_str(), "a8061dc1305136c6c22b8baf0c0127a9")
+    /// ```
     fn update(mut self, data: [u8]) {
         let mut pos: usize = 0
         if self.buf.len() > 0 {
@@ -252,6 +316,15 @@ Poly1305 {
     }
 
     /// The 16-byte tag. The authenticator must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Poly1305}
+    /// let key = hex_decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b").unwrap()
+    /// let mut mac = Poly1305.new(key.as_slice()).unwrap()
+    /// mac.update("Cryptographic Forum Research Group".as_bytes())
+    /// assert_eq(mac.finish().len(), 16)
+    /// ```
     fn finish(mut self): List<u8> {
         if self.buf.len() > 0 {
             let mut last = self.buf.clone()
@@ -330,6 +403,13 @@ Poly1305 {
 }
 
 /// The Poly1305 tag of `data` under a 32-byte one-time `key`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{poly1305}
+/// let key = hex_decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b").unwrap()
+/// assert_eq(poly1305(key.as_slice(), "Cryptographic Forum Research Group".as_bytes()).unwrap().to_hex().as_str(), "a8061dc1305136c6c22b8baf0c0127a9")
+/// ```
 fn poly1305(key: [u8], data: [u8]): Result<List<u8>, CryptoError> {
     let mut p = Poly1305.new(key)?
     p.update(data)
@@ -338,7 +418,7 @@ fn poly1305(key: [u8], data: [u8]): Result<List<u8>, CryptoError> {
 
 // ----- the AEADs ----------------------------------------------------------------------------------------------
 
-fn push_le64(mut out: List<u8>, word: u64) {
+priv fn push_le64(mut out: List<u8>, word: u64) {
     let mut i: u32 = 0
     while i < 8 {
         out.push((word >> (i * 8)) as u8)
@@ -346,7 +426,7 @@ fn push_le64(mut out: List<u8>, word: u64) {
     }
 }
 
-fn aead_tag(otk: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
+priv fn aead_tag(otk: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
     let mut mac = Poly1305.new(otk).unwrap()
     mac.update(aad)
     let mut zeros = List<u8>.new()
@@ -373,7 +453,7 @@ fn aead_tag(otk: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
     mac.finish()
 }
 
-fn aead_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
+priv fn aead_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     let block0 = chacha20_block(key, 0, nonce)
     let mut sealed = chacha20_xor(key, nonce, 1, plaintext)?
     let tag = aead_tag(block0[0..32], aad, sealed.as_slice())
@@ -381,7 +461,7 @@ fn aead_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8
     Ok(sealed)
 }
 
-fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
+priv fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if sealed.len() < 16 {
         return Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
     }
@@ -398,6 +478,16 @@ fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, 
 
 /// ChaCha20-Poly1305 (RFC 8439): encrypts `plaintext` under a 32-byte `key` and 12-byte `nonce` and authenticates it
 /// with `aad`. The result is the ciphertext followed by the 16-byte tag. Never reuse a (key, nonce) pair.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{chacha20_poly1305_seal, chacha20_poly1305_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000").unwrap()
+/// let sealed = chacha20_poly1305_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert_eq(sealed.len(), 22)
+/// assert_eq(chacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), sealed.as_slice()).unwrap().to_hex().as_str(), "736563726574")
+/// ```
 fn chacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
         return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
@@ -410,6 +500,15 @@ fn chacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): R
 
 /// Verifies and decrypts the output of `chacha20_poly1305_seal`; a wrong tag is `AuthenticationFailed` and no
 /// plaintext is released.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{chacha20_poly1305_seal, chacha20_poly1305_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000").unwrap()
+/// let sealed = chacha20_poly1305_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert(chacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "forged".as_bytes(), sealed.as_slice()).is_err())
+/// ```
 fn chacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
         return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
@@ -421,6 +520,16 @@ fn chacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Resu
 }
 
 /// XChaCha20-Poly1305: the same AEAD with a 24-byte nonce, which is safe to pick at random.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{xchacha20_poly1305_seal, xchacha20_poly1305_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000000000000000000000000000").unwrap()
+/// let sealed = xchacha20_poly1305_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert_eq(sealed.len(), 22)
+/// assert_eq(xchacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), sealed.as_slice()).unwrap().to_hex().as_str(), "736563726574")
+/// ```
 fn xchacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
         return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
@@ -433,6 +542,16 @@ fn xchacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): 
 }
 
 /// Verifies and decrypts the output of `xchacha20_poly1305_seal`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{xchacha20_poly1305_seal, xchacha20_poly1305_open}
+/// let key = hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap()
+/// let nonce = hex_decode("000000000000000000000000000000000000000000000000").unwrap()
+/// let sealed = xchacha20_poly1305_seal(key.as_slice(), nonce.as_slice(), "header".as_bytes(), "secret".as_bytes()).unwrap()
+/// assert(xchacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), sealed.as_slice()).is_ok())
+/// assert(xchacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "forged".as_bytes(), sealed.as_slice()).is_err())
+/// ```
 fn xchacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
         return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
