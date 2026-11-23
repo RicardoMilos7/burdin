@@ -8,18 +8,110 @@
 use alloc.Allocator
 
 /// A type that can be shown to a person: `{}` in a format string.
+///
+/// ```
+/// struct Name {
+///     text: String
+/// }
+///
+/// Name: Display {
+///     fn fmt(self, mut f: Formatter) {
+///         f.pad(self.text)
+///     }
+/// }
+///
+/// fn main() {
+///     let n = Name { text: String.from("ada") }
+///     assert_eq(format("[{:>5}]", n), String.from("[  ada]"))
+/// }
+/// ```
 interface Display {
     /// Writes the value to `f`. `f.pad(text)` applies the width, fill, alignment, and precision of the placeholder.
+    ///
+    /// ```
+    /// struct Name {
+    ///     text: String
+    /// }
+    ///
+    /// Name: Display {
+    ///     fn fmt(self, mut f: Formatter) {
+    ///         f.pad(self.text)
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let n = Name { text: String.from("ada") }
+    ///     assert_eq(format("{}", n), String.from("ada"))
+    ///     assert_eq(format("[{:>5}]", n), String.from("[  ada]"))
+    /// }
+    /// ```
     fn fmt(self, mut f: Formatter)
 }
 
 /// A type that can be shown to a programmer: `{:?}` in a format string.
+///
+/// ```
+/// struct Name {
+///     text: String
+/// }
+///
+/// Name: Debug {
+///     fn debug(self, mut f: Formatter) {
+///         f.write_str("Name(")
+///         f.write_str(self.text)
+///         f.write_str(")")
+///     }
+/// }
+///
+/// fn main() {
+///     let n = Name { text: String.from("ada") }
+///     assert_eq(format("{:?}", n), String.from("Name(ada)"))
+/// }
+/// ```
 interface Debug {
     /// Writes the value to `f`.
+    ///
+    /// ```
+    /// struct Name {
+    ///     text: String
+    /// }
+    ///
+    /// Name: Debug {
+    ///     fn debug(self, mut f: Formatter) {
+    ///         f.write_str("Name(")
+    ///         f.write_str(self.text)
+    ///         f.write_str(")")
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let n = Name { text: String.from("ada") }
+    ///     assert_eq(format("{:?}", n), String.from("Name(ada)"))
+    /// }
+    /// ```
     fn debug(self, mut f: Formatter)
 }
 
 /// The text a formatting operation builds, plus the specifier of the placeholder being formatted.
+///
+/// ```
+/// struct Tag {
+///     name: String
+/// }
+///
+/// Tag: Display {
+///     fn fmt(self, mut f: Formatter) {
+///         f.write_str("<")
+///         f.write_str(self.name)
+///         f.write_str(">")
+///     }
+/// }
+///
+/// fn main() {
+///     let tag = Tag { name: String.from("b") }
+///     assert_eq(format("{}", tag), String.from("<b>"))
+/// }
+/// ```
 struct Formatter {
     priv out: String
     priv fill: char
@@ -38,6 +130,11 @@ struct Formatter {
 
 Formatter {
     /// An empty formatter with the default specifier.
+    ///
+    /// ```
+    /// let f = Formatter.new()
+    /// assert_eq(f.finish(), String.from(""))
+    /// ```
     fn new(): Formatter {
         Formatter {
             out: String.new(),
@@ -55,21 +152,46 @@ Formatter {
     }
 
     /// The text written so far, ending the formatter.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.write_str("ok")
+    /// assert_eq(f.finish(), String.from("ok"))
+    /// ```
     fn finish(own self): String {
         self.out
     }
 
     /// Appends text as it is, ignoring the specifier.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.write_str("ab")
+    /// assert_eq(f.finish(), String.from("ab"))
+    /// ```
     fn write_str(mut self, s: str) {
         self.out.push_str(s)
     }
 
     /// Appends one character as it is, ignoring the specifier.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.write_char('z')
+    /// assert_eq(f.finish(), String.from("z"))
+    /// ```
     fn write_char(mut self, c: char) {
         self.out.push(c)
     }
 
     /// Sets the specifier of the next value.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.set_spec('*', 3, false, false, false, true, 5, false, 0, 10)
+    /// f.pad("x")
+    /// assert_eq(f.finish(), String.from("****x"))
+    /// ```
     fn set_spec(
         mut self,
         fill: char,
@@ -96,6 +218,14 @@ Formatter {
     }
 
     /// Restores the default specifier.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.set_spec('*', 3, false, false, false, true, 5, false, 0, 10)
+    /// f.reset_spec()
+    /// f.pad("ab")
+    /// assert_eq(f.finish(), String.from("ab"))
+    /// ```
     fn reset_spec(mut self) {
         self.fill = ' '
         self.align = 0
@@ -108,6 +238,13 @@ Formatter {
     }
 
     /// The minimum width of the placeholder, if one was written.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// assert(f.width().is_none())
+    /// f.set_spec('*', 3, false, false, false, true, 5, false, 0, 10)
+    /// assert_eq(f.width(), Some(5))
+    /// ```
     fn width(self): Option<usize> {
         if self.has_width {
             Some(self.width)
@@ -117,6 +254,11 @@ Formatter {
     }
 
     /// The precision of the placeholder, if one was written.
+    ///
+    /// ```
+    /// let f = Formatter.new()
+    /// assert(f.precision().is_none())
+    /// ```
     fn precision(self): Option<usize> {
         if self.has_precision {
             Some(self.precision)
@@ -126,22 +268,44 @@ Formatter {
     }
 
     /// The fill character of the placeholder (a space unless one was written).
+    ///
+    /// ```
+    /// let f = Formatter.new()
+    /// assert_eq(f.fill(), ' ')
+    /// ```
     fn fill(self): char {
         self.fill
     }
 
     /// Whether the placeholder has the `#` flag.
+    ///
+    /// ```
+    /// let f = Formatter.new()
+    /// assert(!f.alternate())
+    /// ```
     fn alternate(self): bool {
         self.alt
     }
 
     /// Whether the placeholder has the `+` flag.
+    ///
+    /// ```
+    /// let f = Formatter.new()
+    /// assert(!f.sign_plus())
+    /// ```
     fn sign_plus(self): bool {
         self.plus
     }
 
     /// Writes `s` with the placeholder's precision (at most that many characters), width, fill, and alignment.
     /// Text is left-aligned unless the placeholder says otherwise.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.set_spec('*', 3, false, false, false, true, 5, false, 0, 10)
+    /// f.pad("ab")
+    /// assert_eq(f.finish(), String.from("***ab"))
+    /// ```
     fn pad(mut self, s: str) {
         let mut bytes: usize = 0
         let mut chars: usize = 0
@@ -156,12 +320,24 @@ Formatter {
     }
 
     /// Writes `s` with the placeholder's width, fill, and alignment, but not its precision.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.pad_plain("ab")
+    /// assert_eq(f.finish(), String.from("ab"))
+    /// ```
     fn pad_plain(mut self, s: str) {
         self.pad_text(s, __char_count(s), 1)
     }
 
     /// Writes a number as its sign, its radix prefix, and its digits. With the `0` flag the zeros go between the
     /// prefix and the digits; otherwise numbers are right-aligned unless the placeholder says otherwise.
+    ///
+    /// ```
+    /// let mut f = Formatter.new()
+    /// f.pad_number("-", "", "42")
+    /// assert_eq(f.finish(), String.from("-42"))
+    /// ```
     fn pad_number(mut self, sign: str, prefix: str, digits: str) {
         let n = sign.len() + prefix.len() + digits.len()
         if !self.has_width || self.width <= n {

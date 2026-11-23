@@ -10,11 +10,29 @@ use fs.append
 use reactor.__offload_raw
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `Error`.
+///
+/// ```
+/// error enum Bad {
+///     Oops "something went wrong"
+/// }
+/// let b = Bad.Oops
+/// assert_eq(format("{}", b), String.from("something went wrong"))
+/// ```
 interface Error requires Display { }
 
 /// The dynamic error of `Result<T>`: an owned box holding any error, the context messages `.context` added
 /// (outermost first), and the frames a debug build records when the error was created and propagated
 /// (`spec/errors.md`, ERR4 and ERR7).
+///
+/// ```
+/// fn read_cfg(): Result<i32, IoError> {
+///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+/// }
+/// match read_cfg().context("loading") {
+///     Ok(_) => assert(false),
+///     Err(e) => assert_eq(format("{}", e), String.from("loading: cannot read cfg.toml: not found")),
+/// }
+/// ```
 struct Error {
     value: any Error
     frames: List<TraceFrame>
@@ -24,6 +42,11 @@ struct Error {
 
 /// One recorded error site: the function the error passed through and the source file, line, and column
 /// (`spec/debug.md`, DBG3). A release build records no frames at all.
+///
+/// ```
+/// let frame = TraceFrame { func: String.from("main"), file: String.from("main.bd"), line: 3, col: 5 }
+/// assert_eq(format("{}", frame), String.from("at main (main.bd:3:5)"))
+/// ```
 struct TraceFrame {
     func: String
     file: String
@@ -33,6 +56,18 @@ struct TraceFrame {
 
 /// One field of a struct, as `Type.fields` describes it (`spec/reflection.md`, RFL2). `type_name` is the field's
 /// type as the checker prints it. The names are `String`s because a struct cannot hold a view.
+///
+/// ```
+/// struct Point {
+///     x: i32
+///     y: i32
+/// }
+/// let mut names = String.from("")
+/// comptime for field in Point.fields {
+///     names.push_str(field.name)
+/// }
+/// assert_eq(names, String.from("xy"))
+/// ```
 struct FieldInfo: Clone, Eq, Debug {
     name: String
     type_name: String
@@ -41,6 +76,18 @@ struct FieldInfo: Clone, Eq, Debug {
 
 /// One variant of an enum, as `Type.variants` describes it (`spec/reflection.md`, RFL2). `arity` is the number
 /// of fields the variant carries.
+///
+/// ```
+/// enum Shape {
+///     Dot
+///     Line(i32)
+/// }
+/// let mut total: usize = 0
+/// comptime for variant in Shape.variants {
+///     total = total + variant.arity
+/// }
+/// assert_eq(total, 1)
+/// ```
 struct VariantInfo: Clone, Eq, Debug {
     name: String
     index: usize
@@ -61,11 +108,34 @@ Error: Error { }
 
 Error {
     /// Whether the error holds a `T`.
+    ///
+    /// ```
+    /// fn read_cfg(): Result<i32, IoError> {
+    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    /// }
+    /// match read_cfg().context("loading") {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => assert(e.is<IoError>()),
+    /// }
+    /// ```
     fn is<T: Error>(self): bool {
         self.value.is<T>()
     }
 
     /// The value the error holds, when it is a `T`. It consumes the error.
+    ///
+    /// ```
+    /// fn read_cfg(): Result<i32, IoError> {
+    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    /// }
+    /// match read_cfg().context("loading") {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => {
+    ///         let inner = e.downcast<IoError>().unwrap()
+    ///         assert_eq(inner.kind(), IoErrorKind.NotFound)
+    ///     }
+    /// }
+    /// ```
     fn downcast<T: Error>(own self): Option<T> {
         self.value.downcast<T>()
     }
@@ -73,6 +143,16 @@ Error {
     /// Prints the recorded trace frames, one per line, to standard error (`spec/debug.md`, DBG3): each frame's
     /// `at <func> (<file>:<line>:<col>)` form. Nothing prints when there are no frames, which is every release
     /// build. The wrappers of `fn main(): Result<T>` and of a failing test call it after the message.
+    ///
+    /// ```
+    /// fn read_cfg(): Result<i32, IoError> {
+    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    /// }
+    /// match read_cfg().context("loading") {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => e.print_trace(),
+    /// }
+    /// ```
     fn print_trace(self) {
         for frame in self.frames {
             eprintln("{frame}")
@@ -122,6 +202,12 @@ priv fn __error_context(own e: Error, message: str): Error {
 /// The portable kind of an I/O failure (`spec/errors.md`, ERR11): what went wrong, without the platform's own
 /// error code. An operating system code the compiler does not classify is `Other`; the code is still available
 /// through `IoError.os_code()`.
+///
+/// ```
+/// let kind = IoErrorKind.InvalidInput
+/// assert(kind == IoErrorKind.InvalidInput)
+/// assert(kind != IoErrorKind.Interrupted)
+/// ```
 enum IoErrorKind: Copy, Clone, Eq, Debug {
     NotFound
     PermissionDenied
@@ -181,6 +267,11 @@ IoErrorKind: Display {
 /// few failures (such as removing a path that is not a directory) and stores `None` there. The reader and writer
 /// interfaces report the failures that no system call observed (`spec/stdlib.md`, "Readers and writers"); they
 /// carry no path and no code, and `kind()` classifies them too.
+///
+/// ```
+/// let err = IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None }
+/// assert_eq(err.kind(), IoErrorKind.NotFound)
+/// ```
 error enum IoError: Clone, Eq, Debug {
     Read { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot read {path}: {kind}"
     Write { path: String, kind: IoErrorKind, os_code: Option<i32> } "cannot write {path}: {kind}"
@@ -195,6 +286,13 @@ error enum IoError: Clone, Eq, Debug {
 
 IoError {
     /// What went wrong, portably (`spec/errors.md`, ERR11).
+    ///
+    /// ```
+    /// match read_to_string("burdin-doc-no-such-file.txt") {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.NotFound),
+    /// }
+    /// ```
     fn kind(self): IoErrorKind {
         match self {
             IoError.Read { path: _, kind, os_code: _ } => kind,
@@ -211,6 +309,13 @@ IoError {
 
     /// The operating system's own error code: `errno` on Linux and macOS, the Win32 error code on Windows. `None`
     /// when `std` detected the failure itself and no system call reported it.
+    ///
+    /// ```
+    /// match read_to_string("burdin-doc-no-such-file.txt") {
+    ///     Ok(_) => assert(false),
+    ///     Err(e) => assert(e.os_code().is_some()),
+    /// }
+    /// ```
     fn os_code(self): Option<i32> {
         match self {
             IoError.Read { path: _, kind: _, os_code } => os_code,
@@ -227,16 +332,36 @@ IoError {
 }
 
 /// The error type of `i32.parse` and the other integer parsers.
+///
+/// ```
+/// match i32.parse("x") {
+///     Ok(_) => assert(false),
+///     Err(e) => assert_eq(e, ParseIntError.Invalid),
+/// }
+/// ```
 error enum ParseIntError: Eq, Debug {
     Invalid "invalid integer"
 }
 
 /// The error type of `T.try_from(value)` for an integer `T` (spec/stdlib.md, "Conversions").
+///
+/// ```
+/// let big: i32 = 300
+/// match u8.try_from(big) {
+///     Ok(_) => assert(false),
+///     Err(e) => assert_eq(e, TryFromIntError.OutOfRange),
+/// }
+/// ```
 error enum TryFromIntError: Eq, Debug {
     OutOfRange "out of range integral type conversion attempted"
 }
 
 /// The error type of `assert`, `assert_eq`, and `assert_ne` in a `burdin test` build.
+///
+/// ```
+/// let e = AssertError.Failed { condition: String.from("x > 0"), location: String.from("main.bd:3:5") }
+/// assert_eq(format("{}", e), String.from("assertion failed: x > 0 at main.bd:3:5"))
+/// ```
 error enum AssertError {
     Failed { condition: String, location: String } "assertion failed: {condition} at {location}"
     FailedMsg { condition: String, message: String, location: String }
@@ -248,10 +373,20 @@ error enum AssertError {
 }
 
 /// A borrowed C string: a pointer to NUL-terminated bytes. `CStr.to_string(ptr)` copies them into a `String`.
+///
+/// ```
+/// let owned = CString.from("hi")
+/// let text = unsafe { CStr.to_string(owned.as_ptr()) }
+/// assert_eq(text, String.from("hi"))
+/// ```
 type CStr = CPtr<CChar>
 
 /// Panics with `assertion failed` when `cond` is false. With a message, `assert(cond, "text {x}")` formats it
 /// and panics with that instead.
+///
+/// ```
+/// assert(1 < 2)
+/// ```
 fn assert(cond: bool) {
     if !cond {
         panic("assertion failed")
@@ -259,6 +394,10 @@ fn assert(cond: bool) {
 }
 
 /// Panics when the two values differ.
+///
+/// ```
+/// assert_eq(2 + 2, 4)
+/// ```
 fn assert_eq<T: Eq>(a: T, b: T) {
     if a != b {
         panic("assertion failed: the two values differ")
@@ -267,6 +406,10 @@ fn assert_eq<T: Eq>(a: T, b: T) {
 
 /// Panics when the two values are equal. With a message, `assert_ne(a, b, "text {x}")` formats it and panics
 /// with that instead.
+///
+/// ```
+/// assert_ne(1, 2)
+/// ```
 fn assert_ne<T: Eq>(a: T, b: T) {
     if a == b {
         panic("assertion failed: the two values are equal")
@@ -279,6 +422,10 @@ fn assert_ne<T: Eq>(a: T, b: T) {
 /// instead. A missing or different snapshot fails the test; `burdin test --bless` accepts the new text
 /// (`spec/test-runner.md`, "Snapshot tests"). Outside `burdin test` the call formats the value and does nothing
 /// else. The compiler routes every call to `__snapshot_debug` or `__snapshot_display` with its location.
+///
+/// ```
+/// assert_snapshot(42)
+/// ```
 fn assert_snapshot<T: Debug>(value: T) { }
 
 /// `assert_snapshot(value)`: the `Debug` text, recorded for the runner with the call's `path:line:col`.
@@ -310,6 +457,10 @@ priv fn __snapshot_record(text: String, location: str, inline: bool) {
 
 /// `assert` for a condition that is checked only in a debug build: a release build drops the check without
 /// evaluating the condition or formatting the message.
+///
+/// ```
+/// debug_assert(1 < 2)
+/// ```
 fn debug_assert(cond: bool) {
     if !cond {
         panic("assertion failed")
@@ -317,6 +468,10 @@ fn debug_assert(cond: bool) {
 }
 
 /// `assert_eq` for a debug build; a release build drops the check without evaluating the values.
+///
+/// ```
+/// debug_assert_eq(2 + 2, 4)
+/// ```
 fn debug_assert_eq<T: Eq>(a: T, b: T) {
     if a != b {
         panic("assertion failed: the two values differ")
@@ -324,6 +479,10 @@ fn debug_assert_eq<T: Eq>(a: T, b: T) {
 }
 
 /// `assert_ne` for a debug build; a release build drops the check without evaluating the values.
+///
+/// ```
+/// debug_assert_ne(1, 2)
+/// ```
 fn debug_assert_ne<T: Eq>(a: T, b: T) {
     if a == b {
         panic("assertion failed: the two values are equal")
@@ -415,16 +574,49 @@ priv fn __test_assert_ne<T: Eq + Debug>(
 }
 
 /// Panics. `unreachable()` marks a branch the program promises never runs.
+///
+/// ```
+/// fn pick(n: i32): i32 {
+///     if n > 0 {
+///         n
+///     } else {
+///         unreachable()
+///     }
+/// }
+/// assert_eq(pick(3), 3)
+/// ```
 fn unreachable(): ! {
     panic("unreachable")
 }
 
 /// Panics with `not yet implemented`, for a function whose body is still to be written.
+///
+/// ```
+/// fn pending(flag: bool): i32 {
+///     if flag {
+///         1
+///     } else {
+///         todo()
+///     }
+/// }
+/// assert_eq(pending(true), 1)
+/// ```
 fn todo(): ! {
     panic("not yet implemented")
 }
 
 /// Panics with `not implemented`, for a function that is declared but not supported.
+///
+/// ```
+/// fn pending(flag: bool): i32 {
+///     if flag {
+///         1
+///     } else {
+///         unimplemented()
+///     }
+/// }
+/// assert_eq(pending(true), 1)
+/// ```
 fn unimplemented(): ! {
     panic("not implemented")
 }
@@ -440,6 +632,12 @@ fn __offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
 
 /// The error type of the `try_` allocating operations (spec/allocators.md, AL11). The variants are in the order the
 /// compiler's fallible operations report them: `CapacityOverflow` is 0 and `OutOfMemory` is 1.
+///
+/// ```
+/// let e = AllocError.OutOfMemory
+/// assert_eq(e, AllocError.OutOfMemory)
+/// assert(AllocError.CapacityOverflow != AllocError.OutOfMemory)
+/// ```
 error enum AllocError: Eq, Debug {
     CapacityOverflow "capacity overflow"
     OutOfMemory "out of memory"

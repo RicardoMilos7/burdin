@@ -11,19 +11,45 @@ use iter.{FromIterator, Iterable, Iterator}
 use ops.Index
 
 /// A priority queue: `pop` returns the greatest element. Its default is the empty heap.
+///
+/// ```
+/// let mut h: PriorityHeap<i32> = PriorityHeap<i32>.default()
+/// h.push(2)
+/// assert_eq(h.pop(), Some(2))
+/// ```
 struct PriorityHeap<T: Ord>: Default {
     items: List<T>
 }
 
 /// The iterator of `heap.iter()`: it yields a view of each element from the highest priority to the lowest. `D` is the
 /// view of the heap it walks, so the iterator is second-class like every iterator over borrowed storage.
+///
+/// ```
+/// let h = PriorityHeap<i32>.from([1, 2, 3])
+/// let mut total = 0
+/// for x in h.iter() {
+///     total = total + *x
+/// }
+/// assert_eq(total, 6)
+/// ```
 struct PriorityHeapIter<D, T> {
     source: D
     next_index: usize
 }
 
 /// What `PriorityHeapIter` needs from the heap it walks.
+///
+/// ```
+/// let h = PriorityHeap<i32>.from([1, 2])
+/// assert_eq(h.len(), 2)
+/// ```
 interface HeapLen {
+    /// The number of elements the heap holds.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.from([1])
+    /// assert_eq(h.heap_len(), 1)
+    /// ```
     fn heap_len(self): usize
 }
 
@@ -50,11 +76,23 @@ priv fn __lower_bound<T: Ord>(items: List<T>, value: T): usize {
 
 PriorityHeap<T> where T: Ord {
     /// An empty heap.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.new()
+    /// assert(h.is_empty())
+    /// ```
     fn new(): PriorityHeap<T> {
         PriorityHeap { items: List<T>.new() }
     }
 
     /// A heap of the elements of `items`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(4)
+    /// let h = PriorityHeap<i32>.from_list(l)
+    /// assert_eq(h.len(), 1)
+    /// ```
     fn from_list(own items: List<T>): PriorityHeap<T> {
         let mut out = PriorityHeap<T>.new()
         out.extend(items)
@@ -62,6 +100,11 @@ PriorityHeap<T> where T: Ord {
     }
 
     /// A heap of the elements of an array: `PriorityHeap.from([3, 1, 2])`.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.from([1, 8, 3])
+    /// assert_eq(*h.peek().unwrap(), 8)
+    /// ```
     fn from<const N: usize>(own items: [T; N]): PriorityHeap<T> {
         let mut out = PriorityHeap<T>.new()
         out.extend_iter(items.into_iter())
@@ -69,22 +112,47 @@ PriorityHeap<T> where T: Ord {
     }
 
     /// The number of elements.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.from([1, 2, 3])
+    /// assert_eq(h.len(), 3)
+    /// ```
     fn len(self): usize {
         self.items.len()
     }
 
     /// Whether the heap has no elements.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.new()
+    /// assert(h.is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.items.len() == 0
     }
 
     /// Adds `value`.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.new()
+    /// h.push(1)
+    /// h.push(8)
+    /// assert_eq(*h.peek().unwrap(), 8)
+    /// ```
     fn push(mut self, own value: T) {
         let at = __lower_bound(self.items, value)
         self.items.insert(at, value)
     }
 
     /// Adds every element of `items`.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.new()
+    /// let mut l = List<i32>.new()
+    /// l.push(5)
+    /// h.extend(l)
+    /// assert_eq(*h.peek().unwrap(), 5)
+    /// ```
     fn extend(mut self, own items: List<T>) {
         for x in items.into_iter() {
             self.push(x)
@@ -92,6 +160,12 @@ PriorityHeap<T> where T: Ord {
     }
 
     /// Adds every item `iter` yields.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.new()
+    /// h.extend_iter([5, 7].into_iter())
+    /// assert_eq(h.len(), 2)
+    /// ```
     fn extend_iter<I: Iterator<T>>(mut self, own iter: I) {
         let mut iter = iter
         loop {
@@ -103,21 +177,45 @@ PriorityHeap<T> where T: Ord {
     }
 
     /// Removes and returns the greatest element.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.from([3, 9, 2])
+    /// assert_eq(h.pop(), Some(9))
+    /// assert_eq(h.pop(), Some(3))
+    /// ```
     fn pop(mut self): Option<T> {
         self.items.pop()
     }
 
     /// A view of the greatest element.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.from([3, 9, 2])
+    /// assert_eq(*h.peek().unwrap(), 9)
+    /// ```
     fn peek(self): Option<&T> {
         self.items.last()
     }
 
     /// Removes every element.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.from([3, 1])
+    /// h.clear()
+    /// assert(h.is_empty())
+    /// ```
     fn clear(mut self) {
         self.items.clear()
     }
 
     /// The elements as a list, from the highest priority to the lowest. The heap is consumed.
+    ///
+    /// ```
+    /// let h = PriorityHeap<i32>.from([3, 1, 2])
+    /// let sorted = h.into_sorted_list()
+    /// assert_eq(sorted[0], 3)
+    /// assert_eq(sorted[2], 1)
+    /// ```
     fn into_sorted_list(own self): List<T> {
         let mut heap = self
         let mut out = List<T>.new()
@@ -169,6 +267,13 @@ PriorityHeapIter<D, T>: Iterator<&T> where D: Index<T> + HeapLen {
 
 PriorityHeap<T> where T: Ord + Clone {
     /// A copy of the heap.
+    ///
+    /// ```
+    /// let mut h = PriorityHeap<i32>.new()
+    /// h.push(4)
+    /// let copy = h.clone()
+    /// assert_eq(*copy.peek().unwrap(), 4)
+    /// ```
     fn clone(self): PriorityHeap<T> {
         let mut out = PriorityHeap<T>.new()
         for x in self.items {

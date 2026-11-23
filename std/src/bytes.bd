@@ -10,11 +10,23 @@ use fmt.{Debug, Formatter}
 use ops.{Index, IndexMut, PartialEq}
 
 /// A growable, owned buffer of bytes.
+///
+/// ```
+/// let mut b = BytesMut.from_text("hi")
+/// b.push(33)
+/// assert_eq(b.len(), 3)
+/// ```
 struct BytesMut {
     data: List<u8>
 }
 
 /// A read-only run of bytes. Clones and slices share the same storage.
+///
+/// ```
+/// let b = BytesMut.from_text("hey").freeze()
+/// assert_eq(b.len(), 3)
+/// assert_eq(b.to_text(), Ok(String.from("hey")))
+/// ```
 struct Bytes: Clone {
     data: Shared<List<u8>>
     start: usize
@@ -23,31 +35,61 @@ struct Bytes: Clone {
 
 BytesMut {
     /// An empty buffer.
+    ///
+    /// ```
+    /// let b = BytesMut.new()
+    /// assert(b.is_empty())
+    /// ```
     fn new(): BytesMut {
         BytesMut { data: List<u8>.new() }
     }
 
     /// A buffer that holds `data`.
+    ///
+    /// ```
+    /// let b = BytesMut.from_list(BytesMut.from_text("ab").to_list())
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn from_list(own data: List<u8>): BytesMut {
         BytesMut { data: data }
     }
 
     /// A buffer that holds the UTF-8 bytes of the text.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("é")
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn from_text(text: str): BytesMut {
         BytesMut { data: text.to_utf8() }
     }
 
     /// The number of bytes.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("abc")
+    /// assert_eq(b.len(), 3)
+    /// ```
     fn len(self): usize {
         self.data.len()
     }
 
     /// Whether the buffer holds no bytes.
+    ///
+    /// ```
+    /// assert(BytesMut.new().is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.data.len() == 0
     }
 
     /// The byte at `i`, or `None` past the end.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("ab")
+    /// assert_eq(b.get(1), Some(98))
+    /// assert_eq(b.get(2), None)
+    /// ```
     fn get(self, i: usize): Option<u8> {
         if i >= self.data.len() {
             return None
@@ -56,11 +98,23 @@ BytesMut {
     }
 
     /// Appends one byte.
+    ///
+    /// ```
+    /// let mut b = BytesMut.new()
+    /// b.push(7)
+    /// assert_eq(b[0], 7)
+    /// ```
     fn push(mut self, byte: u8) {
         self.data.push(byte)
     }
 
     /// Appends every byte of the view.
+    ///
+    /// ```
+    /// let mut b = BytesMut.from_text("a")
+    /// b.extend(BytesMut.from_text("bc").as_slice())
+    /// assert_eq(b.len(), 3)
+    /// ```
     fn extend(mut self, bytes: [u8]) {
         let mut i: usize = 0
         while i < bytes.len() {
@@ -70,6 +124,12 @@ BytesMut {
     }
 
     /// Appends the UTF-8 bytes of the text.
+    ///
+    /// ```
+    /// let mut b = BytesMut.new()
+    /// b.push_text("hi")
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn push_text(mut self, text: str) {
         for c in text.chars() {
             let encoded = c.to_string().to_utf8()
@@ -82,6 +142,14 @@ BytesMut {
     }
 
     /// Keeps the first `len` bytes. A `len` that is not smaller than the length changes nothing.
+    ///
+    /// ```
+    /// let mut b = BytesMut.from_text("hello")
+    /// b.truncate(2)
+    /// assert_eq(b.len(), 2)
+    /// b.truncate(10)
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn truncate(mut self, len: usize) {
         while self.data.len() > len {
             self.data.pop()
@@ -89,21 +157,46 @@ BytesMut {
     }
 
     /// Removes every byte.
+    ///
+    /// ```
+    /// let mut b = BytesMut.from_text("hi")
+    /// b.clear()
+    /// assert(b.is_empty())
+    /// ```
     fn clear(mut self) {
         self.data.clear()
     }
 
     /// A view of the bytes.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("abc")
+    /// let s = b.as_slice()
+    /// assert_eq(s[1], 98)
+    /// ```
     fn as_slice(self): [u8] {
         self.data[0..self.data.len()]
     }
 
     /// The bytes as a list, without copying them.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("ab")
+    /// let list = b.into_list()
+    /// assert_eq(list.len(), 2)
+    /// ```
     fn into_list(own self): List<u8> {
         self.data
     }
 
     /// A copy of the bytes as a list.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("ab")
+    /// let list = b.to_list()
+    /// assert_eq(list[0], 97)
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn to_list(self): List<u8> {
         let mut out = List<u8>.new()
         let mut i: usize = 0
@@ -115,6 +208,12 @@ BytesMut {
     }
 
     /// The finished, read-only form. The bytes are not copied.
+    ///
+    /// ```
+    /// let b = BytesMut.from_text("hi")
+    /// let frozen = b.freeze()
+    /// assert_eq(frozen.to_hex(), String.from("6869"))
+    /// ```
     fn freeze(own self): Bytes {
         let len = self.data.len()
         Bytes { data: Shared.new(self.data), start: 0, len: len }
@@ -153,32 +252,63 @@ BytesMut: Debug {
 
 Bytes {
     /// An empty run.
+    ///
+    /// ```
+    /// let b = Bytes.new()
+    /// assert(b.is_empty())
+    /// ```
     fn new(): Bytes {
         Bytes { data: Shared.new(List<u8>.new()), start: 0, len: 0 }
     }
 
     /// A run that holds `data`.
+    ///
+    /// ```
+    /// let b = Bytes.from_list(BytesMut.from_text("ab").to_list())
+    /// assert_eq(b.len(), 2)
+    /// ```
     fn from_list(own data: List<u8>): Bytes {
         let len = data.len()
         Bytes { data: Shared.new(data), start: 0, len: len }
     }
 
     /// A run that holds the UTF-8 bytes of the text.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("hey")
+    /// assert_eq(b.len(), 3)
+    /// ```
     fn from_text(text: str): Bytes {
         Bytes.from_list(text.to_utf8())
     }
 
     /// The number of bytes.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("four")
+    /// assert_eq(b.len(), 4)
+    /// ```
     fn len(self): usize {
         self.len
     }
 
     /// Whether the run holds no bytes.
+    ///
+    /// ```
+    /// assert(Bytes.new().is_empty())
+    /// assert(!Bytes.from_text("x").is_empty())
+    /// ```
     fn is_empty(self): bool {
         self.len == 0
     }
 
     /// The byte at `i`, or `None` past the end.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("ab")
+    /// assert_eq(b.get(0), Some(97))
+    /// assert_eq(b.get(5), None)
+    /// ```
     fn get(self, i: usize): Option<u8> {
         if i >= self.len {
             return None
@@ -188,12 +318,24 @@ Bytes {
     }
 
     /// A view of the bytes.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("abc")
+    /// let s = b.as_slice()
+    /// assert_eq(s.len(), 3)
+    /// ```
     fn as_slice(self): [u8] {
         let list = self.data.get()
         list[self.start..self.start + self.len]
     }
 
     /// The bytes `from..to` of this run, sharing its storage. A reversed or out-of-range pair panics.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("hello")
+    /// let part = b.slice(1, 3)
+    /// assert_eq(part.to_text(), Ok(String.from("el")))
+    /// ```
     fn slice(self, from: usize, to: usize): Bytes {
         if from > to || to > self.len {
             panic("Bytes slice out of bounds")
@@ -202,11 +344,23 @@ Bytes {
     }
 
     /// The runs before and after `mid`, sharing this run's storage. A `mid` past the end panics.
+    ///
+    /// ```
+    /// let (left, right) = Bytes.from_text("hello").split_at(2)
+    /// assert_eq(left.len(), 2)
+    /// assert_eq(right.len(), 3)
+    /// ```
     fn split_at(self, mid: usize): (Bytes, Bytes) {
         (self.slice(0, mid), self.slice(mid, self.len))
     }
 
     /// A copy of the bytes as a list.
+    ///
+    /// ```
+    /// let b = Bytes.from_text("ab")
+    /// let list = b.to_list()
+    /// assert_eq(list[1], 98)
+    /// ```
     fn to_list(self): List<u8> {
         let mut out = List<u8>.new()
         let list = self.data.get()
@@ -219,11 +373,19 @@ Bytes {
     }
 
     /// The text the bytes spell (`from_utf8`).
+    ///
+    /// ```
+    /// assert_eq(Bytes.from_text("hi").to_text(), Ok(String.from("hi")))
+    /// ```
     fn to_text(self): Result<String, DecodeError> {
         from_utf8(self.as_slice())
     }
 
     /// The bytes as lowercase hexadecimal.
+    ///
+    /// ```
+    /// assert_eq(Bytes.from_text("hi").to_hex(), String.from("6869"))
+    /// ```
     fn to_hex(self): String {
         hex_encode(self.as_slice())
     }

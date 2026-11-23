@@ -16,13 +16,35 @@ use std.IoError
 // ---- the interfaces ----
 
 /// A source of bytes.
+///
+/// ```
+/// fn take_all<R: Read>(mut r: R): Result<String, IoError> {
+///     r.read_to_string()
+/// }
+/// let mut src = Cursor.from_text("all of it")
+/// assert_eq(take_all(mut src).unwrap(), String.from("all of it"))
+/// ```
 interface Read {
     /// Appends up to `max` bytes to `buf` and returns how many it appended. `Ok(0)` means the end of the input, or
     /// that `max` was 0. A source that has some bytes ready may append fewer than `max`.
+    ///
+    /// ```
+    /// let mut src = Cursor.from_text("hello")
+    /// let mut buf = List<u8>.new()
+    /// assert_eq(src.read(mut buf, 3).unwrap(), 3)
+    /// assert_eq(buf.len(), 3)
+    /// ```
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError>
 
     /// Appends exactly `count` bytes to `buf`. A source that ends first is `IoError.UnexpectedEof`, and the bytes it
     /// did produce stay in `buf`.
+    ///
+    /// ```
+    /// let mut src = Cursor.from_text("hello")
+    /// let mut buf = List<u8>.new()
+    /// src.read_exact(mut buf, 2).unwrap()
+    /// assert_eq(buf.len(), 2)
+    /// ```
     fn read_exact(mut self, mut buf: List<u8>, count: usize): Result<(), IoError> {
         let mut left = count
         while left > 0 {
@@ -36,6 +58,12 @@ interface Read {
     }
 
     /// Appends everything left to `buf` and returns how many bytes that was.
+    ///
+    /// ```
+    /// let mut src = Cursor.from_text("abc")
+    /// let mut buf = List<u8>.new()
+    /// assert_eq(src.read_to_end(mut buf).unwrap(), 3)
+    /// ```
     fn read_to_end(mut self, mut buf: List<u8>): Result<usize, IoError> {
         let mut total: usize = 0
         loop {
@@ -48,6 +76,11 @@ interface Read {
     }
 
     /// Reads everything left as text. The bytes must be valid UTF-8, or the result is `IoError.InvalidData`.
+    ///
+    /// ```
+    /// let mut src = Cursor.from_text("abc")
+    /// assert_eq(src.read_to_string().unwrap(), String.from("abc"))
+    /// ```
     fn read_to_string(mut self): Result<String, IoError> {
         let mut bytes = List<u8>.new()
         self.read_to_end(mut bytes)?
@@ -59,15 +92,41 @@ interface Read {
 }
 
 /// A sink of bytes.
+///
+/// ```
+/// fn say_hello<W: Write>(mut w: W): Result<(), IoError> {
+///     w.write_all("hello".as_bytes())
+/// }
+/// let mut sink = Cursor.empty()
+/// say_hello(mut sink).unwrap()
+/// assert_eq(sink.get_ref().len(), 5)
+/// ```
 interface Write {
     /// Writes a prefix of `data` and returns how many bytes it took. `Ok(0)` for a non-empty `data` means the sink
     /// can take no more.
+    ///
+    /// ```
+    /// let mut sink = Cursor.empty()
+    /// assert_eq(sink.write("ab".as_bytes()).unwrap(), 2)
+    /// ```
     fn write(mut self, data: [u8]): Result<usize, IoError>
 
     /// Pushes every byte the sink holds back to what it wraps, so none is lost if the program ends now.
+    ///
+    /// ```
+    /// let mut sink = Cursor.empty()
+    /// sink.flush().unwrap()
+    /// assert_eq(sink.get_ref().len(), 0)
+    /// ```
     fn flush(mut self): Result<(), IoError>
 
     /// Writes all of `data`, calling `write` until it is taken. A sink that takes no bytes is `IoError.WriteZero`.
+    ///
+    /// ```
+    /// let mut sink = Cursor.empty()
+    /// sink.write_all("abc".as_bytes()).unwrap()
+    /// assert_eq(sink.get_ref().len(), 3)
+    /// ```
     fn write_all(mut self, data: [u8]): Result<(), IoError> {
         let mut done: usize = 0
         while done < data.len() {
@@ -81,12 +140,24 @@ interface Write {
     }
 
     /// Writes the UTF-8 bytes of `text`.
+    ///
+    /// ```
+    /// let mut sink = Cursor.empty()
+    /// sink.write_text("é").unwrap()
+    /// assert_eq(sink.get_ref().len(), 2)
+    /// ```
     fn write_text(mut self, text: str): Result<(), IoError> {
         let bytes = text.to_utf8()
         self.write_all(bytes[0..bytes.len()])
     }
 
     /// Writes `text` and one `\n`.
+    ///
+    /// ```
+    /// let mut sink = Cursor.empty()
+    /// sink.write_line("hi").unwrap()
+    /// assert_eq(sink.get_ref().len(), 3)
+    /// ```
     fn write_line(mut self, text: str): Result<(), IoError> {
         self.write_text(text)?
         let mut newline = List<u8>.new()
@@ -96,6 +167,13 @@ interface Write {
 }
 
 /// Where a `seek` is measured from.
+///
+/// ```
+/// let mut c = Cursor.from_text("hello")
+/// assert_eq(c.seek(SeekFrom.Start(1)).unwrap(), 1)
+/// assert_eq(c.seek(SeekFrom.Current(2)).unwrap(), 3)
+/// assert_eq(c.seek(SeekFrom.End(0)).unwrap(), 5)
+/// ```
 enum SeekFrom: Clone, Copy, Eq, Debug {
     /// This many bytes after the start.
     Start(u64)
@@ -106,17 +184,41 @@ enum SeekFrom: Clone, Copy, Eq, Debug {
 }
 
 /// A source or sink with a position that can move.
+///
+/// ```
+/// let mut c = Cursor.from_text("hello")
+/// assert_eq(c.seek(SeekFrom.Start(2)).unwrap(), 2)
+/// assert_eq(c.seek(SeekFrom.Current(1)).unwrap(), 3)
+/// ```
 interface Seek {
     /// Moves to `from` and returns the new position, in bytes from the start. A position before the start is
     /// `IoError.Seek` and leaves the position as it was; a position past the end is allowed.
+    ///
+    /// ```
+    /// let mut c = Cursor.from_text("hello")
+    /// assert_eq(c.seek(SeekFrom.End(-1)).unwrap(), 4)
+    /// ```
     fn seek(mut self, from: SeekFrom): Result<u64, IoError>
 
     /// The current position, in bytes from the start.
+    ///
+    /// ```
+    /// let mut c = Cursor.from_text("abc")
+    /// c.seek(SeekFrom.Start(1)).unwrap()
+    /// assert_eq(c.position().unwrap(), 1)
+    /// ```
     fn position(mut self): Result<u64, IoError> {
         self.seek(SeekFrom.Current(0))
     }
 
     /// Moves back to the start.
+    ///
+    /// ```
+    /// let mut c = Cursor.from_text("abc")
+    /// c.seek(SeekFrom.Start(2)).unwrap()
+    /// c.rewind().unwrap()
+    /// assert_eq(c.position().unwrap(), 0)
+    /// ```
     fn rewind(mut self): Result<(), IoError> {
         self.seek(SeekFrom.Start(0))?
         Ok(())
@@ -124,14 +226,33 @@ interface Seek {
 }
 
 /// A source that keeps what it has read ahead, so it can read up to a delimiter.
+///
+/// ```
+/// let mut r = Cursor.from_text("one\ntwo")
+/// assert_eq(r.read_line().unwrap(), Some(String.from("one")))
+/// ```
 interface BufRead requires Read {
     /// Appends bytes to `buf` up to and including the first `delim`, or up to the end of the input. The result is
     /// the number of bytes appended, `0` at the end of the input.
+    ///
+    /// ```
+    /// let mut r = Cursor.from_text("ab,cd")
+    /// let mut buf = List<u8>.new()
+    /// assert_eq(r.read_until(44, mut buf).unwrap(), 3)
+    /// assert_eq(buf.len(), 3)
+    /// ```
     fn read_until(mut self, delim: u8, mut buf: List<u8>): Result<usize, IoError>
 
     /// Reads one line without its terminator: the `\n`, and the `\r` of a `\r\n` pair, are dropped. `Ok(None)` is the
     /// end of the input, and the last line may have no terminator. The bytes must be valid UTF-8
     /// (`IoError.InvalidData`).
+    ///
+    /// ```
+    /// let mut r = Cursor.from_text("one\ntwo")
+    /// assert_eq(r.read_line().unwrap(), Some(String.from("one")))
+    /// assert_eq(r.read_line().unwrap(), Some(String.from("two")))
+    /// assert_eq(r.read_line().unwrap(), None)
+    /// ```
     fn read_line(mut self): Result<Option<String>, IoError> {
         let mut bytes = List<u8>.new()
         let n = self.read_until(10, mut bytes)?
@@ -153,12 +274,27 @@ interface BufRead requires Read {
 
     /// An iterator over the lines of the input, each a `Result` because a read can fail. It ends at the end of the
     /// input, and after the first error.
+    ///
+    /// ```
+    /// let mut count = 0
+    /// for line in Cursor.from_text("x\ny").lines() {
+    ///     count = count + 1
+    /// }
+    /// assert_eq(count, 2)
+    /// ```
     fn lines(own self): Lines<Self> {
         Lines { inner: self, done: false }
     }
 }
 
 /// The lines of a `BufRead`, from `lines`.
+///
+/// ```
+/// let mut lines = Cursor.from_text("a\nb\n").lines()
+/// assert_eq(lines.next().unwrap().unwrap(), String.from("a"))
+/// assert_eq(lines.next().unwrap().unwrap(), String.from("b"))
+/// assert(lines.next().is_none())
+/// ```
 struct Lines<R> {
     inner: R
     done: bool
@@ -184,6 +320,13 @@ Lines<R>: Iterator<Result<String, IoError>> where R: BufRead {
 }
 
 /// Copies every byte `from` has left into `to` and returns how many it copied. It does not flush `to`.
+///
+/// ```
+/// let mut from = Cursor.from_text("copy me")
+/// let mut to = Cursor.empty()
+/// assert_eq(copy(mut from, mut to).unwrap(), 7)
+/// assert_eq(to.get_ref().len(), 7)
+/// ```
 fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError> {
     let mut chunk = List<u8>.new()
     let mut total: u64 = 0
@@ -202,6 +345,13 @@ fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError> {
 
 /// A byte buffer with a position. It reads from the position, writes over what is there at the position (growing the
 /// buffer at the end), and seeks within it, so it stands in for a file in tests and for any in-memory source or sink.
+///
+/// ```
+/// let mut c = Cursor.from_text("hi")
+/// let mut buf = List<u8>.new()
+/// c.read(mut buf, 10).unwrap()
+/// assert_eq(buf.len(), 2)
+/// ```
 struct Cursor {
     priv data: List<u8>
     priv pos: usize
@@ -209,26 +359,51 @@ struct Cursor {
 
 Cursor {
     /// A cursor at the start of `data`.
+    ///
+    /// ```
+    /// let c = Cursor.new(BytesMut.from_text("hi").to_list())
+    /// assert_eq(c.get_ref().len(), 2)
+    /// ```
     fn new(own data: List<u8>): Cursor {
         Cursor { data: data, pos: 0 }
     }
 
     /// An empty cursor, for writing.
+    ///
+    /// ```
+    /// let c = Cursor.empty()
+    /// assert_eq(c.get_ref().len(), 0)
+    /// ```
     fn empty(): Cursor {
         Cursor { data: List<u8>.new(), pos: 0 }
     }
 
     /// A cursor at the start of the UTF-8 bytes of `text`.
+    ///
+    /// ```
+    /// let c = Cursor.from_text("é")
+    /// assert_eq(c.get_ref().len(), 2)
+    /// ```
     fn from_text(text: str): Cursor {
         Cursor { data: text.to_utf8(), pos: 0 }
     }
 
     /// The bytes the cursor holds, whatever the position.
+    ///
+    /// ```
+    /// let c = Cursor.from_text("ab")
+    /// assert_eq(c.get_ref().len(), 2)
+    /// ```
     fn get_ref(self): &List<u8> {
         &self.data
     }
 
     /// The buffer, without copying it.
+    ///
+    /// ```
+    /// let c = Cursor.from_text("ab")
+    /// assert_eq(c.into_inner().len(), 2)
+    /// ```
     fn into_inner(own self): List<u8> {
         self.data
     }
@@ -316,6 +491,11 @@ BytesMut: Write {
 // ---- BufReader ----
 
 /// Wraps a reader with a buffer, so many small reads become few large ones and lines can be read.
+///
+/// ```
+/// let mut r = BufReader.new(Cursor.from_text("l1\nl2"))
+/// assert_eq(r.read_line().unwrap(), Some(String.from("l1")))
+/// ```
 struct BufReader<R: Read> {
     priv inner: R
     priv buf: List<u8>
@@ -325,11 +505,21 @@ struct BufReader<R: Read> {
 
 BufReader<R> where R: Read {
     /// A buffered reader with a 4096-byte buffer.
+    ///
+    /// ```
+    /// let r = BufReader.new(Cursor.from_text("hi"))
+    /// assert_eq(r.buffered(), 0)
+    /// ```
     fn new(own inner: R): BufReader<R> {
         BufReader { inner: inner, buf: List<u8>.new(), pos: 0, cap: 4096 }
     }
 
     /// A buffered reader that asks `inner` for `capacity` bytes at a time. A capacity of 0 panics.
+    ///
+    /// ```
+    /// let r = BufReader.with_capacity(4, Cursor.from_text("hi"))
+    /// assert_eq(r.buffered(), 0)
+    /// ```
     fn with_capacity(capacity: usize, own inner: R): BufReader<R> {
         if capacity == 0 {
             panic("BufReader capacity is 0")
@@ -338,16 +528,34 @@ BufReader<R> where R: Read {
     }
 
     /// The reader this one wraps.
+    ///
+    /// ```
+    /// let r = BufReader.new(Cursor.from_text("hi"))
+    /// assert_eq(r.get_ref().get_ref().len(), 2)
+    /// ```
     fn get_ref(self): &R {
         &self.inner
     }
 
     /// How many bytes are buffered, read from the wrapped reader but not yet returned.
+    ///
+    /// ```
+    /// let mut r = BufReader.new(Cursor.from_text("hi"))
+    /// let mut buf = List<u8>.new()
+    /// r.read(mut buf, 1).unwrap()
+    /// assert_eq(r.buffered(), 1)
+    /// ```
     fn buffered(self): usize {
         self.buf.len() - self.pos
     }
 
     /// The wrapped reader. The buffered bytes are lost.
+    ///
+    /// ```
+    /// let r = BufReader.new(Cursor.from_text("hi"))
+    /// let inner = r.into_inner()
+    /// assert_eq(inner.get_ref().len(), 2)
+    /// ```
     fn into_inner(own self): R {
         self.inner
     }
@@ -427,6 +635,13 @@ BufReader<R>: Seek where R: Read + Seek {
 
 /// Wraps a writer with a buffer, so many small writes become few large ones. Dropping it flushes what is buffered,
 /// ignoring a failure; call `flush` to see one.
+///
+/// ```
+/// let mut w = BufWriter.new(Cursor.empty())
+/// w.write_all("hi".as_bytes()).unwrap()
+/// w.flush().unwrap()
+/// assert_eq(w.get_ref().get_ref().len(), 2)
+/// ```
 struct BufWriter<W: Write> {
     // The wrapped writer is the only element of this list. `into_inner` takes it out, and a `Drop` type cannot give
     // up a field, so the list stands in for an `Option` that can lend the writer as a mutable place.
@@ -437,11 +652,22 @@ struct BufWriter<W: Write> {
 
 BufWriter<W> where W: Write {
     /// A buffered writer with a 4096-byte buffer.
+    ///
+    /// ```
+    /// let w = BufWriter.new(Cursor.empty())
+    /// assert_eq(w.buffered(), 0)
+    /// ```
     fn new(own inner: W): BufWriter<W> {
         BufWriter.with_capacity(4096, inner)
     }
 
     /// A buffered writer that holds `capacity` bytes before it writes. A capacity of 0 panics.
+    ///
+    /// ```
+    /// let mut w = BufWriter.with_capacity(8, Cursor.empty())
+    /// w.write("abc".as_bytes()).unwrap()
+    /// assert_eq(w.buffered(), 3)
+    /// ```
     fn with_capacity(capacity: usize, own inner: W): BufWriter<W> {
         if capacity == 0 {
             panic("BufWriter capacity is 0")
@@ -452,16 +678,35 @@ BufWriter<W> where W: Write {
     }
 
     /// The writer this one wraps. What is still buffered has not reached it.
+    ///
+    /// ```
+    /// let mut w = BufWriter.with_capacity(8, Cursor.empty())
+    /// w.write_all("ab".as_bytes()).unwrap()
+    /// assert_eq(w.get_ref().get_ref().len(), 0)
+    /// ```
     fn get_ref(self): &W {
         &self.inner[0]
     }
 
     /// How many bytes are buffered, written to this one but not yet to the wrapped writer.
+    ///
+    /// ```
+    /// let mut w = BufWriter.with_capacity(8, Cursor.empty())
+    /// w.write_all("ab".as_bytes()).unwrap()
+    /// assert_eq(w.buffered(), 2)
+    /// ```
     fn buffered(self): usize {
         self.buf.len()
     }
 
     /// Flushes, then returns the wrapped writer.
+    ///
+    /// ```
+    /// let mut w = BufWriter.new(Cursor.empty())
+    /// w.write_all("ab".as_bytes()).unwrap()
+    /// let inner = w.into_inner().unwrap()
+    /// assert_eq(inner.get_ref().len(), 2)
+    /// ```
     fn into_inner(own self): Result<W, IoError> {
         let mut me = self
         me.flush()?

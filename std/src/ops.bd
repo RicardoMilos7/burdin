@@ -6,93 +6,650 @@
 // and `=` are not overloadable. A type implements each operator interface at most once.
 
 /// A type that supports `a + b`: `a + b` calls `a.add(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Add {
+///     fn add(self, other: Meters): Meters {
+///         Meters { value: self.value + other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let total = Meters { value: 1 } + Meters { value: 1 }
+///     assert_eq(total.value, 2)
+/// }
+/// ```
 interface Add {
+    /// The value of `self + other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Add {
+    ///     fn add(self, other: Meters): Meters {
+    ///         Meters { value: self.value + other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let total = Meters { value: 2 } + Meters { value: 3 }
+    ///     assert_eq(total.value, 5)
+    /// }
+    /// ```
     fn add(self, other: Self): Self
 }
 
 /// A type that supports `a - b`: `a - b` calls `a.sub(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Sub {
+///     fn sub(self, other: Meters): Meters {
+///         Meters { value: self.value - other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let m = Meters { value: 5 } - Meters { value: 6 }
+///     assert_eq(m.value, -1)
+/// }
+/// ```
 interface Sub {
+    /// The value of `self - other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Sub {
+    ///     fn sub(self, other: Meters): Meters {
+    ///         Meters { value: self.value - other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let m = Meters { value: 5 } - Meters { value: 2 }
+    ///     assert_eq(m.value, 3)
+    /// }
+    /// ```
     fn sub(self, other: Self): Self
 }
 
 /// A type that supports `a * b`: `a * b` calls `a.mul(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Mul {
+///     fn mul(self, other: Meters): Meters {
+///         Meters { value: self.value * other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let m = Meters { value: 2 } * Meters { value: 5 }
+///     assert_eq(m.value, 10)
+/// }
+/// ```
 interface Mul {
+    /// The value of `self * other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Mul {
+    ///     fn mul(self, other: Meters): Meters {
+    ///         Meters { value: self.value * other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let m = Meters { value: 3 } * Meters { value: 4 }
+    ///     assert_eq(m.value, 12)
+    /// }
+    /// ```
     fn mul(self, other: Self): Self
 }
 
 /// A type that supports `a / b`: `a / b` calls `a.div(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Div {
+///     fn div(self, other: Meters): Meters {
+///         Meters { value: self.value / other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let m = Meters { value: 8 } / Meters { value: 2 }
+///     assert_eq(m.value, 4)
+/// }
+/// ```
 interface Div {
+    /// The value of `self / other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Div {
+    ///     fn div(self, other: Meters): Meters {
+    ///         Meters { value: self.value / other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let m = Meters { value: 9 } / Meters { value: 2 }
+    ///     assert_eq(m.value, 4)
+    /// }
+    /// ```
     fn div(self, other: Self): Self
 }
 
 /// A type that supports `a % b`: `a % b` calls `a.rem(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Rem {
+///     fn rem(self, other: Meters): Meters {
+///         Meters { value: self.value % other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let m = Meters { value: 9 } % Meters { value: 4 }
+///     assert_eq(m.value, 1)
+/// }
+/// ```
 interface Rem {
+    /// The remainder of `self % other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Rem {
+    ///     fn rem(self, other: Meters): Meters {
+    ///         Meters { value: self.value % other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let m = Meters { value: 7 } % Meters { value: 4 }
+    ///     assert_eq(m.value, 3)
+    /// }
+    /// ```
     fn rem(self, other: Self): Self
 }
 
 /// A type that supports `a & b`: `a & b` calls `a.bitand(b)`.
+///
+/// ```
+/// struct Bits {
+///     value: u8
+/// }
+///
+/// Bits: BitAnd {
+///     fn bitand(self, other: Bits): Bits {
+///         Bits { value: self.value & other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let b = Bits { value: 6 } & Bits { value: 3 }
+///     assert_eq(b.value, 2)
+/// }
+/// ```
 interface BitAnd {
+    /// The value of `self & other`.
+    ///
+    /// ```
+    /// struct Bits {
+    ///     value: u8
+    /// }
+    ///
+    /// Bits: BitAnd {
+    ///     fn bitand(self, other: Bits): Bits {
+    ///         Bits { value: self.value & other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let b = Bits { value: 6 } & Bits { value: 3 }
+    ///     assert_eq(b.value, 2)
+    /// }
+    /// ```
     fn bitand(self, other: Self): Self
 }
 
 /// A type that supports `a | b`: `a | b` calls `a.bitor(b)`.
+///
+/// ```
+/// struct Bits {
+///     value: u8
+/// }
+///
+/// Bits: BitOr {
+///     fn bitor(self, other: Bits): Bits {
+///         Bits { value: self.value | other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let b = Bits { value: 4 } | Bits { value: 1 }
+///     assert_eq(b.value, 5)
+/// }
+/// ```
 interface BitOr {
+    /// The value of `self | other`.
+    ///
+    /// ```
+    /// struct Bits {
+    ///     value: u8
+    /// }
+    ///
+    /// Bits: BitOr {
+    ///     fn bitor(self, other: Bits): Bits {
+    ///         Bits { value: self.value | other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let b = Bits { value: 4 } | Bits { value: 1 }
+    ///     assert_eq(b.value, 5)
+    /// }
+    /// ```
     fn bitor(self, other: Self): Self
 }
 
 /// A type that supports `a ^ b`: `a ^ b` calls `a.bitxor(b)`.
+///
+/// ```
+/// struct Bits {
+///     value: u8
+/// }
+///
+/// Bits: BitXor {
+///     fn bitxor(self, other: Bits): Bits {
+///         Bits { value: self.value ^ other.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let b = Bits { value: 1 } ^ Bits { value: 1 }
+///     assert_eq(b.value, 0)
+/// }
+/// ```
 interface BitXor {
+    /// The value of `self ^ other`.
+    ///
+    /// ```
+    /// struct Bits {
+    ///     value: u8
+    /// }
+    ///
+    /// Bits: BitXor {
+    ///     fn bitxor(self, other: Bits): Bits {
+    ///         Bits { value: self.value ^ other.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let b = Bits { value: 6 } ^ Bits { value: 3 }
+    ///     assert_eq(b.value, 5)
+    /// }
+    /// ```
     fn bitxor(self, other: Self): Self
 }
 
 /// A type that supports `-a`: `-a` calls `a.neg()`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: Neg {
+///     fn neg(self): Meters {
+///         Meters { value: -self.value }
+///     }
+/// }
+///
+/// fn main() {
+///     let m = -Meters { value: 1 }
+///     assert_eq(m.value, -1)
+/// }
+/// ```
 interface Neg {
+    /// The value of `-self`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: Neg {
+    ///     fn neg(self): Meters {
+    ///         Meters { value: -self.value }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let m = -Meters { value: 4 }
+    ///     assert_eq(m.value, -4)
+    /// }
+    /// ```
     fn neg(self): Self
 }
 
 /// A type that supports `!a`: `!a` calls `a.not()`.
+///
+/// ```
+/// struct Flag {
+///     on: bool
+/// }
+///
+/// Flag: Not {
+///     fn not(self): Flag {
+///         Flag { on: !self.on }
+///     }
+/// }
+///
+/// fn main() {
+///     let f = !Flag { on: false }
+///     assert(f.on)
+/// }
+/// ```
 interface Not {
+    /// The value of `!self`.
+    ///
+    /// ```
+    /// struct Flag {
+    ///     on: bool
+    /// }
+    ///
+    /// Flag: Not {
+    ///     fn not(self): Flag {
+    ///         Flag { on: !self.on }
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let f = !Flag { on: true }
+    ///     assert(!f.on)
+    /// }
+    /// ```
     fn not(self): Self
 }
 
 /// A type that supports `==` and `!=` by hand. `==` calls `a.eq(b)` and `!=` calls `a.ne(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: PartialEq {
+///     fn eq(self, other: Meters): bool {
+///         self.value == other.value
+///     }
+/// }
+///
+/// fn main() {
+///     assert(Meters { value: 4 } == Meters { value: 4 })
+///     assert(Meters { value: 4 } != Meters { value: 5 })
+/// }
+/// ```
 interface PartialEq {
     /// Whether `self` is equal to `other`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialEq {
+    ///     fn eq(self, other: Meters): bool {
+    ///         self.value == other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 1 } == Meters { value: 1 })
+    /// }
+    /// ```
     fn eq(self, other: Self): bool
 
     /// Whether `self` differs from `other`. The default is `!self.eq(other)`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialEq {
+    ///     fn eq(self, other: Meters): bool {
+    ///         self.value == other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 1 } != Meters { value: 2 })
+    ///     assert(!(Meters { value: 1 } != Meters { value: 1 }))
+    /// }
+    /// ```
     fn ne(self, other: Self): bool {
         !self.eq(other)
     }
 }
 
 /// A type that supports `<`, `<=`, `>`, and `>=` by hand. `<` calls `a.lt(b)`.
+///
+/// ```
+/// struct Meters {
+///     value: i32
+/// }
+///
+/// Meters: PartialOrd {
+///     fn lt(self, other: Meters): bool {
+///         self.value < other.value
+///     }
+/// }
+///
+/// fn main() {
+///     assert(Meters { value: 1 } < Meters { value: 2 })
+///     assert(Meters { value: 2 } >= Meters { value: 1 })
+/// }
+/// ```
 interface PartialOrd {
     /// Whether `self` is less than `other`. `lt` must be a strict order.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialOrd {
+    ///     fn lt(self, other: Meters): bool {
+    ///         self.value < other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 1 } < Meters { value: 2 })
+    ///     assert(!(Meters { value: 2 } < Meters { value: 2 }))
+    /// }
+    /// ```
     fn lt(self, other: Self): bool
 
     /// Whether `self` is less than or equal to `other`. The default is `!self.gt(other)`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialOrd {
+    ///     fn lt(self, other: Meters): bool {
+    ///         self.value < other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 2 } <= Meters { value: 2 })
+    ///     assert(!(Meters { value: 3 } <= Meters { value: 2 }))
+    /// }
+    /// ```
     fn le(self, other: Self): bool {
         !self.gt(other)
     }
 
     /// Whether `self` is greater than `other`. The default is `other.lt(self)`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialOrd {
+    ///     fn lt(self, other: Meters): bool {
+    ///         self.value < other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 3 } > Meters { value: 2 })
+    ///     assert(!(Meters { value: 2 } > Meters { value: 2 }))
+    /// }
+    /// ```
     fn gt(self, other: Self): bool {
         other.lt(self)
     }
 
     /// Whether `self` is greater than or equal to `other`. The default is `!self.lt(other)`.
+    ///
+    /// ```
+    /// struct Meters {
+    ///     value: i32
+    /// }
+    ///
+    /// Meters: PartialOrd {
+    ///     fn lt(self, other: Meters): bool {
+    ///         self.value < other.value
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     assert(Meters { value: 2 } >= Meters { value: 2 })
+    ///     assert(!(Meters { value: 1 } >= Meters { value: 2 }))
+    /// }
+    /// ```
     fn ge(self, other: Self): bool {
         !self.lt(other)
     }
 }
 
 /// A type whose elements `x[i]` can be read: `x[i]` calls `x.index(i)` and yields `*x.index(i)`.
+///
+/// ```
+/// struct Row {
+///     cells: List<i32>
+/// }
+/// Row: Index<i32> {
+///     fn index(self, i: usize): &i32 {
+///         &self.cells[i]
+///     }
+/// }
+/// let row = Row { cells: [10, 20].into_iter().collect() }
+/// assert_eq(row[1], 20)
+/// ```
 interface Index<T> {
+    /// A reference to the element at `i`. An out-of-range `i` panics.
+    ///
+    /// ```
+    /// struct Row {
+    ///     items: List<i32>
+    /// }
+    ///
+    /// Row: Index<i32> {
+    ///     fn index(self, i: usize): &i32 {
+    ///         &self.items[i]
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let mut items = List<i32>.new()
+    ///     items.push(7)
+    ///     let row = Row { items: items }
+    ///     assert_eq(row[0], 7)
+    /// }
+    /// ```
     fn index(self, i: usize): &T
 }
 
 /// A type whose elements `x[i]` can be written: `x[i] = v` calls `x.index_mut(i)` and writes through it.
+///
+/// ```
+/// struct Row {
+///     cells: List<i32>
+/// }
+/// Row: Index<i32> {
+///     fn index(self, i: usize): &i32 {
+///         &self.cells[i]
+///     }
+/// }
+/// Row: IndexMut<i32> {
+///     fn index_mut(mut self, i: usize): &mut i32 {
+///         &mut self.cells[i]
+///     }
+/// }
+/// let mut row = Row { cells: [10, 20].into_iter().collect() }
+/// row[0] = 5
+/// assert_eq(row[0], 5)
+/// ```
 interface IndexMut<T> {
+    /// A mutable reference to the element at `i`. An out-of-range `i` panics.
+    ///
+    /// ```
+    /// struct Row {
+    ///     items: List<i32>
+    /// }
+    ///
+    /// Row: IndexMut<i32> {
+    ///     fn index_mut(mut self, i: usize): &mut i32 {
+    ///         &mut self.items[i]
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let mut row = Row { items: List<i32>.new() }
+    ///     row.items.push(1)
+    ///     row[0] = 5
+    ///     assert_eq(row.items[0], 5)
+    /// }
+    /// ```
     fn index_mut(mut self, i: usize): &mut T
 }

@@ -2,6 +2,11 @@
 // while compiling and work in `comptime if` (spec/comptime.md, CT5).
 
 /// An operating system.
+///
+/// ```
+/// let o: Os = os()
+/// assert(o == Os.Linux || o == Os.MacOs || o == Os.Windows)
+/// ```
 enum Os: Copy, Clone, Eq {
     Linux
     MacOs
@@ -9,12 +14,26 @@ enum Os: Copy, Clone, Eq {
 }
 
 /// A processor architecture.
+///
+/// ```
+/// let a: Arch = arch()
+/// assert(a == Arch.X86_64 || a == Arch.Aarch64)
+/// ```
 enum Arch: Copy, Clone, Eq {
     X86_64
     Aarch64
 }
 
 /// The operating system the program is compiled for.
+///
+/// ```
+/// let name = match os() {
+///     Os.Linux => "linux",
+///     Os.MacOs => "macos",
+///     Os.Windows => "windows",
+/// }
+/// assert(name.len() > 0)
+/// ```
 fn os(): Os {
     match __target_os() {
         "windows" => Os.Windows,
@@ -24,6 +43,11 @@ fn os(): Os {
 }
 
 /// The processor architecture the program is compiled for.
+///
+/// ```
+/// let a: Arch = arch()
+/// assert(a == Arch.X86_64 || a == Arch.Aarch64)
+/// ```
 fn arch(): Arch {
     match __target_arch() {
         "aarch64" => Arch.Aarch64,

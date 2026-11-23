@@ -14,60 +14,137 @@ priv fn __in(n: u32, low: u32, high: u32): bool {
 // ---- ASCII ----
 
 /// Whether the character is in the ASCII range.
+///
+/// ```
+/// let a: char = 'a'
+/// assert(a.is_ascii())
+/// let e: char = 'é'
+/// assert(!e.is_ascii())
+/// ```
 fn char.is_ascii(self): bool {
     (self as u32) < 128
 }
 
 /// Whether the character is `A`-`Z` or `a`-`z`.
+///
+/// ```
+/// let q: char = 'Q'
+/// assert(q.is_ascii_alphabetic())
+/// let d: char = '7'
+/// assert(!d.is_ascii_alphabetic())
+/// ```
 fn char.is_ascii_alphabetic(self): bool {
     self.is_ascii_uppercase() || self.is_ascii_lowercase()
 }
 
 /// Whether the character is `A`-`Z`.
+///
+/// ```
+/// let q: char = 'Q'
+/// assert(q.is_ascii_uppercase())
+/// let a: char = 'a'
+/// assert(!a.is_ascii_uppercase())
+/// ```
 fn char.is_ascii_uppercase(self): bool {
     __in(self as u32, 65, 90)
 }
 
 /// Whether the character is `a`-`z`.
+///
+/// ```
+/// let a: char = 'a'
+/// assert(a.is_ascii_lowercase())
+/// let q: char = 'Q'
+/// assert(!q.is_ascii_lowercase())
+/// ```
 fn char.is_ascii_lowercase(self): bool {
     __in(self as u32, 97, 122)
 }
 
 /// Whether the character is `0`-`9`.
+///
+/// ```
+/// let n: char = '7'
+/// assert(n.is_ascii_digit())
+/// let x: char = 'x'
+/// assert(!x.is_ascii_digit())
+/// ```
 fn char.is_ascii_digit(self): bool {
     __in(self as u32, 48, 57)
 }
 
 /// Whether the character is `0`-`9`, `a`-`f`, or `A`-`F`.
+///
+/// ```
+/// let f: char = 'F'
+/// assert(f.is_ascii_hexdigit())
+/// let g: char = 'g'
+/// assert(!g.is_ascii_hexdigit())
+/// ```
 fn char.is_ascii_hexdigit(self): bool {
     let n = self as u32
     __in(n, 48, 57) || __in(n, 65, 70) || __in(n, 97, 102)
 }
 
 /// Whether the character is an ASCII letter or digit.
+///
+/// ```
+/// let n: char = '9'
+/// assert(n.is_ascii_alphanumeric())
+/// let p: char = '!'
+/// assert(!p.is_ascii_alphanumeric())
+/// ```
 fn char.is_ascii_alphanumeric(self): bool {
     self.is_ascii_alphabetic() || self.is_ascii_digit()
 }
 
 /// Whether the character is a space, tab, line feed, form feed, or carriage return.
+///
+/// ```
+/// let s: char = ' '
+/// assert(s.is_ascii_whitespace())
+/// let x: char = 'x'
+/// assert(!x.is_ascii_whitespace())
+/// ```
 fn char.is_ascii_whitespace(self): bool {
     let n = self as u32
     n == 32 || n == 9 || n == 10 || n == 12 || n == 13
 }
 
 /// Whether the character is ASCII punctuation or a symbol.
+///
+/// ```
+/// let b: char = '!'
+/// assert(b.is_ascii_punctuation())
+/// let a: char = 'a'
+/// assert(!a.is_ascii_punctuation())
+/// ```
 fn char.is_ascii_punctuation(self): bool {
     let n = self as u32
     __in(n, 33, 47) || __in(n, 58, 64) || __in(n, 91, 96) || __in(n, 123, 126)
 }
 
 /// Whether the character is an ASCII control character (`0`-`31` and `127`).
+///
+/// ```
+/// let nl: char = '\n'
+/// assert(nl.is_ascii_control())
+/// let a: char = 'a'
+/// assert(!a.is_ascii_control())
+/// ```
 fn char.is_ascii_control(self): bool {
     let n = self as u32
     n < 32 || n == 127
 }
 
 /// The character with `A`-`Z` made lowercase; every other character is unchanged.
+///
+/// ```
+/// let c: char = 'Q'
+/// assert_eq(c.to_ascii_lowercase(), 'q')
+/// let e: char = 'É'
+/// assert_eq(e.to_ascii_lowercase(), 'É')
+/// ```
 fn char.to_ascii_lowercase(self): char {
     if self.is_ascii_uppercase() {
         return ((self as u32) + 32) as char
@@ -76,6 +153,11 @@ fn char.to_ascii_lowercase(self): char {
 }
 
 /// The character with `a`-`z` made uppercase; every other character is unchanged.
+///
+/// ```
+/// let c: char = 'q'
+/// assert_eq(c.to_ascii_uppercase(), 'Q')
+/// ```
 fn char.to_ascii_uppercase(self): char {
     if self.is_ascii_lowercase() {
         return ((self as u32) - 32) as char
@@ -84,6 +166,14 @@ fn char.to_ascii_uppercase(self): char {
 }
 
 /// Whether the two characters are equal after `to_ascii_lowercase`.
+///
+/// ```
+/// let a: char = 'a'
+/// let b: char = 'A'
+/// assert(a.eq_ignore_ascii_case(b))
+/// let c: char = 'b'
+/// assert(!a.eq_ignore_ascii_case(c))
+/// ```
 fn char.eq_ignore_ascii_case(self, other: char): bool {
     self.to_ascii_lowercase() == other.to_ascii_lowercase()
 }
@@ -91,6 +181,13 @@ fn char.eq_ignore_ascii_case(self, other: char): bool {
 // ---- Unicode classification ----
 
 /// Whether the character is a letter.
+///
+/// ```
+/// let e: char = 'é'
+/// assert(e.is_alphabetic())
+/// let d: char = '1'
+/// assert(!d.is_alphabetic())
+/// ```
 fn char.is_alphabetic(self): bool {
     let n = self as u32
     if n < 128 {
@@ -126,6 +223,13 @@ fn char.is_alphabetic(self): bool {
 }
 
 /// Whether the character is a decimal digit of any script.
+///
+/// ```
+/// let n: char = '5'
+/// assert(n.is_numeric())
+/// let a: char = 'a'
+/// assert(!a.is_numeric())
+/// ```
 fn char.is_numeric(self): bool {
     let n = self as u32
     if n < 128 {
@@ -138,11 +242,25 @@ fn char.is_numeric(self): bool {
 }
 
 /// Whether the character is a letter or a digit.
+///
+/// ```
+/// let n: char = '5'
+/// assert(n.is_alphanumeric())
+/// let s: char = ' '
+/// assert(!s.is_alphanumeric())
+/// ```
 fn char.is_alphanumeric(self): bool {
     self.is_alphabetic() || self.is_numeric()
 }
 
 /// Whether the character is Unicode white space.
+///
+/// ```
+/// let s: char = ' '
+/// assert(s.is_whitespace())
+/// let x: char = 'x'
+/// assert(!x.is_whitespace())
+/// ```
 fn char.is_whitespace(self): bool {
     let n = self as u32
     __in(n, 9, 13) || n == 32 || n == 133 || n == 160 || n == 5760 || __in(n, 8192, 8202) || n == 8232 || n == 8233
@@ -150,6 +268,13 @@ fn char.is_whitespace(self): bool {
 }
 
 /// Whether the character is a control character (`0`-`31` and `127`-`159`).
+///
+/// ```
+/// let nl: char = '\n'
+/// assert(nl.is_control())
+/// let a: char = 'a'
+/// assert(!a.is_control())
+/// ```
 fn char.is_control(self): bool {
     let n = self as u32
     n < 32 || __in(n, 127, 159)
@@ -158,6 +283,11 @@ fn char.is_control(self): bool {
 // ---- Case ----
 
 /// The lowercase form of the character, or the character itself when it has none.
+///
+/// ```
+/// let c: char = 'Ä'
+/// assert_eq(c.to_lowercase(), 'ä')
+/// ```
 fn char.to_lowercase(self): char {
     let n = self as u32
     if n < 128 {
@@ -190,6 +320,11 @@ fn char.to_lowercase(self): char {
 }
 
 /// The uppercase form of the character, or the character itself when it has none.
+///
+/// ```
+/// let c: char = 'ä'
+/// assert_eq(c.to_uppercase(), 'Ä')
+/// ```
 fn char.to_uppercase(self): char {
     let n = self as u32
     if n < 128 {
@@ -224,11 +359,25 @@ fn char.to_uppercase(self): char {
 }
 
 /// Whether the character has a lowercase form that differs from it.
+///
+/// ```
+/// let c: char = 'Ä'
+/// assert(c.is_uppercase())
+/// let d: char = 'ä'
+/// assert(!d.is_uppercase())
+/// ```
 fn char.is_uppercase(self): bool {
     self.to_lowercase() != self
 }
 
 /// Whether the character is a lowercase letter: it has an uppercase form that differs from it, or it is `ß`.
+///
+/// ```
+/// let c: char = 'ä'
+/// assert(c.is_lowercase())
+/// let s: char = '1'
+/// assert(!s.is_lowercase())
+/// ```
 fn char.is_lowercase(self): bool {
     self.to_uppercase() != self || (self as u32) == 223
 }
@@ -236,12 +385,25 @@ fn char.is_lowercase(self): bool {
 // ---- Digits and code points ----
 
 /// Whether the character is a digit in `radix` (2 to 36).
+///
+/// ```
+/// let f: char = 'f'
+/// assert(f.is_digit(16))
+/// assert(!f.is_digit(10))
+/// ```
 fn char.is_digit(self, radix: u32): bool {
     self.to_digit(radix).is_some()
 }
 
 /// The value of the character as a digit in `radix` (2 to 36), or `None` when it is not one. Letters of either case
 /// are the digits ten and up. A radix outside 2 to 36 panics.
+///
+/// ```
+/// let f: char = 'F'
+/// assert_eq(f.to_digit(16), Some(15))
+/// let g: char = 'g'
+/// assert_eq(g.to_digit(16), None)
+/// ```
 fn char.to_digit(self, radix: u32): Option<u32> {
     if radix < 2 || radix > 36 {
         panic("to_digit: radix must be 2 to 36")
@@ -262,6 +424,13 @@ fn char.to_digit(self, radix: u32): Option<u32> {
 }
 
 /// The number of bytes the character takes in UTF-8.
+///
+/// ```
+/// let e: char = 'é'
+/// assert_eq(e.len_utf8(), 2)
+/// let a: char = 'a'
+/// assert_eq(a.len_utf8(), 1)
+/// ```
 fn char.len_utf8(self): usize {
     let n = self as u32
     if n < 128 {
@@ -277,6 +446,13 @@ fn char.len_utf8(self): usize {
 }
 
 /// The character with this code point, or `None` for a surrogate (`0xD800`-`0xDFFF`) or a value past `0x10FFFF`.
+///
+/// ```
+/// let n: u32 = 65
+/// assert_eq(n.to_char(), Some('A'))
+/// let surrogate: u32 = 55296
+/// assert_eq(surrogate.to_char(), None)
+/// ```
 fn u32.to_char(self): Option<char> {
     if self > 1114111 || __in(self, 55296, 57343) {
         return None
@@ -286,6 +462,13 @@ fn u32.to_char(self): Option<char> {
 
 /// The digit `0`-`9` or lowercase letter `a`-`z` for the value `self` in `radix` (2 to 36), or `None` when the value
 /// is not a digit of that radix. A radix outside 2 to 36 panics.
+///
+/// ```
+/// let n: u32 = 11
+/// assert_eq(n.digit_char(16), Some('b'))
+/// let big: u32 = 12
+/// assert_eq(big.digit_char(10), None)
+/// ```
 fn u32.digit_char(self, radix: u32): Option<char> {
     if radix < 2 || radix > 36 {
         panic("digit_char: radix must be 2 to 36")
@@ -302,6 +485,10 @@ fn u32.digit_char(self, radix: u32): Option<char> {
 // ---- Text ----
 
 /// A copy with every character made lowercase (`char.to_lowercase`).
+///
+/// ```
+/// assert_eq("ÄB".to_lowercase(), String.from("äb"))
+/// ```
 fn str.to_lowercase(self): String {
     let mut out = String.new()
     for c in self.chars() {
@@ -311,6 +498,10 @@ fn str.to_lowercase(self): String {
 }
 
 /// A copy with every character made uppercase (`char.to_uppercase`).
+///
+/// ```
+/// assert_eq("äb".to_uppercase(), String.from("ÄB"))
+/// ```
 fn str.to_uppercase(self): String {
     let mut out = String.new()
     for c in self.chars() {
@@ -320,6 +511,10 @@ fn str.to_uppercase(self): String {
 }
 
 /// A copy with `A`-`Z` made lowercase and every other character unchanged.
+///
+/// ```
+/// assert_eq("ÄB".to_ascii_lowercase(), String.from("Äb"))
+/// ```
 fn str.to_ascii_lowercase(self): String {
     let mut out = String.new()
     for c in self.chars() {
@@ -329,6 +524,10 @@ fn str.to_ascii_lowercase(self): String {
 }
 
 /// A copy with `a`-`z` made uppercase and every other character unchanged.
+///
+/// ```
+/// assert_eq("äb".to_ascii_uppercase(), String.from("äB"))
+/// ```
 fn str.to_ascii_uppercase(self): String {
     let mut out = String.new()
     for c in self.chars() {
@@ -338,37 +537,69 @@ fn str.to_ascii_uppercase(self): String {
 }
 
 /// Whether the two texts are equal after `to_ascii_lowercase`.
+///
+/// ```
+/// assert("Hello".eq_ignore_ascii_case("hELLO"))
+/// assert(!"a".eq_ignore_ascii_case("b"))
+/// ```
 fn str.eq_ignore_ascii_case(self, other: str): bool {
     self.to_ascii_lowercase() == other.to_ascii_lowercase()
 }
 
 /// A copy with every character made lowercase.
+///
+/// ```
+/// let s = String.from("ÄB")
+/// assert_eq(s.to_lowercase(), String.from("äb"))
+/// ```
 fn String.to_lowercase(self): String {
     self.as_str().to_lowercase()
 }
 
 /// A copy with every character made uppercase.
+///
+/// ```
+/// let s = String.from("äb")
+/// assert_eq(s.to_uppercase(), String.from("ÄB"))
+/// ```
 fn String.to_uppercase(self): String {
     self.as_str().to_uppercase()
 }
 
 /// A copy with `A`-`Z` made lowercase.
+///
+/// ```
+/// assert_eq(String.from("AB").to_ascii_lowercase(), String.from("ab"))
+/// ```
 fn String.to_ascii_lowercase(self): String {
     self.as_str().to_ascii_lowercase()
 }
 
 /// A copy with `a`-`z` made uppercase.
+///
+/// ```
+/// assert_eq(String.from("ab").to_ascii_uppercase(), String.from("AB"))
+/// ```
 fn String.to_ascii_uppercase(self): String {
     self.as_str().to_ascii_uppercase()
 }
 
 /// Whether the two texts are equal after `to_ascii_lowercase`.
+///
+/// ```
+/// assert(String.from("Rust").eq_ignore_ascii_case("rUST"))
+/// ```
 fn String.eq_ignore_ascii_case(self, other: str): bool {
     self.as_str().eq_ignore_ascii_case(other)
 }
 
 
 /// Whether every character is in the ASCII range.
+///
+/// ```
+/// assert("abc".is_ascii())
+/// assert(!"é".is_ascii())
+/// ```
 fn str.is_ascii(self): bool {
     for c in self.chars() {
         if !c.is_ascii() {
@@ -379,6 +610,11 @@ fn str.is_ascii(self): bool {
 }
 
 /// Whether every character is in the ASCII range.
+///
+/// ```
+/// assert(String.from("abc").is_ascii())
+/// assert(!String.from("é").is_ascii())
+/// ```
 fn String.is_ascii(self): bool {
     self.as_str().is_ascii()
 }

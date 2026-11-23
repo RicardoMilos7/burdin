@@ -14,67 +14,261 @@ use std.Error
 
 /// The format side of writing: a writer implements this interface. Each method borrows the writer exclusively for
 /// the call, so a struct or sequence is written with a `begin` call, one call per value, and an `end` call.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// s.serialize_bool(true).unwrap()
+/// assert_eq(s.finish(), String.from("true"))
+/// ```
 interface Serializer {
     /// Writes the unit value.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_unit().unwrap()
+    /// assert_eq(s.finish(), String.from("()"))
+    /// ```
     fn serialize_unit(mut self): Result<(), DeError>
 
     /// Writes a `bool`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_bool(true).unwrap()
+    /// assert_eq(s.finish(), String.from("true"))
+    /// ```
     fn serialize_bool(mut self, value: bool): Result<(), DeError>
 
     /// Writes an `i8`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_i8(-1).unwrap()
+    /// assert_eq(s.finish(), String.from("-1"))
+    /// ```
     fn serialize_i8(mut self, value: i8): Result<(), DeError>
     /// Writes an `i16`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_i16(-2).unwrap()
+    /// assert_eq(s.finish(), String.from("-2"))
+    /// ```
     fn serialize_i16(mut self, value: i16): Result<(), DeError>
     /// Writes an `i32`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_i32(-5).unwrap()
+    /// assert_eq(s.finish(), String.from("-5"))
+    /// ```
     fn serialize_i32(mut self, value: i32): Result<(), DeError>
     /// Writes an `i64`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_i64(-3).unwrap()
+    /// assert_eq(s.finish(), String.from("-3"))
+    /// ```
     fn serialize_i64(mut self, value: i64): Result<(), DeError>
     /// Writes an `isize`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_isize(-4).unwrap()
+    /// assert_eq(s.finish(), String.from("-4"))
+    /// ```
     fn serialize_isize(mut self, value: isize): Result<(), DeError>
 
     /// Writes a `u8`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_u8(7).unwrap()
+    /// assert_eq(s.finish(), String.from("7"))
+    /// ```
     fn serialize_u8(mut self, value: u8): Result<(), DeError>
     /// Writes a `u16`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_u16(8).unwrap()
+    /// assert_eq(s.finish(), String.from("8"))
+    /// ```
     fn serialize_u16(mut self, value: u16): Result<(), DeError>
     /// Writes a `u32`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_u32(9).unwrap()
+    /// assert_eq(s.finish(), String.from("9"))
+    /// ```
     fn serialize_u32(mut self, value: u32): Result<(), DeError>
     /// Writes a `u64`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_u64(10).unwrap()
+    /// assert_eq(s.finish(), String.from("10"))
+    /// ```
     fn serialize_u64(mut self, value: u64): Result<(), DeError>
     /// Writes a `usize`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_usize(11).unwrap()
+    /// assert_eq(s.finish(), String.from("11"))
+    /// ```
     fn serialize_usize(mut self, value: usize): Result<(), DeError>
 
     /// Writes an `f32`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_f32(1.5).unwrap()
+    /// assert_eq(s.finish(), String.from("1.5"))
+    /// ```
     fn serialize_f32(mut self, value: f32): Result<(), DeError>
     /// Writes an `f64`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_f64(1.5).unwrap()
+    /// assert_eq(s.finish(), String.from("1.5"))
+    /// ```
     fn serialize_f64(mut self, value: f64): Result<(), DeError>
 
     /// Writes a `char`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_char('a').unwrap()
+    /// assert_eq(s.finish(), String.from("'a'"))
+    /// ```
     fn serialize_char(mut self, value: char): Result<(), DeError>
     /// Writes a `str` (or a `String`, through the one implicit conversion).
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_str("hi\n").unwrap()
+    /// assert_eq(s.finish(), String.from("\"hi\\n\""))
+    /// ```
     fn serialize_str(mut self, value: str): Result<(), DeError>
     /// Writes a run of bytes.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_bytes("ab".as_bytes()).unwrap()
+    /// assert_eq(s.finish(), String.from("[97, 98]"))
+    /// ```
     fn serialize_bytes(mut self, value: [u8]): Result<(), DeError>
 
     /// Starts a sequence of exactly `len` values.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_seq(2).unwrap()
+    /// s.serialize_i32(1).unwrap()
+    /// s.serialize_i32(2).unwrap()
+    /// s.end_seq().unwrap()
+    /// assert_eq(s.finish(), String.from("[1, 2]"))
+    /// ```
     fn begin_seq(mut self, len: usize): Result<(), DeError>
     /// Ends the sequence.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_seq(2).unwrap()
+    /// s.serialize_i32(1).unwrap()
+    /// s.serialize_i32(2).unwrap()
+    /// s.end_seq().unwrap()
+    /// assert_eq(s.finish(), String.from("[1, 2]"))
+    /// ```
     fn end_seq(mut self): Result<(), DeError>
 
     /// Starts a map of exactly `len` entries with `String` keys.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_map(1).unwrap()
+    /// s.map_key("k").unwrap()
+    /// s.serialize_i32(3).unwrap()
+    /// s.end_map().unwrap()
+    /// assert_eq(s.finish(), String.from("{{ \"k\": 3 }}"))
+    /// ```
     fn begin_map(mut self, len: usize): Result<(), DeError>
     /// Writes the key of the next map entry. The entry's value is the next value written.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_map(1).unwrap()
+    /// s.map_key("k").unwrap()
+    /// s.serialize_i32(3).unwrap()
+    /// s.end_map().unwrap()
+    /// assert_eq(s.finish(), String.from("{{ \"k\": 3 }}"))
+    /// ```
     fn map_key(mut self, key: str): Result<(), DeError>
     /// Ends the map.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_map(1).unwrap()
+    /// s.map_key("k").unwrap()
+    /// s.serialize_i32(3).unwrap()
+    /// s.end_map().unwrap()
+    /// assert_eq(s.finish(), String.from("{{ \"k\": 3 }}"))
+    /// ```
     fn end_map(mut self): Result<(), DeError>
 
     /// Starts a struct named `name` with exactly `len` fields.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_struct("Point", 2).unwrap()
+    /// s.struct_field("x").unwrap()
+    /// s.serialize_i32(1).unwrap()
+    /// s.struct_field("y").unwrap()
+    /// s.serialize_i32(2).unwrap()
+    /// s.end_struct().unwrap()
+    /// assert_eq(s.finish(), String.from("Point {{ x: 1, y: 2 }}"))
+    /// ```
     fn begin_struct(mut self, name: str, len: usize): Result<(), DeError>
     /// Writes the name of the next field. The field's value is the next value written.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_struct("Point", 2).unwrap()
+    /// s.struct_field("x").unwrap()
+    /// s.serialize_i32(1).unwrap()
+    /// s.struct_field("y").unwrap()
+    /// s.serialize_i32(2).unwrap()
+    /// s.end_struct().unwrap()
+    /// assert_eq(s.finish(), String.from("Point {{ x: 1, y: 2 }}"))
+    /// ```
     fn struct_field(mut self, name: str): Result<(), DeError>
     /// Ends the struct.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_struct("Point", 2).unwrap()
+    /// s.struct_field("x").unwrap()
+    /// s.serialize_i32(1).unwrap()
+    /// s.struct_field("y").unwrap()
+    /// s.serialize_i32(2).unwrap()
+    /// s.end_struct().unwrap()
+    /// assert_eq(s.finish(), String.from("Point {{ x: 1, y: 2 }}"))
+    /// ```
     fn end_struct(mut self): Result<(), DeError>
 
     /// Starts an enum variant: the enum's name, the variant's name, its declaration index, and its payload arity.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_variant("Shape", "Line", 1, 1).unwrap()
+    /// s.serialize_i32(4).unwrap()
+    /// s.end_variant(1).unwrap()
+    /// assert_eq(s.finish(), String.from("Shape.Line(4)"))
+    /// ```
     fn begin_variant(
         mut self,
         type_name: str,
@@ -83,86 +277,359 @@ interface Serializer {
         arity: usize,
     ): Result<(), DeError>
     /// Ends the variant's `arity` payload values.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.begin_variant("Shape", "Line", 1, 1).unwrap()
+    /// s.serialize_i32(4).unwrap()
+    /// s.end_variant(1).unwrap()
+    /// assert_eq(s.finish(), String.from("Shape.Line(4)"))
+    /// ```
     fn end_variant(mut self, arity: usize): Result<(), DeError>
 }
 
 /// The format side of reading: a reader implements this interface. The data type drives the parse, asking for the
 /// next value or the next structural token.
+///
+/// ```
+/// let mut d = TextDeserializer.new("7")
+/// assert_eq(d.deserialize_i32().unwrap(), 7)
+/// ```
 interface Deserializer {
     /// Reads the unit value.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("()")
+    /// assert(d.deserialize_unit().is_ok())
+    /// ```
     fn deserialize_unit(mut self): Result<(), DeError>
 
     /// Reads a `bool`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("true")
+    /// assert_eq(d.deserialize_bool().unwrap(), true)
+    /// ```
     fn deserialize_bool(mut self): Result<bool, DeError>
 
     /// Reads an `i8`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("-1")
+    /// assert_eq(d.deserialize_i8().unwrap(), -1)
+    /// ```
     fn deserialize_i8(mut self): Result<i8, DeError>
     /// Reads an `i16`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("-2")
+    /// assert_eq(d.deserialize_i16().unwrap(), -2)
+    /// ```
     fn deserialize_i16(mut self): Result<i16, DeError>
     /// Reads an `i32`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("-5")
+    /// assert_eq(d.deserialize_i32().unwrap(), -5)
+    /// ```
     fn deserialize_i32(mut self): Result<i32, DeError>
     /// Reads an `i64`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("-3")
+    /// assert_eq(d.deserialize_i64().unwrap(), -3)
+    /// ```
     fn deserialize_i64(mut self): Result<i64, DeError>
     /// Reads an `isize`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("-4")
+    /// assert_eq(d.deserialize_isize().unwrap(), -4)
+    /// ```
     fn deserialize_isize(mut self): Result<isize, DeError>
 
     /// Reads a `u8`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("7")
+    /// assert_eq(d.deserialize_u8().unwrap(), 7)
+    /// ```
     fn deserialize_u8(mut self): Result<u8, DeError>
     /// Reads a `u16`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("8")
+    /// assert_eq(d.deserialize_u16().unwrap(), 8)
+    /// ```
     fn deserialize_u16(mut self): Result<u16, DeError>
     /// Reads a `u32`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("9")
+    /// assert_eq(d.deserialize_u32().unwrap(), 9)
+    /// ```
     fn deserialize_u32(mut self): Result<u32, DeError>
     /// Reads a `u64`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("10")
+    /// assert_eq(d.deserialize_u64().unwrap(), 10)
+    /// ```
     fn deserialize_u64(mut self): Result<u64, DeError>
     /// Reads a `usize`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("11")
+    /// assert_eq(d.deserialize_usize().unwrap(), 11)
+    /// ```
     fn deserialize_usize(mut self): Result<usize, DeError>
 
     /// Reads an `f32`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("1.5")
+    /// assert(d.deserialize_f32().unwrap() == 1.5)
+    /// ```
     fn deserialize_f32(mut self): Result<f32, DeError>
     /// Reads an `f64`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("1.5")
+    /// assert(d.deserialize_f64().unwrap() == 1.5)
+    /// ```
     fn deserialize_f64(mut self): Result<f64, DeError>
 
     /// Reads a `char`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("'a'")
+    /// assert_eq(d.deserialize_char().unwrap(), 'a')
+    /// ```
     fn deserialize_char(mut self): Result<char, DeError>
     /// Reads a string into a new `String`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("\"hi\"")
+    /// assert_eq(d.deserialize_str().unwrap(), String.from("hi"))
+    /// ```
     fn deserialize_str(mut self): Result<String, DeError>
     /// Reads a run of bytes into a new `List<u8>`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("[97, 98]")
+    /// assert_eq(d.deserialize_bytes().unwrap().len(), 2)
+    /// ```
     fn deserialize_bytes(mut self): Result<List<u8>, DeError>
 
     /// Consumes the opening of a sequence.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("[1, 2]")
+    /// d.begin_seq().unwrap()
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_seq_element().unwrap())
+    /// d.end_seq().unwrap()
+    /// ```
     fn begin_seq(mut self): Result<(), DeError>
     /// Whether another sequence element follows; consumes the separator between elements.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("[1, 2]")
+    /// d.begin_seq().unwrap()
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_seq_element().unwrap())
+    /// d.end_seq().unwrap()
+    /// ```
     fn has_next_seq_element(mut self): Result<bool, DeError>
     /// Consumes the closing of the sequence.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("[1, 2]")
+    /// d.begin_seq().unwrap()
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_seq_element().unwrap())
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_seq_element().unwrap())
+    /// d.end_seq().unwrap()
+    /// ```
     fn end_seq(mut self): Result<(), DeError>
 
     /// Consumes the opening of a map.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("{{ \"k\": 3 }}")
+    /// d.begin_map().unwrap()
+    /// assert(d.has_next_map_entry().unwrap())
+    /// assert_eq(d.map_key().unwrap(), String.from("k"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 3)
+    /// assert(!d.has_next_map_entry().unwrap())
+    /// d.end_map().unwrap()
+    /// ```
     fn begin_map(mut self): Result<(), DeError>
     /// Whether another map entry follows; consumes the separator between entries.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("{{ \"k\": 3 }}")
+    /// d.begin_map().unwrap()
+    /// assert(d.has_next_map_entry().unwrap())
+    /// assert_eq(d.map_key().unwrap(), String.from("k"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 3)
+    /// assert(!d.has_next_map_entry().unwrap())
+    /// d.end_map().unwrap()
+    /// ```
     fn has_next_map_entry(mut self): Result<bool, DeError>
     /// Reads the next map entry's key.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("{{ \"k\": 3 }}")
+    /// d.begin_map().unwrap()
+    /// assert(d.has_next_map_entry().unwrap())
+    /// assert_eq(d.map_key().unwrap(), String.from("k"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 3)
+    /// assert(!d.has_next_map_entry().unwrap())
+    /// d.end_map().unwrap()
+    /// ```
     fn map_key(mut self): Result<String, DeError>
     /// Consumes the closing of the map.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("{{ \"k\": 3 }}")
+    /// d.begin_map().unwrap()
+    /// assert(d.has_next_map_entry().unwrap())
+    /// assert_eq(d.map_key().unwrap(), String.from("k"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 3)
+    /// assert(!d.has_next_map_entry().unwrap())
+    /// d.end_map().unwrap()
+    /// ```
     fn end_map(mut self): Result<(), DeError>
 
     /// Consumes the opening of the struct named `name`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Point {{ x: 1, y: 2 }}")
+    /// d.begin_struct("Point").unwrap()
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("x"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("y"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_field().unwrap())
+    /// d.end_struct().unwrap()
+    /// ```
     fn begin_struct(mut self, name: str): Result<(), DeError>
     /// Whether another field follows; consumes the separator between fields.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Point {{ x: 1, y: 2 }}")
+    /// d.begin_struct("Point").unwrap()
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("x"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("y"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_field().unwrap())
+    /// d.end_struct().unwrap()
+    /// ```
     fn has_next_field(mut self): Result<bool, DeError>
     /// Reads the next field's name.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Point {{ x: 1, y: 2 }}")
+    /// d.begin_struct("Point").unwrap()
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("x"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("y"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_field().unwrap())
+    /// d.end_struct().unwrap()
+    /// ```
     fn field_name(mut self): Result<String, DeError>
     /// Consumes the closing of the struct.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Point {{ x: 1, y: 2 }}")
+    /// d.begin_struct("Point").unwrap()
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("x"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 1)
+    /// assert(d.has_next_field().unwrap())
+    /// assert_eq(d.field_name().unwrap(), String.from("y"))
+    /// assert_eq(d.deserialize_i32().unwrap(), 2)
+    /// assert(!d.has_next_field().unwrap())
+    /// d.end_struct().unwrap()
+    /// ```
     fn end_struct(mut self): Result<(), DeError>
 
     /// Consumes the opening of the enum named `name` and its `.`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Shape.Line(4)")
+    /// d.begin_enum("Shape").unwrap()
+    /// assert_eq(d.variant_name().unwrap(), String.from("Line"))
+    /// d.begin_variant_payload(1).unwrap()
+    /// d.variant_payload_field(0).unwrap()
+    /// assert_eq(d.deserialize_i32().unwrap(), 4)
+    /// d.end_variant_payload(1).unwrap()
+    /// ```
     fn begin_enum(mut self, name: str): Result<(), DeError>
     /// Reads the variant's name.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Shape.Line(4)")
+    /// d.begin_enum("Shape").unwrap()
+    /// assert_eq(d.variant_name().unwrap(), String.from("Line"))
+    /// d.begin_variant_payload(1).unwrap()
+    /// d.variant_payload_field(0).unwrap()
+    /// assert_eq(d.deserialize_i32().unwrap(), 4)
+    /// d.end_variant_payload(1).unwrap()
+    /// ```
     fn variant_name(mut self): Result<String, DeError>
     /// Consumes the opening of the variant's `arity` payload values.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Shape.Line(4)")
+    /// d.begin_enum("Shape").unwrap()
+    /// assert_eq(d.variant_name().unwrap(), String.from("Line"))
+    /// d.begin_variant_payload(1).unwrap()
+    /// d.variant_payload_field(0).unwrap()
+    /// assert_eq(d.deserialize_i32().unwrap(), 4)
+    /// d.end_variant_payload(1).unwrap()
+    /// ```
     fn begin_variant_payload(mut self, arity: usize): Result<(), DeError>
     /// Consumes what separates payload value `index` from the one before it (for index 0, nothing).
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Shape.Line(4)")
+    /// d.begin_enum("Shape").unwrap()
+    /// assert_eq(d.variant_name().unwrap(), String.from("Line"))
+    /// d.begin_variant_payload(1).unwrap()
+    /// d.variant_payload_field(0).unwrap()
+    /// assert_eq(d.deserialize_i32().unwrap(), 4)
+    /// d.end_variant_payload(1).unwrap()
+    /// ```
     fn variant_payload_field(mut self, index: usize): Result<(), DeError>
     /// Consumes the closing of the variant's payload.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("Shape.Line(4)")
+    /// d.begin_enum("Shape").unwrap()
+    /// assert_eq(d.variant_name().unwrap(), String.from("Line"))
+    /// d.begin_variant_payload(1).unwrap()
+    /// d.variant_payload_field(0).unwrap()
+    /// assert_eq(d.deserialize_i32().unwrap(), 4)
+    /// d.end_variant_payload(1).unwrap()
+    /// ```
     fn end_variant_payload(mut self, arity: usize): Result<(), DeError>
 }
 
@@ -170,8 +637,22 @@ interface Deserializer {
 /// for any type, and `struct T: Serialize` makes the compiler generate one (spec/serialization.md, SER12). The
 /// primitive types, `String`, `List`, `Map<String, V>`, `Option`, `Result`, and tuples of 2 to 4 implement it without
 /// a block, when their parts do (SER3, SER14).
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// let n: i32 = 5
+/// n.serialize(mut s).unwrap()
+/// assert_eq(s.finish(), String.from("5"))
+/// ```
 interface Serialize {
     /// Writes the value with `s`.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// let n: i32 = 5
+    /// n.serialize(mut s).unwrap()
+    /// assert_eq(s.finish(), String.from("5"))
+    /// ```
     fn serialize<S: Serializer>(self, mut s: S): Result<(), DeError>
 }
 
@@ -179,8 +660,18 @@ interface Serialize {
 /// function, so an impl block for `T` returns `Result<T, DeError>` and a call is written `T.deserialize(mut d)`.
 /// A hand-written impl block or `struct T: Deserialize` implements it. The built-in types of the `Serialize` note
 /// implement it too, without a block (spec/serialization.md, SER12, SER14).
+///
+/// ```
+/// let mut d = TextDeserializer.new("9")
+/// assert_eq(i32.deserialize(mut d).unwrap(), 9)
+/// ```
 interface Deserialize {
     /// Reads the value with `d`.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("9")
+    /// assert_eq(i32.deserialize(mut d).unwrap(), 9)
+    /// ```
     fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError>
 }
 
@@ -189,6 +680,11 @@ interface Deserialize {
 /// value being handled (`config.servers[2].port`), empty when the error is at the value itself. The `field`,
 /// `index`, `key`, and `variant` methods prepend a segment to the path, so a reader attaches the path as the error
 /// unwinds.
+///
+/// ```
+/// let e = DeError.new("bad")
+/// assert_eq(format("{}", e), String.from("bad"))
+/// ```
 struct DeError {
     /// The description, including a `line L, column C: ` prefix for a syntax error.
     message: String
@@ -210,23 +706,43 @@ DeError: Error { }
 
 DeError {
     /// An error at the value itself, with no path.
+    ///
+    /// ```
+    /// let e = DeError.new("bad")
+    /// assert_eq(format("{}", e), String.from("bad"))
+    /// ```
     fn new(message: str): DeError {
         DeError { message: message.to_string(), path: String.new() }
     }
 
     /// A syntax error of the input at `line` and `column` (both 1-based; a column counts Unicode scalar values).
     /// The message becomes `line L, column C: <message>`.
+    ///
+    /// ```
+    /// let e = DeError.syntax("unexpected", 2, 3)
+    /// assert_eq(format("{}", e), String.from("line 2, column 3: unexpected"))
+    /// ```
     fn syntax(message: str, line: i32, col: i32): DeError {
         DeError { message: format("line {line}, column {col}: {message}"), path: String.new() }
     }
 
     /// Prepends the field `name` to the path (spec/serialization.md, SER9).
+    ///
+    /// ```
+    /// let e = DeError.new("bad").field("a")
+    /// assert_eq(format("{}", e), String.from("bad at a"))
+    /// ```
     fn field(own self, name: str): DeError {
         let path = __prepend(name, self.path.as_str())
         DeError { message: self.message, path }
     }
 
     /// Prepends the sequence index `index` to the path.
+    ///
+    /// ```
+    /// let e = DeError.new("bad").index(2)
+    /// assert_eq(format("{}", e), String.from("bad at [2]"))
+    /// ```
     fn index(own self, index: usize): DeError {
         let segment = format("[{index}]")
         let path = __prepend(segment.as_str(), self.path.as_str())
@@ -234,6 +750,11 @@ DeError {
     }
 
     /// Prepends the map key `key` to the path.
+    ///
+    /// ```
+    /// let e = DeError.new("bad").key("k")
+    /// assert_eq(format("{}", e), String.from("bad at [\"k\"]"))
+    /// ```
     fn key(own self, key: str): DeError {
         let segment = __key_segment(key)
         let path = __prepend(segment.as_str(), self.path.as_str())
@@ -241,6 +762,11 @@ DeError {
     }
 
     /// Prepends the variant `name` to the path.
+    ///
+    /// ```
+    /// let e = DeError.new("bad").variant("V")
+    /// assert_eq(format("{}", e), String.from("bad at V"))
+    /// ```
     fn variant(own self, name: str): DeError {
         let path = __prepend(name, self.path.as_str())
         DeError { message: self.message, path }
@@ -248,22 +774,38 @@ DeError {
 }
 
 /// A field name the reader did not expect (spec/serialization.md, SER6). The caller extends the path with the name.
+///
+/// ```
+/// assert_eq(format("{}", unknown_field("x")), String.from("unknown field 'x'"))
+/// ```
 fn unknown_field(name: str): DeError {
     DeError.new(format("unknown field '{name}'"))
 }
 
 /// A field name that appeared twice (spec/serialization.md, SER6). The caller extends the path with the name.
+///
+/// ```
+/// assert_eq(format("{}", duplicate_field("z")), String.from("duplicate field 'z'"))
+/// ```
 fn duplicate_field(name: str): DeError {
     DeError.new(format("duplicate field '{name}'"))
 }
 
 /// A field the reader never saw (spec/serialization.md, SER6). The caller extends the path with the struct's
 /// location, not with the field's, because the field is absent from the input.
+///
+/// ```
+/// assert_eq(format("{}", missing_field("y")), String.from("missing field 'y'"))
+/// ```
 fn missing_field(name: str): DeError {
     DeError.new(format("missing field '{name}'"))
 }
 
 /// A variant name the reader did not expect (spec/serialization.md, SER8).
+///
+/// ```
+/// assert_eq(format("{}", unknown_variant("Shape", "Cube")), String.from("unknown variant 'Cube' of Shape"))
+/// ```
 fn unknown_variant(type_name: str, name: str): DeError {
     DeError.new(format("unknown variant '{name}' of {type_name}"))
 }
@@ -292,171 +834,358 @@ priv fn __key_segment(key: str): String {
 // ----- scalar helpers -----------------------------------------------------------------------------------------
 
 /// Writes the unit value with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_unit(mut s).unwrap()
+/// assert_eq(s.finish(), String.from("()"))
+/// ```
 fn serialize_unit<S: Serializer>(mut s: S): Result<(), DeError> {
     s.serialize_unit()
 }
 
 /// Writes a `bool` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_bool(mut s, true).unwrap()
+/// assert_eq(s.finish(), String.from("true"))
+/// ```
 fn serialize_bool<S: Serializer>(mut s: S, value: bool): Result<(), DeError> {
     s.serialize_bool(value)
 }
 
 /// Writes an `i8` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_i8(mut s, -1).unwrap()
+/// assert_eq(s.finish(), String.from("-1"))
+/// ```
 fn serialize_i8<S: Serializer>(mut s: S, value: i8): Result<(), DeError> {
     s.serialize_i8(value)
 }
 
 /// Writes an `i16` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_i16(mut s, -2).unwrap()
+/// assert_eq(s.finish(), String.from("-2"))
+/// ```
 fn serialize_i16<S: Serializer>(mut s: S, value: i16): Result<(), DeError> {
     s.serialize_i16(value)
 }
 
 /// Writes an `i32` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_i32(mut s, -5).unwrap()
+/// assert_eq(s.finish(), String.from("-5"))
+/// ```
 fn serialize_i32<S: Serializer>(mut s: S, value: i32): Result<(), DeError> {
     s.serialize_i32(value)
 }
 
 /// Writes an `i64` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_i64(mut s, -3).unwrap()
+/// assert_eq(s.finish(), String.from("-3"))
+/// ```
 fn serialize_i64<S: Serializer>(mut s: S, value: i64): Result<(), DeError> {
     s.serialize_i64(value)
 }
 
 /// Writes an `isize` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_isize(mut s, -4).unwrap()
+/// assert_eq(s.finish(), String.from("-4"))
+/// ```
 fn serialize_isize<S: Serializer>(mut s: S, value: isize): Result<(), DeError> {
     s.serialize_isize(value)
 }
 
 /// Writes a `u8` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_u8(mut s, 7).unwrap()
+/// assert_eq(s.finish(), String.from("7"))
+/// ```
 fn serialize_u8<S: Serializer>(mut s: S, value: u8): Result<(), DeError> {
     s.serialize_u8(value)
 }
 
 /// Writes a `u16` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_u16(mut s, 8).unwrap()
+/// assert_eq(s.finish(), String.from("8"))
+/// ```
 fn serialize_u16<S: Serializer>(mut s: S, value: u16): Result<(), DeError> {
     s.serialize_u16(value)
 }
 
 /// Writes a `u32` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_u32(mut s, 9).unwrap()
+/// assert_eq(s.finish(), String.from("9"))
+/// ```
 fn serialize_u32<S: Serializer>(mut s: S, value: u32): Result<(), DeError> {
     s.serialize_u32(value)
 }
 
 /// Writes a `u64` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_u64(mut s, 10).unwrap()
+/// assert_eq(s.finish(), String.from("10"))
+/// ```
 fn serialize_u64<S: Serializer>(mut s: S, value: u64): Result<(), DeError> {
     s.serialize_u64(value)
 }
 
 /// Writes a `usize` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_usize(mut s, 11).unwrap()
+/// assert_eq(s.finish(), String.from("11"))
+/// ```
 fn serialize_usize<S: Serializer>(mut s: S, value: usize): Result<(), DeError> {
     s.serialize_usize(value)
 }
 
 /// Writes an `f32` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_f32(mut s, 1.5).unwrap()
+/// assert_eq(s.finish(), String.from("1.5"))
+/// ```
 fn serialize_f32<S: Serializer>(mut s: S, value: f32): Result<(), DeError> {
     s.serialize_f32(value)
 }
 
 /// Writes an `f64` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_f64(mut s, 1.5).unwrap()
+/// assert_eq(s.finish(), String.from("1.5"))
+/// ```
 fn serialize_f64<S: Serializer>(mut s: S, value: f64): Result<(), DeError> {
     s.serialize_f64(value)
 }
 
 /// Writes a `char` with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_char(mut s, 'a').unwrap()
+/// assert_eq(s.finish(), String.from("'a'"))
+/// ```
 fn serialize_char<S: Serializer>(mut s: S, value: char): Result<(), DeError> {
     s.serialize_char(value)
 }
 
 /// Writes a `str` (or a `String`) with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_str(mut s, "hi\n").unwrap()
+/// assert_eq(s.finish(), String.from("\"hi\\n\""))
+/// ```
 fn serialize_str<S: Serializer>(mut s: S, value: str): Result<(), DeError> {
     s.serialize_str(value)
 }
 
 /// Writes a run of bytes with `s`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_bytes(mut s, "ab".as_bytes()).unwrap()
+/// assert_eq(s.finish(), String.from("[97, 98]"))
+/// ```
 fn serialize_bytes<S: Serializer>(mut s: S, value: [u8]): Result<(), DeError> {
     s.serialize_bytes(value)
 }
 
 /// Reads the unit value with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("()")
+/// assert(deserialize_unit(mut d).is_ok())
+/// ```
 fn deserialize_unit<D: Deserializer>(mut d: D): Result<(), DeError> {
     d.deserialize_unit()
 }
 
 /// Reads a `bool` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("true")
+/// assert_eq(deserialize_bool(mut d).unwrap(), true)
+/// ```
 fn deserialize_bool<D: Deserializer>(mut d: D): Result<bool, DeError> {
     d.deserialize_bool()
 }
 
 /// Reads an `i8` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("-1")
+/// assert_eq(deserialize_i8(mut d).unwrap(), -1)
+/// ```
 fn deserialize_i8<D: Deserializer>(mut d: D): Result<i8, DeError> {
     d.deserialize_i8()
 }
 
 /// Reads an `i16` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("-2")
+/// assert_eq(deserialize_i16(mut d).unwrap(), -2)
+/// ```
 fn deserialize_i16<D: Deserializer>(mut d: D): Result<i16, DeError> {
     d.deserialize_i16()
 }
 
 /// Reads an `i32` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("-5")
+/// assert_eq(deserialize_i32(mut d).unwrap(), -5)
+/// ```
 fn deserialize_i32<D: Deserializer>(mut d: D): Result<i32, DeError> {
     d.deserialize_i32()
 }
 
 /// Reads an `i64` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("-3")
+/// assert_eq(deserialize_i64(mut d).unwrap(), -3)
+/// ```
 fn deserialize_i64<D: Deserializer>(mut d: D): Result<i64, DeError> {
     d.deserialize_i64()
 }
 
 /// Reads an `isize` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("-4")
+/// assert_eq(deserialize_isize(mut d).unwrap(), -4)
+/// ```
 fn deserialize_isize<D: Deserializer>(mut d: D): Result<isize, DeError> {
     d.deserialize_isize()
 }
 
 /// Reads a `u8` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("7")
+/// assert_eq(deserialize_u8(mut d).unwrap(), 7)
+/// ```
 fn deserialize_u8<D: Deserializer>(mut d: D): Result<u8, DeError> {
     d.deserialize_u8()
 }
 
 /// Reads a `u16` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("8")
+/// assert_eq(deserialize_u16(mut d).unwrap(), 8)
+/// ```
 fn deserialize_u16<D: Deserializer>(mut d: D): Result<u16, DeError> {
     d.deserialize_u16()
 }
 
 /// Reads a `u32` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("9")
+/// assert_eq(deserialize_u32(mut d).unwrap(), 9)
+/// ```
 fn deserialize_u32<D: Deserializer>(mut d: D): Result<u32, DeError> {
     d.deserialize_u32()
 }
 
 /// Reads a `u64` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("10")
+/// assert_eq(deserialize_u64(mut d).unwrap(), 10)
+/// ```
 fn deserialize_u64<D: Deserializer>(mut d: D): Result<u64, DeError> {
     d.deserialize_u64()
 }
 
 /// Reads a `usize` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("11")
+/// assert_eq(deserialize_usize(mut d).unwrap(), 11)
+/// ```
 fn deserialize_usize<D: Deserializer>(mut d: D): Result<usize, DeError> {
     d.deserialize_usize()
 }
 
 /// Reads an `f32` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("1.5")
+/// assert(deserialize_f32(mut d).unwrap() == 1.5)
+/// ```
 fn deserialize_f32<D: Deserializer>(mut d: D): Result<f32, DeError> {
     d.deserialize_f32()
 }
 
 /// Reads an `f64` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("1.5")
+/// assert(deserialize_f64(mut d).unwrap() == 1.5)
+/// ```
 fn deserialize_f64<D: Deserializer>(mut d: D): Result<f64, DeError> {
     d.deserialize_f64()
 }
 
 /// Reads a `char` with `d`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("'a'")
+/// assert_eq(deserialize_char(mut d).unwrap(), 'a')
+/// ```
 fn deserialize_char<D: Deserializer>(mut d: D): Result<char, DeError> {
     d.deserialize_char()
 }
 
 /// Reads a string with `d`, as a new `String`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("\"hi\"")
+/// assert_eq(deserialize_str(mut d).unwrap(), String.from("hi"))
+/// ```
 fn deserialize_str<D: Deserializer>(mut d: D): Result<String, DeError> {
     d.deserialize_str()
 }
 
 /// Reads a run of bytes with `d`, as a new `List<u8>`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("[97, 98]")
+/// assert_eq(deserialize_bytes(mut d).unwrap().len(), 2)
+/// ```
 fn deserialize_bytes<D: Deserializer>(mut d: D): Result<List<u8>, DeError> {
     d.deserialize_bytes()
 }
@@ -464,6 +1193,15 @@ fn deserialize_bytes<D: Deserializer>(mut d: D): Result<List<u8>, DeError> {
 // ----- container helpers --------------------------------------------------------------------------------------
 
 /// Writes a list as a sequence. The compiler's generated impl and a hand-written impl both call this.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// let mut xs = List<i32>.new()
+/// xs.push(5)
+/// xs.push(6)
+/// serialize_list(mut s, xs).unwrap()
+/// assert_eq(s.finish(), String.from("[5, 6]"))
+/// ```
 fn serialize_list<T: Serialize, S: Serializer>(mut s: S, value: List<T>): Result<(), DeError> {
     s.begin_seq(value.len())?
     for item in value {
@@ -473,6 +1211,12 @@ fn serialize_list<T: Serialize, S: Serializer>(mut s: S, value: List<T>): Result
 }
 
 /// Reads a sequence into a new list.
+///
+/// ```
+/// let mut d = TextDeserializer.new("[5, 6]")
+/// let xs: Result<List<i32>, DeError> = deserialize_list(mut d)
+/// assert_eq(xs.unwrap().len(), 2)
+/// ```
 fn deserialize_list<T: Deserialize, D: Deserializer>(mut d: D): Result<List<T>, DeError> {
     d.begin_seq()?
     let mut out = List<T>.new()
@@ -490,6 +1234,14 @@ fn deserialize_list<T: Deserialize, D: Deserializer>(mut d: D): Result<List<T>, 
 
 /// Writes a map with `String` keys. A key's and a value's error are not extended here; the impl that writes a
 /// struct field or sequence element wraps them.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// let mut m = Map<String, i32>.new()
+/// m.insert(String.from("a"), 1)
+/// serialize_map(mut s, m).unwrap()
+/// assert_eq(s.finish(), String.from("{{ \"a\": 1 }}"))
+/// ```
 fn serialize_map<V: Serialize, A: Allocator, S: Serializer>(mut s: S, value: Map<String, V, A>): Result<(), DeError> {
     s.begin_map(value.len())?
     for (key, item) in value {
@@ -500,6 +1252,12 @@ fn serialize_map<V: Serialize, A: Allocator, S: Serializer>(mut s: S, value: Map
 }
 
 /// Reads a map with `String` keys into a new map.
+///
+/// ```
+/// let mut d = TextDeserializer.new("{{ \"a\": 1 }}")
+/// let m: Result<Map<String, i32>, DeError> = deserialize_map(mut d)
+/// assert_eq(m.unwrap().len(), 1)
+/// ```
 fn deserialize_map<V: Deserialize, D: Deserializer>(mut d: D): Result<Map<String, V>, DeError> {
     d.begin_map()?
     let mut out = Map<String, V>.new()
@@ -517,6 +1275,13 @@ fn deserialize_map<V: Deserialize, D: Deserializer>(mut d: D): Result<Map<String
 }
 
 /// Writes an `Option<T>` as the variant `Option.Some(value)` or `Option.None`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// let v: Option<i32> = Some(3)
+/// serialize_option(mut s, v).unwrap()
+/// assert_eq(s.finish(), String.from("Option.Some(3)"))
+/// ```
 fn serialize_option<T: Serialize, S: Serializer>(mut s: S, value: Option<T>): Result<(), DeError> {
     match value {
         Some(inner) => {
@@ -532,6 +1297,12 @@ fn serialize_option<T: Serialize, S: Serializer>(mut s: S, value: Option<T>): Re
 }
 
 /// Reads `Option.Some(value)` or `Option.None`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("Option.Some(3)")
+/// let o: Result<Option<i32>, DeError> = deserialize_option(mut d)
+/// assert_eq(o.unwrap(), Some(3))
+/// ```
 fn deserialize_option<T: Deserialize, D: Deserializer>(mut d: D): Result<Option<T>, DeError> {
     d.begin_enum("Option")?
     let name = d.variant_name()?
@@ -555,6 +1326,13 @@ fn deserialize_option<T: Deserialize, D: Deserializer>(mut d: D): Result<Option<
 }
 
 /// Writes a `Result<T, E>` as the variant `Result.Ok(value)` or `Result.Err(error)`.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// let r: Result<i32, String> = Ok(4)
+/// serialize_result(mut s, r).unwrap()
+/// assert_eq(s.finish(), String.from("Result.Ok(4)"))
+/// ```
 fn serialize_result<T: Serialize, E: Serialize, S: Serializer>(mut s: S, value: Result<T, E>): Result<(), DeError> {
     match value {
         Ok(inner) => {
@@ -571,6 +1349,12 @@ fn serialize_result<T: Serialize, E: Serialize, S: Serializer>(mut s: S, value: 
 }
 
 /// Reads `Result.Ok(value)` or `Result.Err(error)`.
+///
+/// ```
+/// let mut d = TextDeserializer.new("Result.Ok(4)")
+/// let r: Result<Result<i32, String>, DeError> = deserialize_result(mut d)
+/// assert_eq(r.unwrap().unwrap(), 4)
+/// ```
 fn deserialize_result<T: Deserialize, E: Deserialize, D: Deserializer>(mut d: D): Result<Result<T, E>, DeError> {
     d.begin_enum("Result")?
     let name = d.variant_name()?
@@ -604,6 +1388,12 @@ priv fn __tuple_short(arity: usize): DeError {
 }
 
 /// Writes a two-part tuple as a two-element sequence.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_tuple2(mut s, (1, true)).unwrap()
+/// assert_eq(s.finish(), String.from("[1, true]"))
+/// ```
 fn serialize_tuple2<A: Serialize, B: Serialize, S: Serializer>(mut s: S, value: (A, B)): Result<(), DeError> {
     s.begin_seq(2)?
     value.0.serialize(mut s)?
@@ -613,6 +1403,12 @@ fn serialize_tuple2<A: Serialize, B: Serialize, S: Serializer>(mut s: S, value: 
 
 /// Reads a two-element sequence into a two-part tuple. A sequence with fewer elements is an error, because the
 /// parts are read in order and nothing else says how many there are (spec/serialization.md, SER7).
+///
+/// ```
+/// let mut d = TextDeserializer.new("[1, true]")
+/// let t: Result<(i32, bool), DeError> = deserialize_tuple2(mut d)
+/// assert(t.unwrap().1)
+/// ```
 fn deserialize_tuple2<A: Deserialize, B: Deserialize, D: Deserializer>(mut d: D): Result<(A, B), DeError> {
     d.begin_seq()?
     if !d.has_next_seq_element()? {
@@ -628,6 +1424,12 @@ fn deserialize_tuple2<A: Deserialize, B: Deserialize, D: Deserializer>(mut d: D)
 }
 
 /// Writes a three-part tuple as a three-element sequence.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_tuple3(mut s, (1, 2, 3)).unwrap()
+/// assert_eq(s.finish(), String.from("[1, 2, 3]"))
+/// ```
 fn serialize_tuple3<A: Serialize, B: Serialize, C: Serialize, S: Serializer>(
     mut s: S,
     value: (A, B, C),
@@ -640,6 +1442,12 @@ fn serialize_tuple3<A: Serialize, B: Serialize, C: Serialize, S: Serializer>(
 }
 
 /// Reads a three-element sequence into a three-part tuple.
+///
+/// ```
+/// let mut d = TextDeserializer.new("[1, 2, 3]")
+/// let t: Result<(i32, i32, i32), DeError> = deserialize_tuple3(mut d)
+/// assert_eq(t.unwrap().2, 3)
+/// ```
 fn deserialize_tuple3<A: Deserialize, B: Deserialize, C: Deserialize, D: Deserializer>(
     mut d: D,
 ): Result<(A, B, C), DeError> {
@@ -661,6 +1469,12 @@ fn deserialize_tuple3<A: Deserialize, B: Deserialize, C: Deserialize, D: Deseria
 }
 
 /// Writes a four-part tuple as a four-element sequence.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// serialize_tuple4(mut s, (1, 2, 3, 4)).unwrap()
+/// assert_eq(s.finish(), String.from("[1, 2, 3, 4]"))
+/// ```
 fn serialize_tuple4<A: Serialize, B: Serialize, C: Serialize, D: Serialize, S: Serializer>(
     mut s: S,
     value: (A, B, C, D),
@@ -674,6 +1488,12 @@ fn serialize_tuple4<A: Serialize, B: Serialize, C: Serialize, D: Serialize, S: S
 }
 
 /// Reads a four-element sequence into a four-part tuple.
+///
+/// ```
+/// let mut d = TextDeserializer.new("[1, 2, 3, 4]")
+/// let t: Result<(i32, i32, i32, i32), DeError> = deserialize_tuple4(mut d)
+/// assert_eq(t.unwrap().3, 4)
+/// ```
 fn deserialize_tuple4<A: Deserialize, B: Deserialize, C: Deserialize, E: Deserialize, X: Deserializer>(
     mut d: X,
 ): Result<(A, B, C, E), DeError> {
@@ -829,6 +1649,12 @@ priv struct Frame {
 }
 
 /// The test format's writer. It builds the text in `out` and tracks the open containers so it can place separators.
+///
+/// ```
+/// let mut s = TextSerializer.new()
+/// s.serialize_bool(false).unwrap()
+/// assert_eq(s.finish(), String.from("false"))
+/// ```
 struct TextSerializer {
     priv out: String
     priv frames: List<Frame>
@@ -836,11 +1662,22 @@ struct TextSerializer {
 
 TextSerializer {
     /// An empty writer.
+    ///
+    /// ```
+    /// let s = TextSerializer.new()
+    /// assert_eq(s.finish(), String.from(""))
+    /// ```
     fn new(): TextSerializer {
         TextSerializer { out: String.new(), frames: List<Frame>.new() }
     }
 
     /// The text written so far, ending the writer.
+    ///
+    /// ```
+    /// let mut s = TextSerializer.new()
+    /// s.serialize_i32(7).unwrap()
+    /// assert_eq(s.finish(), String.from("7"))
+    /// ```
     fn finish(own self): String {
         self.out
     }
@@ -1128,6 +1965,11 @@ TextSerializer: Serializer {
 }
 
 /// The test format's reader. It owns a copy of the text because a reader is a value that outlives the call.
+///
+/// ```
+/// let mut d = TextDeserializer.new("7")
+/// assert_eq(d.deserialize_i32().unwrap(), 7)
+/// ```
 struct TextDeserializer {
     priv text: String
     priv pos: usize
@@ -1135,16 +1977,32 @@ struct TextDeserializer {
 
 TextDeserializer {
     /// A reader over `text`. The text is copied once.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("true")
+    /// assert(d.deserialize_bool().unwrap())
+    /// ```
     fn new(text: str): TextDeserializer {
         TextDeserializer { text: text.to_string(), pos: 0 }
     }
 
     /// The unread part of the input, as a `str` view.
+    ///
+    /// ```
+    /// let d = TextDeserializer.new("ab")
+    /// assert_eq(d.remaining(), "ab")
+    /// ```
     fn remaining(self): str {
         self.text[self.pos..self.text.len()]
     }
 
     /// Checks that no non-whitespace text is left.
+    ///
+    /// ```
+    /// let mut d = TextDeserializer.new("7  ")
+    /// assert_eq(d.deserialize_i32().unwrap(), 7)
+    /// assert(d.end().is_ok())
+    /// ```
     fn end(mut self): Result<(), DeError> {
         self.skip_ws()
         if self.pos < self.text.len() {
@@ -1606,6 +2464,10 @@ TextDeserializer: Deserializer {
 }
 
 /// Writes `value` with the test format and returns the text (spec/serialization.md, SER13).
+///
+/// ```
+/// assert_eq(to_text(42).unwrap(), String.from("42"))
+/// ```
 fn to_text<T: Serialize>(value: T): Result<String, DeError> {
     let mut s = TextSerializer.new()
     value.serialize(mut s)?
@@ -1613,6 +2475,11 @@ fn to_text<T: Serialize>(value: T): Result<String, DeError> {
 }
 
 /// Reads a value of type `T` from the test format's text. The whole input must be consumed.
+///
+/// ```
+/// let n: Result<i32, DeError> = from_text("42")
+/// assert_eq(n.unwrap(), 42)
+/// ```
 fn from_text<T: Deserialize>(text: str): Result<T, DeError> {
     let mut d = TextDeserializer.new(text)
     let value = T.deserialize(mut d)?

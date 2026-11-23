@@ -10,6 +10,7 @@ template and run
 (`tests/check_tests.py` runs it in CI).
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -256,13 +257,80 @@ unsafe {name}: Sync { }
 """
 
 
+# The doc example of each atomic type and method (issue #938). `{name}` is the type's name and `{ty}` its value type.
+# Keys are a method name, or `struct` for the type itself. Every example is a doc test (`burdin test --doc` runs it).
+INT_EXAMPLES = {
+    "struct": ["let counter = {name}.new(0)", "counter.fetch_add(2)", "assert_eq(counter.load(), 2)"],
+    "new": ["let x = {name}.new(3)", "assert_eq(x.load(), 3)"],
+    "load": ["let x = {name}.new(3)", "assert_eq(x.load(), 3)"],
+    "store": ["let x = {name}.new(0)", "x.store(9)", "assert_eq(x.load(), 9)"],
+    "swap": ["let x = {name}.new(1)", "assert_eq(x.swap(4), 1)", "assert_eq(x.load(), 4)"],
+    "compare_exchange": [
+        "let x = {name}.new(1)",
+        "assert_eq(x.compare_exchange(1, 2), Ok(1))",
+        "assert_eq(x.compare_exchange(1, 3), Err(2))",
+    ],
+    "fetch_add": ["let x = {name}.new(5)", "assert_eq(x.fetch_add(2), 5)", "assert_eq(x.load(), 7)"],
+    "fetch_sub": ["let x = {name}.new(5)", "assert_eq(x.fetch_sub(2), 5)", "assert_eq(x.load(), 3)"],
+    "fetch_and": ["let x = {name}.new(6)", "assert_eq(x.fetch_and(3), 6)", "assert_eq(x.load(), 2)"],
+    "fetch_or": ["let x = {name}.new(4)", "assert_eq(x.fetch_or(1), 4)", "assert_eq(x.load(), 5)"],
+    "fetch_xor": ["let x = {name}.new(6)", "assert_eq(x.fetch_xor(3), 6)", "assert_eq(x.load(), 5)"],
+    "fetch_max": [
+        "let x = {name}.new(3)",
+        "assert_eq(x.fetch_max(7), 3)",
+        "assert_eq(x.fetch_max(1), 7)",
+        "assert_eq(x.load(), 7)",
+    ],
+    "fetch_min": ["let x = {name}.new(3)", "assert_eq(x.fetch_min(1), 3)", "assert_eq(x.load(), 1)"],
+}
+
+BOOL_EXAMPLES = {
+    "struct": ["let flag = AtomicBool.new(false)", "flag.store(true)", "assert(flag.load())"],
+    "new": ["let flag = AtomicBool.new(true)", "assert(flag.load())"],
+    "load": ["let flag = AtomicBool.new(true)", "assert(flag.load())"],
+    "store": ["let flag = AtomicBool.new(false)", "flag.store(true)", "assert(flag.load())"],
+    "swap": ["let flag = AtomicBool.new(false)", "assert_eq(flag.swap(true), false)", "assert(flag.load())"],
+    "compare_exchange": [
+        "let flag = AtomicBool.new(false)",
+        "assert_eq(flag.compare_exchange(false, true), Ok(false))",
+        "assert_eq(flag.compare_exchange(false, true), Err(true))",
+    ],
+    "fetch_and": ["let flag = AtomicBool.new(true)", "assert_eq(flag.fetch_and(false), true)", "assert(!flag.load())"],
+    "fetch_or": ["let flag = AtomicBool.new(false)", "assert_eq(flag.fetch_or(true), false)", "assert(flag.load())"],
+    "fetch_xor": ["let flag = AtomicBool.new(true)", "assert_eq(flag.fetch_xor(true), true)", "assert(!flag.load())"],
+}
+
+
+def with_examples(text: str, examples: dict, subs: dict) -> str:
+    """Puts an example block at the end of the doc comment of each `struct` and `fn` that has one in `examples`."""
+    out = []
+    for line in text.split("\n"):
+        indent = line[: len(line) - len(line.lstrip())]
+        key = None
+        method = re.match(r"\s*fn (\w+)\(", line)
+        if method is not None:
+            key = method.group(1)
+        elif line.startswith("struct "):
+            key = "struct"
+        if key is not None and key in examples:
+            out.append(f"{indent}///")
+            out.append(f"{indent}/// ```")
+            for example in examples[key]:
+                for old, new in subs.items():
+                    example = example.replace(old, new)
+                out.append(f"{indent}/// {example}")
+            out.append(f"{indent}/// ```")
+        out.append(line)
+    return "\n".join(out)
+
+
 def render() -> str:
-    out = HEADER + BOOL
+    out = HEADER + with_examples(BOOL, BOOL_EXAMPLES, {})
     for name, ty, word, bits in INTS:
         text = INT
         for key, value in (("{name}", name), ("{ty}", ty), ("{word}", word), ("{bytes}", str(bits // 8))):
             text = text.replace(key, value)
-        out += text
+        out += with_examples(text, INT_EXAMPLES, {"{name}": name})
     return out
 
 

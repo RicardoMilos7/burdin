@@ -2059,6 +2059,30 @@ the `Option<String>` defect.
 Commands (run from WSL, where the driver is built): `python3 tests/check_regex.py` and `python3 tests/run_tests.py
 s3_regex`, with `BURDIN` pointing at the driver.
 
+## Session: the standard library documentation (issue #938)
+
+Every public item of `std/src/` has a doc comment and at least one example, and every example is built and run.
+`tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25). `tests/std_docs/no_example.txt` is empty, so a new item
+without an example fails the gate. The site is not committed (the website's build generates it), and
+`docs/standard-library.md` maps each module to its spec section and test folder. The atomic and int examples are
+written in their generators (`tests/gen_atomic_std.py`, `tests/gen_int_std.py`), not in the generated files.
+
+Fixed on the way: `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`); `swap_bytes` on 8-bit
+integers panicked (the int generator); `burdin doc --std` listed compiler-internal `__` methods, against DC7
+(`crates/burdin_doc/src/extract.rs`); and several compiler-only items are now `priv` (`task.bd`, `channel.bd`,
+`float.bd`'s `strtod`/`strtof`).
+
+Open:
+
+- **Compiler bug, not fixed:** a field read on a temporary struct with owned fields frees it twice. Repro:
+  `struct Pair { a: String, b: String }`, `fn make(): Pair`, and `let n = make().a.len()` aborts with
+  `free(): double free detected in tcache 2` (exit 134). Binding the temporary first works. The process examples
+  bind their results for this reason.
+- The process examples (`std/src/process.bd`) ran on Linux only. Their Windows behavior (`cmd /c`, `more`,
+  `env_clear`) is unverified.
+
+Commands: `python3 tests/check_std_docs.py` (needs a built driver; `--no-run` skips the examples), then the website build.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

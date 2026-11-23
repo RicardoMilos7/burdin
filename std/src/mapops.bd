@@ -15,21 +15,61 @@ use mem
 
 /// The iterator `map.keys()` returns: a view of each key, in the map's iteration order. It borrows the map, so it
 /// is second-class like every iterator over borrowed storage.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(7, 0)
+/// let mut total = 0
+/// for k in m.keys() {
+///     total = total + *k
+/// }
+/// assert_eq(total, 7)
+/// ```
 struct MapKeys<I, K, V> {
     priv inner: I
 }
 
 /// The iterator `map.values()` returns: a view of each value, in the map's iteration order.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 20)
+/// let mut total = 0
+/// for v in m.values() {
+///     total = total + *v
+/// }
+/// assert_eq(total, 20)
+/// ```
 struct MapValues<I, K, V> {
     priv inner: I
 }
 
 /// The iterator `map.into_keys()` returns: the map's keys, moved out of the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(7, 0)
+/// let mut total = 0
+/// for k in m.into_keys() {
+///     total = total + k
+/// }
+/// assert_eq(total, 7)
+/// ```
 struct MapIntoKeys<I, K, V> {
     priv inner: I
 }
 
 /// The iterator `map.into_values()` returns: the map's values, moved out of the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 20)
+/// let mut total = 0
+/// for v in m.into_values() {
+///     total = total + v
+/// }
+/// assert_eq(total, 20)
+/// ```
 struct MapIntoValues<I, K, V> {
     priv inner: I
 }
@@ -74,35 +114,101 @@ MapIntoValues<I, K, V>: Iterator<V> where I: Iterator<(K, V)> {
     }
 }
 
+/// An iterator over the keys of the map, in no particular order. It borrows the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(7, 0)
+/// let mut total = 0
+/// for k in m.keys() {
+///     total = total + *k
+/// }
+/// assert_eq(total, 7)
+/// ```
 fn Map<K, V, A>.keys(self): MapKeys<MapEntries<K, V>, K, V> {
     MapKeys { inner: self.iter() }
 }
 
+/// An iterator over the values of the map, in no particular order. It borrows the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 20)
+/// let mut total = 0
+/// for v in m.values() {
+///     total = total + *v
+/// }
+/// assert_eq(total, 20)
+/// ```
 fn Map<K, V, A>.values(self): MapValues<MapEntries<K, V>, K, V> {
     MapValues { inner: self.iter() }
 }
 
+/// An iterator that takes the keys of the map, in no particular order. It consumes the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(7, 0)
+/// let mut total = 0
+/// for k in m.into_keys() {
+///     total = total + k
+/// }
+/// assert_eq(total, 7)
+/// ```
 fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> {
     MapIntoKeys { inner: self.into_iter() }
 }
 
+/// An iterator that takes the values of the map, in no particular order. It consumes the map.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 20)
+/// let mut total = 0
+/// for v in m.into_values() {
+///     total = total + v
+/// }
+/// assert_eq(total, 20)
+/// ```
 fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoEntries<K, V, A>, K, V> {
     MapIntoValues { inner: self.into_iter() }
 }
 
 /// Whether the map has no entries.
+///
+/// ```
+/// let m = Map<i32, i32>.new()
+/// assert(m.is_empty())
+/// ```
 fn Map<K, V, A>.is_empty(self): bool {
     self.len() == 0
 }
 
 /// The map's entries, key and value, moved out of the map, which is left empty and usable. A map with a stored
 /// allocator keeps its allocator; only the default-allocator map has this method.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 2)
+/// let mut total = 0
+/// for (k, v) in m.drain() {
+///     total = total + k + v
+/// }
+/// assert_eq(total, 3)
+/// assert(m.is_empty())
+/// ```
 fn Map<K, V>.drain(mut self): MapIntoEntries<K, V> {
     mem.replace(mut self, Map<K, V>.new()).into_iter()
 }
 
 /// Inserts every `(key, value)` item, replacing the value of a key that is already there (as `insert` does).
 /// The default-allocator spelling of `extend_iter`.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.extend([(1, 2), (1, 3)].into_iter())
+/// assert_eq(m.len(), 1)
+/// ```
 fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
     self.extend_iter(items)
 }
@@ -110,12 +216,29 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
 /// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
 /// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
 /// exclusively borrowed until its last use.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// let v = m.get_or_insert_with(1, || 7)
+/// *v = *v + 1
+/// match m.get(1) {
+///     Some(x) => assert_eq(*x, 8),
+///     None => panic("missing"),
+/// }
+/// ```
 fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: F): &mut V where K: Eq {
     self.entry(key).or_insert_with(make)
 }
 
 /// Runs `change` on the value for `key` and returns `true`, or returns `false` without calling it when the key is
 /// absent.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.insert(1, 5)
+/// assert(m.update(1, |v| *v = 9))
+/// assert(!m.update(2, |v| *v = 9))
+/// ```
 fn Map<K, V>.update<F: FnOnce(&mut V)>(mut self, key: K, own change: F): bool where K: Eq {
     match self.get_mut(key) {
         Some(value) => {
@@ -128,6 +251,12 @@ fn Map<K, V>.update<F: FnOnce(&mut V)>(mut self, key: K, own change: F): bool wh
 
 /// Stores every `(key, value)` pair `iter` yields, in order; a key that is already there gets the new value, like
 /// `insert`: `map.extend_iter(other.into_iter())`.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.extend_iter([(1, 2), (3, 4)].into_iter())
+/// assert_eq(m.len(), 2)
+/// ```
 fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K: Eq, A: Allocator {
     let mut iter = iter
     loop {
@@ -142,6 +271,16 @@ fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K:
 
 /// Stores `value` for `key` when the key is absent, and otherwise runs `change` on the value already there (and
 /// drops `value`): `counts.upsert(word, 1, |n| *n = *n + 1)`.
+///
+/// ```
+/// let mut m = Map<i32, i32>.new()
+/// m.upsert(1, 10, |v| *v = *v + 1)
+/// m.upsert(1, 10, |v| *v = *v + 1)
+/// match m.get(1) {
+///     Some(v) => assert_eq(*v, 11),
+///     None => panic("missing"),
+/// }
+/// ```
 fn Map<K, V>.upsert<F: FnOnce(&mut V)>(mut self, own key: K, own value: V, own change: F) where K: Eq {
     if self.contains_key(key) {
         match self.get_mut(key) {

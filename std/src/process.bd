@@ -14,11 +14,24 @@ use target.{Os, os}
 use unicode.to_lowercase
 
 /// Ends the process with `code`.
+///
+/// ```
+/// fn finish(ok: bool) {
+///     if !ok {
+///         exit(2)
+///     }
+/// }
+/// finish(true)
+/// ```
 fn exit(code: i32): ! {
     __exit(code)
 }
 
 /// Runs `command` through the system shell and waits for it. The result is the shell's status.
+///
+/// ```
+/// assert_eq(run("exit 3").unwrap(), 3)
+/// ```
 fn run(command: str): Result<i32, IoError> {
     match __run(command) {
         Ok(status) => Ok(status),
@@ -31,6 +44,12 @@ fn run(command: str): Result<i32, IoError> {
 }
 
 /// How a child's standard stream is connected.
+///
+/// ```
+/// let mode = Stdio.Inherit
+/// assert(mode == Stdio.Inherit)
+/// assert(mode != Stdio.Piped)
+/// ```
 enum Stdio: Copy, Clone, Eq {
     /// The child uses the parent's stream.
     Inherit
@@ -42,6 +61,23 @@ enum Stdio: Copy, Clone, Eq {
 
 /// A program to start, with its arguments, environment, working directory, and standard streams. Build one with
 /// `Command.new`, change it, and start it with `spawn`, `status`, or `output`; nothing runs until then.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Some(5))
+/// ```
 struct Command {
     priv program: String
     priv arguments: List<String>
@@ -57,6 +93,23 @@ struct Command {
 Command {
     /// A command for `program`, with no arguments, the parent's environment and working directory, and inherited
     /// standard streams.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Some(5))
+    /// ```
     fn new(program: str): Command {
         Command {
             program: program.to_string(),
@@ -73,11 +126,51 @@ Command {
 
     /// Adds one argument. It is passed exactly as it is: spaces, quotes, and shell metacharacters have no special
     /// meaning.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("exit 0", "exit 0")
+    /// c.arg("extra")
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn arg(mut self, value: str) {
         self.arguments.push(value.to_string())
     }
 
     /// Adds each element of `values` as an argument, in order.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("exit 0", "exit 0")
+    /// let mut extra = List<String>.new()
+    /// extra.push(String.from("extra"))
+    /// c.args(extra)
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn args(mut self, own values: List<String>) {
         for value in values.into_iter() {
             self.arguments.push(value)
@@ -86,6 +179,25 @@ Command {
 
     /// Sets the environment variable `key` to `value` in the child. An earlier value for the same key is
     /// replaced. The key is written as `key=value`; it should not contain `=` or a NUL byte.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("test \"$BURDIN_DOC\" = yes", "if \"%BURDIN_DOC%\"==\"yes\" (exit 0) else (exit 1)")
+    /// c.env("BURDIN_DOC", "yes")
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn env(mut self, key: str, value: str) {
         let mut entry = key.to_string()
         entry.push('=')
@@ -104,6 +216,25 @@ Command {
     }
 
     /// Removes `key` from the child's environment, whether it came from the parent or from `env`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("exit 0", "exit 0")
+    /// c.env_remove("BURDIN_DOC_NOT_SET")
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn env_remove(mut self, key: str) {
         let mut i: usize = 0
         while i < self.environment.len()
@@ -118,32 +249,146 @@ Command {
     }
 
     /// Starts the child with an empty environment. The variables `env` adds are still set.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("exit 0", "exit 0")
+    /// c.env_clear()
+    /// c.env("BURDIN_DOC", "1")
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn env_clear(mut self) {
         self.clear_environment = true
     }
 
     /// Runs the child in `directory` instead of the parent's working directory.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("exit 0", "exit 0")
+    /// c.cwd(".")
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn cwd(mut self, directory: str) {
         self.directory = Some(directory.to_string())
     }
 
     /// Sets how the child's standard input is connected. The default is `Stdio.Inherit`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("cat", "more")
+    /// c.stdin(Stdio.Null)
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn stdin(mut self, mode: Stdio) {
         self.stdin_mode = mode
     }
 
     /// Sets how the child's standard output is connected. The default is `Stdio.Inherit`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo o", "echo o")
+    /// c.stdout(Stdio.Null)
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn stdout(mut self, mode: Stdio) {
         self.stdout_mode = mode
     }
 
     /// Sets how the child's standard error is connected. The default is `Stdio.Inherit`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo e 1>&2", "echo e 1>&2")
+    /// c.stderr(Stdio.Null)
+    /// assert(c.status().unwrap().success())
+    /// ```
     fn stderr(mut self, mode: Stdio) {
         self.stderr_mode = mode
     }
 
     /// Starts the child and returns the handle that waits for it. The command's stream modes decide which handles
     /// are present on the `Child`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut child = shell("exit 0", "exit 0").spawn().unwrap()
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn spawn(own self): Result<Child, IoError> {
         let stdin_mode = self.stdin_mode
         let stdout_mode = self.stdout_mode
@@ -152,6 +397,23 @@ Command {
     }
 
     /// Starts the child with the command's streams, waits for it, and returns its exit status.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// assert(shell("exit 0", "exit 0").status().unwrap().success())
+    /// ```
     fn status(own self): Result<ExitStatus, IoError> {
         let stdin_mode = self.stdin_mode
         let stdout_mode = self.stdout_mode
@@ -165,6 +427,24 @@ Command {
 
     /// Starts the child with standard output and standard error piped and a null standard input, reads both output
     /// streams to the end, and waits. The result holds everything the child wrote there.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let out = shell("echo hi", "echo hi").output().unwrap()
+    /// assert(out.stdout.len() > 0)
+    /// ```
     fn output(own self): Result<Output, IoError> {
         let mut child: Child = match __spawn(self, Stdio.Null, Stdio.Piped, Stdio.Piped) {
             Ok(child) => child,
@@ -175,6 +455,25 @@ Command {
 }
 
 /// A started child process.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let mut child = shell("exit 0", "exit 0").spawn().unwrap()
+/// assert(child.id() > 0)
+/// assert(child.wait().unwrap().success())
+/// ```
 struct Child {
     priv command: String
     priv pid: i32
@@ -187,27 +486,132 @@ struct Child {
 
 Child {
     /// The process id the operating system gave the child.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut child = shell("exit 0", "exit 0").spawn().unwrap()
+    /// assert(child.id() > 0)
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn id(self): i32 {
         self.pid
     }
 
     /// The child's standard input, when it was piped. The handle is handed out once; a second call is `None`.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("cat", "more")
+    /// c.stdin(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// assert(child.stdin().is_some())
+    /// assert(child.stdin().is_none())
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn stdin(mut self): Option<ChildStdin> {
         self.input.take()
     }
 
     /// The child's standard output, when it was piped. The handle is handed out once.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo o", "echo o")
+    /// c.stdout(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let handle = child.stdout()
+    /// assert(handle.is_some())
+    /// assert(child.stdout().is_none())
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn stdout(mut self): Option<ChildStdout> {
         self.output.take()
     }
 
     /// The child's standard error, when it was piped. The handle is handed out once.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo e 1>&2", "echo e 1>&2")
+    /// c.stderr(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let handle = child.stderr()
+    /// assert(handle.is_some())
+    /// assert(child.stderr().is_none())
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn stderr(mut self): Option<ChildStderr> {
         self.errors.take()
     }
 
     /// Waits for the child and returns its exit status. The child's standard input is closed first, so a program
     /// that reads it sees the end of the input instead of waiting. Waiting twice is an error.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut child = shell("exit 3", "exit 3").spawn().unwrap()
+    /// assert_eq(child.wait().unwrap().code(), Some(3))
+    /// ```
     fn wait(mut self): Result<ExitStatus, IoError> {
         if self.waited {
             return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
@@ -228,6 +632,27 @@ Child {
     /// Closes the child's standard input, reads the piped standard output and standard error to the end, and waits,
     /// so a child that writes a lot to one of them cannot block on the other. A stream that was not piped is empty
     /// in the result.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo hi", "echo hi")
+    /// c.stdout(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let out = child.wait_with_output().unwrap()
+    /// assert(out.stdout.len() > 0)
+    /// ```
     fn wait_with_output(mut self): Result<Output, IoError> {
         // Close the child's input before reading, so a program that reads it first sees the end of the input.
         match self.input.take() {
@@ -313,6 +738,32 @@ Child: Drop {
 }
 
 /// The write end of a child's standard input, piped with `Stdio.Piped`. It closes when it is dropped.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let mut c = shell("cat", "more")
+/// c.stdin(Stdio.Piped)
+/// c.stdout(Stdio.Piped)
+/// let mut child = c.spawn().unwrap()
+/// {
+///     let input = child.stdin().unwrap()
+///     input.write("hi\n").unwrap()
+/// }
+/// let out = child.wait_with_output().unwrap()
+/// assert(out.stdout.len() > 0)
+/// ```
 struct ChildStdin {
     priv handle: usize
 }
@@ -320,6 +771,32 @@ struct ChildStdin {
 ChildStdin {
     /// Writes every byte of `text`. The child's standard input is unbuffered, so the bytes reach it during the
     /// call.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("cat", "more")
+    /// c.stdin(Stdio.Piped)
+    /// c.stdout(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// {
+    ///     let input = child.stdin().unwrap()
+    ///     input.write("hi\n").unwrap()
+    /// }
+    /// let out = child.wait_with_output().unwrap()
+    /// assert(out.stdout.len() > 0)
+    /// ```
     fn write(self, text: str): Result<(), IoError> {
         if __pipe_write(self.handle, text) == 0 {
             Ok(())
@@ -343,12 +820,56 @@ ChildStdin: Drop {
 }
 
 /// The read end of a child's standard output, piped with `Stdio.Piped`. It closes when it is dropped.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let mut c = shell("echo hi", "echo hi")
+/// c.stdout(Stdio.Piped)
+/// let mut child = c.spawn().unwrap()
+/// let out = child.stdout().unwrap()
+/// assert(out.read_to_string().unwrap().len() > 0)
+/// assert(child.wait().unwrap().success())
+/// ```
 struct ChildStdout {
     priv handle: usize
 }
 
 ChildStdout {
     /// Reads everything left, up to the end of the child's output.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo hi", "echo hi")
+    /// c.stdout(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let out = child.stdout().unwrap()
+    /// assert(out.read_to_string().unwrap().len() > 0)
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
             Ok(text) => Ok(text),
@@ -362,6 +883,28 @@ ChildStdout {
 
     /// Reads one line without its terminator (`\n`, or the `\r\n` pair). `Ok(None)` is the end of the output; the
     /// last line may have no terminator.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo hi", "echo hi")
+    /// c.stdout(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let out = child.stdout().unwrap()
+    /// assert(out.read_line().unwrap().is_some())
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
             Ok(line) => Ok(line),
@@ -388,12 +931,56 @@ ChildStdout: Drop {
 }
 
 /// The read end of a child's standard error, piped with `Stdio.Piped`. It closes when it is dropped.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let mut c = shell("echo oops 1>&2", "echo oops 1>&2")
+/// c.stderr(Stdio.Piped)
+/// let mut child = c.spawn().unwrap()
+/// let err = child.stderr().unwrap()
+/// assert(err.read_to_string().unwrap().len() > 0)
+/// assert(child.wait().unwrap().success())
+/// ```
 struct ChildStderr {
     priv handle: usize
 }
 
 ChildStderr {
     /// Reads everything left, up to the end of the child's error output.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo oops 1>&2", "echo oops 1>&2")
+    /// c.stderr(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let err = child.stderr().unwrap()
+    /// assert(err.read_to_string().unwrap().len() > 0)
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
             Ok(text) => Ok(text),
@@ -406,6 +993,28 @@ ChildStderr {
     }
 
     /// Reads one line without its terminator. `Ok(None)` is the end of the output.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let mut c = shell("echo oops 1>&2", "echo oops 1>&2")
+    /// c.stderr(Stdio.Piped)
+    /// let mut child = c.spawn().unwrap()
+    /// let err = child.stderr().unwrap()
+    /// assert(err.read_line().unwrap().is_some())
+    /// assert(child.wait().unwrap().success())
+    /// ```
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
             Ok(line) => Ok(line),
@@ -432,6 +1041,24 @@ ChildStderr: Drop {
 }
 
 /// How a child ended.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let st = shell("exit 0", "exit 0").status().unwrap()
+/// assert(st.success())
+/// ```
 struct ExitStatus: Copy, Clone, Eq {
     priv exit_code: Option<i32>
     priv term_signal: Option<i32>
@@ -439,16 +1066,69 @@ struct ExitStatus: Copy, Clone, Eq {
 
 ExitStatus {
     /// The exit code, or `None` when a signal ended the child. Windows always reports a code.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let st = shell("exit 3", "exit 3").status().unwrap()
+    /// assert_eq(st.code(), Some(3))
+    /// ```
     fn code(self): Option<i32> {
         self.exit_code
     }
 
     /// The signal that ended the child, or `None` when it exited normally. Unix only.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// let st = shell("exit 0", "exit 0").status().unwrap()
+    /// assert_eq(st.signal(), None)
+    /// ```
     fn signal(self): Option<i32> {
         self.term_signal
     }
 
     /// Whether the child exited with code 0.
+    ///
+    /// ```
+    /// fn shell(unix: str, windows: str): Command {
+    ///     comptime if os() == Os.Windows {
+    ///         let mut c = Command.new("cmd")
+    ///         c.arg("/c")
+    ///         c.arg(windows)
+    ///         c
+    ///     } else {
+    ///         let mut c = Command.new("sh")
+    ///         c.arg("-c")
+    ///         c.arg(unix)
+    ///         c
+    ///     }
+    /// }
+    /// assert(shell("exit 0", "exit 0").status().unwrap().success())
+    /// ```
     fn success(self): bool {
         match self.exit_code {
             Some(code) => code == 0,
@@ -458,6 +1138,25 @@ ExitStatus {
 }
 
 /// Everything the child wrote to the streams `Command.output` (or `Child.wait_with_output`) captured.
+///
+/// ```
+/// fn shell(unix: str, windows: str): Command {
+///     comptime if os() == Os.Windows {
+///         let mut c = Command.new("cmd")
+///         c.arg("/c")
+///         c.arg(windows)
+///         c
+///     } else {
+///         let mut c = Command.new("sh")
+///         c.arg("-c")
+///         c.arg(unix)
+///         c
+///     }
+/// }
+/// let out = shell("printf hi", "echo hi").output().unwrap()
+/// assert(out.stdout.len() > 0)
+/// assert(out.status.success())
+/// ```
 struct Output {
     status: ExitStatus
     stdout: String

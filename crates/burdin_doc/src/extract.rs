@@ -288,7 +288,8 @@ fn attach(cx: &Ctx, modules: &mut [Module], mi: usize, m: &ModuleInput) {
                 let Some((tm, tname)) = receiver(cx, mi, &b.ty) else { continue };
                 let inst = instance(cx, mi, text, &b.ty);
                 let where_clause = where_text(text, &b.where_clause);
-                let methods: Vec<&FnDecl> = b.methods.iter().filter(|f| cx.keep(f.is_priv)).collect();
+                let methods: Vec<&FnDecl> =
+                    b.methods.iter().filter(|f| cx.keep(f.is_priv) && !docs::is_internal_name(&f.name.name)).collect();
                 let make = |f: &FnDecl, kind: MemberKind| {
                     let mut mem = member(cx, text, kind, &f.name, f.span.lo, signature::fn_head(text, f), f.is_priv);
                     mem.instance = inst.clone();
@@ -322,7 +323,7 @@ fn attach(cx: &Ctx, modules: &mut [Module], mi: usize, m: &ModuleInput) {
                     }
                 }
             }
-            ast::Item::Extension(x) if cx.keep(x.func.is_priv) => {
+            ast::Item::Extension(x) if cx.keep(x.func.is_priv) && !docs::is_internal_name(&x.func.name.name) => {
                 let Some((tm, tname)) = receiver(cx, mi, &x.recv) else { continue };
                 let mem = extension_member(cx, text, m, x);
                 if let Some(target) = find_item(modules, cx.index, tm, &tname) {

@@ -245,3 +245,12 @@ have no broken links, so `--deny-warnings` passes.
 Tests: `check_doc.py` (the standard library section: the overview and its modules, the `Deque` and `Iterator` pages,
 `peekable`, the search index, site integrity, `--deny-warnings`, the JSON, `--coverage`, the default location; the
 command line section: `--std` with a target, with `-p`, with `--workspace`, and with `-o` and `--coverage`).
+
+**DC25. The standard library's documentation.** Every public item of the standard library has a doc comment and at
+least one example, and every example runs. `tests/check_std_docs.py` reads `burdin doc --std --output-format json` and
+checks three things: each entry has a doc comment (always required); each entry has a Burdin example, and an entry that
+lacks one is listed in `tests/std_docs/no_example.txt`, a list that may only shrink and is written with
+`--write-baseline`; and each example is built and run with the doc-test attributes (spec/test-runner.md, DC6). The
+site is not committed: the website builds it from `burdin doc --std`. Compiler-internal names are never documented
+(DC7): the `__` helpers that the `select` desugaring calls stay public but are left out of the site (spec/channels.md).
+Tests: `check_std_docs.py` (run by `check_ci.py`; `--no-run` skips the examples).

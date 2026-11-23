@@ -7,18 +7,35 @@
 use fmt.{Debug, Formatter}
 
 /// A running hash: the FNV-1a state of the parts written so far. A hasher is a plain value; copy it to branch.
+///
+/// ```
+/// let mut h = Hasher.new()
+/// h.write_u8(9)
+/// assert_eq(h.clone().finish(), h.finish())
+/// ```
 struct Hasher: Copy, Clone, Eq, Debug {
     state: u64
 }
 
 Hasher {
     /// A hasher that has written nothing: the FNV-1a offset basis.
+    ///
+    /// ```
+    /// let h = Hasher.new()
+    /// assert_eq(h.finish(), Hasher.new().finish())
+    /// ```
     fn new(): Hasher {
         Hasher { state: 0xcbf29ce484222325 }
     }
 
     /// A hasher that starts from `seed`: `Hasher.new()` followed by `write_u64(seed)`. Two seeds give unrelated hash
     /// sequences for the same data; the seed is not a secret key, so this resists no attacker.
+    ///
+    /// ```
+    /// let a = Hasher.with_seed(1)
+    /// let b = Hasher.with_seed(2)
+    /// assert(a.finish() != b.finish())
+    /// ```
     fn with_seed(seed: u64): Hasher {
         let mut h = Hasher.new()
         h.write_u64(seed)
@@ -26,21 +43,45 @@ Hasher {
     }
 
     /// Folds one 64-bit word into the state.
+    ///
+    /// ```
+    /// let mut h = Hasher.new()
+    /// h.write_u64(1)
+    /// assert(h.finish() != 0)
+    /// ```
     fn write_u64(mut self, x: u64) {
         self.state = (self.state ^ x).wrapping_mul(0x100000001b3)
     }
 
     /// Folds one byte, as a word.
+    ///
+    /// ```
+    /// let mut h = Hasher.new()
+    /// h.write_u8(1)
+    /// assert(h.finish() != 0)
+    /// ```
     fn write_u8(mut self, x: u8) {
         self.write_u64(x as u64)
     }
 
     /// Folds a `u32`, as a word.
+    ///
+    /// ```
+    /// let mut h = Hasher.new()
+    /// h.write_u32(1)
+    /// assert(h.finish() != 0)
+    /// ```
     fn write_u32(mut self, x: u32) {
         self.write_u64(x as u64)
     }
 
     /// Folds every byte, in order, one word per byte. No length is written.
+    ///
+    /// ```
+    /// let mut h = Hasher.new()
+    /// h.write_bytes("ab".as_bytes())
+    /// assert(h.finish() != 0)
+    /// ```
     fn write_bytes(mut self, bytes: [u8]) {
         let mut i: usize = 0
         while i < bytes.len() {
@@ -50,27 +91,60 @@ Hasher {
     }
 
     /// Folds the UTF-8 bytes of `text`, like `write_bytes`. No length is written.
+    ///
+    /// ```
+    /// let mut a = Hasher.new()
+    /// a.write_str("ab")
+    /// let mut b = Hasher.new()
+    /// b.write_str("ab")
+    /// assert_eq(a.finish(), b.finish())
+    /// ```
     fn write_str(mut self, text: str) {
         self.state = text.hash_from(self.state)
     }
 
     /// Folds a whole value exactly as `value.hash()` would, starting from the current state.
+    ///
+    /// ```
+    /// let mut h = Hasher.new()
+    /// h.write(7)
+    /// let mut other = Hasher.new()
+    /// other.write(8)
+    /// assert(h.finish() != other.finish())
+    /// ```
     fn write<T: Hash>(mut self, value: T) {
         self.state = value.hash_from(self.state)
     }
 
     /// The hash of everything written so far. The hasher is unchanged, so more can be written after it.
+    ///
+    /// ```
+    /// let mut a = Hasher.new()
+    /// a.write_u8(1)
+    /// let mut b = Hasher.new()
+    /// b.write_u8(1)
+    /// assert_eq(a.finish(), b.finish())
+    /// ```
     fn finish(self): u64 {
         self.state
     }
 }
 
 /// The hash of `value`: the same `u64` as `value.hash()`.
+///
+/// ```
+/// assert_eq(hash_of(7), hash_of(7))
+/// ```
 fn hash_of<T: Hash>(value: T): u64 {
     value.hash()
 }
 
 /// The hash of `value` under `seed`: `Hasher.with_seed(seed)`, then `write(value)`, then `finish()`.
+///
+/// ```
+/// assert(hash_seeded(1, 7) != hash_seeded(2, 7))
+/// assert_eq(hash_seeded(1, 7), hash_seeded(1, 7))
+/// ```
 fn hash_seeded<T: Hash>(seed: u64, value: T): u64 {
     let mut h = Hasher.with_seed(seed)
     h.write(value)

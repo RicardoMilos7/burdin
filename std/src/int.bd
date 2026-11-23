@@ -16,6 +16,11 @@ const __i8_MAX: i8 = 127
 const __i8_BITS: u32 = 8
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: i8 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn i8.pow(self, exp: u32): i8 {
     let mut result: i8 = 1
     let mut base = self
@@ -33,6 +38,11 @@ fn i8.pow(self, exp: u32): i8 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: i8 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn i8.wrapping_pow(self, exp: u32): i8 {
     let mut result: i8 = 1
     let mut base = self
@@ -50,6 +60,11 @@ fn i8.wrapping_pow(self, exp: u32): i8 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: i8 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn i8.checked_pow(self, exp: u32): Option<i8> {
     let mut result: i8 = 1
     let mut base = self
@@ -81,6 +96,12 @@ fn i8.checked_pow(self, exp: u32): Option<i8> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn i8.checked_div(self, other: i8): Option<i8> {
     if other == 0 || (self == __i8_MIN && other == -1) {
         return None
@@ -89,6 +110,12 @@ fn i8.checked_div(self, other: i8): Option<i8> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn i8.checked_rem(self, other: i8): Option<i8> {
     if other == 0 || (self == __i8_MIN && other == -1) {
         return None
@@ -97,6 +124,11 @@ fn i8.checked_rem(self, other: i8): Option<i8> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: i8 = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn i8.checked_neg(self): Option<i8> {
     if self == __i8_MIN {
         return None
@@ -105,12 +137,23 @@ fn i8.checked_neg(self): Option<i8> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn i8.wrapping_neg(self): i8 {
     let zero: i8 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn i8.checked_shl(self, n: u32): Option<i8> {
     if n >= 8 {
         return None
@@ -119,6 +162,12 @@ fn i8.checked_shl(self, n: u32): Option<i8> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i8 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn i8.checked_shr(self, n: u32): Option<i8> {
     if n >= 8 {
         return None
@@ -127,16 +176,31 @@ fn i8.checked_shr(self, n: u32): Option<i8> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn i8.wrapping_shl(self, n: u32): i8 {
     self << (n % 8)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: i8 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn i8.wrapping_shr(self, n: u32): i8 {
     self >> (n % 8)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i8 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn i8.saturating_add(self, other: i8): i8 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -151,6 +215,11 @@ fn i8.saturating_add(self, other: i8): i8 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i8 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn i8.saturating_sub(self, other: i8): i8 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -165,6 +234,11 @@ fn i8.saturating_sub(self, other: i8): i8 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i8 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn i8.saturating_mul(self, other: i8): i8 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -179,6 +253,11 @@ fn i8.saturating_mul(self, other: i8): i8 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: i8 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn i8.saturating_pow(self, exp: u32): i8 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -193,21 +272,41 @@ fn i8.saturating_pow(self, exp: u32): i8 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn i8.overflowing_add(self, other: i8): (i8, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i8 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn i8.overflowing_sub(self, other: i8): (i8, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i8 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn i8.overflowing_mul(self, other: i8): (i8, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn i8.div_euclid(self, other: i8): i8 {
     let q = self / other
     if self % other < 0 {
@@ -220,6 +319,11 @@ fn i8.div_euclid(self, other: i8): i8 {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn i8.rem_euclid(self, other: i8): i8 {
     let r = self % other
     if r < 0 {
@@ -232,6 +336,11 @@ fn i8.rem_euclid(self, other: i8): i8 {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: i8 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn i8.abs_diff(self, other: i8): u8 {
     if self > other {
         return (self.wrapping_sub(other)) as u8
@@ -240,6 +349,11 @@ fn i8.abs_diff(self, other: i8): u8 {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: i8 = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn i8.unsigned_abs(self): u8 {
     if self < 0 {
         let zero: i8 = 0
@@ -249,6 +363,11 @@ fn i8.unsigned_abs(self): u8 {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: i8 = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn i8.signum(self): i8 {
     if self > 0 {
         return 1
@@ -260,16 +379,32 @@ fn i8.signum(self): i8 {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: i8 = 3
+/// assert(x.is_positive())
+/// ```
 fn i8.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: i8 = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn i8.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn i8.count_ones(self): u32 {
     let mut v: u8 = self as u8
     let mut n: u32 = 0
@@ -281,11 +416,21 @@ fn i8.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: i8 = 7
+/// assert_eq(x.count_zeros(), 8 - 3)
+/// ```
 fn i8.count_zeros(self): u32 {
     8 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.leading_zeros(), 8 - 1)
+/// ```
 fn i8.leading_zeros(self): u32 {
     let v: u8 = self as u8
     let mut n: u32 = 0
@@ -301,6 +446,11 @@ fn i8.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: i8 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn i8.trailing_zeros(self): u32 {
     let v: u8 = self as u8
     let mut n: u32 = 0
@@ -314,6 +464,11 @@ fn i8.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn i8.rotate_left(self, n: u32): i8 {
     let v: u8 = self as u8
     let k = n % 8
@@ -325,6 +480,11 @@ fn i8.rotate_left(self, n: u32): i8 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: i8 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn i8.rotate_right(self, n: u32): i8 {
     let v: u8 = self as u8
     let k = n % 8
@@ -335,20 +495,22 @@ fn i8.rotate_right(self, n: u32): i8 {
     ((v >> k) | (v << back)) as i8
 }
 
-/// The bytes in the opposite order.
+/// The bytes in the opposite order. A type of one byte is unchanged.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn i8.swap_bytes(self): i8 {
-    let v: u8 = self as u8
-    let mut r: u8 = 0
-    let mut i: u32 = 0
-    while i < 1 {
-        let shift: u32 = 8 * i
-        r = (r << 8) | ((v >> shift) & 255)
-        i = i + 1
-    }
-    r as i8
+    self
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn i8.reverse_bits(self): i8 {
     let v: u8 = self as u8
     let mut r: u8 = 0
@@ -361,6 +523,11 @@ fn i8.reverse_bits(self): i8 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: i8 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn i8.isqrt(self): i8 {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -384,6 +551,11 @@ fn i8.isqrt(self): i8 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i8 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn i8.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -392,6 +564,11 @@ fn i8.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i8 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn i8.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -449,6 +626,11 @@ fn __i8_parse_radix(s: str, radix: u32): Result<i8, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: i8 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn i8.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -482,18 +664,33 @@ fn i8.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn i8.to_le_bytes(self): [u8; 1] {
     let v: u8 = self as u8
     [((v >> 0) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.to_be_bytes()[1 - 1], 1)
+/// ```
 fn i8.to_be_bytes(self): [u8; 1] {
     let v: u8 = self as u8
     [((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: i8 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn i8.to_ne_bytes(self): [u8; 1] {
     self.to_le_bytes()
 }
@@ -522,6 +719,11 @@ const __i16_MAX: i16 = 32767
 const __i16_BITS: u32 = 16
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: i16 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn i16.pow(self, exp: u32): i16 {
     let mut result: i16 = 1
     let mut base = self
@@ -539,6 +741,11 @@ fn i16.pow(self, exp: u32): i16 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: i16 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn i16.wrapping_pow(self, exp: u32): i16 {
     let mut result: i16 = 1
     let mut base = self
@@ -556,6 +763,11 @@ fn i16.wrapping_pow(self, exp: u32): i16 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: i16 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn i16.checked_pow(self, exp: u32): Option<i16> {
     let mut result: i16 = 1
     let mut base = self
@@ -587,6 +799,12 @@ fn i16.checked_pow(self, exp: u32): Option<i16> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn i16.checked_div(self, other: i16): Option<i16> {
     if other == 0 || (self == __i16_MIN && other == -1) {
         return None
@@ -595,6 +813,12 @@ fn i16.checked_div(self, other: i16): Option<i16> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn i16.checked_rem(self, other: i16): Option<i16> {
     if other == 0 || (self == __i16_MIN && other == -1) {
         return None
@@ -603,6 +827,11 @@ fn i16.checked_rem(self, other: i16): Option<i16> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: i16 = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn i16.checked_neg(self): Option<i16> {
     if self == __i16_MIN {
         return None
@@ -611,12 +840,23 @@ fn i16.checked_neg(self): Option<i16> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn i16.wrapping_neg(self): i16 {
     let zero: i16 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn i16.checked_shl(self, n: u32): Option<i16> {
     if n >= 16 {
         return None
@@ -625,6 +865,12 @@ fn i16.checked_shl(self, n: u32): Option<i16> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i16 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn i16.checked_shr(self, n: u32): Option<i16> {
     if n >= 16 {
         return None
@@ -633,16 +879,31 @@ fn i16.checked_shr(self, n: u32): Option<i16> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn i16.wrapping_shl(self, n: u32): i16 {
     self << (n % 16)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: i16 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn i16.wrapping_shr(self, n: u32): i16 {
     self >> (n % 16)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i16 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn i16.saturating_add(self, other: i16): i16 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -657,6 +918,11 @@ fn i16.saturating_add(self, other: i16): i16 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i16 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn i16.saturating_sub(self, other: i16): i16 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -671,6 +937,11 @@ fn i16.saturating_sub(self, other: i16): i16 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i16 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn i16.saturating_mul(self, other: i16): i16 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -685,6 +956,11 @@ fn i16.saturating_mul(self, other: i16): i16 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: i16 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn i16.saturating_pow(self, exp: u32): i16 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -699,21 +975,41 @@ fn i16.saturating_pow(self, exp: u32): i16 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn i16.overflowing_add(self, other: i16): (i16, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i16 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn i16.overflowing_sub(self, other: i16): (i16, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i16 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn i16.overflowing_mul(self, other: i16): (i16, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn i16.div_euclid(self, other: i16): i16 {
     let q = self / other
     if self % other < 0 {
@@ -726,6 +1022,11 @@ fn i16.div_euclid(self, other: i16): i16 {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn i16.rem_euclid(self, other: i16): i16 {
     let r = self % other
     if r < 0 {
@@ -738,6 +1039,11 @@ fn i16.rem_euclid(self, other: i16): i16 {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: i16 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn i16.abs_diff(self, other: i16): u16 {
     if self > other {
         return (self.wrapping_sub(other)) as u16
@@ -746,6 +1052,11 @@ fn i16.abs_diff(self, other: i16): u16 {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: i16 = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn i16.unsigned_abs(self): u16 {
     if self < 0 {
         let zero: i16 = 0
@@ -755,6 +1066,11 @@ fn i16.unsigned_abs(self): u16 {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: i16 = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn i16.signum(self): i16 {
     if self > 0 {
         return 1
@@ -766,16 +1082,32 @@ fn i16.signum(self): i16 {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: i16 = 3
+/// assert(x.is_positive())
+/// ```
 fn i16.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: i16 = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn i16.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn i16.count_ones(self): u32 {
     let mut v: u16 = self as u16
     let mut n: u32 = 0
@@ -787,11 +1119,21 @@ fn i16.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: i16 = 7
+/// assert_eq(x.count_zeros(), 16 - 3)
+/// ```
 fn i16.count_zeros(self): u32 {
     16 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.leading_zeros(), 16 - 1)
+/// ```
 fn i16.leading_zeros(self): u32 {
     let v: u16 = self as u16
     let mut n: u32 = 0
@@ -807,6 +1149,11 @@ fn i16.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: i16 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn i16.trailing_zeros(self): u32 {
     let v: u16 = self as u16
     let mut n: u32 = 0
@@ -820,6 +1167,11 @@ fn i16.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn i16.rotate_left(self, n: u32): i16 {
     let v: u16 = self as u16
     let k = n % 16
@@ -831,6 +1183,11 @@ fn i16.rotate_left(self, n: u32): i16 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: i16 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn i16.rotate_right(self, n: u32): i16 {
     let v: u16 = self as u16
     let k = n % 16
@@ -842,6 +1199,11 @@ fn i16.rotate_right(self, n: u32): i16 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn i16.swap_bytes(self): i16 {
     let v: u16 = self as u16
     let mut r: u16 = 0
@@ -855,6 +1217,11 @@ fn i16.swap_bytes(self): i16 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn i16.reverse_bits(self): i16 {
     let v: u16 = self as u16
     let mut r: u16 = 0
@@ -867,6 +1234,11 @@ fn i16.reverse_bits(self): i16 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: i16 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn i16.isqrt(self): i16 {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -890,6 +1262,11 @@ fn i16.isqrt(self): i16 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i16 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn i16.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -898,6 +1275,11 @@ fn i16.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i16 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn i16.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -955,6 +1337,11 @@ fn __i16_parse_radix(s: str, radix: u32): Result<i16, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: i16 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn i16.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -988,18 +1375,33 @@ fn i16.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn i16.to_le_bytes(self): [u8; 2] {
     let v: u16 = self as u16
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.to_be_bytes()[2 - 1], 1)
+/// ```
 fn i16.to_be_bytes(self): [u8; 2] {
     let v: u16 = self as u16
     [((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: i16 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn i16.to_ne_bytes(self): [u8; 2] {
     self.to_le_bytes()
 }
@@ -1028,6 +1430,11 @@ const __i32_MAX: i32 = 2147483647
 const __i32_BITS: u32 = 32
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: i32 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn i32.pow(self, exp: u32): i32 {
     let mut result: i32 = 1
     let mut base = self
@@ -1045,6 +1452,11 @@ fn i32.pow(self, exp: u32): i32 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: i32 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn i32.wrapping_pow(self, exp: u32): i32 {
     let mut result: i32 = 1
     let mut base = self
@@ -1062,6 +1474,11 @@ fn i32.wrapping_pow(self, exp: u32): i32 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: i32 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn i32.checked_pow(self, exp: u32): Option<i32> {
     let mut result: i32 = 1
     let mut base = self
@@ -1093,6 +1510,12 @@ fn i32.checked_pow(self, exp: u32): Option<i32> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn i32.checked_div(self, other: i32): Option<i32> {
     if other == 0 || (self == __i32_MIN && other == -1) {
         return None
@@ -1101,6 +1524,12 @@ fn i32.checked_div(self, other: i32): Option<i32> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn i32.checked_rem(self, other: i32): Option<i32> {
     if other == 0 || (self == __i32_MIN && other == -1) {
         return None
@@ -1109,6 +1538,11 @@ fn i32.checked_rem(self, other: i32): Option<i32> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: i32 = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn i32.checked_neg(self): Option<i32> {
     if self == __i32_MIN {
         return None
@@ -1117,12 +1551,23 @@ fn i32.checked_neg(self): Option<i32> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn i32.wrapping_neg(self): i32 {
     let zero: i32 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn i32.checked_shl(self, n: u32): Option<i32> {
     if n >= 32 {
         return None
@@ -1131,6 +1576,12 @@ fn i32.checked_shl(self, n: u32): Option<i32> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i32 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn i32.checked_shr(self, n: u32): Option<i32> {
     if n >= 32 {
         return None
@@ -1139,16 +1590,31 @@ fn i32.checked_shr(self, n: u32): Option<i32> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn i32.wrapping_shl(self, n: u32): i32 {
     self << (n % 32)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: i32 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn i32.wrapping_shr(self, n: u32): i32 {
     self >> (n % 32)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i32 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn i32.saturating_add(self, other: i32): i32 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -1163,6 +1629,11 @@ fn i32.saturating_add(self, other: i32): i32 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i32 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn i32.saturating_sub(self, other: i32): i32 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -1177,6 +1648,11 @@ fn i32.saturating_sub(self, other: i32): i32 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i32 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn i32.saturating_mul(self, other: i32): i32 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -1191,6 +1667,11 @@ fn i32.saturating_mul(self, other: i32): i32 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: i32 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn i32.saturating_pow(self, exp: u32): i32 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -1205,21 +1686,41 @@ fn i32.saturating_pow(self, exp: u32): i32 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn i32.overflowing_add(self, other: i32): (i32, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i32 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn i32.overflowing_sub(self, other: i32): (i32, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i32 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn i32.overflowing_mul(self, other: i32): (i32, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn i32.div_euclid(self, other: i32): i32 {
     let q = self / other
     if self % other < 0 {
@@ -1232,6 +1733,11 @@ fn i32.div_euclid(self, other: i32): i32 {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn i32.rem_euclid(self, other: i32): i32 {
     let r = self % other
     if r < 0 {
@@ -1244,6 +1750,11 @@ fn i32.rem_euclid(self, other: i32): i32 {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: i32 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn i32.abs_diff(self, other: i32): u32 {
     if self > other {
         return (self.wrapping_sub(other)) as u32
@@ -1252,6 +1763,11 @@ fn i32.abs_diff(self, other: i32): u32 {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: i32 = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn i32.unsigned_abs(self): u32 {
     if self < 0 {
         let zero: i32 = 0
@@ -1261,6 +1777,11 @@ fn i32.unsigned_abs(self): u32 {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: i32 = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn i32.signum(self): i32 {
     if self > 0 {
         return 1
@@ -1272,16 +1793,32 @@ fn i32.signum(self): i32 {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: i32 = 3
+/// assert(x.is_positive())
+/// ```
 fn i32.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: i32 = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn i32.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn i32.count_ones(self): u32 {
     let mut v: u32 = self as u32
     let mut n: u32 = 0
@@ -1293,11 +1830,21 @@ fn i32.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: i32 = 7
+/// assert_eq(x.count_zeros(), 32 - 3)
+/// ```
 fn i32.count_zeros(self): u32 {
     32 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.leading_zeros(), 32 - 1)
+/// ```
 fn i32.leading_zeros(self): u32 {
     let v: u32 = self as u32
     let mut n: u32 = 0
@@ -1313,6 +1860,11 @@ fn i32.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: i32 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn i32.trailing_zeros(self): u32 {
     let v: u32 = self as u32
     let mut n: u32 = 0
@@ -1326,6 +1878,11 @@ fn i32.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn i32.rotate_left(self, n: u32): i32 {
     let v: u32 = self as u32
     let k = n % 32
@@ -1337,6 +1894,11 @@ fn i32.rotate_left(self, n: u32): i32 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: i32 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn i32.rotate_right(self, n: u32): i32 {
     let v: u32 = self as u32
     let k = n % 32
@@ -1348,6 +1910,11 @@ fn i32.rotate_right(self, n: u32): i32 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn i32.swap_bytes(self): i32 {
     let v: u32 = self as u32
     let mut r: u32 = 0
@@ -1361,6 +1928,11 @@ fn i32.swap_bytes(self): i32 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn i32.reverse_bits(self): i32 {
     let v: u32 = self as u32
     let mut r: u32 = 0
@@ -1373,6 +1945,11 @@ fn i32.reverse_bits(self): i32 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: i32 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn i32.isqrt(self): i32 {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -1396,6 +1973,11 @@ fn i32.isqrt(self): i32 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i32 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn i32.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -1404,6 +1986,11 @@ fn i32.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i32 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn i32.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -1461,6 +2048,11 @@ fn __i32_parse_radix(s: str, radix: u32): Result<i32, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: i32 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn i32.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -1494,18 +2086,33 @@ fn i32.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn i32.to_le_bytes(self): [u8; 4] {
     let v: u32 = self as u32
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.to_be_bytes()[4 - 1], 1)
+/// ```
 fn i32.to_be_bytes(self): [u8; 4] {
     let v: u32 = self as u32
     [((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: i32 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn i32.to_ne_bytes(self): [u8; 4] {
     self.to_le_bytes()
 }
@@ -1534,6 +2141,11 @@ const __i64_MAX: i64 = 9223372036854775807
 const __i64_BITS: u32 = 64
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: i64 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn i64.pow(self, exp: u32): i64 {
     let mut result: i64 = 1
     let mut base = self
@@ -1551,6 +2163,11 @@ fn i64.pow(self, exp: u32): i64 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: i64 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn i64.wrapping_pow(self, exp: u32): i64 {
     let mut result: i64 = 1
     let mut base = self
@@ -1568,6 +2185,11 @@ fn i64.wrapping_pow(self, exp: u32): i64 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: i64 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn i64.checked_pow(self, exp: u32): Option<i64> {
     let mut result: i64 = 1
     let mut base = self
@@ -1599,6 +2221,12 @@ fn i64.checked_pow(self, exp: u32): Option<i64> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn i64.checked_div(self, other: i64): Option<i64> {
     if other == 0 || (self == __i64_MIN && other == -1) {
         return None
@@ -1607,6 +2235,12 @@ fn i64.checked_div(self, other: i64): Option<i64> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn i64.checked_rem(self, other: i64): Option<i64> {
     if other == 0 || (self == __i64_MIN && other == -1) {
         return None
@@ -1615,6 +2249,11 @@ fn i64.checked_rem(self, other: i64): Option<i64> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: i64 = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn i64.checked_neg(self): Option<i64> {
     if self == __i64_MIN {
         return None
@@ -1623,12 +2262,23 @@ fn i64.checked_neg(self): Option<i64> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn i64.wrapping_neg(self): i64 {
     let zero: i64 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn i64.checked_shl(self, n: u32): Option<i64> {
     if n >= 64 {
         return None
@@ -1637,6 +2287,12 @@ fn i64.checked_shl(self, n: u32): Option<i64> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i64 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn i64.checked_shr(self, n: u32): Option<i64> {
     if n >= 64 {
         return None
@@ -1645,16 +2301,31 @@ fn i64.checked_shr(self, n: u32): Option<i64> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn i64.wrapping_shl(self, n: u32): i64 {
     self << (n % 64)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: i64 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn i64.wrapping_shr(self, n: u32): i64 {
     self >> (n % 64)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i64 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn i64.saturating_add(self, other: i64): i64 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -1669,6 +2340,11 @@ fn i64.saturating_add(self, other: i64): i64 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i64 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn i64.saturating_sub(self, other: i64): i64 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -1683,6 +2359,11 @@ fn i64.saturating_sub(self, other: i64): i64 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i64 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn i64.saturating_mul(self, other: i64): i64 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -1697,6 +2378,11 @@ fn i64.saturating_mul(self, other: i64): i64 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: i64 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn i64.saturating_pow(self, exp: u32): i64 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -1711,21 +2397,41 @@ fn i64.saturating_pow(self, exp: u32): i64 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn i64.overflowing_add(self, other: i64): (i64, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i64 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn i64.overflowing_sub(self, other: i64): (i64, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i64 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn i64.overflowing_mul(self, other: i64): (i64, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn i64.div_euclid(self, other: i64): i64 {
     let q = self / other
     if self % other < 0 {
@@ -1738,6 +2444,11 @@ fn i64.div_euclid(self, other: i64): i64 {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn i64.rem_euclid(self, other: i64): i64 {
     let r = self % other
     if r < 0 {
@@ -1750,6 +2461,11 @@ fn i64.rem_euclid(self, other: i64): i64 {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: i64 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn i64.abs_diff(self, other: i64): u64 {
     if self > other {
         return (self.wrapping_sub(other)) as u64
@@ -1758,6 +2474,11 @@ fn i64.abs_diff(self, other: i64): u64 {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: i64 = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn i64.unsigned_abs(self): u64 {
     if self < 0 {
         let zero: i64 = 0
@@ -1767,6 +2488,11 @@ fn i64.unsigned_abs(self): u64 {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: i64 = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn i64.signum(self): i64 {
     if self > 0 {
         return 1
@@ -1778,16 +2504,32 @@ fn i64.signum(self): i64 {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: i64 = 3
+/// assert(x.is_positive())
+/// ```
 fn i64.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: i64 = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn i64.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn i64.count_ones(self): u32 {
     let mut v: u64 = self as u64
     let mut n: u32 = 0
@@ -1799,11 +2541,21 @@ fn i64.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: i64 = 7
+/// assert_eq(x.count_zeros(), 64 - 3)
+/// ```
 fn i64.count_zeros(self): u32 {
     64 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.leading_zeros(), 64 - 1)
+/// ```
 fn i64.leading_zeros(self): u32 {
     let v: u64 = self as u64
     let mut n: u32 = 0
@@ -1819,6 +2571,11 @@ fn i64.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: i64 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn i64.trailing_zeros(self): u32 {
     let v: u64 = self as u64
     let mut n: u32 = 0
@@ -1832,6 +2589,11 @@ fn i64.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn i64.rotate_left(self, n: u32): i64 {
     let v: u64 = self as u64
     let k = n % 64
@@ -1843,6 +2605,11 @@ fn i64.rotate_left(self, n: u32): i64 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: i64 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn i64.rotate_right(self, n: u32): i64 {
     let v: u64 = self as u64
     let k = n % 64
@@ -1854,6 +2621,11 @@ fn i64.rotate_right(self, n: u32): i64 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn i64.swap_bytes(self): i64 {
     let v: u64 = self as u64
     let mut r: u64 = 0
@@ -1867,6 +2639,11 @@ fn i64.swap_bytes(self): i64 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn i64.reverse_bits(self): i64 {
     let v: u64 = self as u64
     let mut r: u64 = 0
@@ -1879,6 +2656,11 @@ fn i64.reverse_bits(self): i64 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: i64 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn i64.isqrt(self): i64 {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -1902,6 +2684,11 @@ fn i64.isqrt(self): i64 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i64 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn i64.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -1910,6 +2697,11 @@ fn i64.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i64 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn i64.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -1967,6 +2759,11 @@ fn __i64_parse_radix(s: str, radix: u32): Result<i64, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: i64 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn i64.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -2000,18 +2797,33 @@ fn i64.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn i64.to_le_bytes(self): [u8; 8] {
     let v: u64 = self as u64
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.to_be_bytes()[8 - 1], 1)
+/// ```
 fn i64.to_be_bytes(self): [u8; 8] {
     let v: u64 = self as u64
     [((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: i64 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn i64.to_ne_bytes(self): [u8; 8] {
     self.to_le_bytes()
 }
@@ -2040,6 +2852,11 @@ const __i128_MAX: i128 = 170141183460469231731687303715884105727
 const __i128_BITS: u32 = 128
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: i128 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn i128.pow(self, exp: u32): i128 {
     let mut result: i128 = 1
     let mut base = self
@@ -2057,6 +2874,11 @@ fn i128.pow(self, exp: u32): i128 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: i128 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn i128.wrapping_pow(self, exp: u32): i128 {
     let mut result: i128 = 1
     let mut base = self
@@ -2074,6 +2896,11 @@ fn i128.wrapping_pow(self, exp: u32): i128 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: i128 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn i128.checked_pow(self, exp: u32): Option<i128> {
     let mut result: i128 = 1
     let mut base = self
@@ -2105,6 +2932,12 @@ fn i128.checked_pow(self, exp: u32): Option<i128> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn i128.checked_div(self, other: i128): Option<i128> {
     if other == 0 || (self == __i128_MIN && other == -1) {
         return None
@@ -2113,6 +2946,12 @@ fn i128.checked_div(self, other: i128): Option<i128> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn i128.checked_rem(self, other: i128): Option<i128> {
     if other == 0 || (self == __i128_MIN && other == -1) {
         return None
@@ -2121,6 +2960,11 @@ fn i128.checked_rem(self, other: i128): Option<i128> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: i128 = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn i128.checked_neg(self): Option<i128> {
     if self == __i128_MIN {
         return None
@@ -2129,12 +2973,23 @@ fn i128.checked_neg(self): Option<i128> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn i128.wrapping_neg(self): i128 {
     let zero: i128 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn i128.checked_shl(self, n: u32): Option<i128> {
     if n >= 128 {
         return None
@@ -2143,6 +2998,12 @@ fn i128.checked_shl(self, n: u32): Option<i128> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: i128 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn i128.checked_shr(self, n: u32): Option<i128> {
     if n >= 128 {
         return None
@@ -2151,16 +3012,31 @@ fn i128.checked_shr(self, n: u32): Option<i128> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn i128.wrapping_shl(self, n: u32): i128 {
     self << (n % 128)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: i128 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn i128.wrapping_shr(self, n: u32): i128 {
     self >> (n % 128)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i128 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn i128.saturating_add(self, other: i128): i128 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -2175,6 +3051,11 @@ fn i128.saturating_add(self, other: i128): i128 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i128 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn i128.saturating_sub(self, other: i128): i128 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -2189,6 +3070,11 @@ fn i128.saturating_sub(self, other: i128): i128 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: i128 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn i128.saturating_mul(self, other: i128): i128 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -2203,6 +3089,11 @@ fn i128.saturating_mul(self, other: i128): i128 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: i128 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn i128.saturating_pow(self, exp: u32): i128 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -2217,21 +3108,41 @@ fn i128.saturating_pow(self, exp: u32): i128 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn i128.overflowing_add(self, other: i128): (i128, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i128 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn i128.overflowing_sub(self, other: i128): (i128, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: i128 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn i128.overflowing_mul(self, other: i128): (i128, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn i128.div_euclid(self, other: i128): i128 {
     let q = self / other
     if self % other < 0 {
@@ -2244,6 +3155,11 @@ fn i128.div_euclid(self, other: i128): i128 {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn i128.rem_euclid(self, other: i128): i128 {
     let r = self % other
     if r < 0 {
@@ -2256,6 +3172,11 @@ fn i128.rem_euclid(self, other: i128): i128 {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: i128 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn i128.abs_diff(self, other: i128): u128 {
     if self > other {
         return (self.wrapping_sub(other)) as u128
@@ -2264,6 +3185,11 @@ fn i128.abs_diff(self, other: i128): u128 {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: i128 = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn i128.unsigned_abs(self): u128 {
     if self < 0 {
         let zero: i128 = 0
@@ -2273,6 +3199,11 @@ fn i128.unsigned_abs(self): u128 {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: i128 = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn i128.signum(self): i128 {
     if self > 0 {
         return 1
@@ -2284,16 +3215,32 @@ fn i128.signum(self): i128 {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: i128 = 3
+/// assert(x.is_positive())
+/// ```
 fn i128.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: i128 = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn i128.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn i128.count_ones(self): u32 {
     let mut v: u128 = self as u128
     let mut n: u32 = 0
@@ -2305,11 +3252,21 @@ fn i128.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: i128 = 7
+/// assert_eq(x.count_zeros(), 128 - 3)
+/// ```
 fn i128.count_zeros(self): u32 {
     128 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.leading_zeros(), 128 - 1)
+/// ```
 fn i128.leading_zeros(self): u32 {
     let v: u128 = self as u128
     let mut n: u32 = 0
@@ -2325,6 +3282,11 @@ fn i128.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: i128 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn i128.trailing_zeros(self): u32 {
     let v: u128 = self as u128
     let mut n: u32 = 0
@@ -2338,6 +3300,11 @@ fn i128.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn i128.rotate_left(self, n: u32): i128 {
     let v: u128 = self as u128
     let k = n % 128
@@ -2349,6 +3316,11 @@ fn i128.rotate_left(self, n: u32): i128 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: i128 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn i128.rotate_right(self, n: u32): i128 {
     let v: u128 = self as u128
     let k = n % 128
@@ -2360,6 +3332,11 @@ fn i128.rotate_right(self, n: u32): i128 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn i128.swap_bytes(self): i128 {
     let v: u128 = self as u128
     let mut r: u128 = 0
@@ -2373,6 +3350,11 @@ fn i128.swap_bytes(self): i128 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn i128.reverse_bits(self): i128 {
     let v: u128 = self as u128
     let mut r: u128 = 0
@@ -2385,6 +3367,11 @@ fn i128.reverse_bits(self): i128 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: i128 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn i128.isqrt(self): i128 {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -2408,6 +3395,11 @@ fn i128.isqrt(self): i128 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i128 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn i128.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -2416,6 +3408,11 @@ fn i128.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: i128 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn i128.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -2473,6 +3470,11 @@ fn __i128_parse_radix(s: str, radix: u32): Result<i128, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: i128 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn i128.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -2506,18 +3508,33 @@ fn i128.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn i128.to_le_bytes(self): [u8; 16] {
     let v: u128 = self as u128
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 120) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.to_be_bytes()[16 - 1], 1)
+/// ```
 fn i128.to_be_bytes(self): [u8; 16] {
     let v: u128 = self as u128
     [((v >> 120) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: i128 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn i128.to_ne_bytes(self): [u8; 16] {
     self.to_le_bytes()
 }
@@ -2546,6 +3563,11 @@ const __isize_MAX: isize = 9223372036854775807
 const __isize_BITS: u32 = 64
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: isize = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn isize.pow(self, exp: u32): isize {
     let mut result: isize = 1
     let mut base = self
@@ -2563,6 +3585,11 @@ fn isize.pow(self, exp: u32): isize {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: isize = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn isize.wrapping_pow(self, exp: u32): isize {
     let mut result: isize = 1
     let mut base = self
@@ -2580,6 +3607,11 @@ fn isize.wrapping_pow(self, exp: u32): isize {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: isize = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn isize.checked_pow(self, exp: u32): Option<isize> {
     let mut result: isize = 1
     let mut base = self
@@ -2611,6 +3643,12 @@ fn isize.checked_pow(self, exp: u32): Option<isize> {
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn isize.checked_div(self, other: isize): Option<isize> {
     if other == 0 || (self == __isize_MIN && other == -1) {
         return None
@@ -2619,6 +3657,12 @@ fn isize.checked_div(self, other: isize): Option<isize> {
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn isize.checked_rem(self, other: isize): Option<isize> {
     if other == 0 || (self == __isize_MIN && other == -1) {
         return None
@@ -2627,6 +3671,11 @@ fn isize.checked_rem(self, other: isize): Option<isize> {
 }
 
 /// `-self`, or `None` for the minimum value.
+///
+/// ```
+/// let x: isize = 5
+/// assert_eq(x.checked_neg(), Some(-5))
+/// ```
 fn isize.checked_neg(self): Option<isize> {
     if self == __isize_MIN {
         return None
@@ -2635,12 +3684,23 @@ fn isize.checked_neg(self): Option<isize> {
 }
 
 /// `-self`, wrapping around for the minimum value.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn isize.wrapping_neg(self): isize {
     let zero: isize = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn isize.checked_shl(self, n: u32): Option<isize> {
     if n >= 64 {
         return None
@@ -2649,6 +3709,12 @@ fn isize.checked_shl(self, n: u32): Option<isize> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: isize = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn isize.checked_shr(self, n: u32): Option<isize> {
     if n >= 64 {
         return None
@@ -2657,16 +3723,31 @@ fn isize.checked_shr(self, n: u32): Option<isize> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn isize.wrapping_shl(self, n: u32): isize {
     self << (n % 64)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: isize = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn isize.wrapping_shr(self, n: u32): isize {
     self >> (n % 64)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: isize = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn isize.saturating_add(self, other: isize): isize {
     match self.checked_add(other) {
         Some(v) => v,
@@ -2681,6 +3762,11 @@ fn isize.saturating_add(self, other: isize): isize {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: isize = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn isize.saturating_sub(self, other: isize): isize {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -2695,6 +3781,11 @@ fn isize.saturating_sub(self, other: isize): isize {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: isize = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn isize.saturating_mul(self, other: isize): isize {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -2709,6 +3800,11 @@ fn isize.saturating_mul(self, other: isize): isize {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: isize = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn isize.saturating_pow(self, exp: u32): isize {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -2723,21 +3819,41 @@ fn isize.saturating_pow(self, exp: u32): isize {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn isize.overflowing_add(self, other: isize): (isize, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: isize = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn isize.overflowing_sub(self, other: isize): (isize, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: isize = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn isize.overflowing_mul(self, other: isize): (isize, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// The quotient rounded so that the remainder is never negative. Division by 0 panics.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn isize.div_euclid(self, other: isize): isize {
     let q = self / other
     if self % other < 0 {
@@ -2750,6 +3866,11 @@ fn isize.div_euclid(self, other: isize): isize {
 }
 
 /// The remainder, never negative. Division by 0 panics.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn isize.rem_euclid(self, other: isize): isize {
     let r = self % other
     if r < 0 {
@@ -2762,6 +3883,11 @@ fn isize.rem_euclid(self, other: isize): isize {
 }
 
 /// The distance between `self` and `other`, as the unsigned type.
+///
+/// ```
+/// let x: isize = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn isize.abs_diff(self, other: isize): usize {
     if self > other {
         return (self.wrapping_sub(other)) as usize
@@ -2770,6 +3896,11 @@ fn isize.abs_diff(self, other: isize): usize {
 }
 
 /// The absolute value as the unsigned type, so the minimum value is representable.
+///
+/// ```
+/// let x: isize = -4
+/// assert_eq(x.unsigned_abs(), 4)
+/// ```
 fn isize.unsigned_abs(self): usize {
     if self < 0 {
         let zero: isize = 0
@@ -2779,6 +3910,11 @@ fn isize.unsigned_abs(self): usize {
 }
 
 /// `-1`, `0`, or `1` by the sign of `self`.
+///
+/// ```
+/// let x: isize = -4
+/// assert_eq(x.signum(), -1)
+/// ```
 fn isize.signum(self): isize {
     if self > 0 {
         return 1
@@ -2790,16 +3926,32 @@ fn isize.signum(self): isize {
 }
 
 /// Whether `self` is greater than 0.
+///
+/// ```
+/// let x: isize = 3
+/// assert(x.is_positive())
+/// ```
 fn isize.is_positive(self): bool {
     self > 0
 }
 
 /// Whether `self` is less than 0.
+///
+/// ```
+/// let x: isize = -3
+/// assert(x.is_negative())
+/// assert(!x.is_positive())
+/// ```
 fn isize.is_negative(self): bool {
     self < 0
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn isize.count_ones(self): u32 {
     let mut v: usize = self as usize
     let mut n: u32 = 0
@@ -2811,11 +3963,21 @@ fn isize.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: isize = 7
+/// assert_eq(x.count_zeros(), 64 - 3)
+/// ```
 fn isize.count_zeros(self): u32 {
     64 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.leading_zeros(), 64 - 1)
+/// ```
 fn isize.leading_zeros(self): u32 {
     let v: usize = self as usize
     let mut n: u32 = 0
@@ -2831,6 +3993,11 @@ fn isize.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: isize = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn isize.trailing_zeros(self): u32 {
     let v: usize = self as usize
     let mut n: u32 = 0
@@ -2844,6 +4011,11 @@ fn isize.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn isize.rotate_left(self, n: u32): isize {
     let v: usize = self as usize
     let k = n % 64
@@ -2855,6 +4027,11 @@ fn isize.rotate_left(self, n: u32): isize {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: isize = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn isize.rotate_right(self, n: u32): isize {
     let v: usize = self as usize
     let k = n % 64
@@ -2866,6 +4043,11 @@ fn isize.rotate_right(self, n: u32): isize {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn isize.swap_bytes(self): isize {
     let v: usize = self as usize
     let mut r: usize = 0
@@ -2879,6 +4061,11 @@ fn isize.swap_bytes(self): isize {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn isize.reverse_bits(self): isize {
     let v: usize = self as usize
     let mut r: usize = 0
@@ -2891,6 +4078,11 @@ fn isize.reverse_bits(self): isize {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`. A negative `self` panics.
+///
+/// ```
+/// let x: isize = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn isize.isqrt(self): isize {
     if self < 0 {
         panic("isqrt of a negative number")
@@ -2914,6 +4106,11 @@ fn isize.isqrt(self): isize {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: isize = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn isize.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -2922,6 +4119,11 @@ fn isize.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 or negative panics.
+///
+/// ```
+/// let x: isize = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn isize.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -2979,6 +4181,11 @@ fn __isize_parse_radix(s: str, radix: u32): Result<isize, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: isize = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn isize.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -3012,18 +4219,33 @@ fn isize.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn isize.to_le_bytes(self): [u8; 8] {
     let v: usize = self as usize
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.to_be_bytes()[8 - 1], 1)
+/// ```
 fn isize.to_be_bytes(self): [u8; 8] {
     let v: usize = self as usize
     [((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: isize = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn isize.to_ne_bytes(self): [u8; 8] {
     self.to_le_bytes()
 }
@@ -3052,6 +4274,11 @@ const __u8_MAX: u8 = 255
 const __u8_BITS: u32 = 8
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: u8 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn u8.pow(self, exp: u32): u8 {
     let mut result: u8 = 1
     let mut base = self
@@ -3069,6 +4296,11 @@ fn u8.pow(self, exp: u32): u8 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: u8 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn u8.wrapping_pow(self, exp: u32): u8 {
     let mut result: u8 = 1
     let mut base = self
@@ -3086,6 +4318,11 @@ fn u8.wrapping_pow(self, exp: u32): u8 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: u8 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn u8.checked_pow(self, exp: u32): Option<u8> {
     let mut result: u8 = 1
     let mut base = self
@@ -3117,6 +4354,12 @@ fn u8.checked_pow(self, exp: u32): Option<u8> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn u8.checked_div(self, other: u8): Option<u8> {
     if other == 0 {
         return None
@@ -3125,6 +4368,12 @@ fn u8.checked_div(self, other: u8): Option<u8> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn u8.checked_rem(self, other: u8): Option<u8> {
     if other == 0 {
         return None
@@ -3133,6 +4382,13 @@ fn u8.checked_rem(self, other: u8): Option<u8> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: u8 = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: u8 = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn u8.checked_neg(self): Option<u8> {
     if self == 0 {
         return Some(0)
@@ -3141,12 +4397,23 @@ fn u8.checked_neg(self): Option<u8> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn u8.wrapping_neg(self): u8 {
     let zero: u8 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn u8.checked_shl(self, n: u32): Option<u8> {
     if n >= 8 {
         return None
@@ -3155,6 +4422,12 @@ fn u8.checked_shl(self, n: u32): Option<u8> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u8 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn u8.checked_shr(self, n: u32): Option<u8> {
     if n >= 8 {
         return None
@@ -3163,16 +4436,31 @@ fn u8.checked_shr(self, n: u32): Option<u8> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn u8.wrapping_shl(self, n: u32): u8 {
     self << (n % 8)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: u8 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn u8.wrapping_shr(self, n: u32): u8 {
     self >> (n % 8)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u8 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn u8.saturating_add(self, other: u8): u8 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -3181,6 +4469,11 @@ fn u8.saturating_add(self, other: u8): u8 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u8 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn u8.saturating_sub(self, other: u8): u8 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -3189,6 +4482,11 @@ fn u8.saturating_sub(self, other: u8): u8 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u8 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn u8.saturating_mul(self, other: u8): u8 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -3197,6 +4495,11 @@ fn u8.saturating_mul(self, other: u8): u8 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: u8 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn u8.saturating_pow(self, exp: u32): u8 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -3205,31 +4508,61 @@ fn u8.saturating_pow(self, exp: u32): u8 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn u8.overflowing_add(self, other: u8): (u8, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u8 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn u8.overflowing_sub(self, other: u8): (u8, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u8 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn u8.overflowing_mul(self, other: u8): (u8, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn u8.div_euclid(self, other: u8): u8 {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn u8.rem_euclid(self, other: u8): u8 {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: u8 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn u8.abs_diff(self, other: u8): u8 {
     if self > other {
         return self - other
@@ -3238,6 +4571,11 @@ fn u8.abs_diff(self, other: u8): u8 {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn u8.count_ones(self): u32 {
     let mut v: u8 = self
     let mut n: u32 = 0
@@ -3249,11 +4587,21 @@ fn u8.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: u8 = 7
+/// assert_eq(x.count_zeros(), 8 - 3)
+/// ```
 fn u8.count_zeros(self): u32 {
     8 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.leading_zeros(), 8 - 1)
+/// ```
 fn u8.leading_zeros(self): u32 {
     let v: u8 = self
     let mut n: u32 = 0
@@ -3269,6 +4617,11 @@ fn u8.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: u8 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn u8.trailing_zeros(self): u32 {
     let v: u8 = self
     let mut n: u32 = 0
@@ -3282,6 +4635,11 @@ fn u8.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn u8.rotate_left(self, n: u32): u8 {
     let v: u8 = self
     let k = n % 8
@@ -3293,6 +4651,11 @@ fn u8.rotate_left(self, n: u32): u8 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: u8 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn u8.rotate_right(self, n: u32): u8 {
     let v: u8 = self
     let k = n % 8
@@ -3303,20 +4666,22 @@ fn u8.rotate_right(self, n: u32): u8 {
     ((v >> k) | (v << back)) as u8
 }
 
-/// The bytes in the opposite order.
+/// The bytes in the opposite order. A type of one byte is unchanged.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn u8.swap_bytes(self): u8 {
-    let v: u8 = self
-    let mut r: u8 = 0
-    let mut i: u32 = 0
-    while i < 1 {
-        let shift: u32 = 8 * i
-        r = (r << 8) | ((v >> shift) & 255)
-        i = i + 1
-    }
-    r as u8
+    self
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn u8.reverse_bits(self): u8 {
     let v: u8 = self
     let mut r: u8 = 0
@@ -3329,11 +4694,23 @@ fn u8.reverse_bits(self): u8 {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: u8 = 8
+/// assert(x.is_power_of_two())
+/// let y: u8 = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn u8.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: u8 = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn u8.checked_next_power_of_two(self): Option<u8> {
     if self <= 1 {
         return Some(1)
@@ -3346,6 +4723,11 @@ fn u8.checked_next_power_of_two(self): Option<u8> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: u8 = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn u8.next_power_of_two(self): u8 {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -3354,6 +4736,11 @@ fn u8.next_power_of_two(self): u8 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: u8 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn u8.isqrt(self): u8 {
     let mut n: u8 = self
     let mut result: u8 = 0
@@ -3374,6 +4761,11 @@ fn u8.isqrt(self): u8 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u8 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn u8.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -3382,6 +4774,11 @@ fn u8.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u8 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn u8.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -3430,6 +4827,11 @@ fn __u8_parse_radix(s: str, radix: u32): Result<u8, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: u8 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn u8.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -3460,18 +4862,33 @@ fn u8.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn u8.to_le_bytes(self): [u8; 1] {
     let v: u8 = self
     [((v >> 0) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.to_be_bytes()[1 - 1], 1)
+/// ```
 fn u8.to_be_bytes(self): [u8; 1] {
     let v: u8 = self
     [((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: u8 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn u8.to_ne_bytes(self): [u8; 1] {
     self.to_le_bytes()
 }
@@ -3500,6 +4917,11 @@ const __u16_MAX: u16 = 65535
 const __u16_BITS: u32 = 16
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: u16 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn u16.pow(self, exp: u32): u16 {
     let mut result: u16 = 1
     let mut base = self
@@ -3517,6 +4939,11 @@ fn u16.pow(self, exp: u32): u16 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: u16 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn u16.wrapping_pow(self, exp: u32): u16 {
     let mut result: u16 = 1
     let mut base = self
@@ -3534,6 +4961,11 @@ fn u16.wrapping_pow(self, exp: u32): u16 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: u16 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn u16.checked_pow(self, exp: u32): Option<u16> {
     let mut result: u16 = 1
     let mut base = self
@@ -3565,6 +4997,12 @@ fn u16.checked_pow(self, exp: u32): Option<u16> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn u16.checked_div(self, other: u16): Option<u16> {
     if other == 0 {
         return None
@@ -3573,6 +5011,12 @@ fn u16.checked_div(self, other: u16): Option<u16> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn u16.checked_rem(self, other: u16): Option<u16> {
     if other == 0 {
         return None
@@ -3581,6 +5025,13 @@ fn u16.checked_rem(self, other: u16): Option<u16> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: u16 = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: u16 = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn u16.checked_neg(self): Option<u16> {
     if self == 0 {
         return Some(0)
@@ -3589,12 +5040,23 @@ fn u16.checked_neg(self): Option<u16> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn u16.wrapping_neg(self): u16 {
     let zero: u16 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn u16.checked_shl(self, n: u32): Option<u16> {
     if n >= 16 {
         return None
@@ -3603,6 +5065,12 @@ fn u16.checked_shl(self, n: u32): Option<u16> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u16 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn u16.checked_shr(self, n: u32): Option<u16> {
     if n >= 16 {
         return None
@@ -3611,16 +5079,31 @@ fn u16.checked_shr(self, n: u32): Option<u16> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn u16.wrapping_shl(self, n: u32): u16 {
     self << (n % 16)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: u16 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn u16.wrapping_shr(self, n: u32): u16 {
     self >> (n % 16)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u16 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn u16.saturating_add(self, other: u16): u16 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -3629,6 +5112,11 @@ fn u16.saturating_add(self, other: u16): u16 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u16 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn u16.saturating_sub(self, other: u16): u16 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -3637,6 +5125,11 @@ fn u16.saturating_sub(self, other: u16): u16 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u16 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn u16.saturating_mul(self, other: u16): u16 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -3645,6 +5138,11 @@ fn u16.saturating_mul(self, other: u16): u16 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: u16 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn u16.saturating_pow(self, exp: u32): u16 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -3653,31 +5151,61 @@ fn u16.saturating_pow(self, exp: u32): u16 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn u16.overflowing_add(self, other: u16): (u16, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u16 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn u16.overflowing_sub(self, other: u16): (u16, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u16 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn u16.overflowing_mul(self, other: u16): (u16, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn u16.div_euclid(self, other: u16): u16 {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn u16.rem_euclid(self, other: u16): u16 {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: u16 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn u16.abs_diff(self, other: u16): u16 {
     if self > other {
         return self - other
@@ -3686,6 +5214,11 @@ fn u16.abs_diff(self, other: u16): u16 {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn u16.count_ones(self): u32 {
     let mut v: u16 = self
     let mut n: u32 = 0
@@ -3697,11 +5230,21 @@ fn u16.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: u16 = 7
+/// assert_eq(x.count_zeros(), 16 - 3)
+/// ```
 fn u16.count_zeros(self): u32 {
     16 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.leading_zeros(), 16 - 1)
+/// ```
 fn u16.leading_zeros(self): u32 {
     let v: u16 = self
     let mut n: u32 = 0
@@ -3717,6 +5260,11 @@ fn u16.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: u16 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn u16.trailing_zeros(self): u32 {
     let v: u16 = self
     let mut n: u32 = 0
@@ -3730,6 +5278,11 @@ fn u16.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn u16.rotate_left(self, n: u32): u16 {
     let v: u16 = self
     let k = n % 16
@@ -3741,6 +5294,11 @@ fn u16.rotate_left(self, n: u32): u16 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: u16 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn u16.rotate_right(self, n: u32): u16 {
     let v: u16 = self
     let k = n % 16
@@ -3752,6 +5310,11 @@ fn u16.rotate_right(self, n: u32): u16 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn u16.swap_bytes(self): u16 {
     let v: u16 = self
     let mut r: u16 = 0
@@ -3765,6 +5328,11 @@ fn u16.swap_bytes(self): u16 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn u16.reverse_bits(self): u16 {
     let v: u16 = self
     let mut r: u16 = 0
@@ -3777,11 +5345,23 @@ fn u16.reverse_bits(self): u16 {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: u16 = 8
+/// assert(x.is_power_of_two())
+/// let y: u16 = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn u16.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: u16 = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn u16.checked_next_power_of_two(self): Option<u16> {
     if self <= 1 {
         return Some(1)
@@ -3794,6 +5374,11 @@ fn u16.checked_next_power_of_two(self): Option<u16> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: u16 = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn u16.next_power_of_two(self): u16 {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -3802,6 +5387,11 @@ fn u16.next_power_of_two(self): u16 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: u16 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn u16.isqrt(self): u16 {
     let mut n: u16 = self
     let mut result: u16 = 0
@@ -3822,6 +5412,11 @@ fn u16.isqrt(self): u16 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u16 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn u16.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -3830,6 +5425,11 @@ fn u16.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u16 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn u16.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -3878,6 +5478,11 @@ fn __u16_parse_radix(s: str, radix: u32): Result<u16, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: u16 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn u16.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -3908,18 +5513,33 @@ fn u16.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn u16.to_le_bytes(self): [u8; 2] {
     let v: u16 = self
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.to_be_bytes()[2 - 1], 1)
+/// ```
 fn u16.to_be_bytes(self): [u8; 2] {
     let v: u16 = self
     [((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: u16 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn u16.to_ne_bytes(self): [u8; 2] {
     self.to_le_bytes()
 }
@@ -3948,6 +5568,11 @@ const __u32_MAX: u32 = 4294967295
 const __u32_BITS: u32 = 32
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: u32 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn u32.pow(self, exp: u32): u32 {
     let mut result: u32 = 1
     let mut base = self
@@ -3965,6 +5590,11 @@ fn u32.pow(self, exp: u32): u32 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: u32 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn u32.wrapping_pow(self, exp: u32): u32 {
     let mut result: u32 = 1
     let mut base = self
@@ -3982,6 +5612,11 @@ fn u32.wrapping_pow(self, exp: u32): u32 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: u32 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn u32.checked_pow(self, exp: u32): Option<u32> {
     let mut result: u32 = 1
     let mut base = self
@@ -4013,6 +5648,12 @@ fn u32.checked_pow(self, exp: u32): Option<u32> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn u32.checked_div(self, other: u32): Option<u32> {
     if other == 0 {
         return None
@@ -4021,6 +5662,12 @@ fn u32.checked_div(self, other: u32): Option<u32> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn u32.checked_rem(self, other: u32): Option<u32> {
     if other == 0 {
         return None
@@ -4029,6 +5676,13 @@ fn u32.checked_rem(self, other: u32): Option<u32> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: u32 = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: u32 = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn u32.checked_neg(self): Option<u32> {
     if self == 0 {
         return Some(0)
@@ -4037,12 +5691,23 @@ fn u32.checked_neg(self): Option<u32> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn u32.wrapping_neg(self): u32 {
     let zero: u32 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn u32.checked_shl(self, n: u32): Option<u32> {
     if n >= 32 {
         return None
@@ -4051,6 +5716,12 @@ fn u32.checked_shl(self, n: u32): Option<u32> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u32 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn u32.checked_shr(self, n: u32): Option<u32> {
     if n >= 32 {
         return None
@@ -4059,16 +5730,31 @@ fn u32.checked_shr(self, n: u32): Option<u32> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn u32.wrapping_shl(self, n: u32): u32 {
     self << (n % 32)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: u32 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn u32.wrapping_shr(self, n: u32): u32 {
     self >> (n % 32)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u32 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn u32.saturating_add(self, other: u32): u32 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -4077,6 +5763,11 @@ fn u32.saturating_add(self, other: u32): u32 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u32 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn u32.saturating_sub(self, other: u32): u32 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -4085,6 +5776,11 @@ fn u32.saturating_sub(self, other: u32): u32 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u32 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn u32.saturating_mul(self, other: u32): u32 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -4093,6 +5789,11 @@ fn u32.saturating_mul(self, other: u32): u32 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: u32 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn u32.saturating_pow(self, exp: u32): u32 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -4101,31 +5802,61 @@ fn u32.saturating_pow(self, exp: u32): u32 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn u32.overflowing_add(self, other: u32): (u32, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u32 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn u32.overflowing_sub(self, other: u32): (u32, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u32 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn u32.overflowing_mul(self, other: u32): (u32, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn u32.div_euclid(self, other: u32): u32 {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn u32.rem_euclid(self, other: u32): u32 {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: u32 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn u32.abs_diff(self, other: u32): u32 {
     if self > other {
         return self - other
@@ -4134,6 +5865,11 @@ fn u32.abs_diff(self, other: u32): u32 {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn u32.count_ones(self): u32 {
     let mut v: u32 = self
     let mut n: u32 = 0
@@ -4145,11 +5881,21 @@ fn u32.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: u32 = 7
+/// assert_eq(x.count_zeros(), 32 - 3)
+/// ```
 fn u32.count_zeros(self): u32 {
     32 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.leading_zeros(), 32 - 1)
+/// ```
 fn u32.leading_zeros(self): u32 {
     let v: u32 = self
     let mut n: u32 = 0
@@ -4165,6 +5911,11 @@ fn u32.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: u32 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn u32.trailing_zeros(self): u32 {
     let v: u32 = self
     let mut n: u32 = 0
@@ -4178,6 +5929,11 @@ fn u32.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn u32.rotate_left(self, n: u32): u32 {
     let v: u32 = self
     let k = n % 32
@@ -4189,6 +5945,11 @@ fn u32.rotate_left(self, n: u32): u32 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: u32 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn u32.rotate_right(self, n: u32): u32 {
     let v: u32 = self
     let k = n % 32
@@ -4200,6 +5961,11 @@ fn u32.rotate_right(self, n: u32): u32 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn u32.swap_bytes(self): u32 {
     let v: u32 = self
     let mut r: u32 = 0
@@ -4213,6 +5979,11 @@ fn u32.swap_bytes(self): u32 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn u32.reverse_bits(self): u32 {
     let v: u32 = self
     let mut r: u32 = 0
@@ -4225,11 +5996,23 @@ fn u32.reverse_bits(self): u32 {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: u32 = 8
+/// assert(x.is_power_of_two())
+/// let y: u32 = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn u32.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: u32 = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn u32.checked_next_power_of_two(self): Option<u32> {
     if self <= 1 {
         return Some(1)
@@ -4242,6 +6025,11 @@ fn u32.checked_next_power_of_two(self): Option<u32> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: u32 = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn u32.next_power_of_two(self): u32 {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -4250,6 +6038,11 @@ fn u32.next_power_of_two(self): u32 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: u32 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn u32.isqrt(self): u32 {
     let mut n: u32 = self
     let mut result: u32 = 0
@@ -4270,6 +6063,11 @@ fn u32.isqrt(self): u32 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u32 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn u32.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -4278,6 +6076,11 @@ fn u32.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u32 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn u32.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -4326,6 +6129,11 @@ fn __u32_parse_radix(s: str, radix: u32): Result<u32, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: u32 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn u32.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -4356,18 +6164,33 @@ fn u32.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn u32.to_le_bytes(self): [u8; 4] {
     let v: u32 = self
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.to_be_bytes()[4 - 1], 1)
+/// ```
 fn u32.to_be_bytes(self): [u8; 4] {
     let v: u32 = self
     [((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: u32 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn u32.to_ne_bytes(self): [u8; 4] {
     self.to_le_bytes()
 }
@@ -4396,6 +6219,11 @@ const __u64_MAX: u64 = 18446744073709551615
 const __u64_BITS: u32 = 64
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: u64 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn u64.pow(self, exp: u32): u64 {
     let mut result: u64 = 1
     let mut base = self
@@ -4413,6 +6241,11 @@ fn u64.pow(self, exp: u32): u64 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: u64 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn u64.wrapping_pow(self, exp: u32): u64 {
     let mut result: u64 = 1
     let mut base = self
@@ -4430,6 +6263,11 @@ fn u64.wrapping_pow(self, exp: u32): u64 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: u64 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn u64.checked_pow(self, exp: u32): Option<u64> {
     let mut result: u64 = 1
     let mut base = self
@@ -4461,6 +6299,12 @@ fn u64.checked_pow(self, exp: u32): Option<u64> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn u64.checked_div(self, other: u64): Option<u64> {
     if other == 0 {
         return None
@@ -4469,6 +6313,12 @@ fn u64.checked_div(self, other: u64): Option<u64> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn u64.checked_rem(self, other: u64): Option<u64> {
     if other == 0 {
         return None
@@ -4477,6 +6327,13 @@ fn u64.checked_rem(self, other: u64): Option<u64> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: u64 = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: u64 = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn u64.checked_neg(self): Option<u64> {
     if self == 0 {
         return Some(0)
@@ -4485,12 +6342,23 @@ fn u64.checked_neg(self): Option<u64> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn u64.wrapping_neg(self): u64 {
     let zero: u64 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn u64.checked_shl(self, n: u32): Option<u64> {
     if n >= 64 {
         return None
@@ -4499,6 +6367,12 @@ fn u64.checked_shl(self, n: u32): Option<u64> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u64 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn u64.checked_shr(self, n: u32): Option<u64> {
     if n >= 64 {
         return None
@@ -4507,16 +6381,31 @@ fn u64.checked_shr(self, n: u32): Option<u64> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn u64.wrapping_shl(self, n: u32): u64 {
     self << (n % 64)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: u64 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn u64.wrapping_shr(self, n: u32): u64 {
     self >> (n % 64)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u64 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn u64.saturating_add(self, other: u64): u64 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -4525,6 +6414,11 @@ fn u64.saturating_add(self, other: u64): u64 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u64 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn u64.saturating_sub(self, other: u64): u64 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -4533,6 +6427,11 @@ fn u64.saturating_sub(self, other: u64): u64 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u64 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn u64.saturating_mul(self, other: u64): u64 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -4541,6 +6440,11 @@ fn u64.saturating_mul(self, other: u64): u64 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: u64 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn u64.saturating_pow(self, exp: u32): u64 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -4549,31 +6453,61 @@ fn u64.saturating_pow(self, exp: u32): u64 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn u64.overflowing_add(self, other: u64): (u64, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u64 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn u64.overflowing_sub(self, other: u64): (u64, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u64 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn u64.overflowing_mul(self, other: u64): (u64, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn u64.div_euclid(self, other: u64): u64 {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn u64.rem_euclid(self, other: u64): u64 {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: u64 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn u64.abs_diff(self, other: u64): u64 {
     if self > other {
         return self - other
@@ -4582,6 +6516,11 @@ fn u64.abs_diff(self, other: u64): u64 {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn u64.count_ones(self): u32 {
     let mut v: u64 = self
     let mut n: u32 = 0
@@ -4593,11 +6532,21 @@ fn u64.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: u64 = 7
+/// assert_eq(x.count_zeros(), 64 - 3)
+/// ```
 fn u64.count_zeros(self): u32 {
     64 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.leading_zeros(), 64 - 1)
+/// ```
 fn u64.leading_zeros(self): u32 {
     let v: u64 = self
     let mut n: u32 = 0
@@ -4613,6 +6562,11 @@ fn u64.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: u64 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn u64.trailing_zeros(self): u32 {
     let v: u64 = self
     let mut n: u32 = 0
@@ -4626,6 +6580,11 @@ fn u64.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn u64.rotate_left(self, n: u32): u64 {
     let v: u64 = self
     let k = n % 64
@@ -4637,6 +6596,11 @@ fn u64.rotate_left(self, n: u32): u64 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: u64 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn u64.rotate_right(self, n: u32): u64 {
     let v: u64 = self
     let k = n % 64
@@ -4648,6 +6612,11 @@ fn u64.rotate_right(self, n: u32): u64 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn u64.swap_bytes(self): u64 {
     let v: u64 = self
     let mut r: u64 = 0
@@ -4661,6 +6630,11 @@ fn u64.swap_bytes(self): u64 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn u64.reverse_bits(self): u64 {
     let v: u64 = self
     let mut r: u64 = 0
@@ -4673,11 +6647,23 @@ fn u64.reverse_bits(self): u64 {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: u64 = 8
+/// assert(x.is_power_of_two())
+/// let y: u64 = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn u64.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: u64 = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn u64.checked_next_power_of_two(self): Option<u64> {
     if self <= 1 {
         return Some(1)
@@ -4690,6 +6676,11 @@ fn u64.checked_next_power_of_two(self): Option<u64> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: u64 = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn u64.next_power_of_two(self): u64 {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -4698,6 +6689,11 @@ fn u64.next_power_of_two(self): u64 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: u64 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn u64.isqrt(self): u64 {
     let mut n: u64 = self
     let mut result: u64 = 0
@@ -4718,6 +6714,11 @@ fn u64.isqrt(self): u64 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u64 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn u64.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -4726,6 +6727,11 @@ fn u64.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u64 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn u64.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -4774,6 +6780,11 @@ fn __u64_parse_radix(s: str, radix: u32): Result<u64, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: u64 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn u64.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -4804,18 +6815,33 @@ fn u64.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn u64.to_le_bytes(self): [u8; 8] {
     let v: u64 = self
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.to_be_bytes()[8 - 1], 1)
+/// ```
 fn u64.to_be_bytes(self): [u8; 8] {
     let v: u64 = self
     [((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: u64 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn u64.to_ne_bytes(self): [u8; 8] {
     self.to_le_bytes()
 }
@@ -4844,6 +6870,11 @@ const __u128_MAX: u128 = 340282366920938463463374607431768211455
 const __u128_BITS: u32 = 128
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: u128 = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn u128.pow(self, exp: u32): u128 {
     let mut result: u128 = 1
     let mut base = self
@@ -4861,6 +6892,11 @@ fn u128.pow(self, exp: u32): u128 {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: u128 = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn u128.wrapping_pow(self, exp: u32): u128 {
     let mut result: u128 = 1
     let mut base = self
@@ -4878,6 +6914,11 @@ fn u128.wrapping_pow(self, exp: u32): u128 {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: u128 = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn u128.checked_pow(self, exp: u32): Option<u128> {
     let mut result: u128 = 1
     let mut base = self
@@ -4909,6 +6950,12 @@ fn u128.checked_pow(self, exp: u32): Option<u128> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn u128.checked_div(self, other: u128): Option<u128> {
     if other == 0 {
         return None
@@ -4917,6 +6964,12 @@ fn u128.checked_div(self, other: u128): Option<u128> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn u128.checked_rem(self, other: u128): Option<u128> {
     if other == 0 {
         return None
@@ -4925,6 +6978,13 @@ fn u128.checked_rem(self, other: u128): Option<u128> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: u128 = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: u128 = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn u128.checked_neg(self): Option<u128> {
     if self == 0 {
         return Some(0)
@@ -4933,12 +6993,23 @@ fn u128.checked_neg(self): Option<u128> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn u128.wrapping_neg(self): u128 {
     let zero: u128 = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn u128.checked_shl(self, n: u32): Option<u128> {
     if n >= 128 {
         return None
@@ -4947,6 +7018,12 @@ fn u128.checked_shl(self, n: u32): Option<u128> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: u128 = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn u128.checked_shr(self, n: u32): Option<u128> {
     if n >= 128 {
         return None
@@ -4955,16 +7032,31 @@ fn u128.checked_shr(self, n: u32): Option<u128> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn u128.wrapping_shl(self, n: u32): u128 {
     self << (n % 128)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: u128 = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn u128.wrapping_shr(self, n: u32): u128 {
     self >> (n % 128)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u128 = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn u128.saturating_add(self, other: u128): u128 {
     match self.checked_add(other) {
         Some(v) => v,
@@ -4973,6 +7065,11 @@ fn u128.saturating_add(self, other: u128): u128 {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u128 = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn u128.saturating_sub(self, other: u128): u128 {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -4981,6 +7078,11 @@ fn u128.saturating_sub(self, other: u128): u128 {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: u128 = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn u128.saturating_mul(self, other: u128): u128 {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -4989,6 +7091,11 @@ fn u128.saturating_mul(self, other: u128): u128 {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: u128 = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn u128.saturating_pow(self, exp: u32): u128 {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -4997,31 +7104,61 @@ fn u128.saturating_pow(self, exp: u32): u128 {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn u128.overflowing_add(self, other: u128): (u128, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u128 = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn u128.overflowing_sub(self, other: u128): (u128, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: u128 = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn u128.overflowing_mul(self, other: u128): (u128, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn u128.div_euclid(self, other: u128): u128 {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn u128.rem_euclid(self, other: u128): u128 {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: u128 = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn u128.abs_diff(self, other: u128): u128 {
     if self > other {
         return self - other
@@ -5030,6 +7167,11 @@ fn u128.abs_diff(self, other: u128): u128 {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn u128.count_ones(self): u32 {
     let mut v: u128 = self
     let mut n: u32 = 0
@@ -5041,11 +7183,21 @@ fn u128.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: u128 = 7
+/// assert_eq(x.count_zeros(), 128 - 3)
+/// ```
 fn u128.count_zeros(self): u32 {
     128 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.leading_zeros(), 128 - 1)
+/// ```
 fn u128.leading_zeros(self): u32 {
     let v: u128 = self
     let mut n: u32 = 0
@@ -5061,6 +7213,11 @@ fn u128.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: u128 = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn u128.trailing_zeros(self): u32 {
     let v: u128 = self
     let mut n: u32 = 0
@@ -5074,6 +7231,11 @@ fn u128.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn u128.rotate_left(self, n: u32): u128 {
     let v: u128 = self
     let k = n % 128
@@ -5085,6 +7247,11 @@ fn u128.rotate_left(self, n: u32): u128 {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: u128 = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn u128.rotate_right(self, n: u32): u128 {
     let v: u128 = self
     let k = n % 128
@@ -5096,6 +7263,11 @@ fn u128.rotate_right(self, n: u32): u128 {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn u128.swap_bytes(self): u128 {
     let v: u128 = self
     let mut r: u128 = 0
@@ -5109,6 +7281,11 @@ fn u128.swap_bytes(self): u128 {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn u128.reverse_bits(self): u128 {
     let v: u128 = self
     let mut r: u128 = 0
@@ -5121,11 +7298,23 @@ fn u128.reverse_bits(self): u128 {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: u128 = 8
+/// assert(x.is_power_of_two())
+/// let y: u128 = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn u128.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: u128 = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn u128.checked_next_power_of_two(self): Option<u128> {
     if self <= 1 {
         return Some(1)
@@ -5138,6 +7327,11 @@ fn u128.checked_next_power_of_two(self): Option<u128> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: u128 = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn u128.next_power_of_two(self): u128 {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -5146,6 +7340,11 @@ fn u128.next_power_of_two(self): u128 {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: u128 = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn u128.isqrt(self): u128 {
     let mut n: u128 = self
     let mut result: u128 = 0
@@ -5166,6 +7365,11 @@ fn u128.isqrt(self): u128 {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u128 = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn u128.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -5174,6 +7378,11 @@ fn u128.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: u128 = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn u128.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -5222,6 +7431,11 @@ fn __u128_parse_radix(s: str, radix: u32): Result<u128, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: u128 = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn u128.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -5252,18 +7466,33 @@ fn u128.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn u128.to_le_bytes(self): [u8; 16] {
     let v: u128 = self
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 120) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.to_be_bytes()[16 - 1], 1)
+/// ```
 fn u128.to_be_bytes(self): [u8; 16] {
     let v: u128 = self
     [((v >> 120) & 255) as u8, ((v >> 112) & 255) as u8, ((v >> 104) & 255) as u8, ((v >> 96) & 255) as u8, ((v >> 88) & 255) as u8, ((v >> 80) & 255) as u8, ((v >> 72) & 255) as u8, ((v >> 64) & 255) as u8, ((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: u128 = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn u128.to_ne_bytes(self): [u8; 16] {
     self.to_le_bytes()
 }
@@ -5292,6 +7521,11 @@ const __usize_MAX: usize = 18446744073709551615
 const __usize_BITS: u32 = 64
 
 /// `self` to the power `exp`. Overflow panics in a debug build and wraps in a release build, like `*`.
+///
+/// ```
+/// let x: usize = 3
+/// assert_eq(x.pow(3), 27)
+/// ```
 fn usize.pow(self, exp: u32): usize {
     let mut result: usize = 1
     let mut base = self
@@ -5309,6 +7543,11 @@ fn usize.pow(self, exp: u32): usize {
 }
 
 /// `self` to the power `exp`, wrapping around on overflow.
+///
+/// ```
+/// let x: usize = 2
+/// assert_eq(x.wrapping_pow(3), 8)
+/// ```
 fn usize.wrapping_pow(self, exp: u32): usize {
     let mut result: usize = 1
     let mut base = self
@@ -5326,6 +7565,11 @@ fn usize.wrapping_pow(self, exp: u32): usize {
 }
 
 /// `self` to the power `exp`, or `None` on overflow.
+///
+/// ```
+/// let x: usize = 3
+/// assert_eq(x.checked_pow(3), Some(27))
+/// ```
 fn usize.checked_pow(self, exp: u32): Option<usize> {
     let mut result: usize = 1
     let mut base = self
@@ -5357,6 +7601,12 @@ fn usize.checked_pow(self, exp: u32): Option<usize> {
 }
 
 /// `self / other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.checked_div(2), Some(3))
+/// assert(x.checked_div(0).is_none())
+/// ```
 fn usize.checked_div(self, other: usize): Option<usize> {
     if other == 0 {
         return None
@@ -5365,6 +7615,12 @@ fn usize.checked_div(self, other: usize): Option<usize> {
 }
 
 /// `self % other`, or `None` when `other` is 0.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.checked_rem(4), Some(3))
+/// assert(x.checked_rem(0).is_none())
+/// ```
 fn usize.checked_rem(self, other: usize): Option<usize> {
     if other == 0 {
         return None
@@ -5373,6 +7629,13 @@ fn usize.checked_rem(self, other: usize): Option<usize> {
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
+///
+/// ```
+/// let x: usize = 0
+/// assert_eq(x.checked_neg(), Some(0))
+/// let y: usize = 1
+/// assert(y.checked_neg().is_none())
+/// ```
 fn usize.checked_neg(self): Option<usize> {
     if self == 0 {
         return Some(0)
@@ -5381,12 +7644,23 @@ fn usize.checked_neg(self): Option<usize> {
 }
 
 /// `-self`, wrapping around (two's complement).
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.wrapping_neg().wrapping_neg(), 1)
+/// ```
 fn usize.wrapping_neg(self): usize {
     let zero: usize = 0
     zero.wrapping_sub(self)
 }
 
 /// `self << n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.checked_shl(2), Some(4))
+/// assert(x.checked_shl(200).is_none())
+/// ```
 fn usize.checked_shl(self, n: u32): Option<usize> {
     if n >= 64 {
         return None
@@ -5395,6 +7669,12 @@ fn usize.checked_shl(self, n: u32): Option<usize> {
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
+///
+/// ```
+/// let x: usize = 8
+/// assert_eq(x.checked_shr(2), Some(2))
+/// assert(x.checked_shr(200).is_none())
+/// ```
 fn usize.checked_shr(self, n: u32): Option<usize> {
     if n >= 64 {
         return None
@@ -5403,16 +7683,31 @@ fn usize.checked_shr(self, n: u32): Option<usize> {
 }
 
 /// `self << (n % bits)`.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.wrapping_shl(3), 8)
+/// ```
 fn usize.wrapping_shl(self, n: u32): usize {
     self << (n % 64)
 }
 
 /// `self >> (n % bits)`.
+///
+/// ```
+/// let x: usize = 16
+/// assert_eq(x.wrapping_shr(2), 4)
+/// ```
 fn usize.wrapping_shr(self, n: u32): usize {
     self >> (n % 64)
 }
 
 /// `self + other`, clamped to the range of the type.
+///
+/// ```
+/// let x: usize = 2
+/// assert_eq(x.saturating_add(3), 5)
+/// ```
 fn usize.saturating_add(self, other: usize): usize {
     match self.checked_add(other) {
         Some(v) => v,
@@ -5421,6 +7716,11 @@ fn usize.saturating_add(self, other: usize): usize {
 }
 
 /// `self - other`, clamped to the range of the type.
+///
+/// ```
+/// let x: usize = 5
+/// assert_eq(x.saturating_sub(2), 3)
+/// ```
 fn usize.saturating_sub(self, other: usize): usize {
     match self.checked_sub(other) {
         Some(v) => v,
@@ -5429,6 +7729,11 @@ fn usize.saturating_sub(self, other: usize): usize {
 }
 
 /// `self * other`, clamped to the range of the type.
+///
+/// ```
+/// let x: usize = 2
+/// assert_eq(x.saturating_mul(3), 6)
+/// ```
 fn usize.saturating_mul(self, other: usize): usize {
     match self.checked_mul(other) {
         Some(v) => v,
@@ -5437,6 +7742,11 @@ fn usize.saturating_mul(self, other: usize): usize {
 }
 
 /// `self` to the power `exp`, clamped to the range of the type.
+///
+/// ```
+/// let x: usize = 2
+/// assert_eq(x.saturating_pow(3), 8)
+/// ```
 fn usize.saturating_pow(self, exp: u32): usize {
     match self.checked_pow(exp) {
         Some(v) => v,
@@ -5445,31 +7755,61 @@ fn usize.saturating_pow(self, exp: u32): usize {
 }
 
 /// `self + other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.overflowing_add(2), (3, false))
+/// ```
 fn usize.overflowing_add(self, other: usize): (usize, bool) {
     (self.wrapping_add(other), self.checked_add(other).is_none())
 }
 
 /// `self - other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: usize = 5
+/// assert_eq(x.overflowing_sub(2), (3, false))
+/// ```
 fn usize.overflowing_sub(self, other: usize): (usize, bool) {
     (self.wrapping_sub(other), self.checked_sub(other).is_none())
 }
 
 /// `self * other` wrapped, and whether it overflowed.
+///
+/// ```
+/// let x: usize = 3
+/// assert_eq(x.overflowing_mul(4), (12, false))
+/// ```
 fn usize.overflowing_mul(self, other: usize): (usize, bool) {
     (self.wrapping_mul(other), self.checked_mul(other).is_none())
 }
 
 /// `self / other`. Division by 0 panics.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.div_euclid(2), 3)
+/// ```
 fn usize.div_euclid(self, other: usize): usize {
     self / other
 }
 
 /// `self % other`. Division by 0 panics.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.rem_euclid(4), 3)
+/// ```
 fn usize.rem_euclid(self, other: usize): usize {
     self % other
 }
 
 /// The distance between `self` and `other`.
+///
+/// ```
+/// let x: usize = 5
+/// assert_eq(x.abs_diff(9), 4)
+/// ```
 fn usize.abs_diff(self, other: usize): usize {
     if self > other {
         return self - other
@@ -5478,6 +7818,11 @@ fn usize.abs_diff(self, other: usize): usize {
 }
 
 /// The number of 1 bits.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.count_ones(), 3)
+/// ```
 fn usize.count_ones(self): u32 {
     let mut v: usize = self
     let mut n: u32 = 0
@@ -5489,11 +7834,21 @@ fn usize.count_ones(self): u32 {
 }
 
 /// The number of 0 bits.
+///
+/// ```
+/// let x: usize = 7
+/// assert_eq(x.count_zeros(), 64 - 3)
+/// ```
 fn usize.count_zeros(self): u32 {
     64 - self.count_ones()
 }
 
 /// The number of 0 bits before the first 1 bit, from the top.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.leading_zeros(), 64 - 1)
+/// ```
 fn usize.leading_zeros(self): u32 {
     let v: usize = self
     let mut n: u32 = 0
@@ -5509,6 +7864,11 @@ fn usize.leading_zeros(self): u32 {
 }
 
 /// The number of 0 bits after the last 1 bit, from the bottom.
+///
+/// ```
+/// let x: usize = 8
+/// assert_eq(x.trailing_zeros(), 3)
+/// ```
 fn usize.trailing_zeros(self): u32 {
     let v: usize = self
     let mut n: u32 = 0
@@ -5522,6 +7882,11 @@ fn usize.trailing_zeros(self): u32 {
 }
 
 /// The bits rotated left by `n % bits` places.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.rotate_left(1), 2)
+/// ```
 fn usize.rotate_left(self, n: u32): usize {
     let v: usize = self
     let k = n % 64
@@ -5533,6 +7898,11 @@ fn usize.rotate_left(self, n: u32): usize {
 }
 
 /// The bits rotated right by `n % bits` places.
+///
+/// ```
+/// let x: usize = 2
+/// assert_eq(x.rotate_right(1), 1)
+/// ```
 fn usize.rotate_right(self, n: u32): usize {
     let v: usize = self
     let k = n % 64
@@ -5544,6 +7914,11 @@ fn usize.rotate_right(self, n: u32): usize {
 }
 
 /// The bytes in the opposite order.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.swap_bytes().swap_bytes(), 1)
+/// ```
 fn usize.swap_bytes(self): usize {
     let v: usize = self
     let mut r: usize = 0
@@ -5557,6 +7932,11 @@ fn usize.swap_bytes(self): usize {
 }
 
 /// The bits in the opposite order.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.reverse_bits().reverse_bits(), 1)
+/// ```
 fn usize.reverse_bits(self): usize {
     let v: usize = self
     let mut r: usize = 0
@@ -5569,11 +7949,23 @@ fn usize.reverse_bits(self): usize {
 }
 
 /// Whether exactly one bit is set.
+///
+/// ```
+/// let x: usize = 8
+/// assert(x.is_power_of_two())
+/// let y: usize = 6
+/// assert(!y.is_power_of_two())
+/// ```
 fn usize.is_power_of_two(self): bool {
     self != 0 && self & (self - 1) == 0
 }
 
 /// The smallest power of two that is at least `self`, or `None` when it does not fit.
+///
+/// ```
+/// let x: usize = 5
+/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// ```
 fn usize.checked_next_power_of_two(self): Option<usize> {
     if self <= 1 {
         return Some(1)
@@ -5586,6 +7978,11 @@ fn usize.checked_next_power_of_two(self): Option<usize> {
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
+///
+/// ```
+/// let x: usize = 5
+/// assert_eq(x.next_power_of_two(), 8)
+/// ```
 fn usize.next_power_of_two(self): usize {
     match self.checked_next_power_of_two() {
         Some(v) => v,
@@ -5594,6 +7991,11 @@ fn usize.next_power_of_two(self): usize {
 }
 
 /// The integer square root: the greatest `r` with `r * r <= self`.
+///
+/// ```
+/// let x: usize = 17
+/// assert_eq(x.isqrt(), 4)
+/// ```
 fn usize.isqrt(self): usize {
     let mut n: usize = self
     let mut result: usize = 0
@@ -5614,6 +8016,11 @@ fn usize.isqrt(self): usize {
 }
 
 /// The base 2 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: usize = 8
+/// assert_eq(x.ilog2(), 3)
+/// ```
 fn usize.ilog2(self): u32 {
     if self <= 0 {
         panic("ilog2 of a number that is not positive")
@@ -5622,6 +8029,11 @@ fn usize.ilog2(self): u32 {
 }
 
 /// The base 10 logarithm rounded down. A `self` that is 0 panics.
+///
+/// ```
+/// let x: usize = 100
+/// assert_eq(x.ilog10(), 2)
+/// ```
 fn usize.ilog10(self): u32 {
     if self <= 0 {
         panic("ilog10 of a number that is not positive")
@@ -5670,6 +8082,11 @@ fn __usize_parse_radix(s: str, radix: u32): Result<usize, ParseIntError> {
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
+///
+/// ```
+/// let x: usize = 11
+/// assert_eq(x.to_string_radix(2), String.from("1011"))
+/// ```
 fn usize.to_string_radix(self, radix: u32): String {
     if radix < 2 || radix > 36 {
         panic("to_string_radix: radix must be 2 to 36")
@@ -5700,18 +8117,33 @@ fn usize.to_string_radix(self, radix: u32): String {
 }
 
 /// The bytes in little-endian order.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.to_le_bytes()[0], 1)
+/// ```
 fn usize.to_le_bytes(self): [u8; 8] {
     let v: usize = self
     [((v >> 0) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 56) & 255) as u8]
 }
 
 /// The bytes in big-endian order.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.to_be_bytes()[8 - 1], 1)
+/// ```
 fn usize.to_be_bytes(self): [u8; 8] {
     let v: usize = self
     [((v >> 56) & 255) as u8, ((v >> 48) & 255) as u8, ((v >> 40) & 255) as u8, ((v >> 32) & 255) as u8, ((v >> 24) & 255) as u8, ((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, ((v >> 0) & 255) as u8]
 }
 
 /// The bytes in the byte order of the target, which is little-endian on every supported platform.
+///
+/// ```
+/// let x: usize = 1
+/// assert_eq(x.to_ne_bytes()[0], 1)
+/// ```
 fn usize.to_ne_bytes(self): [u8; 8] {
     self.to_le_bytes()
 }

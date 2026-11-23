@@ -306,6 +306,12 @@ jobs:
         if: matrix.part == 'tools-lang'
         run: python3 tests/check_doc.py
 
+      # The standard library's documentation (issue #938): every public item documented and given an example,
+      # and every example compiled and run.
+      - name: Check standard library docs
+        if: matrix.part == 'tools-lang'
+        run: python3 tests/check_std_docs.py
+
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
         if: matrix.part == 'tools-build'
@@ -790,6 +796,12 @@ jobs:
       - name: Check burdin doc
         if: matrix.part == 'tools-lang'
         run: python3 tests/check_doc.py
+
+      # The standard library's documentation (issue #938): every public item documented and given an example,
+      # and every example compiled and run.
+      - name: Check standard library docs
+        if: matrix.part == 'tools-lang'
+        run: python3 tests/check_std_docs.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts
@@ -1295,6 +1307,12 @@ jobs:
       - name: Check burdin doc
         if: matrix.part == 'tools-lang'
         run: python tests/check_doc.py
+
+      # The standard library's documentation (issue #938): every public item documented and given an example,
+      # and every example compiled and run.
+      - name: Check standard library docs
+        if: matrix.part == 'tools-lang'
+        run: python tests/check_std_docs.py
 
       # Build-script caching, declared and embedded inputs, --emit-deps, and the bindgen command line (issue #177).
       - name: Check build scripts

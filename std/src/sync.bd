@@ -196,6 +196,12 @@ priv fn __release_read(h: CPtr<LockHead>) {
 /// A value that one task at a time can use. `lock` waits for the value and runs a closure with an exclusive view of it.
 /// A lock is shared by borrowing it (`task.scope`) or by putting it in a `Shared` (`Shared.new(Mutex.new(0))`).
 /// Calling `lock` again on the same mutex from inside the closure waits forever. See spec/shared.md, SH8-SH9.
+///
+/// ```
+/// let m = Mutex.new(10)
+/// let doubled = m.lock(|v| *v * 2)
+/// assert_eq(doubled, 20)
+/// ```
 struct Mutex<T> {
     head: CPtr<u8>
     /// The protected value, as the only element of a list: its storage is on the heap, so a view of it stays where it is
@@ -211,6 +217,12 @@ unsafe Mutex<T>: Sync where T: Send { }
 
 Mutex<T> {
     /// A mutex that holds `value`.
+    ///
+    /// ```
+    /// let m = Mutex.new(String.from("a"))
+    /// m.lock(|s| s.push_str("b"))
+    /// assert_eq(m.lock(|s| s.len()), 2)
+    /// ```
     fn new(own value: T): Mutex<T> {
         let mut list = List<T>.new()
         list.push(value)
@@ -219,6 +231,14 @@ Mutex<T> {
 
     /// Waits until no other task holds the mutex, runs `f` with an exclusive view of the value, releases the mutex, and
     /// returns what `f` returned.
+    ///
+    /// ```
+    /// let counter = Mutex.new(0)
+    /// counter.lock(|v| {
+    ///     *v = *v + 5
+    /// })
+    /// assert_eq(counter.lock(|v| *v), 5)
+    /// ```
     fn lock<R, F: FnOnce(&mut T): R>(self, own f: F): R {
         unsafe {
             __acquire(self.head as CPtr<LockHead>, true)
@@ -230,6 +250,11 @@ Mutex<T> {
     }
 
     /// Like `lock`, but never waits: when another task holds the mutex, `f` does not run and the result is `None`.
+    ///
+    /// ```
+    /// let m = Mutex.new(1)
+    /// assert_eq(m.try_lock(|v| *v + 1), Some(2))
+    /// ```
     fn try_lock<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, true) {
@@ -243,11 +268,24 @@ Mutex<T> {
     }
 
     /// An exclusive view of the value. No lock is taken: `mut self` already says that nobody else can reach the mutex.
+    ///
+    /// ```
+    /// let mut m = Mutex.new(3)
+    /// let slot = m.get_mut()
+    /// *slot = 4
+    /// assert_eq(m.lock(|x| *x), 4)
+    /// ```
     fn get_mut(mut self): &mut T {
         &mut self.value[0]
     }
 
     /// Takes the value out of the mutex.
+    ///
+    /// ```
+    /// let m = Mutex.new(String.from("x"))
+    /// let s = m.into_inner()
+    /// assert_eq(s, String.from("x"))
+    /// ```
     fn into_inner(own self): T {
         let mut inner = self
         match inner.value.pop() {
@@ -270,6 +308,13 @@ Mutex<T>: Drop {
 /// A value that many tasks can read at once or one task can write. `read` runs a closure with a shared view, `write` with
 /// an exclusive one. A new reader waits while a writer is waiting, so writers are not starved; a task that calls `read`
 /// again from inside a `read` closure while a writer is waiting waits forever. See spec/shared.md, SH10.
+///
+/// ```
+/// let lock = RwLock.new(5)
+/// assert_eq(lock.read(|v| *v), 5)
+/// lock.write(|v| *v = 6)
+/// assert_eq(lock.read(|v| *v), 6)
+/// ```
 struct RwLock<T> {
     head: CPtr<u8>
     value: List<T>
@@ -282,6 +327,11 @@ unsafe RwLock<T>: Sync where T: Send + Sync { }
 
 RwLock<T> {
     /// A lock that holds `value`.
+    ///
+    /// ```
+    /// let lock = RwLock.new(1)
+    /// assert_eq(lock.read(|v| *v + 1), 2)
+    /// ```
     fn new(own value: T): RwLock<T> {
         let mut list = List<T>.new()
         list.push(value)
@@ -289,6 +339,11 @@ RwLock<T> {
     }
 
     /// Waits until no writer holds the lock, runs `f` with a shared view of the value, and returns what `f` returned.
+    ///
+    /// ```
+    /// let lock = RwLock.new(String.from("abc"))
+    /// assert_eq(lock.read(|s| s.len()), 3)
+    /// ```
     fn read<R, F: FnOnce(&T): R>(self, own f: F): R {
         unsafe {
             __acquire(self.head as CPtr<LockHead>, false)
@@ -300,6 +355,12 @@ RwLock<T> {
     }
 
     /// Waits until nobody holds the lock, runs `f` with an exclusive view of the value, and returns what `f` returned.
+    ///
+    /// ```
+    /// let lock = RwLock.new(0)
+    /// lock.write(|v| *v = 9)
+    /// assert_eq(lock.read(|v| *v), 9)
+    /// ```
     fn write<R, F: FnOnce(&mut T): R>(self, own f: F): R {
         unsafe {
             __acquire(self.head as CPtr<LockHead>, true)
@@ -311,6 +372,11 @@ RwLock<T> {
     }
 
     /// Like `read`, but never waits: `None` when a writer holds the lock or is waiting for it.
+    ///
+    /// ```
+    /// let lock = RwLock.new(4)
+    /// assert_eq(lock.try_read(|v| *v), Some(4))
+    /// ```
     fn try_read<R, F: FnOnce(&T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, false) {
@@ -324,6 +390,14 @@ RwLock<T> {
     }
 
     /// Like `write`, but never waits: `None` when anyone holds the lock.
+    ///
+    /// ```
+    /// let lock = RwLock.new(4)
+    /// assert_eq(lock.try_write(|v| {
+    ///     *v = 5
+    ///     *v
+    /// }), Some(5))
+    /// ```
     fn try_write<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, true) {
@@ -337,11 +411,23 @@ RwLock<T> {
     }
 
     /// An exclusive view of the value. No lock is taken: `mut self` says nobody else can reach the lock.
+    ///
+    /// ```
+    /// let mut lock = RwLock.new(1)
+    /// let slot = lock.get_mut()
+    /// *slot = 2
+    /// assert_eq(lock.read(|v| *v), 2)
+    /// ```
     fn get_mut(mut self): &mut T {
         &mut self.value[0]
     }
 
     /// Takes the value out of the lock.
+    ///
+    /// ```
+    /// let lock = RwLock.new(7)
+    /// assert_eq(lock.into_inner(), 7)
+    /// ```
     fn into_inner(own self): T {
         let mut inner = self
         match inner.value.pop() {

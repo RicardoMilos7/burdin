@@ -5,6 +5,12 @@ use rw.{BufRead, Read, Write}
 // Files. The bytes come from the compiler's file primitives; the signatures and the error type are Burdin.
 
 /// Reads the whole file at `path` as text.
+///
+/// ```
+/// write_file("burdin-doc-read.txt", "text").unwrap()
+/// assert_eq(read_to_string("burdin-doc-read.txt").unwrap(), String.from("text"))
+/// remove_file("burdin-doc-read.txt").unwrap()
+/// ```
 fn read_to_string(path: str): Result<String, IoError> {
     match __offload(|| __read_to_string(path)) {
         Ok(text) => Ok(text),
@@ -17,6 +23,12 @@ fn read_to_string(path: str): Result<String, IoError> {
 }
 
 /// Writes `text` to `path`, replacing what was there.
+///
+/// ```
+/// write_file("burdin-doc-write.txt", "hi").unwrap()
+/// assert_eq(read_to_string("burdin-doc-write.txt").unwrap(), String.from("hi"))
+/// remove_file("burdin-doc-write.txt").unwrap()
+/// ```
 fn write_file(path: str, text: str): Result<(), IoError> {
     match __offload(|| __write_file(path, text)) {
         Ok(_) => Ok(()),
@@ -33,31 +45,67 @@ fn write_file(path: str, text: str): Result<(), IoError> {
 
 /// The handle to standard output. Its writes share the buffer `print` and `println` use, so their bytes stay in
 /// the order the program wrote them.
+///
+/// ```
+/// let mut out = stdout()
+/// out.write("ok\n".as_bytes()).unwrap()
+/// out.flush().unwrap()
+/// ```
 struct Stdout { }
 
 /// The handle to standard error. Writes are unbuffered and reach the operating system during the call.
+///
+/// ```
+/// let mut err = stderr()
+/// assert_eq(err.write("warning\n".as_bytes()).unwrap(), 8)
+/// ```
 struct Stderr { }
 
 /// The handle to standard input. The runtime reads it a block at a time.
+///
+/// ```
+/// let mut buf = List<u8>.new()
+/// assert_eq(stdin().read(mut buf, 0).unwrap(), 0)
+/// ```
 struct Stdin { }
 
 /// The handle to standard output.
+///
+/// ```
+/// let mut out = stdout()
+/// out.write("hello\n".as_bytes()).unwrap()
+/// out.flush().unwrap()
+/// ```
 fn stdout(): Stdout {
     Stdout { }
 }
 
 /// The handle to standard error.
+///
+/// ```
+/// let mut err = stderr()
+/// assert_eq(err.write("note\n".as_bytes()).unwrap(), 5)
+/// ```
 fn stderr(): Stderr {
     Stderr { }
 }
 
 /// The handle to standard input.
+///
+/// ```
+/// let mut buf = List<u8>.new()
+/// assert_eq(stdin().read(mut buf, 0).unwrap(), 0)
+/// ```
 fn stdin(): Stdin {
     Stdin { }
 }
 
 Stdout {
     /// Whether standard output is a terminal. A pipe or a file is not.
+    ///
+    /// ```
+    /// println("stdout is a terminal: {}", stdout().is_terminal())
+    /// ```
     fn is_terminal(self): bool {
         __is_terminal(1)
     }
@@ -82,6 +130,10 @@ Stdout: Write {
 
 Stderr {
     /// Whether standard error is a terminal.
+    ///
+    /// ```
+    /// println("stderr is a terminal: {}", stderr().is_terminal())
+    /// ```
     fn is_terminal(self): bool {
         __is_terminal(2)
     }
@@ -103,6 +155,10 @@ Stderr: Write {
 
 Stdin {
     /// Whether standard input is a terminal.
+    ///
+    /// ```
+    /// println("stdin is a terminal: {}", stdin().is_terminal())
+    /// ```
     fn is_terminal(self): bool {
         __is_terminal(0)
     }

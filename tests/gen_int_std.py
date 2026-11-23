@@ -33,6 +33,58 @@ use unicode.to_digit
 """
 
 
+# The doc example of each integer function (issue #938). A template is written once and shown for every type: `{t}`
+# is the type's name, `{nb}` its size in bytes, and `{bits}` its width in bits. `name#s` applies to the signed types
+# only and `name#u` to the unsigned types only; the plain name applies to both. Every example is a doc test
+# (`burdin test --doc` runs it), so the values fit every width.
+EXAMPLES = {
+    "abs_diff": ["let x: {t} = 5", "assert_eq(x.abs_diff(9), 4)"],
+    "checked_div": ["let x: {t} = 7", "assert_eq(x.checked_div(2), Some(3))", "assert(x.checked_div(0).is_none())"],
+    "checked_neg#s": ["let x: {t} = 5", "assert_eq(x.checked_neg(), Some(-5))"],
+    "checked_neg#u": ["let x: {t} = 0", "assert_eq(x.checked_neg(), Some(0))", "let y: {t} = 1", "assert(y.checked_neg().is_none())"],
+    "checked_next_power_of_two": ["let x: {t} = 5", "assert_eq(x.checked_next_power_of_two(), Some(8))"],
+    "checked_pow": ["let x: {t} = 3", "assert_eq(x.checked_pow(3), Some(27))"],
+    "checked_rem": ["let x: {t} = 7", "assert_eq(x.checked_rem(4), Some(3))", "assert(x.checked_rem(0).is_none())"],
+    "checked_shl": ["let x: {t} = 1", "assert_eq(x.checked_shl(2), Some(4))", "assert(x.checked_shl(200).is_none())"],
+    "checked_shr": ["let x: {t} = 8", "assert_eq(x.checked_shr(2), Some(2))", "assert(x.checked_shr(200).is_none())"],
+    "count_ones": ["let x: {t} = 7", "assert_eq(x.count_ones(), 3)"],
+    "count_zeros": ["let x: {t} = 7", "assert_eq(x.count_zeros(), {bits} - 3)"],
+    "div_euclid": ["let x: {t} = 7", "assert_eq(x.div_euclid(2), 3)"],
+    "ilog10": ["let x: {t} = 100", "assert_eq(x.ilog10(), 2)"],
+    "ilog2": ["let x: {t} = 8", "assert_eq(x.ilog2(), 3)"],
+    "is_negative": ["let x: {t} = -3", "assert(x.is_negative())", "assert(!x.is_positive())"],
+    "is_positive": ["let x: {t} = 3", "assert(x.is_positive())"],
+    "is_power_of_two": ["let x: {t} = 8", "assert(x.is_power_of_two())", "let y: {t} = 6", "assert(!y.is_power_of_two())"],
+    "isqrt": ["let x: {t} = 17", "assert_eq(x.isqrt(), 4)"],
+    "leading_zeros": ["let x: {t} = 1", "assert_eq(x.leading_zeros(), {bits} - 1)"],
+    "next_power_of_two": ["let x: {t} = 5", "assert_eq(x.next_power_of_two(), 8)"],
+    "overflowing_add": ["let x: {t} = 1", "assert_eq(x.overflowing_add(2), (3, false))"],
+    "overflowing_mul": ["let x: {t} = 3", "assert_eq(x.overflowing_mul(4), (12, false))"],
+    "overflowing_sub": ["let x: {t} = 5", "assert_eq(x.overflowing_sub(2), (3, false))"],
+    "pow": ["let x: {t} = 3", "assert_eq(x.pow(3), 27)"],
+    "rem_euclid": ["let x: {t} = 7", "assert_eq(x.rem_euclid(4), 3)"],
+    "reverse_bits": ["let x: {t} = 1", "assert_eq(x.reverse_bits().reverse_bits(), 1)"],
+    "rotate_left": ["let x: {t} = 1", "assert_eq(x.rotate_left(1), 2)"],
+    "rotate_right": ["let x: {t} = 2", "assert_eq(x.rotate_right(1), 1)"],
+    "saturating_add": ["let x: {t} = 2", "assert_eq(x.saturating_add(3), 5)"],
+    "saturating_mul": ["let x: {t} = 2", "assert_eq(x.saturating_mul(3), 6)"],
+    "saturating_pow": ["let x: {t} = 2", "assert_eq(x.saturating_pow(3), 8)"],
+    "saturating_sub": ["let x: {t} = 5", "assert_eq(x.saturating_sub(2), 3)"],
+    "signum": ["let x: {t} = -4", "assert_eq(x.signum(), -1)"],
+    "swap_bytes": ["let x: {t} = 1", "assert_eq(x.swap_bytes().swap_bytes(), 1)"],
+    "to_be_bytes": ["let x: {t} = 1", "assert_eq(x.to_be_bytes()[{nb} - 1], 1)"],
+    "to_le_bytes": ["let x: {t} = 1", "assert_eq(x.to_le_bytes()[0], 1)"],
+    "to_ne_bytes": ["let x: {t} = 1", "assert_eq(x.to_ne_bytes()[0], 1)"],
+    "to_string_radix": ["let x: {t} = 11", 'assert_eq(x.to_string_radix(2), String.from("1011"))'],
+    "trailing_zeros": ["let x: {t} = 8", "assert_eq(x.trailing_zeros(), 3)"],
+    "unsigned_abs#s": ["let x: {t} = -4", "assert_eq(x.unsigned_abs(), 4)"],
+    "wrapping_neg": ["let x: {t} = 1", "assert_eq(x.wrapping_neg().wrapping_neg(), 1)"],
+    "wrapping_pow": ["let x: {t} = 2", "assert_eq(x.wrapping_pow(3), 8)"],
+    "wrapping_shl": ["let x: {t} = 1", "assert_eq(x.wrapping_shl(3), 8)"],
+    "wrapping_shr": ["let x: {t} = 16", "assert_eq(x.wrapping_shr(2), 4)"],
+}
+
+
 def unsigned_of(name: str) -> str:
     return "u" + name[1:] if name.startswith("i") else name
 
@@ -46,6 +98,15 @@ def gen(name: str, bits: int, signed: bool) -> str:
 
     def fn(sig: str, doc: str, body: str) -> None:
         w(f"/// {doc}")
+        method = sig.split("(")[0]
+        example = EXAMPLES.get(f"{method}#{'s' if signed else 'u'}", EXAMPLES.get(method))
+        if example is not None:
+            w("///")
+            w("/// ```")
+            for line in example:
+                shown = line.replace("{t}", t).replace("{nb}", str(nbytes)).replace("{bits}", str(bits))
+                w(f"/// {shown}" if shown else "///")
+            w("/// ```")
         w(f"fn {t}.{sig} {{")
         for line in body.strip("\n").split("\n"):
             w(("    " + line) if line.strip() else "")
@@ -345,7 +406,11 @@ if k == 0 {{
 }}
 let back: u32 = {bits} - k
 ((v >> k) | (v << back)) as {t}""")
-    fn(f"swap_bytes(self): {t}", "The bytes in the opposite order.", f"""
+    if nbytes == 1:
+        # One byte has no order to reverse; the loop below would shift a `u8` by 8 (issue #938).
+        fn(f"swap_bytes(self): {t}", "The bytes in the opposite order. A type of one byte is unchanged.", "self")
+    else:
+        fn(f"swap_bytes(self): {t}", "The bytes in the opposite order.", f"""
 let v: {u} = {to_u}
 let mut r: {u} = 0
 let mut i: u32 = 0
