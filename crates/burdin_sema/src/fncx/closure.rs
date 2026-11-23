@@ -557,6 +557,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Float(_)
         | K::Char(_)
         | K::Str(_)
+        | K::Bytes(_)
         | K::Const(_)
         | K::None
         | K::Continue(_)
