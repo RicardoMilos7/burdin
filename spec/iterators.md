@@ -333,17 +333,22 @@ matches `I` against the argument (the checker's symbolic call), and a call on a 
 associated function.
 
 **IT17 `collect` and its target.** `Iterator<T>` has the default method `collect<C: FromIterator<T>>(own self): C`, which
-is `C.from_iter(self)`. A member call takes explicit type arguments only when its method declares type parameters of its
-own (`arguments.md`, TA1; `grammar.md` §6). `collect` declares none today, so `x.collect<Set<i32>>()` is E0003
-(`arguments.md`, TA5); accepting that list is #922. Until then **the target is named by the expected type**: the annotation of a `let`, the
-declared type of a parameter, the return type, a field's type. A call with no expected type cannot tell what `C` stands
-for (E0003), and a target that does not implement `FromIterator<T>` for the items the iterator yields is E0141. Collecting
-is eager: it consumes the whole iterator, except where IT19 says it stops early.
+is `C.from_iter(self)`. **The target is named in one of two ways.** Either the call gives it as the explicit type
+argument `x.collect<Set<i32>>()` (`arguments.md`, TA5; grammar.md, "member type arguments"), which seeds `C` with that
+type, or the call takes it from the **expected type**: the annotation of a `let`, the declared type of a parameter, the
+return type, a field's type. A call with neither (`let xs = [1, 2].into_iter().collect()`, with no annotation) cannot tell
+what `C` stands for (E0003). An explicit list of another length is E0003 (TA2), and a target that does not implement
+`FromIterator<T>` for the items the iterator yields is E0141, whichever way it was named. On a value of a type parameter
+bounded by `Iterator<T>` the target is checked against `C`'s bounds the same way, and `C` may be a type parameter of the
+enclosing function. Collecting is eager: it consumes the whole iterator, except where IT19 says it stops early.
 
 ```
 let names: Set<String> = people.iter().map(|p| p.name.clone()).collect()
+let ids = people.iter().map(|p| p.id).collect<List<i32>>()
 fn evens(xs: List<i32>): List<i32> { xs.into_iter().filter(|x| *x % 2 == 0).collect() }
 ```
+
+Only `collect` takes an explicit target. The other `Iterator<T>` defaults and the adapters keep their refusal (TA5).
 
 **IT18 Built-in targets.** The compiler implements `FromIterator` for these types without an impl block, and
 `Type.from_iter(it)` is the call of a `std` function that builds it (`__list_from_iter` and the others in `iter.bd`):

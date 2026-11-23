@@ -1,0 +1,67 @@
+//@ run
+//> [1, 2, 3]
+//> 3 true false
+//> a-b
+//> [9, 5, 1]
+//> 3
+//> 2
+//> 2 1
+//> [2, 1]
+//> [7, 8]
+
+// `collect` takes its target as an explicit type argument, `collect<C>()`, as well as from the expected type (IT17,
+// TA5). The list seeds `C`, so a call needs no annotation. It works on a concrete iterator, on an iterator type
+// parameter (where `C` may itself be a type parameter), and on a user iterator.
+
+struct Countdown {
+    n: i32
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.n == 0 { return None }
+        self.n = self.n - 1
+        Some(self.n + 1)
+    }
+}
+
+fn count_items<I: Iterator<i32>>(own it: I): usize {
+    let items = it.collect<List<i32>>()
+    items.len()
+}
+
+fn build<C: FromIterator<i32>, I: Iterator<i32>>(own it: I): C {
+    it.collect<C>()
+}
+
+fn main() {
+    // A list, from the explicit argument: no annotation and no expected type.
+    let list = [1, 2, 3].into_iter().collect<List<i32>>()
+    println("{list:?}")
+
+    // A set and a string, from the explicit argument.
+    let set = [1, 2, 3, 2, 1].into_iter().collect<Set<i32>>()
+    println("{set.len()} {set.contains(2)} {set.contains(7)}")
+    let text = "a-b".chars().collect<String>()
+    println("{text}")
+
+    // The expected type still names the target when no argument is written.
+    let heap: PriorityHeap<i32> = [5, 9, 1].into_iter().collect()
+    println("{heap.into_sorted_list():?}")
+
+    // A type parameter receiver: the explicit list is checked against its `Iterator<i32>` bound.
+    println("{count_items([4, 5, 6].into_iter())}")
+    println("{count_items(Countdown { n: 2 })}")
+
+    // A generic `C` forwarded as the explicit argument; its `FromIterator<i32>` bound is the caller's.
+    let deque: Deque<i32> = build([2, 9].into_iter())
+    println("{deque.len()} {deque.len() - 1}")
+
+    // A user iterator collects through the same default.
+    let picked = Countdown { n: 2 }
+    let picked_list = picked.collect<List<i32>>()
+    println("{picked_list:?}")
+
+    let tail = [7, 8].into_iter().collect<List<i32>>()
+    println("{tail:?}")
+}

@@ -299,9 +299,13 @@ The call dispatch is `call`, `method_call`, `method_call_on_with`, `module_call`
 `fncx/call.rs`; `reject_type_args` and `user_generic_method` are the refusals. `GenericParam.hidden` marks an `impl`
 parameter in the AST and `GenericFn.hidden` and `GenericMethod.hidden` carry it to sema. Tests:
 `tests/m07_generics/explicit_type_args.bd` (runs), `explicit_type_args_errors.bd` (codes and lines),
-`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. Not done: explicit
-arguments on a method reached through a type parameter's bound (refused, TA5) and on built-in methods such as
-`it.collect<...>()`. A generic method called as an associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
+`comparison_not_type_args.bd`, and the packages `explicit_module_call/` and `explicit_json_call/`. `it.collect<C>()` takes
+its target as the explicit argument (issue #922, `iterators.md` IT17): `method_call_on_with` admits it through
+`iterator_collect`, `iterator_method` passes the list to the `Iterator<T>` default, and `param_method_call` passes it to
+`generic_bound_args` for a value of a type parameter bounded by `Iterator`, checking `C`'s bounds. Tests:
+`tests/m24_stdlib/collect_explicit.bd` and `collect_explicit_errors.bd`. Not done: explicit arguments on other methods
+reached through a type parameter's bound, and on other built-in methods (refused, TA5). A generic method called as an
+associated function with `self` (`Holder.wrap<i32>(h, 2)`) reports
 its parameter types unsubstituted, the same without the list (a pre-existing quirk, not changed here).
 **Language server: `self`, bounds, incomplete calls, and typed completion (issues #849, #851, #852, 2026-11-20).**
 `self.` in a method resolves to the type its impl block or extension method names (`FileIndex::self_owner`), so `self.`

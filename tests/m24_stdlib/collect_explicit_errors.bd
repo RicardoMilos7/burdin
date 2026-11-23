@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// Explicit targets that `collect` refuses (IT17, TA2, TA3, TA5): a list of the wrong length, a target that does not
+// implement `FromIterator<T>` for the items, a closure value (which is not an iterator, so takes no type arguments),
+// and a type parameter receiver whose bound does not allow the target. Each refused call is reported on its line.
+
+fn bad<I: Iterator<i32>>(own it: I): i32 {
+    let total = it.collect<i32>() //~ E0141
+    total
+}
+
+fn main() {
+    let a = [1, 2].into_iter().collect<List<i32>, Set<i32>>() //~ E0003
+    println("{a.len()}")
+    let b = [1, 2].into_iter().collect<i32>() //~ E0141
+    println("{b}")
+    let c = [1, 2].into_iter().collect<List<i64>>() //~ E0141
+    println("{c.len()}")
+    let f = |x: i32| x + 1
+    let d = f.collect<List<i32>>() //~ E0003
+    println("{d}")
+}

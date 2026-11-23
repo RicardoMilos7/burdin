@@ -432,8 +432,9 @@ required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are 
 A range in an index (`s[a..b]`) is a slice view: on `str` and `String` both ends must be character boundaries, or
 the slice panics (`spec/stdlib.md`, "Slicing and character boundaries").
 
-Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), and a method or associated
-function with type parameters of its own (`arguments.md`, TA1). The `<` starts a type list when one parses and its
+Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), a method or associated
+function with type parameters of its own (`arguments.md`, TA1), and the `collect` of an iterator, `it.collect<Set<i32>>()`
+(`iterators.md`, IT17). The `<` starts a type list when one parses and its
 closing `>` is followed by `(`, `.`, or `{` — the same look-ahead as rule 8.2, without the uppercase-name requirement;
 otherwise it is a comparison. A list on a callee that takes no type arguments is E0003 (`arguments.md`, TA5).
 
