@@ -104,7 +104,7 @@ asks for it.
 | `skip(own self, count: usize)` | `SkipIter<Self, T>` | drops the first `count` items |
 | `fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F)` | `A` | left to right |
 | `count(mut self)` | `usize` | consumes the iterator |
-| `any<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first accepted item; `std` declares it as `any_item` (see below) |
+| `any<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first accepted item; a keyword name in a method declaration (`grammar.md`, issue #933) lets `std` declare it as `any` (see below) |
 | `all<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
 | `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
@@ -224,10 +224,10 @@ a call cannot infer them. `rposition` needs a double-ended source (IT14), which 
 issue, as do the language changes they wait for.
 
 
-`any` is a keyword (it begins the `any I` existential type, `existentials.md`), so a method cannot be declared with that
-name and `std` declares it as `any_item` (decided in issue #707: the name stays); the compiler spells the call
-`.any(...)`. The default methods are instantiated on demand for each receiver type, whether the
-receiver is built in or a user type. They are ordinary `std` code: `MapIter`, `FilterIter`, `TakeIter`, and
+`any` is a keyword (it begins the `any I` existential type, `existentials.md`). A keyword is a member name in a method
+declaration (`grammar.md`, issue #933), so `std` declares the method as `fn any` and the call is `.any(...)`. Issue #707
+had kept the name `any_item`; issue #933 replaced it, so `any_item` is no longer provided. The default methods are
+instantiated on demand for each receiver type, whether the receiver is built in or a user type. They are ordinary `std` code: `MapIter`, `FilterIter`, `TakeIter`, and
 `SkipIter` are generic structs whose `next` calls the source's `next` and the closure.
 
 `it.sum()` and `it.product()` are compiler-known: on an iterator of integers or floats they synthesize the loop that

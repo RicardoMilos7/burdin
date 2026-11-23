@@ -201,25 +201,21 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// The names the iteration protocol provides for `recv`: `next`, `sum`, the `Iterator` defaults (spelled
-    /// `any` for `any_item`), and the eager `List` helpers.
+    /// The names the iteration protocol provides for `recv`: `next`, `sum`, the `Iterator` defaults, and the eager
+    /// `List` helpers.
     fn iterator_name(&self, recv: &Ty, name: &str) -> bool {
-        let spelled = if name == "any" { "any_item" } else { name };
         let iterator = self.globals.iterator_item(recv, &[]).is_some();
         if iterator
-            && (spelled == "next"
-                || spelled == "sum"
-                || spelled == "product"
-                || self.globals.iterator_item_fn(spelled).is_some())
+            && (name == "next" || name == "sum" || name == "product" || self.globals.iterator_item_fn(name).is_some())
         {
             return true;
         }
-        if iterator && self.globals.iterator_adapter_fn(spelled).is_some() {
+        if iterator && self.globals.iterator_adapter_fn(name).is_some() {
             return true;
         }
         if iterator
             && let Some(iface) = self.globals.iterator_iface
-            && self.globals.interfaces[iface].methods.iter().any(|m| m.name == spelled)
+            && self.globals.interfaces[iface].methods.iter().any(|m| m.name == name)
         {
             return true;
         }
@@ -228,7 +224,7 @@ impl<'t> Sema<'t> {
         }
         if self.globals.iterable_item(recv, &[]).is_some()
             && let Some(iface) = self.globals.iterable_iface
-            && self.globals.interfaces[iface].methods.iter().any(|m| m.name == spelled)
+            && self.globals.interfaces[iface].methods.iter().any(|m| m.name == name)
         {
             return true;
         }

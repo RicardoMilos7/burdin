@@ -36,9 +36,12 @@ let  loop  match  mut  orelse  own  priv  return  self  Self  struct  true  type
 ```
 
 `derive` starts a user derive declaration (`DeriveItem`, `reflection.md`, RFL8). No keyword is an identifier, except
-immediately after a `.` in a member position, where it is a member name: that is how `.any(...)` reaches the
-`Iterator` default method declared as `any_item` (`iterators.md`, IT9), and why a member may be spelled `any` or
-`impl` now that both are keywords.
+in a member position, where it is a member name (issue #933). The member positions are a word immediately after a `.`
+and the name of a method declared in an `impl` block, an `interface`, or a `derive` body (`MemberFnSig`, below). The
+member names are `any`, `impl`, `error`, `comptime`, and `derive`: the words a `.` already lets stand as names. So
+`.any(...)` reaches the `Iterator` default method `any` (`iterators.md`, IT9), and `fn any(self)` declares it. The
+name of an extension method follows a `.` in its declaration (`fn Type.name`), so it may be a member name too. A
+keyword is still rejected as the name of a free function or an `extern` function, since no `.` reaches those names.
 
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `fuzz` (item start, followed
@@ -116,11 +119,15 @@ Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | Comptime
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
+(* A method in an `impl` block, an `interface`, or a `derive` body: its name may also be a member name (issue #933). *)
+MemberFnSig   = [ "unsafe" ] "fn" MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
+MemberName    = IDENT | "any" | "impl" | "error" | "comptime" | "derive" ;
+                                                        (* the words a `.` lets stand as names (Keywords) *)
 
 (* `fn Type.name(self, ...)`: an extension method. The receiver is the type path before the last dot, including
    the type parameters it declares (`List<T>`), or a slice type (`fn [T].first(self)`, `fn [[T]].concat(self)`);
    `<...>` after the method name declares method-level parameters. `spec/extensions.md`, EX1. *)
-ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
+ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 ParamList     = Param { "," Param } [ "," ] ;
 Param         = SelfParam | [ "comptime" ] [ Convention ] IDENT ":" Type [ "=" Expr ] ;
                                                         (* `comptime` takes a compile-time value: comptime.md, CT4 *)
@@ -158,14 +165,14 @@ ErrorVariant  = Variant [ "from" ] STRING ;
 
 InterfaceItem = "interface" IDENT [ GenericParams ] [ "requires" Bounds ] "{" { InterfaceMember } "}" ;
 InterfaceMember = InterfaceFn | AssociatedType ;
-InterfaceFn   = FnSig [ Block ] ;                       (* a body makes it a default method *)
+InterfaceFn   = MemberFnSig [ Block ] ;                 (* a body makes it a default method *)
 (* `type Name` declares an associated type; it takes no bound and no default in stage 1 (`associated-types.md`, AT1). *)
 AssociatedType = "type" IDENT ;
 
 ImplBlock     = [ "unsafe" ] Type [ ":" TypePath ] [ WhereClause ] "{" { ImplItem } "}" ;
                 (* `unsafe` is required for `Send` and `Sync` and allowed for nothing else (E0281); spec/shared.md SH5 *)
 ImplItem      = ImplFn | AssociatedTypeBinding ;
-ImplFn        = [ "priv" ] FnItem ;
+ImplFn        = [ "priv" ] MemberFnSig Block ;
 (* In a `Type: Interface` block, every associated type of the interface is bound exactly once
    (`associated-types.md`, AT2). An impl block with no interface cannot bind one (E0144). *)
 AssociatedTypeBinding = "type" IDENT "=" Type ;

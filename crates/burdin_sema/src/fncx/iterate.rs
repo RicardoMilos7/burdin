@@ -31,9 +31,6 @@ impl FnCx<'_> {
             return None;
         }
         let builtin_item = self.globals.builtin_iterator_item(&recv_ty, &self.bounds);
-        // `.any(...)` is the adapter's spelling; `any` is reserved as an identifier, so `std` declares the
-        // method as `any_item` (spec/iterators.md, IT9).
-        let lookup = if name.name == "any" { "any_item" } else { name.name.as_str() };
         if name.name == "next" && args.is_empty() {
             let item = builtin_item?;
             if is_place_expr(&recv) && !self.place_mutable(&recv) {
@@ -112,7 +109,7 @@ impl FnCx<'_> {
         }
         let item = self.globals.iterator_item(&recv_ty, &self.bounds)?;
         let iface = self.globals.iterator_iface?;
-        let method = self.globals.interfaces[iface].methods.iter().position(|m| m.name == lookup)?;
+        let method = self.globals.interfaces[iface].methods.iter().position(|m| m.name == name.name)?;
         if !self.globals.interfaces[iface].methods[method].has_default {
             return None;
         }

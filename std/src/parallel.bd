@@ -168,8 +168,8 @@ interface ParallelIterator<T> requires Sync {
         total
     }
 
-    /// Whether `f` accepts some item (`any` is a keyword, so the method is `any_item`, as on `Iterator`). It may stop early.
-    fn any_item<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
+    /// Whether `f` accepts some item, as on `Iterator`. It may stop early.
+    fn any<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let found = AtomicBool.new(false)
         let parts = __chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
@@ -529,7 +529,7 @@ ParFilter<I, T, F>: ParallelValues<T> where I: ParallelValues<T>, F: Fn(&T): boo
 
 ParFilterMap<I, T, U, F>: ParallelValues<U> where I: ParallelIterator<T>, F: Fn(T): Option<U> + Send + Sync, U: Send {}
 
-/// The items of a list, moved out one by one. An item the pipeline never asks for (a `take` or an early `any_item`) is
+/// The items of a list, moved out one by one. An item the pipeline never asks for (a `take` or an early `any`) is
 /// dropped with the list.
 struct ParList<T> {
     slots: List<Mutex<Option<T>>>,

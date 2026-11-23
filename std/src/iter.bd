@@ -205,13 +205,12 @@ interface Iterator<T> {
         }
     }
 
-    /// Whether `f` accepts any item. Stops at the first one it does. The adapter is spelled `.any(...)`; the
-    /// method is named `any_item` because `any` is reserved until milestone 15 (spec/iterators.md, IT9).
+    /// Whether `f` accepts any item. Stops at the first one it does (spec/iterators.md, IT9).
     ///
     /// ```
-    /// assert([1, 2].into_iter().any_item(|x| x == 2))
+    /// assert([1, 2].into_iter().any(|x| x == 2))
     /// ```
-    fn any_item<F: FnMut(T): bool>(mut self, own f: F): bool {
+    fn any<F: FnMut(T): bool>(mut self, own f: F): bool {
         let mut f = f
         loop {
             match self.next() {

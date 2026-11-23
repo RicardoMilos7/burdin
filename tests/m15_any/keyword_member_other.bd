@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// Only the words a `.` lets stand as names may name a method: `if` is still a keyword in a method declaration
+// (spec/grammar.md, "Keywords"; issue #933).
+
+struct Flag {
+    on: bool
+}
+
+Flag {
+    fn if(self): bool { //~ E0001
+        self.on
+    }
+}
+
+fn main() {}

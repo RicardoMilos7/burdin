@@ -230,3 +230,4 @@ The executable form is `tests/m15_any/`:
 | AN6 | `downcast.bd`, `downcast_generic.bd`, `marker_interface.bd`, `not_implementing.bd` (E0141) |
 | AN8, AN9 | `display_any.bd`, `debug_any.bd`, `requires_methods.bd`, `not_interface.bd` (E0200) |
 | AN11 | `drop_glue.bd`, `downcast.bd` (the runtime paths) |
+| Keyword member names (`grammar.md`, issue #933) | `keyword_member_declaration.bd`, `keyword_fn_name_free.bd`, `keyword_member_other.bd`, `any_item_removed.bd` |

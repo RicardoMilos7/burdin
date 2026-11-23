@@ -1648,7 +1648,7 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 ## Iteration
 
 `std` declares `Iterator<T>` (`next`, plus the default methods `map`, `filter`, `take`, `skip`, `fold`, `count`,
-`any_item`, `all`, `find`, `to_list`, and, from issue #708, `collect`; and, from issue #706, `enumerate`, `zip`, `chain`, `flat_map`, `take_while`,
+`any`, `all`, `find`, `to_list`, and, from issue #708, `collect`; and, from issue #706, `enumerate`, `zip`, `chain`, `flat_map`, `take_while`,
 `skip_while`, `map_while`, `step_by`, `inspect`, and `peekable`; and, from issue #707, `last`, `nth`, `position`,
 `for_each`, `reduce`, `partition`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `try_fold`, and `try_for_each`), the
 marker `Iterable<T>`, and `DoubleEndedIterator<T>` (`next_back`). The adapters that need a particular kind of source are

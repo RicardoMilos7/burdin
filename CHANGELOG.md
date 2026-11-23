@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #933: a keyword can name a method declared in an `impl` block, an `interface`, or a `derive` body, so `std`
+  declares the `Iterator` default method as `fn any` and the `any_item` workaround is gone (`spec/grammar.md`,
+  "Keywords"; `spec/iterators.md`, IT9). The words are the ones a `.` already lets stand as names: `any`, `impl`,
+  `error`, `comptime`, and `derive`. A free function and an `extern` function keep their identifier names. Tests:
+  `tests/m15_any/keyword_member_declaration`, `keyword_fn_name_free`, `keyword_member_other`, `any_item_removed`,
+  and the `any` call sites in `tests/s3_parallel` and `tests/m13_iterators`; parser unit tests in
+  `crates/burdin_syntax/src/parser/mod.rs`.
 - Issue #938: every public item of the standard library has a doc comment and at least one example, and every
   example is built and run with its doc-test attributes. `tests/check_std_docs.py` is the gate (`spec/doc.md`, DC25):
   it fails on an undocumented item, an item with no example outside `tests/std_docs/no_example.txt` (now empty), an
