@@ -9,6 +9,24 @@ use burdin_diag::{Code, Span};
 use burdin_tir::{self as tir, Builtin, FnSig, FuncId, LocalKind, Ty};
 use std::rc::Rc;
 
+/// The prelude constructors that take one payload and can be used as a function value (CL11).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Ctor {
+    Some,
+    Ok,
+    Err,
+}
+
+impl Ctor {
+    fn name(self) -> &'static str {
+        match self {
+            Ctor::Some => "Some",
+            Ctor::Ok => "Ok",
+            Ctor::Err => "Err",
+        }
+    }
+}
+
 impl FnCx<'_> {
     /// A named, non-generic function used as a value. Its closure parameter list is the function's parameter
     /// types; every argument is passed by value (CL6) and then forwarded with the function's own conventions.
@@ -65,30 +83,93 @@ impl FnCx<'_> {
         self.value_closure(fn_sig, &mutable, span, |args| mk(tir::ExprKind::Builtin(b, args), ret, span))
     }
 
-    /// `Some` used as a value. A constructor has no signature of its own, so the expected closure type fixes the
-    /// element: its one parameter and the `Option` result must name the same type.
-    pub(super) fn some_value(&mut self, expect: Option<&Ty>, span: Span) -> tir::Expr {
-        let elem = match expect {
-            Some(Ty::Fn { sig, .. })
-                if sig.params.len() == 1 && matches!(&*sig.ret, Ty::Option(t) if **t == sig.params[0]) =>
-            {
-                sig.params[0].clone()
-            }
-            _ => {
-                self.diags.error(
-                    Code::TYPE_MISMATCH,
-                    span,
-                    "cannot tell the type of `Some` used as a value; write the closure type, as in \
-                     `let f: Fn(i32): Option<i32> = Some`",
-                );
-                return error_expr(span);
+    /// `Some`, `Ok`, or `Err` used as a value (CL11). A constructor has no signature of its own, so the expected
+    /// closure type fixes its type arguments. The closure's one parameter is the payload; the expected result gives
+    /// the argument the payload does not fix (`Err`'s `T`, `Ok`'s `E`), and `Some`'s result is built from the payload
+    /// alone, so an open result (`map`'s `U`) is bound by the call. An argument the expected type leaves open is E0003.
+    pub(super) fn constructor_value(&mut self, ctor: Ctor, expect: Option<&Ty>, span: Span) -> tir::Expr {
+        let name = ctor.name();
+        let sig = match expect {
+            Some(Ty::Fn { sig, .. }) => sig.clone(),
+            Some(Ty::Error) => return error_expr(span),
+            _ => return self.constructor_untyped(ctor, span),
+        };
+        let [payload] = sig.params.as_slice() else {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`{name}` takes 1 argument, but the closure type has {} parameters", sig.params.len()),
+            );
+            return error_expr(span);
+        };
+        let payload = payload.clone();
+        let ret = (*sig.ret).clone();
+        if ret == Ty::Error || payload == Ty::Error {
+            return error_expr(span);
+        }
+        if self.is_open(&payload) {
+            return self.constructor_untyped(ctor, span);
+        }
+        let result = match ctor {
+            Ctor::Some => Ty::Option(Box::new(payload.clone())),
+            Ctor::Ok | Ctor::Err => {
+                let Ty::Result(t, e) = &ret else {
+                    if self.is_open(&ret) {
+                        return self.constructor_untyped(ctor, span);
+                    }
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        format!("`{name}` used as a value must return a `Result`, but the closure type returns {ret}"),
+                    );
+                    return error_expr(span);
+                };
+                // `Ok` fixes `T` from the payload and takes `E` from the result; `Err` the reverse.
+                let other = if ctor == Ctor::Ok { e } else { t };
+                if other.as_ref() == &Ty::Error {
+                    return error_expr(span);
+                }
+                if self.is_open(other) {
+                    return self.constructor_untyped(ctor, span);
+                }
+                if ctor == Ctor::Ok {
+                    Ty::Result(Box::new(payload.clone()), e.clone())
+                } else {
+                    Ty::Result(t.clone(), Box::new(payload.clone()))
+                }
             }
         };
-        let fn_sig = FnSig { params: vec![elem.clone()], ret: Box::new(Ty::Option(Box::new(elem.clone()))) };
+        let fn_sig = FnSig { params: vec![payload], ret: Box::new(result.clone()) };
         self.value_closure(fn_sig, &[false], span, |args| {
-            let arg = args.into_iter().next().expect("`Some` takes one argument");
-            mk(tir::ExprKind::Some(Box::new(arg)), Ty::Option(Box::new(elem)), span)
+            let arg = args.into_iter().next().expect("a constructor takes one argument");
+            let kind = match ctor {
+                Ctor::Some => tir::ExprKind::Some(Box::new(arg)),
+                Ctor::Ok => tir::ExprKind::Ok(Box::new(arg)),
+                Ctor::Err => tir::ExprKind::Err(Box::new(arg)),
+            };
+            mk(kind, result, span)
         })
+    }
+
+    /// The error for a constructor used as a value where nothing says what its type arguments are.
+    fn constructor_untyped(&mut self, ctor: Ctor, span: Span) -> tir::Expr {
+        let (name, example) = match ctor {
+            Ctor::Some => ("Some", "let f: Fn(i32): Option<i32> = Some"),
+            Ctor::Ok => ("Ok", "let f: Fn(i32): Result<i32, String> = Ok"),
+            Ctor::Err => ("Err", "let f: Fn(String): Result<i32, String> = Err"),
+        };
+        self.diags.error(
+            Code::TYPE_MISMATCH,
+            span,
+            format!("cannot tell the type of `{name}` used as a value; write the closure type, as in `{example}`"),
+        );
+        error_expr(span)
+    }
+
+    /// A type parameter the call has not bound yet (`U` in `fn map<U, F: Fn(T): U>`), as opposed to one of this
+    /// function's own type parameters, which are in scope with their bounds.
+    fn is_open(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Param(name) if !self.bounds.iter().any(|(p, _)| p.as_str() == name.as_ref()))
     }
 
     /// Builds a captureless closure value whose body `build` receives its parameters as locals, in order.

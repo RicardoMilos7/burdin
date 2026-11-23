@@ -885,8 +885,9 @@ word. Every method except `new` and `with_capacity` exists for every allocator a
 The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
 to the other. If you need the lazy form of `xs.map(f)`, write `xs.iter().map(f)`: the closure then takes the item
 (`T`, or `&T` for a type that is not `Copy`) rather than a view. If you need the eager form of a lazy chain, call
-`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. `filter` and `find` need `T: Clone` only on the
-eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
+`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. A prelude constructor is a closure value too: `Some`
+maps the items to `Option`s, as in `xs.iter().map(Some).collect()`, while `Ok` and `Err` need the other type argument
+written in a closure type (`memory-rules.md` CL11). `filter` and `find` need `T: Clone` only on the eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
 
 The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
 empty list with room for `n` elements, allocating the buffer up front through the default allocator or through the

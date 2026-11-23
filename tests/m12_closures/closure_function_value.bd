@@ -2,8 +2,11 @@
 //> 5
 //> builtin
 //> 7
+//> 8
+//> bad
 
-// A named function, a built-in function, and `Some` are first-class where a closure type is expected (CL11).
+// A named function, a built-in function, and `Some`, `Ok`, and `Err` are first-class where a closure type is
+// expected (CL11). The expected closure type fixes the constructor's type arguments.
 fn add(x: i32, y: i32): i32 {
     x + y
 }
@@ -17,4 +20,10 @@ fn main() {
 
     let s: Fn(i32): Option<i32> = Some
     println(s(7).unwrap().to_string())
+
+    let ok: Fn(i32): Result<i32, String> = Ok
+    println(ok(8).unwrap().to_string())
+
+    let err: Fn(String): Result<i32, String> = Err
+    println(err("bad".to_string()).unwrap_err())
 }

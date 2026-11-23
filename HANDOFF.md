@@ -4,6 +4,18 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Prelude constructors as function values (issue #931, 2026-11-24).** Decision: one rule for `Some`, `Ok`, and `Err`,
+not a special case for `Some`. The expected closure type fixes the constructor's type arguments: its one parameter is
+the payload, and the expected result gives the other argument (`Ok`'s error type, `Err`'s value type). `Some` builds
+`Option<P>` from the payload alone, so `xs.iter().map(Some)` works now and `map`'s `U` is bound to `Option<i32>`. Any
+argument the expected type leaves open is E0003, so `xs.iter().map(Ok)` is still E0003: the call cannot know the error
+type, and inference does not defer to the later `collect`. Write the closure type instead (`let f: Fn(i32): Result<i32,
+String> = Ok`, then `xs.iter().map(f)`). User enum variants are unchanged: `Shape.Circle` as a value is still E0003, a
+separate decision. The rule is CL11 in `spec/memory-rules.md`; the code is `constructor_value` in
+`crates/burdin_sema/src/fncx/fnvalue.rs`. A failed argument no longer adds a second "cannot tell what `U` stands for"
+error at the call (`crates/burdin_sema/src/fncx/generic.rs`). Tests: `tests/m12_closures/closure_function_value` (extended),
+`closure_constructor_value` (run), and the compile-fail `closure_constructor_untyped`, `closure_constructor_mismatch`,
+and `closure_constructor_open`.
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already

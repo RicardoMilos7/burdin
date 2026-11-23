@@ -37,7 +37,7 @@ page.
 ## Why the owners differ
 
 - `m12` (closures) owned calls and the first-class function surface; calls, named functions, built-in functions, and
-  `Some` as a value are implemented with closures. Using a generic or `extern` function as a value is the remaining
+  `Some`, `Ok`, and `Err` as a value are implemented with closures. Using a generic or `extern` function as a value is the remaining
   Stage 1 work, because it needs the callee's type arguments or the C calling convention.
 - `m19` (operators) no longer owns a built-in interface implemented by hand: milestone 19 decided that the operator
   interfaces are ordinary `std` interfaces (`spec/operators.md`, OP2), so implementing `Add`, `Index`, and the rest

@@ -471,16 +471,26 @@ E0002 and putting one in a derived comparison is E0130. A closure may be stored 
 `Option`, or `Result` only when it owns its captures (CL3).
 
 **CL11 Function values.** A non-generic function name, a built-in function name (`println`, `panic`, the runtime
-helpers), or `Some` may be used where a closure type is expected. It becomes a captureless closure of kind `Fn`
-whose body forwards its arguments to the function, so CL6's rule applies: every closure parameter is owned and each
-argument is moved into the call. Forwarding uses the function's own conventions (a read-only or `mut` parameter is
-passed by address, an `own` parameter by value). The value is first-class and owns only its empty capture record. A
-function whose return type is a view (`str`, `&T`, `[T]`) cannot be used this way: the returned view would point
-into the closure's own argument, which is dropped when the call returns (E0171). An `unsafe fn` cannot be used as a
-value either, because a closure call has no `unsafe` boundary (E0161); write a closure that calls it in an `unsafe`
-block. A generic function or an `extern` function as a value is E9000 for now.
+helpers), or one of the prelude constructors `Some`, `Ok`, or `Err` may be used where a closure type is expected. It
+becomes a captureless closure of kind `Fn` whose body forwards its arguments to the function, so CL6's rule applies:
+every closure parameter is owned and each argument is moved into the call. Forwarding uses the function's own
+conventions (a read-only or `mut` parameter is passed by address, an `own` parameter by value). The value is
+first-class and owns only its empty capture record. A function whose return type is a view (`str`, `&T`, `[T]`)
+cannot be used this way: the returned view would point into the closure's own argument, which is dropped when the call
+returns (E0171). An `unsafe fn` cannot be used as a value either, because a closure call has no `unsafe` boundary
+(E0161); write a closure that calls it in an `unsafe` block. A generic function or an `extern` function as a value is
+E9000 for now.
 
-Tests: `tests/m12_closures/`.
+A constructor has no signature, so the expected closure type fixes its type arguments. The closure has exactly one
+parameter, the payload: `Some`, `Ok`, and `Err` each take one argument, so a closure with another number of parameters
+is E0003. `Some` builds `Option<P>` from the payload alone, so its result may be open in the call that takes it (a
+`map` whose result is still `U` binds `U` to `Option<P>`). `Ok` and `Err` also need the argument the payload does not
+fix: `Ok` takes its error type from the expected result, and `Err` its value type. A result of the wrong shape is
+E0003. An argument the expected type leaves open is E0003 as well, so `xs.map(Ok)` whose result is only `U` is
+E0003: nothing in the call says what the error type is. A constructor with no expected closure type is E0003.
+
+Tests: `tests/m12_closures/` (`closure_function_value.bd`, `closure_constructor_value.bd`, and the compile-fail
+`closure_constructor_untyped.bd`, `closure_constructor_mismatch.bd`, `closure_constructor_open.bd`).
 
 ## 13. Scoped tasks (SK)
 
