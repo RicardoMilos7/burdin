@@ -1,6 +1,6 @@
 # Errors (milestone 16)
 
-This is the behavior of `error` declarations, the dynamic `Error`, the default `Result<T>`, `context`, error
+This is the behavior of `error` declarations, the dynamic `AnyError`, the default `Result<T>`, `context`, error
 traces, `fn main(): Result<T>`, and typed test failures. The tests in `tests/m16_errors/` are the executable form.
 The design document's "Error handling" section is the source; this page settles how it lowers.
 
@@ -64,14 +64,14 @@ The generated block is the ordinary `Name: From<Source> { fn from(value: Source)
 unwrapped whatever it is, so a `Result<usize, E>` is unwrapped inside a function that returns `Result<(), E>`, and an
 `Option<i32>` inside one that returns `Option<String>` (`m16_errors/question_other_ok_type`).
 
-## ERR4. The dynamic `Error`
+## ERR4. The dynamic `AnyError`
 
 `std` declares the interface and the type:
 
 ```
 interface Error requires Display { }
 
-struct Error {
+struct AnyError {
     value: any Error
     frames: List<TraceFrame>
     context: String
@@ -85,8 +85,8 @@ struct TraceFrame {
 ```
 
 `Error` (the interface) is the marker: a type is an *error type* when it implements it, which requires `Display`.
-The same name in the type namespace is the dynamic error value. `any Error` is the boxed error, and an error type
-is boxed implicitly wherever the expected type is `Error`, like any other `any Interface` conversion
+`AnyError` is the dynamic error value, a struct of its own name, so the interface and the value never share one.
+`any Error` is the boxed error, and an error type is boxed implicitly wherever the expected type is `AnyError`, like any other `any Interface` conversion
 (`spec/existentials.md`, AN3): an annotation, an argument, a return, a field, an element, a `Some`/`Ok`/`Err`
 payload, or a match arm.
 
@@ -95,44 +95,44 @@ The dynamic value supports the ordinary inspection surface:
 - `e.is<T>()` is true when the box holds a `T`;
 - `e.downcast<T>()` yields `Some(value)` when it holds a `T` and consumes the box;
 - `{}` prints the wrapped error's `Display`;
-- moving, dropping, and passing an `Error` are ordinary moves.
+- moving, dropping, and passing an `AnyError` are ordinary moves.
 
-A `?`, an `Err(...)`, an annotation, or a `.context(...)` that converts an error type into `Error` boxes the
+A `?`, an `Err(...)`, an annotation, or a `.context(...)` that converts an error type into `AnyError` boxes the
 value and keeps it as `value`; the original error survives, so a downcast recovers it.
 
 ## ERR5. The default `Result<T>`
 
-`Result<T>` is written with one argument and means `Result<T, Error>`; `Result<T, E>` keeps its two-argument
+`Result<T>` is written with one argument and means `Result<T, AnyError>`; `Result<T, E>` keeps its two-argument
 form. `Ok`, `Err`, the patterns, `is_ok`, `is_err`, `unwrap`, and `expect` work unchanged, and `?` in a function
 returning `Result<U>` converts any error type into the dynamic error of ERR4.
 
 ## ERR6. `context`
 
 `res.context(message)` is a compiler-known method on `Result<T, E>`. Its argument is a `str`; it returns
-`Result<T, Error>`.
+`Result<T, AnyError>`.
 
 - `Ok(value)` passes through unchanged, and the message expression is evaluated only when there is an error.
-- `Err(e)` becomes an `Err` whose dynamic `Error` keeps the original box in `value` and records `message` in
+- `Err(e)` becomes an `Err` whose dynamic `AnyError` keeps the original box in `value` and records `message` in
   front of any context messages it already had. Printing it prints the contexts outermost first, each followed by
   `: `, then the source error, so a chain prints in order:
   `loading settings: cannot read config: file not found`. Because the original error stays boxed, `downcast`
   still recovers it after `.context`.
-- The error type `E` must be an error type (or `Error` itself); otherwise the call is E0212.
+- The error type `E` must be an error type (or `AnyError` itself); otherwise the call is E0212.
 - The context wrapper keeps the dynamic error's trace frames.
 
 `Option` has no `context` in stage 1.
 
 ## ERR7. Traces
 
-A debug build (`burdin build`/`run`/`test` without `--release`) records a `TraceFrame` in the dynamic `Error`:
+A debug build (`burdin build`/`run`/`test` without `--release`) records a `TraceFrame` in the dynamic `AnyError`:
 
-- when an error type is converted into `Error` (the creation site), and
-- at every `?` that propagates a `Result<..., Error>` outward (the propagation site).
+- when an error type is converted into `AnyError` (the creation site), and
+- at every `?` that propagates a `Result<..., AnyError>` outward (the propagation site).
 
 Frames are in order, creation first, and hold the function the error passed through, and the source file path,
 line, and column of the expression that caused the conversion (`err?` reports the `?`). `.context` keeps the
 frames it receives. A release build records none: the `frames` list stays empty and no frame is allocated. The
-`Error` value has the same layout in both profiles; only the recording differs.
+`AnyError` value has the same layout in both profiles; only the recording differs.
 
 `error.frames` is a public field (a `List<TraceFrame>`), and `TraceFrame` implements `Display` as
 `at {func} ({file}:{line}:{col})` (`spec/debug.md`, DBG3). `error.print_trace()` prints each frame on its own
@@ -141,18 +141,20 @@ call it after printing the message.
 
 ## ERR8. `fn main(): Result<T>`
 
-A `main` written directly as returning `Result<...>` is accepted:
+A `main` whose return type is `Result<...>` is accepted, written directly or through a type alias declared in the same
+file that expands to one (`spec/type-aliases.md`, AL7):
 
 - `Ok(_)` prints nothing and the process exits with status 0;
 - `Err(e)` prints `e` with `Display` to standard error, then the recorded trace frames, one per line
   (`spec/debug.md`, DBG3), and exits with status 1. A release build recorded no frames, so its output is the
   message alone.
 
-The printed error needs `Display` (E0193 at the `main` declaration otherwise). The source must write the
-`Result` type directly; an alias that resolves to a `Result` is E0003 (main's signature rule). `fn main()`
-returning unit keeps working. A `main` with parameters or any other return type is still E0003.
+The printed error needs `Display` (E0193 at the `main` declaration otherwise). An alias of a `Result` that is
+imported from another module is E0003 (main's signature rule): the wrapper is written when the file that declares
+`main` is parsed, before imports resolve, so it cannot see that alias. `fn main()` returning unit keeps working. A
+`main` with parameters or any other return type, an alias that does not expand to `Result`, is still E0003.
 
-`?` inside `main(): Result<T>` converts error types into the default `Error` (ERR4/ERR5) exactly as in any other
+`?` inside `main(): Result<T>` converts error types into the default `AnyError` (ERR4/ERR5) exactly as in any other
 function.
 
 ## ERR9. Typed test failures
@@ -336,7 +338,7 @@ Two decisions are recorded here (issue #701):
 | --- | --- |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field (or a fill character that cannot be written as source) |
 | E0211 | Two variants of one error enum convert from the same source type |
-| E0212 | An error conversion is missing: `?` between two error types with no `From` block, or an implicit conversion into `Error` from a type that does not implement `Error` |
+| E0212 | An error conversion is missing: `?` between two error types with no `From` block, or an implicit conversion into `AnyError` from a type that does not implement `Error` |
 
 `?` that is not in a function returning `Option`/`Result` is still E0160, an unknown interface or type is E0002,
 and a value that does not implement `Display` where a message needs it is E0193.

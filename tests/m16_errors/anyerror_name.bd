@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `Error` is the marker interface, not a type: the dynamic error value is `AnyError` (spec/errors.md, ERR4), so
+// `Error` in a type position is an unknown name.
+
+fn run(): Result<i32, Error> { //~ E0002
+    Ok(1)
+}
+
+fn main() {}

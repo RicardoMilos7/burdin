@@ -27,7 +27,7 @@ tests/
   m13_iterators/       the iteration protocol, adapters, ranges, user `for` loops, generic interfaces and their default methods
   m14_format/          interpolation, `Display`/`Debug`, format specifiers, `format`, output
   m15_any/             `any`/`impl` existentials, boxing, dispatch, downcast
-  m16_errors/          `error` declarations, messages, `from`, dynamic `Error`, `context`, traces, `main`
+  m16_errors/          `error` declarations, messages, `from`, dynamic `AnyError`, `context`, traces, `main`
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
   m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
@@ -272,7 +272,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0205 | The concrete type of an `impl Interface` return cannot be found: the body's returns depend on the function itself, or it never returns a value |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
-| E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
+| E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `AnyError` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
 | E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 | E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
@@ -452,8 +452,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
 21. **Errors.** `error enum` is an ordinary enum plus generated impls: `Display` from each variant's message
     template (whose placeholders name payload fields), `Error` (the std marker interface, which requires
     `Display`), and one `From<Source>` per `from` variant (a tuple variant with exactly one field). `Result<T>`
-    is `Result<T, Error>`, where `std.Error` is an owned box (`any Error`) plus the recorded trace frames. An
-    error type is boxed implicitly wherever `Error` is expected; `?` converts through `from` or into the dynamic
+    is `Result<T, AnyError>`, where `std.AnyError` is an owned box (`any Error`) plus the recorded trace frames. An
+    error type is boxed implicitly wherever `AnyError` is expected; `?` converts through `from` or into the dynamic
     error; `.context("...")` wraps the source and keeps the chain; `is`/`downcast` inspect the box. Debug builds
     record creation and propagation frames; release builds record none. `fn main(): Result<T>` prints an `Err`
     with `Display` to stderr and exits 1. In a `burdin test` build, `assert`/`assert_eq` return a typed
@@ -782,10 +782,10 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
 
 ### Errors and testing
 
-- **Error types are real.** `Result<T>` is `Result<T, Error>` (a boxed dynamic error), and `Result<T, E>` names a
+- **Error types are real.** `Result<T>` is `Result<T, AnyError>` (a boxed dynamic error), and `Result<T, E>` names a
   typed error; `error enum` declarations generate their `Display`, `Error`, and `From` impls, `.context(...)`
   keeps a chain, and debug builds record trace frames. `spec/errors.md` ERR1-ERR10; `m16_errors/*`.
-- **`?` converts through `from` or into the dynamic `Error`.** An `error enum` variant written `from` registers the
+- **`?` converts through `from` or into the dynamic `AnyError`.** An `error enum` variant written `from` registers the
   conversion automatically, a hand-written `Type: From<Source>` block still works, and an error type converts into
   `Result<T>`'s dynamic error without a block (`m16_errors/error_from_conversion.bd`, `error_missing_conversion.bd`).
   The stage 0 hand-written example remains in `m09_stdlib/question_and_from.bd`.

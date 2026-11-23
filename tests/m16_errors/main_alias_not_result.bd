@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An alias that does not expand to `Result<...>` is not a valid return type for `main` (spec/errors.md, ERR8;
+// spec/type-aliases.md, AL7).
+
+type Code = i32
+
+fn main(): Code { //~ E0003
+    0
+}

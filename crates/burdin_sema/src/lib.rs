@@ -146,7 +146,7 @@ impl EntryMode {
 /// entry point (the module index is relative to that package). With [`EntryMode::Test`], the `test` items of the
 /// entry package are declared and checked too, and `main` is not required; that is what `burdin test` builds
 /// ([`EntryMode::Bench`] is `burdin bench` over `bench` items, `spec/bench.md`). `traces` turns on the source
-/// locations the dynamic `Error` records in a debug build (`spec/errors.md`, ERR7), and `sources` is the map those
+/// locations the dynamic `AnyError` records in a debug build (`spec/errors.md`, ERR7), and `sources` is the map those
 /// locations (and the typed test assertions) are read from.
 /// Errors go to `diags`; the program is returned either way, because the memory checks still run on it to report
 /// every error in the file. Do not generate code when `diags` has errors.

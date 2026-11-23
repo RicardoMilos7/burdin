@@ -698,7 +698,7 @@ impl Globals {
                 diags.error(Code::NOT_AN_INTERFACE, span, format!("`{name}` is a type, not an interface"));
                 return Ty::Error;
             }
-            // A name may be both an interface and a type (`std.Error` is): `any Name` names the interface, so the
+            // A name may be both an interface and a type: `any Name` names the interface, so the
             // interface lookup comes first; only when there is no interface is the type rejection reported.
             if let Some(iface) = self.iface_name(module, name) {
                 return self.any_type_of(iface, &first.args, subst, module, span, diags);

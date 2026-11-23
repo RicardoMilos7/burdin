@@ -12,6 +12,21 @@ stays same-type: `str + str`, `String + String`, `s += "x"`, and numbers are sti
 in a statement stays live to the statement's end (RF3), so `s = s + "x"` is E0111; `let t = s + "x"; s = t` works. Tests:
 `tests/m19_operators/string_str_operators` (run) and `string_str_mixed_compile_fail`. The `s3_http` and `s3_tls` conformance
 tests fail on a WSL machine without the OpenSSL development libraries (`-lssl`), which is unrelated to this change.
+**Eager and lazy methods with the same names (issue #934, 2026-11-23).** The decision was to keep both forms and
+document them, not to rename one. `xs.map`, `filter`, `fold`, `any`, `all`, and `find` on a `List` stay eager (they
+build a list or a value at once, take views, and `filter`/`find` clone); `Iterator`'s methods of the same names stay
+lazy. No behavior changed. What changed is the documentation: `spec/iterators.md` IT10 has the table that tells the
+two apart, IT9 points to it, `spec/stdlib.md` (List) and `std/src/iter.bd` point each form to the other (the way to get
+an eager result from a chain is `to_list()` or `collect()`, the way to get a lazy chain from a list is `xs.iter()`).
+Tests: `tests/m13_iterators/eager_lazy_same_items` and `lazy_no_clone_plain` (run), and `eager_filter_needs_clone` and
+`eager_find_needs_clone` (E0141, the eager `Clone` requirement). Not tested: the allocation of the eager and lazy forms
+beyond what the specification says; a lazy chain allocates nothing, which only a checking-allocator test could show.
+**Dynamic error renamed to `AnyError` (issue #932, 2026-11-23).** The `std` struct that `Result<T>` defaults to and
+that `.context` returns is `AnyError` (`std/src/std.bd`; `spec/errors.md`, ERR4-ERR8). The interface keeps the name
+`Error`, so the two no longer share one: `Result<T>` means `Result<T, AnyError>`, an error type boxes implicitly into
+`AnyError`, `error enum` still lowers to `Name: Error` impls, and `any Error` is the boxed interface. The rename is
+breaking for a program that wrote the dynamic type as `Error`. The compiler finds the struct by name in
+`prelude.rs` (`std_adt_ty("AnyError")`). Tests: `tests/m16_errors/*` use the new name.
 
 **Parallel iteration (issue #971, 2026-11-23).** `std.parallel` (`std/src/parallel.bd`, `spec/parallel.md`, PR1-PR12)
 adds Rayon-style pipelines on the scheduler's own workers: sources `par_iter`, `par_iter_mut`, `par_into_iter`, and
@@ -1050,7 +1065,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Standard-library and derive surface | `spec/stdlib.md`, `spec/derives.md` | The names and signatures a stage 0 program may use (issues #28-#31), and the exact `Copy`/`Clone`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`/`Serialize`/`Deserialize` behavior, including the FNV-1a values (issue #39) |
 | Formatting | `spec/format.md`, `std/src/fmt.bd`, `crates/burdin_syntax/src/derive.rs`, `crates/burdin_sema/src/fncx/format.rs` | Milestone 14 (issue #109). Interpolated literals, `Display`/`Debug`, the specifiers, `format` and the generalized output functions, all checked at compile time and lowered to `Formatter` calls; a derived `Debug` generates an impl block as Burdin source. The tests are `tests/m14_format/` |
 | Existential types | `spec/existentials.md`, `crates/burdin_syntax`, `crates/burdin_tir`, `crates/burdin_sema`, `crates/burdin_check`, `crates/burdin_codegen` | Milestone 15 (issue #117). `any Interface` is an owned two-word heap box `{data, vtable}` with implicit boxing where an expected type is known, dynamic method calls, type-id `is`/`downcast`, and object safety (E0202). `impl Interface` in a parameter list is a hidden generic parameter with that bound. New codes E0200, E0201, E0202, and E0204; the tests are `tests/m15_any/` |
-| Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, Error>`, error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
+| Errors | `spec/errors.md`, `crates/burdin_syntax/src/error_item.rs`, `crates/burdin_sema`, `std/src/std.bd` | Milestone 16 (issue #126). `error enum` declarations lower to an ordinary enum plus generated `Display`, `Error`, and `From<Source>` impls; `Result<T>` means `Result<T, AnyError>` (the dynamic struct, renamed from `Error` by issue #932), error types box implicitly, `.context` prefixes the chain, debug builds record traces, `fn main(): Result<T>` prints an `Err`, and test failures are typed. New codes E0210, E0211, and E0212; the tests are `tests/m16_errors/` |
 | Arguments | `spec/arguments.md`, `crates/burdin_syntax`, `crates/burdin_tir` (`ParamSig.name`/`.default`), `crates/burdin_sema/src/fncx/{call,generic,item}.rs` | Milestone 17 (issue #137). `name: Type = expr` declares a constant default checked at the declaration and inserted at each call that omits it; `f(name: value)` matches a parameter by name in any order before generic inference; arguments evaluate in parameter order. New codes E0213 and E0214; the tests are `tests/m17_arguments/` |
 | Extension methods | `spec/extensions.md`, `crates/burdin_syntax/src/ast.rs` (`Item::Extension`), `crates/burdin_sema/src/extensions.rs`, `crates/burdin_sema/src/{declare,imports,prelude,resolve}.rs`, `crates/burdin_sema/src/fncx/call.rs` | Milestone 18 (issue #143). `fn Type.name(self, ...)` adds a method to a local, imported, or built-in type; visible in its module and where imported by name; methods win over a same-named extension, which gets the warning E0215 at its declaration. Generic receivers and method parameters are monomorphized. New codes E0215 (warning) and E0216; the tests are `tests/m18_extension/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
@@ -1065,7 +1080,7 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
-| Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and dynamic `Error`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting), `target.bd` (the compilation target, for `comptime if`), `reactor.bd` (the reactor thread, the timers, `__offload`, and the blocking-extern shim support), `net.bd` (TCP, UDP, `SocketAddr`, and `lookup_host`). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
+| Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and the dynamic `AnyError`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting), `target.bd` (the compilation target, for `comptime if`), `reactor.bd` (the reactor thread, the timers, `__offload`, and the blocking-extern shim support), `net.bd` (TCP, UDP, `SocketAddr`, and `lookup_host`). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
 | Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_comptime`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
 | Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check_deps.py`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check_deps.py` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
@@ -1311,7 +1326,7 @@ how to call WSL from PowerShell.
   generated `Display`, `Error`, and `From<Source>` impl blocks written as Burdin source with the declaration name's
   span. The lowering checks each message template (a placeholder must name a payload field) and each `from` (a
   one-field tuple variant, one conversion per source type, and none on a generic error enum), reporting E0210 and
-  E0211. At parse time the same module renames a written `fn main(): Result<...>` to `__burdin_main_result` and
+  E0211. At parse time the same module renames a `fn main(): Result<...>` (written directly, or through an alias of this file, AL7) to `__burdin_main_result` and
   appends a `main` that prints an `Err` with `Display` to standard error and exits 1; it also wraps each test body
   as `__burdin_test_N_body` with a `__burdin_test_N` that prints the `AssertError` before returning it, and the
   compiler appends the condition's source text and the call's location to every test-mode assertion. Sema resolves
@@ -2141,6 +2156,22 @@ Open:
   `env_clear`) is unverified.
 
 Commands: `python3 tests/check_std_docs.py` (needs a built driver; `--no-run` skips the examples), then the website build.
+
+## Session: a type alias as `main`'s return type (issue #935)
+
+`fn main(): Name` is accepted when `Name` is an alias declared in `main`'s file that expands, through other aliases of
+that file (generic or not), to `Result<...>` (`spec/type-aliases.md` AL7, `spec/errors.md` ERR8). The parser makes the
+choice, in `crates/burdin_syntax/src/error_item.rs` (`result_main_index`, `names_result`), because it writes the wrapper
+for an `Err` while it parses the file. The checker's `main` rule is unchanged. Tests: `tests/m16_errors/main_result_alias*.bd`,
+`main_alias_not_result.bd`, and `main_result_alias_imported/`.
+
+Open:
+
+- **An alias of a `Result` imported from another module is still E0003.** The wrapper cannot see the alias before
+  imports resolve. Lifting it needs the wrapper written after name resolution (a sema-side rename), which is a
+  design change to ERR8. Ask before doing it.
+- **`fn main(): Result<(), IoError>` (a `Result` whose error is not `Error`) fails in the wrapper** with E0002 (no
+  `print_trace` on `IoError`), before and after this change. Aliases behave the same way; the wrapper only supports `Result<T>`.
 
 ## Decisions already made (do not reopen without a reason)
 

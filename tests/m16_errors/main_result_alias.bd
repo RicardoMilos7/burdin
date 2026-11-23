@@ -1,10 +1,12 @@
-//@ compile-fail
+//@ run
+//> done
 
-// `main` may return unit or a `Result` written directly; an alias is not wrapped and is E0003
-// (spec/errors.md, ERR8).
+// An alias declared in main's file that expands to `Result<...>` is main's return type, exactly as `Result<...>`
+// written directly is (spec/errors.md, ERR8; spec/type-aliases.md, AL7).
 
-type Outcome = Result<(), IoError>
+type Res = Result<()>
 
-fn main(): Outcome { //~ E0003
+fn main(): Res {
+    println("done")
     Ok(())
 }

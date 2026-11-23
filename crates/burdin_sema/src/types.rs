@@ -583,7 +583,7 @@ impl Globals {
                 Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
                 Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
             ),
-            // `Result<T>` is the default-error form: `Result<T, Error>` (`spec/errors.md`, ERR5).
+            // `Result<T>` is the default-error form: `Result<T, AnyError>` (`spec/errors.md`, ERR5).
             ("Result", 1) => Ty::Result(
                 Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
                 Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),

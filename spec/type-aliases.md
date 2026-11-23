@@ -2,7 +2,7 @@
 
 A type alias gives a type another name. Milestone 21 lets an alias take parameters. This page is the exact behavior of
 generic aliases; the tests are `tests/m21_reflect/alias_generic.bd` and `alias_invalid.bd`, and the Rust unit tests
-in `crates/burdin_sema/src/impl_tests.rs`. Rule IDs are AL1-AL6.
+in `crates/burdin_sema/src/impl_tests.rs`. Rule IDs are AL1-AL7.
 
 ```
 type Pair<T> = (T, T)
@@ -44,7 +44,8 @@ others, is E0009 at the declaration, like the aliases of stage 0.
 `Pair<i32>` and `(i32, i32)` are the same type: a value of one is a value of the other, methods and interface
 implementations are those of the aliased type, and diagnostics print the aliased type. An alias adds no methods
 and no implementations of its own: an `impl` block names the type itself, and one written through an alias, generic or
-not, is E0003 (`Stacked<i32> { ... }` for `type Stacked<T> = Stack<T>`; write `Stack<i32> { ... }`).
+not, is E0003 (`Stacked<i32> { ... }` for `type Stacked<T> = Stack<T>`; write `Stack<i32> { ... }`). The one place an
+alias is looked through by name is `main`'s return type (AL7).
 
 ## AL6. Errors
 
@@ -56,7 +57,18 @@ not, is E0003 (`Stacked<i32> { ... }` for `type Stacked<T> = Stack<T>`; write `S
 | E0141 | An argument that does not meet a parameter's bound |
 | E0250 | A type argument for a const parameter or the reverse (`spec/const-generics.md`) |
 
+## AL7. `main`'s return type
+
+`fn main(): Name` is accepted when `Name` is an alias declared in the file that declares `main` and it expands, through
+any other aliases of that file, generic or not, to `Result<...>` (`spec/errors.md`, ERR8). The arguments of the alias
+are not looked at: `Outcome<()>` for `type Outcome<T> = Result<T>` is the same return type as `Result<()>`. The rule is
+applied when the file is parsed, because the generated wrapper for an `Err` is written then, before imports resolve. So
+an alias of a `Result` that is imported from another module is E0003, the same error as any other alias that does not
+expand to `Result`. An alias cycle reached from `main`'s return type is E0009 at the declaration (AL4).
+
 ## Tests
 
 `alias_generic` (tuples, arrays with a const parameter, a map, alias of alias, a generic struct field, `Table<i32>.new()`)
-and `alias_invalid` (E0003, E0009, E0141, and the impl through an alias).
+and `alias_invalid` (E0003, E0009, E0141, and the impl through an alias). AL7 is `tests/m16_errors/main_result_alias.bd`
+(run), `main_result_alias_generic.bd` (a generic alias and an alias of it, run-abort), `main_alias_not_result.bd` (E0003),
+`main_result_alias_cycle.bd` (E0009), and `main_result_alias_imported/` (an imported alias, E0003).
