@@ -318,6 +318,9 @@ pub fn emit_object_timed(
     cg.sanitized = opts.sanitize.needs_runtime();
     cg.program()?;
     cg.finish_debug();
+    if opts.sanitize.address {
+        runtime::define_asan_default_options(&context, &module)?;
+    }
     // Panic backtraces unwind through the generated frames: every definition needs an unwind table, in both
     // profiles, or `backtrace` stops at the first optimized function.
     add_unwind_tables(&module);

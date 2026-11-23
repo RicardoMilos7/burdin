@@ -103,6 +103,7 @@ Directives are line comments at any position in the root file.
 | `//@ debug-only` | Skip in release profile (overflow checks). |
 | `//@ release-only` | Skip in debug profile (`debug_assert` is dropped in release). |
 | `//@ skip-platform: os` | Skip on that host: `linux`, `macos`, or `windows`; several may be listed. |
+| `//@ skip-sanitize: name` | Skip under `--sanitize` naming that sanitizer: `address`, `leak`, `thread`, or `undefined`; several may be listed (`spec/sanitizers.md`, SAN7). |
 | `//@ link-lib: NAME` | Extra library to link. |
 | `//@ undecided: text` | Skipped; documents an open design question. |
 | `//@ suggest: E0000 applicability: message` | One suggestion the test's diagnostics carry: the diagnostic's code, the applicability (`machine-applicable`, `maybe-incorrect`, `has-placeholders`, or `unspecified`), and the exact message. May repeat; the suggestions of the test must be exactly these. The runner then applies every suggestion's edits to a copy and checks it with `burdin check` (`spec/fix.md`, FX12). The code must be listed under "Codes with suggestions". |

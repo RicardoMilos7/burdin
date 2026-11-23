@@ -762,16 +762,25 @@ def main(argv) -> int:
             print(f"{case.kind:<13} {case.rel}")
         return 0
 
+    # The sanitizers `--sanitize` names, for the `skip-sanitize` directive (spec/sanitizers.md, SAN7).
+    sanitizers = {name.strip() for name in SANITIZE.split(",")} if SANITIZE else set()
     for case in cases:
         skip_platforms = {
             value.decode("ascii", "replace")
             for raw in directive_values(case.directives, b"skip-platform")
             for value in raw.split()
         }
+        skip_sanitizers = {
+            value.decode("ascii", "replace")
+            for raw in directive_values(case.directives, b"skip-sanitize")
+            for value in raw.split()
+        }
         if case.kind == "undecided":
             case.skip = "undecided"
         elif platform in skip_platforms:
             case.skip = f"skip-platform: {platform}"
+        elif sanitizers & skip_sanitizers:
+            case.skip = f"skip-sanitize: {', '.join(sorted(sanitizers & skip_sanitizers))}"
         elif options["release"] and has_directive(case.directives, b"debug-only"):
             case.skip = "debug-only"
         elif not options["release"] and has_directive(case.directives, b"release-only"):

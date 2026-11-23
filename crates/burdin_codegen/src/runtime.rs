@@ -458,6 +458,21 @@ pub(crate) fn define_main<'ctx>(
     Ok(())
 }
 
+/// Defines `__asan_default_options` for an AddressSanitizer build (`spec/sanitizers.md`, SAN7). The sanitizer reads
+/// the string before the environment's `ASAN_OPTIONS`, which still overrides it. Its one default,
+/// `allocator_may_return_null=1`, makes a refused allocation a null pointer, as the C heap returns it (AL11): without
+/// it the sanitizer aborts on any request above its size limit, which would end a program whose `try_` operations are
+/// meant to report that refusal as a value. A test process has a clean environment, so the default is what it gets.
+pub(crate) fn define_asan_default_options<'ctx>(cx: &'ctx Context, module: &Module<'ctx>) -> GenResult<()> {
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    let f = module.add_function("__asan_default_options", ptr_ty.fn_type(&[], false), None);
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    let options = b.build_global_string_ptr("allocator_may_return_null=1", "asan.options").map_err(llvm_err)?;
+    b.build_return(Some(&options.as_pointer_value())).map_err(llvm_err)?;
+    Ok(())
+}
+
 /// Defines libFuzzer's two entry points for a `burdin fuzz` build (`spec/fuzz.md`, FZ3): `LLVMFuzzerInitialize`,
 /// which prepares the process the way `main` does for a program (the arguments, binary-safe output, the
 /// standard-output flush, and the stack guard), and `LLVMFuzzerTestOneInput(data, size)`, which calls the target
