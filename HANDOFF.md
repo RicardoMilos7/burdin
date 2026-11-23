@@ -2120,8 +2120,10 @@ written in their generators (`tests/gen_atomic_std.py`, `tests/gen_int_std.py`),
 
 Fixed on the way: `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`); `swap_bytes` on 8-bit
 integers panicked (the int generator); `burdin doc --std` listed compiler-internal `__` methods, against DC7
-(`crates/burdin_doc/src/extract.rs`); and several compiler-only items are now `priv` (`task.bd`, `channel.bd`,
-`float.bd`'s `strtod`/`strtof`).
+(`crates/burdin_doc/src/extract.rs`), including the `__` members of an interface, which were not filtered; and several
+compiler-only items are now `priv` (`task.bd`, `channel.bd`, `float.bd`'s `strtod`/`strtof`). The `std.parallel`
+items (`std/src/parallel.bd`, issue #971, merged before this gate) got their examples in the same pass: each is a
+`burdin run` example in its own doc comment, not a baseline entry.
 
 Open:
 

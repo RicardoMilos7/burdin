@@ -87,26 +87,52 @@ priv fn __accepts<T, F: Fn(&T): bool>(f: F, x: T): bool {
 
 /// A pipeline over positions `0..__par_len()`. `__par_get(i)` is the item at source position `i`, or `None` when a
 /// filter dropped it. Each position is asked for at most once per consumer, from any worker.
+///
+/// ```
+/// let total = par_range(1, 5).fold(0 as i64, |a, x| a + x, |a, b| a + b)
+/// assert_eq(total, 10)
+/// ```
 interface ParallelIterator<T> requires Sync {
     fn __par_len(self): usize
     fn __par_get(self, i: usize): Option<T>
 
     /// Applies `f` to each item.
+    ///
+    /// ```
+    /// let squares = par_range(1, 4).map(|x| x * x)
+    /// assert_eq(squares.fold(0 as i64, |a, x| a + x, |a, b| a + b), 14)
+    /// ```
     fn map<U, F: Fn(T): U + Send + Sync>(own self, own f: F): ParMap<Self, T, U, F> {
         ParMap { inner: self, f: f }
     }
 
     /// Keeps the items `f` accepts.
+    ///
+    /// ```
+    /// let evens = par_range(0, 10).filter(|x| *x % 2 == 0)
+    /// assert_eq(evens.count(), 5)
+    /// ```
     fn filter<F: Fn(&T): bool + Send + Sync>(own self, own f: F): ParFilter<Self, T, F> {
         ParFilter { inner: self, f: f }
     }
 
     /// Applies `f` and keeps the `Some` results.
+    ///
+    /// ```
+    /// let halves = par_range(0, 6).filter_map(|x| if x % 2 == 0 { Some(x / 2) } else { None })
+    /// assert_eq(halves.fold(0 as i64, |a, x| a + x, |a, b| a + b), 3)
+    /// ```
     fn filter_map<U, F: Fn(T): Option<U> + Send + Sync>(own self, own f: F): ParFilterMap<Self, T, U, F> {
         ParFilterMap { inner: self, f: f }
     }
 
     /// Calls `f` on every item, in no particular order.
+    ///
+    /// ```
+    /// let hits = AtomicUsize.new(0)
+    /// par_range(0, 100).for_each(|x| { let _ = hits.fetch_add(x as usize) })
+    /// assert_eq(hits.load(), 4950)
+    /// ```
     fn for_each<F: Fn(T) + Send + Sync>(self, own f: F) {
         let _ = __chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
@@ -121,6 +147,10 @@ interface ParallelIterator<T> requires Sync {
     }
 
     /// The number of items.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 7).filter(|x| *x > 2).count(), 4)
+    /// ```
     fn count(self): usize {
         let parts = __chunks(self.__par_len(), |lo, hi| {
             let mut n: usize = 0
@@ -143,6 +173,10 @@ interface ParallelIterator<T> requires Sync {
 
     /// Folds each chunk with `op`, starting every chunk from a clone of `init`, then combines the chunks' results in
     /// source order with `combine`. `op` and `combine` must be associative, and `init` must be neutral for both.
+    ///
+    /// ```
+    /// assert_eq(par_range(1, 5).fold(1 as i64, |a, x| a * x, |a, b| a * b), 24)
+    /// ```
     fn fold<A: Send + Sync + Clone, F: Fn(A, T): A + Send + Sync, G: Fn(A, A): A>(
         self,
         own init: A,
@@ -169,6 +203,10 @@ interface ParallelIterator<T> requires Sync {
     }
 
     /// Whether `f` accepts some item (`any` is a keyword, so the method is `any_item`, as on `Iterator`). It may stop early.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).any_item(|x| x == 7), true)
+    /// ```
     fn any_item<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let found = AtomicBool.new(false)
         let parts = __chunks(self.__par_len(), |lo, hi| {
@@ -190,6 +228,11 @@ interface ParallelIterator<T> requires Sync {
     }
 
     /// Whether `f` accepts every item. It may stop early.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).all(|x| x < 10), true)
+    /// assert_eq(par_range(0, 10).all(|x| x < 5), false)
+    /// ```
     fn all<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let failed = AtomicBool.new(false)
         let parts = __chunks(self.__par_len(), |lo, hi| {
@@ -213,8 +256,16 @@ interface ParallelIterator<T> requires Sync {
 
 /// A pipeline whose items are owned values, so a consumer may keep them: a view (`&T`) cannot be stored in a list, so a
 /// pipeline over `par_iter()` becomes one after a `map` that makes owned items (spec/parallel.md, PR3).
+///
+/// ```
+/// assert_eq(par_range(1, 4).map(|x| x * 2).reduce(|| 0, |a, b| a + b), 12)
+/// ```
 interface ParallelValues<T: Send> requires ParallelIterator<T> {
     /// Combines the items with the associative operation `op`, starting every chunk from `identity()`.
+    ///
+    /// ```
+    /// assert_eq(par_range(1, 5).reduce(|| 1, |a, b| a * b), 24)
+    /// ```
     fn reduce<I: Fn(): T + Send + Sync, F: Fn(T, T): T + Send + Sync>(self, own identity: I, own op: F): T {
         let parts = __chunks(self.__par_len(), |lo, hi| {
             let mut acc = identity()
@@ -236,6 +287,10 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     }
 
     /// The first item in source order that `f` accepts.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 100).find(|x| *x * *x > 50), Some(8))
+    /// ```
     fn find<F: Fn(&T): bool + Send + Sync>(self, own f: F): Option<T> {
         let parts = __chunks(self.__par_len(), |lo, hi| {
             let mut found: Option<T> = None
@@ -262,21 +317,37 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     }
 
     /// The least item under `f`; the first of equal items.
+    ///
+    /// ```
+    /// assert_eq(par_range(-3, 4).min_by(|a, b| (*a).cmp(*b)), Some(-3))
+    /// ```
     fn min_by<F: Fn(&T, &T): Ordering + Send + Sync>(self, own f: F): Option<T> {
         self.__best(|a, b| f(a, b) == Ordering.Less)
     }
 
     /// The greatest item under `f`; the last of equal items.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 5).max_by(|a, b| (*a).cmp(*b)), Some(4))
+    /// ```
     fn max_by<F: Fn(&T, &T): Ordering + Send + Sync>(self, own f: F): Option<T> {
         self.__best(|a, b| f(a, b) != Ordering.Less)
     }
 
     /// The item with the least key; the first of equal ones.
+    ///
+    /// ```
+    /// assert_eq(par_range(-3, 4).min_by_key(|x| *x * *x), Some(0))
+    /// ```
     fn min_by_key<K: Ord, F: Fn(&T): K + Send + Sync>(self, own f: F): Option<T> {
         self.__best(|a, b| f(a).cmp(f(b)) == Ordering.Less)
     }
 
     /// The item with the greatest key; the last of equal ones.
+    ///
+    /// ```
+    /// assert_eq(par_range(-3, 4).max_by_key(|x| *x * *x), Some(3))
+    /// ```
     fn max_by_key<K: Ord, F: Fn(&T): K + Send + Sync>(self, own f: F): Option<T> {
         self.__best(|a, b| f(a).cmp(f(b)) != Ordering.Less)
     }
@@ -325,6 +396,11 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     }
 
     /// Collects the items into a list, in source order.
+    ///
+    /// ```
+    /// let xs: List<i64> = par_range(0, 4).map(|x| x * 3).collect()
+    /// assert_eq(xs[3], 9)
+    /// ```
     fn collect(self): List<T> {
         let parts = __chunks(self.__par_len(), |lo, hi| {
             let mut items = List<T>.new()
@@ -347,24 +423,46 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
 }
 
 /// A pipeline in which every source position is an item, so positions can be numbered, skipped, and cut off.
+///
+/// ```
+/// let pairs: List<(usize, i64)> = par_range(5, 8).enumerate().collect()
+/// assert_eq(pairs[2], (2, 7))
+/// ```
 interface IndexedParallelIterator<T> requires ParallelIterator<T> {
     /// Pairs each item with its position.
+    ///
+    /// ```
+    /// assert_eq(par_range(10, 13).enumerate().map(|p| (p.0 as i64) * p.1).fold(0 as i64, |a, x| a + x, |a, b| a + b), 35)
+    /// ```
     fn enumerate(own self): ParEnumerate<Self, T> {
         ParEnumerate { inner: self }
     }
 
     /// The first `count` items.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 100).take(4).fold(0 as i64, |a, x| a + x, |a, b| a + b), 6)
+    /// ```
     fn take(own self, count: usize): ParWindow<Self, T> {
         ParWindow { inner: self, skip: 0, limit: count, limited: true }
     }
 
     /// Everything after the first `count` items.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).skip(7).fold(0 as i64, |a, x| a + x, |a, b| a + b), 24)
+    /// ```
     fn skip(own self, count: usize): ParWindow<Self, T> {
         ParWindow { inner: self, skip: count, limit: 0, limited: false }
     }
 }
 
 /// The `map` pipeline.
+///
+/// ```
+/// let doubled = par_range(1, 4).map(|x| x * 2)
+/// assert_eq(doubled.fold(0 as i64, |a, x| a + x, |a, b| a + b), 12)
+/// ```
 struct ParMap<I, T, U, F: Fn(T): U> {
     inner: I,
     f: F,
@@ -383,6 +481,10 @@ ParMap<I, T, U, F>: ParallelIterator<U> where I: ParallelIterator<T>, F: Fn(T): 
 }
 
 /// The `filter` pipeline.
+///
+/// ```
+/// assert_eq(par_range(0, 10).filter(|x| *x > 6).count(), 3)
+/// ```
 struct ParFilter<I, T, F: Fn(&T): bool> {
     inner: I,
     f: F,
@@ -407,6 +509,10 @@ ParFilter<I, T, F>: ParallelIterator<T> where I: ParallelIterator<T>, F: Fn(&T):
 }
 
 /// The `filter_map` pipeline.
+///
+/// ```
+/// assert_eq(par_range(0, 4).filter_map(|x| if x > 1 { Some(x) } else { None }).count(), 2)
+/// ```
 struct ParFilterMap<I, T, U, F: Fn(T): Option<U>> {
     inner: I,
     f: F,
@@ -425,6 +531,11 @@ ParFilterMap<I, T, U, F>: ParallelIterator<U> where I: ParallelIterator<T>, F: F
 }
 
 /// The `enumerate` pipeline.
+///
+/// ```
+/// let pairs = par_range(10, 13).enumerate()
+/// assert_eq(pairs.count(), 3)
+/// ```
 struct ParEnumerate<I, T> {
     inner: I,
 }
@@ -444,6 +555,10 @@ ParEnumerate<I, T>: ParallelIterator<(usize, T)> where I: IndexedParallelIterato
 /// The `take` and `skip` pipeline: `skip` positions are dropped, then at most `limit` are kept. It is the one type
 /// both adapters return, so `skip(a).take(b)` and `take(b).skip(a)` chain, and its own `take` and `skip` return it
 /// again rather than a new type (spec/parallel.md, PR5).
+///
+/// ```
+/// assert_eq(par_range(0, 10).take(6).take(4).count(), 4)
+/// ```
 struct ParWindow<I, T> {
     inner: I,
     skip: usize,
@@ -453,6 +568,10 @@ struct ParWindow<I, T> {
 
 ParWindow<I, T> where I: IndexedParallelIterator<T> {
     /// The first `count` items of this pipeline.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).skip(2).take(3).fold(0 as i64, |a, x| a + x, |a, b| a + b), 9)
+    /// ```
     fn take(own self, count: usize): ParWindow<I, T> {
         let mut limit = count
         if self.limited && self.limit < count {
@@ -462,6 +581,10 @@ ParWindow<I, T> where I: IndexedParallelIterator<T> {
     }
 
     /// Everything after the first `count` items of this pipeline.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).take(6).skip(4).fold(0 as i64, |a, x| a + x, |a, b| a + b), 9)
+    /// ```
     fn skip(own self, count: usize): ParWindow<I, T> {
         let mut limit = self.limit
         if self.limited {
@@ -498,6 +621,13 @@ ParWindow<I, T>: ParallelIterator<T> where I: IndexedParallelIterator<T> {
 /// The items of a slice, by shared reference. The view is a type parameter (`V` is always `[T]`), so the pipeline is
 /// second-class like the slice: it cannot outlive or be stored beside the list it views, and the list cannot change
 /// while the pipeline is alive (spec/parallel.md, PR3).
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(1)
+/// xs.push(2)
+/// assert_eq(xs.par_iter().map(|x| *x).fold(0 as i64, |a, x| a + x, |a, b| a + b), 3)
+/// ```
 struct ParSlice<V> {
     xs: V,
 }
@@ -514,11 +644,24 @@ ParSlice<[T]>: ParallelIterator<&T> where T: Sync {
 ParSlice<[T]>: IndexedParallelIterator<&T> where T: Sync {}
 
 /// A pipeline over the items of a slice, by shared reference.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(4)
+/// assert_eq(xs.as_slice().par_iter().map(|x| *x).count(), 1)
+/// ```
 fn [T].par_iter(self): ParSlice<[T]> {
     ParSlice { xs: self }
 }
 
 /// A pipeline over the items of a list, by shared reference.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(4)
+/// xs.push(5)
+/// assert_eq(xs.par_iter().map(|x| *x).count(), 2)
+/// ```
 fn List<T>.par_iter(self): ParSlice<[T]> {
     ParSlice { xs: self.as_slice() }
 }
@@ -531,6 +674,13 @@ ParFilterMap<I, T, U, F>: ParallelValues<U> where I: ParallelIterator<T>, F: Fn(
 
 /// The items of a list, moved out one by one. An item the pipeline never asks for (a `take` or an early `any_item`) is
 /// dropped with the list.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(1)
+/// xs.push(2)
+/// assert_eq(xs.par_into_iter().fold(0 as i64, |a, x| a + x, |a, b| a + b), 3)
+/// ```
 struct ParList<T> {
     slots: List<Mutex<Option<T>>>,
 }
@@ -549,6 +699,13 @@ ParList<T>: IndexedParallelIterator<T> where T: Send {}
 ParList<T>: ParallelValues<T> where T: Send {}
 
 /// A pipeline over the items of a list, moved out of it.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(7)
+/// xs.push(8)
+/// assert_eq(xs.par_into_iter().count(), 2)
+/// ```
 fn List<T>.par_into_iter(own self): ParList<T> where T: Send {
     let mut slots = List<Mutex<Option<T>>>.new()
     for item in self.into_iter() {
@@ -567,6 +724,14 @@ ParWindow<I, T>: ParallelValues<T> where I: IndexedParallelIterator<T> + Paralle
 /// overlap; `xs` keeps the pipeline borrowing the slice exclusively for as long as it lives (E0111 for a second use).
 /// This is not a `ParallelIterator`: a reference made from the address cannot be returned from a method (E0122), so
 /// the two consumers below pass it to the caller's closure instead.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(1)
+/// xs.push(2)
+/// xs.par_iter_mut().for_each(|x| *x = *x * 10)
+/// assert_eq(xs[1], 20)
+/// ```
 struct ParSliceMut<V> {
     xs: V,
     addr: usize,
@@ -574,6 +739,14 @@ struct ParSliceMut<V> {
 
 ParSliceMut<[T]> where T: Send {
     /// Calls `f` on every item, in no particular order.
+    ///
+    /// ```
+    /// let mut xs = List<i64>.new()
+    /// xs.push(1)
+    /// xs.push(2)
+    /// xs.par_iter_mut().for_each(|x| *x = *x + 1)
+    /// assert_eq(xs[0], 2)
+    /// ```
     fn for_each<F: Fn(&mut T) + Send + Sync>(self, own f: F) {
         let base = self.addr
         let _ = __chunks(self.xs.len(), |lo, hi| {
@@ -589,6 +762,14 @@ ParSliceMut<[T]> where T: Send {
     }
 
     /// Calls `f` on every item and its position, in no particular order.
+    ///
+    /// ```
+    /// let mut xs = List<i64>.new()
+    /// xs.push(5)
+    /// xs.push(5)
+    /// xs.par_iter_mut().for_each_indexed(|i, x| *x = *x + i as i64)
+    /// assert_eq(xs[1], 6)
+    /// ```
     fn for_each_indexed<F: Fn(usize, &mut T) + Send + Sync>(self, own f: F) {
         let base = self.addr
         let _ = __chunks(self.xs.len(), |lo, hi| {
@@ -605,6 +786,14 @@ ParSliceMut<[T]> where T: Send {
 }
 
 /// A pipeline over the items of a slice, by exclusive reference: each item is handed to one worker only.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(1)
+/// let mut view = xs.as_slice()
+/// view.par_iter_mut().for_each(|x| *x = *x + 1)
+/// assert_eq(view[0], 2)
+/// ```
 fn [T].par_iter_mut(mut self): ParSliceMut<[T]> {
     let mut addr: usize = 0
     if self.len() > 0 {
@@ -614,6 +803,13 @@ fn [T].par_iter_mut(mut self): ParSliceMut<[T]> {
 }
 
 /// A pipeline over the items of a list, by exclusive reference.
+///
+/// ```
+/// let mut xs = List<i64>.new()
+/// xs.push(3)
+/// xs.par_iter_mut().for_each(|x| *x = *x * 2)
+/// assert_eq(xs[0], 6)
+/// ```
 fn List<T>.par_iter_mut(mut self): ParSliceMut<[T]> {
     let mut view = self.as_slice()
     view.par_iter_mut()
@@ -621,6 +817,10 @@ fn List<T>.par_iter_mut(mut self): ParSliceMut<[T]> {
 
 /// The integers of `start..end`. A `Range` value does not expose its endpoints to library code, so a range is a source
 /// through `par_range`, not through a method on the range.
+///
+/// ```
+/// assert_eq(par_range(-2, 2).count(), 4)
+/// ```
 struct ParRange {
     start: i64,
     len: usize,
@@ -640,6 +840,11 @@ ParRange: IndexedParallelIterator<i64> {}
 ParRange: ParallelValues<i64> {}
 
 /// A pipeline over the integers `start..end` (empty when `end <= start`).
+///
+/// ```
+/// assert_eq(par_range(0, 4).count(), 4)
+/// assert_eq(par_range(3, 1).count(), 0)
+/// ```
 fn par_range(start: i64, end: i64): ParRange {
     if end <= start {
         return ParRange { start: start, len: 0 }
