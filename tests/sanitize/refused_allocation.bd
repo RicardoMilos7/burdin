@@ -1,0 +1,12 @@
+// A request the heap cannot give is a refused allocation, not a crash (spec/allocators.md, AL11). Its size is above
+// AddressSanitizer's own limit, which the sanitizer would abort on by default. `__asan_default_options` makes it a null
+// pointer, as an unsanitized build gets (spec/sanitizers.md, SAN7), so the `try_` form reports it as a value.
+
+fn main() {
+    let n: usize = 1152921504606846976
+    match List<i64>.try_with_capacity(n) {
+        Ok(_) => println("allocated"),
+        Err(e) => println("{}", e),
+    }
+    println("finished")
+}

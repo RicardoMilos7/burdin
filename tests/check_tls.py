@@ -211,7 +211,7 @@ def library_files():
     return found
 
 
-declared = re.findall(r"^\s*fn (\w+)\(", harness.read_text(PACKAGES / "tls" / "src" / "openssl.bd"), re.M)
+declared = re.findall(r"^\s*(?:priv\s+)?fn (\w+)\(", harness.read_text(PACKAGES / "tls" / "src" / "openssl.bd"), re.M)
 check(len(declared) >= 60, f"packages/tls/src/openssl.bd declares only {len(declared)} functions")
 check(len(declared) == len(set(declared)), "packages/tls/src/openssl.bd declares a function twice")
 libraries = library_files()

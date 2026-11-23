@@ -247,6 +247,9 @@ pub(crate) struct Globals {
     /// The `std.Iterator<T>` and `std.Iterable<T>` interfaces, when the standard library declares them.
     pub(crate) iterator_iface: Option<usize>,
     pub(crate) iterable_iface: Option<usize>,
+    /// The `std` parallel-iteration interfaces whose default methods are instantiated on demand (spec/parallel.md,
+    /// PR13), not registered on every impl block.
+    pub(crate) parallel_ifaces: Vec<usize>,
     /// The `std.FromIterator<T>` interface: what `Iterator.collect` builds its target through (`spec/iterators.md`, IT16).
     pub(crate) from_iterator_iface: Option<usize>,
     /// The `std.DoubleEndedIterator<T>` interface: an iterator that can also take items from its back (IT14).

@@ -118,7 +118,7 @@ impl Globals {
 
     /// The item type recorded by a user `Type: Iterator<T>` or `Type: Iterable<T>` block, for a concrete
     /// instance or a type parameter with the bound in scope.
-    fn declared_item(&self, ty: &Ty, iface: Option<usize>, env: &crate::generics::Env) -> Option<Ty> {
+    pub(crate) fn declared_item(&self, ty: &Ty, iface: Option<usize>, env: &crate::generics::Env) -> Option<Ty> {
         let iface = iface?;
         // An `impl Interface` value has the item its interface names (`crate::opaque`).
         if let Some(o) = self.opaque_of(ty) {

@@ -27,6 +27,10 @@ impl Sema<'_> {
         };
         self.globals.iterator_iface = find_iface(&self.globals, "Iterator");
         self.globals.iterable_iface = find_iface(&self.globals, "Iterable");
+        self.globals.parallel_ifaces = ["ParallelIterator", "ParallelValues", "IndexedParallelIterator"]
+            .iter()
+            .filter_map(|name| find_iface(&self.globals, name))
+            .collect();
         self.globals.from_iterator_iface = find_iface(&self.globals, "FromIterator");
         self.globals.double_ended_iface = find_iface(&self.globals, "DoubleEndedIterator");
         self.globals.display_iface = find_iface(&self.globals, "Display");

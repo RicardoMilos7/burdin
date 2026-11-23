@@ -92,6 +92,24 @@ impl FnCx<'_> {
         // the template is instantiated on demand. Registering the defaults on every instance instead would
         // instantiate each adapter's own adapters without end (`take(1)` returns a `TakeIter` whose `take`
         // returns another, and so on).
+        // A parallel-pipeline default is on demand for the same reason (spec/parallel.md, PR13): the interface's
+        // default of that name, for this receiver and its item type.
+        if let Some((iface, method, item)) = self.parallel_default(&recv_ty, &name.name) {
+            let key = (iface, method, recv_ty.clone(), vec![item.clone()]);
+            if let Some(info) = self.globals.builtin_method_templates.get(&key).cloned() {
+                return Some(self.generic_method_call(info, recv, &name.name, explicit, args, span, expect));
+            }
+            for a in args {
+                self.expr(&a.expr, None);
+            }
+            self.globals.requests.borrow_mut().push(Request::BuiltinMethodTemplate {
+                iface,
+                method,
+                self_ty: recv_ty,
+                iface_args: vec![item],
+            });
+            return Some(error_expr(span));
+        }
         let item = self.globals.iterator_item(&recv_ty, &self.bounds)?;
         let iface = self.globals.iterator_iface?;
         let method = self.globals.interfaces[iface].methods.iter().position(|m| m.name == lookup)?;
@@ -113,6 +131,23 @@ impl FnCx<'_> {
             iface_args: vec![item],
         });
         Some(error_expr(span))
+    }
+
+    /// The parallel-pipeline interface that declares a default method `name` for the concrete pipeline value `ty`,
+    /// with the method's index and the item type the value's impl names (spec/parallel.md, PR13). A type parameter is
+    /// not one: a call on it goes through its bound. `None` when no such default applies.
+    fn parallel_default(&self, ty: &Ty, name: &str) -> Option<(usize, usize, Ty)> {
+        if matches!(ty, Ty::Param(_)) {
+            return None;
+        }
+        self.globals.parallel_ifaces.iter().find_map(|&iface| {
+            let method = self.globals.interfaces[iface].methods.iter().position(|m| m.name == name)?;
+            if !self.globals.interfaces[iface].methods[method].has_default {
+                return None;
+            }
+            let item = self.globals.declared_item(ty, Some(iface), &self.bounds)?;
+            Some((iface, method, item))
+        })
     }
 
     /// Whether `name` on a value of type `ty` (through references) is the `collect` of an iterator, which takes its
