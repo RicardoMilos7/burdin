@@ -4,6 +4,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`send` returns a `Result` (issue #929, 2026-11-24).** `Channel<T>.send` returns `Result<(), T>`: `Ok(())` when the
+value was queued, `Err(value)` when the channel was closed (`spec/channels.md` CH3, CH5; `std/src/channel.bd`). A
+`select` send arm binds the same type; the rewrite calls `__send_outcome` for it (`burdin_syntax/src/parser/select.rs`).
+`Result<(), T>` was chosen over a `SendError<T>` struct: it keeps the value and needs no new named type. The second half
+of the issue, not losing an unchosen send arm's value, is declined: CH8 now records why the move stays eager. Tests: the
+new `s2_channels/send_result`, and `close_semantics`, `close_wakes_sender`, `stress_close_race`, and `select_send` now
+match on `Ok`/`Err`.
+
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already

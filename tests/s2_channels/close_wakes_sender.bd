@@ -12,7 +12,7 @@ fn main() {
     task.yield()
     ch.close()
     match sender.join() {
-        Some(v) => println("blocked sender got its value back: {}", v),
-        None => println("the value was queued"),
+        Err(v) => println("blocked sender got its value back: {}", v),
+        Ok(()) => println("the value was queued"),
     }
 }
