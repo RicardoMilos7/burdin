@@ -323,9 +323,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     fn debug_type_uncached(&mut self, ty: &Ty) -> DIType<'ctx> {
         match ty {
-            Ty::Unit | Ty::Never | Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::Error | Ty::Chars => {
-                self.debug_unspecified(&Self::debug_name(ty))
-            }
+            Ty::Unit
+            | Ty::Never
+            | Ty::Param(_)
+            | Ty::Const(_)
+            | Ty::Projection { .. }
+            | Ty::Error
+            | Ty::TryFromError { .. }
+            | Ty::Chars => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
             Ty::Char => self.debug_basic("char", 32, DW_ATE_UTF),

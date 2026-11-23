@@ -314,7 +314,8 @@ interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
 `lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
-(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+(FR7). An integer literal given to `T.from(v)` takes an integer `T` as its type, so `u8.from(5)` is valid and
+`u8.from(300)` is E0008 (FR2, issue #937); `into` on a literal receiver is not changed (FR4). `TryFrom<S>` is a bound (TF7, TF9): `T.try_from(v)` in a generic body returns `Result<T, <T as TryFrom<S>>.Error>`, and the error resolves once `T` is concrete (issue #937, part). Not done: `From` blocks on generic types (TF8), and `Drop` as a bound (E9000, `bound-drop-from`).
 Tests: `tests/m24_stdlib/from_*` and `into_*`.
 
 **`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
@@ -326,8 +327,7 @@ one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the a
 `check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
 conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
 blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
-with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
-(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+with two `from` variants of different sources could not compile; both work now. Not done: a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
 from `char`, and `try_from` for other primitive types. Tests:
 `tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
@@ -2153,8 +2153,10 @@ written in their generators (`tests/gen_atomic_std.py`, `tests/gen_int_std.py`),
 
 Fixed on the way: `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`); `swap_bytes` on 8-bit
 integers panicked (the int generator); `burdin doc --std` listed compiler-internal `__` methods, against DC7
-(`crates/burdin_doc/src/extract.rs`); and several compiler-only items are now `priv` (`task.bd`, `channel.bd`,
-`float.bd`'s `strtod`/`strtof`).
+(`crates/burdin_doc/src/extract.rs`), including the `__` members of an interface, which were not filtered; and several
+compiler-only items are now `priv` (`task.bd`, `channel.bd`, `float.bd`'s `strtod`/`strtof`). The `std.parallel`
+items (`std/src/parallel.bd`, issue #971, merged before this gate) got their examples in the same pass: each is a
+`burdin run` example in its own doc comment, not a baseline entry.
 
 Open:
 

@@ -65,7 +65,7 @@ fn definition_finds_functions_types_methods_fields_locals_and_modules() {
     assert_eq!(definition(&mut g, true, "Color.Green", 0, 6), "src/shapes.bd:36:Green");
     assert_eq!(definition(&mut g, true, "Rect { w, h }", 0, 7), "src/shapes.bd:17:w", "shorthand names the parameter");
     // The standard library is opened from a materialized copy.
-    assert_eq!(definition(&mut g, false, "assert_eq", 0, 0), "std/std.bd:262:assert_eq");
+    assert_eq!(definition(&mut g, false, "assert_eq", 0, 0), "std/std.bd:401:assert_eq");
     // Nothing to find on a keyword, a literal, or a comment.
     assert_eq!(definition(&mut g, false, "fn main", 0, 0), "none");
     assert_eq!(definition(&mut g, false, "\"área\"", 0, 2), "none");

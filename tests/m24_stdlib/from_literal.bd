@@ -1,0 +1,18 @@
+//@ run
+//> 5 5 5 -5 200 true
+//> 255
+
+// An integer literal given to `T.from(v)` takes the integer type `T` (spec/stdlib.md, FR2), so `u8.from(5)` converts a
+// `u8`. A minus sign before the literal is part of it. The conversion runs at compile time too.
+
+fn main() {
+    let a = u8.from(5)
+    let b = i64.from(5)
+    let c = usize.from(5)
+    let d = i8.from(-5)
+    let e = u16.from(200)
+    let f = f64.from(5) == 5.0
+    println("{} {} {} {} {} {}", a, b, c, d, e, f)
+    let g = comptime u8.from(255)
+    println("{}", g)
+}

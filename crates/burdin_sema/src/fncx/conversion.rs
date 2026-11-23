@@ -30,6 +30,16 @@ pub(crate) fn lossless_from(to: &Ty, from: &Ty) -> bool {
 /// The largest Unicode scalar value, as a `char` holds it.
 const LAST_SCALAR: i128 = 0x10_FFFF;
 
+/// Whether `e` is an integer literal, with or without the minus sign before it (FR2). An integer literal has no
+/// suffix, so its type is the one its context gives it.
+fn is_int_literal(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Int(_) => true,
+        ast::ExprKind::Unary(ast::UnOp::Neg, operand) => matches!(operand.kind, ast::ExprKind::Int(_)),
+        _ => false,
+    }
+}
+
 /// The significand precision of a float type, counting the implicit bit.
 fn significand_bits(t: FloatTy) -> u32 {
     match t {
@@ -48,15 +58,16 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Cast(Box::new(value)), to, span)
     }
 
-    /// `T.from(v)` for a scalar `T` (FR2). The argument is checked without an expected type, so an integer literal
-    /// is an `i32`.
+    /// `T.from(v)` for a scalar `T` (FR2). An integer literal takes an integer `T` as its type, as it takes its expected
+    /// type everywhere else; any other argument is checked without an expected type, so it keeps its own type.
     pub(super) fn primitive_from_call(&mut self, to: &Ty, args: &[ast::Arg], span: Span) -> tir::Expr {
         if args.len() != 1 {
             let message = format!("`{to}.from` takes 1 argument, but {} were given", args.len());
             self.diags.error(Code::ARG_COUNT, span, message);
             return self.args_then_error(args, span);
         }
-        let value = self.expr(&args[0].expr, None);
+        let expect = (matches!(to, Ty::Int(_)) && is_int_literal(&args[0].expr)).then_some(to);
+        let value = self.expr(&args[0].expr, expect);
         if value.ty == Ty::Error {
             return error_expr(span);
         }

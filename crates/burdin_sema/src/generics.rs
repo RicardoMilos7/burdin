@@ -30,6 +30,9 @@ pub(crate) enum Bound {
     /// `From<S>`: a value of the source type `S` converts into the bounded type, through a built-in pair or a `From`
     /// block (`spec/stdlib.md`, FR7).
     From(Ty),
+    /// `TryFrom<S>`: a value of the source type `S` converts into the bounded type through a `try_from` that succeeds
+    /// or fails, an integer through any integer (`spec/stdlib.md`, TF7 and TF4).
+    TryFrom(Ty),
     /// A closure capability: `Fn(A, B): R`, `FnMut(...)`, or `FnOnce(...)`. The index selects the signature in
     /// [`Globals::fn_bounds`].
     Fn(usize, tir::FnKind),
@@ -231,7 +234,7 @@ impl Globals {
         match ty {
             Ty::Param(_) => true,
             // An unresolved projection belongs to symbolic code; it is resolved once the self type is concrete.
-            Ty::Projection { .. } => true,
+            Ty::Projection { .. } | Ty::TryFromError { .. } => true,
             Ty::Const(v) => *v >= crate::consteval::SYM_CONST,
             Ty::Array(inner, n) => *n >= crate::consteval::SYM_LEN || self.ty_has_param(inner),
             Ty::Ref { inner, .. }
@@ -380,6 +383,19 @@ impl Globals {
                 send: send.clone(),
             },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.subst_ty(t, env)).collect()),
+            // The error of a conversion resolves once the target is concrete (TF9). A missing conversion is reported
+            // where the bound was checked, so it stays silent here.
+            Ty::TryFromError { self_ty, source } => {
+                let new_self = self.subst_ty(self_ty, env);
+                let new_source = self.subst_ty(source, env);
+                if matches!(new_self, Ty::Param(_) | Ty::Error)
+                    || self.ty_has_param(&new_self)
+                    || self.ty_has_param(&new_source)
+                {
+                    return Ty::TryFromError { self_ty: Box::new(new_self), source: Box::new(new_source) };
+                }
+                self.try_from_error_of(&new_self, &new_source).unwrap_or(Ty::Error)
+            }
             // A projection normalizes to the implementation's binding once the self type is concrete
             // (`spec/associated-types.md`, AT3, AT4). With a bare parameter (or an error) it stays opaque.
             Ty::Projection { self_ty, iface, iface_name, args, name } => {
@@ -454,6 +470,7 @@ impl Globals {
         match bound {
             Bound::User(i, args) => Bound::User(*i, args.iter().map(|a| self.subst_ty(a, subst)).collect()),
             Bound::From(source) => Bound::From(self.subst_ty(source, subst)),
+            Bound::TryFrom(source) => Bound::TryFrom(self.subst_ty(source, subst)),
             other => other.clone(),
         }
     }
@@ -476,6 +493,7 @@ impl Globals {
             Bound::Hash => "Hash".into(),
             Bound::Default => "Default".into(),
             Bound::From(source) => format!("From<{source}>"),
+            Bound::TryFrom(source) => format!("TryFrom<{source}>"),
             Bound::Fn(i, kind) => self.fn_sig_name(*i, *kind),
             Bound::ConstOf(ty) => format!("const {ty}"),
         }
@@ -578,14 +596,14 @@ impl Globals {
         // A plain name: a built-in interface, or one in scope.
         if segs.len() == 1 {
             let name = first.name.name.as_str();
-            if name == "From" {
+            if name == "From" || name == "TryFrom" {
                 if first.args.len() != 1 {
-                    let message = format!("`From` takes 1 type argument, but {} were given", first.args.len());
+                    let message = format!("`{name}` takes 1 type argument, but {} were given", first.args.len());
                     diags.error(Code::TYPE_MISMATCH, ty.span, message);
                     return None;
                 }
                 let source = self.resolve_type_in(&first.args[0], None, subst, module, diags);
-                return Some(Bound::From(source));
+                return Some(if name == "From" { Bound::From(source) } else { Bound::TryFrom(source) });
             }
             let builtin = match name {
                 "Copy" => Some(Bound::Copy),
@@ -594,7 +612,7 @@ impl Globals {
                 "Ord" => Some(Bound::Ord),
                 "Hash" => Some(Bound::Hash),
                 "Default" => Some(Bound::Default),
-                "Drop" | "TryFrom" => {
+                "Drop" => {
                     diags.error(
                         Code::UNSUPPORTED, // e9000: bound-drop-from
                         ty.span,
@@ -785,6 +803,33 @@ impl Globals {
         }
     }
 
+    /// Whether a value of type `from` converts into `to` through `TryFrom` (`spec/stdlib.md`, TF7): an integer `to`
+    /// takes any integer (TF4), and any other `to` needs a `TryFrom` block whose source is `from`.
+    pub(crate) fn try_converts_into(&self, to: &Ty, from: &Ty, env: &Env) -> bool {
+        if *from == Ty::Error {
+            return true;
+        }
+        match to {
+            Ty::Error => true,
+            Ty::Param(name) => self.bound_in_env(name, &Bound::TryFrom(from.clone()), env),
+            Ty::Int(_) if matches!(from, Ty::Int(_)) => true,
+            _ => self.conversions_into(to, "try_from").iter().any(|c| c.source == *from),
+        }
+    }
+
+    /// The error type of `to`'s `try_from` from `source` (`spec/stdlib.md`, TF9): `TryFromIntError` for an integer
+    /// target (TF4, TF5), and otherwise the `E` of the block's `Result<to, E>`. `None` when there is no conversion.
+    pub(crate) fn try_from_error_of(&self, to: &Ty, source: &Ty) -> Option<Ty> {
+        if let (Ty::Int(_), Ty::Int(_)) = (to, source) {
+            return self.try_from_int_error_ty.clone();
+        }
+        let block = self.conversions_into(to, "try_from").into_iter().find(|c| c.source == *source)?;
+        match &self.sigs[block.func.0].ret {
+            Ty::Result(_, err) => Some((**err).clone()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn satisfies_with(&self, ty: &Ty, bound: &Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
         let want = self.subst_bound(bound, subst);
         match ty {
@@ -803,6 +848,7 @@ impl Globals {
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
                 Bound::From(source) => self.converts_into(ty, &source, env),
+                Bound::TryFrom(source) => self.try_converts_into(ty, &source, env),
                 Bound::User(i, args) => self.implements(ty, i, &args, env),
                 Bound::Fn(i, kind) => match ty {
                     Ty::Fn { sig, kind: actual, .. } => **sig == self.bound_fn_sig(i, subst) && actual.at_least(kind),

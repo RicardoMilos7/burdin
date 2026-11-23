@@ -101,7 +101,7 @@ impl TypeDefs<'_> {
             }
             // A projection is opaque until the implementation's binding is substituted; it is never copied or
             // cloned on its own (`spec/associated-types.md`, AT3).
-            Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => false,
+            Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => false,
             // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
             Ty::Any(_) => false,
             Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
@@ -149,6 +149,7 @@ impl TypeDefs<'_> {
             | Ty::Param(_)
             | Ty::Const(_)
             | Ty::Projection { .. }
+            | Ty::TryFromError { .. }
             | Ty::CPtr(_)
             | Ty::Chars => false,
             Ty::Range(..)

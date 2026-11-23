@@ -361,7 +361,13 @@ fn container(p: &Program, base: (u64, u64), alloc: &Alloc) -> (u64, u64) {
 fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
     Some(match ty {
         // A projection is resolved before code generation, so it never has a runtime value.
-        Ty::Unit | Ty::Never | Ty::Error | Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => return None,
+        Ty::Unit
+        | Ty::Never
+        | Ty::Error
+        | Ty::Param(_)
+        | Ty::Const(_)
+        | Ty::Projection { .. }
+        | Ty::TryFromError { .. } => return None,
         Ty::Bool => (1, 1),
         Ty::Char => (4, 4),
         Ty::Int(i) => {
