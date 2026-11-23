@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// An alias cycle reached from main's return type is E0009 at the declaration (spec/type-aliases.md, AL4). The cycle
+// does not expand to a `Result`, so main's return type is also rejected (E0003, AL7).
+
+type Ping = Pong //~ E0009
+type Pong = Ping
+
+fn main(): Ping { //~ E0003
+    Ok(())
+}

@@ -1,12 +1,12 @@
 //@ compile-fail
 
-// `?` needs a conversion: a `From` block, or an error type for the dynamic `Error` (spec/errors.md, ERR4-ERR5).
+// `?` needs a conversion: a `From` block, or an error type for the dynamic `AnyError` (spec/errors.md, ERR4-ERR5).
 
 fn number(): Result<i32, i32> {
     Ok(1)
 }
 
-fn run(): Result<i32, Error> {
+fn run(): Result<i32, AnyError> {
     let n = number()? //~ E0212
     Ok(n)
 }

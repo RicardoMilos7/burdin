@@ -339,7 +339,7 @@ error the field produced with `e.field(name)`, a sequence reader wraps with `e.i
 missing field) is wrapped by its caller the same way. A hand-written impl does the wrapping explicitly; a generated
 impl receives the wrapping code (SER12).
 
-`DeError` is an error type: it implements `Display` and the `std.Error` marker, so it boxes into the dynamic `Error`
+`DeError` is an error type: it implements `Display` and the `std.Error` marker, so it boxes into the dynamic `AnyError`
 and `?` converts it in a `fn main(): Result<()>`. `Display` writes `message`, then ` at ` and the path when the path
 is non-empty:
 

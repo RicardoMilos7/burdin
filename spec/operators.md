@@ -41,8 +41,8 @@ interface of its own (CA5); the shifts are not overloaded and stay integer-only.
 `std` declares the interfaces in `std/src/ops.bd`; the prelude makes their names visible in every module. They are
 ordinary interfaces, not built-in bounds: a program implements them with an ordinary impl block, and they can be used
 as bounds (`T: Add`) and named in `where` clauses like any other interface. Every operand interface is same-type: both
-operands have the receiver's type, so there are no mixed-type operators (`V + i32` is E0003; implement `Add` and
-convert first).
+operands have the receiver's type, so there are no mixed-type operators for a user type (`V + i32` is E0003; implement
+`Add` and convert first). The one built-in mixed pair is a `String` with a `str` (OP14).
 
 ```burdin
 interface Add { fn add(self, other: Self): Self }
@@ -230,6 +230,32 @@ still short-circuit and accept only `bool`.
 
 Missing interface methods and wrong impl signatures keep E0140 and E0003, like every other interface.
 
+## OP14: `String` and `str`
+
+A `String` and a `str` may meet in two places. This is the only mixed-type pair the built-in rules accept; every other
+pair of different types keeps the same-type rule (OP2, OP7).
+
+- `String + str` is built in and has type `String`. The result is a new string holding the text of the left operand
+  followed by the text of the right one. Both operands are borrowed (OP8), so neither is moved and both stay usable.
+  It is the standard library's `__concat` (`std/src/text.bd`), so it is an ordinary call for the checks and the code
+  generator.
+- The comparisons `==`, `!=`, `<`, `<=`, `>`, `>=` accept a `String` on either side of a `str` (`s == "x"`,
+  `"x" == s`, `s < t.as_str()`). The `String` is viewed as a `str` (`as_str`), and the comparison is the `str`
+  comparison: byte order for the ordering operators, byte equality for `==`.
+
+Not accepted, and still E0003: `str + String` and `str + str` (`"a" + "b"`, `string_plus_unsupported`), `String + String`
+(write `s + t.as_str()`), and `String + i32` or a comparison with a number. The result of `String + str` is an owned
+`String`; it does not change the left operand. Compound assignment has no mixed form: `s += "x"` is not part of this
+rule and stays E0003 (the same-type rule).
+
+Known gap (RF3): a borrow made in a statement stays live until that statement ends, so `s = s + "x"` is E0111, the
+same as `s = join(s.as_str(), "x")` for an ordinary function. Write `let t = s + "x"` and then `s = t`. Fixing this is a
+change to the borrow checker's liveness, not to this rule.
+
+The rule is decided here rather than by a general `Add<Rhs>` interface (issue #936 offered both). A general right-hand
+type would let one type implement `Add` for several operands and would change the once-per-type rule of OP2 and the
+literal rule of OP7, so it is not part of this rule and would need its own decision.
+
 ## Tests
 
 | Rule | Tests (in `tests/m19_operators/`) |
@@ -242,4 +268,5 @@ Missing interface methods and wrong impl signatures keep E0140 and E0003, like e
 | OP10 (write mode) | `index_write_place`, `nested_index` |
 | OP11 | `vector_add_index` (the std interfaces are visible without `use`) |
 | OP12 | `builtin_operators`, `builtin_overflow_aborts`, `builtin_division_by_zero_aborts`, `builtin_shift_overflow_aborts`, `builtin_index_errors`, `and_or_not_overloadable` |
+| OP14 | `string_str_operators` (run), `string_str_mixed_compile_fail` (E0003 for the pairs still rejected) |
 | OP1 (compound assignment) | `compound_assignment` (a user type without `Add`, E0141); the rest is in `tests/compound_assign/` (`spec/compound-assignment.md`, CA5) |

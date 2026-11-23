@@ -582,10 +582,10 @@ impl FnCx<'_> {
 
     /// The error conversion of `?` (`spec/errors.md`, ERR3-ERR5):
     ///
-    /// - the same type passes through, and a `?` that propagates the dynamic `Error` records a trace frame when
+    /// - the same type passes through, and a `?` that propagates the dynamic `AnyError` records a trace frame when
     ///   tracing is on (ERR7);
     /// - a user `Type: From<Source>` block converts one error type into another (ERR3);
-    /// - an error type becomes the dynamic `Error`, boxed at this creation site (ERR4);
+    /// - an error type becomes the dynamic `AnyError`, boxed at this creation site (ERR4);
     /// - anything else is E0212.
     fn convert_error(&mut self, value: tir::Expr, from: &Ty, to: &Ty, span: Span, propagate: bool) -> tir::Expr {
         if from == to {

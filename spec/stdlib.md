@@ -521,7 +521,7 @@ interface IndexMut<T> { fn index_mut(mut self, i: usize): &mut T }
 ```
 
 The built-in operators and the `Eq`/`Ord` derives always win over an implementation, both operands have the same
-type, and `&&`, `||`, `=`, and the shifts are not overloadable. A compound assignment (`a += b`) on a user type is `a = a + b`
+type (except a `String` with a `str`, OP14), and `&&`, `||`, `=`, and the shifts are not overloadable. A compound assignment (`a += b`) on a user type is `a = a + b`
 through `Add` and the other operator interfaces (`spec/compound-assignment.md`, CA5). `Index` names the element type
 and returns a reference; `IndexMut` is selected when the indexed place is written. The exact resolution, the
 diagnostics, and the ownership rules are in [`operators.md`](operators.md).
@@ -554,8 +554,9 @@ and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, an
 either of whose ends is not a character boundary (see "Slicing and character boundaries" below). `len` counts bytes.
 
 `==` and `!=` compare two `str` values or two `String` values byte for byte. `<`, `<=`, `>`, `>=` compare two `str`
-values or two `String` values lexicographically by bytes. The operands must have the same type; `s == "x"` does not
-convert, and there is no `Ord` for a mixed pair.
+values or two `String` values lexicographically by bytes. A `String` and a `str` compare with each other in all six
+operators, in either order (`s == "x"`, `"x" < s`), by the same bytes rule (`operators.md` OP14). Any other mixed pair is
+E0003.
 
 ### Bytes, UTF-8, and checked slicing (issue #713)
 
@@ -648,13 +649,16 @@ range value because a `Range<usize>` value does not expose its endpoints to libr
 `String` implements `Default` (the empty string), `Ord` (byte order through `<`), `Clone`, `Display`, and `Debug`;
 `Hash` for `String` is part of the interface-coverage work (issue #716).
 
-**`+` on strings is not provided.** The operator interfaces take two operands of the same type, and a `String + str`
-that allocates and returns a `String` would need a second, mixed-type rule. `push_str`, `format`, the interpolated
-string literal, and `join` are the ways to build text; the rule is recorded here so a later stage can revisit it.
+**`String + str` is built in; other `+` on text is not provided.** `String + str` returns a new `String` holding both
+texts and borrows both operands. The comparisons `==`, `!=`, `<`, `<=`, `>`, `>=` accept a `String` on either side of a
+`str`. Every other pair stays same-type: `str + str` and `String + String` are E0003 (write `s + t.as_str()`), and
+`s += "x"` is E0003. `push_str`, `format`, the interpolated string literal, and `join` are the other ways to build text.
+The rule is `operators.md` OP14.
 
 Tests: `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, and the abort cases
 `string_edit_boundary_aborts` (a non-boundary insert), `string_edit_bounds_aborts` (a reversed range), and
-`string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) records the `+` decision.
+`string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) pins `"a" + "b"`, and the
+mixed forms are in `m19_operators/string_str_operators` and `string_str_mixed_compile_fail`.
 
 ### Characters of a text (issue #193)
 
@@ -877,6 +881,12 @@ storable, so `List<str>` and `List<&T>` are rejected (E0120). The eager iteratio
 `any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
 (`iterators.md`, IT10); `.any` is resolved to the `std` function named `__list_any` and spelled with the reserved
 word. Every method except `new` and `with_capacity` exists for every allocator argument.
+
+The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
+to the other. If you need the lazy form of `xs.map(f)`, write `xs.iter().map(f)`: the closure then takes the item
+(`T`, or `&T` for a type that is not `Copy`) rather than a view. If you need the eager form of a lazy chain, call
+`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. `filter` and `find` need `T: Clone` only on the
+eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
 
 The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
 empty list with room for `n` elements, allocating the buffer up front through the default allocator or through the
@@ -1791,22 +1801,22 @@ Tests: `m24_stdlib/hash_values` (HS1, HS2), `hash_hasher` (HS3), `hash_seeded` (
 ## `Option<T>` and `Result<T, E>`
 
 `Option<T>` is built in with the variants `Some(T)` and `None`; `None` takes its type from context. `Result<T, E>`
-is built in with `Ok(T)` and `Err(E)`. `Result<T>` written with one argument means `Result<T, Error>`, the dynamic
+is built in with `Ok(T)` and `Err(E)`. `Result<T>` written with one argument means `Result<T, AnyError>`, the dynamic
 error type described below (`errors.md`, ERR5).
 
 ```
 Option<T>:  unwrap(), expect(msg: str): T, is_some(): bool, is_none(): bool
 Result<T, E>: unwrap(), expect(msg: str): T, is_ok(): bool, is_err(): bool
-Result<T, E>: context(message: str): Result<T, Error>
+Result<T, E>: context(message: str): Result<T, AnyError>
 ```
 
 `unwrap` panics on `None`/`Err`; `expect(msg)` panics with `msg`. `expr?` returns early through the enclosing
 `Option` or `Result` function (E0160 outside one) and converts the error through a user `Type: From<Source>` block;
-in a function returning `Result<U>` / `Result<U, Error>`, any error type is boxed into the dynamic `Error`
+in a function returning `Result<U>` / `Result<U, AnyError>`, any error type is boxed into the dynamic `AnyError`
 (`errors.md`, ERR4). `expr orelse fallback` supplies a value for `None` or `Err`; a closure handler receives the
 `Err` payload (`|e| ...`) and takes no argument for `None` (`|| ...`, issue #488). `match` handles both types; `Option` also supports `==`/`!=` when its
 payload does, and `Hash` when its payload does. `.context(message)` prefixes a context message and returns
-`Result<T, Error>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). The combinators of the next section are
+`Result<T, AnyError>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). The combinators of the next section are
 stage 1 (issue #481).
 
 ### Sorting with a comparator (issue #418)
@@ -1930,11 +1940,10 @@ the arity and a closure value, E0141 for a target that is not `FromIterator`).
 
 ## Errors
 
-`std` declares the marker interface `Error requires Display { }` and, under the same name in the type namespace,
-the dynamic error value:
+`std` declares the marker interface `Error requires Display { }` and the dynamic error value `AnyError`, a struct of its own name:
 
 ```
-struct Error {
+struct AnyError {
     value: any Error
     frames: List<TraceFrame>
     context: String
@@ -1948,15 +1957,15 @@ struct TraceFrame {
 }
 ```
 
-A type is an error type when it implements `Error`, which requires `Display`. The dynamic `Error` is an owned
+A type is an error type when it implements `Error`, which requires `Display`. The dynamic `AnyError` is an owned
 `any Error` box together with the context messages `.context` added (outermost first) and the frames a debug build
-records. An error type is boxed implicitly wherever `Error` is expected; `e.is<T>()` reports whether the box holds
+records. An error type is boxed implicitly wherever `AnyError` is expected; `e.is<T>()` reports whether the box holds
 a `T`, `e.downcast<T>()` consumes the box and yields `Some(value)` on a match (both need `T: Error`), `{}`
 prints the wrapped error's `Display` (`errors.md`, ERR4), and `e.print_trace()` prints the recorded frames, one
 `at {func} ({file}:{line}:{col})` line each, to standard error (`debug.md`, DBG3; nothing when there are none, which
 is every release build). `TraceFrame` implements `Display` as `at {func} ({file}:{line}:{col})`, and
 `error.frames` is its public `List<TraceFrame>`; a debug build records a creation frame at each conversion into
-`Error` and a propagation frame at each `?` that passes a `Result<..., Error>` outward, each naming the function
+`AnyError` and a propagation frame at each `?` that passes a `Result<..., AnyError>` outward, each naming the function
 the error passed through, and a release build records none (`errors.md`, ERR7).
 
 `std` declares its error types (`errors.md`, ERR10-ERR11):
@@ -2398,7 +2407,7 @@ table covers, plus `Display` and `Iterable`; `Serialize`/`Deserialize` are in th
 | slices `[T]` | yes | yes | no | no | no | no | no | no | yes |
 | ranges `Range<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | no | no | no | yes |
 | `Ordering` | yes | yes | yes | yes | yes | no | yes | no | no |
-| dynamic `Error` | no | no | no | no | no | no | yes | yes | no |
+| dynamic `AnyError` | no | no | no | no | no | no | yes | yes | no |
 | `IoError` | no | no | yes | no | no | no | yes | yes | no |
 | `Duration` | yes | yes | yes | yes | yes | zero | yes | yes | no |
 | `Instant` | yes | yes | yes | yes | yes | no | yes | no | no |

@@ -453,7 +453,7 @@ impl FnCx<'_> {
         }
     }
 
-    fn std_call(&mut self, name: &str, args: Vec<tir::Expr>, span: Span) -> tir::Expr {
+    pub(super) fn std_call(&mut self, name: &str, args: Vec<tir::Expr>, span: Span) -> tir::Expr {
         match self.globals.std_func(name) {
             Some(f) => {
                 let ret = self.globals.sigs[f.0].ret.clone();

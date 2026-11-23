@@ -130,6 +130,10 @@ asks for it.
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
 | `collect<C: FromIterator<T>>(own self)` | `C` | builds any collection that implements `FromIterator<T>`; the expected type names `C` (IT17) |
 
+The names `map`, `filter`, `fold`, `any`, `all`, and `find` also exist on a `List` with eager meanings (IT10). A lazy
+chain is built from `xs.iter()`, and an eager result is built from a chain with `to_list()` or `collect()`. IT10 has
+the table that tells the two forms apart.
+
 **Adapters for a particular kind of source (IT13).** `flatten`, `cloned`, `copied`, `cycle`, and `rev` need a bound on
 the interface's own item type or on the source itself (the items are iterators, the items are views, the source is
 `Clone`, the source is double-ended), which a default method of `Iterator<T>` cannot state. The compiler resolves
@@ -248,6 +252,28 @@ numbers (`&T` where `T` is an integer or a float).
 
 They are eager: each builds its result list immediately and the source list is not consumed. `filter` and `find`
 clone the element they keep; `map`'s result type `U` comes from the closure's return type.
+
+The eager and lazy forms are both kept, on purpose. The same name means the eager form on a `List` and the lazy form
+(IT9) on an iterator, and each form is documented with a pointer to the other. Pick by what the call must give back:
+
+| | Eager (IT10): `xs.map(f)` on a `List` | Lazy (IT9): `xs.iter().map(f)` |
+| --- | --- | --- |
+| Result | a `List<U>` built at once | an adapter; an item is computed only when the consumer asks for it |
+| Closure argument of `map`, `fold`, `any`, `all` | a view, `&T` (`*x` reads an `i32`) | the item `iter()` yields: `T` for a `Copy` type, `&T` otherwise (`x` for an `i32`) |
+| Closure argument of `filter`, `find` | a view, `&T` | a view, `&T`, for both |
+| Clone | `filter` and `find` need `T: Clone` and clone the element they keep | none; the lazy forms keep a view or the item it yields |
+| Source | borrowed, not consumed | borrowed through `iter()`, not consumed |
+
+If you need the eager result from a lazy chain, collect the chain: `xs.iter().map(|x| x * 2).to_list()` gives the same
+items as `xs.map(|x| *x * 2)`. If you need a lazy chain from an eager call, write `xs.iter()` in place of `xs` and
+take the item, not a view, in the closure. A lazy `filter` or `find` over a `T` that is not `Copy` yields views, which
+`to_list()` cannot store, so write `xs.iter().cloned()` first to get the owned items the eager form clones. The
+pointers in the rest of the specification and in `std` (`stdlib.md`, the List section; `std/src/iter.bd`) say the same.
+
+Tests: `tests/m13_iterators/eager_lazy_same_items` (both forms give the same items, and `to_list()` gives the eager
+result), `lazy_no_clone_plain` (the lazy `filter` and `find` on a struct that is not `Clone`), `eager_map_closure_view`
+and `lazy_map_closure_item` (E0003: the closure's parameter is a view on one side and the item on the other), and
+`eager_filter_needs_clone` and `eager_find_needs_clone` (E0141: the eager forms need `Clone`).
 
 **IT11 Ranges.** `Range<T>` and `RangeInclusive<T>` are `Iterable<T>`: `r.iter()` and `r.into_iter()` both give a
 `RangeIter<T>`, which yields the endpoints in order. An inclusive iterator yields the upper endpoint and then

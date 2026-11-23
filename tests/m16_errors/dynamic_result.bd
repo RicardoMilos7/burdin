@@ -6,8 +6,8 @@
 //> -1
 //> 10
 
-// `Result<T>` means `Result<T, Error>` (spec/errors.md, ERR5), and an error type converts into the dynamic
-// error wherever `Error` is expected.
+// `Result<T>` means `Result<T, AnyError>` (spec/errors.md, ERR5), and an error type converts into the dynamic
+// error wherever `AnyError` is expected.
 
 error enum ConfigError {
     Missing(String) "missing key {0}"
