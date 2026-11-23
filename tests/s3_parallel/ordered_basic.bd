@@ -23,6 +23,6 @@ fn main() {
     println("sum {}", total)
     let evens = xs.par_iter().filter(|x| **x % 2 == 0).map(|x| *x).collect()
     println("evens {} first {} last {}", evens.len(), evens[0], evens[evens.len() - 1])
-    println("any {} all {}", xs.par_iter().any_item(|x| *x == 77777), xs.par_iter().all(|x| *x < 99999))
+    println("any {} all {}", xs.par_iter().any(|x| *x == 77777), xs.par_iter().all(|x| *x < 99999))
     println("find {:?}", xs.par_iter().map(|x| *x).find(|x| *x % 7 == 0 && *x > 0))
 }

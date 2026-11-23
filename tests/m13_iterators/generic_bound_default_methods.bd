@@ -11,7 +11,7 @@
 // A default method with its own type parameters, reached through a bound (issue #390). The method's parameters are
 // found from the closure the call receives, so `U` is the closure's return type inside the generic body, and the
 // adapters of `Iterator<T>` (`map`, `filter`, `zip`, `flat_map`, `max`) work on a type parameter the same way, and so
-// do `any` and `all`, which the bound's `any_item` default method provides (spec/iterators.md, IT9).
+// do `any` and `all`, which the bound's `any` default method provides (spec/iterators.md, IT9).
 
 interface Mapper<T> {
     fn get(self): T

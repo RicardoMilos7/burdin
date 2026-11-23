@@ -215,9 +215,9 @@ interface Iterator<T> {
     /// form on a `List` is `xs.any(f)`, whose closure takes a view of each element.
     ///
     /// ```
-    /// assert([1, 2].into_iter().any_item(|x| x == 2))
+    /// assert([1, 2].into_iter().any(|x| x == 2))
     /// ```
-    fn any_item<F: FnMut(T): bool>(mut self, own f: F): bool {
+    fn any<F: FnMut(T): bool>(mut self, own f: F): bool {
         let mut f = f
         loop {
             match self.next() {

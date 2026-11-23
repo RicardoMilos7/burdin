@@ -84,7 +84,7 @@ impl Fmt<'_> {
                 let block = self.impl_block()?;
                 concat(vec![kw, space(), block])
             }
-            TokenKind::Fn | TokenKind::Unsafe => self.fn_decl(false)?,
+            TokenKind::Fn | TokenKind::Unsafe => self.fn_decl(false, false)?,
             TokenKind::Struct => self.struct_decl()?,
             TokenKind::Enum => self.enum_decl(false)?,
             TokenKind::Error => self.enum_decl(true)?,
@@ -104,8 +104,9 @@ impl Fmt<'_> {
     // ----- functions -------------------------------------------------------------------------------------------
 
     /// `[unsafe] fn name<T>(params): Type where ... { body }`, and the extension form `fn Type.name(...)`. With
-    /// `body_optional`, an interface or `extern` signature may have no body.
-    pub fn fn_decl(&mut self, body_optional: bool) -> R<D> {
+    /// `body_optional`, an interface or `extern` signature may have no body. With `member`, the name is a method's
+    /// name in an impl block, an interface, or a derive body, which may be a member name (issue #933).
+    pub fn fn_decl(&mut self, body_optional: bool, member: bool) -> R<D> {
         let extension = lookahead::extension_ahead(&self.raw, self.pos);
         let mut parts = Vec::new();
         if self.at(&TokenKind::Unsafe) {
@@ -142,6 +143,8 @@ impl Fmt<'_> {
                     break;
                 }
             }
+        } else if member {
+            parts.push(self.member_name()?);
         } else {
             parts.push(self.ident()?);
         }
@@ -387,8 +390,9 @@ impl Fmt<'_> {
 
     /// `{ [priv] [blocking] fn ... }`: methods, one per line, blank lines kept. With `body_optional` a method may be
     /// a bare signature; with `blocking_ok` the contextual `blocking` marker is accepted, as it is inside
-    /// `extern "C" { ... }` (`spec/io.md`, IO4).
-    fn method_list(&mut self, body_optional: bool, blocking_ok: bool) -> R<D> {
+    /// `extern "C" { ... }` (`spec/io.md`, IO4). With `member_names` a method name may be a member name (issue #933);
+    /// an `extern` block's names may not.
+    fn method_list(&mut self, body_optional: bool, blocking_ok: bool, member_names: bool) -> R<D> {
         let open = self.open(&TokenKind::LBrace, true)?;
         self.depth += 1;
         let mut members = Vec::new();
@@ -425,7 +429,7 @@ impl Fmt<'_> {
             if !matches!(self.kind(), TokenKind::Fn | TokenKind::Unsafe) {
                 return Err(self.error("expected a method"));
             }
-            parts.push(self.fn_decl(body_optional)?);
+            parts.push(self.fn_decl(body_optional, member_names)?);
             members.push(Member { doc: concat(parts), after: Doc::Nil, blank_before });
         }
         self.depth -= 1;
@@ -445,7 +449,7 @@ impl Fmt<'_> {
             parts.push(self.bounds()?);
         }
         parts.push(space());
-        parts.push(self.method_list(true, false)?);
+        parts.push(self.method_list(true, false, true)?);
         Ok(concat(parts))
     }
 
@@ -462,7 +466,7 @@ impl Fmt<'_> {
         } else {
             parts.push(space());
         }
-        parts.push(self.method_list(false, false)?);
+        parts.push(self.method_list(false, false, true)?);
         Ok(concat(parts))
     }
 
@@ -470,7 +474,7 @@ impl Fmt<'_> {
     fn derive_decl(&mut self) -> R<D> {
         let kw = self.tok_doc();
         let name = self.ident()?;
-        let methods = self.method_list(false, false)?;
+        let methods = self.method_list(false, false, true)?;
         Ok(concat(vec![kw, space(), name, space(), methods]))
     }
 
@@ -483,13 +487,13 @@ impl Fmt<'_> {
         let abi = self.tok_doc();
         let mut parts = vec![kw, space(), abi, space()];
         if self.at(&TokenKind::LBrace) {
-            parts.push(self.method_list(true, true)?);
+            parts.push(self.method_list(true, true, false)?);
         } else {
             if self.at(&TokenKind::Priv) {
                 parts.push(self.tok_doc());
                 parts.push(space());
             }
-            parts.push(self.fn_decl(false)?);
+            parts.push(self.fn_decl(false, false)?);
         }
         Ok(concat(parts))
     }

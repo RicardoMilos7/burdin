@@ -1,9 +1,19 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, and fifty-first. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, and fifty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
+**Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
+`interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
+`fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already
+lets stand as names: `any`, `impl`, `error`, `comptime`, and `derive`. A free function, an `extern` function, and any
+other keyword (`fn if`) are still rejected. The parser (`member_name`, `member_fn_decl` in `burdin_syntax`), the
+formatter (`member_name` in `burdin_fmt`), and the three sema lookups that spelled `any` as `any_item` changed with it.
+Tests: `tests/m15_any/keyword_member_declaration`, `keyword_fn_name_free`, `keyword_member_other`, `any_item_removed`,
+and the renamed call sites in `tests/s3_parallel` and `tests/m13_iterators`; the parser unit tests are in
+`burdin_syntax/src/parser/mod.rs`. `packages/regex` still has a private method named `any_item`; it is not a std name and
+was left alone.
 **Mixed `String`/`str` operators (issue #936, 2026-11-23).** Decision: the narrow rule, not a general `Add<Rhs>`.
 `String + str` is built in and returns a new `String` (both operands borrowed; it calls `__concat` in `std/src/text.bd`),
 and a `String` and a `str` compare in all six comparison operators, either order (`spec/operators.md` OP14, `IC1` in
@@ -38,7 +48,7 @@ task (`__chunks`), and merges the partial results in source order. Three things 
 in `burdin_sema/src/markers.rs` answers it), (2) consumers that keep items are on `ParallelValues<T>`, implemented only
 for owned-item pipelines, because a default method on the one interface instantiates for a view item and fails (E0120),
 and `indexed` adapters are on `IndexedParallelIterator<T>`, and (3) `fold` takes `(init, op, combine)`, `any` is
-`any_item`, a range source is `par_range` (a `Range` hides its endpoints from library code), and `par_iter_mut` has its
+`any` (it was `any_item` until #933), a range source is `par_range` (a `Range` hides its endpoints from library code), and `par_iter_mut` has its
 own `for_each`/`for_each_indexed` because a `&mut` made from an address cannot be returned from a method (E0122). The
 feature also found a code generation bug and fixed it (`Globals::unique_instance_name`): two instances that spell alike
 but differ (a borrowing closure and an owning one, both `Fn(i64): i64`) shared one LLVM function name, so one body was
