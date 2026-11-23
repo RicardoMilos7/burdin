@@ -203,6 +203,11 @@ interface ParallelIterator<T> requires Sync {
     }
 
     /// Whether `f` accepts some item, as on `Iterator`. It may stop early.
+    ///
+    /// ```
+    /// assert_eq(par_range(0, 10).any(|x| x == 7), true)
+    /// assert_eq(par_range(0, 10).any(|x| x > 9), false)
+    /// ```
     fn any<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let found = AtomicBool.new(false)
         let parts = __chunks(self.__par_len(), |lo, hi| {
