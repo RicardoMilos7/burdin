@@ -1,7 +1,7 @@
 # Burdin stage 1 plan
 
-Stage 0 is complete: the Rust compiler implements the core subset, all 133 conformance tests pass, and the memory
-model is enforced (`spec/stage0-subset.md`, `spec/memory-rules.md`). Stage 1 grows the **same Rust compiler** with the
+Stage 0 is complete: the Rust compiler implements the core subset, all 294 stage 0 conformance tests pass (the
+`m01_*` to `m11_*` folders; `tests/README.md` gives the count and the command), and the memory model is enforced (`spec/stage0-subset.md`, `spec/memory-rules.md`). Stage 1 grows the **same Rust compiler** with the
 rest of the core language, then stops. It is a plan, not a commitment: each milestone gets its tests before its code,
 and the plan changes when a decision changes.
 
@@ -395,19 +395,23 @@ and named build profiles (`dev`, `release`, `test`, `bench`, and custom) are in 
 
 ### When wanted
 
-`TryFrom` and `try_from` have landed for user types and integer types (`spec/stdlib.md`, "Conversions", issue
-#274), and fallible allocation has landed for `List`, `Map`, `String`, and the allocator primitives
-(`spec/allocators.md`, AL11, issue #278); the remaining items below are still wanted.
+Items that were wanted during stage 1, with their status. Each is listed once; the spec link is where its behavior is
+written down.
 
-`i128`/`u128` have landed too (issue #273, `spec/int128.md`), and so has `break` with a value (issue #276,
-`spec/grammar.md` rule 8.10), and compound assignment has landed for the built-in types (issue #277,
-`spec/compound-assignment.md`). The remaining items are doc tests, `bench` blocks, fallible allocation,
-compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
-slip past stage 1, and a package registry. Compound assignment on a user type (issue #277) takes the operator from its interface, as `a = a op b`.
-`spec/grammar.md` rule 8.10). The remaining items are compound assignment, doc tests, `bench` blocks,
-fallible allocation, compiler-inserted preemption checks, a MIR (decision 6), `Set`/`Deque` if they
-compiler-inserted preemption checks, declaration generation in comptime, a MIR (decision 6), `Set`/`Deque` if they
-slip past stage 1, and a package registry.
+| Item | Status | Where | Issue |
+| --- | --- | --- | --- |
+| `TryFrom` and `try_from` for user and integer types | landed | `stdlib.md`, "Conversions" | #274 |
+| Fallible allocation for `List`, `Map`, `String`, and the allocator primitives | landed | `allocators.md`, AL11 | #278 |
+| `i128` and `u128` | landed | `int128.md` | #273 |
+| `break` with a value | landed | `grammar.md`, rule 8.10 | #276 |
+| Compound assignment, on the built-in types and on user types through their operator interface | landed | `compound-assignment.md` | #277 |
+| `Set<T>` and `Deque<T>` | landed | `stdlib.md`, "`Set<T>`" and "`Deque<T>`" | #190, #191 |
+| Declaration generation in comptime | landed | `generate.md` | #280 |
+| Doc tests | landed | `test-runner.md`, "Doc tests" | #250, #650-#652 |
+| `bench` blocks | landed | `bench.md`, BN1 | not recorded |
+| Compiler-inserted preemption checks | not landed; cooperative preemption points are a later concurrency item | `tasks.md` (no preemption in stage 2.1) | not recorded |
+| A MIR | not planned: the comptime engine and the checks read the typed tree (decision 6) | `comptime.md`, CT1 | #158, #159 (closed as not chosen) |
+| A package registry | not landed; a `version` with no `path` or `git` is an error | `packages.md`, PKG2 and PKG11 | not recorded |
 
 ## Working on stage 1
 

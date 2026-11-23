@@ -104,8 +104,8 @@ asks for it.
 | `skip(own self, count: usize)` | `SkipIter<Self, T>` | drops the first `count` items |
 | `fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F)` | `A` | left to right |
 | `count(mut self)` | `usize` | consumes the iterator |
-| `any(FnMut(T): bool)` | `bool` | stops at the first accepted item |
-| `all(FnMut(T): bool)` | `bool` | stops at the first rejected item |
+| `any<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first accepted item; `std` declares it as `any_item` (see below) |
+| `all<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
 | `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
 | `zip<U, J: Iterator<U>>(own self, own other: J)` | `ZipIter<Self, T, J, U>` | `(item, other item)` pairs; ends when either source ends |

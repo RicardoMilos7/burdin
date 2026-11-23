@@ -438,6 +438,7 @@ impl<'a> Analyzer<'a> {
             | K::Float(_)
             | K::Char(_)
             | K::Str(_)
+            | K::Bytes(_)
             | K::Const(_)
             | K::None
             | K::LayoutOf { .. } => Origin::default(),

@@ -1,0 +1,37 @@
+//@ run
+//> 17
+//> 65 66 67
+//> 3
+//> 66
+//> 66
+//> 65
+//> 66
+//> 67
+//> 104
+
+// `embed` with the expected type `[u8]` is a static byte view of the file, and no length is written (CT15). The
+// view is static data (RT4), so a function may return it and a local may hold it. A constant may not have type
+// `[u8]` (CT3, E0221), so the view is bound in a function, a parameter, or a `let`.
+
+fn bytes(): [u8] {
+    embed("data/bytes.bin")
+}
+
+fn pick(xs: [u8], i: usize): u8 {
+    xs[i]
+}
+
+fn main() {
+    let text: [u8] = embed("data/greeting.txt")
+    println("{}", text.len())
+    let view: [u8] = embed("data/bytes.bin")
+    println("{} {} {}", view[0], view[1], view[2])
+    println("{}", view.len())
+    println("{}", pick(bytes(), 1))
+    println("{}", pick(embed("data/bytes.bin"), 1))
+    let all: [u8] = bytes()
+    for b in all {
+        println("{}", b)
+    }
+    println("{}", text[0])
+}

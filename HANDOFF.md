@@ -4,6 +4,30 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Documentation consistency pass (issues #946-#967, 2026-11-23).** The spec, the tests README, the design, and the
+HANDOFF now agree with the compiler on the points those issues named: `derive`, `blocking`, slice receivers, and closures
+are in the grammar; a const-specific impl (`Grid<3> { ... }`) is implemented and tested (`m21_reflect/const_impl_specific`),
+so CG8 no longer lists it; the comptime file rule is `embed` alone (CT15); there is no MIR (decision 6); decision 34 is
+generation and decision 35 compound assignment; the stage 0 count is 294 (`run_tests.py --list m01_ ... m11_`); and the
+stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
+now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
+(`m13_iterators/generic_bound_default_methods`). Still open, and the spec states the current behavior with these numbers:
+the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
+struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
+(`m15_any/impl_not_parameter` pins the E0201 until then).
+**`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
+view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
+a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
+keys on the expected type `[u8]`; the typed tree has a new `ExprKind::Bytes` (static, like `Str`), codegen emits it
+as a private constant global, and the comptime interpreter reads it as a `[u8]` slice. A constant may not have type
+`[u8]`: CT3 keeps constants to scalars, `str`, `String`, and aggregates of those, so `const DATA: [u8] = embed(...)` is
+E0221 (a decision: a view is bound in a function or a `let`). Remaining gap: `[u8; N]` still needs its length written
+where the array is named; an inferred `embed_bytes` form from the issue was not built. Tests:
+`tests/m21_reflect/embed_slice` (run) and `embed_slice_invalid` (E0240, E0241, E0221). Verified: the m21 folder
+(30 passed) and the full conformance suite in debug (1255 passed; 5 failed, all `s3_tls` and `s3_http` cases that
+fail to link `-lcrypto` on this VM, not this change), `cargo clippy --all-targets -- -D warnings`, `cargo test
+--workspace`, `check_tests`, `check_error_docs`, `check_docs`, and `check_e9000`, all clean.
+
 **Official packages are implicit (2026-11-23).** `use json` reaches `packages/json` with no `[dependencies]` line
 (`spec/packages.md`, PKG15, PKG17, PKG18): `burdin_query::package::implicit_official_deps` scans each loaded package's
 `src/*.bd` for `use` first names, skips the package's own name, a same-named dep, and a same-named top-level module,
@@ -56,7 +80,7 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
 `fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
 text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
-hygienic (as user derives are, decision 24), and generation before the whole-program check: step 1 checks each
+hygienic (as user derives are, decision 26 in `tests/README.md`), and generation before the whole-program check: step 1 checks each
 generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
 parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
 `fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is

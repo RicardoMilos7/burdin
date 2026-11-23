@@ -102,6 +102,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let hi_v = self.usize_value(hi)?;
         let hi_v = self.slice_end(lo_v, hi_v, len.into_int_value(), inclusive, span)?;
         self.bounds_guard_ule(lo_v, hi_v, span)?;
+        // A `str` or `String` slice keeps the text valid UTF-8, so both of its ends must be character boundaries
+        // (`spec/stdlib.md`, "Slicing"). A byte slice of `[u8]` is not checked this way.
+        if matches!(base.ty, Ty::Str | Ty::String) {
+            self.char_boundary_guard(ptr.into_pointer_value(), len.into_int_value(), lo_v, span)?;
+            self.char_boundary_guard(ptr.into_pointer_value(), len.into_int_value(), hi_v, span)?;
+        }
         // The element type of a slice or a `List` decides the stride; `str` and `String` are bytes. Slicing a
         // slice of `i32` by three elements must move three elements, not three bytes.
         let elem_ty = match &base.ty {
@@ -397,6 +403,39 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Panics unless `at` is a character boundary of the `len` bytes at `data`: the start, the end, or a byte that
+    /// does not continue a character. The byte is read only when `at < len`, so an empty text is never read.
+    fn char_boundary_guard(
+        &mut self,
+        data: PointerValue<'ctx>,
+        len: IntValue<'ctx>,
+        at: IntValue<'ctx>,
+        span: Span,
+    ) -> GenResult<()> {
+        let i8_ty = self.cx.i8_type();
+        let ok = self.alloca(self.cx.bool_type().into(), "boundary.ok")?;
+        self.builder.build_store(ok, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
+        let inside = self.new_block("boundary.inside");
+        let done = self.new_block("boundary.done");
+        let in_text = self.builder.build_int_compare(IntPredicate::ULT, at, len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(in_text, inside, done).map_err(llvm_err)?;
+        self.builder.position_at_end(inside);
+        // SAFETY (LLVM): `at < len`, checked above.
+        let p = unsafe { self.builder.build_in_bounds_gep(i8_ty, data, &[at], "") }.map_err(llvm_err)?;
+        let byte = self.builder.build_load(i8_ty, p, "").map_err(llvm_err)?.into_int_value();
+        let continuation = self.builder.build_and(byte, i8_ty.const_int(0xC0, false), "").map_err(llvm_err)?;
+        let is_continuation = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, continuation, i8_ty.const_int(0x80, false), "")
+            .map_err(llvm_err)?;
+        let starts_char = self.builder.build_not(is_continuation, "").map_err(llvm_err)?;
+        self.builder.build_store(ok, starts_char).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+        self.builder.position_at_end(done);
+        let ok = self.builder.build_load(self.cx.bool_type(), ok, "").map_err(llvm_err)?.into_int_value();
+        self.check(ok, "slice: the index is not a character boundary", span)
     }
 
     /// The exclusive end of a slice from its written end: `hi` itself, or `hi + 1` when the range is inclusive.

@@ -244,6 +244,7 @@ impl Walker<'_> {
             | K::Float(_)
             | K::Char(_)
             | K::Str(_)
+            | K::Bytes(_)
             | K::Local(_)
             | K::Const(_)
             | K::Continue(_)

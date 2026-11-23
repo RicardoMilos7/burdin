@@ -57,7 +57,7 @@ pub(crate) fn check_const_cycles(consts: &[tir::Const], decls: &[&ast::ConstDecl
 pub(crate) fn is_const_expr(e: &tir::Expr) -> bool {
     use tir::ExprKind as K;
     match &e.kind {
-        K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Const(_) => true,
+        K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bytes(_) | K::Const(_) => true,
         K::Unary(_, a) | K::Cast(a) => is_const_expr(a),
         K::Binary(_, a, b) => is_const_expr(a) && is_const_expr(b),
         _ => e.ty == Ty::Error,
