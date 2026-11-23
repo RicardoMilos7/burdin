@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A concrete type argument in the receiver pattern must match: `Result<T, i32>` does not cover
+// `Result<String, String>` (EX3).
+
+fn Result<T, i32>.code(self): i32 {
+    match self {
+        Ok(_) => 0,
+        Err(c) => c,
+    }
+}
+
+fn main() {
+    let r: Result<String, String> = Err("boom".to_string())
+    println(r.code().to_string()) //~ E0002
+}

@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// An omitted allocator argument in the receiver pattern is the default one: `List<T>` is `List<T, Global>`, so
+// it does not cover a list in an arena (EX3, AL5).
+
+fn List<T>.first_or(self, d: T): T {
+    d
+}
+
+fn main() {
+    let arena = Arena.new()
+    let mut xs = List<i32>.new_in(arena)
+    xs.push(1)
+    println(xs.first_or(0).to_string()) //~ E0002
+}
