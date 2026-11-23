@@ -247,7 +247,12 @@ pub(crate) fn extension_applies(globals: &Globals, ext: &ExtensionInfo, recv_ty:
     }
     let mut bindings = Vec::new();
     globals.unify(&ext.recv, recv_ty, &mut bindings);
-    ext.recv_params.iter().all(|p| bindings.iter().any(|(n, t)| n == p && *t != Ty::Error))
+    if !ext.recv_params.iter().all(|p| bindings.iter().any(|(n, t)| n == p && *t != Ty::Error)) {
+        return false;
+    }
+    // `unify` ignores a concrete part that differs, so the pattern, with its parameters replaced, must equal the
+    // receiver: `Result<T, i32>` does not cover `Result<String, String>`, and `List<T>` is `List<T, Global>`.
+    globals.subst_ty(&ext.recv, &bindings) == *recv_ty
 }
 
 /// The type parameters an extension receiver declares, with the span of each. A receiver is a type path
@@ -469,6 +474,18 @@ mod tests {
             &Ty::Map(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
         ));
         assert!(!extension_applies(&globals, &generic, &Ty::Error));
+
+        // A concrete part of the pattern must match too.
+        let string = Ty::String;
+        let i32_ty = Ty::Int(IntTy::I32);
+        let result_pat =
+            extension(Ty::Result(Box::new(Ty::Param("T".into())), Box::new(i32_ty.clone())), &["T"], &["T"]);
+        assert!(extension_applies(
+            &globals,
+            &result_pat,
+            &Ty::Result(Box::new(string.clone()), Box::new(i32_ty.clone()))
+        ));
+        assert!(!extension_applies(&globals, &result_pat, &Ty::Result(Box::new(string.clone()), Box::new(string))));
 
         let concrete = extension(Ty::String, &[], &[]);
         assert!(extension_applies(&globals, &concrete, &Ty::String));

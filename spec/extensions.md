@@ -145,7 +145,7 @@ way to take a reference to an extension, and no way to pass one where a closure 
 | --- | --- |
 | EX1 declaration, receiver types, generics | `m18_extension/string_extension.bd`, `user_type_extension.bd`, `enum_extension.bd`, `concrete_receiver_args.bd`, `generic_receiver.bd`, `generic_user_type.bd`, `method_type_params.bd`, `missing_self.bd`, `where_not_parameter.bd`, `duplicate_receiver_arg.bd` |
 | EX2 visibility and imports | `m18_extension/imported_extension/`, `not_imported/`, `aliased_import/`, `duplicate_import/`, `private_extension/`, `imported_type_extension/`, `reexported_extension/` |
-| EX3 resolution order | `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, `shadowed_interface_method.bd`, `receiver_mismatch.bd`, `not_callable_by_name.bd` |
+| EX3 resolution order | `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, `shadowed_interface_method.bd`, `receiver_mismatch.bd`, `receiver_concrete_arg_mismatch.bd`, `receiver_allocator_mismatch.bd`, `not_callable_by_name.bd` |
 | EX4 shadowing warning | `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, `shadowed_interface_method.bd` |
 | EX5 conflicts | `m18_extension/same_name_different_receivers.bd`, `duplicate_extension.bd`, `duplicate_receiver_arg.bd`, `duplicate_import/`, `missing_self.bd`, `where_not_parameter.bd`, `aliased_import/` |
 | EX6 calls and conventions | `m18_extension/mut_receiver.bd`, `own_receiver_drop.bd`, `mut_requires_mutable.bd`, `view_of_self.bd`, `view_of_temporary.bd`, `generic_body_calls_extension.bd`, `unsafe_extension.bd`, `unsafe_extension_outside.bd` |
