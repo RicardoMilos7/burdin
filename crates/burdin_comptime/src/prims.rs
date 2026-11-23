@@ -1879,6 +1879,15 @@ impl<'p> Interp<'p, '_> {
         if lo_u > hi_u {
             return Err(bounds(lo, hi_u, span));
         }
+        // A `str` or `String` slice keeps the text valid UTF-8: both ends must be character boundaries.
+        let splits_char = match &base {
+            Value::Str(b) => !char_boundary(&b[..], lo_u) || !char_boundary(&b[..], hi_u),
+            Value::String(b) => !char_boundary(&b[..], lo_u) || !char_boundary(&b[..], hi_u),
+            _ => false,
+        };
+        if splits_char {
+            return Err(panic("slice: the index is not a character boundary", span));
+        }
         Ok(match base {
             Value::Str(b) => Value::Str(Rc::from(&b[lo_u..hi_u])),
             Value::String(b) => Value::Str(Rc::from(&b[lo_u..hi_u])),

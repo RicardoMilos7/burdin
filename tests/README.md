@@ -283,7 +283,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `comptime for` variable over `Type.fields` |
 | E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `struct T: Name` with a user derive and no interface `Name` in scope |
 | E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
-| E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
+| E0240 | `embed` could not read its file: it is missing, unreadable, or (for `str`) not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
 | E0242 | Invalid generated text from a `comptime generate` block (`spec/generate.md`): it does not parse, or it declares an item other than a `struct`, `enum`, or `fn` (a `const`, `use`, `impl`, `interface`, `derive`, `type`, test, bench, `comptime assert`, or a nested `comptime generate`) |
 | E0243 | `comptime generate` outside module scope (in a function body, an impl block, or an expression) |
@@ -522,7 +522,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Ty::Const`, so instances, inference, and keys work as for types. Array lengths (`[T; R * C]`, `[0; N]`) are
     const expressions over numbers, const parameters, and constants (E0250 for a type/value mix-up, E0251 when the
     expression cannot be computed, E0252 for an argument nothing determines). `embed("path")` is the contents of a
-    file read at compile time, as `str` or, with the expected type `[u8; N]`, as bytes; the file is a build input
+    file read at compile time, as `str`, with the expected type `[u8; N]` as bytes of that length, or with the
+    expected type `[u8]` as a static byte view with no length written (`embed_slice`; RT4). The file is a build input
     (`--emit-deps`), a missing one is E0240 and a bad path or length E0241. `spec/const-generics.md` CG1-CG9,
     `spec/comptime.md` CT15, `tests/m21_reflect/`.
 
@@ -801,9 +802,11 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   signatures the tests exercise. In particular `List.last` and `Map.get` return `Option<&T>`/`Option<&V>`, `List.pop`
   returns `Option<T>`, `List.remove` and `Map.remove` return owned values, and `List.contains` takes a value.
   Unknown names are E0002 and wrong arities E0004.
-- **`String` length and slicing are byte-based.** `s.len()` is bytes and `s[a..b]` slices bytes; `chars()` iterates
-  Unicode scalar values. The design says UTF-8 but does not define `len`. `m09_stdlib/string_ops.bd`,
-  `m09_stdlib/file_io.bd`, `file_io_binary.bd`; decision 7.
+- **`String` length is byte-based, and slicing keeps the text valid UTF-8.** `s.len()` is bytes and `chars()` iterates
+  Unicode scalar values. `s[a..b]` on `str` or `String` panics unless both ends are character boundaries (issue #916),
+  so a `str` is always valid UTF-8; `get(a, b)` is the `None` form. The design says UTF-8 but does not define `len`.
+  `m09_stdlib/string_ops.bd`, `m09_stdlib/file_io.bd`, `file_io_binary.bd`, `m24_stdlib/string_slice_boundary`,
+  `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_comptime_aborts`; decision 7.
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
   type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
   `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).

@@ -220,12 +220,16 @@ where it happened. Integer overflow follows the profile: it panics in a debug bu
 ## embed
 
 `embed("path")` is the contents of a file, read while compiling. The path is relative to the source file that writes the
-call, and it may not be absolute or contain `..`. The result is a `str` for text files, or the bytes as `[u8; N]` when
-the expected type is an array of bytes:
+call, and it may not be absolute or contain `..`. The result is a `str` for text files. With the expected type
+`[u8; N]` it is the bytes of a file of exactly that length, and with the expected type `[u8]` it is a static byte view
+of the file, so the length is never written (a constant may not have that type, so bind the view in a function or a `let`):
 
 ```burdin fragment
 const LICENSE: str = embed("LICENSE.txt")
 const HEADER: [u8; 4] = embed("magic.bin")
+fn payload(): [u8] {
+    embed("payload.bin")
+}
 ```
 
 A missing or unreadable file is `E0240`, and an invalid path or an array whose length does not match the file is

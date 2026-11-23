@@ -15,6 +15,18 @@ now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_m
 the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
 struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
 (`m15_any/impl_not_parameter` pins the E0201 until then).
+**`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
+view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
+a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
+keys on the expected type `[u8]`; the typed tree has a new `ExprKind::Bytes` (static, like `Str`), codegen emits it
+as a private constant global, and the comptime interpreter reads it as a `[u8]` slice. A constant may not have type
+`[u8]`: CT3 keeps constants to scalars, `str`, `String`, and aggregates of those, so `const DATA: [u8] = embed(...)` is
+E0221 (a decision: a view is bound in a function or a `let`). Remaining gap: `[u8; N]` still needs its length written
+where the array is named; an inferred `embed_bytes` form from the issue was not built. Tests:
+`tests/m21_reflect/embed_slice` (run) and `embed_slice_invalid` (E0240, E0241, E0221). Verified: the m21 folder
+(30 passed) and the full conformance suite in debug (1255 passed; 5 failed, all `s3_tls` and `s3_http` cases that
+fail to link `-lcrypto` on this VM, not this change), `cargo clippy --all-targets -- -D warnings`, `cargo test
+--workspace`, `check_tests`, `check_error_docs`, `check_docs`, and `check_e9000`, all clean.
 
 **Official packages are implicit (2026-11-23).** `use json` reaches `packages/json` with no `[dependencies]` line
 (`spec/packages.md`, PKG15, PKG17, PKG18): `burdin_query::package::implicit_official_deps` scans each loaded package's

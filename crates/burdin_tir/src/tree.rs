@@ -226,6 +226,9 @@ pub enum ExprKind {
     Float(f64),
     Char(char),
     Str(String),
+    /// A static byte view of an embedded file (`embed("path")` with the expected type `[u8]`, `spec/comptime.md`
+    /// CT15). Its type is `[u8]`; it is static data, like a string literal (RT4).
+    Bytes(Vec<u8>),
     Local(LocalId),
     Const(ConstId),
     Call(FuncId, Vec<Expr>),

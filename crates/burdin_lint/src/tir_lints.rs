@@ -395,6 +395,7 @@ impl An<'_> {
             | K::Float(_)
             | K::Char(_)
             | K::Str(_)
+            | K::Bytes(_)
             | K::Const(_)
             | K::None
             | K::Continue(_)
@@ -666,7 +667,15 @@ impl An<'_> {
 fn invariant(e: &Expr, allocates: &mut bool) -> bool {
     use ExprKind as K;
     match &e.kind {
-        K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Const(_) | K::None => true,
+        K::Unit
+        | K::Bool(_)
+        | K::Int(_)
+        | K::Float(_)
+        | K::Char(_)
+        | K::Str(_)
+        | K::Bytes(_)
+        | K::Const(_)
+        | K::None => true,
         K::Array(es) | K::Tuple(es) => es.iter().all(|x| invariant(x, allocates)),
         K::Struct(fs) | K::Variant(_, fs) => fs.iter().all(|(_, x)| invariant(x, allocates)),
         K::Some(x) | K::Ok(x) | K::Err(x) | K::Cast(x) | K::Unary(_, x) | K::StringAsStr(x) => invariant(x, allocates),

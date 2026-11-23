@@ -1,0 +1,13 @@
+//@ run-abort
+//@ stderr: slice: the index is not a character boundary
+//> before
+
+// A slice of a `String` whose start splits a multi-byte character panics (issue #916). Byte 2 of "añb" is the second
+// byte of `ñ`, so the slice is refused before any text is made from it.
+
+fn main() {
+    let owned = String.from("añb")
+    println("before")
+    let bad = owned[2..3]
+    println("{bad}")
+}

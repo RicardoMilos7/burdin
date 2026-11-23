@@ -1579,7 +1579,7 @@ fn main() {}
 
 ## E0240: `embed` could not read its file
 
-`embed("path")` reads a file while compiling. The file is missing, cannot be read, or, for `str`, is not valid
+`embed("path")` reads a file while compiling. The file is missing or cannot be read, or, for `str`, it is not valid
 UTF-8 text. The path is relative to the source file that writes the call. `spec/comptime.md` CT15.
 
 <!-- error-example: E0240 -->
@@ -1591,13 +1591,13 @@ fn main() {
 ```
 <!-- /error-example -->
 
-**How to fix:** correct the path, or embed a binary file as bytes with an expected type of `[u8; N]`.
+**How to fix:** correct the path, or embed a binary file as bytes with an expected type of `[u8]` or `[u8; N]`.
 
 ## E0241: Invalid `embed`
 
 The path of `embed` must be a string literal, so that the file is known while compiling, and it must be relative and
 stay inside the directory of the source file (no `..`). When the expected type is `[u8; N]`, `N` must be the length
-of the file. `spec/comptime.md` CT15.
+of the file. An expected type of `[u8]` needs no length. `spec/comptime.md` CT15.
 
 <!-- error-example: E0241 -->
 ```burdin
@@ -1610,7 +1610,7 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** write the path as a string literal inside the source directory, and give `[u8; N]` the file's
-length.
+length, or use `[u8]` to take the bytes without writing a length.
 
 ## E0242: Invalid generated text
 

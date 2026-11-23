@@ -240,12 +240,13 @@ Tests: `m06_conventions/return_aggregate_two_sources` (run); errors: `return_agg
 `m24_stdlib/iter_zip`, `iter_chain` (the chains), `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`.
 
 **RT4 Static.** String literals are static views. A literal can be returned from any function, whatever its parameters,
-in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. A `const` of type
-`str` whose value is a string literal (directly or through another such constant) is static too. No other expression
-is static in stage 0: a view of a local, parameter, temporary, `String`, or non-`str` constant follows RT1-RT3, and
-`&` of a constant is E0003 because a constant is not a place.
+in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. The same holds for
+an `embed("path")` whose expected type is `str` or `[u8]` (`comptime.md`, CT15): its bytes are static data. A `const`
+of type `str` whose value is a string literal, directly or through another such constant, is static too (a constant may
+not have type `[u8]`, E0221). No other expression is static in stage 0: a view of a local, parameter, temporary, `String`, or non-`str` constant follows
+RT1-RT3, and `&` of a constant is E0003 because a constant is not a place.
 Tests: `m06_conventions/return_literal_ok`, `static_literals`, `const_is_not_a_place`, `return_ref_single_source`,
-`str_views`, `slice_views`, `option_of_reference_ok`;
+`str_views`, `slice_views`, `option_of_reference_ok`, `m21_reflect/embed_slice`;
 errors: `return_ref_two_sources`, `return_str_two_sources` (E0121), `return_ref_to_local`, `return_view_of_local_string`,
 `return_ref_from_own_param` (E0122).
 

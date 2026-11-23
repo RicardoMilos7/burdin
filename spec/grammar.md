@@ -429,6 +429,8 @@ Both are first-class, `Copy`, and iterable by `for`, and may be stored in a bind
 endpoints must be integers, and both take their type from context, from the other endpoint, or default to `i32`.
 The range operators bind looser than comparison, so `r == (0..4)` needs the parentheses. Both endpoints are
 required: open-ended forms (`..b`, `a..`, `..`) do not exist in stage 0 and are a syntax error.
+A range in an index (`s[a..b]`) is a slice view: on `str` and `String` both ends must be character boundaries, or
+the slice panics (`spec/stdlib.md`, "Slicing and character boundaries").
 
 Type arguments may follow a member name: `x.is<Circle>()` and `x.downcast<Circle>()` (AN6), and a method or associated
 function with type parameters of its own (`arguments.md`, TA1). The `<` starts a type list when one parses and its
