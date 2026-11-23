@@ -63,10 +63,10 @@ impl Sema<'_> {
                 index_mut: find_iface(&self.globals, "IndexMut")?,
             })
         })();
-        // The error surface: the `Error` marker interface, the dynamic `Error` value, and the helpers that build
+        // The error surface: the `Error` marker interface, the dynamic `AnyError` value, and the helpers that build
         // one (`spec/errors.md`, ERR4). Everything is optional, so a program without `std` still checks.
         self.globals.error_iface = find_iface(&self.globals, "Error");
-        let error_ty = self.globals.std_adt_ty("Error");
+        let error_ty = self.globals.std_adt_ty("AnyError");
         self.globals.error_ty = error_ty;
         if let Some(&std_module) = std_modules.iter().find(|&&m| self.globals.modules[m].path == ["std"]) {
             // `exported_value` also finds `priv` declarations, which is how the compiler reaches these helpers.

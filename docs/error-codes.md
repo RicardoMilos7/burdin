@@ -1266,7 +1266,7 @@ variant.
 ## E0212: Missing error conversion
 
 `?` converts the error of a `Result` into the enclosing function's error type through a `Type: From<Source>` block,
-or into the dynamic `Error` when the function returns `Result<...>` and the value's type is an error type (a type
+or into the dynamic `AnyError` when the function returns `Result<...>` and the value's type is an error type (a type
 implementing `Error`, which requires `Display`). An integer, a `String`, or any other non-error type cannot be
 converted this way, and `.context(...)` needs an error type too.
 
@@ -1276,7 +1276,7 @@ fn load(): Result<i32, i32> {
     Ok(1)
 }
 
-fn run(): Result<i32, Error> {
+fn run(): Result<i32, AnyError> {
     let n = load()? //~ E0212
     Ok(n)
 }

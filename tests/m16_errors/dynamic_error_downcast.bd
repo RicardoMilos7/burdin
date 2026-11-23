@@ -22,7 +22,7 @@ fn into_dynamic(ok: bool): Result<i32> {
 }
 
 fn main() {
-    let io: Error = IoError.Read {
+    let io: AnyError = IoError.Read {
         path: "cfg.toml".to_string(),
         kind: IoErrorKind.NotFound,
         os_code: None,
@@ -33,7 +33,7 @@ fn main() {
         None => println("wrong"),
     }
 
-    let io2: Error = IoError.Read {
+    let io2: AnyError = IoError.Read {
         path: "cfg.toml".to_string(),
         kind: IoErrorKind.NotFound,
         os_code: None,
@@ -55,12 +55,12 @@ fn main() {
         }
     }
 
-    let mut values: List<Error> = List<Error>.new()
+    let mut values: List<AnyError> = List<AnyError>.new()
     values.push(ConfigError.Missing("x".to_string()))
     let first = values.pop().unwrap()
     println("{}", first.is<ConfigError>())
 
-    let boxed: Error = ConfigError.Missing("y".to_string())
+    let boxed: AnyError = ConfigError.Missing("y".to_string())
     match boxed.downcast<ConfigError>() {
         Some(ConfigError.Missing(key)) => println("key {key}"),
         _ => println("no"),

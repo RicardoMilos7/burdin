@@ -272,7 +272,7 @@ pub(crate) struct Globals {
     /// containers on the C heap only.
     pub(crate) allocator_iface: Option<usize>,
     pub(crate) global_alloc_ty: Option<Ty>,
-    /// The `std.Error` interface (the marker that makes a type an error type) and the `std.Error` struct (the
+    /// The `std.Error` interface (the marker that makes a type an error type) and the `std.AnyError` struct (the
     /// dynamic error value). Both are `None` when the standard library does not declare them (`spec/errors.md`,
     /// ERR4).
     pub(crate) error_iface: Option<usize>,
@@ -473,7 +473,7 @@ impl Globals {
         })
     }
 
-    /// Whether `ty` is the dynamic error value `std.Error` (`spec/errors.md`, ERR4).
+    /// Whether `ty` is the dynamic error value `std.AnyError` (`spec/errors.md`, ERR4).
     pub(crate) fn is_error_ty(&self, ty: &Ty) -> bool {
         self.error_ty.as_ref().is_some_and(|error| error == ty)
     }

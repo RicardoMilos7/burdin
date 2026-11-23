@@ -26,7 +26,7 @@ test it. A folder under `tests/` named `m` or `s` followed by a number is a mile
 
 | Module | What it holds | Spec | Tests |
 |---|---|---|---|
-| `std` | The prelude: `assert`, `format`, `Error`, `Result` helpers, output | [stdlib](../spec/stdlib.md), [errors](../spec/errors.md) | [m24_stdlib](../tests/m24_stdlib/), [m16_errors](../tests/m16_errors/) |
+| `std` | The prelude: `assert`, `format`, `Error`, `AnyError`, `Result` helpers, output | [stdlib](../spec/stdlib.md), [errors](../spec/errors.md) | [m24_stdlib](../tests/m24_stdlib/), [m16_errors](../tests/m16_errors/) |
 | `alloc` | Allocators, `Arena`, `AllocError` | [allocators](../spec/allocators.md) | [m23_allocators](../tests/m23_allocators/) |
 | `atomic` | `AtomicBool` and the integer atomics | [shared](../spec/shared.md) | [s2_shared](../tests/s2_shared/) |
 | `bytes` | `Bytes` and `BytesMut`, byte buffers | [stdlib](../spec/stdlib.md) | [m24_stdlib](../tests/m24_stdlib/) |

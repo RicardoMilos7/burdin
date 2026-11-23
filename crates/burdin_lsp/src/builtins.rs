@@ -36,7 +36,7 @@ const TYPES: &[(&str, &str, &str)] = &[
     ("List", "struct List<T>", "A growable list of values, stored contiguously."),
     ("Map", "struct Map<K, V>", "A hash map from keys to values."),
     ("Option", "enum Option<T>", "`Some(T)` or `None`."),
-    ("Result", "enum Result<T, E>", "`Ok(T)` or `Err(E)`; `Result<T>` means `Result<T, Error>`."),
+    ("Result", "enum Result<T, E>", "`Ok(T)` or `Err(E)`; `Result<T>` means `Result<T, AnyError>`."),
     ("Heap", "struct Heap<T>", "One value in its own allocation."),
 ];
 
@@ -183,7 +183,7 @@ const DECLS: &[(&str, &str, &str)] = &[
     ("Result", "fn expect(own self, msg: str): T", "The value; panics with `msg` on `Err`."),
     ("Result", "fn is_ok(self): bool", "Whether it is `Ok`."),
     ("Result", "fn is_err(self): bool", "Whether it is `Err`."),
-    ("Result", "fn context(own self, message: str): Result<T, Error>", "Prefixes a context message to the error."),
+    ("Result", "fn context(own self, message: str): Result<T, AnyError>", "Prefixes a context message to the error."),
     ("Heap", "fn new(value: T): Heap<T>", "Moves the value into a new allocation."),
     ("Heap", "fn new_in(alloc: A, value: T): Heap<T, A>", "`new`, with an allocator."),
 ];

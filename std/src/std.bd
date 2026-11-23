@@ -9,7 +9,7 @@ use fmt.{Debug, Display, Formatter}
 use fs.append
 use reactor.__offload_raw
 
-/// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `Error`.
+/// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `AnyError`.
 ///
 /// ```
 /// error enum Bad {
@@ -33,7 +33,7 @@ interface Error requires Display { }
 ///     Err(e) => assert_eq(format("{}", e), String.from("loading: cannot read cfg.toml: not found")),
 /// }
 /// ```
-struct Error {
+struct AnyError {
     value: any Error
     frames: List<TraceFrame>
     /// The `message: ` prefixes of `.context`, outermost first; empty when none was added.
@@ -94,7 +94,7 @@ struct VariantInfo: Clone, Eq, Debug {
     arity: usize
 }
 
-Error: Display {
+AnyError: Display {
     fn fmt(self, mut f: Formatter) {
         if self.context.len() > 0 {
             f.write_str(self.context)
@@ -104,9 +104,9 @@ Error: Display {
     }
 }
 
-Error: Error { }
+AnyError: Error { }
 
-Error {
+AnyError {
     /// Whether the error holds a `T`.
     ///
     /// ```
@@ -171,32 +171,32 @@ TraceFrame: Display {
 }
 
 /// A dynamic error with no frames: what a release build records, and what an error with tracing disabled uses.
-priv fn __error_plain(own value: any Error): Error {
-    Error { value, frames: List<TraceFrame>.new(), context: String.new() }
+priv fn __error_plain(own value: any Error): AnyError {
+    AnyError { value, frames: List<TraceFrame>.new(), context: String.new() }
 }
 
 /// A dynamic error with a creation frame (a debug build).
-priv fn __error_at(own value: any Error, func: str, file: str, line: i32, col: i32): Error {
+priv fn __error_at(own value: any Error, func: str, file: str, line: i32, col: i32): AnyError {
     let mut frames = List<TraceFrame>.new()
     frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
-    Error { value, frames, context: String.new() }
+    AnyError { value, frames, context: String.new() }
 }
 
 /// A dynamic error with one more propagation frame (a debug build).
-priv fn __error_frame(own e: Error, func: str, file: str, line: i32, col: i32): Error {
+priv fn __error_frame(own e: AnyError, func: str, file: str, line: i32, col: i32): AnyError {
     let mut e = e
     e.frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
     e
 }
 
 /// `.context(message)`: keeps the boxed source error and its frames, and adds one more context message in front.
-priv fn __error_context(own e: Error, message: str): Error {
+priv fn __error_context(own e: AnyError, message: str): AnyError {
     let context = if e.context.len() == 0 {
         message.to_string()
     } else {
         format("{message}: {e.context}")
     }
-    Error { value: e.value, frames: e.frames, context }
+    AnyError { value: e.value, frames: e.frames, context }
 }
 
 /// The portable kind of an I/O failure (`spec/errors.md`, ERR11): what went wrong, without the platform's own
