@@ -19,6 +19,7 @@ impl FnCx<'_> {
         let checked = match expect {
             Some(want @ Ty::Any(_)) => self.coerce_any(checked, want),
             Some(want) if self.globals.is_error_ty(want) => self.coerce_error(checked, want),
+            Some(want) if self.globals.opaque_of(want).is_some() => self.coerce_opaque(checked, want),
             _ => checked,
         };
         // An `unsafe` block is checked with the depth raised; the block itself is the boundary and its result
@@ -86,9 +87,15 @@ impl FnCx<'_> {
                 let value = match value {
                     Some(v) => {
                         let v = self.expr(v, Some(&ret));
+                        if self.infer_returns {
+                            self.returned.push(v.ty.clone());
+                        }
                         Some(Box::new(self.expect_ty(v, &ret)))
                     }
                     None => {
+                        if self.infer_returns {
+                            self.returned.push(Ty::Unit);
+                        }
                         if !compatible(&Ty::Unit, &ret) {
                             self.mismatch(span, &ret, &Ty::Unit);
                         }

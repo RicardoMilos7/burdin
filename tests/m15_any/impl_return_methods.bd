@@ -1,0 +1,106 @@
+//@ run
+//> 12 112
+//> 5
+//> 9
+//> 104
+//> 7 7
+//> 4 12
+//> drop 12
+//> drop 4
+
+interface Shape {
+    fn area(self): i32
+    fn scale(mut self, k: i32)
+    fn describe(self): i32 {
+        self.area() + 100
+    }
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+    fn scale(mut self, k: i32) {
+        self.w = self.w * k
+    }
+}
+
+Rect {
+    fn as_shape(own self): impl Shape {
+        self
+    }
+}
+
+struct Pt: Copy, Clone {
+    v: i32
+}
+
+Pt: Shape {
+    fn area(self): i32 {
+        self.v
+    }
+    fn scale(mut self, k: i32) {
+        self.v = self.v * k
+    }
+}
+
+struct Guard {
+    id: i32
+}
+
+Guard: Shape {
+    fn area(self): i32 {
+        self.id
+    }
+    fn scale(mut self, k: i32) {
+        self.id = self.id * k
+    }
+}
+
+Guard: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn make(): impl Shape {
+    Rect { w: 2, h: 3 }
+}
+
+fn wrap<T: Shape>(own x: T): impl Shape {
+    x
+}
+
+fn copy_pt(): impl Shape {
+    Pt { v: 7 }
+}
+
+fn guard(): impl Shape {
+    Guard { id: 4 }
+}
+
+fn total(s: impl Shape): i32 {
+    s.describe()
+}
+
+fn main() {
+    let mut s = make()
+    s.scale(2)
+    println("{s.area()} {s.describe()}")
+    let w = wrap(Rect { w: 1, h: 5 })
+    println("{w.area()}")
+    println("{Rect { w: 3, h: 3 }.as_shape().area()}")
+    println("{total(wrap(Rect { w: 2, h: 2 }))}")
+    let p = copy_pt()
+    let q = p
+    println("{p.area()} {q.area()}")
+    let g = guard()
+    let mut h = guard()
+    h.scale(3)
+    println("{g.area()} {h.area()}")
+}

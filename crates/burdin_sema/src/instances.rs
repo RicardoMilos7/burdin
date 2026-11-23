@@ -69,12 +69,12 @@ impl<'t> Sema<'t> {
             self.globals.struct_pkg.push(self.globals.package_of(gmodule));
             let private = self.globals.generic_adts[template].is_priv;
             self.globals.adt_priv.insert((false, id), private);
-            self.src.structs.push(crate::session::AdtSrcEntry {
+            self.src.structs.push(Some(crate::session::AdtSrcEntry {
                 decl: self.tpl.structs[decl],
                 subst,
                 bounds,
                 module: gmodule,
-            });
+            }));
             ((false, id), Ty::Struct(r))
         };
         self.globals.adt_instances.insert((template, args.clone()), key);

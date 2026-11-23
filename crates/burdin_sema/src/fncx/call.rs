@@ -1308,6 +1308,10 @@ impl FnCx<'_> {
         }
         // Field access and method calls see through references (RF1).
         let recv = self.auto_deref(recv);
+        // A value of an `impl Interface` return type has only the interface's methods (`fncx/opaque.rs`).
+        if self.globals.opaque_of(&recv.ty).is_some() {
+            return self.opaque_method_call(recv, explicit, name, args, span, expect);
+        }
         // `xs.get(range): Option<[T]>`: the checked form of slicing. A range expression or a range-valued
         // local picks it; any other argument is the index form the method table provides (`spec/stdlib.md`,
         // "Slices").

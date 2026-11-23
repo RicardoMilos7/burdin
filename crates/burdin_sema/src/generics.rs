@@ -560,7 +560,11 @@ impl Globals {
             return None;
         }
         if let ast::TypeKind::Impl(_) = &ty.kind {
-            diags.error(Code::IMPL_NOT_PARAMETER, ty.span, "`impl Interface` is only allowed on a parameter");
+            diags.error(
+                Code::IMPL_NOT_PARAMETER,
+                ty.span,
+                "`impl Interface` is only allowed on a parameter or a return type",
+            );
             return None;
         }
         let ast::TypeKind::Path(segs) = &ty.kind else {
@@ -823,6 +827,14 @@ impl Globals {
         // An `any I` satisfies `I` itself and every interface `I` requires, through its vtable (AN8).
         if let Ty::Any(a) = ty {
             return self.any_satisfies(a, iface, args);
+        }
+        // An `impl I` return value satisfies the interface it names and what that interface requires, and nothing
+        // else: its concrete type is not visible (spec/existentials.md, AN4).
+        if let Ty::Struct(a) = ty
+            && let Some(o) = self.opaque_for_struct(a.id)
+        {
+            let want = Bound::User(iface, args.to_vec());
+            return self.bound_closure(&o.bound).iter().any(|have| self.bound_provides(have, &want, &[]));
         }
         if (Some(iface) == self.display_iface || Some(iface) == self.debug_iface)
             && let Some(answer) = self.builtin_formattable(ty, Some(iface) == self.debug_iface, iface, env)

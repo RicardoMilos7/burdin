@@ -120,6 +120,13 @@ impl Globals {
     /// instance or a type parameter with the bound in scope.
     fn declared_item(&self, ty: &Ty, iface: Option<usize>, env: &crate::generics::Env) -> Option<Ty> {
         let iface = iface?;
+        // An `impl Interface` value has the item its interface names (`crate::opaque`).
+        if let Some(o) = self.opaque_of(ty) {
+            return self.bound_closure(&o.bound).into_iter().find_map(|c| match c {
+                Bound::User(i, args) if i == iface && args.len() == 1 => Some(args[0].clone()),
+                _ => None,
+            });
+        }
         match ty {
             Ty::Param(name) => env.iter().find(|(n, _)| n == &**name).and_then(|(_, bounds)| {
                 bounds.iter().find_map(|b| {

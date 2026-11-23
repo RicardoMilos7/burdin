@@ -23,6 +23,22 @@ first so `comptime` reports E0224 (PR10). Not done: `flat_map`, `rev`, user sour
 (PR12). `s3_parallel` runs in CI on all three OSes, and its stress tests repeat 20 times like the stage 2 ones. Verified
 here on Linux x86-64 only: `s3_parallel` (14 tests), `s2_shared`, `m12_closures`, the full conformance suite, clippy,
 fmt, and `cargo test --workspace`.
+**Return-position `impl I` (issues #959 and #926, 2026-11-23).** `fn make(): impl Shape` returns one concrete type that
+the body determines, and callers see only `Shape` (`spec/existentials.md` AN4). The compiler does this with an opaque
+wrapper struct per function (`crates/burdin_sema/src/opaque.rs`): the struct has no name and one field, the concrete
+value. Before the bodies are checked, `Sema::resolve_opaque_returns` infers each body's type and fills the field,
+repeating until nothing changes, so a caller sees the type its callee returns. A caller's value has only the methods of
+`I` and the interfaces `I` requires (`fncx/opaque.rs`), satisfies only those, and boxes as `any` only those; the
+method call goes to the concrete value. Errors: E0003 (returns disagree), E0141 (the concrete type does not implement
+`I`), E0205 (the concrete type depends on the function itself), and E0201 still for a local, field, element, bound, or
+`extern` signature. Tests: `tests/m15_any/impl_return.bd`, `impl_return_methods.bd` (run), and `impl_return_iterator`,
+`impl_return_generic`, and `impl_return_opaque`,
+`impl_return_mismatch`, `impl_return_recursive`, `impl_return_unsatisfied`, `impl_return_move` (compile-fail).
+A `for` loop, `next`, and the adapters work on an `impl Iterator` value (`impl_return_iterator.bd`), and a generic
+body may call a function that returns `impl I` (`impl_return_generic.bd`). Gap: an `impl I` in an `extern "C"`
+signature is reported as E0163 (an extern function cannot be generic), not E0201 as the spec's list says; left as it
+was.
+
 **Documentation consistency pass (issues #946-#967, 2026-11-23).** The spec, the tests README, the design, and the
 HANDOFF now agree with the compiler on the points those issues named: `derive`, `blocking`, slice receivers, and closures
 are in the grammar; a const-specific impl (`Grid<3> { ... }`) is implemented and tested (`m21_reflect/const_impl_specific`),
