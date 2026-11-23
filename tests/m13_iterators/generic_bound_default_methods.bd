@@ -5,10 +5,13 @@
 //> 10
 //> 107
 //> 4
+//> true
+//> false
 
 // A default method with its own type parameters, reached through a bound (issue #390). The method's parameters are
 // found from the closure the call receives, so `U` is the closure's return type inside the generic body, and the
-// adapters of `Iterator<T>` (`map`, `filter`, `zip`, `flat_map`, `max`) work on a type parameter the same way.
+// adapters of `Iterator<T>` (`map`, `filter`, `zip`, `flat_map`, `max`) work on a type parameter the same way, and so
+// do `any` and `all`, which the bound's `any_item` default method provides (spec/iterators.md, IT9).
 
 interface Mapper<T> {
     fn get(self): T
@@ -53,6 +56,17 @@ fn spread<I: Iterator<i32>>(own it: I): i32 {
     it.flat_map(|x| [x, x].into_iter()).count() as i32
 }
 
+// `any` and `all` take the iterator by `mut self`, so the bound's default methods borrow a mutable binding (IT9).
+fn has_big<I: Iterator<i32>>(own it: I): bool {
+    let mut it = it
+    it.any(|x| x > 2)
+}
+
+fn all_big<I: Iterator<i32>>(own it: I): bool {
+    let mut it = it
+    it.all(|x| x > 2)
+}
+
 fn shifted_max<I: Iterator<i32>>(own it: I): Option<i32> {
     it.map(|x| x + 100).max()
 }
@@ -64,4 +78,6 @@ fn main() {
     println(pipeline([1, 2, 3].into_iter()).to_string())
     println(shifted_max([1, 7, 3].into_iter()).unwrap().to_string())
     println(spread([1, 2].into_iter()).to_string())
+    println(has_big([1, 2, 3].into_iter()).to_string())
+    println(all_big([1, 2, 3].into_iter()).to_string())
 }

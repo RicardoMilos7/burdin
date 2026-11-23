@@ -6,8 +6,8 @@ checker does. Each rule has an ID, an error code where it can be violated, and t
 (paths relative to `tests/`, without `.bd`).
 
 All checks run on a function body at a time, on the typed tree (`burdin_tir`). Nothing here looks at another
-function's body: a call is checked from its signature alone. Stage 0 has no MIR; the design's MIR steps belong to
-stage 1 (`stage1-subset.md`).
+function's body: a call is checked from its signature alone. The compiler has no MIR; the design's MIR steps were
+decided against (`stage1-subset.md`, decision 6).
 
 Each check also records the ownership events it observes — declarations, moves, copies, borrows, drops, drop flags,
 argument conventions, and derived clones — as `Function::events` (`spec/check.md`, CK10). The command line
@@ -145,10 +145,10 @@ Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_m
 
 **IC1 Implicit conversion.** A `String` value passed as an argument whose parameter type is `str` is borrowed as a
 `str` for the call; the `String` is not moved. The same conversion applies to the argument-like positions that
-already have a `str` type: the payload of `Some`, `Ok`, and `Err`, the value of `mem.replace`, and a struct-literal
-field; `assert_eq` converts its second operand when the first is a `str`. It does not apply anywhere else: a `let`
-annotation, an assignment, a return type, an array or tuple element, a comparison, or a built-in name that is not an
-argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
+already have a `str` type: the payload of `Some`, `Ok`, and `Err` and the value of `mem.replace`; `assert_eq` converts
+its second operand when the first is a `str`. It does not apply anywhere else: a `let` annotation, an assignment, a
+return type, an array or tuple element, a struct-literal field (a concrete `str` field is E0120, and #919 tracks that),
+a comparison, or a built-in name that is not an argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
 the **only** implicit conversion in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
 `str`, `String` to `[u8]`, numeric widening, or user-defined conversions (all E0003).
 Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`; errors: `let_string_to_str`,

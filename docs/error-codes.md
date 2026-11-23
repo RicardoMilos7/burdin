@@ -1116,8 +1116,9 @@ A stored boxed value is `any Interface`; a parameter that accepts any implementa
 ## E0201: `impl Interface` outside a parameter list
 
 `impl Interface` is sugar for one hidden generic parameter with that interface as its bound, so it needs a call site
-to infer the concrete type from. A return type, a local annotation, a field, a container element, a bound, or an
-`extern` signature has no such parameter.
+to infer the concrete type from. A local annotation, a field, a container element, a bound, or an `extern` signature has
+no such parameter. A return type is accepted by the language (`spec/existentials.md`, AN4), but the compiler reports
+E0201 for it until issue #926 lands.
 
 <!-- error-example: E0201 -->
 ```burdin

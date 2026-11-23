@@ -80,9 +80,10 @@ the vtable.
 
 ## AN4: `impl Interface` is a hidden generic parameter
 
-`impl I` is accepted only in a parameter list (E0201 anywhere else, including a return type, a local annotation, a
-field, a container element, a bound, or an `extern` signature). It is sugar for one hidden type parameter with the
-interface as its bound:
+`impl I` is accepted in a parameter list and as a return type (`fn make(): impl Shape`, which the caller sees through
+`Shape`; the compiler reports E0201 for a return type until #926 lands). It is E0201 anywhere else, including a local
+annotation, a field, a container element, a bound, or an `extern` signature. In a parameter it is sugar for one hidden
+type parameter with the interface as its bound:
 
 ```
 fn draw(shape: impl Shape)          // fn draw<T: Shape>(shape: T)
@@ -164,8 +165,8 @@ adapter).
 `any I` cannot be used in an `extern "C"` signature (E0162), because it is not a C ABI value. It cannot be the target
 of an `impl` block or a `Drop` implementation, and it cannot be a bound (`T: any I` is E0200). It cannot be matched
 with a pattern: there is no pattern that names a boxed type; use `is`/`downcast` instead. It cannot be a type
-argument that makes a type second-class (it never does, since it is owned). `impl I` outside a parameter list is
-E0201, including a `self` type and a bound. `impl I` in an interface method's parameter list is an ordinary generic
+argument that makes a type second-class (it never does, since it is owned). `impl I` outside a parameter list and a
+return type is E0201, including a `self` type and a bound. `impl I` in an interface method's parameter list is an ordinary generic
 method, which makes that interface non-object-safe (AN2).
 
 ## AN11: The representation of a vtable

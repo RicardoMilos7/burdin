@@ -104,8 +104,8 @@ asks for it.
 | `skip(own self, count: usize)` | `SkipIter<Self, T>` | drops the first `count` items |
 | `fold<A, F: FnMut(A, T): A>(mut self, own init: A, own f: F)` | `A` | left to right |
 | `count(mut self)` | `usize` | consumes the iterator |
-| `any(FnMut(T): bool)` | `bool` | stops at the first accepted item |
-| `all(FnMut(T): bool)` | `bool` | stops at the first rejected item |
+| `any<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first accepted item; `std` declares it as `any_item` (see below) |
+| `all<F: FnMut(T): bool>(mut self, own f: F)` | `bool` | stops at the first rejected item |
 | `find<F: FnMut(&T): bool>(mut self, own f: F)` | `Option<T>` | stops at the first accepted item |
 | `enumerate(own self)` | `EnumerateIter<Self, T>` | `(index, item)` pairs, counting from 0 |
 | `zip<U, J: Iterator<U>>(own self, own other: J)` | `ZipIter<Self, T, J, U>` | `(item, other item)` pairs; ends when either source ends |
@@ -333,8 +333,9 @@ matches `I` against the argument (the checker's symbolic call), and a call on a 
 associated function.
 
 **IT17 `collect` and its target.** `Iterator<T>` has the default method `collect<C: FromIterator<T>>(own self): C`, which
-is `C.from_iter(self)`. The language has no explicit type arguments on a member call (`x.collect<Set<i32>>()` is E0002;
-grammar.md, "member type arguments"), so **the target is named by the expected type**: the annotation of a `let`, the
+is `C.from_iter(self)`. A member call takes explicit type arguments only when its method declares type parameters of its
+own (`arguments.md`, TA1; `grammar.md` §6). `collect` declares none today, so `x.collect<Set<i32>>()` is E0003
+(`arguments.md`, TA5); accepting that list is #922. Until then **the target is named by the expected type**: the annotation of a `let`, the
 declared type of a parameter, the return type, a field's type. A call with no expected type cannot tell what `C` stands
 for (E0003), and a target that does not implement `FromIterator<T>` for the items the iterator yields is E0141. Collecting
 is eager: it consumes the whole iterator, except where IT19 says it stops early.

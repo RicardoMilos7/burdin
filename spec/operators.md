@@ -133,7 +133,7 @@ operators are always same-type and always return `bool`. The built-in and derive
 implementation (`spec/derives.md`): a type that derives `Eq` uses the derived equality even when it also implements
 `PartialEq`, and a type that derives `Ord` uses the derived ordering. Remove the derive to use a hand-written
 comparison. A type that derives only `Ord` gets built-in `<` (and `<=`, `>`, `>=`) but no `==`; a type that derives
-only `Eq` gets `==`/`!=` but no ordering. Each operator is decided on its own.
+only `Eq` gets `==`/`!=` but no ordering. (A generic `T: Ord` bound does allow `==` in its body, `derives.md`; #918.) Each operator is decided on its own.
 
 `PartialOrd` and `PartialEq` need not agree; the compiler does not check that `lt` and `eq` are consistent. That is
 the implementation's contract.
