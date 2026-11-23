@@ -1,0 +1,28 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Rect {
+    w: i32
+    h: i32
+}
+
+Rect: Shape {
+    fn area(self): i32 {
+        self.w * self.h
+    }
+}
+
+// The concrete type of `rec` depends on `rec`: nothing fixes it.
+fn rec(n: i32): impl Shape { //~ E0205
+    if n == 0 {
+        return Rect { w: 1, h: 1 }
+    }
+    rec(n - 1)
+}
+
+fn main() {
+    println("{rec(2).area()}")
+}

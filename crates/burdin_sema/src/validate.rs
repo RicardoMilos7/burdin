@@ -217,7 +217,11 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
         }
         out
     };
-    let keys = (0..src.structs.len()).map(|i| (false, i)).chain((0..src.enums.len()).map(|i| (true, i)));
+    // A wrapper of an `impl Interface` return has no declaration, so it has no source name to report.
+    let keys = (0..src.structs.len())
+        .filter(|&i| src.structs[i].is_some())
+        .map(|i| (false, i))
+        .chain((0..src.enums.len()).map(|i| (true, i)));
     for key in keys {
         let mut seen = Vec::new();
         let mut stack = direct(key);
@@ -233,7 +237,12 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
             }
         }
         if cyclic {
-            let name = if key.0 { &src.enums[key.1].decl.name } else { &src.structs[key.1].decl.name };
+            let name = if key.0 {
+                &src.enums[key.1].decl.name
+            } else {
+                // Only declared structs are keys (see `keys` above).
+                &src.structs[key.1].as_ref().expect("a declared struct").decl.name
+            };
             diags.error(
                 Code::CYCLIC_DECLARATION,
                 name.span,

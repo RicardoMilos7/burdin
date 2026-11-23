@@ -250,6 +250,8 @@ impl Code {
     pub const NOT_AN_INTERFACE: Code = Code("E0200");
     /// `impl Interface` outside a parameter list.
     pub const IMPL_NOT_PARAMETER: Code = Code("E0201");
+    /// A function returning `impl Interface` whose concrete type cannot be found: its body returns through itself.
+    pub const OPAQUE_UNKNOWN: Code = Code("E0205");
     /// An interface that cannot be used as `any` because it is not object-safe.
     pub const NOT_OBJECT_SAFE: Code = Code("E0202");
     /// An invalid `error` declaration: a `from` variant without exactly one tuple field, `from` on a generic

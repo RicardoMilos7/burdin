@@ -322,6 +322,8 @@ impl FnCx<'_> {
             return Self::with_label(label, mk(kind, Ty::Unit, span));
         }
         let iterable = self.expr(iter, None);
+        // An `impl Interface` value iterates through its concrete value (`fncx/opaque.rs`).
+        let iterable = self.open_opaque_for_loop(iterable);
         // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
         // `Iterable` through `iter()` (spec/iterators.md, IT4).
         let builtin = matches!(

@@ -99,12 +99,13 @@ impl Globals {
             }
             // `any Interface`: the owned boxed existential (spec/existentials.md, AN1).
             ast::TypeKind::Any(inner) => self.resolve_any(inner, ty.span, subst, module, diags),
-            // The parser desugars `impl` in a parameter list; anywhere else it reaches here (AN4).
+            // The parser desugars `impl` in a parameter list, and a return type is made by `crate::opaque`;
+            // anywhere else it reaches here (AN4).
             ast::TypeKind::Impl(_) => {
                 diags.error(
                     Code::IMPL_NOT_PARAMETER,
                     ty.span,
-                    "`impl Interface` is only allowed on a parameter; use `any Interface` for a stored value",
+                    "`impl Interface` is only allowed on a parameter or a return type; use `any Interface` for a stored value",
                 );
                 Ty::Error
             }

@@ -4,6 +4,22 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Return-position `impl I` (issues #959 and #926, 2026-11-23).** `fn make(): impl Shape` returns one concrete type that
+the body determines, and callers see only `Shape` (`spec/existentials.md` AN4). The compiler does this with an opaque
+wrapper struct per function (`crates/burdin_sema/src/opaque.rs`): the struct has no name and one field, the concrete
+value. Before the bodies are checked, `Sema::resolve_opaque_returns` infers each body's type and fills the field,
+repeating until nothing changes, so a caller sees the type its callee returns. A caller's value has only the methods of
+`I` and the interfaces `I` requires (`fncx/opaque.rs`), satisfies only those, and boxes as `any` only those; the
+method call goes to the concrete value. Errors: E0003 (returns disagree), E0141 (the concrete type does not implement
+`I`), E0205 (the concrete type depends on the function itself), and E0201 still for a local, field, element, bound, or
+`extern` signature. Tests: `tests/m15_any/impl_return.bd`, `impl_return_methods.bd` (run), and `impl_return_iterator`,
+`impl_return_generic`, and `impl_return_opaque`,
+`impl_return_mismatch`, `impl_return_recursive`, `impl_return_unsatisfied`, `impl_return_move` (compile-fail).
+A `for` loop, `next`, and the adapters work on an `impl Iterator` value (`impl_return_iterator.bd`), and a generic
+body may call a function that returns `impl I` (`impl_return_generic.bd`). Gap: an `impl I` in an `extern "C"`
+signature is reported as E0163 (an extern function cannot be generic), not E0201 as the spec's list says; left as it
+was.
+
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
 view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
 a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)

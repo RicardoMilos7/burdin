@@ -262,9 +262,10 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
 | E0194 | A format call with arguments whose format string is not a string literal |
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
-| E0201 | `impl Interface` outside a parameter list (a return type, a local annotation, a field, an element, a bound, or an `extern` signature) |
+| E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature) |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
 | E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
+| E0205 | The concrete type of an `impl Interface` return cannot be found: the body's returns depend on the function itself, or it never returns a value |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `Error` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
@@ -437,8 +438,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
     prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
     receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
-    (E0202). `impl Interface` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden
-    generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
+    (E0202). `impl Interface` is accepted in a parameter list and as a return type (E0201 anywhere else); in a
+    parameter list it is sugar for one hidden generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
     compiler-known on `any I`, written with member type arguments; the downcast consumes the box. The boxed type
     must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
     `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
