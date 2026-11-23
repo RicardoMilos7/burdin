@@ -309,7 +309,9 @@ struct Point: Copy, Clone, Eq, Hash {
 | `Debug` | All fields are `Debug` |
 | `Serialize`, `Deserialize` | All fields support them |
 
-Derives are written in the language with `comptime` and reflection (see Comptime), not as macros. There is no `macro_rules`. Hand-written implementations are always allowed. A derive on a generic type requires the same bound on its parameters, and a failing derive reports the offending field.
+Derives are written in the language with `comptime` and reflection (see Comptime), not as macros. There is no `macro_rules`. Hand-written implementations are allowed for the standard and user interfaces (`Display`, `Debug`, `From`, `Drop`, and
+your own). The derive-only interfaces (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`) come from a derive, and writing
+one by hand is not yet allowed (`spec/impls.md`, IM8; issue #402). A derive on a generic type requires the same bound on its parameters, and a failing derive reports the offending field.
 
 **Compile-speed measures.** Monomorphized instances are generated in parallel and cached between builds, identical instantiations are deduplicated, and overlapping implementations are disallowed to keep resolution simple.
 
@@ -327,7 +329,8 @@ error enum ConfigError {
 }
 ```
 
-**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `Error` type that any error converts into, so applications can use `?` everywhere without naming error types. An `Error` can be inspected or downcast with `match`.
+**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `Error` type that any error converts into, so applications can use `?` everywhere without naming error types. An `Error` is inspected or downcast with `is` and `downcast`, not with `match`: a pattern cannot name a boxed type
+(`spec/existentials.md`, AN10).
 
 **Context** wraps an error with a message and keeps the original as its source:
 

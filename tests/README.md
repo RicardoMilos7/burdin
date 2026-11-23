@@ -265,7 +265,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
 | E0194 | A format call with arguments whose format string is not a string literal |
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
-| E0201 | `impl Interface` outside a parameter list (a return type, a local annotation, a field, an element, a bound, or an `extern` signature) |
+| E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature); a return type is reported too until #926 lands |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
 | E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
@@ -286,7 +286,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `comptime for` variable over `Type.fields` |
 | E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `struct T: Name` with a user derive and no interface `Name` in scope |
 | E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
-| E0240 | `embed` could not read its file: it is missing, unreadable, or not valid UTF-8 text |
+| E0240 | `embed` could not read its file: it is missing, unreadable, or (for `str`) not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
 | E0242 | Invalid generated text from a `comptime generate` block (`spec/generate.md`): it does not parse, or it declares an item other than a `struct`, `enum`, or `fn` (a `const`, `use`, `impl`, `interface`, `derive`, `type`, test, bench, `comptime assert`, or a nested `comptime generate`) |
 | E0243 | `comptime generate` outside module scope (in a function body, an impl block, or an expression) |
@@ -348,8 +348,8 @@ executable form. The design document leaves them open; where a rule says "deviat
    marker there is a syntax error, E0001). `spec/grammar.md` 8.4, `spec/memory-rules.md` CV2-CV4.
 2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str` and stays usable.
    This is the only implicit conversion, and it applies only to argument-like positions (call arguments, `Some`/`Ok`/
-   `Err` payloads, `assert_eq`, `mem.replace`); a `let`, assignment, return, array or tuple element, or comparison
-   does not convert. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
+   `Err` payloads, `assert_eq`, `mem.replace`); a `let`, assignment, return, array or tuple element, struct-literal
+   field, or comparison does not convert. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
    `spec/memory-rules.md` IC1.
 3. **Views are copyable.** `str`, `[T]`, `&T`, and `CPtr<T>` can be used many times without a derive. `&mut T` cannot
    be copied: assigning it moves it (E0100), while passing it to `&mut` or dereferencing reborrows it.
@@ -440,8 +440,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
     prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
     receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
-    (E0202). `impl Interface` is accepted only in a parameter list (E0201 anywhere else) and is sugar for one hidden
-    generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
+    (E0202). `impl Interface` is accepted in a parameter list and as a return type (E0201 anywhere else; the compiler reports a
+    return type as E0201 until #926) and is sugar for one hidden generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
     compiler-known on `any I`, written with member type arguments; the downcast consumes the box. The boxed type
     must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
     `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
@@ -493,7 +493,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
     non-`Copy` element out is E0101. The shifts are not overloadable, and `&&`, `||`, and `=` remain non-overloadable.
-    Compound assignment on a user type takes its operator from the interface (issue #277, CA5; decision 34).
+    Compound assignment on a user type takes its operator from the interface (issue #277, CA5; decision 35).
     `spec/operators.md` OP1-OP13, `tests/m19_operators/`.
 
 25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
@@ -525,7 +525,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Ty::Const`, so instances, inference, and keys work as for types. Array lengths (`[T; R * C]`, `[0; N]`) are
     const expressions over numbers, const parameters, and constants (E0250 for a type/value mix-up, E0251 when the
     expression cannot be computed, E0252 for an argument nothing determines). `embed("path")` is the contents of a
-    file read at compile time, as `str` or, with the expected type `[u8; N]`, as bytes; the file is a build input
+    file read at compile time, as `str`, with the expected type `[u8; N]` as bytes of that length, or with the
+    expected type `[u8]` as a static byte view with no length written (`embed_slice`; RT4). The file is a build input
     (`--emit-deps`), a missing one is E0240 and a bad path or length E0241. `spec/const-generics.md` CG1-CG9,
     `spec/comptime.md` CT15, `tests/m21_reflect/`.
 
@@ -607,21 +608,21 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
     `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
     `m18_extension/method_type_params`.
-34. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
-    and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
-    On a user type or a type parameter, `a op= b` is `a = a op b` through the operator's interface (`Add` for `+=`,
-    and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
-    place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
-    `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
 34. **Declaration generation (first slice).** A module-scope `comptime generate { ... }` block is evaluated at compile
     time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations the text
     holds to its module. The mechanism is source text, parsed like a derive body, not typed item values. Generated
-    names are not hygienic, as derives are (decision 24), and every generated token carries the block's span. The
+    names are not hygienic, as user derives are (decision 26), and every generated token carries the block's span. The
     front end runs generation before the whole-program check: generators are checked against the hand-written
     declarations only, evaluated in module and source order, and their text is then declared. A generator that
     fails stops generation, and its errors are reported without the rest of the program's. Other items in the text
     (constants, impls, interfaces, derives, aliases, tests) are E0242, and `comptime generate` outside module scope is
     E0243. Issue #280; `spec/generate.md` GN1-GN10, `tests/generate/`.
+35. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
+    and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
+    On a user type or a type parameter, `a op= b` is `a = a op b` through the operator's interface (`Add` for `+=`,
+    and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
+    place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
+    `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
 
 ## Review of the expected outputs
 
@@ -633,8 +634,11 @@ above on 2026-11-14. Each milestone folder was read in full. No expectation was 
 behavior, so no test was changed; the behavior the tests pin where the design is silent, defers a feature, or
 deliberately differs is recorded below.
 
-The counts in the table are the 134 tests issue #20 reviewed. Issue #21 then added the decision tests in the next
-section; the suite is larger than the table.
+The counts in the table are the 134 tests issue #20 reviewed, a snapshot from 2026-11-14. Issue #21 then added the
+decision tests in the next section, and later issues added more to the same folders, so the table is not the current
+count. The current stage 0 count is 294: the tests in folders `m01_*` through `m11_*`, every kind (run, compile-fail,
+run-abort, burdin-test, test-compile-fail), decision tests included. `python3 tests/run_tests.py --list m01_ m02_ m03_
+m04_ m05_ m06_ m07_ m08_ m09_ m10_ m11_` prints them; fixtures outside those folders are not counted.
 
 | Folder | Tests | What was reviewed |
 | --- | --- | --- |
@@ -727,8 +731,9 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   [the derives spec](../spec/derives.md), `Default` a static `default()` for structs, and `Eq`/`Ord` the comparison
   operators with fields in declaration order and variants in declaration order. Decision 15;
   `m07_generics/derives.bd`, `derive_values.bd`.
-- **No MIR (deviation).** The design's compiler architecture has a MIR; stage 0 checks the typed tree (`burdin_tir`),
-  and `burdin_mir` is planned for stage 1 (`spec/stage1-subset.md`, issue #493). The header and RF2 of
+- **No MIR (deviation).** The design's compiler architecture has a MIR; the compiler checks the typed tree
+  (`burdin_tir`) and interprets that same tree for comptime, with no `burdin_mir` (`spec/comptime.md`, CT1;
+  `spec/stage1-subset.md`, decision 6; issue #159 closed as not chosen). The header and RF2 of
   [the memory rules](../spec/memory-rules.md) now say so.
 - **Borrow liveness is conservative (deviation in precision).** The rule is "until the last use", but stage 0
   computes it per top-level statement, so any use inside a loop keeps a loan live for the whole loop. This rejects
@@ -800,9 +805,11 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   signatures the tests exercise. In particular `List.last` and `Map.get` return `Option<&T>`/`Option<&V>`, `List.pop`
   returns `Option<T>`, `List.remove` and `Map.remove` return owned values, and `List.contains` takes a value.
   Unknown names are E0002 and wrong arities E0004.
-- **`String` length and slicing are byte-based.** `s.len()` is bytes and `s[a..b]` slices bytes; `chars()` iterates
-  Unicode scalar values. The design says UTF-8 but does not define `len`. `m09_stdlib/string_ops.bd`,
-  `m09_stdlib/file_io.bd`, `file_io_binary.bd`; decision 7.
+- **`String` length is byte-based, and slicing keeps the text valid UTF-8.** `s.len()` is bytes and `chars()` iterates
+  Unicode scalar values. `s[a..b]` on `str` or `String` panics unless both ends are character boundaries (issue #916),
+  so a `str` is always valid UTF-8; `get(a, b)` is the `None` form. The design says UTF-8 but does not define `len`.
+  `m09_stdlib/string_ops.bd`, `m09_stdlib/file_io.bd`, `file_io_binary.bd`, `m24_stdlib/string_slice_boundary`,
+  `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_comptime_aborts`; decision 7.
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
   type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
   `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).

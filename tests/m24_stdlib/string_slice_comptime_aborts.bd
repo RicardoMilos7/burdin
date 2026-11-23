@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A compile-time slice whose end splits a multi-byte character is a compile-time panic (E0222), like the run-time
+// check (issue #916).
+
+fn main() {
+    let tail = comptime "añb"[1..2] //~ E0222
+}

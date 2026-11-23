@@ -760,7 +760,15 @@ impl<'a> Checker<'a> {
     fn expr(&mut self, e: &tir::Expr, mode: Mode) {
         use tir::ExprKind as K;
         match &e.kind {
-            K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::None | K::Const(_) => {}
+            K::Unit
+            | K::Bool(_)
+            | K::Int(_)
+            | K::Float(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::Bytes(_)
+            | K::None
+            | K::Const(_) => {}
             K::LayoutOf { .. } => {}
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
             K::Field(..) | K::Index(..) | K::Deref(_) | K::PtrDeref(_) | K::DerefRef(_) => self.place_expr(e, mode),

@@ -9,12 +9,28 @@ use iter.Iterator
 use mem
 use unicode.{is_whitespace, len_utf8}
 
+/// Whether the bytes of `needle` are in `text` at byte offset `at`. The caller keeps `at + needle.len()` within the
+/// text. It compares bytes rather than slices of the text: a slice that splits a character panics (`spec/stdlib.md`),
+/// and a valid needle starts with a byte that does not continue a character, so a match starts on a boundary.
+priv fn __matches_at(text: str, at: usize, needle: str): bool {
+    let hay = text.as_bytes()
+    let pat = needle.as_bytes()
+    let mut k: usize = 0
+    while k < pat.len() {
+        if hay[at + k] != pat[k] {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
 priv fn __index_of(text: str, needle: str, from: usize): usize {
     let n = needle.len()
     let mut i = from
     while i + n <= text.len() {
-        if text[i..i + n] == needle {
+        if __matches_at(text, i, needle) {
             return i
         }
         i = i + 1
@@ -80,7 +96,7 @@ fn str.contains(self, needle: str): bool {
 
 /// Whether the text ends with `suffix`.
 fn str.ends_with(self, suffix: str): bool {
-    suffix.len() <= self.len() && self[self.len() - suffix.len()..self.len()] == suffix
+    suffix.len() <= self.len() && __matches_at(self, self.len() - suffix.len(), suffix)
 }
 
 /// The text without leading and trailing white space (`char.is_whitespace`).
@@ -173,12 +189,13 @@ fn str.split_whitespace(self): List<String> {
 /// start a new line.
 fn str.lines(self): List<String> {
     let mut out = List<String>.new()
+    let bytes = self.as_bytes()
     let mut start: usize = 0
     let mut i: usize = 0
-    while i < self.len() {
-        if self[i..i + 1] == "\n" {
+    while i < bytes.len() {
+        if bytes[i] == 10 {
             let mut end = i
-            if end > start && self[end - 1..end] == "\r" {
+            if end > start && bytes[end - 1] == 13 {
                 end = end - 1
             }
             out.push(__copy(self, start, end))
@@ -611,7 +628,7 @@ fn str.rfind_str(self, needle: str): Option<usize> {
     }
     let mut i = self.len() - n
     loop {
-        if self[i..i + n] == needle {
+        if __matches_at(self, i, needle) {
             return Some(i)
         }
         if i == 0 {
@@ -661,7 +678,7 @@ fn String.find_all(self, needle: str): List<(usize, String)> {
 }
 
 /// The bytes `from..to` as a view, or `None` when the range is reversed, past the end, or either end splits a
-/// character. `s[a..b]` stays the unchecked byte slice (`spec/stdlib.md`).
+/// character. It is `s[from..to]` without the panic (`spec/stdlib.md`, "Slicing and character boundaries").
 fn str.get(self, from: usize, to: usize): Option<str> {
     if from > to || to > self.len() {
         return None

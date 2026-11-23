@@ -165,8 +165,8 @@ note at the operation:
 The check is dynamic: a function that prints can be called at compile time as long as the path taken does not print.
 Nothing else observable depends on the machine, the time, or the order of compilation, so a comptime result depends
 only on the source, the target, and the profile (`--release` changes overflow behavior, CT1). `Map` iteration order
-at compile time is insertion order, which is one of the orders `spec/stdlib.md` allows. There is no comptime file
-access yet; `embed` belongs to milestone 21.
+at compile time is insertion order, which is one of the orders `spec/stdlib.md` allows. Reading a file at compile
+time is `embed` alone (CT15); CT9 rejects every other file operation.
 
 ## CT10. Panics
 
@@ -219,7 +219,14 @@ so the purity rule (CT9) is untouched.
 - The path is a string literal, relative to the directory of the source file that writes the call. An absolute path,
   or one with a `..` component, is E0241, and so is a path that is not a literal.
 - With the expected type `[u8; N]` (a `let` annotation, a parameter, a constant's type), the result is the file's bytes
-  and `N` must be the file's length (E0241). Anywhere else it is a `str`, and the file must be valid UTF-8 (E0240).
+  and `N` must be the file's length (E0241).
+- With the expected type `[u8]` (a `let` annotation, a parameter, a return type), the result is a static byte view of
+  the file: its length is not written, so it needs no length check. It is static data, like a string literal
+  (`memory-rules.md`, RT4), so a function may return it and a local may hold it, whatever its parameters. A file that is
+  missing or cannot be read is still E0240, and an absolute or `..` path is still E0241. A constant may not have type
+  `[u8]` (CT3, E0221): a constant's value is copied into each use, so a view is bound in a function or a `let` instead.
+- Anywhere else it is a `str`, and the file must be valid UTF-8 (E0240). A binary file therefore needs `[u8]` or
+  `[u8; N]`.
 - A file that is missing, a directory, or unreadable is E0240 at the path, naming the file; the build stops without
   a crash.
 - The compiler records every file `embed` read as an input of the build: `burdin build --emit-deps <file>` writes them,
@@ -228,6 +235,9 @@ so the purity rule (CT9) is untouched.
 ```
 const LICENSE: str = embed("LICENSE.txt")
 const HEADER: [u8; 4] = embed("magic.bin")
+fn payload(): [u8] {
+    embed("payload.bin")
+}
 ```
 
 ## Diagnostics
@@ -240,7 +250,7 @@ const HEADER: [u8; 4] = embed("magic.bin")
 | E0223 | A `comptime assert` failed |
 | E0224 | An impure operation (I/O, environment, process, C) during compile-time evaluation |
 | E0225 | Compile-time evaluation exceeded its step budget, its call depth, or the specialization limit |
-| E0240 | `embed` could not read its file, or the file is not valid UTF-8 text |
+| E0240 | `embed` could not read its file, or a `str` file is not valid UTF-8 text (`[u8]` and `[u8; N]` take any bytes) |
 | E0241 | An invalid `embed`: a path that is not a literal, is absolute, or has `..`; a `[u8; N]` with the wrong length |
 | E0009 | A constant that depends on itself through calls (existing code) |
 
@@ -259,5 +269,6 @@ memory rules at compile time (`comptime_moves`, `comptime_drop`), and the interp
 [`test-runner.md`](test-runner.md#differential-tests), with `tests/m10_test_runner/attributes_differential.bd` and
 `tests/runner/differential/`.
 
-`tests/m21_reflect/` covers CT15: `embed_basic` (a text file as `str` and a binary file as `[u8; N]`), `embed_missing`
-(E0240), and `embed_invalid` (E0241).
+`tests/m21_reflect/` covers CT15: `embed_basic` (a text file as `str` and a binary file as `[u8; N]`), `embed_slice`
+(a `[u8]` view as a local, a return value, and a parameter, with no length written), `embed_missing` (E0240),
+`embed_invalid` (E0241), and `embed_slice_invalid` (E0240, E0241, and E0221 for a constant of type `[u8]`).

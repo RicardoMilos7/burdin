@@ -6,8 +6,8 @@ checker does. Each rule has an ID, an error code where it can be violated, and t
 (paths relative to `tests/`, without `.bd`).
 
 All checks run on a function body at a time, on the typed tree (`burdin_tir`). Nothing here looks at another
-function's body: a call is checked from its signature alone. Stage 0 has no MIR; the design's MIR steps belong to
-stage 1 (`stage1-subset.md`).
+function's body: a call is checked from its signature alone. The compiler has no MIR; the design's MIR steps were
+decided against (`stage1-subset.md`, decision 6).
 
 Each check also records the ownership events it observes — declarations, moves, copies, borrows, drops, drop flags,
 argument conventions, and derived clones — as `Function::events` (`spec/check.md`, CK10). The command line
@@ -145,10 +145,10 @@ Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_m
 
 **IC1 Implicit conversion.** A `String` value passed as an argument whose parameter type is `str` is borrowed as a
 `str` for the call; the `String` is not moved. The same conversion applies to the argument-like positions that
-already have a `str` type: the payload of `Some`, `Ok`, and `Err`, the value of `mem.replace`, and a struct-literal
-field; `assert_eq` converts its second operand when the first is a `str`. It does not apply anywhere else: a `let`
-annotation, an assignment, a return type, an array or tuple element, a comparison, or a built-in name that is not an
-argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
+already have a `str` type: the payload of `Some`, `Ok`, and `Err` and the value of `mem.replace`; `assert_eq` converts
+its second operand when the first is a `str`. It does not apply anywhere else: a `let` annotation, an assignment, a
+return type, an array or tuple element, a struct-literal field (a concrete `str` field is E0120, and #919 tracks that),
+a comparison, or a built-in name that is not an argument keeps the type `String` and is E0003 when `str` is expected. `.as_str()` is the explicit conversion. This is
 the **only** implicit conversion in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
 `str`, `String` to `[u8]`, numeric widening, or user-defined conversions (all E0003).
 Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`; errors: `let_string_to_str`,
@@ -240,12 +240,13 @@ Tests: `m06_conventions/return_aggregate_two_sources` (run); errors: `return_agg
 `m24_stdlib/iter_zip`, `iter_chain` (the chains), `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`.
 
 **RT4 Static.** String literals are static views. A literal can be returned from any function, whatever its parameters,
-in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. A `const` of type
-`str` whose value is a string literal (directly or through another such constant) is static too. No other expression
-is static in stage 0: a view of a local, parameter, temporary, `String`, or non-`str` constant follows RT1-RT3, and
-`&` of a constant is E0003 because a constant is not a place.
+in any returned expression: a tail expression, `return`, a block, an `if` branch, or a `match` arm. The same holds for
+an `embed("path")` whose expected type is `str` or `[u8]` (`comptime.md`, CT15): its bytes are static data. A `const`
+of type `str` whose value is a string literal, directly or through another such constant, is static too (a constant may
+not have type `[u8]`, E0221). No other expression is static in stage 0: a view of a local, parameter, temporary, `String`, or non-`str` constant follows
+RT1-RT3, and `&` of a constant is E0003 because a constant is not a place.
 Tests: `m06_conventions/return_literal_ok`, `static_literals`, `const_is_not_a_place`, `return_ref_single_source`,
-`str_views`, `slice_views`, `option_of_reference_ok`;
+`str_views`, `slice_views`, `option_of_reference_ok`, `m21_reflect/embed_slice`;
 errors: `return_ref_two_sources`, `return_str_two_sources` (E0121), `return_ref_to_local`, `return_view_of_local_string`,
 `return_ref_from_own_param` (E0122).
 

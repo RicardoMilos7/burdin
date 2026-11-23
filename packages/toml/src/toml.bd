@@ -12,6 +12,13 @@
 
 /// A position in the input: `line` and `column` are 1-based (a column counts Unicode scalar values), and `start` and
 /// `end` are byte offsets. A value the writer made has the zero span.
+///
+/// ```
+/// # use toml
+/// let span = toml.Span { line: 2, column: 5, start: 10, end: 13 }
+/// assert_eq(span.line, 2)
+/// assert_eq(span.end - span.start, 3)
+/// ```
 struct Span: Copy {
     line: usize,
     column: usize,
@@ -20,6 +27,13 @@ struct Span: Copy {
 }
 
 /// A calendar date: a four-digit year, a month from 1 to 12, and a day that exists in its month.
+///
+/// ```
+/// # use toml
+/// let date = toml.Date { year: 2026, month: 11, day: 23 }
+/// assert_eq(date.month, 11)
+/// assert_eq(date.day, 23)
+/// ```
 struct Date: Copy {
     year: i32,
     month: u8,
@@ -27,6 +41,13 @@ struct Date: Copy {
 }
 
 /// A time of day. `second` is 0 to 60 (60 is a leap second), and `nanosecond` is the fraction of the second.
+///
+/// ```
+/// # use toml
+/// let time = toml.Time { hour: 7, minute: 32, second: 0, nanosecond: 500000000 }
+/// assert_eq(time.hour, 7)
+/// assert_eq(time.nanosecond, 500000000)
+/// ```
 struct Time: Copy {
     hour: u8,
     minute: u8,
@@ -35,6 +56,16 @@ struct Time: Copy {
 }
 
 /// One of the four TOML datetime forms (TOML9). An offset is in minutes east of UTC, so `Z` and `+00:00` are both 0.
+///
+/// ```
+/// # use toml
+/// let date = toml.Date { year: 2026, month: 11, day: 23 }
+/// let when = toml.Datetime.LocalDate(date)
+/// match when {
+///     toml.Datetime.LocalDate(d) => assert_eq(d.day, 23),
+///     _ => assert(false),
+/// }
+/// ```
 enum Datetime: Copy {
     OffsetDateTime(Date, Time, i32),
     LocalDateTime(Date, Time),
@@ -43,6 +74,18 @@ enum Datetime: Copy {
 }
 
 /// A TOML value. A table keeps its entries in document order, and an array keeps its items in order.
+///
+/// ```
+/// # use toml
+/// let doc = toml.parse("name = \"Ink\"\ncount = 3\n").unwrap()
+/// match doc {
+///     toml.Value.Table(entries) => {
+///         assert_eq(entries.len(), 2)
+///         assert_eq(entries[1].key.as_str(), "count")
+///     }
+///     _ => assert(false),
+/// }
+/// ```
 enum Value {
     Str(String),
     Int(i64),
@@ -54,12 +97,34 @@ enum Value {
 }
 
 /// A value and the place it starts.
+///
+/// ```
+/// # use toml
+/// let doc = toml.parse("count = 3\n").unwrap()
+/// match doc {
+///     toml.Value.Table(entries) => assert_eq(entries[0].item.span.line, 1),
+///     _ => assert(false),
+/// }
+/// ```
 struct Item {
     value: Heap<Value>,
     span: Span,
 }
 
 /// A key of a table, the place the key starts, and the item it names.
+///
+/// ```
+/// # use toml
+/// let doc = toml.parse("name = \"Ink\"\n").unwrap()
+/// match doc {
+///     toml.Value.Table(entries) => {
+///         let entry = entries[0]
+///         assert_eq(entry.key.as_str(), "name")
+///         assert_eq(entry.key_span.column, 1)
+///     }
+///     _ => assert(false),
+/// }
+/// ```
 struct Entry {
     key: String,
     key_span: Span,
@@ -68,30 +133,30 @@ struct Entry {
 
 // ----- the node arena -----------------------------------------------------------------------------------------------
 
-const KIND_TABLE: i32 = 0
-const KIND_ARRAY: i32 = 1
-const KIND_STRING: i32 = 2
-const KIND_INTEGER: i32 = 3
-const KIND_FLOAT: i32 = 4
-const KIND_BOOL: i32 = 5
-const KIND_DATETIME: i32 = 6
+priv const KIND_TABLE: i32 = 0
+priv const KIND_ARRAY: i32 = 1
+priv const KIND_STRING: i32 = 2
+priv const KIND_INTEGER: i32 = 3
+priv const KIND_FLOAT: i32 = 4
+priv const KIND_BOOL: i32 = 5
+priv const KIND_DATETIME: i32 = 6
 
 // The magnitude of `i64::MAX` and of `i64::MIN`, the bounds a TOML integer must stay inside (TOML6).
-const INT_POSITIVE_LIMIT: u64 = 9223372036854775807
-const INT_NEGATIVE_LIMIT: u64 = 9223372036854775808
+priv const INT_POSITIVE_LIMIT: u64 = 9223372036854775807
+priv const INT_NEGATIVE_LIMIT: u64 = 9223372036854775808
 
 // How a table or array came to be (TOML4). Only the parser's checks read it.
-const ORIGIN_IMPLICIT: i32 = 0 // a table that a header path implied, which a later header may still define
-const ORIGIN_HEADER: i32 = 1 // a table a [header] defined, or an element of an array of tables
-const ORIGIN_DOTTED: i32 = 2 // a table a dotted key created or extended
-const ORIGIN_INLINE: i32 = 3 // an inline table, which is closed
-const ORIGIN_STATIC: i32 = 4 // a static array, [ ... ]
-const ORIGIN_TABLES: i32 = 5 // an array of tables, [[ ... ]]
+priv const ORIGIN_IMPLICIT: i32 = 0 // a table that a header path implied, which a later header may still define
+priv const ORIGIN_HEADER: i32 = 1 // a table a [header] defined, or an element of an array of tables
+priv const ORIGIN_DOTTED: i32 = 2 // a table a dotted key created or extended
+priv const ORIGIN_INLINE: i32 = 3 // an inline table, which is closed
+priv const ORIGIN_STATIC: i32 = 4 // a static array, [ ... ]
+priv const ORIGIN_TABLES: i32 = 5 // an array of tables, [[ ... ]]
 
 /// One node of the arena: a table, an array, or a scalar. `kids` are the indices of a table's or an array's children in
 /// order. A child's `key` is its name in its table, and it is empty in an array. A map's table is `sorted`, so its
 /// entries are written by key (TOML13); a struct's entries keep the order of its fields.
-struct Node {
+priv struct Node {
     kind: i32,
     origin: i32,
     key: String,
@@ -107,7 +172,7 @@ struct Node {
 }
 
 /// A node of `kind` with the given origin and span, and every other field empty.
-fn new_node(kind: i32, origin: i32, span: Span): Node {
+priv fn new_node(kind: i32, origin: i32, span: Span): Node {
     Node {
         kind: kind,
         origin: origin,
@@ -125,12 +190,12 @@ fn new_node(kind: i32, origin: i32, span: Span): Node {
 }
 
 /// The span of nothing: the position the writer gives every node.
-fn zero_span(): Span {
+priv fn zero_span(): Span {
     Span { line: 0, column: 0, start: 0, end: 0 }
 }
 
 /// The text of a kind, as `expected ..., found ...` names it.
-fn describe(kind: i32): str {
+priv fn describe(kind: i32): str {
     if kind == KIND_TABLE {
         "a table"
     } else if kind == KIND_ARRAY {
@@ -149,12 +214,12 @@ fn describe(kind: i32): str {
 }
 
 /// A syntax or type error at `span`: its message gets the `line L, column C: ` prefix (SER10).
-fn syntax_error(message: str, span: Span): DeError {
+priv fn syntax_error(message: str, span: Span): DeError {
     DeError.syntax(message, span.line as i32, span.column as i32)
 }
 
 /// Whether `a` sorts before `b` in byte order (the order TOML13 writes map keys in).
-fn byte_less(a: str, b: str): bool {
+priv fn byte_less(a: str, b: str): bool {
     let x = a.as_bytes()
     let y = b.as_bytes()
     let mut i: usize = 0
@@ -168,7 +233,7 @@ fn byte_less(a: str, b: str): bool {
 }
 
 /// The children of the table or array at `index`, in the order they are written: a sorted table's by key.
-fn ordered_kids(nodes: List<Node>, index: usize): List<usize> {
+priv fn ordered_kids(nodes: List<Node>, index: usize): List<usize> {
     let mut order = List<usize>.new()
     let mut i: usize = 0
     while i < nodes[index].kids.len() {
@@ -190,7 +255,7 @@ fn ordered_kids(nodes: List<Node>, index: usize): List<usize> {
 }
 
 /// The `Value` tree of the node at `index` (read-only: the arena is copied out, not moved).
-fn node_value(nodes: List<Node>, index: usize): Value {
+priv fn node_value(nodes: List<Node>, index: usize): Value {
     let kind = nodes[index].kind
     if kind == KIND_TABLE {
         let order = ordered_kids(nodes, index)
@@ -228,17 +293,17 @@ fn node_value(nodes: List<Node>, index: usize): Value {
 // ----- character classes --------------------------------------------------------------------------------------------
 
 /// A byte of a bare key: `A-Z a-z 0-9 _ -` (TOML3).
-fn is_bare_byte(b: u8): bool {
+priv fn is_bare_byte(b: u8): bool {
     (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95 || b == 45
 }
 
 /// An ASCII digit.
-fn is_digit(b: u8): bool {
+priv fn is_digit(b: u8): bool {
     b >= 48 && b <= 57
 }
 
 /// The value of a hexadecimal digit, or -1 when `b` is not one.
-fn digit_value(b: u8): i32 {
+priv fn digit_value(b: u8): i32 {
     if b >= 48 && b <= 57 {
         (b - 48) as i32
     } else if b >= 97 && b <= 102 {
@@ -251,17 +316,17 @@ fn digit_value(b: u8): i32 {
 }
 
 /// A control character other than tab (TOML5). Line feeds and carriage returns are control characters too.
-fn is_control_byte(b: u8): bool {
+priv fn is_control_byte(b: u8): bool {
     (b < 32 && b != 9) || b == 127
 }
 
 /// Whether a year is a leap year.
-fn is_leap(year: i64): bool {
+priv fn is_leap(year: i64): bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 /// How many days `month` of `year` has.
-fn days_in(year: i64, month: i64): i64 {
+priv fn days_in(year: i64, month: i64): i64 {
     if month == 2 {
         if is_leap(year) {
             29
@@ -278,7 +343,7 @@ fn days_in(year: i64, month: i64): i64 {
 // ----- the parser ---------------------------------------------------------------------------------------------------
 
 /// One segment of a dotted key: its name and where it starts.
-struct Key {
+priv struct Key {
     name: String,
     span: Span,
 }
@@ -286,7 +351,7 @@ struct Key {
 /// The parser: the input, the byte offset of the next unread byte, the start of each line (for positions), the node
 /// arena, and the table that the key/value lines being read go into (`current`). The document starts in the root table,
 /// which is node 0.
-struct Parser {
+priv struct Parser {
     text: String,
     pos: usize,
     line_starts: List<usize>,
@@ -296,7 +361,7 @@ struct Parser {
 
 Parser {
     /// A parser over `text`. The text is copied once.
-    fn new(text: str): Parser {
+    priv fn new(text: str): Parser {
         let mut starts = List<usize>.new()
         starts.push(0)
         let bytes = text.as_bytes()
@@ -1441,6 +1506,13 @@ Parser {
 }
 
 /// Reads a TOML document into a `Value` tree (TOML2-TOML11). The root is a table.
+///
+/// ```
+/// # use toml
+/// let doc = toml.parse("title = \"Burdin\"\n")
+/// assert(doc.is_ok())
+/// assert(toml.parse("title = \n").is_err())
+/// ```
 fn parse(text: str): Result<Value, DeError> {
     let mut parser = Parser.new(text)
     parser.document()?
@@ -1451,6 +1523,12 @@ fn parse(text: str): Result<Value, DeError> {
 
 /// Writes `value` in the canonical form (TOML13): the scalars of each table first, then its tables as sections. The
 /// value must be a table.
+///
+/// ```
+/// # use toml
+/// let doc = toml.parse("name = \"Ink\"\nqty = 12\n").unwrap()
+/// assert_eq(toml.render(doc).unwrap().as_str(), "name = \"Ink\"\nqty = 12\n")
+/// ```
 fn render(value: Value): Result<String, DeError> {
     match value {
         Value.Table(entries) => {
@@ -1463,7 +1541,7 @@ fn render(value: Value): Result<String, DeError> {
 }
 
 /// Whether a value is written as a section: a table, or a non-empty array of tables (TOML13).
-fn is_section(value: Value): bool {
+priv fn is_section(value: Value): bool {
     match value {
         Value.Table(_) => true,
         Value.Array(items) => is_table_array(items),
@@ -1472,7 +1550,7 @@ fn is_section(value: Value): bool {
 }
 
 /// Whether `items` is a non-empty array whose items are all tables.
-fn is_table_array(items: List<Item>): bool {
+priv fn is_table_array(items: List<Item>): bool {
     if items.len() == 0 {
         return false
     }
@@ -1486,7 +1564,7 @@ fn is_table_array(items: List<Item>): bool {
 }
 
 /// The key as the canonical text writes it: bare when every byte is a bare-key byte, and a basic string otherwise.
-fn key_text(key: str): String {
+priv fn key_text(key: str): String {
     let mut bare = key.len() > 0
     let bytes = key.as_bytes()
     let mut i: usize = 0
@@ -1506,7 +1584,7 @@ fn key_text(key: str): String {
 }
 
 /// A header path: `path` and `key`, joined with a dot.
-fn join_path(path: str, key: str): String {
+priv fn join_path(path: str, key: str): String {
     let name = key_text(key)
     if path.len() == 0 {
         name
@@ -1517,7 +1595,7 @@ fn join_path(path: str, key: str): String {
 
 /// Writes the body of one table: its scalars and inline arrays in order, then each sub-table and each array of tables as
 /// a section in order. `path` is the table's header path.
-fn write_table(mut out: String, entries: List<Entry>, path: str) {
+priv fn write_table(mut out: String, entries: List<Entry>, path: str) {
     for entry in entries {
         if !is_section(*entry.item.value) {
             out.push_str(key_text(entry.key.as_str()).as_str())
@@ -1550,7 +1628,7 @@ fn write_table(mut out: String, entries: List<Entry>, path: str) {
 }
 
 /// Writes a section header: a blank line first, unless the header starts the document (TOML13).
-fn write_header(mut out: String, name: str, array: bool) {
+priv fn write_header(mut out: String, name: str, array: bool) {
     if out.len() > 0 {
         out.push('\n')
     }
@@ -1566,7 +1644,7 @@ fn write_header(mut out: String, name: str, array: bool) {
 }
 
 /// Writes a value inline: a scalar, an array `[1, 2]`, or an inline table `{ a = 1 }` (TOML13).
-fn write_inline(mut out: String, value: Value) {
+priv fn write_inline(mut out: String, value: Value) {
     match value {
         Value.Str(text) => write_basic(mut out, text.as_str()),
         Value.Int(n) => out.push_str(n.to_string().as_str()),
@@ -1614,7 +1692,7 @@ fn write_inline(mut out: String, value: Value) {
 
 /// Writes `text` as a basic string: `"` and `\` are escaped, the common control characters have their short escapes, and
 /// every other control character and DEL is `\uXXXX` in lowercase hex (TOML13).
-fn write_basic(mut out: String, text: str) {
+priv fn write_basic(mut out: String, text: str) {
     out.push('"')
     for c in text.chars() {
         let code = c as u32
@@ -1643,7 +1721,7 @@ fn write_basic(mut out: String, text: str) {
 }
 
 /// Writes a code point as four lowercase hex digits.
-fn write_hex4(mut out: String, code: u32) {
+priv fn write_hex4(mut out: String, code: u32) {
     let mut place: u32 = 4096
     while place > 0 {
         let digit = (code / place) % 16
@@ -1658,7 +1736,7 @@ fn write_hex4(mut out: String, code: u32) {
 
 /// The float's canonical text (TOML7): `nan`, `inf`, `-inf`, a negative zero as `-0.0`, and a point or exponent in every
 /// finite form.
-fn float_text(f: f64): String {
+priv fn float_text(f: f64): String {
     if f.is_nan() {
         return "nan".to_string()
     }
@@ -1691,7 +1769,7 @@ fn float_text(f: f64): String {
 }
 
 /// A number padded with zeros on the left to `width` digits.
-fn pad(n: i64, width: usize): String {
+priv fn pad(n: i64, width: usize): String {
     let digits = n.to_string()
     let mut out = String.new()
     let mut i = digits.len()
@@ -1704,7 +1782,7 @@ fn pad(n: i64, width: usize): String {
 }
 
 /// A date's text: `YYYY-MM-DD`.
-fn date_text(date: Date): String {
+priv fn date_text(date: Date): String {
     let mut out = pad(date.year as i64, 4)
     out.push('-')
     out.push_str(pad(date.month as i64, 2).as_str())
@@ -1714,7 +1792,7 @@ fn date_text(date: Date): String {
 }
 
 /// A time's text: `HH:MM:SS`, and a fraction without trailing zeros when the nanosecond is not zero.
-fn time_text(time: Time): String {
+priv fn time_text(time: Time): String {
     let mut out = pad(time.hour as i64, 2)
     out.push(':')
     out.push_str(pad(time.minute as i64, 2).as_str())
@@ -1734,7 +1812,7 @@ fn time_text(time: Time): String {
 }
 
 /// An offset's text: `Z` for zero, otherwise a sign and `HH:MM`.
-fn offset_text(minutes: i32): String {
+priv fn offset_text(minutes: i32): String {
     if minutes == 0 {
         return "Z".to_string()
     }
@@ -1753,7 +1831,7 @@ fn offset_text(minutes: i32): String {
 }
 
 /// A datetime's canonical text (TOML9, TOML13).
-fn datetime_text(d: Datetime): String {
+priv fn datetime_text(d: Datetime): String {
     match d {
         Datetime.OffsetDateTime(date, time, minutes) => {
             let mut out = date_text(date)
@@ -1778,7 +1856,7 @@ fn datetime_text(d: Datetime): String {
 /// One open container in the writer. `node` receives the next value: an element of an array, or an entry under `key` in a
 /// table. A payload frame belongs to an enum variant, and a transparent frame is the payload of an `Option.Some`, which
 /// adds nothing of its own; it copies its parent's destination, so its value lands where the parent's would.
-struct WFrame {
+priv struct WFrame {
     node: usize,
     array: bool,
     key: String,
@@ -1787,13 +1865,34 @@ struct WFrame {
 }
 
 /// The TOML writer. The framework calls it in document order, and it builds the arena that `to_value` reads.
+///
+/// ```
+/// # use toml
+/// struct Setting: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let mut writer = toml.Writer.new()
+/// Setting { name: "Ink".to_string(), qty: 12 }.serialize(mut writer).unwrap()
+/// assert_eq(toml.render(writer.document()).unwrap().as_str(), "name = \"Ink\"\nqty = 12\n")
+/// ```
 struct Writer {
-    nodes: List<Node>,
-    frames: List<WFrame>,
+    priv nodes: List<Node>,
+    priv frames: List<WFrame>,
 }
 
 Writer {
     /// A writer with an empty root table.
+    ///
+    /// ```
+    /// # use toml
+    /// struct Setting: Serialize {
+    ///     qty: u32,
+    /// }
+    /// let mut writer = toml.Writer.new()
+    /// Setting { qty: 3 }.serialize(mut writer).unwrap()
+    /// assert_eq(toml.render(writer.document()).unwrap().as_str(), "qty = 3\n")
+    /// ```
     fn new(): Writer {
         let mut nodes = List<Node>.new()
         nodes.push(new_node(KIND_TABLE, ORIGIN_HEADER, zero_span()))
@@ -1848,6 +1947,19 @@ Writer {
     }
 
     /// The value written, as a `Value` tree.
+    ///
+    /// ```
+    /// # use toml
+    /// struct Setting: Serialize {
+    ///     name: String,
+    /// }
+    /// let mut writer = toml.Writer.new()
+    /// Setting { name: "Ink".to_string() }.serialize(mut writer).unwrap()
+    /// match writer.document() {
+    ///     toml.Value.Table(entries) => assert_eq(entries[0].key.as_str(), "name"),
+    ///     _ => assert(false),
+    /// }
+    /// ```
     fn document(self): Value {
         node_value(self.nodes, 0)
     }
@@ -2086,6 +2198,16 @@ Writer: Serializer {
 }
 
 /// Writes `value` as a `Value` tree: the framework's writes, arranged as TOML (TOML14).
+///
+/// ```
+/// # use toml
+/// struct Setting: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let value = toml.to_value(Setting { name: "Ink".to_string(), qty: 12 }).unwrap()
+/// assert_eq(toml.render(value).unwrap().as_str(), "name = \"Ink\"\nqty = 12\n")
+/// ```
 fn to_value<T: Serialize>(value: T): Result<Value, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
@@ -2093,6 +2215,15 @@ fn to_value<T: Serialize>(value: T): Result<Value, DeError> {
 }
 
 /// Writes `value` as canonical TOML text (TOML13). The value must be a table: a struct, a map, or a variant with a payload.
+///
+/// ```
+/// # use toml
+/// struct Setting: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// assert_eq(toml.to_string(Setting { name: "Ink".to_string(), qty: 12 }).unwrap().as_str(), "name = \"Ink\"\nqty = 12\n")
+/// ```
 fn to_string<T: Serialize>(value: T): Result<String, DeError> {
     let document = to_value(value)?
     render(document)
@@ -2101,7 +2232,7 @@ fn to_string<T: Serialize>(value: T): Result<String, DeError> {
 // ----- the reader: the format side of `Deserializer` ----------------------------------------------------------------
 
 /// Flattens a `Value` into an arena of nodes, the form the reader works on. The root is node 0.
-struct Flatten {
+priv struct Flatten {
     nodes: List<Node>,
 }
 
@@ -2209,23 +2340,34 @@ Flatten {
 }
 
 /// A frame of the reader: an open table or array, and the index of its next child to read.
-struct RFrame {
+priv struct RFrame {
     node: usize,
     next: usize,
 }
 
 /// An open enum: `option` for `Option`, and `object` for a variant written as a table with one entry.
-struct EFrame {
+priv struct EFrame {
     option: bool,
     object: bool,
 }
 
 /// The TOML reader. A value is read from the innermost open container's next child, or from the root when none is open.
 /// Reading a value consumes it (the container moves on); opening a container and closing it consumes it at the close.
+///
+/// ```
+/// # use toml
+/// struct Setting: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let doc = toml.parse("name = \"Ink\"\nqty = 12\n").unwrap()
+/// let setting: Result<Setting, DeError> = toml.from_value(doc)
+/// assert_eq(setting.unwrap().qty, 12)
+/// ```
 struct Reader {
-    nodes: List<Node>,
-    frames: List<RFrame>,
-    enums: List<EFrame>,
+    priv nodes: List<Node>,
+    priv frames: List<RFrame>,
+    priv enums: List<EFrame>,
 }
 
 Reader {
@@ -2571,6 +2713,17 @@ Reader: Deserializer {
 }
 
 /// Reads a `Value` tree as a `T` (the framework's reads, arranged as TOML; TOML15).
+///
+/// ```
+/// # use toml
+/// struct Setting: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let doc = toml.parse("name = \"Ink\"\nqty = 12\n").unwrap()
+/// let setting: Setting = toml.from_value<Setting>(doc).unwrap()
+/// assert_eq(setting.name.as_str(), "Ink")
+/// ```
 fn from_value<T: Deserialize>(value: Value): Result<T, DeError> {
     let mut flat = Flatten { nodes: List<Node>.new() }
     flat.value(value, String.new(), zero_span(), zero_span())
@@ -2579,6 +2732,16 @@ fn from_value<T: Deserialize>(value: Value): Result<T, DeError> {
 }
 
 /// Reads a `T` from TOML text (TOML2-TOML15). The text must parse as a table.
+///
+/// ```
+/// # use toml
+/// struct Setting: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let setting = toml.from_str<Setting>("name = \"Ink\"\nqty = 12\n")
+/// assert_eq(setting.unwrap().qty, 12)
+/// ```
 fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
     let document = parse(text)?
     from_value(document)

@@ -2,6 +2,14 @@
 // names, old signatures, HMAC-SHA1 in legacy protocols); do not use it where an attacker can choose the input.
 
 /// An incremental SHA-1 hasher (insecure for collisions; see the file comment).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Sha1}
+/// let mut hasher = Sha1.new()
+/// hasher.update("abc".as_bytes())
+/// assert_eq(hasher.finish().to_hex().as_str(), "a9993e364706816aba3e25717850c26c9cd0d89d")
+/// ```
 struct Sha1 {
     h: [u32; 5],
     buf: List<u8>,
@@ -9,21 +17,49 @@ struct Sha1 {
 }
 
 Sha1 {
+    /// A new SHA-1 hasher, which produces a 20-byte digest. SHA-1 is broken for collision resistance; see the file comment.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha1}
+    /// assert_eq(Sha1.new().output_len(), 20)
+    /// ```
     fn new(): Sha1 {
         Sha1 { h: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0], buf: List<u8>.new(), total: 0 }
     }
 
     /// The block size in bytes (64).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha1}
+    /// assert_eq(Sha1.new().block_len(), 64)
+    /// ```
     fn block_len(self): usize {
         64
     }
 
     /// The digest size in bytes (20).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha1}
+    /// assert_eq(Sha1.new().output_len(), 20)
+    /// ```
     fn output_len(self): usize {
         20
     }
 
     /// Hashes more input.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha1}
+    /// let mut hasher = Sha1.new()
+    /// hasher.update("a".as_bytes())
+    /// hasher.update("bc".as_bytes())
+    /// assert_eq(hasher.finish().to_hex().as_str(), "a9993e364706816aba3e25717850c26c9cd0d89d")
+    /// ```
     fn update(mut self, data: [u8]) {
         self.total = self.total.wrapping_add(data.len() as u64)
         let mut pos: usize = 0
@@ -49,6 +85,13 @@ Sha1 {
     }
 
     /// Ends the hash and returns the digest. The hasher must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha1}
+    /// let mut hasher = Sha1.new()
+    /// assert_eq(hasher.finish().to_hex().as_str(), "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+    /// ```
     fn finish(mut self): List<u8> {
         let bits = self.total.wrapping_mul(8)
         let keep = self.total
@@ -80,7 +123,7 @@ Sha1 {
         out
     }
 
-    fn compress(mut self, block: [u8]) {
+    priv fn compress(mut self, block: [u8]) {
         let mut w: [u32; 80] = [0; 80]
         let mut t: usize = 0
         while t < 16 {
@@ -135,6 +178,12 @@ Sha1 {
 }
 
 /// The SHA-1 digest of `data` (insecure for collisions; see the file comment).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha1}
+/// assert_eq(sha1("abc".as_bytes()).to_hex().as_str(), "a9993e364706816aba3e25717850c26c9cd0d89d")
+/// ```
 fn sha1(data: [u8]): List<u8> {
     let mut h = Sha1.new()
     h.update(data)

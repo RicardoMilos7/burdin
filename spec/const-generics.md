@@ -57,8 +57,10 @@ Rewrite the code or give the type a name.
 
 A call to a generic function infers a const parameter the way it infers a type parameter: from an array argument
 (`fn sum<const N: usize>(a: [i32; N])` called with `[1, 2, 3]` gives `N = 3`), from the arguments of a generic type
-(`m: Matrix<T, R, C>`), or from the expected type. A const parameter that nothing determines is E0252. Functions
-have no explicit generic arguments at a call; a struct literal takes its arguments from its annotation.
+(`m: Matrix<T, R, C>`), or from the expected type. A const parameter that nothing determines is E0252. A const
+argument can also be written in a call's explicit list, like a type argument: `len_of<3>([1, 2, 3])`
+(`arguments.md`, TA1; `tests/m07_generics/explicit_type_args.bd`). A struct literal takes its arguments from its
+annotation.
 
 ## CG7. Derives
 
@@ -70,8 +72,9 @@ same.
 
 Const parameters on interfaces, default values for const parameters, a function call in a const expression (a
 `comptime` call is `spec/comptime.md` CT2, not an array length), predicates on a const parameter (`where N > 0`),
-an `impl` for one specific value (`Matrix<T, 2, 2> { ... }`, E9000 as for any specific instance), and unifying two
-different spellings of the same length (CG5) are not part of this milestone.
+and unifying two different spellings of the same length (CG5) are not part of this milestone. An `impl` for one
+specific const value is part of it: `Grid<3> { ... }` covers the instances whose argument is 3, as `Stack<i32>`
+does for a type (`impls.md`, IM1-IM2; `tests/m21_reflect/const_impl_specific.bd`).
 
 ## CG9. Errors
 
@@ -86,4 +89,5 @@ different spellings of the same length (CG5) are not part of this milestone.
 
 `const_matrix` (the matrix of the design document, methods that read `R` and `C`, inference from an array),
 `const_params` (`bool` parameters, constants as lengths, inference from a generic type, derives), `const_invalid`
-(E0250), `const_eval_errors` (E0251), and `const_infer` (E0252).
+(E0250), `const_eval_errors` (E0251), and `const_infer` (E0252). An impl for one const value is `const_impl_specific`,
+with its wrong-instance call in `const_impl_specific_invalid` (E0002).

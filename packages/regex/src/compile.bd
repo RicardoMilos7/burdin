@@ -9,10 +9,10 @@ use parse.{Assertion, Node, Parsed}
 use errors.RegexError
 
 /// The most instructions a program may have (RX7).
-const MAX_INSTRUCTIONS: usize = 100000
+priv const MAX_INSTRUCTIONS: usize = 100000
 
 /// One instruction. A `Char` holds the lower-case character when its flag is set (RX6).
-enum Inst: Copy, Clone, Eq, Debug {
+priv enum Inst: Copy, Clone, Eq, Debug {
     Char(char, bool)
     Any(bool)
     Class(usize)
@@ -25,13 +25,13 @@ enum Inst: Copy, Clone, Eq, Debug {
 
 /// A compiled pattern: the instructions, the classes they index, and the number of capture slots (two per group,
 /// group 0 included).
-struct Program {
+priv struct Program {
     code: List<Inst>,
     classes: List<CharClass>,
     slots: usize,
 }
 
-struct Compiler {
+priv struct Compiler {
     nodes: List<Node>,
     refs: List<usize>,
     code: List<Inst>,
@@ -39,7 +39,7 @@ struct Compiler {
 
 Compiler {
     /// Emits the instructions of the node at `index`.
-    fn node(mut self, index: usize) {
+    priv fn node(mut self, index: usize) {
         let node = self.nodes[index]
         match node {
             Node.Empty => {}
@@ -66,7 +66,7 @@ Compiler {
     }
 
     /// `a|b|c`: each alternative after a split that prefers it, and a jump from its end to the end of the whole.
-    fn alternation(mut self, start: usize, count: usize) {
+    priv fn alternation(mut self, start: usize, count: usize) {
         let mut jumps = List<usize>.new()
         let mut k: usize = 0
         while k < count {
@@ -94,7 +94,7 @@ Compiler {
 
     /// A repetition of `child` (RX2). The copies stop once the program passes the instruction limit, and the
     /// compiler reports that after the whole program is built.
-    fn repeat(mut self, child: usize, min: u32, max: Option<u32>, greedy: bool) {
+    priv fn repeat(mut self, child: usize, min: u32, max: Option<u32>, greedy: bool) {
         match max {
             None => {
                 if min == 0 {
@@ -159,7 +159,7 @@ Compiler {
 }
 
 /// Compiles a parsed pattern (RX7). A program past the instruction limit is an error.
-fn compile(own parsed: Parsed): Result<Program, RegexError> {
+priv fn compile(own parsed: Parsed): Result<Program, RegexError> {
     let slots = 2 * (parsed.groups + 1)
     let total = parsed.total
     let root = parsed.root

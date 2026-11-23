@@ -1,8 +1,9 @@
 //! `embed("path")` (`spec/comptime.md`, CT15): the contents of a file, read while compiling.
 //!
-//! The result is `str` for a text file, or `[u8; N]` when the expected type asks for the bytes. The path is
-//! relative to the directory of the source file that writes the call, and every file read is recorded as an
-//! input of the build, so `--emit-deps` can list it.
+//! The result is `str` for a text file, `[u8; N]` when the expected type is an array of the file's length, or a
+//! static `[u8]` view when the expected type is `[u8]` (no length is written, and the view is static data, RT4).
+//! The path is relative to the directory of the source file that writes the call, and every file read is recorded
+//! as an input of the build, so `--emit-deps` can list it.
 
 use super::{FnCx, error_expr, mk};
 use burdin_diag::{Code, Span};
@@ -72,6 +73,11 @@ impl FnCx<'_> {
             }
             let elems = bytes.iter().map(|b| mk(tir::ExprKind::Int(*b as i128), Ty::Int(IntTy::U8), span)).collect();
             return mk(tir::ExprKind::Array(elems), Ty::Array(Box::new(Ty::Int(IntTy::U8)), *len), span);
+        }
+        if let Some(Ty::Slice(elem)) = expect
+            && **elem == Ty::Int(IntTy::U8)
+        {
+            return mk(tir::ExprKind::Bytes(bytes), Ty::Slice(Box::new(Ty::Int(IntTy::U8))), span);
         }
         match String::from_utf8(bytes) {
             Ok(content) => mk(tir::ExprKind::Str(content), Ty::Str, span),

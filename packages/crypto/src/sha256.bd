@@ -1,7 +1,7 @@
 // SHA-224 and SHA-256 (FIPS 180-4), in pure Burdin. Not constant time with respect to the message length, which is
 // public in every use here; the compression function has no secret-dependent branches or table lookups.
 
-const SHA256_K: [u32; 64] = [
+priv const SHA256_K: [u32; 64] = [
     0x428a2f98,
     0x71374491,
     0xb5c0fbcf,
@@ -69,6 +69,14 @@ const SHA256_K: [u32; 64] = [
 ]
 
 /// An incremental SHA-256 (or SHA-224) hasher.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{Sha256}
+/// let mut hasher = Sha256.new()
+/// hasher.update("abc".as_bytes())
+/// assert_eq(hasher.finish().to_hex().as_str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+/// ```
 struct Sha256 {
     h: [u32; 8],
     buf: List<u8>,
@@ -78,6 +86,12 @@ struct Sha256 {
 
 Sha256 {
     /// A SHA-256 hasher (32-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// assert_eq(Sha256.new().output_len(), 32)
+    /// ```
     fn new(): Sha256 {
         Sha256 {
             h: [
@@ -97,6 +111,12 @@ Sha256 {
     }
 
     /// A SHA-224 hasher (28-byte digest).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// assert_eq(Sha256.new224().output_len(), 28)
+    /// ```
     fn new224(): Sha256 {
         Sha256 {
             h: [
@@ -116,16 +136,37 @@ Sha256 {
     }
 
     /// The block size in bytes (64).
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// assert_eq(Sha256.new().block_len(), 64)
+    /// ```
     fn block_len(self): usize {
         64
     }
 
     /// The digest size in bytes.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// assert_eq(Sha256.new224().output_len(), 28)
+    /// ```
     fn output_len(self): usize {
         self.out_len
     }
 
     /// Hashes more input.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// let mut hasher = Sha256.new()
+    /// hasher.update("a".as_bytes())
+    /// hasher.update("bc".as_bytes())
+    /// assert_eq(hasher.finish().to_hex().as_str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    /// ```
     fn update(mut self, data: [u8]) {
         self.total = self.total.wrapping_add(data.len() as u64)
         let mut pos: usize = 0
@@ -151,6 +192,13 @@ Sha256 {
     }
 
     /// Ends the hash and returns the digest. The hasher must not be used afterwards.
+    ///
+    /// ```
+    /// # use crypto
+    /// # use crypto.{Sha256}
+    /// let mut hasher = Sha256.new()
+    /// assert_eq(hasher.finish().to_hex().as_str(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    /// ```
     fn finish(mut self): List<u8> {
         let bits = self.total.wrapping_mul(8)
         self.update_padding(bits)
@@ -168,7 +216,7 @@ Sha256 {
         out
     }
 
-    fn update_padding(mut self, bits: u64) {
+    priv fn update_padding(mut self, bits: u64) {
         let mut pad = List<u8>.new()
         pad.push(0x80)
         while (self.buf.len() + pad.len()) % 64 != 56 {
@@ -188,7 +236,7 @@ Sha256 {
         self.total = keep
     }
 
-    fn compress(mut self, block: [u8]) {
+    priv fn compress(mut self, block: [u8]) {
         let mut w: [u32; 64] = [0; 64]
         let mut t: usize = 0
         while t < 16 {
@@ -246,6 +294,12 @@ Sha256 {
 }
 
 /// The SHA-256 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha256}
+/// assert_eq(sha256("abc".as_bytes()).to_hex().as_str(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+/// ```
 fn sha256(data: [u8]): List<u8> {
     let mut h = Sha256.new()
     h.update(data)
@@ -253,6 +307,12 @@ fn sha256(data: [u8]): List<u8> {
 }
 
 /// The SHA-224 digest of `data`.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{sha224}
+/// assert_eq(sha224("abc".as_bytes()).to_hex().as_str(), "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7")
+/// ```
 fn sha224(data: [u8]): List<u8> {
     let mut h = Sha256.new224()
     h.update(data)

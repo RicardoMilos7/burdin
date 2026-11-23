@@ -2,6 +2,14 @@
 
 /// Compares two byte strings without stopping at the first difference, so the time does not reveal where they
 /// differ. Different lengths are unequal at once (a length is not a secret here).
+///
+/// ```
+/// # use crypto
+/// # use crypto.{constant_time_eq}
+/// assert(constant_time_eq("abc".as_bytes(), "abc".as_bytes()))
+/// assert(!constant_time_eq("abc".as_bytes(), "abd".as_bytes()))
+/// assert(!constant_time_eq("abc".as_bytes(), "ab".as_bytes()))
+/// ```
 fn constant_time_eq(a: [u8], b: [u8]): bool {
     if a.len() != b.len() {
         return false
@@ -16,11 +24,28 @@ fn constant_time_eq(a: [u8], b: [u8]): bool {
 }
 
 /// Overwrites `buf` with zeros. The compiler may remove dead stores, so this is hygiene, not a guarantee.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{wipe}
+/// let mut secret = List<u8>.from([1, 2, 3])
+/// let mut view = secret[0..3]
+/// wipe(mut view)
+/// assert_eq(secret.to_hex().as_str(), "000000")
+/// ```
 fn wipe(mut buf: [u8]) {
     buf.fill(0)
 }
 
 /// The bytes of `a` XORed with the bytes of `b`; the shorter length wins.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{xor_bytes}
+/// let a = hex_decode("0f0f").unwrap()
+/// let b = hex_decode("f0ff").unwrap()
+/// assert_eq(xor_bytes(a.as_slice(), b.as_slice()).to_hex().as_str(), "fff0")
+/// ```
 fn xor_bytes(a: [u8], b: [u8]): List<u8> {
     let mut out = List<u8>.new()
     let mut i: usize = 0
@@ -33,6 +58,12 @@ fn xor_bytes(a: [u8], b: [u8]): List<u8> {
 
 /// `count` random bytes from the OS entropy source (`getentropy` on Unix, `rand_s` on Windows), suitable for keys,
 /// nonces, and salts. It panics if the system has no entropy source.
+///
+/// ```
+/// # use crypto
+/// # use crypto.{random_bytes}
+/// assert_eq(random_bytes(16).len(), 16)
+/// ```
 fn random_bytes(count: usize): List<u8> {
     let mut out = List<u8>.new()
     while out.len() < count {

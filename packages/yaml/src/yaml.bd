@@ -32,7 +32,7 @@ priv const MAX_ALIAS_BYTES: usize = 4194304
 
 /// One node of a loaded or an about-to-be-written document. The nodes of a document live in one list and refer to
 /// each other by index.
-struct Node {
+priv struct Node {
     // 0 = scalar, 1 = sequence, 2 = mapping.
     kind: i32,
     // The text of a scalar (decoded, for a quoted or block scalar; already formatted, in the writer's tree).
@@ -83,13 +83,13 @@ priv fn __syntax(text: str, message: str, position: usize): DeError {
 // ----- the loader ----------------------------------------------------------------------------------------------
 
 /// A mapping key and where it starts.
-struct Key {
+priv struct Key {
     text: String,
     pos: usize,
 }
 
 /// The properties written before a node: an anchor and the `!!str` tag.
-struct Props {
+priv struct Props {
     present: bool,
     has_anchor: bool,
     anchor: String,
@@ -98,19 +98,33 @@ struct Props {
 
 /// The YAML parser: a normalized copy of the input, the byte offset of the next unread byte, the nodes built so
 /// far, and the anchors seen so far.
+///
+/// ```
+/// # use yaml
+/// let mut loader = yaml.Loader.new("42\n")
+/// let root = loader.load().unwrap()
+/// let mut reader = loader.finish(root)
+/// assert_eq(deserialize_i32(mut reader).unwrap(), 42)
+/// ```
 struct Loader {
-    text: String,
-    pos: usize,
-    nodes: List<Node>,
-    anchors: Map<String, usize>,
-    depth: usize,
-    copied_nodes: usize,
-    copied_bytes: usize,
+    priv text: String,
+    priv pos: usize,
+    priv nodes: List<Node>,
+    priv anchors: Map<String, usize>,
+    priv depth: usize,
+    priv copied_nodes: usize,
+    priv copied_bytes: usize,
 }
 
 Loader {
     /// A loader over `text`. The text is copied once, with line breaks normalized to line feeds and a leading byte
     /// order mark removed.
+    ///
+    /// ```
+    /// # use yaml
+    /// let mut loader = yaml.Loader.new("42\n")
+    /// assert(loader.load().is_ok())
+    /// ```
     fn new(text: str): Loader {
         Loader {
             text: __normalize(text),
@@ -124,6 +138,13 @@ Loader {
     }
 
     /// Loads the whole text as one document and returns the index of its root node.
+    ///
+    /// ```
+    /// # use yaml
+    /// let mut loader = yaml.Loader.new("name: Ink\n")
+    /// let root = loader.load()
+    /// assert(root.is_ok())
+    /// ```
     fn load(mut self): Result<usize, DeError> {
         self.check_characters()?
         self.skip_to_content(true)?
@@ -157,6 +178,14 @@ Loader {
     }
 
     /// Ends the loader, handing its tree and its text to a reader.
+    ///
+    /// ```
+    /// # use yaml
+    /// let mut loader = yaml.Loader.new("42\n")
+    /// let root = loader.load().unwrap()
+    /// let mut reader = loader.finish(root)
+    /// assert_eq(deserialize_i32(mut reader).unwrap(), 42)
+    /// ```
     fn finish(own self, root: usize): Reader {
         let mut nodes = self.nodes
         // A node of kind 3 stands for a sequence element that is not there (see `has_next_seq_element`).
@@ -1244,7 +1273,7 @@ Loader {
 // ----- the reader ----------------------------------------------------------------------------------------------
 
 /// One open sequence or mapping in the reader: the node, and how many of its entries were handed out.
-struct RFrame {
+priv struct RFrame {
     node: usize,
     // How many entries were handed out.
     cursor: usize,
@@ -1253,7 +1282,7 @@ struct RFrame {
 }
 
 /// One open enum in the reader. They nest (a variant's payload may hold another enum), so they are a stack.
-struct REnum {
+priv struct REnum {
     // The node the enum is read from.
     node: usize,
     // Whether this enum is `Option`, and whether the input was `null` there.
@@ -1267,18 +1296,26 @@ struct REnum {
 
 /// The YAML reader: a loaded tree, and the node the next value is read from. The line and column of an error are
 /// computed from the offset a node was loaded at (SER10).
+///
+/// ```
+/// # use yaml
+/// let mut loader = yaml.Loader.new("42\n")
+/// let root = loader.load().unwrap()
+/// let mut reader = loader.finish(root)
+/// assert_eq(deserialize_i32(mut reader).unwrap(), 42)
+/// ```
 struct Reader {
-    nodes: List<Node>,
-    text: String,
-    cur: usize,
-    frames: List<RFrame>,
-    enums: List<REnum>,
+    priv nodes: List<Node>,
+    priv text: String,
+    priv cur: usize,
+    priv frames: List<RFrame>,
+    priv enums: List<REnum>,
     // How many values were started so far. A derived tuple reads its first part without asking
     // `has_next_seq_element`, and the count is how the reader tells.
-    reads: usize,
+    priv reads: usize,
     // The node `cur` is set to when a sequence has no further element, and the offset of that sequence.
-    missing: usize,
-    missing_at: usize,
+    priv missing: usize,
+    priv missing_at: usize,
 }
 
 Reader {
@@ -1765,7 +1802,7 @@ Reader {
 
 /// A float scalar's reading: `special` is 0 for an ordinary number (its text in `canon`), 1 for `.inf`, 2 for
 /// `-.inf`, and 3 for `.nan`.
-struct FloatText {
+priv struct FloatText {
     special: i32,
     canon: String,
     node: usize,
@@ -1774,19 +1811,33 @@ struct FloatText {
 // ----- the writer ----------------------------------------------------------------------------------------------
 
 /// The YAML writer: it builds a tree from the framework's calls, and `finish` prints it in block style.
+///
+/// ```
+/// # use yaml
+/// let mut writer = yaml.Writer.new()
+/// serialize_i32(mut writer, 42).unwrap()
+/// assert_eq(writer.finish().unwrap().as_str(), "42\n")
+/// ```
 struct Writer {
-    nodes: List<Node>,
+    priv nodes: List<Node>,
     // The open sequences and mappings, innermost last.
-    stack: List<usize>,
+    priv stack: List<usize>,
     // The open variants, innermost last: 0 = written as the payload itself (`Option`, unit variants), 1 = a mapping
     // with one entry, 2 = a mapping whose entry is a sequence.
-    variants: List<i32>,
-    root: usize,
-    has_root: bool,
+    priv variants: List<i32>,
+    priv root: usize,
+    priv has_root: bool,
 }
 
 Writer {
     /// A writer with no value yet.
+    ///
+    /// ```
+    /// # use yaml
+    /// let mut writer = yaml.Writer.new()
+    /// serialize_str(mut writer, "hi").unwrap()
+    /// assert_eq(writer.finish().unwrap().as_str(), "hi\n")
+    /// ```
     fn new(): Writer {
         Writer {
             nodes: List<Node>.new(),
@@ -1798,6 +1849,13 @@ Writer {
     }
 
     /// The text of the value written, ending the writer.
+    ///
+    /// ```
+    /// # use yaml
+    /// let mut writer = yaml.Writer.new()
+    /// serialize_bool(mut writer, true).unwrap()
+    /// assert_eq(writer.finish().unwrap().as_str(), "true\n")
+    /// ```
     fn finish(own self): Result<String, DeError> {
         if !self.has_root {
             return Err(DeError.new("no value was written"))
@@ -2048,6 +2106,16 @@ Writer: Serializer {
 // ----- the public surface --------------------------------------------------------------------------------------
 
 /// Writes `value` as a YAML document in block style, ending in a line feed.
+///
+/// ```
+/// # use yaml
+/// struct Item: Serialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let text = yaml.to_string(Item { name: "Ink".to_string(), qty: 12 }).unwrap()
+/// assert_eq(text.as_str(), "name: Ink\nqty: 12\n")
+/// ```
 fn to_string<T: Serialize>(value: T): Result<String, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
@@ -2055,6 +2123,16 @@ fn to_string<T: Serialize>(value: T): Result<String, DeError> {
 }
 
 /// Reads a value of type `T` from `text`, a single YAML document.
+///
+/// ```
+/// # use yaml
+/// struct Item: Deserialize {
+///     name: String,
+///     qty: u32,
+/// }
+/// let item: Result<Item, DeError> = yaml.from_str("name: Ink\nqty: 12\n")
+/// assert_eq(item.unwrap().qty, 12)
+/// ```
 fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
     let mut loader = Loader.new(text)
     let root = loader.load()?
@@ -2327,7 +2405,7 @@ priv fn __float_special(text: str): i32 {
 }
 
 /// What `__parse_int` found.
-struct IntText {
+priv struct IntText {
     ok: bool,
     neg: bool,
     mag: u64,
