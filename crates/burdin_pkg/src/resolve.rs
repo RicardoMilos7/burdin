@@ -305,9 +305,21 @@ impl Walker<'_> {
         self.visiting.push(dir.to_path_buf());
         let mut dependencies = Vec::new();
         // The potential graph (PKG33): every dependency the manifest declares, whatever its features and platform,
-        // and the dev-dependencies of the entry package alone (PKG26).
-        let dev: &[Dependency] = if is_root { &manifest.dev_deps } else { &[] };
-        for dependency in manifest.deps.iter().chain(dev) {
+        // and the dev-dependencies of the entry package alone (PKG26). An official package a source imports without
+        // declaring it is a dependency too, and is pinned like a declared one (PKG15, PKG17).
+        let mut declared: Vec<Dependency> = manifest.deps.clone();
+        if is_root {
+            declared.extend(manifest.dev_deps.iter().cloned());
+        }
+        declared.extend(package::implicit_official_deps(dir, &manifest).into_iter().map(|name| Dependency {
+            name,
+            source: DepSource::Official,
+            optional: false,
+            default_features: true,
+            features: Vec::new(),
+            target: None,
+        }));
+        for dependency in &declared {
             let key = &dependency.name;
             let name = match &dependency.source {
                 DepSource::Path(relative) => {
@@ -325,7 +337,7 @@ impl Walker<'_> {
                 DepSource::Official => {
                     let (dep_dir, checksum) = self
                         .official_dependency(key)
-                        .map_err(|e| format!("`{}`: dependency `{key} = true`: {e}", manifest_path.display()))?;
+                        .map_err(|e| format!("`{}`: dependency `{key}` (official): {e}", manifest_path.display()))?;
                     self.visit(&dep_dir, None, Origin::Official(checksum), false)?
                 }
             };
@@ -627,14 +639,11 @@ mod tests {
     fn an_official_package_is_pinned_by_its_files() {
         let s = Scratch::new("official");
         let json = s.package("official/json", "[package]\nname = \"json\"\nversion = \"0.1.0\"\n");
-        // An official package may need another one.
+        // An official package may need another one, through `use` like any implicit dependency.
         s.package("official/text", "[package]\nname = \"text\"\n");
-        fs::write(
-            json.join("burdin.toml"),
-            "[package]\nname = \"json\"\nversion = \"0.1.0\"\n[dependencies]\ntext = true\n",
-        )
-        .unwrap();
-        let app = s.package("app", "[package]\nname = \"app\"\n[dependencies]\njson = true\n");
+        fs::write(json.join("src").join("json.bd"), "use text.f\n\nfn f() {}\n").unwrap();
+        let app = s.package("app", "[package]\nname = \"app\"\n");
+        fs::write(app.join("src").join("app.bd"), "use json.f\n\nfn main() {}\n").unwrap();
         // SAFETY: this is the only test of this crate that sets the variable, and it sets it once.
         unsafe { std::env::set_var(package::PACKAGES_ENV, s.0.join("official")) };
 
@@ -665,18 +674,16 @@ mod tests {
         assert_eq!(sync(&app, false).unwrap(), Synced::Wrote);
         assert_eq!(sync(&app, true).unwrap(), Synced::UpToDate);
 
-        // An unknown official name says what the official packages are.
+        // An official package is not declared in the manifest.
         fs::write(app.join("burdin.toml"), "[package]\nname = \"app\"\n[dependencies]\nyaml = true\n").unwrap();
         let error = resolve(&app, None, None, false).unwrap_err();
-        assert!(
-            error.contains("dependency `yaml = true`") && error.contains("the official packages are: json, text"),
-            "{error}"
-        );
+        assert!(error.contains("official packages are not declared"), "{error}");
 
         // The same directory reached as an official package and as a path is refused.
-        let both = "[package]\nname = \"app\"\n[dependencies]\njson = true\nj = \"../official/json\"\n";
-        fs::write(app.join("burdin.toml"), both).unwrap();
-        assert!(resolve(&app, None, None, false).unwrap_err().contains("the official packages and a path"));
+        fs::write(app.join("burdin.toml"), "[package]\nname = \"app\"\n[dependencies]\nb = \"../b\"\n").unwrap();
+        s.package("b", "[package]\nname = \"b\"\n[dependencies]\nj = \"../official/json\"\n");
+        let error = resolve(&app, None, None, false).unwrap_err();
+        assert!(error.contains("which are the same files") && error.contains("the official packages"), "{error}");
         // SAFETY: as above.
         unsafe { std::env::remove_var(package::PACKAGES_ENV) };
     }

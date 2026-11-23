@@ -1,12 +1,7 @@
 # tls
 
 TLS on the platform's own stack: SChannel on Windows, OpenSSL 3 on Linux and macOS (issues #262, #322, #878; the behavior
-is `spec/tls.md`). Declare it in `burdin.toml` and `use tls`:
-
-```toml
-[dependencies]
-tls = true
-```
+is `spec/tls.md`). Use it with `use tls`; no `burdin.toml` entry is needed.
 
 > **This is an experiment, not a security claim.** The package has had no audit. Use a reviewed stack for anything you
 > care about.
@@ -31,8 +26,8 @@ backend()                                    the TLS stack of this build, as tex
 | `TlsStream` | `connect(tcp, server_name, config)`, `accept(tcp, config)`; `recv(buf, max)`, `send(data)`, `send_all(data)`, `close()`, `abort()`; `tls_version`, `cipher`, `alpn_protocol`, `peer_certificate`, `server_name`; `set_read_timeout`, `set_write_timeout`; `Read` and `Write` |
 
 `tls.backend()` returns a `String` naming the stack the build uses: `SChannel` on Windows, and on Linux and macOS the
-text of the linked OpenSSL (it starts with `OpenSSL 3`, for example `OpenSSL 3.0.13 30 Jan 2024`). With the `openssl`
-feature off it is `none`.
+text of the linked OpenSSL (it starts with `OpenSSL 3`, for example `OpenSSL 3.0.13 30 Jan 2024`). A build of the
+package itself with its `openssl` feature off returns `none`.
 
 Verification is on by default and cannot be turned off by accident: a client checks the server's chain against its trust
 store and the certificate's names against the `server_name` it passes to `connect` (a DNS name, or an IP address matched
@@ -127,16 +122,9 @@ Only Linux and macOS need OpenSSL. On Windows the package links SChannel and not
 A library in another place is found with the linker's own variable (`LIBRARY_PATH` on Linux and macOS) or `BURDIN_CC`
 flags.
 
-## The `openssl` feature
+## OpenSSL
 
-`tls` links OpenSSL through its `openssl` feature, which is on by default (`[features] default = ["openssl"]`). The
-feature only affects Linux and macOS: on Windows the package links SChannel whatever the feature says (`spec/tls.md`,
-TLS1a). A program that wants the package's types without linking OpenSSL turns the feature off:
-
-```toml
-[dependencies]
-tls = { official = true, default-features = false }
-```
-
-Then no OpenSSL library is linked, and each TLS call returns `TlsError.Unsupported` ("no OpenSSL in this build"), so the
-program still builds and runs. `spec/tls.md`, TLS7, has the rules and the tests.
+On Linux and macOS, `tls` links OpenSSL 3 through its `openssl` default feature, so a program that uses the package
+needs the OpenSSL libraries at link time. On Windows it links SChannel instead (`spec/tls.md`, TLS1a). A program that
+uses `tls` therefore always has a working backend; there is no declaration that turns it off. `spec/tls.md`, TLS7, has
+the rules and the tests.

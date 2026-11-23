@@ -59,7 +59,8 @@ not updated and may disagree with the repository.
    the language server: transport, lifecycle, positions, packages, every feature, the editor targets, and their tests,
    `spec/repl.md` is `burdin repl`, the session model, the meta-commands, and the editor, `spec/scripts.md` is
    single-file scripts, the shebang, the inline manifest, and the binary cache, `spec/packages.md` is path, git, and
-   official dependencies (`name = true`), `burdin.lock`, `--locked`, and `burdin add`, `spec/serialization.md` is the
+   official packages (`use <name>`; never declared in `burdin.toml`), `burdin.lock`, `--locked`, and `burdin add`,
+   `spec/serialization.md` is the
    serialization framework: the data model, `Serialize`/`Deserialize` and the format-side `Serializer`/`Deserializer`,
    path-aware errors, the derives, and the test format, `spec/toml.md` is the TOML 1.0.0 package: the subset it reads,
    the canonical form it writes, the framework mapping, the strict reader, and its errors with their locations,
@@ -143,12 +144,12 @@ python3 tests/check_packages.py          check `burdin add` and `burdin.lock`: p
 python3 tests/check_workspace.py         check workspaces: members, default members, excludes, the selection flags, inherited
                                          fields, and one lockfile at the root
 python3 tests/check_features.py          check dependency tables, features, and targets: selection, unification, dev-dependencies, `cfg` tables, the generated `features` module, and the potential-graph lockfile
-python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, `burdin add json`, and its official pin
-python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, `burdin add toml`, and its official pin
-python3 tests/check_crypto.py            check the `crypto` official package: ~500 known-answer vectors (tests/crypto), the error messages, `burdin add crypto`, and its official pin
-python3 tests/check_math.py              check the `math` official package: ~2,400 known-answer cases (tests/math), the runner, `burdin add math`, and its official pin
+python3 tests/check_json.py              check the `json` official package: the tests/json fixtures, the implicit `use json` load, and its official pin
+python3 tests/check_toml.py              check the `toml` official package: the tests/toml fixtures, the implicit `use toml` load, and its official pin
+python3 tests/check_crypto.py            check the `crypto` official package: ~500 known-answer vectors (tests/crypto), the error messages, the implicit `use crypto` load, and its official pin
+python3 tests/check_math.py              check the `math` official package: ~2,400 known-answer cases (tests/math), the runner, the implicit `use math` load, and its official pin
 python3 tests/check_link.py              check the `[link]` manifest table: a dependency's libraries reach the link by name, target tables, and the manifest errors (needs a built driver)
-python3 tests/check_tls.py               check the `tls` official package: the committed test certificates, the conformance program (clients and servers over 127.0.0.1), the declared OpenSSL symbols, the README's examples, `burdin add tls`, and its official pin (needs OpenSSL 3 to link)
+python3 tests/check_tls.py               check the `tls` official package: the committed test certificates, the conformance program (clients and servers over 127.0.0.1), the declared OpenSSL symbols, the README's examples, the implicit `use tls` load, and its official pin (needs OpenSSL 3 to link)
 python3 tests/check_toolchain.py         check the toolchain manager and the `burdin` proxy against fixture releases (needs rustc and curl)
 python3 tests/check_check.py             check `burdin check`: fixtures and goldens, equivalence with a build over the conformance suite, no codegen
 python3 tests/check_inspect.py           check `burdin expand` (goldens, and every m17/m19/m20/m21 expansion re-checked and run), `--emit`, `burdin asm`, `burdin bloat`, `check --print-instances`
@@ -263,7 +264,7 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
-packages/                 the official packages, each an ordinary Burdin package declared with `name = true`; they ship
+packages/                 the official packages, each an ordinary Burdin package reached with `use <name>`; they ship
                           with the compiler (spec/packages.md, PKG15-PKG18); `tests/packages/official` has the fixtures
                           the tests use instead
 editors/                  the VS Code extension (vscode/) and the Neovim and Helix setup for `burdin lsp`

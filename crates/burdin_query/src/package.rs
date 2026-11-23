@@ -3,7 +3,7 @@
 //! A single `.bd` file is a package with one module (its path is empty). A directory is a package described by
 //! its `burdin.toml`; its entry point is `src/main.bd`, and `[dependencies]` are loaded recursively from their
 //! `path`, from the checkout of the commit `burdin.lock` pins for a `git` dependency, or from the compiler's own
-//! `packages/` folder for an official one (`name = true`; `spec/packages.md`). The loader never fetches: `burdin_pkg` resolves and checks out git dependencies before a build. Module paths are
+//! `packages/` folder for an official one (`use <name>`; `spec/packages.md`). The loader never fetches: `burdin_pkg` resolves and checks out git dependencies before a build. Module paths are
 //! relative to `src/` (`geometry/shapes.bd` is module `geometry.shapes`).
 //!
 //! Which dependencies a build loads is decided here: features, optional dependencies, dev-dependencies of the entry
@@ -14,7 +14,9 @@ use crate::cfg::{self, Cfg, Host};
 use crate::features::{self, Item};
 use crate::lockfile::{self, GitRef, Lockfile};
 use crate::workspace;
+use burdin_diag::{Diagnostics, FileId};
 use burdin_sema::EntryMode;
+use burdin_syntax::token::TokenKind;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -107,33 +109,64 @@ pub fn load(target: &Path) -> Result<Workspace, String> {
     load_selected(target, EntryMode::Build, &FeatureRequest::default())
 }
 
-/// A package of in-memory files: `paths` name the files as `geometry/shapes.bd` (module `geometry.shapes`). The entry
-/// module is `main.bd`, or the first file when there is none. The embedded standard library is attached.
-pub fn in_memory<'a>(paths: impl IntoIterator<Item = &'a str>) -> Workspace {
-    let modules: Vec<ModuleFile> = paths
-        .into_iter()
-        .map(|path| ModuleFile {
+/// A package of in-memory files: `files` are `(path inside src, text)` pairs, the path naming the file as
+/// `geometry/shapes.bd` (module `geometry.shapes`). The entry module is `main.bd`, or the first file when there is
+/// none. The embedded standard library is attached. Like a package on disk, the text decides which official packages
+/// the program imports (`use json`; `spec/packages.md`, PKG15).
+pub fn in_memory<'a>(files: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<Workspace, String> {
+    let files: Vec<(&str, &str)> = files.into_iter().collect();
+    let modules: Vec<ModuleFile> = files
+        .iter()
+        .map(|(path, _)| ModuleFile {
             path: path.trim_end_matches(".bd").split('/').map(str::to_string).collect(),
             file: PathBuf::from(path),
             text: None,
         })
         .collect();
     let entry_module = modules.iter().position(|m| m.path == ["main"]).unwrap_or(0);
-    let package = PackageFiles {
-        name: "app".to_string(),
-        dir: None,
-        modules,
+    let official = official_names();
+    let mut used = BTreeSet::new();
+    for (_, text) in &files {
+        used.extend(used_package_names(text));
+    }
+    let local: BTreeSet<&str> = modules.iter().filter_map(|module| module.path.first().map(String::as_str)).collect();
+    let mut manifest = empty_manifest("app");
+    let declared = BTreeSet::new();
+    for name in implicit_from_uses(used, &official, &declared, "app", |name| !local.contains(name)) {
+        manifest.deps.push(official_dependency(name));
+    }
+    let mut loader = Loader::new(None);
+    let root = loader.add_node(PathBuf::new(), PathBuf::from("<memory>"), manifest)?;
+    loader.activate(root, false, &FeatureRequest::default())?;
+    let mut packages = loader.into_packages(Some(modules))?;
+    // The in-memory entry module answers `use <package>` itself, as the old in-memory package did.
+    if let Some(entry) = packages.get_mut(root) {
+        entry.root_module = Some(entry_module);
+    }
+    attach_std(&mut packages);
+    Ok(Workspace { packages, entry_package: root, entry_module, stem: "app".to_string() })
+}
+
+/// A manifest with a name and nothing else: no dependencies, features, or links.
+fn empty_manifest(name: &str) -> Manifest {
+    Manifest {
+        name: name.to_string(),
+        version: None,
+        license: None,
+        authors: Vec::new(),
         deps: Vec::new(),
+        dev_deps: Vec::new(),
+        features: Vec::new(),
+        features_section: false,
         build_allow: Vec::new(),
-        link_libs: Vec::new(),
-        root_module: Some(entry_module),
+        link: Vec::new(),
         lint: Vec::new(),
         rust: Default::default(),
         edition: Default::default(),
-    };
-    let mut packages = vec![package];
-    attach_std(&mut packages);
-    Workspace { packages, entry_package: 0, entry_module, stem: "app".to_string() }
+        profiles: Vec::new(),
+        include: None,
+        exclude: Vec::new(),
+    }
 }
 
 /// The user's Burdin home, where tools keep state that outlives one run (`spec/scripts.md` SC6 and
@@ -271,8 +304,8 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
             }
             DepSource::Official => {
                 return Err(format!(
-                    "{line_number}: a script's dependency must be a `path`; a script has no lockfile to pin an \
-                     official package"
+                    "{line_number}: a script's dependency must be a `path`; an official package needs no \
+                     declaration (`use <name>`) and a script has no lockfile to pin one"
                 ));
             }
         };
@@ -324,32 +357,16 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
         let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "a".into());
         let path = source_path_text(target);
         let text = std::fs::read_to_string(target).map_err(|e| format!("cannot read {path}: {e}"))?;
-        let manifest = script_manifest(&text).map_err(|e| format!("{path}:{e}"))?;
+        let manifest = script_manifest(&text).map_err(|e| format!("{path}:{e}"))?.unwrap_or_default();
         let base = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         let script = ModuleFile { path: Vec::new(), file: target.to_path_buf(), text: None };
-        let Some(manifest) = manifest else {
-            let mut packages = vec![PackageFiles {
-                name: stem.clone(),
-                dir: None,
-                modules: vec![script],
-                deps: Vec::new(),
-                build_allow: Vec::new(),
-                link_libs: Vec::new(),
-                root_module: Some(0),
-                lint: Vec::new(),
-                rust: Default::default(),
-                edition: Default::default(),
-            }];
-            attach_std(&mut packages);
-            return Ok(Workspace { packages, entry_package: 0, entry_module: 0, stem });
-        };
         // The script's own name is its package name; a dependency with the same name would be ambiguous.
         if manifest.deps.iter().any(|(name, _)| *name == stem) {
             return Err(format!("{path}: a dependency is also named `{stem}`, the script's own package name"));
         }
         // A script's dependencies are paths relative to the script, and it has no features: the script is the root
         // of the graph, with a manifest of its own that names the dependencies and nothing else.
-        let script_manifest = Manifest {
+        let mut script_manifest = Manifest {
             name: stem.clone(),
             version: None,
             deps: manifest
@@ -378,10 +395,12 @@ fn load_impl(target: &Path, require_entry: bool, dev: bool, request: &FeatureReq
             include: None,
             exclude: Vec::new(),
         };
+        // A script has no `src/` to scan, so its own text says which official packages it imports (PKG15).
+        add_implicit_official_deps_in_text(&mut script_manifest, &text);
         let mut loader = Loader::new(None);
         let root = loader.add_node(base.to_path_buf(), target.to_path_buf(), script_manifest)?;
         loader.activate(root, false, request)?;
-        let mut packages = loader.into_packages(Some(script))?;
+        let mut packages = loader.into_packages(Some(vec![script]))?;
         attach_std(&mut packages);
         Ok(Workspace { packages, entry_package: root, entry_module: 0, stem })
     } else {
@@ -473,7 +492,16 @@ pub fn manifest_dir(file: &Path) -> Option<PathBuf> {
 /// or not a given build loads them; empty when the manifest does not read.
 pub fn dependency_names(dir: &Path) -> Vec<String> {
     match parse_manifest(&dir.join("burdin.toml")) {
-        Ok(manifest) => manifest.deps.iter().chain(&manifest.dev_deps).map(|dep| dep.name.clone()).collect(),
+        Ok(manifest) => {
+            let mut names: Vec<String> =
+                manifest.deps.iter().chain(&manifest.dev_deps).map(|dep| dep.name.clone()).collect();
+            // An official package a source imports is a dependency for `burdin fmt`'s import grouping and for a
+            // tool's completion (PKG15).
+            names.extend(implicit_official_deps(dir, &manifest));
+            names.sort();
+            names.dedup();
+            names
+        }
         Err(_) => Vec::new(),
     }
 }
@@ -538,8 +566,134 @@ pub fn official_names() -> Vec<String> {
     official_root().map(|root| official_names_in(&root)).unwrap_or_default()
 }
 
-/// The directory of the official package `name`, or the error that explains why there is none (`name = true` for a
-/// name that is not official, or no packages directory at all).
+/// The official packages a package imports with `use` but does not declare (`spec/packages.md`, PKG15). The
+/// compiler's `packages/` folder is part of the standard library's surface: `use json` reaches `json` without a
+/// `[dependencies]` entry. Only the packages a source imports join the build, so an unused official package is not
+/// loaded, checked, linked, or pinned.
+///
+/// The scan reads every `.bd` file under `dir/src` and keeps the first name of each `use` declaration (`use json`,
+/// `use json.{Value}`, `pub use json as j`) that names an official package, is not already declared (`deps`,
+/// `dev_deps`, and their target tables), is not the package itself, and is not one of the package's own top-level
+/// modules. The result is sorted. Generated modules are not on disk when a package is loaded, so a package that only
+/// generated code imports must declare it (`spec/packages.md`, PKG18).
+pub fn implicit_official_deps(dir: &Path, manifest: &Manifest) -> Vec<String> {
+    let official = official_names();
+    if official.is_empty() {
+        return Vec::new();
+    }
+    let src = dir.join("src");
+    let declared: BTreeSet<String> =
+        manifest.deps.iter().chain(&manifest.dev_deps).map(|dep| dep.name.clone()).collect();
+    let mut used = BTreeSet::new();
+    let mut files = Vec::new();
+    collect_source_files(&src, &mut files);
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        // Most files name none of the official packages; only lex those that might.
+        if official.iter().any(|name| text.contains(name.as_str())) {
+            used.extend(used_package_names(&text));
+        }
+    }
+    implicit_from_uses(used, &official, &declared, &manifest.name, |name| !src.join(format!("{name}.bd")).is_file())
+}
+
+/// The official packages a source text imports with `use`, sorted. A caller whose package layout is fixed, such as
+/// the REPL's session, uses this to notice that a new import needs the layout to be reopened (PKG15).
+pub fn official_uses(text: &str) -> Vec<String> {
+    let official = official_names();
+    if official.is_empty() {
+        return Vec::new();
+    }
+    used_package_names(text).into_iter().filter(|name| official.binary_search(name).is_ok()).collect()
+}
+
+/// Every name a source text imports at its top level with `use`, sorted and deduplicated. The `use` may name a
+/// package, a module, or an item (`use json`, `use json.{Value}`, `use std.io.Writer`, `pub use json as j`); only
+/// the first name is kept. Comments and string literals are not tokens, so they contribute nothing.
+fn used_package_names(text: &str) -> BTreeSet<String> {
+    let mut diags = Diagnostics::default();
+    let lexed = burdin_syntax::lexer::lex(FileId(0), text, &mut diags);
+    let mut names = BTreeSet::new();
+    let mut after_use = false;
+    for token in &lexed.tokens {
+        if after_use {
+            if let TokenKind::Ident(name) = &token.kind {
+                names.insert(name.clone());
+            }
+            after_use = false;
+        } else if token.kind == TokenKind::Use {
+            after_use = true;
+        }
+    }
+    names
+}
+
+/// Filters the names a source imports to the official packages it does not declare (`spec/packages.md`, PKG15).
+fn implicit_from_uses(
+    used: impl IntoIterator<Item = String>,
+    official: &[String],
+    declared: &BTreeSet<String>,
+    package: &str,
+    usable: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    used.into_iter()
+        .filter(|name| name != package)
+        .filter(|name| !declared.contains(name))
+        .filter(|name| official.binary_search(name).is_ok())
+        .filter(|name| usable(name))
+        .collect()
+}
+
+/// Every `.bd` file under `dir`, recursively, in no particular order. A directory that cannot be read contributes
+/// nothing: the loader reports the real error when it discovers the modules.
+fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_source_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "bd") {
+            files.push(path);
+        }
+    }
+}
+
+/// An implicit official dependency, with no keys that shape it: default features, not optional, on every platform.
+fn official_dependency(name: String) -> Dependency {
+    Dependency {
+        name,
+        source: DepSource::Official,
+        optional: false,
+        default_features: true,
+        features: Vec::new(),
+        target: None,
+    }
+}
+
+/// Adds the official packages `manifest` imports to its dependencies before the graph is activated.
+fn add_implicit_official_deps(manifest: &mut Manifest, dir: &Path) {
+    for name in implicit_official_deps(dir, manifest) {
+        manifest.deps.push(official_dependency(name));
+    }
+}
+
+/// Adds the official packages a script imports (`use json`) to its manifest. A script has no directory to scan, so
+/// the script's own text is scanned instead.
+fn add_implicit_official_deps_in_text(manifest: &mut Manifest, text: &str) {
+    let official = official_names();
+    if official.is_empty() {
+        return;
+    }
+    let declared: BTreeSet<String> =
+        manifest.deps.iter().chain(&manifest.dev_deps).map(|dep| dep.name.clone()).collect();
+    let used = used_package_names(text);
+    for name in implicit_from_uses(used, &official, &declared, &manifest.name, |_| true) {
+        manifest.deps.push(official_dependency(name));
+    }
+}
+
+/// The directory of the official package `name`, or the error that explains why there is none (no such package, or
+/// no packages directory at all). An implicit dependency reaches it (`spec/packages.md`, PKG15).
 pub fn official_dir(name: &str) -> Result<PathBuf, String> {
     let Some(root) = official_root() else {
         let looked: Vec<String> = official_roots().iter().map(|root| source_path_text(root)).collect();
@@ -615,7 +769,8 @@ impl Loader {
     /// Adds the entry package in `dir` (canonical), read from its `burdin.toml`.
     fn add_root(&mut self, dir: &Path) -> Result<usize, String> {
         let manifest_path = dir.join("burdin.toml");
-        let manifest = parse_manifest(&manifest_path)?;
+        let mut manifest = parse_manifest(&manifest_path)?;
+        add_implicit_official_deps(&mut manifest, dir);
         self.add_node(dir.to_path_buf(), manifest_path, manifest)
     }
 
@@ -646,7 +801,8 @@ impl Loader {
             return Ok(id);
         }
         let manifest_path = dir.join("burdin.toml");
-        let manifest = parse_manifest(&manifest_path)?;
+        let mut manifest = parse_manifest(&manifest_path)?;
+        add_implicit_official_deps(&mut manifest, &dir);
         self.add_node(dir, manifest_path, manifest)
     }
 
@@ -787,18 +943,18 @@ impl Loader {
         visit(self, root, &mut Vec::new(), &mut done)
     }
 
-    /// The packages of the build, in node order (the entry package first). A script's package is `script` (its one
-    /// file, and no manifest), so its modules are not read from a directory.
-    fn into_packages(self, script: Option<ModuleFile>) -> Result<Vec<PackageFiles>, String> {
-        let mut script = script;
+    /// The packages of the build, in node order (the entry package first). A script's or an in-memory program's
+    /// package is `root_modules` (its files, and no manifest on disk), so its modules are not read from a directory.
+    fn into_packages(self, root_modules: Option<Vec<ModuleFile>>) -> Result<Vec<PackageFiles>, String> {
+        let mut root_modules = root_modules;
         let mut packages = Vec::with_capacity(self.nodes.len());
         for (id, node) in self.nodes.iter().enumerate() {
             let manifest = &node.manifest;
-            // A script is the root of its build: its one file is its only module, and it has no directory.
-            let script_file = if id == 0 { script.take() } else { None };
-            let is_script = script_file.is_some();
-            let mut modules = match script_file {
-                Some(file) => vec![file],
+            // A script is the root of its build: its files are its only modules, and it has no directory.
+            let script_modules = if id == 0 { root_modules.take() } else { None };
+            let is_script = script_modules.is_some();
+            let mut modules = match script_modules {
+                Some(files) => files,
                 None => discover_modules(&node.dir)?,
             };
             // Other packages reach this one as `use <package>`: prefer `src/<package>.bd`, then `src/lib.bd`.
@@ -855,7 +1011,7 @@ impl Loader {
                 .map_err(|e| format!("`{}`: dependency `{name}`: {e}", manifest_path.display())),
             DepSource::Official => official_dir(name)
                 .and_then(|dir| dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", dir.display())))
-                .map_err(|e| format!("`{}`: dependency `{name} = true`: {e}", manifest_path.display())),
+                .map_err(|e| format!("`{}`: dependency `{name}` (official): {e}", manifest_path.display())),
             DepSource::Git { url, reference } => {
                 let locked = self.lock.as_ref().and_then(|lock| lock.git_package(url, reference));
                 let Some(git) = locked.and_then(|p| p.git.as_ref()) else {
@@ -887,7 +1043,7 @@ pub enum DepSource {
     Path(String),
     /// A git repository and the reference to build; `burdin.lock` pins it to a commit.
     Git { url: String, reference: GitRef },
-    /// The official package of the dependency's own name, bundled with the compiler (`name = true`).
+    /// The official package of the dependency's own name, bundled with the compiler (`use <name>`).
     Official,
 }
 
@@ -1313,6 +1469,11 @@ pub(crate) fn parse_document(text: &str, path: &Path) -> Result<Document, String
                 if value == "false" {
                     return Err(format!("{at}: `{key} = false` means nothing: remove the line"));
                 }
+                if value == "true" {
+                    return Err(format!(
+                        "{at}: `{key}`: official packages are not declared in `burdin.toml`; `use {key}` loads it"
+                    ));
+                }
                 let source = parse_dependency(value).map_err(|e| format!("{at}: {e}"))?;
                 doc.workspace_deps.push((key.to_string(), source, line_number));
             }
@@ -1550,6 +1711,12 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                     where_()
                 ));
             }
+            if value == "true" && !dotted {
+                return Err(format!(
+                    "{}: dependency `{key}`: official packages are not declared in `burdin.toml`; `use {key}` loads it",
+                    where_()
+                ));
+            }
             let inherits = dotted || workspace_table(value).map_err(|e| format!("{}: {e}", where_()))?.is_some();
             if inherits || doc.dep_inherits.iter().any(|(name, _)| name == key) {
                 // `name.workspace = true` takes the source the workspace declares, from the member's directory (WS16).
@@ -1646,6 +1813,9 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
             "rust.crates" => {
                 if !is_ident(key) {
                     return Err(format!("{}: `{key}` is not a valid module name for a Rust crate", where_()));
+                }
+                if value == "true" {
+                    return Err(format!("{}: a Rust crate must be a `path`", where_()));
                 }
                 let path = match parse_dependency(value).map_err(|e| format!("{}: {e}", where_()))? {
                     DepSource::Path(path) => path,
@@ -1873,10 +2043,10 @@ pub(crate) struct DependencySpec {
     pub(crate) features: Vec<String>,
 }
 
-/// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), `{ git = "<url>" }` with at most one of `branch`,
-/// `tag`, and `rev`, or `true` (or `{ official = true }`) for the official package of that name (`spec/packages.md`,
-/// PKG1-PKG2, PKG15), with the keys of PKG25: `optional`, `default-features`, and `features`. Other keys are ignored, so
-/// a newer manifest loads.
+/// `{ path = "../lib" }` (or a bare `"../lib"` as a shorthand), or `{ git = "<url>" }` with at most one of `branch`,
+/// `tag`, and `rev` (`spec/packages.md`, PKG1-PKG2), with the keys of PKG25: `optional`, `default-features`, and
+/// `features`. Other keys are ignored, so a newer manifest loads. An official package is not declared here: `use
+/// <name>` loads it (PKG15).
 fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     let plain =
         |source: DepSource| DependencySpec { source, optional: false, default_features: true, features: Vec::new() };
@@ -1884,12 +2054,10 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
         return parse_string(value).map(|path| plain(DepSource::Path(path)));
     }
     if value == "true" {
-        return Ok(plain(DepSource::Official));
+        return Err("official packages are not declared in `burdin.toml`: `use <name>` loads one".to_string());
     }
     if !(value.starts_with('{') && value.ends_with('}')) {
-        return Err("a dependency must be `{ path = \"...\" }`, `{ git = \"...\" }`, or `true` for an official \
-                    package"
-            .to_string());
+        return Err("a dependency must be `{ path = \"...\" }` or `{ git = \"...\" }`".to_string());
     }
     let inner = &value[1..value.len() - 1];
     let mut path = None;
@@ -1899,7 +2067,6 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     let mut optional = false;
     let mut default_features = true;
     let mut features = Vec::new();
-    let mut official = false;
     for part in split_table(inner) {
         let Some((key, value)) = part.split_once('=') else {
             return Err(format!("expected `key = value` in the dependency table, found `{}`", part.trim()));
@@ -1913,10 +2080,7 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
             "rev" => references.push(GitRef::Rev(parse_string(value)?)),
             "version" => has_version = true,
             "official" => {
-                if !parse_bool(value)? {
-                    return Err("`official = false` means nothing: remove the key, or give `path` or `git`".to_string());
-                }
-                official = true;
+                return Err("official packages are not declared in `burdin.toml`: `use <name>` loads one".to_string());
             }
             "optional" => optional = parse_bool(value)?,
             "default-features" => default_features = parse_bool(value)?,
@@ -1926,17 +2090,6 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
     }
     if references.len() > 1 {
         return Err("a git dependency takes at most one of `branch`, `tag`, and `rev`".to_string());
-    }
-    if official {
-        // `{ official = true, default-features = false }` is the official package with the keys of PKG25 (PKG15).
-        if path.is_some() || git.is_some() {
-            return Err("`official = true` names an official package, so it takes no `path` or `git`".to_string());
-        }
-        if !references.is_empty() || has_version {
-            return Err("`official = true` takes only the keys of PKG25 (`optional`, `default-features`, `features`)"
-                .to_string());
-        }
-        return Ok(DependencySpec { source: DepSource::Official, optional, default_features, features });
     }
     let source = match (path, git) {
         (Some(_), Some(_)) => return Err("a dependency takes a `path` or a `git` repository, not both".to_string()),
@@ -1959,10 +2112,7 @@ fn parse_dependency_spec(value: &str) -> Result<DependencySpec, String> {
                 .to_string());
         }
         (None, None) => {
-            return Err(
-                "a dependency needs a `path` or a `git` repository, or `official = true` for an official package"
-                    .to_string(),
-            );
+            return Err("a dependency needs a `path` or a `git` repository".to_string());
         }
     };
     Ok(DependencySpec { source, optional, default_features, features })
@@ -2201,20 +2351,27 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
     }
 
     #[test]
-    fn official_dependency_forms() {
-        let m = manifest("[package]\nname = \"app\"\n[dependencies]\njson = true\nlib = \"../lib\"\n").unwrap();
-        assert_eq!(
-            sources(&m.deps),
-            vec![("json".to_string(), DepSource::Official), ("lib".to_string(), DepSource::Path("../lib".to_string()))]
+    fn official_packages_are_not_declared() {
+        // `use json` loads an official package; a manifest entry is an error that says so.
+        let error = manifest("[package]\nname = \"app\"\n[dependencies]\njson = true\n").unwrap_err();
+        assert!(error.contains("official packages are not declared"), "{error}");
+        assert!(error.contains("`use json` loads it"), "{error}");
+        assert!(error.starts_with("burdin.toml:4:"), "{error}");
+        let error = manifest("[package]\nname = \"app\"\n[dependencies]\njson = { official = true }\n").unwrap_err();
+        assert!(error.contains("official packages are not declared"), "{error}");
+        let error = manifest("[package]\nname = \"app\"\n[workspace.dependencies]\njson = true\n").unwrap_err();
+        assert!(error.contains("official packages are not declared"), "{error}");
+        // A script and a Rust crate take paths.
+        let script = "//! [dependencies]\n//! json = true\nfn main() {}\n";
+        assert!(script_manifest(script).unwrap_err().contains("official packages are not declared"));
+        assert!(
+            manifest("[package]\nname = \"app\"\n[rust.crates]\ngeo = true\n")
+                .unwrap_err()
+                .contains("a Rust crate must be a `path`")
         );
+        // `false` means nothing, and an unknown boolean is not a dependency.
         let error = manifest("[package]\nname = \"app\"\n[dependencies]\njson = false\n").unwrap_err();
         assert!(error.contains("`json = false` means nothing"), "{error}");
-        assert!(error.starts_with("burdin.toml:4:"), "{error}");
-        // Only a dependency of a package takes `true`: a script and a Rust crate take paths.
-        let script = "//! [dependencies]\n//! json = true\nfn main() {}\n";
-        assert!(script_manifest(script).unwrap_err().contains("must be a `path`"));
-        assert!(manifest("[package]\nname = \"app\"\n[rust.crates]\ngeo = true\n").unwrap_err().contains("`path`"));
-        // Not a boolean spelling the manifest knows.
         assert!(manifest("[package]\nname = \"app\"\n[dependencies]\njson = yes\n").is_err());
     }
 
@@ -2256,6 +2413,29 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
     }
 
     #[test]
+    fn a_use_declaration_names_the_package_it_starts_with() {
+        let names = |text: &str| used_package_names(text).into_iter().collect::<Vec<_>>();
+        assert_eq!(names("use json\n"), ["json"]);
+        assert_eq!(names("use json.{Value, parse}\n"), ["json"]);
+        assert_eq!(names("pub use toml as t\n"), ["toml"]);
+        assert_eq!(names("use std.io.Writer\n"), ["std"]);
+        assert_eq!(names("use yaml\npub use xml\nuse yaml\n"), ["xml", "yaml"]);
+        // Comments and strings are not tokens, and a field access is not a `use`.
+        assert_eq!(names("// use json\nconst s = \"use json\"\nfn f(v: V) { v.json }\n"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_implicit_dependency_skips_declared_self_and_unofficial_names() {
+        let official = ["json".to_string(), "toml".to_string()];
+        let declared: BTreeSet<String> = ["json".to_string()].into_iter().collect();
+        let used = ["json", "toml", "app", "yaml"].into_iter().map(str::to_string);
+        assert_eq!(implicit_from_uses(used, &official, &declared, "app", |_| true), ["toml"]);
+        // A top-level module of the same name is the package's own, not the official package.
+        let names = implicit_from_uses(["toml".to_string()], &official, &BTreeSet::new(), "app", |name| name != "toml");
+        assert!(names.is_empty());
+    }
+
+    #[test]
     fn invalid_dependency_tables_are_rejected() {
         let dep = |table: &str| manifest(&format!("[package]\nname = \"app\"\n[dependencies]\nlib = {table}\n"));
         assert!(dep("{ git = \"x\", tag = \"a\", branch = \"b\" }").unwrap_err().contains("at most one"));
@@ -2264,19 +2444,21 @@ d = { git = \"https://example.com/d.git\", rev = \"1a2b3c\" }
         assert!(dep("{ version = \"1.0\" }").unwrap_err().contains("no package registry"));
         assert!(dep("{ git = \"\" }").unwrap_err().contains("repository URL"));
         assert!(dep("{ }").unwrap_err().contains("needs a `path` or a `git`"));
-        assert!(dep("{ official = true, path = \"../lib\" }").unwrap_err().contains("takes no `path` or `git`"));
-        assert!(dep("{ official = true, tag = \"v1\" }").unwrap_err().contains("takes only the keys of PKG25"));
-        assert!(dep("{ official = false }").unwrap_err().contains("means nothing"));
+        assert!(dep("true").unwrap_err().contains("official packages are not declared"));
+        assert!(
+            dep("{ official = true, path = \"../lib\" }").unwrap_err().contains("official packages are not declared")
+        );
+        assert!(dep("{ official = false }").unwrap_err().contains("official packages are not declared"));
     }
 
     #[test]
-    fn official_tables_take_the_keys_of_pkg25() {
-        let text = "[package]\nname = \"app\"\n[dependencies]\ntls = { official = true, default-features = false, features = [\"x\"] }\n";
-        let parsed = manifest(text).unwrap();
-        let tls = parsed.deps.iter().find(|dep| dep.name == "tls").unwrap();
-        assert_eq!(tls.source, DepSource::Official);
-        assert!(!tls.default_features);
-        assert_eq!(tls.features, vec!["x".to_string()]);
+    fn an_official_package_takes_no_dependency_keys() {
+        let error = manifest(
+            "[package]\nname = \"app\"\n[dependencies]\ntls = { official = true, default-features = false }\n",
+        )
+        .unwrap_err();
+        assert!(error.contains("official packages are not declared"), "{error}");
+        assert!(error.contains("`use <name>` loads one"), "{error}");
     }
 
     /// The `(name, source)` pairs of dependencies, for comparing a manifest's sources.

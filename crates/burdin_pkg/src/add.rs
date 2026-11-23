@@ -20,8 +20,6 @@ pub enum Source {
         url: String,
         reference: GitRef,
     },
-    /// The official package named by `Request::name`: `name = true` (PKG15).
-    Official,
 }
 
 pub struct Request {
@@ -38,7 +36,7 @@ pub struct Added {
     pub name: String,
     /// The manifest already had a dependency by this name, and its line was replaced.
     pub replaced: bool,
-    /// The source as the report shows it: `path ../lib`, `git <url>, tag v1, commit 1a2b3c4d5e6f`, or `official`.
+    /// The source as the report shows it: `path ../lib`, or `git <url>, tag v1, commit 1a2b3c4d5e6f`.
     pub source: String,
 }
 
@@ -59,12 +57,6 @@ pub fn add(request: &Request) -> Result<Added, String> {
             let relative = relative_path(&manifest_dir, &dep_dir);
             let value = format!("{{ path = {} }}", quote(&relative));
             (dep_dir, value, format!("path {relative}"), None)
-        }
-        Source::Official => {
-            let name = request.name.as_deref().ok_or("`add` needs the name of an official package")?;
-            let dir = package::official_dir(name).map_err(|e| format!("cannot add `{name}`: {e}"))?;
-            let dep_dir = dir.canonicalize().map_err(|e| format!("cannot open {}: {e}", source_path_text(&dir)))?;
-            (dep_dir, "true".to_string(), "official".to_string(), None)
         }
         Source::Git { url, reference } => {
             let commit = git::resolve(url, reference)?;
@@ -235,16 +227,6 @@ mod tests {
         assert_eq!(relative_path(&base.join("a").join("app"), &base.join("a").join("lib")), "../lib");
         assert_eq!(relative_path(&base.join("app"), &base.join("app").join("vendor").join("x")), "vendor/x");
         assert_eq!(relative_path(&base, &base), ".");
-    }
-
-    #[test]
-    fn an_official_entry_is_a_bare_true() {
-        let (text, replaced) = set_dependency("[package]\nname = \"app\"\n", "json", "true");
-        assert_eq!(text, "[package]\nname = \"app\"\n\n[dependencies]\njson = true\n");
-        assert!(!replaced);
-        let (text, replaced) = set_dependency("[dependencies]\njson = { path = \"../json\" }\n", "json", "true");
-        assert_eq!(text, "[dependencies]\njson = true\n");
-        assert!(replaced);
     }
 
     #[test]

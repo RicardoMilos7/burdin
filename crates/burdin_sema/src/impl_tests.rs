@@ -53,18 +53,19 @@ fn errors_with_official(source: &str, official: &[&str]) -> Vec<(String, Vec<Str
         .collect()
 }
 
-// `spec/packages.md`, PKG18: an unresolved `use` of an official package that is not declared says how to declare it,
-// whichever way the `use` is written; any other unresolved `use` gets no help.
+// `spec/packages.md`, PKG18: an unresolved `use` of an official package the package does not load says how a
+// hand-written file loads it, whichever way the `use` is written; any other unresolved `use` gets no help.
 #[test]
 fn unknown_module_names_an_official_package() {
-    let help = "`json` is an official package: add `json = true` to [dependencies] or run `burdin add json`";
+    let help = "`json` is an official package: `use json` in a hand-written file of this package loads it for the \
+                whole package (a generated module cannot load it on its own)";
     for source in ["use json", "use json.parse", "use json.{parse, Value}"] {
         let errors = errors_with_official(source, &["json", "toml"]);
         assert_eq!(errors.len(), 1, "{source}: {errors:?}");
         assert!(errors[0].0.starts_with("unknown module `json"), "{source}: {}", errors[0].0);
         assert_eq!(errors[0].1, [help], "{source}");
     }
-    // Not official, or the package has no manifest to declare it in: the error alone.
+    // Not official, or the package has no manifest to load it in: the error alone.
     assert_eq!(errors_with_official("use yaml", &["json"]), [("unknown module `yaml`".to_string(), vec![])]);
     assert_eq!(errors_with_official("use json", &[]), [("unknown module `json`".to_string(), vec![])]);
 }

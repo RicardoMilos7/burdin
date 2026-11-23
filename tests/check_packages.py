@@ -20,13 +20,13 @@ What it checks:
   * failures leave burdin.toml and burdin.lock unchanged: a missing path, a directory that is not a package, an
     unknown tag, an invalid name, a registry name, no manifest, and usage errors (exit status 2) (PKG14);
   * `--manifest-path` edits another package, and a lockfile of a newer format is refused (PKG10);
-  * official packages (PKG15-PKG18): `name = true` builds and runs, also through another official package, with the
-    golden lockfile (`source = "official"` and a checksum this script recomputes from PKG7); `burdin add <name>` writes
-    `name = true`; a changed official package fails `--locked`, naming it, and a plain build re-pins it; `= false`,
-    an unknown name, no packages directory, and `burdin add` of an unknown name fail with their messages; a `use` of
-    an undeclared official package gets the help line; and the lookup order of PKG16 (`BURDIN_PACKAGES`, then
-    `<exe dir>/../packages`, then `<exe dir>/packages`) works from a copy of the driver. The packages are the
-    fixtures in tests/packages/official, so the check does not depend on the real packages.
+  * official packages (PKG15-PKG18): `use shout` loads one, also through another official package (`use mark`),
+    with the golden lockfile (`source = "official"` and a checksum this script recomputes from PKG7) and no manifest
+    line; a changed official package fails `--locked`, naming it, and a plain build re-pins it; `name = true`,
+    `{ official = true }`, `= false`, an unknown name, and `burdin add <name>` fail with their messages; a `use` of a
+    name that is not official stays unknown; a local module of the same name wins; and the lookup order of PKG16
+    (`BURDIN_PACKAGES`, then `<exe dir>/../packages`, then `<exe dir>/packages`) works from a copy of the driver. The
+    packages are the fixtures in tests/packages/official, so the check does not depend on the real packages.
 """
 
 import hashlib
@@ -334,14 +334,6 @@ with harness.temporary_dir("burdin-packages-") as work:
 
     use_shout = "use shout.loud\n\nfn main() {\n    println(loud().to_string())\n}\n"
     oapp = package(work / "oapp", "oapp", "0.1.0", "main", use_shout)
-    oapp_manifest = '[package]\nname = "oapp"\nversion = "0.1.0"\n'
-    added = official_in(oapp, "add", "shout")
-    check(added.returncode == 0, f"`burdin add shout` failed: {err(added)[:400]}")
-    check(out(added) == "Added dependency `shout` (official)\n", f"`burdin add shout` printed {out(added)!r}")
-    check(
-        harness.read_text(oapp / "burdin.toml") == oapp_manifest + "\n[dependencies]\nshout = true\n",
-        "burdin.toml after `add shout` is not the golden text",
-    )
 
     def official_lock():
         return (
@@ -351,19 +343,22 @@ with harness.temporary_dir("burdin-packages-") as work:
             + lock_entry("shout", "0.2.0", ["mark"], official_checksum=tree_checksum(official / "shout"))
         )
 
+    # No manifest entry: `use shout` loads the package, and `shout` reaches `mark` the same way (PKG15). The lockfile
+    # pins both, and burdin.toml stays as written.
+    ran = official_in(oapp, "run", ".")
+    check(ran.returncode == 0 and out(ran) == "34\n", f"an official package did not build: {out(ran)!r} {err(ran)[:300]}")
+    check(
+        harness.read_text(oapp / "burdin.toml") == '[package]\nname = "oapp"\nversion = "0.1.0"\n',
+        "loading an official package changed burdin.toml",
+    )
     check(
         harness.read_text(oapp / "burdin.lock") == official_lock(),
-        "burdin.lock after `add shout` is not the golden text:\n" + harness.read_text(oapp / "burdin.lock"),
+        "burdin.lock for an implicit official package is not the golden text:\n" + harness.read_text(oapp / "burdin.lock"),
     )
-    ran = official_in(oapp, "run", ".", "--locked")
-    check(ran.returncode == 0 and out(ran) == "34\n", f"an official package did not build: {out(ran)!r} {err(ran)[:300]}")
-    again = official_in(oapp, "add", "shout")
-    check(out(again) == "Replaced dependency `shout` (official)\n", f"re-adding an official package printed {out(again)!r}")
-    check(harness.read_text(oapp / "burdin.toml").count("shout") == 1, "re-adding an official package repeated its line")
+    check(official_in(oapp, "run", ".", "--locked").returncode == 0, "`--locked` rejected the fresh official pin")
 
-    # A manifest written by hand: `--locked` wants a lockfile, a plain build writes the golden one.
+    # Without a lockfile, `--locked` wants one; a plain build writes the golden one.
     hand = package(work / "hand", "oapp", "0.1.0", "main", use_shout)
-    harness.write_text(hand / "burdin.toml", oapp_manifest + "\n[dependencies]\nshout = true\n")
     unlocked = official_in(hand, "build", ".", "--locked")
     check(
         unlocked.returncode == 1 and "there is no burdin.lock" in err(unlocked),
@@ -371,7 +366,7 @@ with harness.temporary_dir("burdin-packages-") as work:
     )
     check(not (hand / "burdin.lock").exists(), "`--locked` wrote a lockfile for an official package")
     built = official_in(hand, "build", ".")
-    check(built.returncode == 0, f"a hand-written `shout = true` did not build: {err(built)[:300]}")
+    check(built.returncode == 0, f"a program with an implicit official package did not build: {err(built)[:300]}")
     check(harness.read_text(hand / "burdin.lock") == official_lock(), "a plain build did not write the golden lockfile")
 
     # An official package that changed (a newer compiler brings newer ones) is a difference, not a corrupt checkout.
@@ -392,14 +387,16 @@ with harness.temporary_dir("burdin-packages-") as work:
     check(harness.read_text(oapp / "burdin.lock") == official_lock(), "a plain build did not re-pin the changed official package")
     check(official_in(oapp, "check", ".", "--locked").returncode == 0, "`check --locked` fails on a re-pinned official package")
 
-    # Mistakes in the manifest.
+    # Mistakes in the manifest: an official package is not declared, at all.
     bad = package(work / "bad", "bad", "0.1.0", "main", "fn main() {\n}\n")
     bad_manifest = '[package]\nname = "bad"\n\n[dependencies]\n'
     for line, needle in [
         ("shout = false\n", "`shout = false` means nothing"),
-        ("jsn = true\n", "dependency `jsn = true`: it is not an official package; the official packages are: mark, shout"),
-        ("jsn = true\n", '{ git = "..." }'),
-        ("shout = yes\n", "`true` for an official package"),
+        ("shout = true\n", "official packages are not declared in `burdin.toml`; `use shout` loads it"),
+        ("jsn = true\n", "official packages are not declared in `burdin.toml`; `use jsn` loads it"),
+        ("shout = { official = true }\n", "official packages are not declared"),
+        ("shout = { official = true, default-features = false }\n", "official packages are not declared"),
+        ("shout = yes\n", 'a dependency must be `{ path = "..." }` or `{ git = "..." }`'),
         ('shout = { version = "1.0" }\n', "no package registry"),
     ]:
         harness.write_text(bad / "burdin.toml", bad_manifest + line)
@@ -407,17 +404,20 @@ with harness.temporary_dir("burdin-packages-") as work:
         check(result.returncode == 1, f"`{line.strip()}` exited {result.returncode}, expected 1")
         check(needle in err(result), f"`{line.strip()}` did not say {needle!r}: {err(result)[:300]}")
         check(not (bad / "burdin.lock").exists(), f"`{line.strip()}` wrote a lockfile")
+
+    # Without a packages directory an implicit `use` is just an unknown module; there is no declaration to fail.
     missing_env = dict(env)
     missing_env["BURDIN_PACKAGES"] = str(work / "no-such-folder")
-    harness.write_text(bad / "burdin.toml", bad_manifest + "shout = true\n")
-    result = official_in(bad, "build", ".", environment=missing_env)
+    gone = package(work / "gone", "gone", "0.1.0", "main", use_shout)
+    result = official_in(gone, "check", ".", "--width", "0", environment=missing_env)
     check(
-        result.returncode == 1 and "found no packages directory" in err(result) and "BURDIN_PACKAGES" in err(result),
-        f"`shout = true` without a packages directory said: {err(result)[:300]}",
+        result.returncode == 1 and "unknown module `shout.loud`" in err(result),
+        f"`use shout` without a packages directory said: {err(result)[:300]}",
     )
 
-    # `burdin add` of a name that is not official, and an official name with a git reference.
+    # `burdin add` has no official source: a bare name is refused, and `add` cannot write a declaration.
     for arguments, status, needle in [
+        (["add", "shout"], 2, "official packages are not declared"),
         (["add", "jsn"], 2, "the official packages are: mark, shout"),
         (["add", "jsn"], 2, "no package registry"),
         (["add", "jsn@1.0"], 2, "no package registry"),
@@ -435,28 +435,21 @@ with harness.temporary_dir("burdin-packages-") as work:
         f"`add shout` with no packages said: {err(nothing)[:300]}",
     )
 
-    # A `use` of an official package the manifest does not declare keeps its error and gains the help line.
-    forgot = package(work / "forgot", "forgot", "0.1.0", "main", use_shout)
-    undeclared = official_in(forgot, "check", ".", "--width", "0")
-    check(
-        undeclared.returncode == 1 and "unknown module `shout.loud`" in err(undeclared),
-        f"an undeclared `use shout` said: {err(undeclared)[:300]}",
-    )
-    check(
-        "`shout` is an official package: add `shout = true` to [dependencies] or run `burdin add shout`" in err(undeclared),
-        f"an undeclared `use shout` has no help line: {err(undeclared)[:400]}",
-    )
     other = package(work / "other", "other", "0.1.0", "main", "use jsn.loud\n\nfn main() {\n}\n")
     unknown = official_in(other, "check", ".", "--width", "0")
     check(unknown.returncode == 1 and "unknown module `jsn.loud`" in err(unknown), f"`use jsn` said: {err(unknown)[:300]}")
     check("official package" not in err(unknown), "`use jsn` got a help line about official packages")
-    declared = official_in(forgot, "add", "shout")
-    check(declared.returncode == 0, f"`burdin add shout` after the error failed: {err(declared)[:300]}")
-    fixed = official_in(forgot, "run", ".")
-    check(
-        fixed.returncode == 0 and out(fixed) == "41\n",
-        f"the `use shout` program did not run after `add`: {out(fixed)!r} {err(fixed)[:300]}",
+    # A module of the package's own wins over an official package of the same name (PKG15).
+    local = package(
+        work / "localmod", "localmod", "0.1.0", "main", "use shout.loud\n\nfn main() {\n    println(loud().to_string())\n}\n"
     )
+    harness.write_text(local / "src" / "shout.bd", "fn loud(): i32 {\n    7\n}\n")
+    own = official_in(local, "run", ".")
+    check(
+        own.returncode == 0 and out(own) == "7\n",
+        f"a local module of an official name did not win: {out(own)!r} {err(own)[:400]}",
+    )
+    check(not (local / "burdin.lock").exists(), "a local module of an official name loaded the official package")
 
     # The lookup order (PKG16), from copies of the driver: `bin/burdin` with `packages/` beside `bin/`, and `burdin`
     # with `packages/` beside it. BURDIN_PACKAGES is not set, so only the executable's own surroundings can find them.
@@ -470,11 +463,14 @@ with harness.temporary_dir("burdin-packages-") as work:
         exe_dir.mkdir(parents=True)
         shutil.copy2(burdin, exe_dir / executable)
         shutil.copytree(harness.TESTS / "packages" / "official", packages_at)
+        # A mark the repository's own packages do not have proves the copy beside this executable was the one read.
+        harness.write_text(packages_at / "mark" / "src" / "mark.bd", "fn bang(): i32 {\n    90\n}\n")
         located = package(work / f"located-{layout}", "located", "0.1.0", "main", use_shout)
-        result = harness.run([exe_dir / executable, "add", "shout"], cwd=located, env=plain_env)
-        check(result.returncode == 0, f"the {layout} layout did not find the official packages: {err(result)[:300]}")
         ran = harness.run([exe_dir / executable, "run", "."], cwd=located, env=plain_env)
-        check(ran.returncode == 0 and out(ran) == "34\n", f"the {layout} layout did not build: {out(ran)!r} {err(ran)[:300]}")
+        check(
+            ran.returncode == 0 and out(ran) == "91\n",
+            f"the {layout} layout did not find its official packages: {out(ran)!r} {err(ran)[:300]}",
+        )
 
 print(f"Checked `burdin add` and burdin.lock ({checks} checks)")
 

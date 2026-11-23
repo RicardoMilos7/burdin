@@ -13,7 +13,7 @@ What it checks:
     an alias bomb and a document nested past the depth limit, and neither takes a noticeable time;
   * the same document with CRLF line breaks, and with a byte order mark, reads as the LF document does;
   * large documents (thousands of entries, in block and in single-line flow form) read in a reasonable time;
-  * `burdin add yaml` writes `yaml = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * `use yaml` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 """
@@ -42,7 +42,7 @@ burdin = harness.require_burdin()
 
 FIXTURES = harness.TESTS / "yaml"
 PACKAGES = harness.ROOT / "packages"
-MANIFEST = '[package]\nname = "yamlcheck"\nversion = "0.1.0"\n\n[dependencies]\nyaml = true\n'
+MANIFEST = '[package]\nname = "yamlcheck"\nversion = "0.1.0"\n'
 
 # The program the fixtures drive. It reads a mode and a fixture's path from the command line (so a non-ASCII fixture
 # never depends on how a platform spells an argument). The `config` mode reads a `Config`, re-emits it, reads what it
@@ -265,7 +265,7 @@ check(re.search(r'^name = "yaml"$', manifest_text, re.M) is not None, "packages/
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/yaml has no version")
 check((PACKAGES / "yaml" / "src" / "yaml.bd").is_file(), "packages/yaml has no src/yaml.bd")
 readme = PACKAGES / "yaml" / "README.md"
-check(readme.is_file() and "yaml = true" in harness.read_text(readme), "packages/yaml/README.md is missing or does not say how to depend on yaml")
+check(readme.is_file() and "use yaml" in harness.read_text(readme), "packages/yaml/README.md is missing or does not show `use yaml`")
 
 with harness.temporary_dir("burdin-yaml-") as work:
     env = dict(os.environ)
@@ -360,21 +360,6 @@ with harness.temporary_dir("burdin-yaml-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the yaml package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add yaml` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use yaml\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "yaml")
-    check(added.returncode == 0, f"`burdin add yaml` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `yaml` (official)\n", f"`burdin add yaml` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\nyaml = true\n',
-        f"`burdin add yaml` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add yaml` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add yaml` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

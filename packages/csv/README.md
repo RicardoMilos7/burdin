@@ -1,12 +1,7 @@
 # csv
 
 CSV reading and writing on the serialization framework (issue #257; the framework is `spec/serialization.md`).
-Declare it in `burdin.toml` and `use csv`:
-
-```toml
-[dependencies]
-csv = true
-```
+Use it with `use csv`; no `burdin.toml` entry is needed.
 
 ```burdin
 use csv
@@ -123,6 +118,6 @@ and a value that does not parse are all reports, and after a syntax error the re
 `tests/check_csv.py` drives this package through fixture files: `tests/csv/roundtrip` (read each record, write it
 back as it is read, and compare with writing the whole list), `semicolon`, `noheader`, `crlf` (converted to
 `\r\n` by the script), `raw` and `crlf_raw` and `cr_raw` (the text fields of every record), and `bad` and `bad_raw`
-(malformed input, one document per file), each with an `.expected` golden. It also checks `burdin add csv` and
+(malformed input, one document per file), each with an `.expected` golden. It also checks the implicit `use csv` load and
 the official pin in `burdin.lock`. `tests/s3_serialize/csv` is the conformance case that runs the writer errors and
 the hand-written sequence record inside the conformance suite.

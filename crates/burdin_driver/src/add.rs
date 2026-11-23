@@ -38,8 +38,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         (None, Some(url)) => {
             Source::Git { url, reference: args.references.into_iter().next().unwrap_or(GitRef::DefaultBranch) }
         }
-        // Neither: `parse` checked that the name is an official package.
-        (None, None) => Source::Official,
+        (None, None) => unreachable!("parse requires `--path` or `--git`"),
         (Some(_), Some(_)) => unreachable!("parse refuses both sources"),
     };
     let request = Request { manifest_dir, name: args.name, source };
@@ -56,8 +55,9 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     }
 }
 
-/// The arguments, or `None` for `--help`. `official` is the names of the official packages: a name given with
-/// neither `--path` nor `--git` must be one of them.
+/// The arguments, or `None` for `--help`. A bare name with neither `--path` nor `--git` is refused: official
+/// packages are reached with `use <name>` and are not declared (PKG15), and there is no registry yet (PKG2). `official`
+/// is the names of the official packages, so the refusal can say that about one.
 fn parse(argv: &[String], official: &[String]) -> Result<Option<AddArgs>, String> {
     let mut args = AddArgs::default();
     let mut it = argv.iter();
@@ -85,10 +85,20 @@ fn parse(argv: &[String], official: &[String]) -> Result<Option<AddArgs>, String
             _ => return Err(format!("unexpected argument `{raw}`")),
         }
     }
-    match (&args.path, &args.git) {
-        (Some(_), Some(_)) => return Err("give `--path` or `--git`, not both".to_string()),
-        (None, None) => match &args.name {
-            Some(name) if official.contains(name) => {}
+    if args.path.is_some() && args.git.is_some() {
+        return Err("give `--path` or `--git`, not both".to_string());
+    }
+    if args.references.len() > 1 {
+        return Err("give at most one of `--branch`, `--tag`, and `--rev`".to_string());
+    }
+    if !args.references.is_empty() && args.git.is_none() {
+        return Err("`--branch`, `--tag`, and `--rev` apply only to `--git`".to_string());
+    }
+    if args.path.is_none() && args.git.is_none() {
+        match &args.name {
+            Some(name) if official.contains(name) => {
+                return Err(format!("official packages are not declared in `burdin.toml`: `use {name}` loads it"));
+            }
             Some(name) => {
                 let known = if official.is_empty() {
                     "this burdin has no official packages".to_string()
@@ -101,18 +111,9 @@ fn parse(argv: &[String], official: &[String]) -> Result<Option<AddArgs>, String
                 ));
             }
             None => {
-                return Err("`add` needs a dependency: `--path <dir>`, `--git <url>`, or the name of an official \
-                            package"
-                    .to_string());
+                return Err("`add` needs a dependency: `--path <dir>` or `--git <url>`".to_string());
             }
-        },
-        _ => {}
-    }
-    if args.references.len() > 1 {
-        return Err("give at most one of `--branch`, `--tag`, and `--rev`".to_string());
-    }
-    if !args.references.is_empty() && args.git.is_none() {
-        return Err("`--branch`, `--tag`, and `--rev` apply only to `--git`".to_string());
+        }
     }
     Ok(Some(args))
 }
@@ -164,19 +165,21 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_name_is_an_official_package_or_a_usage_error() {
+    fn a_bare_name_is_refused() {
         let official = ["json".to_string(), "toml".to_string()];
-        let args = parse(&argv(&["json"]), &official).unwrap().unwrap();
-        assert_eq!((args.name.as_deref(), args.path, args.git), (Some("json"), None, None));
+        // An official package is not declared; `use json` is how a program reaches it.
+        let error = parse(&argv(&["json"]), &official).unwrap_err();
+        assert!(error.contains("official packages are not declared"), "{error}");
+        assert!(error.contains("`use json` loads it"), "{error}");
         // Not official: the registry message names what is.
         let error = parse(&argv(&["yaml"]), &official).unwrap_err();
         assert!(
             error.contains("no package registry") && error.contains("the official packages are: json, toml"),
             "{error}"
         );
-        assert!(parse_plain(&["json"]).unwrap_err().contains("has no official packages"));
+        assert!(parse_plain(&["json"]).unwrap_err().contains("no package registry"));
         assert!(parse(&argv(&["json@1.0"]), &official).unwrap_err().contains("no package registry"));
-        // An official name takes no git reference.
+        // A reference with no `--git` is a usage error of its own.
         assert!(parse(&argv(&["json", "--tag", "v1"]), &official).unwrap_err().contains("only to `--git`"));
         // With a source, the name is just the `use` name.
         assert!(parse(&argv(&["yaml", "--path", "../y"]), &official).is_ok());

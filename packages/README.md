@@ -1,17 +1,18 @@
 # Official packages
 
 The packages that ship with the compiler. Each folder here is an ordinary Burdin package with its own `burdin.toml`
-and `src/`; a program uses one by declaring it in its manifest with `name = true`, or with `burdin add <name>`:
+and `src/`; a program uses one with `use json`, and needs no `[dependencies]` line:
 
-```toml
-[dependencies]
-json = true
+```burdin
+use json
 ```
 
-and then `use json`. An official package is versioned with the compiler: the release archive and the installers put
-this folder next to the `burdin` executable, and the lockfile pins the files of each one (a different compiler brings
-different files). The behavior, including where the compiler looks for this folder, is `spec/packages.md` (PKG15 to
-PKG18).
+An official package is never declared in `burdin.toml`: `use <name>` is the only way to reach one. A module a
+`comptime generate` block or a build script produces cannot bring one in on its own; a hand-written file of the same
+package that imports it loads it for the whole package. An official package is versioned with the compiler: the release
+archive and the installers put this folder next to the `burdin` executable, and the lockfile pins the files of each one
+(a different compiler brings different files). The behavior, including where the compiler looks for this folder, is
+`spec/packages.md` (PKG15 to PKG18).
 
 Official packages today:
 
@@ -22,8 +23,8 @@ Official packages today:
 - `yaml` — a safe YAML subset with anchors resolved (issue #258; `packages/yaml/README.md`).
 - `xml` — an XML reader and writer with namespaces and a small DOM (issue #259; `packages/xml/README.md`).
 - `http` — an HTTP/1.1 client with redirects, timeouts, safe retries, and per-origin connection reuse, and `https` over
-  `tls` (on by default, so a program that uses it links OpenSSL 3; `http = { official = true, default-features = false }`
-  leaves TLS out) (issues #260, #262, #878; `packages/http/README.md`, `spec/http-client.md`).
+  `tls` (so a program that uses it links OpenSSL 3) (issues #260, #262, #878; `packages/http/README.md`,
+  `spec/http-client.md`).
 - `regex` — regular expressions on a Pike VM (no backtracking, so linear time), with named groups, flags, classes,
   replacement templates, and splitting; an experiment, not a Python `re` replacement (issue #264; `packages/regex/README.md`,
   `spec/regex.md`).

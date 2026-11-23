@@ -1,6 +1,3 @@
 [package]
 name = "abort_approx_tolerance"
 version = "0.1.0"
-
-[dependencies]
-math = true

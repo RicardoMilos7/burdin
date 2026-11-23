@@ -215,5 +215,5 @@ byte zero of the text, even when a search starts later. Witnessed by the `RX14 t
 - `tests/regex/runner` is the program that runs the rows through the package and prints one line per row.
 - `tests/check_regex.py` builds the runner against `packages/regex` through `BURDIN_PACKAGES`, compares every golden row,
   generates random patterns and texts of the subset in which Python's `re` and this package agree, and compares their
-  output row by row with `re` as the oracle. It also checks `burdin add regex`, the official pin, and `--locked`.
+  output row by row with `re` as the oracle. It also checks the implicit load, the official pin, and `--locked`.
 - `tests/s3_regex/usage` is the conformance case: the public surface with a fixed expected output.

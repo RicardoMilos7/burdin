@@ -12,8 +12,7 @@ What it checks:
     define the same way (no anchors, no backreferences, no quantified groups), with random ASCII texts, for every
     operation the runner exposes. A disagreement is reported with its row;
   * the whole golden file runs within a fixed time budget (RX1: the linear-time cases finish);
-  * `burdin add regex` writes `regex = true`, prints the official-package line, and pins the package in
-    `burdin.lock` with `source = "official"` and the PKG7 checksum of its files;
+  * `use regex` loads the package with no manifest entry, and `burdin.lock` pins it with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it;
   * the package folder has its README and declares its name and version.
 """
@@ -47,7 +46,7 @@ FIXTURES = harness.TESTS / "regex"
 PACKAGES = harness.ROOT / "packages"
 CASES = FIXTURES / "cases.tsv"
 TIME_BUDGET = 120.0
-MANIFEST = '[package]\nname = "regexcheck"\nversion = "0.1.0"\n\n[dependencies]\nregex = true\n'
+MANIFEST = '[package]\nname = "regexcheck"\nversion = "0.1.0"\n'
 SEED = 264
 PATTERNS = 300
 TEXTS = 5
@@ -316,7 +315,7 @@ check(re.search(r'^name = "regex"$', manifest_text, re.M) is not None, "packages
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/regex has no version")
 check((PACKAGES / "regex" / "src" / "regex.bd").is_file(), "packages/regex has no src/regex.bd")
 readme = PACKAGES / "regex" / "README.md"
-check(readme.is_file() and "regex = true" in harness.read_text(readme), "packages/regex/README.md is missing or does not say how to depend on regex")
+check(readme.is_file() and "use regex" in harness.read_text(readme), "packages/regex/README.md is missing or does not show `use regex`")
 for source in sorted((PACKAGES / "regex" / "src").glob("*.bd")):
     check('println("dbg' not in harness.read_text(source), f"{source.name} still prints debugging output")
 
@@ -407,21 +406,6 @@ with harness.temporary_dir("burdin-regex-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the regex package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add regex` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use regex\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "regex")
-    check(added.returncode == 0, f"`burdin add regex` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `regex` (official)\n", f"`burdin add regex` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\nregex = true\n',
-        f"`burdin add regex` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add regex` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add regex` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

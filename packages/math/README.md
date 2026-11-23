@@ -1,18 +1,13 @@
 # math
 
 Numbers, statistics, vectors, and matrices for `f64` (issue #268; `spec/math.md`). It is an official package: it ships
-with the compiler and needs no install.
-
-```toml
-[dependencies]
-math = true
-```
+with the compiler, and `use math` loads it with no manifest entry.
 
 ```burdin
 use math.{gcd, mean, Matrix, Vector}
 ```
 
-or `burdin add math`. The standard library already has the scalar float functions (`sqrt`, `powi`, `ln`, `sin`,
+The standard library already has the scalar float functions (`sqrt`, `powi`, `ln`, `sin`,
 `hypot`, `clamp`, `to_radians`, and the constants `f64.PI`, `f64.E`, and so on); this package adds what std does not.
 
 ## What it provides

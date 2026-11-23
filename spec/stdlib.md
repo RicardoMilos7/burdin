@@ -2330,8 +2330,8 @@ the boundary; it aborts like any other panic (`memory-rules.md`, DR10).
 
 `std.serialize` is the framework core; the exact data model, the format side, the error path, the derives, and the
 test format are in [`serialization.md`](serialization.md). This is the surface, and its names are in the prelude.
-The formats themselves are official packages (`spec/packages.md`, PKG15): `packages/json` is the first one, declared
-with `json = true` and used as `json.to_string`, `json.to_string_pretty`, and `json.from_str`
+The formats themselves are official packages (`spec/packages.md`, PKG15): `packages/json` is the first one, reached
+with `use json` and no manifest entry, and used as `json.to_string`, `json.to_string_pretty`, and `json.from_str`
 ([`packages/json/README.md`](../packages/json/README.md)).
 
 ```

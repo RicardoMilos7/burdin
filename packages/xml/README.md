@@ -1,12 +1,7 @@
 # xml
 
 XML reading and writing: a small DOM, and the serialization framework's format side (issue #259; the framework is
-`spec/serialization.md`). Declare it in `burdin.toml` and `use xml`:
-
-```toml
-[dependencies]
-xml = true
-```
+`spec/serialization.md`). Use it with `use xml`; no `burdin.toml` entry is needed.
 
 ```burdin
 use xml

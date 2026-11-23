@@ -1,12 +1,7 @@
 # yaml
 
 YAML reading and writing on the serialization framework (issue #258; the framework is `spec/serialization.md`).
-Declare it in `burdin.toml` and `use yaml`:
-
-```toml
-[dependencies]
-yaml = true
-```
+Use it with `use yaml`; no `burdin.toml` entry is needed.
 
 ```burdin
 use yaml
@@ -168,5 +163,5 @@ whatever type the program reads.
 (block scalars, quoted scalars, and what looks like another type), `tests/yaml/anchors`, `tests/yaml/nested`
 (tuples, a list of lists, the float cases), and `tests/yaml/bad` (one malformed document per file), each with its exact
 output in an `.expected` file. It also reads the same documents with CRLF line breaks and with a byte order mark, and
-two large documents, and checks `burdin add yaml` and the lockfile pin. `tests/s3_serialize/yaml` is the conformance
+two large documents, and checks the implicit `use yaml` load and the lockfile pin. `tests/s3_serialize/yaml` is the conformance
 case that runs the mapping inside the conformance suite.

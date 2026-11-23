@@ -247,8 +247,7 @@ Every rule is witnessed by one of these:
   mismatched shapes), and the `run-abort` cases `abort_mod_pow`, `abort_not_square`, `abort_dyn_shape`,
   `abort_quantile`, `abort_bisect`, `abort_covariance`, `abort_approx_tolerance`, `abort_simpson`, and
   `abort_from_list`, one for each panic of MA9 that has a stated message.
-- `tests/check_math.py` also checks the manifest, the README, the official pin of the package in `burdin.lock`, and
-  `burdin add math`.
+- `tests/check_math.py` also checks the manifest, the README, and the official pin of the package in `burdin.lock`.
 
 ## MA12. Deferred
 

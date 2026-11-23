@@ -10,7 +10,7 @@ What it checks:
     written one at a time as they are read, the decoded fields, the raw fields, and the error message with its
     line, column, and path;
   * a malformed fixture never aborts the process: the exit status is 0 and the error is reported as text;
-  * `burdin add csv` writes `csv = true`, prints the official-package line, and pins the package in `burdin.lock`
+  * `use csv` loads the package with no manifest entry, and `burdin.lock` pins it
     with `source = "official"` and the PKG7 checksum of its files;
   * `--locked` accepts the pin, rejects a changed package by name, and a plain build re-pins it.
 
@@ -43,7 +43,7 @@ burdin = harness.require_burdin()
 
 FIXTURES = harness.TESTS / "csv"
 PACKAGES = harness.ROOT / "packages"
-MANIFEST = '[package]\nname = "csvcheck"\nversion = "0.1.0"\n\n[dependencies]\ncsv = true\n'
+MANIFEST = '[package]\nname = "csvcheck"\nversion = "0.1.0"\n'
 
 # The program the fixtures drive. It reads a fixture's path from the command line (so a non-ASCII fixture never
 # depends on how a platform spells an argument). In `rows` mode it prints the raw fields of every record. In the other
@@ -241,7 +241,7 @@ check(re.search(r'^name = "csv"$', manifest_text, re.M) is not None, "packages/c
 check(re.search(r'^version = "\d+\.\d+\.\d+"$', manifest_text, re.M) is not None, "packages/csv has no version")
 check((PACKAGES / "csv" / "src" / "csv.bd").is_file(), "packages/csv has no src/csv.bd")
 readme = PACKAGES / "csv" / "README.md"
-check(readme.is_file() and "csv = true" in harness.read_text(readme), "packages/csv/README.md is missing or does not say how to depend on csv")
+check(readme.is_file() and "use csv" in harness.read_text(readme), "packages/csv/README.md is missing or does not show `use csv`")
 
 with harness.temporary_dir("burdin-csv-") as work:
     env = dict(os.environ)
@@ -298,21 +298,6 @@ with harness.temporary_dir("burdin-csv-") as work:
     check(f'checksum = "{checksum}"' in lock, "burdin.lock does not pin the csv package's files")
     locked = run_in(app, "build", ".", "--locked")
     check(locked.returncode == 0, f"`--locked` rejected the fresh lockfile: {err(locked)[:300]}")
-
-    # `burdin add csv` in a package that does not declare it yet.
-    adder = work / "adder"
-    write(adder / "burdin.toml", '[package]\nname = "adder"\nversion = "0.1.0"\n')
-    write(adder / "src" / "main.bd", "use csv\n\nfn main() {\n    println(\"ok\")\n}\n")
-    added = run_in(adder, "add", "csv")
-    check(added.returncode == 0, f"`burdin add csv` failed: {err(added)[:300]}")
-    check(out(added) == "Added dependency `csv` (official)\n", f"`burdin add csv` printed {out(added)!r}")
-    check(
-        harness.read_text(adder / "burdin.toml") == '[package]\nname = "adder"\nversion = "0.1.0"\n\n[dependencies]\ncsv = true\n',
-        f"`burdin add csv` wrote {harness.read_text(adder / 'burdin.toml')!r}",
-    )
-    adder_built = run_in(adder, "build", ".")
-    check(adder_built.returncode == 0, f"the package `burdin add csv` edited did not build: {err(adder_built)[:300]}")
-    check('source = "official"' in harness.read_text(adder / "burdin.lock"), "`burdin add csv` wrote no official pin")
 
     # A changed package is a difference the lockfile reports by name, and a plain build re-pins it (PKG17).
     before = snapshot(app)

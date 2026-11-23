@@ -278,24 +278,23 @@ default = ["openssl"]
 openssl = ["dep:openssl_link"]
 ```
 
-Its manifest holds the `[link]` table (PKG34): `ssl` and `crypto` on Unix. The package is declared only for platforms other
-than Windows (PKG27), since Windows links SChannel (TLS1). A
-package's libraries reach the link only when the package is in the active graph (PKG34), so the `openssl` feature decides
-whether a program links OpenSSL at all. The feature is on by default, as it is in the HTTP clients that make TLS a
-feature (`reqwest`'s `default-tls` and `ureq`'s `tls`, both on unless the user turns the default off).
+Its manifest holds the `[link]` table (PKG34): `ssl` and `crypto` on Unix. The package is declared only for platforms
+other than Windows (PKG27), since Windows links SChannel (TLS1). A package's libraries reach the link only when the
+package is in the active graph (PKG34), so the `openssl` feature decides whether a build links OpenSSL at all. The
+feature is on by default, and a dependent package cannot turn it off: `use tls` loads the package with its default
+features. The switch remains for the package's own builds (its `--no-default-features` path) and for a future
+mechanism; on Windows it has no effect (TLS1a).
 
-**The `openssl` feature is the only switch, and it is a compile-time one.** Every function of `tls` that calls an OpenSSL
-symbol is written as `comptime if features.openssl { ... } else { ... }` (CT5). With the feature on, the body is the
-real one. With it off, the body is a failure: a function that returns a `Result` returns `TlsError.Unsupported` ("no OpenSSL in this
-build: the `openssl` feature of the tls package is off"), and any other function returns an empty value (an empty string or list,
-`None`, zero, or nothing). The declarations and the safe types still compile, so a program's code is the same either way. A
-build with the feature off references no OpenSSL symbol, so it links and runs on a machine with no OpenSSL installed. The
-`http` package uses this (`spec/http-client.md`, HC17): its `tls` feature is on by default, and a program that writes
-`http = { official = true, default-features = false }` gets plain `http` with no OpenSSL link and `https` URLs fail with
-`HttpError.Tls`.
+**The `openssl` feature is a compile-time switch.** Every function of `tls` that calls an OpenSSL symbol is written as
+`comptime if features.openssl { ... } else { ... }` (CT5). With the feature on, the body is the real one. With it off,
+the body is a failure: a function that returns a `Result` returns `TlsError.Unsupported` ("no OpenSSL in this build: the
+`openssl` feature of the tls package is off"), and any other function returns an empty value (an empty string or list,
+`None`, zero, or nothing). The declarations and the safe types still compile, so the package's code is the same either
+way. A build with the feature off references no OpenSSL symbol, so it links and runs on a machine with no OpenSSL
+installed.
 
-Why a feature and not a link-time error: the link is what fails. A program that does not use `https` should not need
-OpenSSL installed, and a program that does should get OpenSSL's real libraries, not a stub.
+Why a feature and not a link-time error: the link is what fails. The package's own no-OpenSSL build should link, and a
+real build should get OpenSSL's real libraries, not a stub.
 
 | Platform | What is installed | What the program needs |
 | --- | --- | --- |
@@ -325,10 +324,10 @@ declares many of these through macros, so a signature typo is caught only by a t
 
 Tests: `tests/s3_tls/link` (Linux and macOS: links the system OpenSSL through the manifest alone and runs) and
 `tests/s3_tls/link_windows` (Windows: links SChannel through the manifest alone and reports it through `tls.backend()`);
-the `[link]` table itself: `tests/check_link.py`; the optional feature: `tests/check_tls.py` (a program with
-`tls = { official = true, default-features = false }` builds and runs with no `-lssl` or `-lcrypto` on the linker's
-command line, and its TLS calls report `Unsupported`). On Windows the feature has no effect (TLS1a), so that check runs on
-Unix only.
+the `[link]` table itself: `tests/check_link.py`; the OpenSSL link and the feature-off branch: `tests/check_tls.py`
+(a program that uses `tls` links `-lssl` and `-lcrypto` and configures TLS, and the package itself checks with
+`--tests --no-default-features`). On Windows the feature has no effect (TLS1a), so the link-line check runs on Unix
+only.
 
 ## TLS8. What is not provided
 
@@ -359,7 +358,7 @@ committed under `tests/s3_tls/conformance/src/certs` and read with `embed`; they
 with the `openssl` command-line tool (a test authority, an intermediate, leaves with long validity, an expired leaf, a
 wrong-host leaf, a self-signed leaf, a client leaf, and an encrypted key). The keys are throw-away test keys, committed
 on purpose so that no tool is needed to run the tests. `tests/check_tls.py` checks the fixtures with the `openssl`
-tool, runs the conformance program, checks the declared symbols, the README's examples, `burdin add tls`, and the pin.
+tool, runs the conformance program, checks the declared symbols, the README's examples, the implicit load, and the pin.
 The manifest table is checked by `tests/check_link.py`.
 
 The valid certificates are valid from one year before the day `tests/tls/regenerate.py` made them (it signs everything
