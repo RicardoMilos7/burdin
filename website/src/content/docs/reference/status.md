@@ -55,6 +55,11 @@ The full matrix, with the test behind each row, is in
   against known answers. It is not a security claim, and it should not protect real data.
 - **Stack traces in `main` are rough.** An error returned from `fn main(): Result<T>` prints a trace that names an internal
   frame. The message itself is correct.
+- **Cross-compilation stops at the link.** `burdin build --target <triple>` writes the object file of any of the six
+  platforms and links it through a clang driver and sysroot you supply. Burdin does not install or find a cross
+  toolchain, and the cross-built programs are not run in CI: the runtime's layouts for other platforms follow their C
+  headers but are only checked on the host. `--sanitize`, profile-guided optimization, and Rust interop do not work
+  with `--target`.
 - **Libraries are a first step.** A `[lib]` table builds a static or a shared library for C callers, on Linux as the
   tested platform. The Windows and macOS artifacts are not yet tested in CI, and a Burdin program cannot link a built
   artifact (it compiles the library's source). `--lto` and the sanitizers do not apply to a library, and there is no

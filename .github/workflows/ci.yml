@@ -323,6 +323,12 @@ jobs:
         if: matrix.part == 'tools-build'
         run: python3 tests/check_linker.py
 
+      # Cross-compilation (spec/cross-compilation.md, issue #282): the six targets' objects, the target facts, the
+      # runtime's per-platform layouts, and the link command, with a stand-in for the cross linker.
+      - name: Check cross-compilation
+        if: matrix.part == 'tools-build'
+        run: python3 tests/check_cross.py
+
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
       # and the header a C library compiles and links against.
@@ -821,6 +827,12 @@ jobs:
       - name: Check the linker choice
         if: matrix.part == 'tools-build'
         run: python3 tests/check_linker.py
+
+      # Cross-compilation (spec/cross-compilation.md, issue #282): the six targets' objects, the target facts, the
+      # runtime's per-platform layouts, and the link command, with a stand-in for the cross linker.
+      - name: Check cross-compilation
+        if: matrix.part == 'tools-build'
+        run: python3 tests/check_cross.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,
@@ -1340,6 +1352,12 @@ jobs:
       - name: Check the linker choice
         if: matrix.part == 'tools-build'
         run: python tests/check_linker.py
+
+      # Cross-compilation (spec/cross-compilation.md, issue #282): the six targets' objects, the target facts, the
+      # runtime's per-platform layouts, and the link command, with a stand-in for the cross linker.
+      - name: Check cross-compilation
+        if: matrix.part == 'tools-build'
+        run: python tests/check_cross.py
 
       # `burdin bindgen` through libclang and `burdin bindgen --export` (issues #244-#248, #475, #476, #663):
       # the golden modules, the generated code compiled and run, the wrappers built with the system C compiler,

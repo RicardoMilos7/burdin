@@ -29,6 +29,7 @@ mod migrate;
 mod msvc;
 mod new;
 mod pack;
+mod platform;
 mod profile;
 mod refactor;
 mod repl;
@@ -76,6 +77,8 @@ pub(crate) struct Args {
     pub(crate) strip: bool,
     /// Emit LLVM bitcode and link with `-flto`; needs an LLVM compiler driver.
     pub(crate) lto: bool,
+    /// `--target <triple>`: build for another platform (`spec/cross-compilation.md`). `None` builds for the host.
+    pub(crate) cross: Option<burdin_tir::target::Target>,
     /// Instrument the program for profile-guided optimization.
     pub(crate) pgo_generate: bool,
     /// `burdin build --tests`: compile the package's `test` blocks and the test dispatcher instead of `main`, the
@@ -243,6 +246,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "-g" | "--debug-info" => args.debug = flag_without_value(a, inline)?,
             "--strip" => args.strip = flag_without_value(a, inline)?,
             "--lto" => args.lto = flag_without_value(a, inline)?,
+            "--target" => {
+                let triple = option_value(&mut it, inline, a, "a target triple")?;
+                args.cross = Some(burdin_tir::target::Target::parse(&triple)?);
+            }
             "--tests" => args.tests = flag_without_value(a, inline)?,
             "--locked" => args.locked = flag_without_value(a, inline)?,
             "--features" => {
@@ -416,6 +423,20 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     }
     if args.pgo_generate && args.pgo_use.is_some() {
         return Err("`--pgo-generate` and `--pgo-use` are different builds; choose one".to_string());
+    }
+    if args.cross.is_some() {
+        if args.command != "build" {
+            return Err("`--target` is only valid for `burdin build` and `burdin check`: a program built for another \
+                        platform cannot run, test, or benchmark here"
+                .to_string());
+        }
+        if args.sanitize != burdin_codegen::Sanitizers::default() || args.pgo_generate || args.pgo_use.is_some() {
+            return Err(
+                "`--target` cannot be combined with `--sanitize` or profile-guided optimization: their runtimes \
+                        and profiles belong to the host"
+                    .to_string(),
+            );
+        }
     }
     if args.lto && (args.pgo_generate || args.pgo_use.is_some()) {
         return Err("`--lto` cannot be combined with profile-guided optimization".to_string());
@@ -789,6 +810,8 @@ fn driver_main() -> ExitCode {
         Ok(a) => a,
         Err(msg) => return cli::usage_error(&command, &msg),
     };
+    // The platform to build for, before anything reads a target fact (`spec/cross-compilation.md`, XC2).
+    burdin_tir::target::set(args.cross);
     // The profile is read before the scope: a member build reuses the target's profile.
     if matches!(args.command.as_str(), "build" | "run" | "test" | "bench") {
         let flags = workspace::Flags { packages: &args.packages, workspace: args.workspace, exclude: &args.exclude };
@@ -1187,6 +1210,14 @@ pub(crate) fn front_end(
             Ok(outcome) => {
                 script_inputs = outcome.inputs;
                 rust_libs = outcome.link_libs;
+                if platform::is_cross() && !rust_libs.is_empty() {
+                    // The shim is built by `cargo` for the host (`spec/cross-compilation.md`, XC12).
+                    eprintln!(
+                        "error: `--target` does not work with Rust interop: a `[rust.crates]` shim is built for the                          host, not for `{}`",
+                        burdin_tir::target::current().triple()
+                    );
+                    return Err(ExitCode::from(1));
+                }
             }
             Err(failure) => {
                 report_build_failure(&loaded, failure, options);
@@ -1312,7 +1343,7 @@ pub(crate) fn compile(
     let output = match (output, &library) {
         (Some(path), _) => path.to_path_buf(),
         (None, Some(library)) => output_dir.join(library::file_name(library.kind, &loaded.stem)),
-        (None, None) => output_dir.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION),
+        (None, None) => output_dir.join(&loaded.stem).with_extension(platform::exe_extension()),
     };
     // `burdin build app` from the package's parent directory would otherwise ask the linker to replace the package
     // directory with a file.
@@ -1489,7 +1520,14 @@ fn write_c_header(target: &Path, header: &str, options: &CompileOptions) -> Resu
 fn archive(objects: &[PathBuf], output: &Path) -> Result<(), String> {
     let _ = std::fs::remove_file(output);
     let mut args: Vec<OsString> = Vec::new();
-    let tool = if cfg!(windows) {
+    let tool = if platform::is_cross() {
+        // GNU `ar` and `lib.exe` cannot index another platform's objects; llvm-ar reads every format.
+        args.push("rcs".into());
+        args.push(output.into());
+        PathBuf::from(
+            std::env::var("BURDIN_AR").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "llvm-ar".into()),
+        )
+    } else if cfg!(windows) {
         args.push("/nologo".into());
         args.push(format!("/OUT:{}", output.display()).into());
         msvc_lib_tool()
@@ -1514,7 +1552,7 @@ fn msvc_lib_tool() -> PathBuf {
 /// linker appends `.exe` to an output name with no extension, so `-o app` is `app.exe` on Windows. Copying a file onto
 /// itself is nothing to do.
 fn copy_executable(from: &Path, to: &Path) -> Result<(), ExitCode> {
-    let to = if cfg!(windows) && to.extension().is_none() { to.with_extension("exe") } else { to.to_path_buf() };
+    let to = if platform::windows() && to.extension().is_none() { to.with_extension("exe") } else { to.to_path_buf() };
     if from == to {
         return Ok(());
     }
@@ -1590,7 +1628,7 @@ fn emit_program_cached(
     let dir = TempDir::new().map_err(|e| fail(format!("cannot create a temporary directory: {e}")))?;
     let extension = if options.lto {
         "bc"
-    } else if cfg!(windows) {
+    } else if platform::windows() {
         "obj"
     } else {
         "o"
@@ -1651,7 +1689,7 @@ fn emit_program_cached(
     };
     let link_opts = LinkOptions {
         // A library's exports are its C symbols already; only a program re-exports its symbols for backtraces.
-        export_dynamic: cfg!(target_os = "linux") && product == Product::Program,
+        export_dynamic: platform::linux() && product == Product::Program,
         debug: options.debug,
         strip: options.strip,
         lto: options.lto,
@@ -2007,6 +2045,9 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
         }
         return Ok(());
     }
+    if platform::is_cross() {
+        return link_cross(objects, output, libs, opts, burdin_ld.as_deref());
+    }
     let named = std::env::var("BURDIN_CC").ok();
     let mut cc = named.clone().unwrap_or_else(|| if cfg!(windows) { "cl".into() } else { "cc".into() });
     let choice = linker::choose(
@@ -2063,8 +2104,98 @@ fn link(objects: &[PathBuf], output: &Path, libs: &[String], opts: &LinkOptions)
             linker::failure_note(&choice)
         ));
     }
-    if opts.debug && cfg!(target_os = "macos") {
+    if opts.debug && cfg!(target_os = "macos") && !platform::is_cross() {
         write_dsym(output)?;
+    }
+    Ok(())
+}
+
+/// The compiler driver that links for another platform (`spec/cross-compilation.md`, XC8): `BURDIN_CC_<TRIPLE>`, then
+/// `BURDIN_CC`, then the first LLVM driver that starts. The host's `cc` is not a candidate: it targets the host.
+fn cross_compiler() -> Result<String, String> {
+    let specific = platform::variable("BURDIN_CC");
+    for name in [specific.as_str(), "BURDIN_CC"] {
+        if let Some(value) = std::env::var(name).ok().filter(|v| !v.trim().is_empty()) {
+            return Ok(value);
+        }
+    }
+    let triple = burdin_tir::target::current().triple();
+    ["clang", "clang-21"]
+        .into_iter()
+        .find(|candidate| {
+            Command::new(candidate).arg("--version").output().map(|out| out.status.success()).unwrap_or(false)
+        })
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "cannot link for `{triple}`: no cross linker was found; set {specific} (or BURDIN_CC) to a clang \
+                 driver, and {} to the target's system root; `--emit obj` stops before the link",
+                platform::variable("BURDIN_SYSROOT")
+            )
+        })
+}
+
+/// The target's system root for a cross link: `BURDIN_SYSROOT_<TRIPLE>`, then `BURDIN_SYSROOT`.
+fn cross_sysroot() -> Option<String> {
+    [platform::variable("BURDIN_SYSROOT"), "BURDIN_SYSROOT".to_string()]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.trim().is_empty()))
+}
+
+/// The arguments that make a clang driver link for the target and the linker it uses: `--target`, the system root,
+/// and `-fuse-ld=` (lld unless `BURDIN_LD` names another; the host's own linker cannot link another architecture).
+/// An MSVC-style driver (`clang-cl`) takes the Windows SDK root as `/winsysroot` and picks its linker itself.
+fn cross_prefix(cc: &str, sysroot: Option<&str>, burdin_ld: Option<&str>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![format!("--target={}", burdin_tir::target::current().triple()).into()];
+    if is_msvc_style(cc) {
+        if let Some(root) = sysroot {
+            args.push("/winsysroot".into());
+            args.push(root.into());
+        }
+        return args;
+    }
+    if let Some(root) = sysroot {
+        args.push(format!("--sysroot={root}").into());
+    }
+    let linker = burdin_ld.map(str::trim).filter(|v| !v.is_empty() && !matches!(*v, "platform" | "default"));
+    args.push(format!("-fuse-ld={}", linker.unwrap_or("lld")).into());
+    args
+}
+
+/// Links for another platform (`spec/cross-compilation.md`, XC8). The link runs on the host's compiler driver told to
+/// target the other platform; nothing is run, so a failure is the toolchain's, and the message says which one.
+fn link_cross(
+    objects: &[PathBuf],
+    output: &Path,
+    libs: &[String],
+    opts: &LinkOptions,
+    burdin_ld: Option<&str>,
+) -> Result<(), String> {
+    let triple = burdin_tir::target::current().triple();
+    let cc = cross_compiler()?;
+    let sysroot = cross_sysroot();
+    let mut args = cross_prefix(&cc, sysroot.as_deref(), burdin_ld);
+    if is_msvc_style(&cc) {
+        if opts.debug {
+            write_natvis(output)?;
+        }
+        args.extend(link_args(&cc, objects, output, libs, opts, None));
+    } else {
+        // `cross_prefix` already holds the `-fuse-ld=` flag.
+        args.extend(unix_link_args(objects, output, libs, opts, None));
+        if platform::windows() {
+            args.extend(["-lkernel32", "-lws2_32"].map(OsString::from));
+        }
+    }
+    let out = Command::new(&cc).args(&args).output().map_err(|e| linker_error(&cc, e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "linking for `{triple}` failed ({cc}):\n{}{}\nnote: a cross link needs the target's C library and startup \
+             files; set {} to the target's system root (spec/cross-compilation.md)",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+            platform::variable("BURDIN_SYSROOT")
+        ));
     }
     Ok(())
 }
@@ -2258,7 +2389,7 @@ fn unix_link_args(
     }
     if opts.strip {
         args.push("-s".into());
-        if cfg!(target_os = "macos") {
+        if platform::macos() {
             // `-s` removes the symbol table but Mach-O still exports every global function through the export
             // trie, and `nm` reports those names. A stripped executable needs to export only its entry point.
             args.push("-Wl,-exported_symbol,_main".into());
@@ -2282,7 +2413,7 @@ fn unix_link_args(
     }
     // The float functions (`spec/stdlib.md`, "Float functions") call the C math library. It is a separate
     // library on Linux; macOS folds it into libSystem, where `-lm` still links.
-    if !libs.iter().any(|l| l == "m") {
+    if !libs.iter().any(|l| l == "m") && !platform::windows() {
         args.push("-lm".into());
     }
     args

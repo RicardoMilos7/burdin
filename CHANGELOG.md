@@ -6,7 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
-Nothing yet.
+- Issue #282: cross-compilation. `burdin build --target <triple>` and `burdin check --target <triple>` build and check
+  for `x86_64` or `aarch64` with `unknown-linux-gnu`, `apple-darwin`, or `pc-windows-msvc`, from any of them
+  (`spec/cross-compilation.md`, XC1-XC12). `target.os()`, `target.arch()`, and a manifest's `cfg(...)` tables follow the
+  target; code generation emits the target's object format and the runtime uses the target's structure layouts; the
+  executable's name and the link follow it too (`BURDIN_CC_<TRIPLE>`, `BURDIN_SYSROOT_<TRIPLE>`, lld). A cross build is
+  not cached, and `--sanitize`, PGO, `[rust.crates]`, and every command that would run the program are refused. No new
+  error code. Tests: `tests/check_cross.py` and the unit tests in `crates/burdin_tir/src/target.rs`,
+  `crates/burdin_codegen/src/platform.rs`, and `crates/burdin_driver/src/platform.rs`.
 
 ## 0.1.3 — 2026-11-24
 

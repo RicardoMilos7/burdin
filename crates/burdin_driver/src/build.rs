@@ -260,7 +260,13 @@ fn run_script(
         fuzz_target: None,
         verbose: false,
     };
-    let compiled = crate::compile(script, out, Some(&exe), &nested).map_err(|_| {
+    // The script runs on this machine, so it is compiled for it, whatever `--target` names for the package
+    // (`spec/cross-compilation.md`, XC10).
+    let building_for = burdin_tir::target::explicit();
+    burdin_tir::target::set(None);
+    let compiled = crate::compile(script, out, Some(&exe), &nested);
+    burdin_tir::target::set(building_for);
+    let compiled = compiled.map_err(|_| {
         Failure::new(Code::BUILD_SCRIPT, format!("the build script of package `{}` did not compile", package.name))
     })?;
 

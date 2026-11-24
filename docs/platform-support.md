@@ -23,8 +23,9 @@ links. When a platform, a check, or a gap changes, update this page in the same 
 | Windows | arm64 | `aarch64-pc-windows-msvc` | Untested | Same; the official LLVM 21 Windows archive that CI uses is x86-64, so a native arm64 LLVM build would come first |
 | other OS or 32-bit | — | — | Unsupported | `tests/check_platform.py` reports a skip, and nothing in the build or the suite exercises it |
 
-The compiler targets the host it runs on (`TargetMachine::get_default_triple` in `burdin_codegen`); there is no
-cross-compilation flag. "Tested" means the full conformance suite (m01-m24 and the stage 2 folders) passes in the
+The compiler targets the host it runs on unless `--target <triple>` names another of the six platforms above
+(`spec/cross-compilation.md`): `burdin build --target` writes that platform's object file and links it with a clang
+driver and sysroot the user supplies, and no CI job runs the resulting program. "Tested" means the full conformance suite (m01-m24 and the stage 2 folders) passes in the
 debug and release profiles and every check script runs on that host in CI. "Untested" means the code path is expected to work because nothing
 in it is architecture-specific, but no job proves it, so a failure there is not a CI regression. "Unsupported" means
 no claim at all.
