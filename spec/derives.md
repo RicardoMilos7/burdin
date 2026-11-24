@@ -50,6 +50,21 @@ tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` 
 `Clone`. `Copy` types clone by copying; `String` copies its buffer; `Heap<T>` allocates and clones the pointee; a
 `List` clones its elements; structs, tuples, arrays, and enums clone field by field.
 
+## `Eq`, `Ord`, and the comparison interfaces (issue #918)
+
+`Eq` and `Ord` are the derived `PartialEq` and `PartialOrd`: a derive installs the structural `==` and `<` that the
+operators use, so a type that derives one has the matching operators without writing an interface. A hand-written
+`PartialEq` or `PartialOrd` on a type that also derives `Eq` or `Ord` (and `PartialEq` on one that derives `Ord`,
+which brings `Eq`) is a second implementation of the same interface and is rejected with E0007; remove the derive to
+write the comparison by hand. Nothing is silently ignored.
+
+The two bounds differ in what satisfies them. `T: Ord` accepts a derived `Ord` or a hand-written `PartialOrd`,
+because every consumer of `Ord` in `std` (`PriorityHeap`, `cmp.min`, `max`, `clamp`) is written in Burdin and calls
+`<`. `T: Eq` accepts only the derived `Eq`: `Map`, `Set`, `List.contains`, and slice `contains` are compiler built-ins
+that compare structurally, so a hand-written `PartialEq` does not make a type usable as a key or a search target
+(`List.sort` likewise needs a derived `Ord`). Hand-writing `Eq`, `Ord`, `Hash`, or `Clone` is E9000 (issue #402),
+so these built-ins' equality cannot be customized yet.
+
 ## `Eq`
 
 `==` and `!=` compare values. The derive requires every field to support `==`. Structs and tuples compare fields in
@@ -73,9 +88,9 @@ Comparison is lexicographic:
 - integers compare numerically (signed or unsigned as written), `bool` as `false < true`, `char` by scalar value,
   `String` and `str` byte by byte.
 
-`Ord` does not imply `Eq` for a derive: a type that needs both lists both. A generic bound `T: Ord` is different: the
-body of `fn f<T: Ord>(a: T, b: T)` may use `a == b`, because the bound adds `Eq` (`bound_closure`). The derive and the bound
-disagree today; #918 decides one rule for both. A float field has no derived ordering, so a struct with
+`Ord` implies `Eq`, in the derive and in the bound alike (issue #918): a type that derives `Ord` also has `==` and
+`!=`, and the body of `fn f<T: Ord>(a: T, b: T)` may use `a == b` (`bound_closure`). Deriving both is allowed and
+means the same as deriving `Ord`. A float field has no derived ordering, so a struct with
 an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option` orders `None`
 before `Some` and then by payload; `Result` orders `Ok` before `Err` (its declared variant order) and then by the
 payload of the same variant. References and `List` do not support `<`.

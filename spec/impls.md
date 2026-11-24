@@ -75,7 +75,8 @@ A derive on a generic type holds for the instances whose parts allow it: `Wrappe
 needs them is an error at the use (E0003, E0002, E0141). A requirement that mentions no parameter is checked once, at the
 derive (E0130). The rule for `Debug`, `Hash`, `Ord`, and `Default` is the same (`spec/derives.md`).
 
-The built-in derive-only interfaces are `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` (`spec/derives.md`). Writing one
+The built-in derive-only interfaces are `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` (`spec/derives.md`). A derive of `Eq` or `Ord` already provides `PartialEq` or `PartialOrd`, so implementing those by hand on the same
+type is E0007 (`spec/derives.md`, issue #918). Writing one
 by hand (`Wrapper<T>: Eq where T: Eq { ... }`) is not implemented, for a generic type or a plain one: it is E9000 under
 issue #402, whose rule applies to both. The other interfaces are written by hand as ordinary interfaces: `Debug`,
 `Display`, `From`, `TryFrom`, `Drop` (IM7), and `Serialize`/`Deserialize`, which a program writes by hand as

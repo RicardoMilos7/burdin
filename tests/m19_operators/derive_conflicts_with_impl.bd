@@ -1,0 +1,46 @@
+//@ compile-fail
+
+// A derive of `Eq` or `Ord` is the type's `PartialEq` or `PartialOrd`, so a hand-written implementation of the
+// same interface is a second one (E0007, spec/operators.md OP5, spec/derives.md). Remove the derive to write the
+// comparison by hand. `Ord` brings `Eq`, so it conflicts with `PartialEq` too.
+
+struct P: Eq, Ord {
+    n: i32
+}
+
+P: PartialEq { //~ E0007
+    fn eq(self, other: P): bool {
+        false
+    }
+}
+
+P: PartialOrd { //~ E0007
+    fn lt(self, other: P): bool {
+        false
+    }
+}
+
+struct Q: Ord {
+    n: i32
+}
+
+Q: PartialEq { //~ E0007
+    fn eq(self, other: Q): bool {
+        false
+    }
+}
+
+struct Wrapper<T>: Eq {
+    v: T
+}
+
+Wrapper<T>: PartialEq where T: Eq { //~ E0007
+    fn eq(self, other: Wrapper<T>): bool {
+        false
+    }
+}
+
+fn main() {
+    let a = P { n: 1 }
+    println((a == a).to_string())
+}

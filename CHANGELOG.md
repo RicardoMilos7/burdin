@@ -6,7 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
-Nothing yet.
+- Issue #918: `Eq`/`Ord` are the derived `PartialEq`/`PartialOrd`. `Ord` now implies `Eq` in the derive as it does in
+  the bound, so a type that derives `Ord` has `==` and `!=`. A hand-written `PartialEq`/`PartialOrd` on a type that
+  derives the matching `Eq`/`Ord` is E0007 instead of being silently ignored. The `List.contains` and map-key messages
+  name `Eq`. A hand-written `PartialEq` still does not satisfy `T: Eq` (the built-in collections compare structurally);
+  that bridge waits on hand-written `Eq`/`Ord` (#402). Tests: `m19_operators/derive_conflicts_with_impl`,
+  `m19_operators/ord_implies_eq`. `spec/derives.md`, `spec/operators.md`, `spec/impls.md`.
 
 ## 0.1.3 — 2026-11-24
 

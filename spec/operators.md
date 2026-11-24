@@ -99,7 +99,8 @@ For `a op b` the checker first applies the stage 0 rule to the common operand ty
    (`has_ord`: primitives, `str`/`String`, tuples/`Range`, and a struct or enum that derives `Ord` and whose fields do).
 
 A type parameter obeys its bounds: `T: Eq` uses the built-in structural comparison, and `T: PartialEq` uses the
-interface; when both are present the built-in wins (the same rule as for a type that both derives and implements).
+interface; when both are present the built-in wins. A derive installs the interface (`spec/derives.md`), so a
+concrete type never has both: deriving `Eq` or `Ord` and writing `PartialEq`/`PartialOrd` is E0007.
 
 Only when the built-in rule does not apply does the checker try the interface, in this order:
 
@@ -129,11 +130,11 @@ is E0141 for a struct/enum/type parameter and E0003 for any other type.
 ## OP5: Comparison operators
 
 `==` lowers to `eq`, `!=` to `ne`, `<` to `lt`, `<=` to `le`, `>` to `gt`, and `>=` to `ge`. The comparison
-operators are always same-type and always return `bool`. The built-in and derived comparisons win over an interface
-implementation (`spec/derives.md`): a type that derives `Eq` uses the derived equality even when it also implements
-`PartialEq`, and a type that derives `Ord` uses the derived ordering. Remove the derive to use a hand-written
-comparison. A type that derives only `Ord` gets built-in `<` (and `<=`, `>`, `>=`) but no `==`; a type that derives
-only `Eq` gets `==`/`!=` but no ordering. (A generic `T: Ord` bound does allow `==` in its body, `derives.md`; #918.) Each operator is decided on its own.
+operators are always same-type and always return `bool`. A derived comparison is the type's own implementation of the
+interface (`spec/derives.md`, issue #918), so a type that derives `Eq` or `Ord` cannot also implement `PartialEq`
+or `PartialOrd` (E0007); remove the derive to write the comparison by hand. A type that derives `Ord` also gets
+`==`/`!=` (`Ord` implies `Eq`, as the bound does); a type that derives only `Eq` gets `==`/`!=` but no ordering.
+Each operator is decided on its own.
 
 `PartialOrd` and `PartialEq` need not agree; the compiler does not check that `lt` and `eq` are consistent. That is
 the implementation's contract.

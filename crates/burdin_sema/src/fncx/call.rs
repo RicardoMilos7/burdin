@@ -1516,7 +1516,7 @@ impl FnCx<'_> {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
                         span,
-                        format!("cannot search a `List<{elem}>`: `{elem}` does not support `==`"),
+                        format!("cannot search a `List<{elem}>`: `{elem}` does not support `Eq`"),
                     );
                 }
             }
@@ -1544,7 +1544,7 @@ impl FnCx<'_> {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     span,
-                    format!("cannot use `{k}` as a map key: it does not support `==`"),
+                    format!("cannot use `{k}` as a map key: it does not support `Eq`"),
                 );
             }
             _ => {}

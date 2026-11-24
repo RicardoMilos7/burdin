@@ -197,7 +197,7 @@ generation and decision 35 compound assignment; the stage 0 count is 294 (`run_t
 stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
 now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
 (`m13_iterators/generic_bound_default_methods`). Still open, and the spec states the current behavior with these numbers:
-the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
+the allocator's 8-byte alignment cap (#917), the hand-written `Eq`/`Ord`/`PartialEq`-as-`Eq` bridge to the built-in collections (#918 landed `Ord` implies `Eq` and E0007 for a derive next to its interface; a hand-written `PartialEq` still does not satisfy `T: Eq`), the `String`-to-`str`
 struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
 (`m15_any/impl_not_parameter` pins the E0201 until then).
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static

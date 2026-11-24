@@ -1,0 +1,32 @@
+//@ run
+//> true
+//> false
+//> true
+//> true
+//> false
+
+// `Ord` brings `Eq`, in the derive and in a bound alike (spec/derives.md): a type that derives only `Ord` has `==`
+// and `!=`, and `T: Ord` allows them in a generic body.
+
+struct Rank: Ord {
+    level: i32
+}
+
+enum Level: Ord {
+    Low
+    High(i32)
+}
+
+fn same<T: Ord>(a: T, b: T): bool {
+    a == b
+}
+
+fn main() {
+    let a = Rank { level: 1 }
+    let b = Rank { level: 2 }
+    println((a == a).to_string())
+    println((a == b).to_string())
+    println((a != b).to_string())
+    println(same(Level.High(3), Level.High(3)).to_string())
+    println(same(Level.Low, Level.High(0)).to_string())
+}

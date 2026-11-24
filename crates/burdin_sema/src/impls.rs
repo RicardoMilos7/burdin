@@ -126,6 +126,16 @@ impl<'t> Sema<'t> {
             ImplKind::Inherent | ImplKind::User(_) => {
                 let iface_args = iface.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
                 if let Some((i, args)) = iface {
+                    let list = if key.0 {
+                        Some(&self.src.enums[key.1].decl.derives)
+                    } else {
+                        self.src.structs[key.1].as_ref().map(|entry| &entry.decl.derives)
+                    };
+                    if let Some(list) = list
+                        && self.reject_derived_comparison(imp, i, list, &self_ty, diags)
+                    {
+                        return;
+                    }
                     check_missing_methods(&self.globals, imp, i, diags);
                     let assoc = self.resolve_assoc_bindings(imp, Some(i), diags);
                     let impl_index = self.globals.impls.len();
@@ -156,6 +166,36 @@ impl<'t> Sema<'t> {
                 self.register_methods(imp, module, iface, &self_ty, MethodScope::plain(), diags);
             }
         }
+    }
+
+    /// A derive of `Eq` or `Ord` is the type's `PartialEq` or `PartialOrd`, so a hand-written implementation of the
+    /// interface next to it would be a second one (E0007, `spec/derives.md`, issue #918). Returns whether `imp` was
+    /// rejected.
+    fn reject_derived_comparison(
+        &self,
+        imp: &ast::ImplBlock,
+        iface: usize,
+        list: &[ast::Type],
+        ty: &dyn std::fmt::Display,
+        diags: &mut Diagnostics,
+    ) -> bool {
+        let Some(ops) = self.globals.op_ifaces.as_ref() else { return false };
+        let derives = crate::derives::parse_derives(list);
+        let (name, derive) = if iface == ops.partial_eq && derives.eq {
+            ("PartialEq", if derives.ord { "Ord" } else { "Eq" })
+        } else if iface == ops.partial_ord && derives.ord {
+            ("PartialOrd", "Ord")
+        } else {
+            return false;
+        };
+        diags.error(
+            Code::DUPLICATE_NAME,
+            imp.span,
+            format!(
+                "`{ty}` derives `{derive}`, which already provides `{name}`; remove the derive or this implementation"
+            ),
+        );
+        true
     }
 
     /// The orphan rule (E0142): inherent methods and `Drop` belong to the type's package, and an interface may be
@@ -430,6 +470,15 @@ impl<'t> Sema<'t> {
         let iface = kind.user_interface();
         let iface_args = match iface {
             Some(i) => {
+                let info = &self.globals.generic_adts[g];
+                let list = if info.is_enum {
+                    &self.tpl.enums[info.decl].derives
+                } else {
+                    &self.tpl.structs[info.decl].derives
+                };
+                if self.reject_derived_comparison(imp, i, list, &info.name, diags) {
+                    return;
+                }
                 check_missing_methods(&self.globals, imp, i, diags);
                 let args = self.resolve_iface_args(i, iface_seg, &subst, &wheres, module, imp.span, diags);
                 // The binding of each associated type, filled in once the instance whose arguments are the

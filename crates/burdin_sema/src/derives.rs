@@ -41,6 +41,8 @@ pub(crate) fn parse_derives(list: &[ast::Type]) -> tir::Derives {
         };
         *flag = true;
         match name {
+            // `Ord` brings `Eq`, as the bound does (`spec/derives.md`, issue #918).
+            "Ord" => d.eq = true,
             "Copy" => d.copy_span = Some(t.span),
             "Clone" => d.clone_span = Some(t.span),
             _ => {}
