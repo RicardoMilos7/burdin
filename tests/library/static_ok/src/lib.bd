@@ -1,0 +1,25 @@
+// A library package (spec/library.md). `greet_base` and `greet_print` are its C exports; `hidden` is a `priv` export,
+// so it has no C symbol, and `helper` is local to the artifact. `tests/check_library.py` copies this package, builds
+// it as a static or a shared library (it sets `kind`), and calls the exports from `tests/library/c/`.
+
+static BASE: i32 = 40
+
+extern "C" fn greet_base(): i32 {
+    BASE + helper()
+}
+
+extern "C" fn greet_print(own n: i32) {
+    println(n.to_string())
+}
+
+priv extern "C" fn hidden(): i32 {
+    7
+}
+
+fn helper(): i32 {
+    2
+}
+
+test "the helper adds two" {
+    assert_eq(helper(), 2)
+}

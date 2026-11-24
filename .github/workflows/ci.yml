@@ -362,6 +362,12 @@ jobs:
         if: matrix.part == 'tools-pkg'
         run: python3 tests/check_packages.py
 
+      # Libraries (issue #1000, spec/library.md): the `[lib]` table, static and shared artifacts, their C header, and
+      # the C programs that link them (the C programs run on Linux; every platform checks the artifacts and manifests).
+      - name: Check libraries
+        if: matrix.part == 'tools-pkg'
+        run: python3 tests/check_library.py
+
       # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
       # dependencies, and one lockfile at the root (spec/workspaces.md).
       - name: Check workspaces
@@ -854,6 +860,12 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools-pkg'
         run: python3 tests/check_packages.py
+
+      # Libraries (issue #1000, spec/library.md): the `[lib]` table, static and shared artifacts, their C header, and
+      # the C programs that link them (the C programs run on Linux; every platform checks the artifacts and manifests).
+      - name: Check libraries
+        if: matrix.part == 'tools-pkg'
+        run: python3 tests/check_library.py
 
       # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
       # dependencies, and one lockfile at the root (spec/workspaces.md).
@@ -1367,6 +1379,12 @@ jobs:
       - name: Check burdin add and burdin.lock
         if: matrix.part == 'tools-pkg'
         run: python tests/check_packages.py
+
+      # Libraries (issue #1000, spec/library.md): the `[lib]` table, static and shared artifacts, their C header, and
+      # the C programs that link them (the C programs run on Linux; every platform checks the artifacts and manifests).
+      - name: Check libraries
+        if: matrix.part == 'tools-pkg'
+        run: python tests/check_library.py
 
       # Workspaces (issues #342, #343): members, default members, excludes, the selection flags, inherited fields and
       # dependencies, and one lockfile at the root (spec/workspaces.md).

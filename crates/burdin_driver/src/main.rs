@@ -22,6 +22,7 @@ mod export;
 mod fix;
 mod fmt;
 mod fuzz_runner;
+mod library;
 mod linker;
 mod lint;
 mod migrate;
@@ -900,7 +901,8 @@ fn build(args: &Args, options: &CompileOptions) -> ExitCode {
     };
     let mut entries = Vec::new();
     for member in members {
-        if member.dir.join("src").join("main.bd").is_file() {
+        // A member builds when it has a program's `src/main.bd`, or a static or shared `[lib]` (`spec/library.md`, LB10).
+        if member.dir.join("src").join("main.bd").is_file() || library::dir_is_library(&member.dir) {
             entries.push(member);
         } else if named.contains(&member.name) {
             eprintln!("error: `{}` has no src/main.bd to build, and `-p` names it", member.name);
@@ -961,6 +963,14 @@ fn run(args: &Args, options: &CompileOptions) -> ExitCode {
     // A one-file target that makes itself a script runs from a content-addressed cache (`spec/scripts.md`, SC5).
     if let Some(code) = scripts::run_script(args, options) {
         return code;
+    }
+    // A library has no entry point to run; `burdin build` writes its artifact (`spec/library.md`, LB3).
+    if library::dir_is_library(&args.target) {
+        eprintln!(
+            "error: {} has no entry point: it is a library, and `burdin build` writes its artifact",
+            args.target.display()
+        );
+        return ExitCode::from(1);
     }
     let dir = match TempDir::new() {
         Ok(d) => d,
@@ -1147,7 +1157,13 @@ pub(crate) fn front_end(
     options: &CompileOptions,
     overrides: &SourceOverrides,
 ) -> Result<FrontEnd, ExitCode> {
-    let mode = options.mode;
+    // A library is checked the way `burdin check --tests` checks one: its `main` is not required, and its tests are
+    // checked (`spec/library.md`, LB3). Only a build or a check asks for that; `test`, `bench`, and `fuzz` already do.
+    let mode = if options.mode == EntryMode::Build && library::dir_is_library(target) {
+        EntryMode::Test
+    } else {
+        options.mode
+    };
     if options.verbose {
         eprintln!("compiling {}", target.display());
     }
@@ -1283,9 +1299,20 @@ pub(crate) fn compile(
     // EX4: a shadowed extension method). They render like errors, with the `warning` severity.
     print_warnings(&diags, &sources, options.diagnostics, options.report_clean);
 
-    let output = match output {
-        Some(path) => path.to_path_buf(),
-        None => output_dir.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION),
+    // The `[lib]` table says what this package writes: a library's artifact, or (the default) a program (`spec/library.md`).
+    // A test, bench, or fuzz build is always a program, whatever the package's `[lib]` table says.
+    let library = match library::validate(&loaded.packages[loaded.entry_package]) {
+        Ok(library) if options.mode == EntryMode::Build => library,
+        Ok(_) => None,
+        Err(failure) => {
+            report_build_failure(&loaded, failure, options);
+            return Err(ExitCode::from(1));
+        }
+    };
+    let output = match (output, &library) {
+        (Some(path), _) => path.to_path_buf(),
+        (None, Some(library)) => output_dir.join(library::file_name(library.kind, &loaded.stem)),
+        (None, None) => output_dir.join(&loaded.stem).with_extension(std::env::consts::EXE_EXTENSION),
     };
     // `burdin build app` from the package's parent directory would otherwise ask the linker to replace the package
     // directory with a file.
@@ -1303,7 +1330,29 @@ pub(crate) fn compile(
             write_artifact(&emit.path(&output, emit::EmitKind::Tir), &text)?;
         }
     }
-    write_executable(&program, &sources, &loaded, &files, &output, options, &rust_libs)?;
+    match &library {
+        Some(library) => {
+            // A program is cached in the target directory and copied to where it was asked for; a library is written
+            // there the same way, though it is not cached (`spec/library.md`, LB3 and LB11).
+            let bin = burdin_query::workspace::target_dir(target).join("burdin").join(&options.profile.dir).join("bin");
+            if let Err(e) = std::fs::create_dir_all(&bin) {
+                eprintln!("error: cannot create {}: {e}", bin.display());
+                return Err(ExitCode::from(2));
+            }
+            let staged = bin.join(library::file_name(library.kind, &loaded.stem));
+            write_library(&program, &sources, &loaded, &staged, options, &rust_libs, library.kind)?;
+            if staged != output
+                && let Err(e) = std::fs::copy(&staged, &output)
+            {
+                eprintln!("error: cannot write {}: {e}", output.display());
+                return Err(ExitCode::from(2));
+            }
+        }
+        None => write_executable(&program, &sources, &loaded, &files, &output, options, &rust_libs)?,
+    }
+    if let Some(header) = library.as_ref().and_then(|library| library.c_header.as_deref()) {
+        write_c_header(target, header, options)?;
+    }
     let site = |span: burdin_diag::Span| {
         let file = sources.get(span.file);
         Site { file: file.path.clone(), line: file.line_col(span.lo).0 }
@@ -1352,9 +1401,17 @@ fn write_executable(
         return emit_program(program, sources, &loaded.stem, output, options, rust_libs, &package_flags);
     };
     let objects = burdin_codegen::ObjectCache { dir: plan.objects.clone(), identity: build::compiler_fingerprint() };
-    if let Err(code) =
-        emit_program_cached(program, sources, &loaded.stem, &staged, options, rust_libs, &package_flags, Some(objects))
-    {
+    if let Err(code) = emit_program_cached(
+        program,
+        sources,
+        &loaded.stem,
+        &staged,
+        options,
+        rust_libs,
+        &package_flags,
+        Some(objects),
+        Product::Program,
+    ) {
         let _ = std::fs::remove_file(&staged);
         return Err(code);
     }
@@ -1365,6 +1422,92 @@ fn write_executable(
     let result = copy_executable(&staged, output);
     let _ = std::fs::remove_file(&staged);
     result
+}
+
+/// What a build links: a program, or a library of one kind (`spec/library.md`, LB3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Product {
+    Program,
+    Library(library::Kind),
+}
+
+/// Writes a static or shared library of the checked `program` to `output` (`spec/library.md`, LB3 and LB9). It is the
+/// same code a program is, without an entry point: the objects are archived or linked as a shared library. A library
+/// is not stored in the target cache (LB11), so every build writes it again.
+fn write_library(
+    program: &burdin_tir::Program,
+    sources: &SourceMap,
+    loaded: &package::Workspace,
+    output: &Path,
+    options: &CompileOptions,
+    rust_libs: &[String],
+    kind: library::Kind,
+) -> Result<(), ExitCode> {
+    let refused = [
+        ("--lto", options.lto),
+        ("--pgo-generate", options.pgo_generate),
+        ("--pgo-use", options.pgo_use.is_some()),
+        ("--sanitize", options.sanitize.instruments() || options.sanitize.needs_runtime()),
+    ];
+    if let Some((flag, _)) = refused.iter().find(|(_, set)| *set) {
+        eprintln!("error: `{flag}` does not apply to a library (spec/library.md, LB9)");
+        return Err(ExitCode::from(2));
+    }
+    let package_flags = package_flags(loaded, &options.profile);
+    emit_program_cached(
+        program,
+        sources,
+        &loaded.stem,
+        output,
+        options,
+        rust_libs,
+        &package_flags,
+        None,
+        Product::Library(kind),
+    )
+}
+
+/// Writes the C header of a library's exports to `header`, a path relative to the package directory `target`
+/// (`spec/library.md`, LB8). It is the header `burdin bindgen --export` writes, and its errors are that command's.
+fn write_c_header(target: &Path, header: &str, options: &CompileOptions) -> Result<(), ExitCode> {
+    let path = target.join(header);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("error: cannot create {}: {e}", parent.display());
+        return Err(ExitCode::from(2));
+    }
+    match export::run(target, &path, None, options.diagnostics) {
+        ExitCode::SUCCESS => Ok(()),
+        code => Err(code),
+    }
+}
+
+/// Archives the objects of a static library into `output` (`spec/library.md`, LB7). Unix uses `ar`; with MSVC it is
+/// the `lib` tool beside the `cl` the link uses, or the one on `PATH`. An archive from an earlier build is replaced
+/// whole, so it cannot keep a member this build no longer has.
+fn archive(objects: &[PathBuf], output: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_file(output);
+    let mut args: Vec<OsString> = Vec::new();
+    let tool = if cfg!(windows) {
+        args.push("/nologo".into());
+        args.push(format!("/OUT:{}", output.display()).into());
+        msvc_lib_tool()
+    } else {
+        args.push("rcs".into());
+        args.push(output.into());
+        PathBuf::from("ar")
+    };
+    args.extend(objects.iter().map(OsString::from));
+    run_tool(&tool, &args)
+}
+
+/// The MSVC `lib` tool: the one beside the `cl` that the installation's link uses, or `lib.exe` on `PATH`.
+fn msvc_lib_tool() -> PathBuf {
+    match msvc::discover(&msvc::Probe::from_env()) {
+        Ok(toolchain) => toolchain.cl.with_file_name("lib.exe"),
+        Err(_) => PathBuf::from("lib.exe"),
+    }
 }
 
 /// Copies a built executable to where the user asked for it, under the name the linker would have given it. The MSVC
@@ -1423,10 +1566,11 @@ pub(crate) fn emit_program(
     rust_libs: &[String],
     package_flags: &[burdin_codegen::PackageFlags],
 ) -> Result<(), ExitCode> {
-    emit_program_cached(program, sources, stem, output, options, rust_libs, package_flags, None)
+    emit_program_cached(program, sources, stem, output, options, rust_libs, package_flags, None, Product::Program)
 }
 
-/// [`emit_program`] with the object cache of a cacheable build (`spec/target.md`, TG11).
+/// [`emit_program`] with the object cache of a cacheable build (`spec/target.md`, TG11), and for the product to link:
+/// a program, or a library (`spec/library.md`).
 #[allow(clippy::too_many_arguments)]
 fn emit_program_cached(
     program: &burdin_tir::Program,
@@ -1437,6 +1581,7 @@ fn emit_program_cached(
     rust_libs: &[String],
     package_flags: &[burdin_codegen::PackageFlags],
     object_cache: Option<burdin_codegen::ObjectCache>,
+    product: Product,
 ) -> Result<(), ExitCode> {
     let fail = |msg: String| {
         eprintln!("error: {msg}");
@@ -1473,6 +1618,7 @@ fn emit_program_cached(
         asm_syntax: emit.map_or(Default::default(), |e| e.asm_syntax),
         sanitize: options.sanitize,
         object_cache,
+        library: matches!(product, Product::Library(_)),
     };
     // A large program is split into codegen units compiled on several threads, one object each (issue #334).
     let started = std::time::Instant::now();
@@ -1504,15 +1650,22 @@ fn emit_program_cached(
         None => objects,
     };
     let link_opts = LinkOptions {
-        export_dynamic: cfg!(target_os = "linux"),
+        // A library's exports are its C symbols already; only a program re-exports its symbols for backtraces.
+        export_dynamic: cfg!(target_os = "linux") && product == Product::Program,
         debug: options.debug,
         strip: options.strip,
         lto: options.lto,
         pgo_generate: options.pgo_generate,
         sanitize: options.sanitize,
+        shared: product == Product::Library(library::Kind::Shared),
     };
     let libs: Vec<String> = options.link_libs.iter().chain(rust_libs).cloned().collect();
-    link(&objects, output, &libs, &link_opts).map_err(fail)?;
+    match product {
+        Product::Program | Product::Library(library::Kind::Shared) => {
+            link(&objects, output, &libs, &link_opts).map_err(fail)?
+        }
+        Product::Library(library::Kind::Static) => archive(&objects, output).map_err(fail)?,
+    }
     if options.verbose {
         eprintln!("phase link: {}", format_ms(linking.elapsed()));
     }
@@ -1826,6 +1979,8 @@ struct LinkOptions {
     pgo_generate: bool,
     /// The sanitizer runtimes to link (`--sanitize`, `burdin fuzz`); they need clang as the linker.
     sanitize: burdin_codegen::Sanitizers,
+    /// Link a shared library rather than a program: `-shared`, or `/LD` with MSVC (`spec/library.md`, LB7).
+    shared: bool,
 }
 
 /// Links the object files (which define `main` and the runtime) with libc into the executable `output`.
@@ -1975,6 +2130,10 @@ fn link_args(
         // and `llvm-config` are how the rest of the build finds that installation.
         let llvm_libdir = libs.iter().any(|l| l == "LLVM-C").then(resolve_llvm_c_libdir).flatten();
         let mut args = msvc_link_args(objects, output, libs, llvm_libdir.as_deref());
+        if opts.shared {
+            // `/LD` makes a DLL (and its import library) of the `/Fe:` output; it follows `/nologo`.
+            args.insert(1, "/LD".into());
+        }
         args.extend(msvc_debug_args(output, opts));
         if opts.strip {
             // Without `/DEBUG` link.exe writes no debug directory; `/OPT:REF` drops unreferenced sections.
@@ -2084,6 +2243,9 @@ fn unix_link_args(
     }
     if opts.export_dynamic {
         args.push("-rdynamic".into());
+    }
+    if opts.shared {
+        args.push("-shared".into());
     }
     if opts.lto {
         args.push("-flto".into());

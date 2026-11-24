@@ -55,6 +55,10 @@ The full matrix, with the test behind each row, is in
   against known answers. It is not a security claim, and it should not protect real data.
 - **Stack traces in `main` are rough.** An error returned from `fn main(): Result<T>` prints a trace that names an internal
   frame. The message itself is correct.
+- **Libraries are a first step.** A `[lib]` table builds a static or a shared library for C callers, on Linux as the
+  tested platform. The Windows and macOS artifacts are not yet tested in CI, and a Burdin program cannot link a built
+  artifact (it compiles the library's source). `--lto` and the sanitizers do not apply to a library, and there is no
+  `root` key or per-profile `[lib]`. See [packages and modules](/guide/packages-and-modules/#libraries).
 - **LLVM 21 is required.** Building the compiler from source, and running `burdin build`, need the LLVM 21 libraries. The
   [installation guide](/getting-started/installation/) describes each platform.
 

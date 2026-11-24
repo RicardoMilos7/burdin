@@ -130,6 +130,29 @@ is not built, checked, or pinned in `burdin.lock`. Writing `json = true` in `bur
 is an error that points you to `use json`. The [packages reference](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md)
 describes how the compiler finds official packages and how `burdin.lock` pins them.
 
+## Libraries
+
+A library package has `src/lib.bd` and no `src/main.bd`. By default it has no build output: other Burdin packages
+compile its source into their own programs. To build an artifact that programs in other languages can link, set the
+`[lib]` table in `burdin.toml`:
+
+```toml
+[lib]
+kind = "static"             # "source" (the default), "static", or "shared"
+c-header = "include/greet.h" # optional: a C header of the exported functions
+```
+
+- `static` writes an archive: `libNAME.a` on Linux and macOS, `NAME.lib` on Windows.
+- `shared` writes a shared library: `libNAME.so` on Linux, `libNAME.dylib` on macOS, and `NAME.dll` with `NAME.lib` on
+  Windows.
+- The exports are the `extern "C" fn` items that are not `priv`. A `priv` function has no C symbol.
+- `burdin build` writes the artifact and, with `c-header`, the header. `burdin run` refuses a library, since it has
+  nothing to run.
+- A static or shared library must not have a `src/main.bd`. An invalid `[lib]` table is error E0265.
+
+A C program links the artifact like any other library. For a static library on Linux, add `-lm`. The
+[library specification](https://github.com/RicardoMilos7/burdin/blob/main/spec/library.md) lists every rule.
+
 ## Checking a package
 
 `burdin check` type-checks a package without building it, and `burdin build` builds it. Commands accept a package

@@ -459,6 +459,43 @@ pub(crate) fn define_main<'ctx>(
     Ok(())
 }
 
+/// Defines a library's initializer (`spec/library.md`, LB6): a global constructor, which runs when the object is loaded
+/// (before the host calls any export) and does what `main` does for a program's statics and output. It registers the
+/// standard-output flush at exit, then runs the static initializer. It does not record arguments or install the stack
+/// guard: the process is the host's.
+pub(crate) fn define_library_init<'ctx>(
+    cx: &'ctx Context,
+    module: &Module<'ctx>,
+    statics: Option<FunctionValue<'ctx>>,
+) -> GenResult<()> {
+    let void_ty = cx.void_type();
+    let i32_ty = cx.i32_type();
+    let ptr_ty = cx.ptr_type(AddressSpace::default());
+    let f = module.add_function("burdin.library_init", void_ty.fn_type(&[], false), Some(Linkage::Internal));
+    let b = cx.create_builder();
+    b.position_at_end(cx.append_basic_block(f, "entry"));
+    if let Some(flush) = module.get_function("burdin_rt_flush_locked") {
+        let atexit = libc(module, "atexit", i32_ty.fn_type(&[ptr_ty.into()], false));
+        b.build_call(atexit, &[flush.as_global_value().as_pointer_value().into()], "").map_err(llvm_err)?;
+    }
+    if let Some(init) = statics {
+        b.build_call(init, &[], "").map_err(llvm_err)?;
+    }
+    b.build_return(None).map_err(llvm_err)?;
+    // `@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32 65535, ptr @init, ptr null }]`: the
+    // object's constructors, run by the loader before `main` (or on `dlopen`, or by the Windows CRT for a DLL).
+    let ctor_ty = cx.struct_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
+    let ctor = ctor_ty.const_named_struct(&[
+        i32_ty.const_int(65535, false).into(),
+        f.as_global_value().as_pointer_value().into(),
+        ptr_ty.const_null().into(),
+    ]);
+    let ctors = module.add_global(ctor_ty.array_type(1), None, "llvm.global_ctors");
+    ctors.set_linkage(Linkage::Appending);
+    ctors.set_initializer(&ctor_ty.const_array(&[ctor]));
+    Ok(())
+}
+
 /// Defines `__asan_default_options` for an AddressSanitizer build (`spec/sanitizers.md`, SAN7). The sanitizer reads
 /// the string before the environment's `ASAN_OPTIONS`, which still overrides it. Its one default,
 /// `allocator_may_return_null=1`, makes a refused allocation a null pointer, as the C heap returns it (AL11): without

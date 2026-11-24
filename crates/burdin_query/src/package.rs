@@ -52,6 +52,9 @@ pub struct PackageFiles {
     /// The `[lint]` table of the manifest: `(lint name, level, line)` in file order (`spec/lint.md`, LN3). The
     /// linter checks the names and levels, so a manifest from a newer compiler still loads.
     pub lint: Vec<(String, String, usize)>,
+    /// The `[lib]` table of the manifest: `(key, value, line)` in file order, the value as written (`spec/library.md`,
+    /// LB1). The driver validates it and reports E0265, so a manifest from a newer compiler still loads.
+    pub lib: Vec<(String, String, usize)>,
     /// The `[rust]` and `[rust.crates]` tables: Rust crates this package binds through generated C-ABI shims
     /// (`spec/rust-interop.md`, RI7).
     pub rust: RustConfig,
@@ -161,6 +164,7 @@ fn empty_manifest(name: &str) -> Manifest {
         build_allow: Vec::new(),
         link: Vec::new(),
         lint: Vec::new(),
+        lib: Vec::new(),
         rust: Default::default(),
         edition: Default::default(),
         profiles: Vec::new(),
@@ -321,6 +325,13 @@ pub fn script_manifest(text: &str) -> Result<Option<ScriptManifest>, String> {
     Ok(Some(ScriptManifest { deps }))
 }
 
+/// Whether a `[lib]` table is anything but `kind = "source"` alone: a library, or an invalid table the driver reports
+/// (E0265). Such a package is not a program's source, so it has no entry point to require (`spec/library.md`, LB2);
+/// an invalid table is reported as E0265 rather than as a missing entry point.
+pub fn lib_is_not_source(lib: &[(String, String, usize)]) -> bool {
+    lib.iter().any(|(key, value, _)| !(key == "kind" && parse_string(value).ok().as_deref() == Some("source")))
+}
+
 /// The lockfile in `dir`, when there is one: a directory without a manifest has none.
 fn read_lock(dir: &Path) -> Result<Option<Lockfile>, String> {
     if dir.join(workspace::MANIFEST).is_file() { lockfile::read(dir) } else { Ok(None) }
@@ -347,7 +358,7 @@ fn load_impl(
         let main = package.modules.iter().position(|m| m.path == ["main"]);
         let entry_module = match main {
             Some(module) => module,
-            None if require_entry => {
+            None if require_entry && !lib_is_not_source(&package.lib) => {
                 return Err(format!(
                     "package `{}` has no entry point: expected {}",
                     package.name,
@@ -401,6 +412,7 @@ fn load_impl(
             build_allow: Vec::new(),
             link: Vec::new(),
             lint: Vec::new(),
+            lib: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
             license: None,
@@ -487,6 +499,7 @@ fn std_package() -> PackageFiles {
         link_libs: Vec::new(),
         root_module,
         lint: Vec::new(),
+        lib: Vec::new(),
         rust: Default::default(),
         edition: Default::default(),
     }
@@ -1020,6 +1033,7 @@ impl Loader {
                 link_libs: manifest.link_libs_for(Host::current()),
                 root_module,
                 lint: manifest.lint.clone(),
+                lib: manifest.lib.clone(),
                 rust: manifest.rust.clone(),
                 edition: manifest.edition,
             });
@@ -1128,6 +1142,8 @@ pub struct Manifest {
     pub link: Vec<(Option<Cfg>, String)>,
     /// The `[lint]` entries: `(name, level, line)`.
     pub lint: Vec<(String, String, usize)>,
+    /// The `[lib]` entries: `(key, value, line)`, the value as written (`spec/library.md`, LB1).
+    pub lib: Vec<(String, String, usize)>,
     pub rust: RustConfig,
     /// `[package] edition`; the default edition when the manifest names none.
     pub edition: burdin_sema::Edition,
@@ -1669,6 +1685,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
     let mut build_allow: Vec<String> = Vec::new();
     let mut link: Vec<(Option<Cfg>, String)> = Vec::new();
     let mut lint: Vec<(String, String, usize)> = Vec::new();
+    let mut lib: Vec<(String, String, usize)> = Vec::new();
     let mut rust = RustConfig::default();
     // Each dependency name with the line it was declared on: a name is declared once per manifest (PKG25).
     let mut declared: Vec<(String, usize)> = Vec::new();
@@ -1838,6 +1855,8 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
                 let level = parse_string(value).map_err(|e| format!("{}: {e}", where_()))?;
                 lint.push((key.to_string(), level, index + 1));
             }
+            // The keys and values of `[lib]` are checked by the driver, which reports E0265 (`spec/library.md`).
+            "lib" => lib.push((key.to_string(), value.to_string(), index + 1)),
             "rust" if key == "toolchain" => {
                 rust.toolchain = Some(parse_string(value).map_err(|e| format!("{}: {e}", where_()))?);
             }
@@ -1900,6 +1919,7 @@ pub fn parse_manifest_text(text: &str, path: &Path) -> Result<Manifest, String> 
         build_allow,
         link,
         lint,
+        lib,
         rust,
         edition,
         profiles,
@@ -2041,7 +2061,7 @@ pub(crate) fn parse_string_array(value: &str) -> Result<Vec<String>, String> {
 }
 
 /// A `"..."` string, with `\"`, `\\`, `\n`, and `\t` escapes.
-pub(crate) fn parse_string(value: &str) -> Result<String, String> {
+pub fn parse_string(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
         return Err("expected a quoted string".to_string());
