@@ -267,7 +267,9 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   when the package is not already in the graph and the client advertises
   `textDocument.completion.completionItem.additionalTextEditsSupport`; once the package is in the graph, the
   qualified name compiles as written and no edit is sent. Only official packages are indexed this way: a path or git
-  dependency offers nothing until the manifest declares it (`spec/packages.md`, PKG15).
+  dependency offers nothing until the manifest declares it (`spec/packages.md`, PKG15). The package's own name is
+  offered too, as a module (`htt` offers `http`), with the same `additionalTextEdits` entry: accepting it loads the
+  package the way accepting one of its items does.
 
 **Snippets.** When the client advertises `textDocument.completion.completionItem.snippetSupport`, the server adds
 snippet items (kind `Snippet`, `insertTextFormat` 2, tab stops `${n:...}` and the final `$0`). A snippet replaces the
@@ -304,7 +306,8 @@ Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_
 `self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`,
 `a_dependency_completes_without_a_use_in_the_file`, `a_use_offers_every_official_package`,
 `official_packages_complete_before_any_file_imports_them`, `a_local_module_shadows_an_official_package`
-(`fixtures/official-shadow`); the `builtins.rs` unit test and the `official.rs` unit test.
+(`fixtures/official-shadow`), `an_official_package_name_completes_and_loads_itself`; the `builtins.rs` unit test and the
+`official.rs` unit test.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
 with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is
@@ -360,10 +363,16 @@ Tests: `folding_selection_and_links`.
 **LS18. Code actions.** Quick fixes come from the compiler's suggestions and from the server: E0002 for an unknown
 name that another module declares imports it (`use helpers.triple`); E0005 and E0113 make the binding `mut`; E0114 adds
 the `mut` marker before the argument; E0140 adds the missing methods of an implementation, with the interface's
-signatures and `todo()` bodies. Each quick fix names its diagnostic. `refactor.rewrite` writes the inferred type of a
+signatures and `todo()` bodies. An E0002 on the name of an official package that the file does not load, where the name
+is followed by `.` (`http.Client` with no `use http`), is fixed by the action titled "import http": the server inserts the `use`
+that loads the package, where a completion's edit would put it (LS12). An E0002 on a bare name that an official package
+exports, not written after a dot (`Client.new()` with no `use`), is fixed by the action titled "import http.Client", one
+per package that exports the name, which inserts `use http.Client`. Each quick fix names its diagnostic. `refactor.rewrite` writes the inferred type of a
 `let` under the cursor; `source.organizeImports` applies the linter's removals of unused imports. Every edit is a
 workspace edit (`changes` by URI), which the client previews.
-Tests: `quick_fixes_for_the_errors_of_a_file`, `organize_imports_and_write_a_type`.
+Tests: `quick_fixes_for_the_errors_of_a_file`, `organize_imports_and_write_a_type`,
+`an_official_package_used_without_a_use_is_imported_by_a_quick_fix`,
+`a_bare_official_item_is_imported_by_a_quick_fix`.
 
 **LS19. Lenses and test commands.** In a file with tests, a lens at the top runs them all (`▶ Run N tests in file`), and
 above each `test` block a lens runs it and another debugs it; above the entry module's `main`, a lens runs the program

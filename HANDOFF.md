@@ -228,7 +228,11 @@ a package when an edit adds an official import, and `use` completion offers ever
 every official package's public API (`crates/burdin_lsp/src/official.rs`): `json.` lists its items and re-exported
 modules before anything imports it, and typing `Client` offers `http.Client` with an `additionalTextEdits` entry that
 inserts `use http` when the package is not in the graph; a local module or a path or git dependency of the same name
-shadows the official package. Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module
+shadows the official package. Typing the start of a package's name offers the package itself (`htt` offers `http`) with
+the same edit, and an E0002 on an unloaded `http.Client` gets the quick fix "import http" that inserts the `use`
+and a bare `Client` that an official package exports gets "import http.Client" (LS12, LS18;
+`an_official_package_name_completes_and_loads_itself`, `an_official_package_used_without_a_use_is_imported_by_a_quick_fix`,
+and `a_bare_official_item_is_imported_by_a_quick_fix` in `crates/burdin_lsp/tests/`). Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module
 shadowing, unknown non-official name, the refused declarations), `tests/check_repl.py`, and the loader's and language
 server's unit tests. Verified:
 `cargo test --workspace`, clippy and fmt clean, the full conformance suite (1258 passed, 0 failed, 7 skipped; the
