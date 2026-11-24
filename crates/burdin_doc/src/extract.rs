@@ -192,7 +192,8 @@ fn item_of(cx: &Ctx, text: &str, item: &ast::Item) -> Option<Item> {
         }
         ast::Item::Interface(d) => {
             let mut i = simple_item(cx, text, kind, &d.name, d.span, signature::brace_head(text, d.span), private);
-            for m in &d.methods {
+            // The compiler's internal names are never documented (DC7), interface members included.
+            for m in d.methods.iter().filter(|m| !docs::is_internal_name(&m.decl.name.name)) {
                 let k = if m.has_body { MemberKind::Provided } else { MemberKind::Required };
                 i.methods.push(member(
                     cx,

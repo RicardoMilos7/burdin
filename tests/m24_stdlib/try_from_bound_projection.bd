@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The error of a conversion (spec/stdlib.md, TF9) is written on a type parameter whose bounds include `TryFrom<S>`
+// (E0141 otherwise), names only `Error` (E0145 otherwise), and a concrete type with no conversion has none (E0141).
+
+fn no_bound<T>(e: <T as TryFrom<i32>>.Error) { //~ E0141
+}
+
+fn wrong_name<T: TryFrom<i32>>(e: <T as TryFrom<i32>>.Value) { //~ E0145
+}
+
+fn concrete(e: <String as TryFrom<i32>>.Error) { //~ E0141
+}
+
+fn main() {}

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `T.try_from` needs a `TryFrom` bound on `T` (spec/stdlib.md, TF7): without one, `T` has no `try_from` (E0141).
+
+fn check<T>(v: i32) {
+    let r = T.try_from(v) //~ E0141
+}
+
+fn main() {}
