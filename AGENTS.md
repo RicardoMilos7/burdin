@@ -39,6 +39,8 @@ python3 tests/check_deps.py              audit the dependency pins and licenses 
 python3 tests/check_platform.py          check the host triple and 64-bit isize/usize (needs a built driver)
 python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
 python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
+bun run check:examples                   in website/: compile and run the website's examples and Burdin code blocks (needs Bun and a built burdin)
+bun run check:links                      in website/: check every internal link of the built site
 python3 tests/check_debug_info.py        check -g's DWARF, line table, and a gdb breakpoint (needs a built driver)
 python3 tests/check_debug_printers.py    check the panic hook, the symbolized frames, the gdb/lldb printers, the Natvis file, and `burdin debug`
 python3 tests/check_dap.py               check `burdin dap`, the debug adapter, against a stub backend
@@ -116,7 +118,15 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
   direction: syntax to sema to check to codegen, `burdin_tir` as the shared vocabulary, `burdin_diag` under everything,
   and nothing before codegen touching LLVM. Update this file's map when a crate is added, removed, or renamed.
 - **Update the docs with the code.** `HANDOFF.md`, the relevant `spec/*.md`, and `CHANGELOG.md` change in the same
-  milestone as the behavior.
+  milestone as the behavior, and so does the website (next rule).
+- **Update the website with the language.** The website in `website/` (Astro and Starlight, published to GitHub Pages)
+  is the user-facing documentation: the guides, the reference, and the examples in `website/src/content/docs/`. A change
+  that a Burdin programmer can see (syntax, a standard-library name, a command or flag, a diagnostic a user meets, what a
+  package does) updates the page that describes it in the same change, and the reference pages (`reference/cli.md`,
+  `reference/standard-library.md`, `reference/status.md`) when they list it. A feature that is not finished yet is
+  recorded in `reference/status.md` as a limitation. A Burdin example is a code block with the info string `burdin`,
+  which `bun run check:examples` compiles, so write examples that compile; `burdin fragment` is only for an
+  illustration that cannot stand alone. Internal changes with no user-visible effect need no page.
 
 ## Definition of done
 
@@ -125,6 +135,7 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 - The behavior is implemented (or the decision is written down).
 - A test proves it: conformance, unit, CLI, integration, or a benchmark, depending on the area.
 - New diagnostic codes are registered in `tests/README.md` first.
+- A user-visible change updates the website pages that describe it (see "Update the website with the language").
 - The suite passes in debug and release.
 - The closing comment names the test paths and the exact command(s) that pass, plus any manual verification.
 
@@ -134,6 +145,8 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 - [ ] `.github/workflows/ci.yml` lists the finished milestone's folder.
 - [ ] `HANDOFF.md` describes the new behavior and the remaining gaps.
 - [ ] The relevant `spec/*.md` is updated (rule IDs and test lists included).
+- [ ] The website pages in `website/src/content/docs/` describe the milestone's user-visible behavior, and
+      `bun run check:examples` in `website/` passes.
 - [ ] `CHANGELOG.md` has an entry for the milestone.
 - [ ] `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass.
 - [ ] Every issue in the milestone is closed with its verification result, and the GitHub milestone is closed.
@@ -174,6 +187,8 @@ HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, the
                           documentation generator, the query library, the language server, stage 0 scope, stage 1 plan
+website/                  the user-facing site (Astro and Starlight): guides, reference, and examples in
+                          `src/content/docs/`; checked by `bun run check:examples` and `bun run check:links`
 docs/                     the user-facing error-code reference (checked against tests/README.md), the diagnostics-for-tools
                           reference and JSON schema (docs/diagnostics.md, docs/diagnostic.schema.json), the lint
                           reference (docs/lints.md, checked by tests/check_lint.py), the platform support matrix
