@@ -482,8 +482,24 @@ pub(crate) fn define_library_init<'ctx>(
         b.build_call(init, &[], "").map_err(llvm_err)?;
     }
     b.build_return(None).map_err(llvm_err)?;
+    if cfg!(all(unix, not(target_os = "macos"))) {
+        // On ELF the loader runs a shared library's constructors from `.init_array` only. LLVM puts
+        // `llvm.global_ctors` in `.ctors` on this target: GNU ld folds that into `.init_array`, lld does not, and a
+        // shared library's `.ctors` never runs. So the initializer's address goes in `.init_array` directly, and
+        // `llvm.used` keeps the entry alive through optimization.
+        let entry = module.add_global(ptr_ty, None, "burdin.library_init.entry");
+        entry.set_linkage(Linkage::Internal);
+        entry.set_initializer(&f.as_global_value().as_pointer_value());
+        entry.set_section(Some(".init_array"));
+        let used = module.add_global(ptr_ty.array_type(1), None, "llvm.used");
+        used.set_linkage(Linkage::Appending);
+        used.set_section(Some("llvm.metadata"));
+        used.set_initializer(&ptr_ty.const_array(&[entry.as_pointer_value()]));
+        return Ok(());
+    }
     // `@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32 65535, ptr @init, ptr null }]`: the
-    // object's constructors, run by the loader before `main` (or on `dlopen`, or by the Windows CRT for a DLL).
+    // object's constructors, run by the loader before `main` (or on `dlopen`, or by the Windows CRT for a DLL, or as
+    // `__mod_init_func` on macOS).
     let ctor_ty = cx.struct_type(&[i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
     let ctor = ctor_ty.const_named_struct(&[
         i32_ty.const_int(65535, false).into(),

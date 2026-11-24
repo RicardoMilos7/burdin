@@ -223,8 +223,9 @@ with harness.temporary_dir("burdin-library-") as work:
         if compiled.returncode == 0:
             ran = harness.run([str(program)], cwd=shared)
             words = harness.text(ran.stdout).split()
-            check(ran.returncode == 0 and "42" in words, "the shared library's export did not answer 42 (LB7)")
-            check("5" in words, "the text an exported function printed is missing from a shared library (LB6)")
+            detail = f"exit {ran.returncode}, stdout {harness.text(ran.stdout)!r}, stderr {harness.text(ran.stderr)!r}"
+            check(ran.returncode == 0 and "42" in words, f"the shared library's export did not answer 42 (LB7): {detail}")
+            check("5" in words, f"the text an exported function printed is missing from a shared library (LB6): {detail}")
 
     # --- LB1, LB4: E0265 -------------------------------------------------------------------------------------
     bad = {
