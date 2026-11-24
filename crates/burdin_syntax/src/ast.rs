@@ -662,6 +662,12 @@ pub enum ExprKind {
     /// the segment's index and its arguments: `Shape<i32>.Rect { ... }` has `(0, [i32])` and `sh.Shape<i32>.Rect`
     /// has `(1, [i32])`. The base, when there is one, takes every field the literal does not name (`spec/struct-update.md`).
     StructLit(Vec<Ident>, Option<(usize, Vec<Type>)>, Vec<FieldInit>, Option<Box<Expr>>),
+    /// `.name`: a name the expected type has (`spec/target-typing.md`, TT1 and TT6): a variant, a function value,
+    /// or, as the callee of a `Call`, an associated function (`.new()`).
+    Target(Ident),
+    /// `.{ field: value, ..base }`: a struct literal whose type is the expected type (TT1, TT7, and the base as in
+    /// `StructLit`).
+    TargetStruct(Vec<FieldInit>, Option<Box<Expr>>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,

@@ -474,6 +474,19 @@ impl Fmt<'_> {
                 Ok(Ex::plain(self.list_doc(list, single)))
             }
             TokenKind::LBracket => self.array_expr(),
+            // `.name` and `.{ fields }`: a value whose type is the expected type (spec/target-typing.md, TT1).
+            TokenKind::Dot => {
+                let dot = self.tok_doc();
+                if self.at(&TokenKind::LBrace) {
+                    let lit = self.struct_literal_body()?;
+                    return Ok(Ex { hug: true, ..Ex::plain(concat(vec![dot, lit])) });
+                }
+                if !matches!(self.kind(), TokenKind::Ident(_)) {
+                    return Err(self.error("expected a name or `{` after `.`"));
+                }
+                let name = self.tok_doc();
+                Ok(Ex::plain(concat(vec![dot, name])))
+            }
             TokenKind::LBrace => {
                 let first = self.pos;
                 let parts = self.block_parts()?;

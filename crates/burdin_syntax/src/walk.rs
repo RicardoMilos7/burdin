@@ -217,6 +217,17 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
                 v.expr(b);
             }
         }
+        K::TargetStruct(fields, base) => {
+            for f in fields {
+                if let Some(x) = &f.value {
+                    v.expr(x);
+                }
+            }
+            if let Some(b) = base {
+                v.expr(b);
+            }
+        }
+        K::Target(_) => {}
         K::IfLet { pattern, scrutinee, then_block, else_expr } => {
             v.expr(scrutinee);
             v.pattern(pattern);

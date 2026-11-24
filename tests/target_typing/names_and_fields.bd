@@ -1,0 +1,22 @@
+//@ compile-fail
+
+// A name the expected type does not have is E0002, as `T.name` reports it, and a `.{ ... }` checks its fields the way
+// `T { ... }` does (spec/target-typing.md, TT6 and TT7).
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Color {
+    Red,
+    Green,
+}
+
+fn main() {
+    let v: Color = .Blue //~ E0002
+    let p: Point = .{ x: 1, z: 2 } //~ E0002 //~ E0003
+    let q: Point = .new(1, 2) //~ E0002
+    let w: Point = .Red //~ E0002
+    println("{p.x} {q.x} {w.x}")
+}

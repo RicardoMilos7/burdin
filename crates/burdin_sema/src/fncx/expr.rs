@@ -172,6 +172,8 @@ impl FnCx<'_> {
             K::StructLit(path, type_args, fields, base) => {
                 self.struct_literal(path, type_args.as_ref(), fields, base.as_deref(), expect, span)
             }
+            K::Target(name) => self.target_value(name, span, expect),
+            K::TargetStruct(fields, base) => self.target_struct(fields, base.as_deref(), span, expect),
             K::IfLet { pattern, scrutinee, then_block, else_expr } => {
                 self.if_let(pattern, scrutinee, then_block, else_expr.as_deref(), expect, span)
             }

@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A `.` that starts an expression must be followed by a name or `{` (spec/target-typing.md, TT8).
+
+fn main() {
+    println(.) //~ E0001
+}

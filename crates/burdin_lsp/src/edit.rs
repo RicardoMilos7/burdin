@@ -3,7 +3,7 @@
 
 use crate::index::{FileIndex, Item, KEYWORDS, Kind, Tk, Tok};
 use crate::json::Json;
-use crate::nav::{Resolver, SymKind, base_type};
+use crate::nav::{Resolver, SymKind, base_type, enclosing_brace, leading_dot, literal_owner};
 use crate::official::OfficialIndex;
 use crate::project::{Loc, Package};
 use crate::server::{Reply, ReqError, Server};
@@ -449,6 +449,13 @@ enum Context {
     Use,
     /// After `x.`; the offset of the dot.
     Member(u32),
+    /// After a leading dot (`.Red`, `.new(3)`): the offset of the dot. The members are those of the type the position
+    /// expects (LS12).
+    Leading(u32),
+    /// At a field's name inside a struct literal's braces (`Point { x: 1, `, `.{ x: 1, `): the struct the literal builds
+    /// and the `{`'s token index. The members are the struct's fields the literal has not written, then the names in
+    /// scope for shorthand (LS12).
+    Field { owner: String, brace: usize },
     /// At the start of a function's parameter: the first one, and whether the function is a method.
     Parameter { first: bool, method: bool },
     /// In the `: A, B` list after `struct Name` or `enum Name`, at the start of a name.
@@ -703,7 +710,10 @@ fn context(text: &str, ix: &FileIndex, start: usize) -> Context {
         return Context::Use;
     }
     if start > 0 && text.as_bytes()[start - 1] == b'.' {
-        return Context::Member((start - 1) as u32);
+        let dot = (start - 1) as u32;
+        let leading =
+            ix.tokens.iter().position(|t| t.lo == dot && t.kind == Tk::Dot).is_some_and(|i| leading_dot(ix, i));
+        return if leading { Context::Leading(dot) } else { Context::Member(dot) };
     }
     // The tokens before the word being completed.
     let end = ix.tokens.partition_point(|t| (t.hi as usize) <= start && (t.lo as usize) < start);
@@ -817,13 +827,42 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
     let official = server.official();
     let encoding = server.encoding;
     let additional_edits = server.caps.additional_edits;
-    let mut r = Resolver::new(&mut server.packages[i]);
-    let ix = r.index(&path).unwrap_or_default();
+    let ix = Resolver::new(&mut server.packages[i]).index(&path).unwrap_or_default();
     let prefix = &text[start..offset as usize];
     let imports =
         Imports { encoding, supported: additional_edits, place: import_place(&text, &ix), text: text.clone() };
     let site = Site { path: &path, ix: &ix, offset, prefix, imports: &imports };
-    let context = context(&text, &ix, start);
+    let plain = context(&text, &ix, start);
+    // A field name in a struct literal's braces (LS12): the literal builds the struct before its `{`, or for a leading
+    // `.{` the type its position expects, which the analysis gives at the dot.
+    let literal = match plain {
+        Context::Statement | Context::Expression => literal_brace(&text, &ix, start),
+        _ => None,
+    };
+    let literal_type = match literal {
+        Some((brace, None)) => literal_owner(&ix, brace + 1),
+        Some((_, Some(dot))) => expected_type_at(server, i, &path, &text, &text, dot)?.map(|ty| base_type(&ty)),
+        None => None,
+    };
+    // A leading dot's members are those of the type its position expects, which the analysis gives at the dot.
+    let expected = match plain {
+        Context::Leading(dot) => {
+            let repaired = repaired_for_completion(&text, &ix, dot);
+            expected_type_at(server, i, &path, &text, &repaired, dot)?
+        }
+        _ => None,
+    };
+    let mut r = Resolver::new(&mut server.packages[i]);
+    let all = r.all_items();
+    // `Point {` and `.{` build a struct; `match Shape.Circle {` or `if FLAG {` do not, and keep their own context.
+    let context = match (literal, literal_type) {
+        (Some((brace, _)), Some(owner))
+            if all.iter().any(|(_, item)| item.kind == Kind::Struct && item.name == owner) =>
+        {
+            Context::Field { owner, brace }
+        }
+        _ => plain,
+    };
     let calls = snippets && !paren_follows && !matches!(context, Context::Use);
     let mut out = Completions { items: Vec::new(), seen: Vec::new(), snippets, calls };
     match context {
@@ -833,6 +872,13 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         }
         Context::Member(dot) => {
             member_completions(&mut r, &official, &path, &ix, &text, dot, &mut out);
+        }
+        Context::Leading(_) => {
+            leading_completions(&mut r, expected.as_deref(), &mut out);
+        }
+        Context::Field { owner, brace } => {
+            literal_fields(&all, &owner, &ix, brace, start, &mut out);
+            scope_completions(&mut r, &official, &site, Scope::Values, &mut out);
         }
         Context::Parameter { first, method } => {
             if first && method {
@@ -1002,6 +1048,128 @@ fn member_completions(
         // A generic parameter (`s: S` with `S: Serializer`): the methods of its bounds.
         Some(bounds) => bound_members(&all, &bounds, out),
         None => value_members(&all, &base, out),
+    }
+}
+
+/// The type a leading dot at `dot` stands for: the type its position expects (`spec/target-typing.md`). `repaired` is
+/// the text analyzed: the document's own, or [`repaired_for_completion`]'s with a placeholder. The document's text is
+/// put back before the answer is returned, so the server's state is the document's again.
+fn expected_type_at(
+    server: &mut Server,
+    i: usize,
+    path: &str,
+    text: &str,
+    repaired: &str,
+    dot: u32,
+) -> Result<Option<String>, ReqError> {
+    server.packages[i].set_text(path, repaired);
+    let analyzed = server.analyzed(i);
+    let ty = server.packages[i].current().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
+    server.packages[i].set_text(path, text);
+    analyzed?;
+    server.analyzed(i)?;
+    Ok(ty.filter(|ty| usable(ty)))
+}
+
+/// The text with a placeholder name after the dot at `dot`, and the closing brackets its line still needs before the
+/// dot's end: `name(.` becomes `name(.__complete)`, and `Point { x: .` becomes `Point { x: .__complete}`. A bracket the
+/// line closes after the dot is counted, so an editor that closed it already is not closed twice (LS12).
+fn repaired_for_completion(text: &str, ix: &FileIndex, dot: u32) -> String {
+    let line_start = text[..dot as usize].rfind('\n').map_or(0, |n| n + 1);
+    let line_end = text[dot as usize..].find('\n').map_or(text.len(), |n| dot as usize + n) as u32;
+    let mut open: Vec<char> = Vec::new();
+    for t in ix.tokens.iter().filter(|t| t.lo as usize >= line_start && t.hi <= dot) {
+        match t.kind {
+            Tk::LParen => open.push(')'),
+            Tk::LBracket => open.push(']'),
+            Tk::LBrace => open.push('}'),
+            Tk::RParen | Tk::RBracket | Tk::RBrace => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    for t in ix.tokens.iter().filter(|t| t.lo > dot && t.hi <= line_end) {
+        if matches!(t.kind, Tk::RParen | Tk::RBracket | Tk::RBrace) {
+            open.pop();
+        }
+    }
+    let at = dot as usize + 1;
+    let closers: String = open.iter().rev().collect();
+    format!("{}__complete{}{}", &text[..at], closers, &text[at..])
+}
+
+/// After a leading dot: the members of the type its position expects, as `T.` offers them: its variants and its
+/// associated functions (`.Red`, `.new(3)`, TT6), and the prelude's `Some` and `None`, or `Ok` and `Err`.
+fn leading_completions(r: &mut Resolver, expected: Option<&str>, out: &mut Completions) {
+    let Some(ty) = expected else { return };
+    let base = base_type(ty);
+    match base.as_str() {
+        "Option" => {
+            out.add("Some", 20, "Some(value): Option", None, 0);
+            out.add("None", 20, "None", None, 0);
+        }
+        "Result" => {
+            out.add("Ok", 20, "Ok(value): Result", None, 0);
+            out.add("Err", 20, "Err(error): Result", None, 0);
+        }
+        _ => {}
+    }
+    let all = r.all_items();
+    type_members(&all, &base, out);
+}
+
+/// The `{` of the struct literal a field name at `start` is written in (LS12): the name starts an entry, after a `{` or
+/// a `,`, inside a code body. Its token index, and the offset of the dot when the `{` is a leading `.{`.
+fn literal_brace(text: &str, ix: &FileIndex, start: usize) -> Option<(usize, Option<u32>)> {
+    let end = ix.tokens.partition_point(|t| (t.hi as usize) <= start && (t.lo as usize) < start);
+    if !matches!(end.checked_sub(1).map(|i| &ix.tokens[i].kind), Some(Tk::LBrace | Tk::Comma)) {
+        return None;
+    }
+    // A struct's own declaration (`struct Point { x: i32 }`) is not a literal: only a code body holds one.
+    if !matches!(open_blocks(text, ix, end).last(), Some((_, Block::Code))) {
+        return None;
+    }
+    let brace = enclosing_brace(ix, end)?;
+    let dot = brace.checked_sub(1).filter(|&d| ix.tokens[d].kind == Tk::Dot && leading_dot(ix, d));
+    Some((brace, dot.map(|d| ix.tokens[d].lo)))
+}
+
+/// The fields of struct `owner` that the literal whose `{` is token `brace` has not written yet, then the names in
+/// scope for shorthand (`Point { x, y }`). A name starting an entry of the literal is written, except the one being
+/// completed, at byte `start`.
+fn literal_fields(
+    all: &[(String, Item)],
+    owner: &str,
+    ix: &FileIndex,
+    brace: usize,
+    start: usize,
+    out: &mut Completions,
+) {
+    let mut written: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    for (i, t) in ix.tokens.iter().enumerate().skip(brace + 1) {
+        match t.kind {
+            Tk::LParen | Tk::LBracket | Tk::LBrace => depth += 1,
+            Tk::RParen | Tk::RBracket => depth -= 1,
+            Tk::RBrace if depth == 0 => break,
+            Tk::RBrace => depth -= 1,
+            _ => {
+                let entry = matches!(ix.tokens[i - 1].kind, Tk::LBrace | Tk::Comma);
+                if let Some(name) = t.ident()
+                    && depth == 0
+                    && entry
+                    && t.lo as usize != start
+                {
+                    written.push(name.to_string());
+                }
+            }
+        }
+    }
+    for (_, item) in all.iter().filter(|(_, i)| i.kind == Kind::Field && i.owner.as_deref() == Some(owner)) {
+        if !written.contains(&item.name) {
+            out.item(item, 0);
+        }
     }
 }
 

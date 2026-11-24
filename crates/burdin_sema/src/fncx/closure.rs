@@ -852,6 +852,7 @@ impl FreeNames {
             | K::Str(_)
             | K::InlineSnapshot(_)
             | K::Bool(_)
+            | K::Target(_)
             | K::Continue(_) => {}
             K::Break { value, .. } => {
                 if let Some(value) = value {
@@ -945,7 +946,7 @@ impl FreeNames {
                 self.expr(body);
                 self.scopes.pop();
             }
-            K::StructLit(_, _, fields, base) => {
+            K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.expr(v);
@@ -1059,10 +1060,11 @@ fn contains_return(e: &ast::Expr) -> bool {
             contains_return(scrutinee)
                 || arms.iter().any(|arm| arm.guard.as_ref().is_some_and(contains_return) || contains_return(&arm.body))
         }
-        K::StructLit(_, _, fields, base) => {
+        K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
             fields.iter().any(|f| f.value.as_ref().is_some_and(contains_return))
                 || base.as_deref().is_some_and(contains_return)
         }
+        K::Target(_) => false,
         K::IfLet { scrutinee, then_block, else_expr, .. } => {
             contains_return(scrutinee)
                 || block_has_return(then_block)

@@ -518,6 +518,8 @@ impl Parser<'_> {
             }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
+            // `.name` and `.{ fields }`: a value whose type is the expected type (spec/target-typing.md).
+            TokenKind::Dot => self.target_expr(),
             TokenKind::Reserved(_) => {
                 self.ident("an expression")?;
                 unreachable!()
@@ -542,15 +544,21 @@ impl Parser<'_> {
 
     /// A struct literal after its head: `Wrapper { ... }`, `Shape.Rect { ... }`, `Shape<i32>.Rect { ... }`, or
     /// `sh.Shape<i32>.Rect { ... }`. The type arguments are the segment they follow (`type_args`, `None` when none;
-    /// `spec/arguments.md`, SL1). `Path { field: value, ..base }` takes its base as the last item
-    /// (`spec/struct-update.md`, SU1): a second base is E0013, and a field or a separator after the base is E0014. Both
-    /// are reported and the literal still parses, so the rest of the file is checked.
+    /// `spec/arguments.md`, SL1).
     pub(super) fn struct_literal(
         &mut self,
         path: Vec<Ident>,
         type_args: Option<(usize, Vec<Type>)>,
         start: Span,
     ) -> PResult<Expr> {
+        let (fields, base, close) = self.struct_body()?;
+        Ok(Expr { kind: ExprKind::StructLit(path, type_args, fields, base), span: start.to(close) })
+    }
+
+    /// The `{ field: value, ..base }` of a struct literal, its base if any, and the span of its closing brace.
+    /// `..base` takes the last item (`spec/struct-update.md`, SU1): a second base is E0013, and a field or a separator
+    /// after the base is E0014. Both are reported and the literal still parses, so the rest of the file is checked.
+    fn struct_body(&mut self) -> PResult<(Vec<FieldInit>, Option<Box<Expr>>, Span)> {
         self.open(&TokenKind::LBrace, true)?;
         let mut fields = Vec::new();
         let mut base: Option<Box<Expr>> = None;
@@ -587,7 +595,25 @@ impl Parser<'_> {
             }
         }
         let close = self.close(&TokenKind::RBrace)?;
-        Ok(Expr { kind: ExprKind::StructLit(path, type_args, fields, base), span: start.to(close.span) })
+        Ok((fields, base, close.span))
+    }
+
+    /// `.name` or `.{ fields }` at the start of an expression (spec/target-typing.md, TT1). A `.` anywhere else is
+    /// member access, which the postfix loop reads; here nothing before the dot is an expression.
+    fn target_expr(&mut self) -> PResult<Expr> {
+        let start = self.expect(&TokenKind::Dot)?.span;
+        if self.at(&TokenKind::LBrace) {
+            let (fields, base, close) = self.struct_body()?;
+            return Ok(Expr { kind: ExprKind::TargetStruct(fields, base), span: start.to(close) });
+        }
+        match self.kind().clone() {
+            TokenKind::Ident(name) => {
+                let t = self.bump();
+                let name = Ident { name, span: t.span };
+                Ok(Expr { kind: ExprKind::Target(name), span: start.to(t.span) })
+            }
+            _ => Err(self.unexpected("a name or `{` after `.`")),
+        }
     }
 
     pub(super) fn match_expr(&mut self) -> PResult<Expr> {

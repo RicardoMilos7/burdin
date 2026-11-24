@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// The expected type must be one a target-typed form can name (spec/target-typing.md, TT4 and TT5): a type parameter
+// that is not known, a reference, a view, and a type that is not a struct for `.{ ... }`.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Color {
+    Red,
+    Green,
+}
+
+fn make<T>(): T {
+    .new() //~ E0003
+}
+
+fn view(p: &Point): i32 {
+    p.x
+}
+
+fn main() {
+    let a = make<List<String>>()
+    let b: i32 = .{ x: 1, y: 2 } //~ E0003
+    let c: Color = .{ x: 1 } //~ E0003
+    let d = view(.{ x: 1, y: 2 }) //~ E0003
+    let e: str = .new() //~ E0003
+    println("{b} {d} {e}")
+}

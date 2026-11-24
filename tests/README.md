@@ -66,6 +66,8 @@ tests/
                        mutual TLS, truncation, timeouts; its test certificates are committed under `src/certs` and made
                        by `tests/tls/regenerate.py`); needs OpenSSL's development files installed (`libssl-dev`,
                        `brew install openssl@3`)
+  target_typing/       target-typed initializers `.name`, `.name(args)`, and `.{ ... }`, whose type is the expected type
+                       of their position (spec/target-typing.md): run and compile-fail programs
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by
@@ -319,6 +321,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0302 | A `static` or `static mut` declaration in a function body; a static is a module item (`spec/globals.md`, GL1) |
 | E0303 | A `static` whose type is not plain data: it owns memory, or has a destructor, so it would have to be dropped (`spec/globals.md`, GL2) |
 | E0304 | A borrow of a `static mut`, shared, mutable, or a method's `self`: no reference may alias it (`spec/globals.md`, GL4) |
+
+Target-typed initializers (`spec/target-typing.md`, TT12) add no code: their errors are E0001, E0002, and E0003, which
+are registered above.
 
 ### Codes without a compile-fail test
 

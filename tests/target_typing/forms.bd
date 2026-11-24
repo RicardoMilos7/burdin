@@ -1,0 +1,138 @@
+//@ run
+//> 2
+//> 0
+//> 30
+//> 2
+//> 0 0
+//> 8
+//> 0
+//> some 3
+//> none
+//> err bad
+//> 3
+//> 5
+//> 15
+//> 0
+//> 1
+//> 1 2
+
+// Target-typed initializers (spec/target-typing.md, TT1-TT7): `.name`, `.name(args)`, and `.{ fields }` take their
+// type from the expected type of the place they are written in. Each expected-type source is covered: a `let`
+// annotation, an argument, a return value and a body's tail, a struct field, an assignment, an `if` arm, a generic
+// argument, and a type alias.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Holder {
+    list: List<i32>,
+    count: i32,
+}
+
+enum Color: Eq {
+    Red,
+    Green,
+}
+
+type Names = List<String>
+
+Point {
+    fn new(x: i32, y: i32): Self {
+        Self { x, y }
+    }
+
+    fn sum(self): i32 {
+        self.x + self.y
+    }
+}
+
+fn take(p: Point): i32 {
+    p.sum()
+}
+
+fn pick(c: Color): i32 {
+    match c {
+        Color.Red => 1,
+        Color.Green => 2,
+    }
+}
+
+fn origin(): Point {
+    .{ x: 0, y: 0 }
+}
+
+fn make_point(x: i32): Point {
+    .new(x, x)
+}
+
+fn keep<A, B>(own a: A, own b: B): B {
+    b
+}
+
+fn main() {
+    // A `let` with an annotation: `.new()` is `List<String>.new()`.
+    let mut list: List<String> = .new()
+    list.push(String.from("a"))
+    list.push(String.from("b"))
+    println(list.len().to_string())
+
+    let names: Names = .new()
+    println(names.len().to_string())
+
+    // An argument takes its parameter's type.
+    println(take(.{ x: 10, y: 20 }).to_string())
+    println(pick(.Green).to_string())
+
+    // A return value, and the tail of a body.
+    let o = origin()
+    println("{o.x} {o.y}")
+    println(make_point(4).sum().to_string())
+
+    // A struct field: the field's type is the expected type.
+    let h = Holder { list: .new(), count: 0 }
+    println(h.list.len().to_string())
+
+    // The prelude constructors: `Option.Some` and `Option.None` by a `let` annotation.
+    let some: Option<i32> = .Some(3)
+    let none: Option<i32> = .None
+    match some {
+        Some(v) => println("some {v}"),
+        None => println("none"),
+    }
+    match none {
+        Some(v) => println("some {v}"),
+        None => println("none"),
+    }
+    let bad: Result<i32, String> = .Err(String.from("bad"))
+    match bad {
+        Ok(v) => println("ok {v}"),
+        Err(e) => println("err {e}"),
+    }
+
+    // An `if` gives its arms its type.
+    let flag = true
+    let p: Point = if flag { .{ x: 1, y: 2 } } else { .new(3, 4) }
+    println(p.sum().to_string())
+
+    // An assignment takes the type of its target.
+    let mut cur = Point.new(0, 0)
+    cur = .{ x: 2, y: 3 }
+    println(cur.sum().to_string())
+
+    // A struct literal with a shorthand field and a plain field.
+    let x = 4
+    let q: Point = .{ x, y: 11 }
+    println(q.sum().to_string())
+
+    // A generic argument whose parameter type comes from the explicit type arguments.
+    let got = keep<i32, List<String>>(1, .new())
+    println(got.len().to_string())
+
+    // A `.{ ... }` field nested in a literal, and a `.name(args)` that is an associated function.
+    let nested: Holder = .{ list: .new(), count: 1 }
+    println(nested.count.to_string())
+    let v = Point.new(1, 2)
+    println("{v.x} {v.y}")
+}

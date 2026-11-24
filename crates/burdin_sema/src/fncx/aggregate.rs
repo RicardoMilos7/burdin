@@ -107,7 +107,7 @@ impl FnCx<'_> {
     }
 
     /// `Color.Red`: a unit variant of an enum type.
-    fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
+    pub(super) fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
         // `u32.MAX`: an integer type's constants are `std` constants named `__<type>_<name>`.
         if let Ty::Int(i) = &ty
             && let Some(Global::Const(c)) = self.globals.std_value(&format!("__{}_{}", i.name(), name.name))
@@ -244,6 +244,20 @@ impl FnCx<'_> {
                 }
             },
         }
+        self.struct_fields(target, &text, fields, base, span)
+    }
+
+    /// The fields of a struct literal once its type is known: each field is checked against its declaration, and
+    /// a missing field is an error. `target` is the type, the variant if any, and the package that declares it;
+    /// `text` names the literal in messages. The target-typed `.{ ... }` (spec/target-typing.md, TT7) shares it.
+    pub(super) fn struct_fields(
+        &mut self,
+        target: Option<(Ty, Option<usize>, usize)>,
+        text: &str,
+        fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
+        span: Span,
+    ) -> tir::Expr {
         let defs: Vec<tir::FieldDef> = match &target {
             Some((Ty::Struct(a), _, _)) => self.globals.structs[a.id].fields.clone(),
             Some((Ty::Enum(a), Some(i), _)) => self.globals.enums[a.id].variants[*i].fields.clone(),

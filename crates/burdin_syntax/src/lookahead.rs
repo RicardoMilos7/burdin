@@ -268,5 +268,6 @@ pub fn can_start_expr(kind: &TokenKind) -> bool {
             | Amp
             | Pipe
             | OrOr
+            | Dot
     )
 }

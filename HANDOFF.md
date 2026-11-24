@@ -4,6 +4,22 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Target-typed initializers (issue #998, 2026-11-24).** `.name`, `.name(args)`, and `.{ fields }` take their type from the
+expected type of their position, meaning `T.name`, `T.name(args)`, and `T { fields }` for that `T`. The rule is
+`spec/target-typing.md` TT1-TT12, the grammar is `TargetExpr` in `spec/grammar.md`, and the tests are
+`tests/target_typing/` (run: `forms.bd`; compile-fail: `no_expected_type`, `expected_type_kinds`, `names_and_fields`,
+`bare_dot`). The parser reads a `.` that starts an expression as `ExprKind::Target` or `ExprKind::TargetStruct`; sema
+lowers them in `fncx/target.rs` to `assoc_call`, `unit_variant`, `some`/`result_ctor`, and the shared `struct_fields`
+(split out of `struct_literal`), so the memory checks and the comptime engine see the typed tree they already read. No
+new registry code: E0001 for a bare `.`, E0002 for a name the type lacks, and E0003 for no expected type, a type
+parameter, a reference, a view, or a `.{ }` on a non-struct. The expected type never comes from a later use, a method
+receiver, or the other operand of a binary operator. The folder is outside the milestone list, and CI runs it with the
+other non-milestone folders. Not done: tuple and array forms (TT7 leaves them out). `burdin fmt` reads and prints the forms.
+The language server answers a leading dot as its explicit spelling (LS8, LS12 in `spec/lsp.md`): `symbol_at` resolves
+`.Green` and `.{ x: 1 }` through the type the analysis gives the form at its dot, and completion after a bare dot
+analyzes a copy of the text with a placeholder name (`expected_type_at` in `edit.rs`) to read that type. The unknown-name
+case in `target_value` keeps its expected type on the error node for this. Tests: `crates/burdin_lsp/tests/leading_dot.rs`.
+
 **Struct-like variants of generic enums built with a literal (issue #396, 2026-11-24).** `Shape<i32>.Rect { w: 2, h: 3 }`
 names the instance on the head, and `Shape.Rect { w: 2, h: 3 }` infers the arguments from the field values and the
 expected type, as a tuple variant does (`spec/arguments.md`, SL1-SL4). The bare form already parsed and was refused with

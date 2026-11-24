@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #998: target-typed initializers. `.name`, `.name(args)`, and `.{ fields }` take their type from the expected
+  type of their position, as `T.name`, `T.name(args)`, and `T { fields }` do for the `T` the position gives
+  (`spec/target-typing.md`, TT1-TT12; `spec/grammar.md`, `TargetExpr`). `let list: List<String> = .new()`,
+  `a(.{ x: 10, y: 20 })`, and `pick(.Red)` need no repeated type. No new error code: E0003 for a form with no usable
+  expected type, E0002 for a name the type lacks, and E0001 for a bare `.`. Tests: `tests/target_typing/`. The language
+  server treats a leading dot as its explicit spelling: definition, hover, references, and rename of `.Green` and
+  `.{ x: 1 }`, and completion after a bare dot offers the members of the expected type (`spec/lsp.md`, LS8 and LS12;
+  `crates/burdin_lsp/tests/leading_dot.rs`).
 - Issue #396: a struct-like variant of a generic enum can be built with a literal, `Shape<i32>.Rect { w: 2, h: 3 }`
   with explicit arguments on the head, or `Shape.Rect { w: 2, h: 3 }` with the arguments inferred from the field values
   and the expected type, as a tuple variant is (`spec/arguments.md`, SL1-SL4). The variant is matched by its fields
