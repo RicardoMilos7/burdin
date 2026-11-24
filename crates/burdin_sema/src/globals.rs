@@ -335,6 +335,9 @@ pub(crate) struct Globals {
     pub(crate) located: std::cell::Cell<bool>,
 }
 
+/// `(type key, eq, lt)` of a type with a hand-written comparison.
+pub(crate) type ComparisonMethods = ((bool, usize), Option<FuncId>, Option<FuncId>);
+
 pub(crate) fn adt_key(ty: &Ty) -> Option<(bool, usize)> {
     match ty {
         Ty::Struct(a) => Some((false, a.id)),
@@ -371,6 +374,37 @@ impl Globals {
                 (method("allocate"), method("reallocate"), method("deallocate"))
             {
                 out.push(burdin_tir::AllocatorFns { ty: ty.clone(), allocate, reallocate, deallocate });
+            }
+        }
+        out
+    }
+
+    /// The hand-written `eq` and `lt` of every concrete struct and enum that implements `PartialEq` or
+    /// `PartialOrd` instead of deriving `Eq` or `Ord`, as `(type key, eq, lt)`. The built-in comparisons of code
+    /// generation call them (`spec/derives.md`, issue #918).
+    pub(crate) fn comparison_methods(&self) -> Vec<ComparisonMethods> {
+        let mut out = Vec::new();
+        let types = self
+            .struct_refs
+            .iter()
+            .map(|r| Ty::Struct(r.clone()))
+            .chain(self.enum_refs.iter().map(|r| Ty::Enum(r.clone())));
+        for ty in types {
+            let Some(key) = adt_key(&ty) else { continue };
+            if self.ty_has_param(&ty) {
+                continue;
+            }
+            let derives = if key.0 { &self.enums[key.1].derives } else { &self.structs[key.1].derives };
+            let eq = (!derives.eq
+                && self.methods.contains_key(&(key, "eq".to_string()))
+                && self.implements_partial_eq(&ty, &[]))
+            .then(|| self.methods[&(key, "eq".to_string())]);
+            let lt = (!derives.ord
+                && self.methods.contains_key(&(key, "lt".to_string()))
+                && self.implements_partial_ord(&ty, &[]))
+            .then(|| self.methods[&(key, "lt".to_string())]);
+            if eq.is_some() || lt.is_some() {
+                out.push((key, eq, lt));
             }
         }
         out

@@ -1751,11 +1751,12 @@ order, issue #703). The decisions behind it:
 
 - **`cmp` is not an interface method.** `PartialOrd` keeps `lt`/`le`/`gt`/`ge` and `Ord` stays the compiler-known
   bound, so a derive generates nothing new: `cmp` is `<` read twice. `Ord` and `Eq` remain independent derives.
-- **A hand-written `PartialOrd` satisfies an `Ord` bound.** A type that implements `PartialOrd` (its `lt` is the
-  order) is accepted wherever `T: Ord` is required, which is how `Reverse<T>` works with `cmp.min`, `max_by_key`, and
-  later `PriorityHeap` and `sort_by_key`. The built-in `<` does not apply to such a type (`has_ord` is false), so a
-  generic body instantiated for it calls `lt`; the compiler-implemented `List.sort` still wants a derived `Ord`
-  (E0141). Hand-written `Eq`/`Ord`/`Hash` beyond this stay E9000 under #402 (`Hash`: HS5).
+- **A hand-written `PartialOrd` satisfies an `Ord` bound, and a hand-written `PartialEq` an `Eq` bound.** A type
+  that implements `PartialOrd` (its `lt` is the order) and has `==` is accepted wherever `T: Ord` is required, which
+  is how `Reverse<T>` works with `cmp.min`, `max_by_key`, `PriorityHeap`, and `sort`; a type that implements
+  `PartialEq` is accepted wherever `T: Eq` is. The compiler-implemented `List.sort`, `contains`, `dedup`, and the
+  `Map`/`Set` lookups call the type's `lt` and `eq` (`derives.md`, issue #918); a hand-written-`eq` key must also
+  derive `Hash`. Hand-written `Eq`/`Ord`/`Hash` stay E9000 under #402 (`Hash`: HS5).
 - A closure comparator or key function sees views of the values (`&T`), so the helpers return an owned `T`: `min`
   and friends cannot be called on two `str` views (E0121, a view cannot come from two parameters); use `String`.
 

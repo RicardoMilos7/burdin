@@ -889,7 +889,7 @@ impl Globals {
                 Bound::Copy => self.is_copy(ty),
                 Bound::Clone => self.is_clone(ty),
                 Bound::Eq => self.has_eq_in(ty, env),
-                Bound::Ord => self.has_ord_in(ty, env) || self.implements_partial_ord(ty, env),
+                Bound::Ord => self.has_ord_in(ty, env),
                 Bound::Hash => self.has_hash_in(ty, env),
                 Bound::Default => self.has_default(ty),
                 Bound::From(source) => self.converts_into(ty, &source, env),
@@ -1134,6 +1134,15 @@ impl Globals {
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
             Ty::Range(t, _) => self.has_ord_in(t, env),
+            // A derived `Ord`, or a hand-written `PartialOrd` (whose `==` is `eq_from_order` unless it has its own).
+            Ty::Struct(_) | Ty::Enum(_) => self.has_derived_ord_in(ty, env) || self.implements_partial_ord(ty, env),
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` is a struct or enum whose derived `Ord` holds.
+    pub(crate) fn has_derived_ord_in(&self, ty: &Ty, env: &Env) -> bool {
+        match ty {
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
                 s.derives.ord && s.fields.iter().all(|f| self.has_ord_in(&f.ty, env))
@@ -1146,10 +1155,25 @@ impl Globals {
         }
     }
 
-    /// Whether a user type implements `PartialOrd` by hand. Such a type satisfies an `Ord` bound: its `lt` is the
-    /// order, which is how `Reverse<T>` plugs into a container or a sort that asks for `T: Ord`. The built-in
-    /// `<` still does not apply to it (`has_ord`), so a generic body instantiated for it calls `lt`.
-    fn implements_partial_ord(&self, ty: &Ty, env: &Env) -> bool {
+    /// Whether `==` on `ty` comes from its order: it implements `PartialOrd` by hand and has no equality of its
+    /// own, so two values are equal when neither is less (`Ord` brings `Eq`, `spec/derives.md`, issue #918).
+    pub(crate) fn eq_from_order(&self, ty: &Ty, env: &Env) -> bool {
+        let derived = match ty {
+            Ty::Struct(a) => self.structs[a.id].derives.eq,
+            Ty::Enum(a) => self.enums[a.id].derives.eq,
+            _ => return false,
+        };
+        !derived && self.implements_partial_ord(ty, env) && !self.implements_partial_eq(ty, env)
+    }
+
+    /// Whether a user type implements `PartialEq` by hand (a derived `Eq` is not one: `has_derived_eq_in`).
+    pub(crate) fn implements_partial_eq(&self, ty: &Ty, env: &Env) -> bool {
+        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.partial_eq, &[], env))
+    }
+
+    /// Whether a user type implements `PartialOrd` by hand. Such a type satisfies an `Ord` bound:
+    /// its `lt` is the order, which is how `Reverse<T>` plugs into a container or a sort that asks for `T: Ord`.
+    pub(crate) fn implements_partial_ord(&self, ty: &Ty, env: &Env) -> bool {
         self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.partial_ord, &[], env))
     }
 

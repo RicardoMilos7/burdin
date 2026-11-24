@@ -78,6 +78,11 @@ impl Codegen<'_, '_> {
         }
         // A container's buffer is allocated and freed through its allocator implementation, which no expression
         // calls directly (`spec/allocators.md`, AL4).
+        for d in program.structs.iter().map(|s| &s.derives).chain(program.enums.iter().map(|e| &e.derives)) {
+            for f in [d.eq_method, d.lt_method].into_iter().flatten() {
+                mark(f, &mut reachable, &mut pending);
+            }
+        }
         for fns in &program.allocator_fns {
             mark(fns.allocate, &mut reachable, &mut pending);
             mark(fns.reallocate, &mut reachable, &mut pending);

@@ -58,12 +58,22 @@ operators use, so a type that derives one has the matching operators without wri
 which brings `Eq`) is a second implementation of the same interface and is rejected with E0007; remove the derive to
 write the comparison by hand. Nothing is silently ignored.
 
-The two bounds differ in what satisfies them. `T: Ord` accepts a derived `Ord` or a hand-written `PartialOrd`,
-because every consumer of `Ord` in `std` (`PriorityHeap`, `cmp.min`, `max`, `clamp`) is written in Burdin and calls
-`<`. `T: Eq` accepts only the derived `Eq`: `Map`, `Set`, `List.contains`, and slice `contains` are compiler built-ins
-that compare structurally, so a hand-written `PartialEq` does not make a type usable as a key or a search target
-(`List.sort` likewise needs a derived `Ord`). Hand-writing `Eq`, `Ord`, `Hash`, or `Clone` is E9000 (issue #402),
-so these built-ins' equality cannot be customized yet.
+Both bounds are satisfied by the derive or by the hand-written interface, and the compiler's built-in comparisons
+call whichever the type has. `T: Eq` accepts a derived `Eq` or a hand-written `PartialEq`; `T: Ord` accepts a derived
+`Ord`, or a hand-written `PartialOrd`; a type with the latter and no `PartialEq` has `==` from its order (equal when
+neither is less), because `Ord` brings `Eq`. `Map`, `Set`, `List.contains`,
+slice `contains`, `dedup`, `sort`, `PriorityHeap`, `cmp.min`, `assert_eq`, and `==`/`<` on a list, tuple, array,
+`Option`, `Result`, or field that holds such a type then call the type's `eq` and `lt` (for sorting, `a` before `b` when
+`a.lt(b)`, equal when neither is less). Two limits:
+
+- A `Map` key or `Set` element whose `==` is hand-written must also derive `Hash` (E0141 otherwise). Keys are hashed
+  structurally and hand-writing `Hash` is E9000 (#402), so the derive is the promise that values equal by `eq` hash
+  alike; a hand-written `eq` coarser than the structure breaks lookups.
+- The compile-time interpreter compares structurally inside a list, tuple, or field, so a hand-written `eq` there
+  is not called in a `comptime` evaluation (a direct `a == b` on the type is).
+
+Hand-writing `Eq`, `Ord`, `Hash`, or `Clone` is E9000 (issue #402); `PartialEq`/`PartialOrd` are how the equality and
+order of a collection are customized.
 
 ## `Eq`
 

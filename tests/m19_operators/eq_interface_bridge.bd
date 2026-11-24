@@ -1,0 +1,69 @@
+//@ run
+//> true
+//> true
+//> true
+//> true
+//> 2
+//> true
+//> true
+//> false
+//> true
+//> 3
+
+// A hand-written `PartialEq` satisfies `T: Eq` and is what every built-in `==` calls: `List.contains`, `dedup`,
+// list, tuple, and `Option` equality, `assert_eq`, and a map or set key (spec/derives.md, issue #918). `Mod10`
+// compares by the last digit, so any of these using the structural comparison instead would disagree.
+
+struct Mod10: Copy, Clone {
+    n: i32
+}
+
+Mod10: PartialEq {
+    fn eq(self, other: Mod10): bool {
+        self.n % 10 == other.n % 10
+    }
+}
+
+fn same<T: Eq>(a: T, b: T): bool {
+    a == b
+}
+
+fn count_distinct<T: Eq>(own items: List<T>): usize {
+    let mut copy = items
+    copy.dedup()
+    copy.len()
+}
+
+fn main() {
+    let a = Mod10 { n: 3 }
+    let b = Mod10 { n: 13 }
+    println((a == b).to_string())
+    println(same(a, b).to_string())
+
+    let mut xs = List<Mod10>.new()
+    xs.push(Mod10 { n: 1 })
+    xs.push(Mod10 { n: 2 })
+    println(xs.contains(Mod10 { n: 12 }).to_string())
+    let mut ys = List<Mod10>.new()
+    ys.push(Mod10 { n: 11 })
+    ys.push(Mod10 { n: 22 })
+    println((xs == ys).to_string())
+
+    let mut dup = List<Mod10>.new()
+    dup.push(Mod10 { n: 5 })
+    dup.push(Mod10 { n: 15 })
+    dup.push(Mod10 { n: 6 })
+    println(count_distinct(dup).to_string())
+
+    println(((a, 1) == (b, 1)).to_string())
+    let some: Option<Mod10> = Some(a)
+    println((some == Some(b)).to_string())
+    assert_eq(xs, ys)
+    println((a != b).to_string())
+    println((a.ne(Mod10 { n: 4 })).to_string())
+    let mut more = List<Mod10>.new()
+    more.push(a)
+    more.push(b)
+    more.push(Mod10 { n: 4 })
+    println(more.len().to_string())
+}

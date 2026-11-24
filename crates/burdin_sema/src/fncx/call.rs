@@ -1540,11 +1540,13 @@ impl FnCx<'_> {
                 | Method::MapContainsKey
                 | Method::MapInsert,
                 Ty::Map(k, _, _),
-            ) if !self.globals.has_eq_in(k, &self.bounds) => {
+            ) if !self.globals.has_key_eq_in(k, &self.bounds) => {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
                     span,
-                    format!("cannot use `{k}` as a map key: it does not support `Eq`"),
+                    format!(
+                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `PartialEq` also needs `Hash`"
+                    ),
                 );
             }
             _ => {}

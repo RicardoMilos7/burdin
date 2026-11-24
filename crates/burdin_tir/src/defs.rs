@@ -22,6 +22,11 @@ pub struct Derives {
     /// Where the derive names were written, for diagnostics at the derive clause.
     pub copy_span: Option<Span>,
     pub clone_span: Option<Span>,
+    /// The hand-written `PartialEq.eq` and `PartialOrd.lt` of the type, when it implements the interface instead of
+    /// deriving `Eq`/`Ord`. The built-in comparisons (`Map` keys, `List.contains`, `sort`, `==` on a tuple or list
+    /// of the type) call them (`spec/derives.md`, issue #918). Filled in when the program is finished.
+    pub eq_method: Option<FuncId>,
+    pub lt_method: Option<FuncId>,
 }
 
 #[derive(Clone, Debug)]

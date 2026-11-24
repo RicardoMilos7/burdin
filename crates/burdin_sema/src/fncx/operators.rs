@@ -206,10 +206,20 @@ impl FnCx<'_> {
                 let ok = match op {
                     B::Add | B::Sub | B::Mul | B::Div | B::Rem => ty.is_numeric(),
                     B::BitAnd | B::BitOr | B::BitXor => matches!(ty, Ty::Int(_) | Ty::Bool),
+                    // A struct or enum compares through its derive or its interface implementation, whichever it
+                    // has, so the interface is the one that decides a type without a derive (OP3).
+                    B::Eq | B::Ne if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) => {
+                        self.globals.has_derived_eq_in(&ty, &self.bounds)
+                            || self.globals.eq_from_order(&ty, &self.bounds)
+                    }
                     B::Eq | B::Ne => self.globals.has_eq_in(&ty, &self.bounds),
                     B::Lt | B::Gt | B::Le | B::Ge => {
                         matches!(ty, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char)
-                            || self.globals.has_ord_in(&ty, &self.bounds)
+                            || if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) {
+                                self.globals.has_derived_ord_in(&ty, &self.bounds)
+                            } else {
+                                self.globals.has_ord_in(&ty, &self.bounds)
+                            }
                     }
                     _ => unreachable!("handled above"),
                 };

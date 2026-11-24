@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// A hand-written `PartialEq` can be a `Map` key only when the type also derives `Hash`: keys are hashed
+// structurally, and the derive is the promise that equal values hash alike (spec/derives.md, issue #918).
+
+struct Loose {
+    n: i32
+}
+
+Loose: PartialEq {
+    fn eq(self, other: Loose): bool {
+        self.n == other.n
+    }
+}
+
+struct Tight: Hash {
+    n: i32
+}
+
+Tight: PartialEq {
+    fn eq(self, other: Tight): bool {
+        self.n == other.n
+    }
+}
+
+fn main() {
+    let mut ok = Map<Tight, i32>.new()
+    ok.insert(Tight { n: 1 }, 1)
+    let mut bad = Map<Loose, i32>.new()
+    bad.insert(Loose { n: 1 }, 1) //~ E0141
+}

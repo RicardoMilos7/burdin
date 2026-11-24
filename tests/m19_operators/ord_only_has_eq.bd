@@ -1,0 +1,27 @@
+//@ run
+//> true
+//> false
+//> true
+
+// A type with a hand-written `PartialOrd` and no `PartialEq` satisfies `T: Ord`, and `Ord` brings `Eq`: two values
+// are equal when neither is less, in a generic body and for `==` alike (spec/derives.md, issue #918).
+
+struct Level: Copy, Clone {
+    n: i32
+}
+
+Level: PartialOrd {
+    fn lt(self, other: Level): bool {
+        self.n < other.n
+    }
+}
+
+fn tied<T: Ord>(a: T, b: T): bool {
+    a == b
+}
+
+fn main() {
+    println(tied(Level { n: 1 }, Level { n: 1 }).to_string())
+    println(tied(Level { n: 1 }, Level { n: 2 }).to_string())
+    println((Level { n: 3 } == Level { n: 3 }).to_string())
+}
