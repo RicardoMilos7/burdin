@@ -1,8 +1,27 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, and fifty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, fifty-second, and fifty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
+
+**Struct-like variants of generic enums built with a literal (issue #396, 2026-11-24).** `Shape<i32>.Rect { w: 2, h: 3 }`
+names the instance on the head, and `Shape.Rect { w: 2, h: 3 }` infers the arguments from the field values and the
+expected type, as a tuple variant does (`spec/arguments.md`, SL1-SL4). The bare form already parsed and was refused with
+E0002, not E9000 as the issue said; the explicit form did not parse at all, because the AST's `StructLit` had no room
+for the head's arguments. Now it does: `ExprKind::StructLit` carries the head's type arguments, and the formatter treats a
+generic head as a path (`crates/burdin_fmt/src/exprs.rs`). The checker is `struct_literal` and `literal_target` in
+`crates/burdin_sema/src/fncx/aggregate.rs` (an instance named by the arguments goes through `adt_path`, as a `match`
+scrutinee does), and `generic_variant_literal` in `fncx/generic.rs` (the inferred case, which mirrors
+`generic_struct_literal`). The arguments sit on the segment they follow: `StructLit` carries `(index, args)`, so
+`sh.Shape<i32>.Rect { ... }` has them on segment 1 (`parser/expr.rs`, `struct_head`). The checker resolves that
+segment as a module-qualified generic type (`written_instance` in `aggregate.rs`, which uses `generic_adt_path` and
+`generic_adt_type`); a segment that is not a generic type, such as a variant, takes none, which is E0003. The parser
+cannot tell a variant from a type in a module path, so `Shape.Rect<i32> { ... }` parses and the checker refuses it.
+No E9000 row existed for this construct, so `spec/e9000-audit.md` is unchanged. Tests:
+`tests/m21_reflect/generic_variant_literal` and `generic_variant_modules` (run), `generic_variant_literal_errors` and
+`generic_variant_modules_errors` (compile-fail, codes E0002 and E0003), the parser unit test
+`a_struct_literal_keeps_the_type_arguments_on_their_segment`, and the formatter unit test
+`a_struct_literal_of_a_generic_variant_keeps_its_arguments`.
 
 **Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
 (`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or

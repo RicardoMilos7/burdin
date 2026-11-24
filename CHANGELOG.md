@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #396: a struct-like variant of a generic enum can be built with a literal, `Shape<i32>.Rect { w: 2, h: 3 }`
+  with explicit arguments on the head, or `Shape.Rect { w: 2, h: 3 }` with the arguments inferred from the field values
+  and the expected type, as a tuple variant is (`spec/arguments.md`, SL1-SL4). The variant is matched by its fields
+  like any other, and `Self.Rect { ... }` works inside the impl block. A module path takes the arguments too:
+  `sh.Shape<i32>.Rect { ... }` and `sh.Wrapper<i32> { ... }`. The literal's errors are the ones a plain struct literal
+  gives (E0002, E0003), and a variant with arguments of its own is E0003. Tests: `tests/m21_reflect/generic_variant_literal`
+  and `generic_variant_modules` (run), `generic_variant_literal_errors` and `generic_variant_modules_errors`
+  (compile-fail); the parser keeps each segment's arguments (a unit test in `crates/burdin_syntax/src/parser/mod.rs`),
+  and the formatter lays out both forms (a unit test in `crates/burdin_fmt/src/docs.rs`).
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`

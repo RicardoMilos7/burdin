@@ -1,0 +1,33 @@
+//@ compile-fail
+
+// A struct-like variant of a generic enum built with a literal (issue #396) is checked like any literal: a field of
+// the wrong type, a missing or repeated field, an unknown field or variant, a variant without named fields, and the
+// wrong number of type arguments are each reported at the literal, and a literal whose arguments nothing determines
+// asks for them. Every error in the file is reported, and each line carries the code of its error.
+
+struct Wrapper<T> {
+    inner: T,
+}
+
+enum Shape<T> {
+    Dot
+    Circle(T)
+    Rect { w: T, h: T }
+}
+
+fn main() {
+    let a = Shape.Rect { w: 1, h: "x" } //~ E0003
+    let b = Shape.Rect { w: 1 } //~ E0003
+    let c = Shape.Rect { w: 1, h: 2, z: 3 } //~ E0002
+    let d = Shape.Nope { w: 1 } //~ E0002
+    let e = Shape.Circle { r: 1 } //~ E0003
+    let f = Shape<i32, i32>.Rect { w: 1, h: 2 } //~ E0003
+    let g = Missing.Rect { w: 1 } //~ E0002
+    let h = Shape<bool>.Rect { w: 1, h: 2 } //~ E0003
+    let i = Wrapper<i32, i32> { inner: 1 } //~ E0003
+    let j = Shape<i32>.Circle { r: 1 } //~ E0003
+    let k = Wrapper<i32> { inner: "s" } //~ E0003
+    let l: Shape<i32> = Shape.Rect { w: 1, h: 2, w: 3 } //~ E0003
+    let m = Shape.Rect {} //~ E0003
+    let n = Shape.Rect<i32> { w: 1, h: 2 } //~ E0003
+}

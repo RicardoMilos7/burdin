@@ -403,6 +403,7 @@ PathExpr      = IDENT [ GenericArgs ] ;                 (* later segments are pa
 TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
 ArrayExpr     = "[" [ Expr { "," Expr } [ "," ] ] "]" | "[" Expr ";" Expr "]" ;
 StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
+                                                         (* `Shape<i32>.Rect { ... }`: the arguments are the head's (`arguments.md`, SL1) *)
 FieldInit     = IDENT [ ":" Expr ] ;                    (* `x` alone is shorthand for `x: x` *)
 
 IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;

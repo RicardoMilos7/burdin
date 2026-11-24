@@ -169,7 +169,9 @@ impl FnCx<'_> {
                 let ty = Ty::Tuple(checked.iter().map(|e| e.ty.clone()).collect());
                 mk(tir::ExprKind::Tuple(checked), ty, span)
             }
-            K::StructLit(path, fields) => self.struct_literal(path, fields, expect, span),
+            K::StructLit(path, type_args, fields) => {
+                self.struct_literal(path, type_args.as_ref(), fields, expect, span)
+            }
             K::IfLet { pattern, scrutinee, then_block, else_expr } => {
                 self.if_let(pattern, scrutinee, then_block, else_expr.as_deref(), expect, span)
             }
