@@ -148,3 +148,68 @@ fn main() {
 ```
 
 A field of a view type, such as `str`, is not allowed. A struct stores values it owns, so text in a struct is a `String`.
+
+## Leaving out the type name
+
+When the place a value is written in already says its type, the type name can be left out. A leading dot means "the type
+this place expects":
+
+```burdin
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn distance(a: Point, b: Point): i32 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    dx * dx + dy * dy
+}
+
+fn origin(): Point {
+    .{ x: 0, y: 0 }
+}
+
+fn main() {
+    let p: Point = .{ x: 3, y: 4 }
+    println("{distance(p, origin())}")
+    println("{distance(.{ x: 1, y: 1 }, .{ x: 4, y: 3 })}")
+}
+```
+
+The program prints `25` and then `13`. The three forms are:
+
+| Written | Means | Example |
+| --- | --- | --- |
+| `.{ x: 3, y: 4 }` | `Point { x: 3, y: 4 }` | `let p: Point = .{ x: 3, y: 4 }` |
+| `.new(3, 4)` | `Point.new(3, 4)`, when `Point` has a `new` function | `let p: Point = .new(3, 4)` |
+| `.Red` | `Color.Red`, a variant of an enum | `let c: Color = .Red` |
+
+These places give the type:
+
+- a `let` with an annotation: `let names: List<String> = .new()`;
+- a parameter, for an argument: `distance(.{ x: 1, y: 1 }, ...)` in the program above;
+- a function's return type, for a `return` value and for the last value of the body, as `origin` does above;
+- a struct field: `Stack { items: .new() }`;
+- the place an assignment writes to: `cur = .{ x: 2, y: 3 }`.
+
+The type comes only from the place, never from a later use. A value that has no type of its own is an error, and the
+compiler says so:
+
+```text
+main.bd:7:13: error[E0003]: `.{ ... }` needs an expected type: write the
+    type, as in `List<String>.new()`, or give the place a type
+```
+
+A leading dot is not always allowed:
+
+- It cannot start a method call on its own. `.new().len()` is an error; write `List<String>.new().len()`.
+- The other side of `==` does not give a type. `c == .Red` is an error; write `c == Color.Red`.
+- The type must be a named type. A reference such as `&Point`, a `str`, and a type parameter that the place does not
+  know are errors.
+- `.{ ... }` builds a struct only. For an enum, write the variant, as in `.Red`. Tuples and arrays keep their own
+  spelling, `(1, 2)` and `[1, 2]`.
+
+The rules are the same as for `Point { ... }`, so every check on a struct literal applies here too. The
+[target-typed initializers](https://github.com/RicardoMilos7/burdin/blob/main/spec/target-typing.md) specification lists
+each rule.

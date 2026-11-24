@@ -287,7 +287,7 @@ impl Visit for Resolver {
                 self.expr(target);
                 self.expr(value);
             }
-            ExprKind::StructLit(_, fields) => {
+            ExprKind::StructLit(_, fields) | ExprKind::TargetStruct(fields) => {
                 for f in fields {
                     match &f.value {
                         Some(v) => self.expr(v),

@@ -636,6 +636,11 @@ pub enum ExprKind {
     },
     /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
     StructLit(Vec<Ident>, Vec<FieldInit>),
+    /// `.name`: a name the expected type has (`spec/target-typing.md`, TT1 and TT6): a variant, a function value,
+    /// or, as the callee of a `Call`, an associated function (`.new()`).
+    Target(Ident),
+    /// `.{ field: value, ... }`: a struct literal whose type is the expected type (TT1 and TT7).
+    TargetStruct(Vec<FieldInit>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,

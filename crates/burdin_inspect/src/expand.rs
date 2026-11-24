@@ -778,6 +778,7 @@ impl<'a> Expander<'a> {
         let atomic = matches!(
             e.kind,
             K::Name { .. }
+                | K::Target(_)
                 | K::SelfValue
                 | K::Field(..)
                 | K::TupleField(..)
@@ -1151,6 +1152,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
         | K::Bool(_)
         | K::Unit
         | K::Name { .. }
+        | K::Target(_)
         | K::SelfValue
         | K::Continue(_) => {}
         K::Break { value, .. } => {
@@ -1228,7 +1230,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             }
         }
         K::Closure { body, .. } => out.push(body),
-        K::StructLit(_, inits) => out.extend(inits.iter().filter_map(|i| i.value.as_ref())),
+        K::StructLit(_, inits) | K::TargetStruct(inits) => out.extend(inits.iter().filter_map(|i| i.value.as_ref())),
         K::ComptimeAssert(a, b) => {
             out.push(a);
             out.extend(b.iter().map(|b| &**b));

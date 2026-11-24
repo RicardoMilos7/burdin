@@ -66,6 +66,8 @@ tests/
                        mutual TLS, truncation, timeouts; its test certificates are committed under `src/certs` and made
                        by `tests/tls/regenerate.py`); needs OpenSSL's development files installed (`libssl-dev`,
                        `brew install openssl@3`)
+  target_typing/       target-typed initializers `.name`, `.name(args)`, and `.{ ... }`, whose type is the expected type
+                       of their position (spec/target-typing.md): run and compile-fail programs
 ```
 
 Stage 3's driver and tooling work has no conformance folders beyond `s3_bench`: each tool's behavior is pinned by
@@ -309,6 +311,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0290 | An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, on a variadic declaration, or two declarations of one C symbol that disagree about it |
 | E0300 | A `#!` shebang line anywhere but the first line of a file |
 | E0301 | Warning: a form the package's edition deprecates and the next edition removes; the fix writes the replacement (`spec/fix.md`, FX11). In the edition that removes the form, a use is E0002 with the same fix |
+
+Target-typed initializers (`spec/target-typing.md`, TT12) add no code: their errors are E0001, E0002, and E0003, which
+are registered above.
 
 ### Codes without a compile-fail test
 

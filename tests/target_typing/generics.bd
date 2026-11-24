@@ -1,0 +1,52 @@
+//@ run
+//> 1 x
+//> 4
+//> 0
+//> empty
+//> 0
+
+// Target-typed initializers of generic types (spec/target-typing.md, TT4): the type arguments of a generic struct,
+// enum, or associated function come from the expected type, and a generic callee's parameter type comes from the
+// call's explicit type arguments.
+
+struct Pair<A, B> {
+    a: A,
+    b: B,
+}
+
+enum Stack<T> {
+    Empty,
+    Node(T, Heap<Stack<T>>),
+}
+
+Stack<T> {
+    fn new(): Stack<T> {
+        Stack.Empty
+    }
+}
+
+fn first(p: Pair<i32, String>): i32 {
+    p.a
+}
+
+fn wrap<T>(): List<T> {
+    .new()
+}
+
+fn main() {
+    let p: Pair<i32, String> = .{ a: 1, b: String.from("x") }
+    println("{p.a} {p.b}")
+    println(first(.{ a: 4, b: String.from("y") }).to_string())
+
+    let v: List<Pair<i32, String>> = .new()
+    println(v.len().to_string())
+
+    let s: Stack<i32> = .new()
+    match s {
+        Stack.Empty => println("empty"),
+        Stack.Node(_, _) => println("node"),
+    }
+
+    let w: List<i32> = wrap<i32>()
+    println(w.len().to_string())
+}

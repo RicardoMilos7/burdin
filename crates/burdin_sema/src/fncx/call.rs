@@ -14,6 +14,10 @@ use burdin_tir::{self as tir, AssertKind, Builtin, FloatTy, FuncId, IntTy, Metho
 
 impl FnCx<'_> {
     pub(super) fn call(&mut self, callee: &ast::Expr, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
+        // `.name(args)`: an associated function of the expected type (spec/target-typing.md, TT1).
+        if let ast::ExprKind::Target(name) = &callee.kind {
+            return self.target_call(name, args, span, expect);
+        }
         if let ast::ExprKind::Field(recv, name) = &callee.kind {
             return self.method_call(recv, name, &[], args, span, expect);
         }

@@ -1,0 +1,29 @@
+//@ compile-fail
+
+// A target-typed form with no expected type is E0003 (spec/target-typing.md, TT3). A later use does not give it a
+// type, and neither does a method receiver or the other operand of a binary operator.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Color: Eq {
+    Red,
+    Green,
+}
+
+fn takes_list(list: List<String>) {
+    println(list.len().to_string())
+}
+
+fn main() {
+    let a = .new() //~ E0003
+    takes_list(a)
+    let b = .new().len() //~ E0003
+    let red = Color.Red
+    let same = red == .Red //~ E0003
+    let c = .{ x: 1, y: 2 } //~ E0003
+    let d = .Red //~ E0003
+    println("{b} {same} {c.x} {d}")
+}

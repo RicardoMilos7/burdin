@@ -510,6 +510,8 @@ impl Parser<'_> {
             }
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
+            // `.name` and `.{ fields }`: a value whose type is the expected type (spec/target-typing.md).
+            TokenKind::Dot => self.target_expr(),
             TokenKind::Reserved(_) => {
                 self.ident("an expression")?;
                 unreachable!()
@@ -533,6 +535,12 @@ impl Parser<'_> {
     }
 
     pub(super) fn struct_literal(&mut self, path: Vec<Ident>, start: Span) -> PResult<Expr> {
+        let (fields, close) = self.struct_body()?;
+        Ok(Expr { kind: ExprKind::StructLit(path, fields), span: start.to(close) })
+    }
+
+    /// The `{ field: value, ... }` of a struct literal, and the span of its closing brace.
+    fn struct_body(&mut self) -> PResult<(Vec<FieldInit>, Span)> {
         self.open(&TokenKind::LBrace, true)?;
         let mut fields = Vec::new();
         if !self.at(&TokenKind::RBrace) {
@@ -546,7 +554,25 @@ impl Parser<'_> {
             }
         }
         let close = self.close(&TokenKind::RBrace)?;
-        Ok(Expr { kind: ExprKind::StructLit(path, fields), span: start.to(close.span) })
+        Ok((fields, close.span))
+    }
+
+    /// `.name` or `.{ fields }` at the start of an expression (spec/target-typing.md, TT1). A `.` anywhere else is
+    /// member access, which the postfix loop reads; here nothing before the dot is an expression.
+    fn target_expr(&mut self) -> PResult<Expr> {
+        let start = self.expect(&TokenKind::Dot)?.span;
+        if self.at(&TokenKind::LBrace) {
+            let (fields, close) = self.struct_body()?;
+            return Ok(Expr { kind: ExprKind::TargetStruct(fields), span: start.to(close) });
+        }
+        match self.kind().clone() {
+            TokenKind::Ident(name) => {
+                let t = self.bump();
+                let name = Ident { name, span: t.span };
+                Ok(Expr { kind: ExprKind::Target(name), span: start.to(t.span) })
+            }
+            _ => Err(self.unexpected("a name or `{` after `.`")),
+        }
     }
 
     pub(super) fn match_expr(&mut self) -> PResult<Expr> {

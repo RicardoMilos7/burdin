@@ -129,6 +129,13 @@ impl Visit for Mentions {
                     }
                 }
             }
+            ExprKind::TargetStruct(fields) => {
+                for f in fields {
+                    if f.value.is_none() {
+                        self.add(&f.name.name);
+                    }
+                }
+            }
             _ => {}
         }
         walk_expr(self, e);

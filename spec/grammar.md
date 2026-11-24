@@ -392,7 +392,7 @@ Arg           = [ "mut" ] [ IDENT ":" ] Expr ;          (* `IDENT ":"` names the
 Primary       = Literal | PathExpr | "self" | "Self" | "(" ")" | "(" Expr ")" | TupleExpr
               | ArrayExpr | StructLiteral | Block | ClosureExpr | IfExpr | MatchExpr | LoopExpr | WhileExpr
               | ForExpr | SelectExpr | "unsafe" Block | "return" [ Expr ] | "break" [ LABEL ] [ Expr ]
-              | "continue" [ LABEL ] | LabeledExpr | InlineSnapshot ;
+              | "continue" [ LABEL ] | LabeledExpr | InlineSnapshot | TargetExpr ;
 
 Literal       = INT | FLOAT | CHAR | STRING | "true" | "false" ;
 InlineSnapshot = "@" STRING ;                           (* no placeholders; only `assert_snapshot`'s second argument, E0172 (test-runner.md, SN4) *)
@@ -405,6 +405,8 @@ TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
 ArrayExpr     = "[" [ Expr { "," Expr } [ "," ] ] "]" | "[" Expr ";" Expr "]" ;
 StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
 FieldInit     = IDENT [ ":" Expr ] ;                    (* `x` alone is shorthand for `x: x` *)
+TargetExpr    = "." IDENT | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
+                                                       (* `.name`, `.name(args)`, `.{ ... }`: the type is the expected type of the position, spec/target-typing.md TT1 *)
 
 IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
 Cond          = Expr | "let" Pattern "=" Expr ;

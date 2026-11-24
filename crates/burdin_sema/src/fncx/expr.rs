@@ -170,6 +170,8 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Tuple(checked), ty, span)
             }
             K::StructLit(path, fields) => self.struct_literal(path, fields, expect, span),
+            K::Target(name) => self.target_value(name, span, expect),
+            K::TargetStruct(fields) => self.target_struct(fields, span, expect),
             K::IfLet { pattern, scrutinee, then_block, else_expr } => {
                 self.if_let(pattern, scrutinee, then_block, else_expr.as_deref(), expect, span)
             }

@@ -166,7 +166,8 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
             }
         }
         K::Closure { body, .. } => out.push(Child::Expr(Role::Closure, body)),
-        K::StructLit(_, fields) => {
+        K::Target(_) => {}
+        K::StructLit(_, fields) | K::TargetStruct(fields) => {
             out.extend(fields.iter().filter_map(|f| f.value.as_ref()).map(|x| Child::Expr(Role::Plain, x)))
         }
         K::ComptimeAssert(c, m) => {
@@ -406,6 +407,7 @@ pub fn is_atomic(e: &Expr) -> bool {
             | K::Bool(_)
             | K::Unit
             | K::Name { .. }
+            | K::Target(_)
             | K::SelfValue
             | K::Tuple(_)
             | K::Array(_)
@@ -418,6 +420,7 @@ pub fn is_atomic(e: &Expr) -> bool {
             | K::Index(..)
             | K::Try(_)
             | K::StructLit(..)
+            | K::TargetStruct(..)
     )
 }
 

@@ -24,6 +24,7 @@ mod reflect;
 mod serial;
 mod stmt;
 mod suggest;
+mod target;
 
 pub(crate) use item::{check_const, check_defaults, check_function, infer_return};
 pub(crate) use reflect::RESERVED_MEMBERS;

@@ -88,6 +88,9 @@ fn main() {
 }
 ```
 
+Where the place expects one of these two types, the variant can start with a dot: `let found: Option<i32> = .Some(3)` and
+`let missing: Option<i32> = .None`.
+
 The [errors](/guide/errors/) chapter covers the shorter forms for these two types.
 
 ## Enums with generic data
@@ -116,6 +119,34 @@ fn main() {
 
 `*left` reads the value out of the box. The [ownership](/guide/ownership/) chapter explains why the match above moves the
 boxes out of `t`.
+
+## Variants where the type is known
+
+A variant can start with a dot when the place expects its enum. This follows the rule for struct values, described in
+[structs and methods](/guide/structs-and-methods/#leaving-out-the-type-name):
+
+```burdin
+enum Color {
+    Red
+    Green
+}
+
+fn name(c: Color): str {
+    match c {
+        Color.Red => "red",
+        Color.Green => "green",
+    }
+}
+
+fn main() {
+    let favorite: Color = .Green
+    println(name(favorite))
+    println(name(.Red))
+}
+```
+
+The program prints `green` and then `red`. The leading dot needs an expected type, and a comparison does not give one, so
+`favorite == .Green` is an error. Write `favorite == Color.Green` instead.
 
 ## Enums in other forms
 

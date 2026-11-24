@@ -447,6 +447,15 @@ impl Mapper<'_> {
                     }
                 }
             }
+            ExprKind::Target(name) => self.ident(name),
+            ExprKind::TargetStruct(fields) => {
+                for fi in fields {
+                    self.ident(&mut fi.name);
+                    if let Some(v) = &mut fi.value {
+                        self.expr(v);
+                    }
+                }
+            }
             ExprKind::IfLet { pattern, scrutinee, then_block, else_expr } => {
                 self.pat(pattern);
                 self.expr(scrutinee);

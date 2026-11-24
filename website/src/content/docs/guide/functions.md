@@ -83,6 +83,13 @@ fn main() {
 A named argument uses the parameter's name and a colon. Positional arguments come first, and once one argument is named,
 every later argument must be named too. Named arguments may be written in any order.
 
+## Arguments take the parameter's type
+
+An argument can start with a dot. It then takes the type of its parameter, so a struct can be passed without naming it:
+if `distance` takes two `Point` values, `distance(.{ x: 1, y: 1 }, .{ x: 4, y: 3 })` builds both. The
+[structs and methods](/guide/structs-and-methods/#leaving-out-the-type-name) chapter lists the places where the type comes
+from.
+
 ## Recursion
 
 A function can call itself. Each call has its own parameters and its own locals:

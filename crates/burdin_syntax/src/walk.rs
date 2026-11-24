@@ -203,13 +203,14 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             }
             v.expr(body);
         }
-        K::StructLit(_, fields) => {
+        K::StructLit(_, fields) | K::TargetStruct(fields) => {
             for f in fields {
                 if let Some(x) = &f.value {
                     v.expr(x);
                 }
             }
         }
+        K::Target(_) => {}
         K::IfLet { pattern, scrutinee, then_block, else_expr } => {
             v.expr(scrutinee);
             v.pattern(pattern);

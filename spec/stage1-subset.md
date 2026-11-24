@@ -29,6 +29,11 @@ A feature is in stage 1 only if one of these is true:
 Everything else waits for stage 2 (tasks and concurrency) or stage 3 (tooling and ecosystem), even if it is already
 designed.
 
+Target-typed initializers (`.name`, `.name(args)`, and `.{ ... }`, which take their type from the expected type) were
+considered and left out of stage 1. None of the three rules admits them, because each form has a spelling that already
+works. The rule is in `spec/target-typing.md` (TT1-TT12, issue #998). It landed as a standalone feature, not as a
+milestone, and the item is listed under "When wanted" below.
+
 **Done means:** the stage 1 milestones pass on Linux, macOS, and Windows, the whole stage 0 suite still passes, and
 every stage 0 gap listed in "Fixes that ship with stage 1" has a registry code and tests.
 
@@ -414,6 +419,7 @@ written down.
 | Compiler-inserted preemption checks | not landed; cooperative preemption points are a later concurrency item | `tasks.md` (no preemption in stage 2.1) | not recorded |
 | A MIR | not planned: the comptime engine and the checks read the typed tree (decision 6) | `comptime.md`, CT1 | #158, #159 (closed as not chosen) |
 | A package registry | not landed; a `version` with no `path` or `git` is an error | `packages.md`, PKG2 and PKG11 | not recorded |
+| Target-typed initializers: `.name`, `.name(args)`, and `.{ ... }` take their type from the expected type | landed outside the milestones (`tests/target_typing`); not a stage 1 milestone | `target-typing.md`, TT1-TT12 | #998 |
 
 ## Working on stage 1
 

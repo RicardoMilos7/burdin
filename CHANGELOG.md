@@ -6,6 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #998: target-typed initializers. `.name`, `.name(args)`, and `.{ fields }` take their type from the expected
+  type of their position, as `T.name`, `T.name(args)`, and `T { fields }` do for the `T` the position gives
+  (`spec/target-typing.md`, TT1-TT12; `spec/grammar.md`, `TargetExpr`). `let list: List<String> = .new()`,
+  `a(.{ x: 10, y: 20 })`, and `pick(.Red)` need no repeated type. No new error code: E0003 for a form with no usable
+  expected type, E0002 for a name the type lacks, and E0001 for a bare `.`. Tests: `tests/target_typing/`.
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`
