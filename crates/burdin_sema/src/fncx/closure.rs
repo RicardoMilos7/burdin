@@ -575,6 +575,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
@@ -945,13 +946,16 @@ impl FreeNames {
                 self.expr(body);
                 self.scopes.pop();
             }
-            K::StructLit(_, fields) | K::TargetStruct(fields) => {
+            K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.expr(v);
                     } else {
                         self.use_name(&f.name.name, f.name.span);
                     }
+                }
+                if let Some(b) = base {
+                    self.expr(b);
                 }
             }
             K::IfLet { pattern, scrutinee, then_block, else_expr } => {
@@ -989,11 +993,12 @@ fn pattern_names(pat: &ast::Pattern, out: &mut Vec<String>) {
     match &pat.kind {
         ast::PatternKind::Wild | ast::PatternKind::Lit(_) | ast::PatternKind::Range(..) | ast::PatternKind::Path(_) => {
         }
+        ast::PatternKind::Rest(name) => out.extend(name.iter().map(|n| n.name.clone())),
         ast::PatternKind::Binding { name, .. } => out.push(name.name.clone()),
-        ast::PatternKind::Tuple(subs) | ast::PatternKind::TupleStruct(_, subs) => {
+        ast::PatternKind::Tuple(subs) | ast::PatternKind::TupleStruct(_, subs) | ast::PatternKind::Slice(subs) => {
             subs.iter().for_each(|p| pattern_names(p, out))
         }
-        ast::PatternKind::Struct(_, fields) => {
+        ast::PatternKind::Struct(_, fields, _) => {
             for f in fields {
                 match &f.pattern {
                     Some(p) => pattern_names(p, out),
@@ -1055,8 +1060,9 @@ fn contains_return(e: &ast::Expr) -> bool {
             contains_return(scrutinee)
                 || arms.iter().any(|arm| arm.guard.as_ref().is_some_and(contains_return) || contains_return(&arm.body))
         }
-        K::StructLit(_, fields) | K::TargetStruct(fields) => {
+        K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
             fields.iter().any(|f| f.value.as_ref().is_some_and(contains_return))
+                || base.as_deref().is_some_and(contains_return)
         }
         K::Target(_) => false,
         K::IfLet { scrutinee, then_block, else_expr, .. } => {

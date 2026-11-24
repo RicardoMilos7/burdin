@@ -1,0 +1,27 @@
+//@ run
+//> drop 5
+//> a 4
+//> drop 4
+
+// The unmoved element of a temporary array drops at the end of the `let` statement that destructured it (AP10, DR5).
+// The bound element `a` lives to the end of `main`.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        let id = self.id
+        println("drop {id}")
+    }
+}
+
+fn make(): [Noisy; 2] {
+    [Noisy { id: 4 }, Noisy { id: 5 }]
+}
+
+fn main() {
+    let [a, _] = make()
+    println("a {a.id}")
+}

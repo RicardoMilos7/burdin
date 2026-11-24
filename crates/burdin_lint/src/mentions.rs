@@ -121,7 +121,7 @@ impl Visit for Mentions {
         match &e.kind {
             ExprKind::Name { name, .. } => self.add(&name.name),
             ExprKind::Field(_, name) => self.add(&name.name),
-            ExprKind::StructLit(path, fields) => {
+            ExprKind::StructLit(path, _, fields, _) => {
                 self.path(path);
                 for f in fields {
                     if f.value.is_none() {
@@ -129,7 +129,7 @@ impl Visit for Mentions {
                     }
                 }
             }
-            ExprKind::TargetStruct(fields) => {
+            ExprKind::TargetStruct(fields, _) => {
                 for f in fields {
                     if f.value.is_none() {
                         self.add(&f.name.name);
@@ -144,7 +144,7 @@ impl Visit for Mentions {
     fn pattern(&mut self, p: &Pattern) {
         match &p.kind {
             PatternKind::Binding { name, .. } => self.add(&name.name),
-            PatternKind::Path(path) | PatternKind::TupleStruct(path, _) | PatternKind::Struct(path, _) => {
+            PatternKind::Path(path) | PatternKind::TupleStruct(path, _) | PatternKind::Struct(path, _, _) => {
                 self.path(path);
             }
             _ => {}

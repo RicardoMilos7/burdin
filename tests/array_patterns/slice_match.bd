@@ -1,0 +1,25 @@
+//@ run
+//> empty
+//> one 4
+//> two 4 9
+//> many, first 4
+
+// A slice pattern without a rest element matches exactly its length, and a rest element matches the rest (AP5, AP11).
+// The four arms cover every length, so the match is exhaustive.
+
+fn describe(xs: [i32]) {
+    match xs {
+        [] => println("empty")
+        [x] => println("one {x}")
+        [x, y] => println("two {x} {y}")
+        [first, ..] => println("many, first {first}")
+    }
+}
+
+fn main() {
+    let arr = [4, 9, 2]
+    describe(arr[0..0])
+    describe(arr[0..1])
+    describe(arr[0..2])
+    describe(arr[0..3])
+}

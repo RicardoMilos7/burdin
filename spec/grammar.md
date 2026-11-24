@@ -43,6 +43,10 @@ member names are `any`, `impl`, `error`, `comptime`, and `derive`: the words a `
 name of an extension method follows a `.` in its declaration (`fn Type.name`), so it may be a member name too. A
 keyword is still rejected as the name of a free function or an `extern` function, since no `.` reaches those names.
 
+`static` is not a keyword. A declaration that begins `static` followed by `mut` or a name is a `StaticItem` at module
+scope (`globals.md`, GL1); in a function body it is E0302, and the rest of it is read as a `let`. Otherwise the word is
+an ordinary identifier, so `static: Interface { }` is still an impl block, and `static` may name a local.
+
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `fuzz` (item start, followed
 by a name and a parameter list; [`fuzz.md`](fuzz.md), FZ1),
@@ -180,6 +184,7 @@ AssociatedTypeBinding = "type" IDENT "=" Type ;
 
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
 ConstItem     = "const" IDENT ":" Type "=" Expr ;
+StaticItem    = "static" [ "mut" ] IDENT ":" Type "=" Expr ;   (* module scope only: a `static` in a body is E0302; `spec/globals.md`, GL1-GL2 *)
 
 UseItem       = [ "pub" ] "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;   (* `pub` re-exports *)
 
@@ -403,7 +408,9 @@ PathExpr      = IDENT [ GenericArgs ] ;                 (* later segments are pa
                                                          (* `Self` is a path for `Self.new()`, `Self.Variant`, and `Self { ... }` *)
 TupleExpr     = "(" Expr "," [ Expr { "," Expr } [ "," ] ] ")" ;
 ArrayExpr     = "[" [ Expr { "," Expr } [ "," ] ] "]" | "[" Expr ";" Expr "]" ;
-StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
+StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}"
+              | PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } Sep ] ".." Expr "}" ;   (* with a base: last, rule 8.12 *)
+                                                         (* `Shape<i32>.Rect { ... }`: the arguments are the head's (`arguments.md`, SL1) *)
 FieldInit     = IDENT [ ":" Expr ] ;                    (* `x` alone is shorthand for `x: x` *)
 TargetExpr    = "." IDENT | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
                                                        (* `.name`, `.name(args)`, `.{ ... }`: the type is the expected type of the position, spec/target-typing.md TT1 *)
@@ -461,12 +468,27 @@ PrimaryPat    = "_"
               | [ "-" ] Literal [ "..=" [ "-" ] Literal ]        (* literal or inclusive range: 4..=9 *)
               | [ "mut" ] IDENT                                  (* binding, or a unit variant or constant in scope *)
               | PatPath
-              | PatPath "(" [ Pattern { "," Pattern } [ "," ] ] ")"
+              | PatPath "(" [ ElemPat { "," ElemPat } [ "," ] ] ")"
               | PatPath "{" [ FieldPat { Sep FieldPat } [ Sep ] ] "}"
-              | "(" [ Pattern { "," Pattern } [ "," ] ] ")" ;    (* tuple; `(p)` is just p *)
+              | PatPath "{" [ FieldPat { Sep FieldPat } Sep ] ".." [ Sep ] "}"   (* rest: `..` last, rule 7.1 *)
+              | "(" [ ElemPat { "," ElemPat } [ "," ] ] ")"    (* tuple; `(p)` is just p *)
+              | "[" [ ElemPat { "," ElemPat } [ "," ] ] "]" ;  (* array or slice pattern, rule 7.2 *)
+ElemPat       = Pattern | ".." | ".." IDENT ;                   (* `..` or `..name` is a rest element, rules 7.1, 7.2 *)
 PatPath       = ( IDENT | "Self" ) { "." IDENT } ;               (* Some, Shape.Circle, Token.Num, Self.Variant *)
 FieldPat      = IDENT [ ":" Pattern ] ;                          (* `w` alone is shorthand for `w: w` *)
 ```
+
+**Rest (`..`, rule 7.1).** `..` stands for the elements or fields a pattern does not name. In a tuple or tuple-variant
+pattern it is an `ElemPat` and may stand anywhere, at most once (E0010); in a struct pattern it is the last item (E0012
+for one before a field). A `..` that stands for nothing is E0011. `spec/rest-patterns.md` has the rules (RP1-RP7); the
+type checker turns each `..` into wildcards, so the checks and code generation see no rest form.
+
+**Array and slice patterns (`[...]`, rule 7.2).** `[` begins a pattern wherever a pattern is allowed. Its elements are
+`ElemPat`s, and at most one is a rest element: `..`, or `..name` to bind the rest, which a tuple or tuple-variant
+pattern may not use (E0016). `[]` is valid. A pattern on `[T; n]` names `n` elements (or fewer with a rest) and a pattern
+on `[T]` matches its length; a pattern on any other type is E0003. `spec/array-patterns.md` has the rules (AP1-AP12).
+Unlike a tuple, a `[...]` pattern is not desugared to wildcards: the slice form keeps its rest through the checks and
+code generation (`Pat::Slice`).
 
 A bare identifier pattern is a binding unless a unit variant or constant with that name is in scope (`None` is, through
 the prelude). The linter requires bindings to be lowercase. A string literal pattern compares a `str` scrutinee byte
@@ -522,6 +544,10 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
     pattern for the same reason). Witnesses: `tests/m02_basics/while_let.bd`
     (runs), `while_let_errors.bd` and `while_let_else.bd` (codes and lines), `tests/m05_ownership/while_let_moves.bd`
     (runs, drops per pass), and `while_let_moves_errors.bd` (a moved scrutinee is E0104).
+12. **Struct update and rest.** After a struct literal's fields, `..` followed by an expression is a base
+    (`Pair { left: 1, ..other }`, `spec/struct-update.md`, SU1): it is the last item, with no separator after it, at
+    most one (E0013), and no field after it (E0014). In a pattern the same token is the rest (`spec/rest-patterns.md`).
+    A struct literal's `..` is recognized by the token after its `{`, so `Pair { ..p }` is a literal with a base.
 
 ## 9. What the parser does not decide
 

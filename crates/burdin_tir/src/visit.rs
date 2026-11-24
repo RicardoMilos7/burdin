@@ -44,6 +44,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Bytes(_)
         | K::Local(_)
         | K::Const(_)
+        | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
         | K::None
@@ -186,6 +187,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Bytes(_)
         | K::Local(_)
         | K::Const(_)
+        | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
         | K::None
@@ -289,6 +291,13 @@ pub fn pat_locals(p: &Pat, out: &mut Vec<crate::LocalId>) {
         }
         Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pat_locals(inner, out),
         Pat::Or(ps) | Pat::Product(ps) | Pat::Variant(_, ps) => ps.iter().for_each(|q| pat_locals(q, out)),
+        Pat::Slice { prefix, rest, suffix } => {
+            prefix.iter().for_each(|q| pat_locals(q, out));
+            if let Some(rest) = rest {
+                pat_locals(rest, out);
+            }
+            suffix.iter().for_each(|q| pat_locals(q, out));
+        }
         Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
     }
 }

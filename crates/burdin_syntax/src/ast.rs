@@ -309,10 +309,23 @@ pub struct ImplBlock {
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub is_priv: bool,
+    /// Whether the declaration is a `const`, or a `static` (immutable or `static mut`), spec/globals.md.
+    pub kind: ConstKind,
     pub name: Ident,
     pub ty: Type,
     pub value: Expr,
     pub span: Span,
+}
+
+/// The keyword of a module-level value declaration (`spec/globals.md`, GL1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstKind {
+    /// `const NAME: T = expr`: a value copied into each use.
+    Const,
+    /// `static NAME: T = expr`: one value for the whole program, read-only.
+    Static,
+    /// `static mut NAME: T = expr`: one value for the whole program, written in `unsafe` code.
+    StaticMut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -452,6 +465,9 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone)]
+// `Let` holds its whole `Pattern` inline, and a struct pattern's `..` span (spec/rest-patterns.md, RP3) made that
+// pattern larger than the expression variant. Boxing every `let` pattern would cost more than the size difference.
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     Let { pattern: Pattern, ty: Option<Type>, init: Expr, else_block: Option<Block>, span: Span },
     Expr(Expr),
@@ -473,10 +489,18 @@ pub enum PatternKind {
     Path(Vec<Ident>),
     /// `Path(p, ...)`, such as `Some(v)`.
     TupleStruct(Vec<Ident>, Vec<Pattern>),
-    /// `Path { field, field: p, ... }`.
-    Struct(Vec<Ident>, Vec<FieldPat>),
+    /// `Path { field, field: p, ... }`, with the span of its `..` when the pattern has one (`spec/rest-patterns.md`,
+    /// RP3): the fields it does not name are then ignored.
+    Struct(Vec<Ident>, Vec<FieldPat>, Option<Span>),
     Or(Vec<Pattern>),
     At(Ident, Box<Pattern>),
+    /// A `..` rest element: an element of a tuple, tuple-variant, or array or slice pattern, which stands for the
+    /// elements the pattern does not name (`spec/rest-patterns.md`). The type checker turns it into wildcards. A
+    /// `..name` binds the elements it stands for, which only an array or slice pattern may do (`spec/array-patterns.md`,
+    /// AP6).
+    Rest(Option<Ident>),
+    /// `[p, ..., q]`: an array or slice pattern (`spec/array-patterns.md`). Its elements are patterns or rest elements.
+    Slice(Vec<Pattern>),
 }
 
 #[derive(Clone, Debug)]
@@ -634,13 +658,16 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Box<Expr>,
     },
-    /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
-    StructLit(Vec<Ident>, Vec<FieldInit>),
+    /// `Path { field: value, ..base }`; the path is a type name or `Enum.Variant`. The type arguments, when written, are
+    /// the segment's index and its arguments: `Shape<i32>.Rect { ... }` has `(0, [i32])` and `sh.Shape<i32>.Rect`
+    /// has `(1, [i32])`. The base, when there is one, takes every field the literal does not name (`spec/struct-update.md`).
+    StructLit(Vec<Ident>, Option<(usize, Vec<Type>)>, Vec<FieldInit>, Option<Box<Expr>>),
     /// `.name`: a name the expected type has (`spec/target-typing.md`, TT1 and TT6): a variant, a function value,
     /// or, as the callee of a `Call`, an associated function (`.new()`).
     Target(Ident),
-    /// `.{ field: value, ... }`: a struct literal whose type is the expected type (TT1 and TT7).
-    TargetStruct(Vec<FieldInit>),
+    /// `.{ field: value, ..base }`: a struct literal whose type is the expected type (TT1, TT7, and the base as in
+    /// `StructLit`).
+    TargetStruct(Vec<FieldInit>, Option<Box<Expr>>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,

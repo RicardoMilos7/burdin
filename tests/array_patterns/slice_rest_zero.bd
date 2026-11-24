@@ -1,0 +1,17 @@
+//@ run
+//> all 3
+//> none 0
+
+// `[..all]` matches every slice, the empty one included, so it is irrefutable and binds the whole view (AP5).
+
+fn count(xs: [i32]): usize {
+    match xs {
+        [..all] => all.len()
+    }
+}
+
+fn main() {
+    let arr = [7, 8, 9]
+    println("all {count(arr[0..3])}")
+    println("none {count(arr[0..0])}")
+}

@@ -202,6 +202,144 @@ fn main() {}
 **How to fix:** break the cycle: give the constant a value that does not mention it, point the alias at a concrete
 type, or put the recursive value behind a `Heap<T>` (or a `List<T>`, which allocates).
 
+## E0010: A second `..` in one pattern
+
+A tuple, tuple-variant, or struct pattern has more than one `..`. A pattern stands for the elements it does not
+name with one `..`, so a second one has no meaning (`spec/rest-patterns.md`, RP3).
+
+<!-- error-example: E0010 -->
+```burdin
+fn main() {
+    let (a, .., b, ..) = (1, 2, 3) //~ E0010
+}
+```
+<!-- /error-example -->
+
+**How to fix:** keep one `..` and name the parts on the other side of it explicitly.
+
+## E0011: A `..` that stands for nothing
+
+A `..` in a pattern stands for at least one element or field of the matched type. When the pattern already names all of
+them, the `..` ignores nothing and is an error (`spec/rest-patterns.md`, RP4). The check uses the type of the value
+being matched.
+
+<!-- error-example: E0011 -->
+```burdin
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let Pair { left, right, .. } = p //~ E0011
+    let (a, b, ..) = (1, 2) //~ E0011
+}
+```
+<!-- /error-example -->
+
+**How to fix:** remove the `..`; the pattern already matches the whole value.
+
+## E0012: A `..` in the wrong place in a struct pattern
+
+In a struct pattern, `..` must come after every named field: a `..` before a field, or a field after a `..`, is an
+error (`spec/rest-patterns.md`, RP3). A tuple pattern may put its `..` anywhere.
+
+<!-- error-example: E0012 -->
+```burdin
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let Pair { .., left } = p //~ E0012
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write the `..` last, after the fields you name.
+
+## E0013: A second `..base` in a struct literal
+
+A struct literal has at most one base after `..` (`spec/struct-update.md`, SU1). The second base is an error; the
+first one is the base.
+
+<!-- error-example: E0013 -->
+```burdin
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let q = Pair { ..p, ..p } //~ E0013
+}
+```
+<!-- /error-example -->
+
+**How to fix:** keep one base; name the fields that come from the other value.
+
+## E0014: A struct literal base that is not last
+
+The base of a struct literal, `..base`, is the last item and has no separator after it (`spec/struct-update.md`, SU1).
+A field after it, or a comma after it, is an error.
+
+<!-- error-example: E0014 -->
+```burdin
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let q = Pair { ..p, left: 3 } //~ E0014
+}
+```
+<!-- /error-example -->
+
+**How to fix:** move the `..base` after the named fields, with no comma after it.
+
+## E0015: Struct update on an enum variant
+
+`..base` takes the fields of a struct. An enum variant's fields exist only in the variants the enum has, and a base
+of the enum type may hold any of them, so a variant with named fields cannot be updated (`spec/struct-update.md`, SU7).
+
+<!-- error-example: E0015 -->
+```burdin
+enum Shape {
+    Rect { w: i32, h: i32 }
+    Dot
+}
+
+fn main() {
+    let r = Shape.Rect { w: 2, h: 3 }
+    let s = Shape.Rect { w: 4, ..r } //~ E0015
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write every field of the variant, or keep the values in a struct and update that.
+
+## E0016: A named rest in a tuple pattern
+
+`..name` binds the elements a rest stands for, and only an array or slice pattern has elements to bind that way. A
+tuple pattern takes a plain `..` (`spec/array-patterns.md`, AP6).
+
+<!-- error-example: E0016 -->
+```burdin
+fn main() {
+    let (a, ..rest) = (1, 2, 3) //~ E0016
+    println("{a}")
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write `..` without a name in a tuple, or destructure an array with `[a, ..rest]`.
+
 ## E0100: Use of a moved value
 
 The value was moved earlier, so this use would read storage that no longer owns anything. The diagnostic carries
@@ -2096,3 +2234,64 @@ fn main() {
 **How to fix:** `burdin fix` applies the fix (`unimplemented()` becomes `panic("not implemented")`), and
 `burdin fix --migrate` applies it and moves the package to the next edition, after checking that the package compiles
 there. Write `todo()` instead when the function is still to be written.
+
+## E0302: `static` in a function body
+
+A `static` is a module item: it is declared at module scope, where its value is stored once before `main` runs and
+lives for the whole program (`spec/globals.md`, GL1). A `static` or `static mut` declaration in a function body is
+this error, and it is reported at the `static` keyword. The rest of the declaration is read as a `let`, so the body is
+still checked.
+
+<!-- error-example: E0302 -->
+```burdin
+fn main() {
+    static LIMIT: i32 = 3 //~ E0302
+    println(LIMIT.to_string())
+}
+```
+<!-- /error-example -->
+
+**How to fix:** move the declaration to module scope. A value that is computed inside one function is a `let` binding
+there.
+
+## E0303: `static` of a type that is not plain data
+
+A `static` is never dropped (`spec/globals.md`, GL5), so its type must own no memory and have no destructor. The plain
+types are the scalars, `bool`, `char`, `str`, and tuples, arrays, `Option`, `Result`, ranges, and structs and enums
+whose fields are plain. A `String`, a `List`, a `Map`, a `Heap`, a `Shared`, an `Arena`, a closure, an `any`, or a type
+with a `Drop` implementation is E0303, at the type.
+
+<!-- error-example: E0303 -->
+```burdin
+static NAME: String = String.from("burdin") //~ E0303
+
+fn main() {
+    println(NAME)
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write `const` when the value is known at compile time, which copies it into each use and accepts a
+`String` (`spec/comptime.md`, CT3). A value that a function owns and changes belongs in a `let` or a `mut` parameter.
+
+## E0304: borrow of a `static mut`
+
+A `static mut` may be read and written only in `unsafe` code (E0161), and its value may not be borrowed: no reference
+can alias it, so a read or a write never conflicts with another (`spec/globals.md`, GL4). A borrow of it, `&NAME`,
+`&mut NAME`, or a method call that takes `self` by reference, is E0304 at the borrow.
+
+<!-- error-example: E0304 -->
+```burdin
+static mut COUNT: i32 = 0
+
+fn main() {
+    unsafe {
+        let shared = &COUNT //~ E0304
+        println((*shared).to_string())
+    }
+}
+```
+<!-- /error-example -->
+
+**How to fix:** read the value into a local with a copy, `let count = COUNT`, and borrow the local. An immutable
+`static` may be borrowed freely, since it is never written (`spec/globals.md`, GL3).

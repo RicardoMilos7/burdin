@@ -1,0 +1,94 @@
+//@ compile-fail
+
+// A `where` predicate on an associated-type projection is checked where it is used: a call whose projection does not
+// meet the bound is E0141 at the call, a body that uses a projection beyond its bounds is E0141, and a predicate on a
+// projection no interface answers is E0145. An impl block's projected predicate decides whether the impl applies
+// (spec/associated-types.md, AT7).
+
+interface Container {
+    type Item
+    fn get(own self): Self.Item
+}
+
+interface Describe {
+    fn describe(own self): String
+}
+
+// No `Eq` and no `Describe`: it cannot be the item of a container used under those bounds.
+struct Plain {
+    n: i32
+}
+
+struct Holder {
+    value: Plain
+}
+
+Holder: Container {
+    type Item = Plain
+    fn get(own self): Self.Item { self.value }
+}
+
+struct Count {
+    n: i32
+}
+
+Count: Container {
+    type Item = i32
+    fn get(own self): Self.Item { self.n }
+}
+
+fn same<C: Container>(own a: C, own b: C): bool where C.Item: Eq {
+    a.get() == b.get()
+}
+
+fn show<C: Container>(own c: C): String where C.Item: Describe {
+    c.get().describe()
+}
+
+// The projection has no `Eq` bound in this body, so `==` on it is not available.
+fn unbounded<C: Container>(own a: C, own b: C): bool {
+    a.get() == b.get() //~ E0141
+}
+
+// `Count`'s item is `i32`, which has no `Describe` implementation, so the call fails.
+fn use_show(own c: Count): String {
+    show(c) //~ E0141
+}
+
+// `Holder`'s item is `Plain`, which is not `Eq`.
+fn use_same(own a: Holder, own b: Holder): bool {
+    same(a, b) //~ E0141
+}
+
+// No interface implemented for `Count` declares an associated type named `Missing`.
+fn missing<C>(own c: C): bool where C.Missing: Eq { //~ E0145
+    true
+}
+
+// A projection on a parameter that has no bounds at all.
+fn bare<C>(own c: C): bool where C.Item: Eq { //~ E0145
+    true
+}
+
+struct Wrapper<C: Container> {
+    inner: C
+}
+
+// The impl applies only where the projection is `Describe`; `Holder`'s item is not.
+Wrapper<C>: Describe where C.Item: Describe {
+    fn describe(own self): String { self.inner.get().describe() }
+}
+
+// A method's own parameter with a projected predicate is checked at the call too.
+Count {
+    fn matches<U: Container>(self, own u: U): bool where U.Item: Eq {
+        let v = u.get()
+        v == v
+    }
+}
+
+fn main() {
+    println("{}", Count { n: 1 }.matches(Holder { value: Plain { n: 1 } })) //~ E0141
+    let w = Wrapper { inner: Holder { value: Plain { n: 1 } } }
+    println("{}", w.describe()) //~ E0002
+}

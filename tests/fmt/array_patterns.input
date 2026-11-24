@@ -1,0 +1,12 @@
+fn main() {
+    let [a,   b] = arr
+    let [first,   ..rest] = names
+    let [ .. ] = names
+    let [x,   ..mid, last] = arr
+    let [  ] = empty
+    match names {
+        [n,   ..tail] => println("{n} {tail}")
+        [] => println("none")
+    }
+    let (pair,   ..more) = (1, 2)
+}

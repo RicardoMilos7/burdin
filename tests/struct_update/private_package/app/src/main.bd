@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A base takes every field it does not name, so a `priv` field of a struct in another package is E0150 there, as it
+// is for a named field (spec/struct-update.md, SU8). The `id` field is public and named, so it is fine.
+
+use lib.{Gadget}
+
+fn main() {
+    let g = Gadget.new(1)
+    let h = Gadget { id: 2, ..g } //~ E0150
+    let k = Gadget { secret: 3, ..g } //~ E0150
+    println("{h.id} {k.id}")
+}

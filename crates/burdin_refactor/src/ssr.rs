@@ -282,7 +282,7 @@ impl Pattern {
                     })
             }
             (ExprKind::Target(a), ExprKind::Target(b)) => a.name == b.name,
-            (ExprKind::TargetStruct(f1), ExprKind::TargetStruct(f2)) => {
+            (ExprKind::TargetStruct(f1, b1), ExprKind::TargetStruct(f2, b2)) => {
                 f1.len() == f2.len()
                     && f1.iter().zip(f2).all(|(x, y)| {
                         x.name.name == y.name.name
@@ -292,10 +292,29 @@ impl Pattern {
                                 _ => false,
                             }
                     })
+                    && match (b1, b2) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => self.matches(cx, a, b, bound),
+                        _ => false,
+                    }
             }
-            (ExprKind::StructLit(path_a, f1), ExprKind::StructLit(path_b, f2)) => {
+            (ExprKind::StructLit(path_a, args_a, f1, b1), ExprKind::StructLit(path_b, args_b, f2, b2)) => {
                 path_a.len() == path_b.len()
                     && path_a.iter().zip(path_b).all(|(x, y)| x.name == y.name)
+                    && match (args_a, args_b) {
+                        (None, None) => true,
+                        (Some((ia, xa)), Some((ib, xb))) => {
+                            ia == ib
+                                && xa.len() == xb.len()
+                                && xa.iter().zip(xb).all(|(x, y)| cx.type_text(x) == cx.type_text(y))
+                        }
+                        _ => false,
+                    }
+                    && match (b1, b2) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => self.matches(cx, a, b, bound),
+                        _ => false,
+                    }
                     && f1.len() == f2.len()
                     && f1.iter().zip(f2).all(|(x, y)| {
                         x.name.name == y.name.name
@@ -366,6 +385,11 @@ struct MatchCx<'a> {
 impl MatchCx<'_> {
     fn text(&self, e: &Expr) -> String {
         self.text.get(e.span.lo as usize..e.span.hi as usize).unwrap_or("").to_string()
+    }
+
+    /// The source text of a type, so two type arguments match when they are written the same way.
+    fn type_text(&self, t: &ast::Type) -> String {
+        self.text.get(t.span.lo as usize..t.span.hi as usize).unwrap_or("").to_string()
     }
 
     /// Whether the name `pattern` written in the pattern matches the name `written` at `at` in the code (RF3).

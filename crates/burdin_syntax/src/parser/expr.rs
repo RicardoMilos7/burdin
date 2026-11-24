@@ -3,7 +3,7 @@
 use super::{PResult, Parser, Restriction};
 use crate::ast::*;
 use crate::token::TokenKind;
-use burdin_diag::Span;
+use burdin_diag::{Code, Span};
 
 impl Parser<'_> {
     pub fn expr(&mut self) -> PResult<Expr> {
@@ -212,11 +212,18 @@ impl Parser<'_> {
                                 let args = self.expr_generic_args()?;
                                 let span = e.span.to(self.prev_span());
                                 e = Expr { kind: ExprKind::TypeArgs(Box::new(e), args), span };
+                                // `sh.Wrapper<i32> { ... }`: the arguments on a module-qualified type head a literal.
+                                if self.at_struct_literal(r)
+                                    && let Some((path, type_args)) = struct_head(&e)
+                                {
+                                    let start = e.span;
+                                    e = self.struct_literal(path, type_args, start)?;
+                                }
                             } else if self.at_struct_literal(r)
-                                && let Some(path) = expr_path(&e)
+                                && let Some((path, type_args)) = struct_head(&e)
                             {
                                 let start = e.span;
-                                e = self.struct_literal(path, start)?;
+                                e = self.struct_literal(path, type_args, start)?;
                             }
                         }
                         TokenKind::Int(n) => {
@@ -368,7 +375,7 @@ impl Parser<'_> {
                 self.bump();
                 let name = Ident { name: "Self".to_string(), span: start };
                 if self.at_struct_literal(r) {
-                    return self.struct_literal(vec![name], start);
+                    return self.struct_literal(vec![name], None, start);
                 }
                 Ok(Expr { kind: ExprKind::Name { name, args: Vec::new() }, span: start })
             }
@@ -378,7 +385,8 @@ impl Parser<'_> {
                 let name = self.ident("an expression")?;
                 let args = if generic { self.expr_generic_args()? } else { Vec::new() };
                 if self.at_struct_literal(r) {
-                    return self.struct_literal(vec![name], start);
+                    let type_args = (!args.is_empty()).then_some((0, args));
+                    return self.struct_literal(vec![name], type_args, start);
                 }
                 let span = if args.is_empty() { name.span } else { start.to(self.prev_span()) };
                 Ok(Expr { span, kind: ExprKind::Name { name, args } })
@@ -534,27 +542,60 @@ impl Parser<'_> {
         self.at(&TokenKind::LBrace) && !self.nl() && r == Restriction::None && looks_like_struct_literal(self)
     }
 
-    pub(super) fn struct_literal(&mut self, path: Vec<Ident>, start: Span) -> PResult<Expr> {
-        let (fields, close) = self.struct_body()?;
-        Ok(Expr { kind: ExprKind::StructLit(path, fields), span: start.to(close) })
+    /// A struct literal after its head: `Wrapper { ... }`, `Shape.Rect { ... }`, `Shape<i32>.Rect { ... }`, or
+    /// `sh.Shape<i32>.Rect { ... }`. The type arguments are the segment they follow (`type_args`, `None` when none;
+    /// `spec/arguments.md`, SL1).
+    pub(super) fn struct_literal(
+        &mut self,
+        path: Vec<Ident>,
+        type_args: Option<(usize, Vec<Type>)>,
+        start: Span,
+    ) -> PResult<Expr> {
+        let (fields, base, close) = self.struct_body()?;
+        Ok(Expr { kind: ExprKind::StructLit(path, type_args, fields, base), span: start.to(close) })
     }
 
-    /// The `{ field: value, ... }` of a struct literal, and the span of its closing brace.
-    fn struct_body(&mut self) -> PResult<(Vec<FieldInit>, Span)> {
+    /// The `{ field: value, ..base }` of a struct literal, its base if any, and the span of its closing brace.
+    /// `..base` takes the last item (`spec/struct-update.md`, SU1): a second base is E0013, and a field or a separator
+    /// after the base is E0014. Both are reported and the literal still parses, so the rest of the file is checked.
+    fn struct_body(&mut self) -> PResult<(Vec<FieldInit>, Option<Box<Expr>>, Span)> {
         self.open(&TokenKind::LBrace, true)?;
         let mut fields = Vec::new();
+        let mut base: Option<Box<Expr>> = None;
         if !self.at(&TokenKind::RBrace) {
             loop {
-                let name = self.ident("a field name")?;
-                let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
-                fields.push(FieldInit { name, value });
+                if self.at(&TokenKind::DotDot) {
+                    let dots = self.span();
+                    self.bump();
+                    let value = self.expr()?;
+                    if base.is_some() {
+                        self.diags.error(Code::BASE_REPEATED, dots, "a struct literal may have only one `..base`");
+                    } else {
+                        base = Some(Box::new(value));
+                    }
+                } else {
+                    let name = self.ident("a field name")?;
+                    let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
+                    if base.is_some() {
+                        self.diags.error(
+                            Code::BASE_POSITION,
+                            name.span,
+                            "`..base` must be the last item of a struct literal",
+                        );
+                    }
+                    fields.push(FieldInit { name, value });
+                }
+                if base.is_some() && self.at(&TokenKind::Comma) && *self.nth_kind(1) == TokenKind::RBrace {
+                    let comma = self.span();
+                    self.diags.error(Code::BASE_POSITION, comma, "no separator may follow `..base`");
+                }
                 if !self.brace_list_sep("field")? {
                     break;
                 }
             }
         }
         let close = self.close(&TokenKind::RBrace)?;
-        Ok((fields, close.span))
+        Ok((fields, base, close.span))
     }
 
     /// `.name` or `.{ fields }` at the start of an expression (spec/target-typing.md, TT1). A `.` anywhere else is
@@ -562,8 +603,8 @@ impl Parser<'_> {
     fn target_expr(&mut self) -> PResult<Expr> {
         let start = self.expect(&TokenKind::Dot)?.span;
         if self.at(&TokenKind::LBrace) {
-            let (fields, close) = self.struct_body()?;
-            return Ok(Expr { kind: ExprKind::TargetStruct(fields), span: start.to(close) });
+            let (fields, base, close) = self.struct_body()?;
+            return Ok(Expr { kind: ExprKind::TargetStruct(fields, base), span: start.to(close) });
         }
         match self.kind().clone() {
             TokenKind::Ident(name) => {
@@ -637,14 +678,32 @@ impl Parser<'_> {
 const LEVEL_OR: u8 = 4;
 const LEVEL_CMP: u8 = 6;
 
-/// The identifiers of a path expression such as `Shape.Rect`, or `None` if `e` is not a plain path.
-fn expr_path(e: &Expr) -> Option<Vec<Ident>> {
+/// A struct literal's path and the arguments on one of its segments (`StructLit`'s `type_args`).
+type StructHead = (Vec<Ident>, Option<(usize, Vec<Type>)>);
+
+/// The identifiers of a path expression such as `Shape.Rect`, and the generic arguments written on one of its
+/// segments, or `None` if `e` is not a plain path. Arguments stand on a segment that a `.` or the end of the path
+/// follows: `Shape<i32>.Rect` has them on `Shape`, and `sh.Shape<i32>.Rect` on `Shape` too. At most one segment
+/// carries arguments.
+fn struct_head(e: &Expr) -> Option<StructHead> {
     match &e.kind {
-        ExprKind::Name { name, args } if args.is_empty() => Some(vec![name.clone()]),
+        ExprKind::Name { name, args } => {
+            let type_args = (!args.is_empty()).then_some((0, args.clone()));
+            Some((vec![name.clone()], type_args))
+        }
         ExprKind::Field(base, id) => {
-            let mut path = expr_path(base)?;
+            let (mut path, type_args) = struct_head(base)?;
             path.push(id.clone());
-            Some(path)
+            Some((path, type_args))
+        }
+        // `sh.Shape<i32>`: the arguments belong to the segment just before them.
+        ExprKind::TypeArgs(base, args) => {
+            let (path, none) = struct_head(base)?;
+            if none.is_some() {
+                return None;
+            }
+            let index = path.len() - 1;
+            Some((path, Some((index, args.clone()))))
         }
         _ => None,
     }

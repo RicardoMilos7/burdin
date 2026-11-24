@@ -228,10 +228,12 @@ impl Fmt<'_> {
                             let name = self.tok_doc();
                             let mut doc = concat(vec![dot, name]);
                             if self.at(&TokenKind::Lt) && lookahead::member_type_args_ahead(&self.raw, self.pos) {
+                                // `sh.Shape<i32>.Rect { ... }` and `sh.Wrapper<i32> { ... }` keep the path: the
+                                // arguments are a segment of it, and a `{` after them is a struct literal.
                                 let args = self.angle_args()?;
                                 doc = concat(vec![doc, args]);
-                                path = false;
-                            } else if path && self.at_struct_literal(r) {
+                            }
+                            if path && self.at_struct_literal(r) {
                                 // `Shape.Rect { ... }`: what came before is the path of a struct literal.
                                 let path_doc = concat(vec![head, concat(segs.drain(..).map(|s| s.doc).collect()), doc]);
                                 let lit = self.struct_literal_body()?;
@@ -383,7 +385,8 @@ impl Fmt<'_> {
             && !self.raw[(self.pos + 1).min(self.raw.len() - 1)].nl_before
     }
 
-    /// `{ name: value, name }`: the fields of a struct literal, separated by `,` or a line break.
+    /// `{ name: value, name, ..base }`: the fields of a struct literal, separated by `,` or a line break. The base,
+    /// when there is one, is last and has no separator after it (`spec/struct-update.md`, SU1).
     fn struct_literal_body(&mut self) -> R<D> {
         let open = self.open(&TokenKind::LBrace, true)?;
         let mut elems = Vec::new();
@@ -391,6 +394,13 @@ impl Fmt<'_> {
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.error("expected `}`"));
+            }
+            if self.at(&TokenKind::DotDot) {
+                let dots = self.tok_doc();
+                let base = self.expr()?;
+                elems.push(Elem { doc: concat(vec![dots, base.doc]), after: Doc::Nil });
+                trailing_comma = false;
+                continue;
             }
             let mut doc = self.ident()?;
             if self.at(&TokenKind::Colon) {
@@ -452,7 +462,8 @@ impl Fmt<'_> {
                     let lit = self.struct_literal_body()?;
                     return Ok(Ex { hug: true, ..Ex::plain(concat(vec![doc, space(), lit])) });
                 }
-                Ok(Ex { path: !generic, ..Ex::plain(doc) })
+                // A generic head is a path too: `Shape<i32>.Rect { ... }` is a struct literal of a variant.
+                Ok(Ex { path: true, ..Ex::plain(doc) })
             }
             TokenKind::LParen => {
                 let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| Ok(f.expr()?.doc))?;

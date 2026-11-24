@@ -1095,8 +1095,10 @@ fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
     use ast::PatternKind as P;
     match &p.kind {
         P::Binding { name, .. } => out.push(name.name.clone()),
-        P::Tuple(ps) | P::Or(ps) | P::TupleStruct(_, ps) => ps.iter().for_each(|p| pattern_names(p, out)),
-        P::Struct(_, fields) => {
+        P::Tuple(ps) | P::Or(ps) | P::TupleStruct(_, ps) | P::Slice(ps) => {
+            ps.iter().for_each(|p| pattern_names(p, out))
+        }
+        P::Struct(_, fields, _) => {
             for f in fields {
                 match &f.pattern {
                     Some(p) => pattern_names(p, out),
@@ -1108,6 +1110,7 @@ fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
             out.push(name.name.clone());
             pattern_names(p, out);
         }
+        P::Rest(name) => out.extend(name.iter().map(|n| n.name.clone())),
         P::Wild | P::Lit(_) | P::Range(..) | P::Path(_) => {}
     }
 }
@@ -1121,6 +1124,11 @@ fn pat_locals(p: &burdin_tir::Pat, out: &mut Vec<burdin_tir::LocalId>) {
             pat_locals(inner, out);
         }
         P::Or(ps) | P::Product(ps) | P::Variant(_, ps) => ps.iter().for_each(|p| pat_locals(p, out)),
+        P::Slice { prefix, rest, suffix } => {
+            for p in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                pat_locals(p, out);
+            }
+        }
         P::Some(p) | P::Ok(p) | P::Err(p) => pat_locals(p, out),
         P::Wild | P::Bool(_) | P::Int(_) | P::Char(_) | P::Str(_) | P::Range(..) | P::None => {}
     }
@@ -1230,7 +1238,10 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             }
         }
         K::Closure { body, .. } => out.push(body),
-        K::StructLit(_, inits) | K::TargetStruct(inits) => out.extend(inits.iter().filter_map(|i| i.value.as_ref())),
+        K::StructLit(_, _, inits, base) | K::TargetStruct(inits, base) => {
+            out.extend(inits.iter().filter_map(|i| i.value.as_ref()));
+            out.extend(base.as_deref());
+        }
         K::ComptimeAssert(a, b) => {
             out.push(a);
             out.extend(b.iter().map(|b| &**b));

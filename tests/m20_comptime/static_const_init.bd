@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A constant is evaluated at compile time, so its initializer may not name a static (E0220, spec/globals.md, GL1).
+
+static LIMIT: i32 = 3
+const DOUBLE: i32 = LIMIT * 2 //~ E0220
+
+fn main() {
+    println(DOUBLE.to_string())
+}

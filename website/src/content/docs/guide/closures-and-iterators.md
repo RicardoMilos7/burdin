@@ -80,7 +80,7 @@ The most common adapters and consumers:
 | `fold(start, f)` | Combines all items into one value, starting from `start` |
 | `sum()` | Adds the items up |
 | `any(f)`, `all(f)` | Whether some, or every, item satisfies `f` |
-| `collect()` | Gathers the items into a collection, such as a `List`. The type comes from the context, or from the list: `collect<List<i32>>()` |
+| `collect()` | Gathers the items into a collection, such as a `List`. The type comes from an annotation (`let xs: List<i32> = ...`), or from an explicit type argument: `collect<List<i32>>()` |
 
 Adapters are lazy. `take(2)` pulls only two items from the chain before it stops, so a `map` after it runs only twice.
 
@@ -98,6 +98,38 @@ fn main() {
 
 A chain can stand on a value that lives long enough. An array literal in the middle of a chain would be dropped before
 the chain runs, so bind the array to a name first, as the `pairs` example does.
+
+## Eager methods on a list
+
+A `List` also has `map`, `filter`, `fold`, `any`, `all`, and `find`. These are eager: each one builds its result at once,
+and the list is not consumed. Their closures receive a reference to each item, so the item is `&i32` and `*x` reads it.
+The lazy methods above are the iterator methods, reached through `iter()`. Use the eager form when you want a list back
+right away, and the lazy form when you chain steps or stop early. `to_list()` turns a lazy chain into an eager list:
+
+```burdin
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    xs.push(4)
+    let doubled = xs.map(|x: &i32|: i32 { *x * 2 })
+    let big = xs.filter(|x: &i32|: bool { *x > 2 })
+    let total = xs.fold(0, |acc: i32, x: &i32|: i32 { acc + *x })
+    let lazy: List<i32> = xs.iter().map(|x: i32|: i32 { x * 10 }).to_list()
+    println("{doubled:?} {big:?} {total} {lazy:?}")
+}
+```
+
+`collect` builds the collection its target names, and a prelude constructor such as `Some` can be passed as the function:
+
+```burdin
+fn main() {
+    let squares = [1, 2, 3].iter().map(|x: i32|: i32 { x * x }).collect<List<i32>>()
+    let wrapped: List<Option<i32>> = [1, 2].iter().map(Some).collect()
+    println("{squares:?} {wrapped:?}")
+}
+```
 
 ## for loops
 

@@ -1,7 +1,7 @@
 //! Impl blocks: `Type { ... }`, `Type: Drop { ... }`, and `Type: Interface { ... }`.
 
 use crate::builtins::builtin_type;
-use crate::generics::{BUILTIN_INTERFACES, Bound, Head, ImplInfo, param_ty};
+use crate::generics::{BUILTIN_INTERFACES, Bound, Head, ImplInfo, param_ty, projection_owner};
 use crate::globals::{FromImpl, Globals, TypeName, adt_key};
 use crate::session::{FnItem, ImplTemplate, Sema};
 use burdin_diag::{Code, Diagnostics, Span};
@@ -414,9 +414,7 @@ impl<'t> Sema<'t> {
                 return;
             }
         }
-        let wheres = self.impl_wheres(imp, module, &params, diags);
-        // The bounds the impl's names keep while its associated bindings are resolved: the bounds of the type's
-        // arguments they matched, and the impl's own `where` clause (`spec/associated-types.md`, AT2).
+        // The bounds the type's arguments carry under the names the impl gives them.
         let mut assoc_bounds: Vec<(String, Vec<Bound>)> = Vec::new();
         for (written, bs) in pattern.iter().zip(&adt_bounds) {
             if let Ty::Param(n) = written
@@ -425,6 +423,9 @@ impl<'t> Sema<'t> {
                 assoc_bounds.push((n.to_string(), bs.clone()));
             }
         }
+        let wheres = self.impl_wheres(imp, module, &params, &assoc_bounds, diags);
+        // The bounds the impl's names keep while its associated bindings are resolved: the bounds of the type's
+        // arguments they matched, and the impl's own `where` clause (`spec/associated-types.md`, AT2).
         assoc_bounds.extend(wheres.iter().cloned());
         let iface = kind.user_interface();
         let iface_args = match iface {
@@ -639,14 +640,21 @@ impl<'t> Sema<'t> {
     }
 
     /// The bounds an impl block's `where` clause puts on the names it gives the type's arguments.
+    ///
+    /// `base` holds the bounds the type's declaration gives its arguments, under the names the impl writes them.
+    /// A predicate on an associated-type projection of one of the impl's parameters (`where I.Item: Eq`, AT7) is kept
+    /// as a projected bound on that parameter, and is resolved after the plain predicates, with them in scope.
     fn impl_wheres(
         &self,
         imp: &ast::ImplBlock,
         module: usize,
         params: &[String],
+        base: &[(String, Vec<Bound>)],
         diags: &mut Diagnostics,
     ) -> Vec<(String, Vec<Bound>)> {
-        let mut wheres = Vec::new();
+        let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), crate::generics::param_ty(p))).collect();
+        let mut wheres: Vec<(String, Vec<Bound>)> = Vec::new();
+        let mut projections = Vec::new();
         for pred in &imp.where_clause {
             let name = match &pred.ty.kind {
                 ast::TypeKind::Path(s) if s.len() == 1 && s[0].args.is_empty() && params.contains(&s[0].name.name) => {
@@ -654,19 +662,37 @@ impl<'t> Sema<'t> {
                 }
                 _ => None,
             };
-            let Some(name) = name else {
-                diags.error(
-                    Code::UNSUPPORTED, // e9000: impl-where-non-param
-                    pred.ty.span,
-                    "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
-                );
-                continue;
-            };
-            let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), crate::generics::param_ty(p))).collect();
-            wheres.push((
-                name,
-                pred.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect(),
-            ));
+            match name {
+                Some(name) => wheres.push((
+                    name,
+                    pred.bounds.iter().filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags)).collect(),
+                )),
+                None => projections.push(pred),
+            }
+        }
+        for pred in projections {
+            let bounds_so_far: Vec<(String, Vec<Bound>)> = base.iter().cloned().chain(wheres.iter().cloned()).collect();
+            let subject = self.globals.resolve_type_bounded(&pred.ty, None, &subst, &bounds_so_far, module, diags);
+            let param_names: Vec<&str> = params.iter().map(String::as_str).collect();
+            match projection_owner(&subject, &param_names).map(|i| params[i].clone()) {
+                Some(name) => {
+                    let extra: Vec<Bound> = pred
+                        .bounds
+                        .iter()
+                        .filter_map(|b| self.globals.resolve_bound(b, &subst, module, diags))
+                        .map(|b| Bound::Projected(subject.clone(), Box::new(b)))
+                        .collect();
+                    wheres.push((name, extra));
+                }
+                None if subject != Ty::Error => {
+                    diags.error(
+                        Code::UNSUPPORTED, // e9000: impl-where-non-param
+                        pred.ty.span,
+                        "a `where` clause on something other than a type parameter or its associated type is not implemented in this compiler yet",
+                    );
+                }
+                None => {}
+            }
         }
         wheres
     }

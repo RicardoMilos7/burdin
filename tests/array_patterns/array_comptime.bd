@@ -1,0 +1,18 @@
+//@ run
+//> sum 7
+//> first 3
+
+// A comptime array is destructured like a runtime one (AP12): the constant's elements are read at compile time.
+
+const PAIR: [i32; 2] = [3, 4]
+
+const TOTAL: i32 = comptime {
+    let [x, y] = PAIR
+    x + y
+}
+
+fn main() {
+    println("sum {TOTAL}")
+    let [first, _] = PAIR
+    println("first {first}")
+}

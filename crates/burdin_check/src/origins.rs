@@ -350,6 +350,11 @@ impl<'a> Analyzer<'a> {
                     self.bind_pattern(sub, origin, allow_temp, span);
                 }
             }
+            Pat::Slice { prefix, rest, suffix } => {
+                for sub in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                    self.bind_pattern(sub, origin, allow_temp, span);
+                }
+            }
         }
     }
 
@@ -399,6 +404,8 @@ impl<'a> Analyzer<'a> {
         use tir::ExprKind as K;
         match &e.kind {
             K::Local(id) => self.local_storage(*id),
+            // A static is storage that lives for the whole program, so a view of it is static data (RT4).
+            K::Static(_) => Origin::default(),
             K::Field(base, _) => self.place_origin(base),
             // Indexing a slice looks through to whatever the slice views; indexing an array or a list names the
             // collection's own storage.
@@ -440,6 +447,7 @@ impl<'a> Analyzer<'a> {
             | K::Str(_)
             | K::Bytes(_)
             | K::Const(_)
+            | K::Static(_)
             | K::None
             | K::LayoutOf { .. } => Origin::default(),
             // A plain value carries no view, even when its storage is a parameter's.

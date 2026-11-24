@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// The base is the last item of a struct literal, once: a second base is E0013, and a field or a separator after the
+// base is E0014 (SU1).
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let q = Pair { ..p, ..p } //~ E0013
+    let r = Pair { ..p, left: 3 } //~ E0014
+    let s = Pair { ..p, } //~ E0014
+    println("{q.left} {r.left} {s.left}")
+}

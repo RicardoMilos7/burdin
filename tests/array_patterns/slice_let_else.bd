@@ -1,0 +1,27 @@
+//@ run
+//> pair 3
+//> short -1
+//> head 3
+
+// A slice pattern is refutable, so a `let` with one needs an `else` block that leaves the function (AP7).
+
+fn pair_sum(xs: [i32]): i32 {
+    let [a, b] = xs else {
+        return -1
+    }
+    a + b
+}
+
+fn head_of(xs: [i32]): i32 {
+    let [h, ..] = xs else {
+        return -1
+    }
+    h
+}
+
+fn main() {
+    let arr = [1, 2, 3, 4]
+    println("pair {pair_sum(arr[0..2])}")
+    println("short {pair_sum(arr[0..1])}")
+    println("head {head_of(arr[2..4])}")
+}

@@ -412,6 +412,9 @@ written down.
 | `i128` and `u128` | landed | `int128.md` | #273 |
 | `break` with a value | landed | `grammar.md`, rule 8.10 | #276 |
 | Compound assignment, on the built-in types and on user types through their operator interface | landed | `compound-assignment.md` | #277 |
+| Rest patterns (`..` in tuple, tuple-variant, and struct patterns) | landed | `rest-patterns.md`, RP1-RP7 | #993 |
+| Struct update syntax (`Name { field: v, ..base }`) | landed | `struct-update.md`, SU1-SU10 | #994 |
+| Array and slice patterns (`[a, ..rest]` on `[T; n]` and `[T]`, with `..` and `..name`) | landed | `array-patterns.md`, AP1-AP12 | #486 |
 | `Set<T>` and `Deque<T>` | landed | `stdlib.md`, "`Set<T>`" and "`Deque<T>`" | #190, #191 |
 | Declaration generation in comptime | landed | `generate.md` | #280 |
 | Doc tests | landed | `test-runner.md`, "Doc tests" | #250, #650-#652 |

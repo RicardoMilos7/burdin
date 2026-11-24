@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `..name` binds a rest only in an array or slice pattern. A tuple has no rest binding, so `(a, ..rest)` is E0016
+// (AP6). A plain `..` is still fine in a tuple (RP1).
+
+fn main() {
+    let (a, ..rest) = (1, 2, 3) //~ E0016
+    let (b, ..) = (1, 2, 3)
+}

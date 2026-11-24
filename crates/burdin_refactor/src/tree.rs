@@ -167,8 +167,9 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         }
         K::Closure { body, .. } => out.push(Child::Expr(Role::Closure, body)),
         K::Target(_) => {}
-        K::StructLit(_, fields) | K::TargetStruct(fields) => {
-            out.extend(fields.iter().filter_map(|f| f.value.as_ref()).map(|x| Child::Expr(Role::Plain, x)))
+        K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
+            out.extend(fields.iter().filter_map(|f| f.value.as_ref()).map(|x| Child::Expr(Role::Plain, x)));
+            out.extend(base.as_deref().map(|b| Child::Expr(Role::Plain, b)));
         }
         K::ComptimeAssert(c, m) => {
             out.push(Child::Expr(Role::Comptime, c));

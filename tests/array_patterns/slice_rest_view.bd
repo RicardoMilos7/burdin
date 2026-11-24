@@ -1,0 +1,21 @@
+//@ run
+//> total 10
+//> tail 9
+//> none 0
+
+// `..rest` on a slice binds a view of the elements the pattern does not name (AP6). The recursion walks the view
+// down to the empty slice.
+
+fn total(xs: [i32]): i32 {
+    match xs {
+        [] => 0
+        [first, ..rest] => first + total(rest)
+    }
+}
+
+fn main() {
+    let arr = [1, 2, 3, 4]
+    println("total {total(arr[0..4])}")
+    println("tail {total(arr[1..4])}")
+    println("none {total(arr[4..4])}")
+}

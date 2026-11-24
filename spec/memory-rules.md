@@ -88,6 +88,9 @@ value, with no `&` written: reading it, passing it to a read-only parameter, and
 to it is E0005 and moving out of it is E0101. A binding is dropped at the end of its arm.
 A temporary scrutinee is moved into a compiler-made local of the same statement, so its untouched parts still drop
 once and a failed guard restores the parts an earlier arm bound.
+A `..` in a pattern (`spec/rest-patterns.md`, RP2) binds nothing, so the parts it stands for stay in the scrutinee
+exactly as a `_` would leave them. A struct update's taken fields are moved out of its base the same way
+(`spec/struct-update.md`, SU4 and SU5), and a base that is a temporary is held in a compiler-made local of the literal.
 Tests: `m05_ownership/match_moves_owned_scrutinee`, `m05_ownership/match_moves_then_use`, `match_temporary_fields_drop`,
 `match_guard_temporary`, `match_guard_temporary_fields`, `match_heap_pointee_partial`, `m06_conventions/match_borrowed_binding`, `match_borrowed_binding_readonly`,
 `m07_generics/generic_stack`.

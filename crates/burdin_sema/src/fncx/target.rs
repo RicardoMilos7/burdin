@@ -96,16 +96,25 @@ impl FnCx<'_> {
     }
 
     /// `.{ field: value, ... }`: a struct literal of the expected type, checked like `Type { ... }` (TT7).
-    pub(super) fn target_struct(&mut self, fields: &[ast::FieldInit], span: Span, expect: Option<&Ty>) -> tir::Expr {
+    pub(super) fn target_struct(
+        &mut self,
+        fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
+        span: Span,
+        expect: Option<&Ty>,
+    ) -> tir::Expr {
         let Some(ty) = self.target_ty(expect, ".{ ... }", span) else {
             self.check_field_values(fields);
+            if let Some(base) = base {
+                self.expr(base, None);
+            }
             return error_expr(span);
         };
         match ty {
             Ty::Struct(a) => {
                 let owner = self.globals.struct_pkg[a.id];
                 let text = Ty::Struct(a.clone()).to_string();
-                self.struct_fields(Some((Ty::Struct(a), None, owner)), &text, fields, span)
+                self.struct_fields(Some((Ty::Struct(a), None, owner)), &text, fields, base, span)
             }
             other => {
                 self.diags.error(
@@ -114,6 +123,9 @@ impl FnCx<'_> {
                     format!("`.{{ ... }}` builds a struct, but the expected type `{other}` is not a struct"),
                 );
                 self.check_field_values(fields);
+                if let Some(base) = base {
+                    self.expr(base, None);
+                }
                 error_expr(span)
             }
         }

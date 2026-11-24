@@ -1,0 +1,17 @@
+//@ compile-fail
+
+// In a struct pattern, `..` comes last: a `..` before a field, or a field after one, is E0012 (RP3). A tuple pattern
+// may put its `..` anywhere, so the first tuple below is fine.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let (.., last) = (1, 2)
+    let p = Pair { left: 1, right: 2 }
+    let Pair { .., left } = p //~ E0012
+    let Pair { left, .., right } = p //~ E0012
+    println("{last}")
+}

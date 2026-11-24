@@ -1,0 +1,23 @@
+//@ run
+//> 3 4
+
+// A `match` on an array or a slice whose arms never destructure it is exhaustive by its wildcard alone. The checker
+// splits an array into one column per element only when a pattern destructures it, so a large array costs nothing
+// here (`crates/burdin_sema/src/exhaust.rs`, `seq_lengths`).
+
+fn wild_array(values: [i32; 4]): i32 {
+    match values {
+        _ => 3
+    }
+}
+
+fn wild_slice(values: [i32]): i32 {
+    match values {
+        _ => 4
+    }
+}
+
+fn main() {
+    let arr = [1, 2]
+    println("{wild_array([1, 2, 3, 4])} {wild_slice(arr[0..2])}")
+}

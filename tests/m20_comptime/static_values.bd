@@ -1,0 +1,45 @@
+//@ run
+//> 7
+//> hi 2
+//> 3 -2
+//> 3
+//> Green
+//> 0
+
+// Immutable statics are initialized before `main` runs, from constants and `comptime` values, and read from
+// functions (spec/globals.md, GL1 and GL3).
+
+struct Point: Copy, Clone, Eq {
+    x: i32
+    y: i32
+}
+
+enum Color: Copy, Clone, Eq {
+    Red
+    Green
+}
+
+const BASE: i32 = 3
+static LIMIT: i32 = BASE * 2 + 1
+static GREETING: str = "hi"
+static PAIR: (i32, i32) = (3, -2)
+static ITEMS: [i32; 4] = [1, 2, 3, 4]
+static ORIGIN: Point = Point { x: 0, y: 0 }
+static SHADE: Color = Color.Green
+static SQUARE: i32 = comptime { let mut n = 0; for i in 0..4 { n = n + i }; n }
+
+fn limit(): i32 {
+    LIMIT
+}
+
+fn main() {
+    println("{limit()}")
+    println("{GREETING} {GREETING.len()}")
+    println("{PAIR.0} {PAIR.1}")
+    println("{ITEMS[2]}")
+    match SHADE {
+        Color.Red => println("Red"),
+        Color.Green => println("Green"),
+    }
+    println("{ORIGIN.x}")
+}

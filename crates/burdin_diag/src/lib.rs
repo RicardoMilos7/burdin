@@ -187,6 +187,21 @@ impl Code {
     pub const LITERAL_RANGE: Code = Code("E0008");
     /// A declaration that depends on itself: a constant, a type alias, or a type that contains itself.
     pub const CYCLIC_DECLARATION: Code = Code("E0009");
+    /// A second `..` in one pattern (`spec/rest-patterns.md`, RP3).
+    pub const REST_REPEATED: Code = Code("E0010");
+    /// A `..` in a pattern that stands for no element or field (RP4).
+    pub const REST_IGNORES_NOTHING: Code = Code("E0011");
+    /// A `..` before a field, or a field after a `..`, in a struct pattern (RP3).
+    pub const REST_POSITION: Code = Code("E0012");
+    /// A second `..base` in one struct literal (`spec/struct-update.md`, SU1).
+    pub const BASE_REPEATED: Code = Code("E0013");
+    /// A `..base` that is followed by a field or a separator (SU1).
+    pub const BASE_POSITION: Code = Code("E0014");
+    /// A `..base` on a struct-like enum variant (SU7).
+    pub const BASE_VARIANT: Code = Code("E0015");
+    /// A `..name` in a pattern that is not an array or slice pattern: a tuple has no rest binding (`spec/array-patterns.md`,
+    /// AP6).
+    pub const NAMED_REST: Code = Code("E0016");
     pub const MOVED: Code = Code("E0100");
     pub const MOVE_FROM_BORROW: Code = Code("E0101");
     pub const PARTIAL_MOVE_FROM_DROP: Code = Code("E0103");
@@ -365,6 +380,13 @@ impl Code {
     pub const SHEBANG_PLACEMENT: Code = Code("E0300");
     /// A warning: a form the package's edition deprecates and the next edition removes (`spec/fix.md`, FX11).
     pub const DEPRECATED: Code = Code("E0301");
+    /// A `static` declared in a function body: statics are module items (`spec/globals.md`, GL1).
+    pub const STATIC_ITEM: Code = Code("E0302");
+    /// A static whose type is not plain data: it owns memory or has a destructor, so it would need dropping at exit
+    /// (`spec/globals.md`, GL2).
+    pub const STATIC_NOT_PLAIN: Code = Code("E0303");
+    /// A borrow of a `static mut`: no reference may alias it (`spec/globals.md`, GL4).
+    pub const STATIC_MUT_BORROW: Code = Code("E0304");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

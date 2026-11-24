@@ -2,7 +2,7 @@
 
 An interface may name a type that each implementation chooses. The interface writes `type Name` and a projection
 (`Self.Name`, `T.Name`, or `<T as Interface>.Name`) reads the implementation's choice back. Issue #393 settles the
-feature; milestone 21 (`tests/m21_reflect/`) carries its tests. Rule IDs are AT1-AT6.
+feature; milestone 21 (`tests/m21_reflect/`) carries its tests. Rule IDs are AT1-AT7.
 
 The stage 1 iteration decision (`spec/stage1-subset.md`, item 2) keeps `Iterator<T>` generic and `Iterable<T>` a
 marker. Associated types are the general feature the design's `Iterator` sketch implies; they are implemented here
@@ -120,6 +120,33 @@ An interface default method may use `Self.Name` in its signature and its body. T
 implementation as usual (`register_methods` → `add_method` with `self_ty` the implementing type), so the projection
 resolves to that implementation's binding there. The interface's own symbolic check sees the opaque
 `Ty::Projection`, checked against the bounds it declares.
+
+## AT7. Where clauses on projections
+
+A `where` predicate may bound a projection of one of the declaration's own type parameters, written with a projection
+form from AT3: `where I.Item: Eq`, `where <I as Container>.Item: Describe`. Issue #394 settles the rule; a predicate
+on a projection is a bound on the projection, not on the parameter, so `I` itself does not gain the bound.
+
+- **In the body**, the projection meets the bounds its predicate states. `==`, `<`, a method of the bound's interface
+  (`c.get().describe()`), and `{}` formatting all accept a projection value that way. A value of the projection type
+  without such a predicate is not usable as that bound's value (E0141 for `==`, a method call, or an operator).
+- **At a call** (a generic function, a generic method, or an impl block that is instantiated), the projection under the
+  instance's arguments must meet the bounds. The argument that does not is reported at the call: E0141, with the
+  projection named (`` `Plain` does not implement `Eq`, which `<C as Container>.Item` requires ``).
+- **On an impl block**, a predicate on a projection of an impl parameter decides whether the impl applies, as its other
+  `where` clauses do (IM2). A method call on an instance whose projection does not meet the predicate finds no method
+  (E0002).
+- **Order**: the plain predicates of a declaration (`where C: Container`) are in scope when a projection predicate is
+  resolved, so the two may come in either order. The projection must resolve: an unknown associated type, or one no
+  bound declares, is E0145, as anywhere else.
+- **Not covered** (still E9000 in `spec/e9000-audit.md`, owner Stage 1, issue #394): a predicate whose subject is not a
+  parameter or a projection of one (`where i32: Eq`, `where Vec<T>: Eq`), a `where` clause on a non-generic impl
+  block, and a predicate on `Self` inside an interface's default method.
+
+Tests: `tests/m21_reflect/associated_where.bd` (a function, a method, a generic impl, the `==`, `<`, method, and format
+uses) and `associated_where_errors.bd` (E0141 at a call, in a body, and in a method, E0145 for an unknown projection,
+and E0002 for an impl whose predicate fails); the unit test `satisfies_reads_the_projected_bounds_of_a_projection` in
+`crates/burdin_sema/src/generics.rs`.
 
 ## Errors
 

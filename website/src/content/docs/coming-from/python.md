@@ -77,8 +77,8 @@ string literal with braces is interpolated.
 | `raise E("msg")` | `Err(E.Variant)` | Errors are returned, not raised. |
 | `assert x == y` | `assert_eq(x, y)?` in a `test` | |
 | `with open(...) as f:` | a scope with a value that has `Drop` | Cleanup runs when the value goes out of scope. |
-| `import json` | `use json` | With `json = true` in `burdin.toml`. |
-| `pip install` | `[dependencies] name = true` | The official packages, or a path. |
+| `import json` | `use json` | No setup: `use` loads an official package. |
+| `pip install` | `[dependencies] name = "../path"` or `{ git = "..." }` | Official packages need no line. |
 
 ## Integers and division
 

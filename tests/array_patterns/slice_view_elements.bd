@@ -1,0 +1,26 @@
+//@ run
+//> first ann
+//> rest bob
+
+// The elements of a slice pattern are views, as the bindings of any pattern on a borrowed scrutinee are: a `String`
+// element is read through its view and never moved out of the slice (AP9). The rest binding is a view of the middle.
+
+fn first_name(names: [String]) {
+    match names {
+        [n, ..] => println("first {n}")
+        [] => println("none")
+    }
+}
+
+fn rest_names(names: [String]) {
+    match names {
+        [_, ..rest] => println("rest {rest[0]}")
+        [] => println("none")
+    }
+}
+
+fn main() {
+    let names = ["ann".to_string(), "bob".to_string()]
+    first_name(names[0..2])
+    rest_names(names[0..2])
+}

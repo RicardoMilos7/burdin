@@ -1,0 +1,36 @@
+//@ run
+//> left 1
+//> right 2
+//> base
+//> 1 2
+//> first 7
+//> base
+//> first 7
+//> done
+
+// The named values are evaluated first, in source order, and then the base (SU3). A base that is a call runs when
+// the literal is built, after the named fields.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn show(label: str, v: i32): i32 {
+    println("{label} {v}")
+    v
+}
+
+fn make(): Pair {
+    println("base")
+    Pair { left: 5, right: 6 }
+}
+
+fn main() {
+    let x = Pair { left: show("left", 1), right: show("right", 2), ..make() }
+    println("{x.left} {x.right}")
+
+    let y = Pair { left: show("first", 7), ..make() }
+    println("first {y.left}")
+    println("done")
+}

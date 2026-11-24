@@ -14,6 +14,37 @@ close-out checklist in `AGENTS.md`).
   server treats a leading dot as its explicit spelling: definition, hover, references, and rename of `.Green` and
   `.{ x: 1 }`, and completion after a bare dot offers the members of the expected type (`spec/lsp.md`, LS8 and LS12;
   `crates/burdin_lsp/tests/leading_dot.rs`).
+- Issue #396: a struct-like variant of a generic enum can be built with a literal, `Shape<i32>.Rect { w: 2, h: 3 }`
+  with explicit arguments on the head, or `Shape.Rect { w: 2, h: 3 }` with the arguments inferred from the field values
+  and the expected type, as a tuple variant is (`spec/arguments.md`, SL1-SL4). The variant is matched by its fields
+  like any other, and `Self.Rect { ... }` works inside the impl block. A module path takes the arguments too:
+  `sh.Shape<i32>.Rect { ... }` and `sh.Wrapper<i32> { ... }`. The literal's errors are the ones a plain struct literal
+  gives (E0002, E0003), and a variant with arguments of its own is E0003. Tests: `tests/m21_reflect/generic_variant_literal`
+  and `generic_variant_modules` (run), `generic_variant_literal_errors` and `generic_variant_modules_errors`
+  (compile-fail); the parser keeps each segment's arguments (a unit test in `crates/burdin_syntax/src/parser/mod.rs`),
+  and the formatter lays out both forms (a unit test in `crates/burdin_fmt/src/docs.rs`).
+- Issue #485: global variables (`spec/globals.md`, decision 36). `static` declares an immutable global at module scope,
+  and `static mut` a writable one that is used only in `unsafe` code. Each value is computed at compile time and stored
+  before `main` runs; its type must be plain data, so it is never dropped. A `static mut` may not be borrowed. A
+  `static` in a function body is E0302, a non-plain type is E0303, and a borrow of a `static mut` is E0304. Atomics and
+  `Mutex<T>` cannot be a static's type yet (E0221). Tests: `tests/m20_comptime/static_*` and `const_global`, and
+  `tests/s2_tasks/static_in_task`.
+- Issue #486: array and slice patterns, `let [a, b] = arr` and `match names { [first, ..rest] => ... }`, on a fixed-size
+  array `[T; n]` and on a slice view `[T]` (`spec/array-patterns.md`, AP1-AP12). `..` or `..name` stands for the elements
+  the pattern does not name; `..name` binds an array on an array and a view on a slice. A slice pattern is refutable
+  unless it is `[..]` or `[..name]`, and a `match` over slices is exhaustive over every length. An owned array moves only
+  the elements it binds, by constant index; a slice's elements are views. A named rest in a tuple is E0016. Tests:
+  `tests/array_patterns/`.
+- Issue #994: struct update syntax, `Point { x: 1, ..base }`, sets the named fields and takes the others from `base`,
+  which must have the literal's type and come last (`spec/struct-update.md`, SU1-SU10). A place base gives its taken
+  fields as partial moves; a temporary base is held for the statement. A `Drop` type may be updated only when every
+  taken field is `Copy`; an enum variant has no update form (E0015). Tests: `tests/struct_update/`.
+- Issue #993: `..` in a tuple, tuple-variant, or struct pattern stands for the parts the pattern does not name
+  (`spec/rest-patterns.md`, RP1-RP7). The ignored parts stay where they were and drop with their owner. A `..` that
+  stands for nothing is E0011, a second one E0010, and a struct pattern's `..` out of place E0012. Slice and array rest
+  patterns are in #486. Tests: `tests/rest_patterns/`.
+- Fixed with #993: a destructuring `let` of a place moved the whole place, and the untouched parts of a temporary
+  destructured by `let` were never dropped. Both now follow the `match` rules (MV8, DR5).
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`

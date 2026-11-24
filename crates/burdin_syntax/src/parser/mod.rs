@@ -871,6 +871,34 @@ struct Point { x: i32 }
     }
 
     #[test]
+    fn a_struct_literal_keeps_the_type_arguments_on_their_segment() {
+        // `Shape<i32>.Rect { ... }` has the arguments on segment 0, `sh.Shape<i32>.Rect { ... }` on segment 1, and a
+        // literal with no arguments has none (issue #396).
+        let (file, out) = render(
+            "fn main() {
+    f(Shape<i32>.Rect { w: 1 }, Shape.Rect { w: 2 }, Wrapper<i64> { inner: 3 },              sh.Shape<i32>.Rect { w: 4 })
+}
+",
+        );
+        assert_eq!(out, "");
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
+        let ExprKind::Call(_, args) = &call.kind else { unreachable!() };
+        let ExprKind::StructLit(path, type_args, _, _) = &args[0].expr.kind else { unreachable!() };
+        assert_eq!(path.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Shape", "Rect"]);
+        assert!(matches!(type_args, Some((0, a)) if a.len() == 1));
+        let ExprKind::StructLit(path, type_args, _, _) = &args[1].expr.kind else { unreachable!() };
+        assert_eq!(path.len(), 2);
+        assert!(type_args.is_none());
+        let ExprKind::StructLit(path, type_args, _, _) = &args[2].expr.kind else { unreachable!() };
+        assert_eq!(path.len(), 1);
+        assert!(matches!(type_args, Some((0, a)) if a.len() == 1));
+        let ExprKind::StructLit(path, type_args, _, _) = &args[3].expr.kind else { unreachable!() };
+        assert_eq!(path.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["sh", "Shape", "Rect"]);
+        assert!(matches!(type_args, Some((1, a)) if a.len() == 1));
+    }
+
+    #[test]
     fn a_derive_item_holds_methods() {
         let (file, out) = render(
             "derive Describe {
@@ -1062,5 +1090,48 @@ S {
         let messages: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert!(messages[0].contains("expected a method name, found `if`"), "{messages:?}");
+    }
+
+    #[test]
+    fn module_statics_parse_with_their_kind_and_a_body_static_is_e0302() {
+        // `static` and `static mut` are module items (spec/globals.md, GL1); in a body it is E0302, read as a `let`.
+        let (file, diags) = parse_str(
+            "static mut COUNT: i32 = 0
+static LIMIT: i32 = 3
+fn main() {
+    static inner: i32 = 1
+    let static = 2
+}
+",
+        );
+        let found: Vec<(String, String)> = diags.iter().map(|d| (d.code.0.to_string(), d.message.clone())).collect();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "E0302", "{found:?}");
+        let kinds: Vec<(&str, ConstKind)> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Const(c) => Some((c.name.name.as_str(), c.kind)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, vec![("COUNT", ConstKind::StaticMut), ("LIMIT", ConstKind::Static)]);
+    }
+
+    #[test]
+    fn static_followed_by_a_colon_is_still_an_impl_block() {
+        // `static: Interface { }` is an impl block for a type named `static`, not a declaration.
+        let (_, diags) = parse_str(
+            "struct static { x: i32 }
+static: Display {
+    fn show(self): str { \"s\" }
+}
+",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code.0 == "E0302"),
+            "{:?}",
+            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+        );
     }
 }

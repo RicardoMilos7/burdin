@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// A non-Copy field may not be taken out of a value with a `Drop` implementation (SU6, and the move rule DR8).
+
+struct Tracked {
+    name: String
+    id: i32
+}
+
+Tracked: Drop {
+    fn drop(mut self) {}
+}
+
+fn main() {
+    let t = Tracked { name: String.from("a"), id: 1 }
+    let u = Tracked { id: 2, ..t } //~ E0103
+    println("{u.id}")
+}

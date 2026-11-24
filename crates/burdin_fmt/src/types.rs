@@ -358,7 +358,7 @@ impl Fmt<'_> {
                 }
                 let path = concat(parts);
                 if self.at(&TokenKind::LParen) {
-                    let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.pattern())?;
+                    let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.element_pattern())?;
                     let list = self.list_doc(list, false);
                     return Ok(concat(vec![path, list]));
                 }
@@ -369,12 +369,16 @@ impl Fmt<'_> {
                 Ok(path)
             }
             TokenKind::LParen => {
-                let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.pattern())?;
+                let list = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| f.element_pattern())?;
                 if list.elems.len() == 1 && !list.trailing_comma {
                     return Ok(self.paren_doc(list));
                 }
                 let single_with_comma = list.elems.len() == 1;
                 Ok(self.list_doc(list, single_with_comma))
+            }
+            TokenKind::LBracket => {
+                let list = self.delimited(&TokenKind::LBracket, &TokenKind::RBracket, |f| f.element_pattern())?;
+                Ok(self.list_doc(list, false))
             }
             TokenKind::Int(_)
             | TokenKind::Minus
@@ -394,13 +398,27 @@ impl Fmt<'_> {
         }
     }
 
-    /// `{ a, b: pattern }`: fields separated by `,` or a line break.
+    /// One element of a tuple, tuple-variant, array, or slice pattern: a pattern, or the rest `..` or `..name`
+    /// (`spec/rest-patterns.md`, `spec/array-patterns.md`). The name sticks to the dots.
+    fn element_pattern(&mut self) -> R<D> {
+        if !self.at(&TokenKind::DotDot) {
+            return self.pattern();
+        }
+        let dots = self.tok_doc();
+        if matches!(self.kind(), TokenKind::Ident(_)) {
+            let name = self.ident()?;
+            return Ok(concat(vec![dots, name]));
+        }
+        Ok(dots)
+    }
+
+    /// `{ a, b: pattern, .. }`: fields separated by `,` or a line break; a `..` comes last.
     fn struct_pattern_fields(&mut self) -> R<D> {
         let open = self.open(&TokenKind::LBrace, true)?;
         let mut elems = Vec::new();
         let mut trailing_comma = false;
         while !self.at(&TokenKind::RBrace) {
-            let name = self.ident()?;
+            let name = if self.at(&TokenKind::DotDot) { self.tok_doc() } else { self.ident()? };
             let mut doc = name;
             if self.at(&TokenKind::Colon) {
                 let colon = self.tok_doc();

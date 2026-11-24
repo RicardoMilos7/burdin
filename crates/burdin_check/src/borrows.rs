@@ -354,6 +354,7 @@ impl<'a> Checker<'a> {
             | K::Str(_)
             | K::Bytes(_)
             | K::Const(_)
+            | K::Static(_)
             | K::None
             | K::Continue(_)
             | K::LayoutOf { .. } => {}
@@ -815,6 +816,11 @@ fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
                 view_bindings(sub, locals, out);
             }
         }
+        Pat::Slice { prefix, rest, suffix } => {
+            for sub in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                view_bindings(sub, locals, out);
+            }
+        }
     }
 }
 
@@ -831,6 +837,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
@@ -968,6 +975,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }

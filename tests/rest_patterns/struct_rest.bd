@@ -1,0 +1,56 @@
+//@ run
+//> left 1
+//> right 2
+//> pair matched
+//> rect width 2
+//> dot
+//> l 1
+//> r 2
+//> shape height 5
+
+// `..` in struct patterns: last, after the named fields, for structs and struct-like variants (spec/rest-patterns.md,
+// RP1 and RP3). The named fields are read; the others are left alone.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+enum Shape {
+    Rect { w: i32, h: i32 }
+    Dot
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let Pair { left, .. } = p
+    println("left {left}")
+    let Pair { right, .. } = p
+    println("right {right}")
+    let Pair { .. } = p
+    println("pair matched")
+
+    let s = Shape.Rect { w: 2, h: 5 }
+    match s {
+        Shape.Rect { w, .. } => println("rect width {w}")
+        Shape.Dot => println("dot")
+    }
+    match Shape.Dot {
+        Shape.Rect { .. } => println("rect")
+        Shape.Dot => println("dot")
+    }
+
+    // A trailing comma and a line break before `..` are separators like any other.
+    let Pair {
+        left: l,
+        ..
+    } = p
+    println("l {l}")
+    if let Pair { right: r, .. } = p {
+        println("r {r}")
+    }
+    match s {
+        Shape.Rect { h, .. } => println("shape height {h}")
+        Shape.Dot => {}
+    }
+}
