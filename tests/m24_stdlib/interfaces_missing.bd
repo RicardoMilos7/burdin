@@ -11,10 +11,6 @@ struct CopyList: Copy {
     value: List<i32> //~ E0130
 }
 
-struct EqList: Eq {
-    value: List<i32> //~ E0130
-}
-
 struct CopyText: Copy {
     value: String //~ E0130
 }

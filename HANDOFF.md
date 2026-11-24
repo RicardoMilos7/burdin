@@ -4,6 +4,15 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Collection equality (issue #928, 2026-11-24).** Decision: option 1 of the issue, `==` for the collections that hold
+values, not removing `Hash`. `List<T>` has `==` when `T` does (length, then the elements in order), in the codegen's
+`list_eq` beside `map_eq`, and `has_eq_in` for `Ty::List`. `PriorityHeap<T>` derives `Eq` over its sorted list.
+`Deque<T>` already had a hand-written `PartialEq` in `std` (its front/back split is not canonical, so it cannot derive
+`Eq`). Gaps, left as found: `assert_eq`, `assert_ne`, and a `T: Eq` bound reject any type whose `==` is a hand-written
+`PartialEq` impl, so `assert_eq` on a `Deque` or a `Set` is E0141. Fixing that needs a decision between `Eq` and
+`PartialEq` for those bounds. `Deque` and `PriorityHeap` have no `Hash`. Tests: `tests/m24_stdlib/list_equality`,
+`list_equality_needs_eq`, `list_keys`, `heap_equality`, `deque_equality` (run) and `interfaces_missing` (the `EqList`
+case moved to `list_equality`).
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already

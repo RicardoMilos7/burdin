@@ -1,0 +1,29 @@
+//@ run
+//> true false
+//> true false
+//> Some(5) true
+//> true
+
+// A priority heap is equal to another that holds equal elements in priority order (issue #928). Two heaps pushed in
+// different orders are equal; a heap with an element removed is not.
+
+fn main() {
+    let a = PriorityHeap<i32>.from([3, 1, 2])
+    let b = PriorityHeap<i32>.from([2, 3, 1])
+    let c = PriorityHeap<i32>.from([3, 1])
+    println("{a == b} {a == c}")
+    assert_eq(a, b)
+    assert_ne(a, c)
+
+    let mut d = PriorityHeap<i32>.from([3, 1, 2])
+    d.push(5)
+    let e = PriorityHeap<i32>.from([5, 3, 2, 1])
+    println("{d == e} {a != b}")
+
+    let top = d.pop()
+    println("{top:?} {d == a}")
+
+    let empty = PriorityHeap<i32>.new()
+    let empty_again = PriorityHeap<i32>.new()
+    println("{empty == empty_again}")
+}
