@@ -7,7 +7,6 @@
 use alloc.{Allocator, Global}
 use fmt.{Debug, Formatter}
 use iter.{FromIterator, Iterable, Iterator}
-use ops.PartialEq
 
 /// A set of distinct values.
 ///
@@ -398,7 +397,7 @@ Set<T> where T: Eq {
     }
 }
 
-Set<T>: PartialEq where T: Eq {
+Set<T>: Eq where T: Eq {
     fn eq(self, other: Set<T>): bool {
         self.map.len() == other.map.len() && self.is_subset(other)
     }

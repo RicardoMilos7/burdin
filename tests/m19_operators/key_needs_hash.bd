@@ -1,13 +1,13 @@
 //@ compile-fail
 
-// A hand-written `PartialEq` can be a `Map` key only when the type also derives `Hash`: keys are hashed
+// A hand-written `Eq` can be a `Map` key only when the type also derives `Hash`: keys are hashed
 // structurally, and the derive is the promise that equal values hash alike (spec/derives.md, issue #918).
 
 struct Loose {
     n: i32
 }
 
-Loose: PartialEq {
+Loose: Eq {
     fn eq(self, other: Loose): bool {
         self.n == other.n
     }
@@ -17,7 +17,7 @@ struct Tight: Hash {
     n: i32
 }
 
-Tight: PartialEq {
+Tight: Eq {
     fn eq(self, other: Tight): bool {
         self.n == other.n
     }

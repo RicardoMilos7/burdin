@@ -168,8 +168,8 @@ pub(crate) struct OpIfaces {
     pub(crate) bitxor: usize,
     pub(crate) neg: usize,
     pub(crate) not: usize,
-    pub(crate) partial_eq: usize,
-    pub(crate) partial_ord: usize,
+    pub(crate) eq: usize,
+    pub(crate) ord: usize,
     pub(crate) index: usize,
     pub(crate) index_mut: usize,
 }
@@ -379,8 +379,8 @@ impl Globals {
         out
     }
 
-    /// The hand-written `eq` and `lt` of every concrete struct and enum that implements `PartialEq` or
-    /// `PartialOrd` instead of deriving `Eq` or `Ord`, as `(type key, eq, lt)`. The built-in comparisons of code
+    /// The hand-written `eq` and `lt` of every concrete struct and enum that implements the `Eq` or
+    /// `Ord` interface instead of deriving `Eq` or `Ord`, as `(type key, eq, lt)`. The built-in comparisons of code
     /// generation call them (`spec/derives.md`, issue #918).
     pub(crate) fn comparison_methods(&self) -> Vec<ComparisonMethods> {
         let mut out = Vec::new();
@@ -397,11 +397,11 @@ impl Globals {
             let derives = if key.0 { &self.enums[key.1].derives } else { &self.structs[key.1].derives };
             let eq = (!derives.eq
                 && self.methods.contains_key(&(key, "eq".to_string()))
-                && self.implements_partial_eq(&ty, &[]))
+                && self.implements_eq_iface(&ty, &[]))
             .then(|| self.methods[&(key, "eq".to_string())]);
             let lt = (!derives.ord
                 && self.methods.contains_key(&(key, "lt".to_string()))
-                && self.implements_partial_ord(&ty, &[]))
+                && self.implements_ord_iface(&ty, &[]))
             .then(|| self.methods[&(key, "lt".to_string())]);
             if eq.is_some() || lt.is_some() {
                 out.push((key, eq, lt));

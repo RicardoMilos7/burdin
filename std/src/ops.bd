@@ -412,7 +412,7 @@ interface Not {
 ///     value: i32
 /// }
 ///
-/// Meters: PartialEq {
+/// Meters: Eq {
 ///     fn eq(self, other: Meters): bool {
 ///         self.value == other.value
 ///     }
@@ -423,7 +423,7 @@ interface Not {
 ///     assert(Meters { value: 4 } != Meters { value: 5 })
 /// }
 /// ```
-interface PartialEq {
+interface Eq {
     /// Whether `self` is equal to `other`.
     ///
     /// ```
@@ -431,7 +431,7 @@ interface PartialEq {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialEq {
+    /// Meters: Eq {
     ///     fn eq(self, other: Meters): bool {
     ///         self.value == other.value
     ///     }
@@ -450,7 +450,7 @@ interface PartialEq {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialEq {
+    /// Meters: Eq {
     ///     fn eq(self, other: Meters): bool {
     ///         self.value == other.value
     ///     }
@@ -473,7 +473,7 @@ interface PartialEq {
 ///     value: i32
 /// }
 ///
-/// Meters: PartialOrd {
+/// Meters: Ord {
 ///     fn lt(self, other: Meters): bool {
 ///         self.value < other.value
 ///     }
@@ -484,7 +484,7 @@ interface PartialEq {
 ///     assert(Meters { value: 2 } >= Meters { value: 1 })
 /// }
 /// ```
-interface PartialOrd {
+interface Ord {
     /// Whether `self` is less than `other`. `lt` must be a strict order.
     ///
     /// ```
@@ -492,7 +492,7 @@ interface PartialOrd {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialOrd {
+    /// Meters: Ord {
     ///     fn lt(self, other: Meters): bool {
     ///         self.value < other.value
     ///     }
@@ -512,7 +512,7 @@ interface PartialOrd {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialOrd {
+    /// Meters: Ord {
     ///     fn lt(self, other: Meters): bool {
     ///         self.value < other.value
     ///     }
@@ -534,7 +534,7 @@ interface PartialOrd {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialOrd {
+    /// Meters: Ord {
     ///     fn lt(self, other: Meters): bool {
     ///         self.value < other.value
     ///     }
@@ -556,7 +556,7 @@ interface PartialOrd {
     ///     value: i32
     /// }
     ///
-    /// Meters: PartialOrd {
+    /// Meters: Ord {
     ///     fn lt(self, other: Meters): bool {
     ///         self.value < other.value
     ///     }

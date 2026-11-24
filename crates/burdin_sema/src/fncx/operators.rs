@@ -299,12 +299,12 @@ impl FnCx<'_> {
             B::BitAnd => (ops.bitand, "bitand", "BitAnd"),
             B::BitOr => (ops.bitor, "bitor", "BitOr"),
             B::BitXor => (ops.bitxor, "bitxor", "BitXor"),
-            B::Eq => (ops.partial_eq, "eq", "PartialEq"),
-            B::Ne => (ops.partial_eq, "ne", "PartialEq"),
-            B::Lt => (ops.partial_ord, "lt", "PartialOrd"),
-            B::Gt => (ops.partial_ord, "gt", "PartialOrd"),
-            B::Le => (ops.partial_ord, "le", "PartialOrd"),
-            B::Ge => (ops.partial_ord, "ge", "PartialOrd"),
+            B::Eq => (ops.eq, "eq", "Eq"),
+            B::Ne => (ops.eq, "ne", "Eq"),
+            B::Lt => (ops.ord, "lt", "Ord"),
+            B::Gt => (ops.ord, "gt", "Ord"),
+            B::Le => (ops.ord, "le", "Ord"),
+            B::Ge => (ops.ord, "ge", "Ord"),
             _ => return None,
         })
     }

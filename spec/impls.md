@@ -75,9 +75,9 @@ A derive on a generic type holds for the instances whose parts allow it: `Wrappe
 needs them is an error at the use (E0003, E0002, E0141). A requirement that mentions no parameter is checked once, at the
 derive (E0130). The rule for `Debug`, `Hash`, `Ord`, and `Default` is the same (`spec/derives.md`).
 
-The built-in derive-only interfaces are `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` (`spec/derives.md`). A derive of `Eq` or `Ord` already provides `PartialEq` or `PartialOrd`, so implementing those by hand on the same
-type is E0007 (`spec/derives.md`, issue #918). Writing one
-by hand (`Wrapper<T>: Eq where T: Eq { ... }`) is not implemented, for a generic type or a plain one: it is E9000 under
+The built-in derive-only interfaces are `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, and `Default` (`spec/derives.md`). `Eq` and `Ord` are also ordinary interfaces: a block `Wrapper<T>: Eq where T: Eq { fn eq(...) }` is a
+hand-written comparison, and next to a derive of the same name it is E0007 (`spec/derives.md`, issue #918). Writing
+`Copy`, `Clone`, `Hash`, or `Default` by hand (`Wrapper<T>: Clone where T: Clone { ... }`) is not implemented, for a generic type or a plain one: it is E9000 under
 issue #402, whose rule applies to both. The other interfaces are written by hand as ordinary interfaces: `Debug`,
 `Display`, `From`, `TryFrom`, `Drop` (IM7), and `Serialize`/`Deserialize`, which a program writes by hand as
 `serialization.md` describes. When #402 lands, the `where` clauses

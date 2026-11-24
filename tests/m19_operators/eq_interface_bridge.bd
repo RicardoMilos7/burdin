@@ -10,7 +10,7 @@
 //> true
 //> 3
 
-// A hand-written `PartialEq` satisfies `T: Eq` and is what every built-in `==` calls: `List.contains`, `dedup`,
+// A hand-written `Eq` satisfies `T: Eq` and is what every built-in `==` calls: `List.contains`, `dedup`,
 // list, tuple, and `Option` equality, `assert_eq`, and a map or set key (spec/derives.md, issue #918). `Mod10`
 // compares by the last digit, so any of these using the structural comparison instead would disagree.
 
@@ -18,7 +18,7 @@ struct Mod10: Copy, Clone {
     n: i32
 }
 
-Mod10: PartialEq {
+Mod10: Eq {
     fn eq(self, other: Mod10): bool {
         self.n % 10 == other.n % 10
     }

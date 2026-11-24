@@ -168,8 +168,8 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// A derive of `Eq` or `Ord` is the type's `PartialEq` or `PartialOrd`, so a hand-written implementation of the
-    /// interface next to it would be a second one (E0007, `spec/derives.md`, issue #918). Returns whether `imp` was
+    /// A derive of `Eq` or `Ord` is the type's own implementation of that interface, so a hand-written
+    /// implementation next to it would be a second one (E0007, `spec/derives.md`, issue #918). Returns whether `imp` was
     /// rejected.
     fn reject_derived_comparison(
         &self,
@@ -181,10 +181,10 @@ impl<'t> Sema<'t> {
     ) -> bool {
         let Some(ops) = self.globals.op_ifaces.as_ref() else { return false };
         let derives = crate::derives::parse_derives(list);
-        let (name, derive) = if iface == ops.partial_eq && derives.eq {
-            ("PartialEq", if derives.ord { "Ord" } else { "Eq" })
-        } else if iface == ops.partial_ord && derives.ord {
-            ("PartialOrd", "Ord")
+        let (name, derive) = if iface == ops.eq && derives.eq {
+            ("Eq", if derives.ord { "Ord" } else { "Eq" })
+        } else if iface == ops.ord && derives.ord {
+            ("Ord", "Ord")
         } else {
             return false;
         };
@@ -192,7 +192,7 @@ impl<'t> Sema<'t> {
             Code::DUPLICATE_NAME,
             imp.span,
             format!(
-                "`{ty}` derives `{derive}`, which already provides `{name}`; remove the derive or this implementation"
+                "`{ty}` derives `{derive}`, which is already its `{name}` implementation; remove the derive or this block"
             ),
         );
         true
@@ -289,6 +289,16 @@ impl<'t> Sema<'t> {
                 }
                 let kind = if name == "From" { ImplKind::From } else { ImplKind::TryFrom };
                 return Some((kind, Some(seg)));
+            }
+            // `Eq` and `Ord` are also interfaces (`std.ops`): a block of either is a hand-written comparison.
+            if (name == "Eq" || name == "Ord")
+                && let Some(ops) = &self.globals.op_ifaces
+            {
+                if !seg.args.is_empty() {
+                    diags.error(Code::TYPE_MISMATCH, t.span, format!("`{name}` takes no type arguments"));
+                    return None;
+                }
+                return Some((ImplKind::User(if name == "Eq" { ops.eq } else { ops.ord }), None));
             }
             if BUILTIN_INTERFACES.contains(&name.as_str()) {
                 if !seg.args.is_empty() {

@@ -52,16 +52,16 @@ tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` 
 
 ## `Eq`, `Ord`, and the comparison interfaces (issue #918)
 
-`Eq` and `Ord` are the derived `PartialEq` and `PartialOrd`: a derive installs the structural `==` and `<` that the
-operators use, so a type that derives one has the matching operators without writing an interface. A hand-written
-`PartialEq` or `PartialOrd` on a type that also derives `Eq` or `Ord` (and `PartialEq` on one that derives `Ord`,
-which brings `Eq`) is a second implementation of the same interface and is rejected with E0007; remove the derive to
-write the comparison by hand. Nothing is silently ignored.
+`Eq` and `Ord` are each one thing with two spellings: a derive (`struct P: Eq, Ord`) installs the structural
+`==` and `<`, and an impl block (`P: Eq { fn eq(self, other: P): bool { ... } }`, `P: Ord { fn lt(...) }`) writes
+them by hand. There is no separate "partial" interface: the interfaces are `Eq { eq, ne }` and
+`Ord { lt, le, gt, ge }` in `std.ops` (`spec/operators.md`). A type that derives `Eq` or `Ord` (or derives `Ord`,
+which brings `Eq`) and also writes the interface block has two implementations of it and is rejected with E0007;
+remove the derive to write the comparison by hand. Nothing is silently ignored.
 
 Both bounds are satisfied by the derive or by the hand-written interface, and the compiler's built-in comparisons
-call whichever the type has. `T: Eq` accepts a derived `Eq` or a hand-written `PartialEq`; `T: Ord` accepts a derived
-`Ord`, or a hand-written `PartialOrd`; a type with the latter and no `PartialEq` has `==` from its order (equal when
-neither is less), because `Ord` brings `Eq`. `Map`, `Set`, `List.contains`,
+call whichever the type has. `T: Eq` and `T: Ord` accept the derive or the impl block. A type with an `Ord` block and
+no `Eq` of its own has `==` from its order (equal when neither is less), because `Ord` brings `Eq`. `Map`, `Set`, `List.contains`,
 slice `contains`, `dedup`, `sort`, `PriorityHeap`, `cmp.min`, `assert_eq`, and `==`/`<` on a list, tuple, array,
 `Option`, `Result`, or field that holds such a type then call the type's `eq` and `lt` (for sorting, `a` before `b` when
 `a.lt(b)`, equal when neither is less). Two limits:
@@ -72,8 +72,8 @@ slice `contains`, `dedup`, `sort`, `PriorityHeap`, `cmp.min`, `assert_eq`, and `
 - The compile-time interpreter compares structurally inside a list, tuple, or field, so a hand-written `eq` there
   is not called in a `comptime` evaluation (a direct `a == b` on the type is).
 
-Hand-writing `Eq`, `Ord`, `Hash`, or `Clone` is E9000 (issue #402); `PartialEq`/`PartialOrd` are how the equality and
-order of a collection are customized.
+Hand-writing `Hash` or `Clone` is E9000 (issue #402); the `Eq` and `Ord` blocks are how the equality and order of
+a collection are customized.
 
 ## `Eq`
 

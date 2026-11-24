@@ -1134,8 +1134,8 @@ impl Globals {
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
             Ty::Range(t, _) => self.has_ord_in(t, env),
-            // A derived `Ord`, or a hand-written `PartialOrd` (whose `==` is `eq_from_order` unless it has its own).
-            Ty::Struct(_) | Ty::Enum(_) => self.has_derived_ord_in(ty, env) || self.implements_partial_ord(ty, env),
+            // A derived `Ord`, or a hand-written `Ord` implementation (whose `==` is `eq_from_order` unless it has its own).
+            Ty::Struct(_) | Ty::Enum(_) => self.has_derived_ord_in(ty, env) || self.implements_ord_iface(ty, env),
             _ => false,
         }
     }
@@ -1155,7 +1155,7 @@ impl Globals {
         }
     }
 
-    /// Whether `==` on `ty` comes from its order: it implements `PartialOrd` by hand and has no equality of its
+    /// Whether `==` on `ty` comes from its order: it implements the `Ord` interface and has no equality of its
     /// own, so two values are equal when neither is less (`Ord` brings `Eq`, `spec/derives.md`, issue #918).
     pub(crate) fn eq_from_order(&self, ty: &Ty, env: &Env) -> bool {
         let derived = match ty {
@@ -1163,18 +1163,18 @@ impl Globals {
             Ty::Enum(a) => self.enums[a.id].derives.eq,
             _ => return false,
         };
-        !derived && self.implements_partial_ord(ty, env) && !self.implements_partial_eq(ty, env)
+        !derived && self.implements_ord_iface(ty, env) && !self.implements_eq_iface(ty, env)
     }
 
-    /// Whether a user type implements `PartialEq` by hand (a derived `Eq` is not one: `has_derived_eq_in`).
-    pub(crate) fn implements_partial_eq(&self, ty: &Ty, env: &Env) -> bool {
-        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.partial_eq, &[], env))
+    /// Whether a user type implements the `Eq` interface by hand (a derived `Eq` is not one: `has_derived_eq_in`).
+    pub(crate) fn implements_eq_iface(&self, ty: &Ty, env: &Env) -> bool {
+        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.eq, &[], env))
     }
 
-    /// Whether a user type implements `PartialOrd` by hand. Such a type satisfies an `Ord` bound:
+    /// Whether a user type implements the `Ord` interface by hand. Such a type satisfies an `Ord` bound:
     /// its `lt` is the order, which is how `Reverse<T>` plugs into a container or a sort that asks for `T: Ord`.
-    pub(crate) fn implements_partial_ord(&self, ty: &Ty, env: &Env) -> bool {
-        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.partial_ord, &[], env))
+    pub(crate) fn implements_ord_iface(&self, ty: &Ty, env: &Env) -> bool {
+        self.op_ifaces.as_ref().is_some_and(|ops| self.implements(ty, ops.ord, &[], env))
     }
 
     /// Whether values of `ty` implement `Debug`, for the derive requirement.

@@ -21,12 +21,12 @@ These operators resolve to an interface method for a user type:
 | `a ^ b` | `BitXor` | `bitxor` |
 | `-a` | `Neg` | `neg` |
 | `!a` | `Not` | `not` |
-| `a == b` | `PartialEq` | `eq` |
-| `a != b` | `PartialEq` | `ne` |
-| `a < b` | `PartialOrd` | `lt` |
-| `a <= b` | `PartialOrd` | `le` |
-| `a > b` | `PartialOrd` | `gt` |
-| `a >= b` | `PartialOrd` | `ge` |
+| `a == b` | `Eq` | `eq` |
+| `a != b` | `Eq` | `ne` |
+| `a < b` | `Ord` | `lt` |
+| `a <= b` | `Ord` | `le` |
+| `a > b` | `Ord` | `gt` |
+| `a >= b` | `Ord` | `ge` |
 | `a[i]` | `Index<T>` | `index` |
 | `a[i] = v` | `IndexMut<T>` | `index_mut` |
 
@@ -56,12 +56,12 @@ interface BitXor { fn bitxor(self, other: Self): Self }
 interface Neg { fn neg(self): Self }
 interface Not { fn not(self): Self }
 
-interface PartialEq {
+interface Eq {
     fn eq(self, other: Self): bool
     fn ne(self, other: Self): bool { !self.eq(other) }
 }
 
-interface PartialOrd {
+interface Ord {
     fn lt(self, other: Self): bool
     fn le(self, other: Self): bool { !self.gt(other) }
     fn gt(self, other: Self): bool { other.lt(self) }
@@ -75,7 +75,7 @@ interface IndexMut<T> { fn index_mut(mut self, i: usize): &mut T }
 - The arithmetic, bitwise, unary, and comparison methods take a **read-only** receiver and a read-only second
   operand. The operator borrows both operands and returns a new owned value; neither operand is moved, and both stay
   usable after the expression. `Neg`/`Not` borrow their operand the same way.
-- `PartialEq` and `PartialOrd` are independent: a type may implement either alone. `lt` must be a strict order, and
+- `Eq` and `Ord` are independent interfaces: a type may implement either alone (an `Ord` without `Eq` has `==` from its order, `spec/derives.md`). `lt` must be a strict order, and
   the defaults define `le` as `!self.gt(other)`, `gt` as `other.lt(self)`, and `ge` as `!self.lt(other)`. An
   implementation may override any default. `ne` defaults to `!self.eq(other)`.
 - `Index<T>` and `IndexMut<T>` take the **element** type as their parameter; the index type is always `usize`. The
@@ -98,9 +98,9 @@ For `a op b` the checker first applies the stage 0 rule to the common operand ty
 4. the ordering operators are built in for `Int`, `Float`, `Bool`, `Char`, and when `T` has stage 0 ordering
    (`has_ord`: primitives, `str`/`String`, tuples/`Range`, and a struct or enum that derives `Ord` and whose fields do).
 
-A type parameter obeys its bounds: `T: Eq` uses the built-in structural comparison, and `T: PartialEq` uses the
-interface; when both are present the built-in wins. A derive installs the interface (`spec/derives.md`), so a
-concrete type never has both: deriving `Eq` or `Ord` and writing `PartialEq`/`PartialOrd` is E0007.
+A type parameter obeys its bounds: `T: Eq` and `T: Ord` are satisfied by the derive or by the interface block,
+and the instance uses whichever the concrete type has. A derive installs the interface (`spec/derives.md`), so a
+concrete type never has both: deriving `Eq` and writing `Eq { ... }` is E0007, and likewise for `Ord`.
 
 Only when the built-in rule does not apply does the checker try the interface, in this order:
 
@@ -110,8 +110,8 @@ Only when the built-in rule does not apply does the checker try the interface, i
   (`it does not implement Add`, or `its bounds do not provide Add`); any other type keeps the stage 0 **E0003**
   (`+ cannot be applied to List<i32>`). A struct or enum that derives `Eq`/`Ord` but fails the derive requirement
   keeps the stage 0 **E0003** when it has no interface implementation, because the failure names a field, not a
-  missing interface (E0130 already reports the derive itself). If such a type also implements `PartialEq` or
-  `PartialOrd`, that implementation is used and the derive still fails the build with E0130.
+  missing interface (E0130 already reports the derive itself). A type that derives `Eq`/`Ord` cannot also
+  implement the interface (E0007, OP5).
 
 The built-in rule is chosen from the common operand type after the ordinary literal inference, and the two operands
 must have the same type before an interface is tried (`compatible`), so `V + i32` is E0003. `Result` of the operator
@@ -131,12 +131,12 @@ is E0141 for a struct/enum/type parameter and E0003 for any other type.
 
 `==` lowers to `eq`, `!=` to `ne`, `<` to `lt`, `<=` to `le`, `>` to `gt`, and `>=` to `ge`. The comparison
 operators are always same-type and always return `bool`. A derived comparison is the type's own implementation of the
-interface (`spec/derives.md`, issue #918), so a type that derives `Eq` or `Ord` cannot also implement `PartialEq`
-or `PartialOrd` (E0007); remove the derive to write the comparison by hand. A type that derives `Ord` also gets
+interface (`spec/derives.md`, issue #918), so a type that derives `Eq` or `Ord` cannot also write an `Eq` or `Ord`
+block (E0007); remove the derive to write the comparison by hand. A type that derives `Ord` also gets
 `==`/`!=` (`Ord` implies `Eq`, as the bound does); a type that derives only `Eq` gets `==`/`!=` but no ordering.
 Each operator is decided on its own.
 
-`PartialOrd` and `PartialEq` need not agree; the compiler does not check that `lt` and `eq` are consistent. That is
+`Ord` and `Eq` need not agree (a type with both); the compiler does not check that `lt` and `eq` are consistent. That is
 the implementation's contract.
 
 ## OP6: Operators in generic code
@@ -224,7 +224,7 @@ still short-circuit and accept only `bool`.
 
 | Code | Cause |
 | --- | --- |
-| E0141 | A struct, enum, or type parameter does not implement the operator interface (`Add`, `Neg`, `PartialEq`, `PartialOrd`, `Index`, `IndexMut`, ...) the operator needs |
+| E0141 | A struct, enum, or type parameter does not implement the operator interface (`Add`, `Neg`, `Eq`, `Ord`, `Index`, `IndexMut`, ...) the operator needs |
 | E0113 | `IndexMut` is needed through an immutable place, or an index expression is the receiver of a `mut self` method through the read-only `index` view |
 | E0101 | A non-`Copy` element is moved out of `x[i]` |
 | E0003 | Operands or the index have the wrong type; the type has no built-in operator and no overload; a failed `Eq`/`Ord` derive keeps the stage 0 code |

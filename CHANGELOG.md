@@ -6,10 +6,11 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
-- Issue #918: `Eq`/`Ord` are the derived `PartialEq`/`PartialOrd`. `Ord` now implies `Eq` in the derive as it does in
-  the bound, so a type that derives `Ord` has `==` and `!=`. A hand-written `PartialEq`/`PartialOrd` on a type that
-  derives the matching `Eq`/`Ord` is E0007 instead of being silently ignored. A hand-written `PartialEq` now
-  satisfies `T: Eq`, and a `PartialOrd` on a type with `==` satisfies `T: Ord`; `Map`, `Set`, `List.contains`, `dedup`,
+- Issue #918: `PartialEq` and `PartialOrd` are gone: `Eq` and `Ord` are each one name for the derive and the
+  interface (`Type: Eq { fn eq(...) }`, `Type: Ord { fn lt(...) }`). `Ord` now implies `Eq` in the derive as it does in
+  the bound, so a type that derives `Ord` has `==` and `!=`. An `Eq`/`Ord` block on a type that
+  derives the same one is E0007 instead of being silently ignored. A hand-written `Eq` block
+  satisfies `T: Eq`, and an `Ord` block satisfies `T: Ord`; `Map`, `Set`, `List.contains`, `dedup`,
   `sort`, `PriorityHeap`, and `==`/`<` on lists, tuples, and options call the type's `eq`/`lt`. A hand-written-`eq`
   map key must derive `Hash`. Tests: `m19_operators/derive_conflicts_with_impl`, `ord_implies_eq`,
   `eq_interface_bridge`, `eq_interface_collections`, `ord_interface_bridge`, `key_needs_hash`. `spec/derives.md`,

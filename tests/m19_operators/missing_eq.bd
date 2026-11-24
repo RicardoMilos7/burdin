@@ -1,6 +1,6 @@
 //@ compile-fail
 
-// `==` and `!=` on a user type need `PartialEq` (E0141, spec/operators.md OP3, OP5).
+// `==` and `!=` on a user type need `Eq` (E0141, spec/operators.md OP3, OP5).
 
 struct Plain {
     n: i32

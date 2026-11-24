@@ -1545,7 +1545,7 @@ impl FnCx<'_> {
                     Code::BOUND_NOT_SATISFIED,
                     span,
                     format!(
-                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `PartialEq` also needs `Hash`"
+                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
                     ),
                 );
             }

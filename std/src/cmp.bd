@@ -1,5 +1,4 @@
 use fmt.{Debug, Formatter}
-use ops.PartialOrd
 
 // Three-way comparison: `Ordering`, `a.cmp(b)`, `Reverse<T>`, and the comparison helpers (spec/stdlib.md).
 //
@@ -238,7 +237,7 @@ struct Reverse<T>: Copy, Clone, Eq, Debug {
     value: T
 }
 
-Reverse<T>: PartialOrd where T: Ord {
+Reverse<T>: Ord where T: Ord {
     fn lt(self, other: Reverse<T>): bool {
         other.value < self.value
     }

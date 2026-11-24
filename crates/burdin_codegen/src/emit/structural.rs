@@ -32,12 +32,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let bool_ty = self.cx.bool_type();
         let yes = bool_ty.const_int(1, false);
         let Some(t) = self.llvm_ty(ty) else { return Ok(yes) };
-        // A type with a hand-written `PartialEq` compares through its `eq` (`spec/derives.md`, issue #918).
+        // A type with a hand-written `Eq` implementation compares through its `eq` (`spec/derives.md`, issue #918).
         if let Some(f) = self.user_comparison(ty, false) {
             let call = self.builder.build_call(f, &[l.into(), r.into()], "eq").map_err(llvm_err)?;
             return Ok(call.try_as_basic_value().basic().expect("eq returns a bool").into_int_value());
         }
-        // A type with a hand-written `PartialOrd` and no equality of its own is equal when neither is less.
+        // A type with a hand-written `Ord` implementation and no equality of its own is equal when neither is less.
         if self.derives_no_eq(ty)
             && let Some(f) = self.user_comparison(ty, true)
         {
@@ -249,7 +249,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<IntValue<'ctx>> {
         let i32_ty = self.cx.i32_type();
         let Some(t) = self.llvm_ty(ty) else { return Ok(i32_ty.const_zero()) };
-        // A type with a hand-written `PartialOrd` orders through its `lt` (`spec/derives.md`, issue #918).
+        // A type with a hand-written `Ord` implementation orders through its `lt` (`spec/derives.md`, issue #918).
         if let Some(f) = self.user_comparison(ty, true) {
             let less = self.builder.build_call(f, &[l.into(), r.into()], "lt").map_err(llvm_err)?;
             let less = less.try_as_basic_value().basic().expect("lt returns a bool").into_int_value();

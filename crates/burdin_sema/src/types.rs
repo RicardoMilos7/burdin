@@ -799,10 +799,10 @@ impl Globals {
             Ty::Array(t, _) => self.has_eq_in(t, env),
             // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
             Ty::List(t, _) => self.has_eq_in(t, env),
-            // A derived `Eq` or a hand-written `PartialEq`: a derive is the type's own implementation of the
+            // A derived `Eq` or a hand-written `Eq` implementation: a derive is the type's own implementation of the
             // interface (`spec/derives.md`, issue #918).
             Ty::Struct(_) | Ty::Enum(_) => {
-                self.has_derived_eq_in(ty, env) || self.implements_partial_eq(ty, env) || self.eq_from_order(ty, env)
+                self.has_derived_eq_in(ty, env) || self.implements_eq_iface(ty, env) || self.eq_from_order(ty, env)
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)
