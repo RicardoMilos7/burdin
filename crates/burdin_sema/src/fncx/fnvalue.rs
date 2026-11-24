@@ -235,8 +235,11 @@ impl FnCx<'_> {
         }
         let owned = sig.params[0].own || matches!(expect, Some(Ty::Fn { borrowed: false, .. }));
         let rest = &sig.params[1..];
+        // The generated parameters and arguments have no source text, so they take an empty span at the start of the
+        // value: a cursor on the value then finds the method call, not one of these names.
+        let empty = Span::new(span.file, span.lo, span.lo);
         let params: Vec<ast::ClosureParam> = (0..rest.len())
-            .map(|i| ast::ClosureParam { name: ast::Ident { name: format!("arg{i}"), span }, ty: None })
+            .map(|i| ast::ClosureParam { name: ast::Ident { name: format!("arg{i}"), span: empty }, ty: None })
             .collect();
         let args: Vec<ast::Arg> = params
             .iter()
@@ -244,7 +247,7 @@ impl FnCx<'_> {
                 name: None,
                 mut_marker: false,
                 mut_span: None,
-                expr: ast::Expr { kind: ast::ExprKind::Name { name: p.name.clone(), args: Vec::new() }, span },
+                expr: ast::Expr { kind: ast::ExprKind::Name { name: p.name.clone(), args: Vec::new() }, span: empty },
             })
             .collect();
         let callee = ast::Expr { kind: ast::ExprKind::Field(Box::new(recv.clone()), name.clone()), span };
