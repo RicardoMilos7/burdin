@@ -57,6 +57,9 @@ pub(crate) fn run(
     options: &CompileOptions,
 ) -> Result<Outcome, Failure> {
     check_grants(workspace)?;
+    // The entry package's `[lib]` table is checked before any of its source is (`spec/library.md`, LB1). A build of a
+    // library checks it again when it writes the artifact.
+    crate::library::validate(&workspace.packages[workspace.entry_package])?;
     let fingerprint = compiler_fingerprint();
     let mut outcome = Outcome::default();
     // Dependencies first, like a package manager building a graph: a package's generated modules are ready before
@@ -730,6 +733,7 @@ mod tests {
             deps: Vec::new(),
             build_allow: Vec::new(),
             link_libs: Vec::new(),
+            lib: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),
@@ -761,6 +765,7 @@ mod tests {
             deps: Vec::new(),
             build_allow: Vec::new(),
             link_libs: Vec::new(),
+            lib: Vec::new(),
             lint: Vec::new(),
             rust: Default::default(),
             edition: Default::default(),

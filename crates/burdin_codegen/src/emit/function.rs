@@ -108,6 +108,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.windows,
                 self.sanitized,
             )?,
+            // A library has no entry point: its constructor initializes it when it is loaded (`spec/library.md`, LB6).
+            None if self.library => crate::runtime::define_library_init(self.cx, self.module, self.static_init)?,
             // A `burdin fuzz` build: libFuzzer supplies `main` and calls the target once per input
             // (`spec/fuzz.md`, FZ3).
             None if program.fuzz_target.is_some() => {
@@ -160,7 +162,37 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if self.debug.is_some() {
             self.emit_debug_scripts()?;
         }
+        if self.library {
+            self.finish_library_linkage();
+        }
         Ok(())
+    }
+
+    /// The linkage of a library (`spec/library.md`, LB5): an `extern "C" fn` with a body keeps its C symbol, which a
+    /// Windows DLL exports, and every other function and variable with a definition is local to the object, so two
+    /// libraries linked into one program do not define the same symbols. Declarations (what the program calls, and
+    /// what it reads from C) and the constructor list are left alone.
+    fn finish_library_linkage(&self) {
+        let exported: std::collections::HashSet<&str> =
+            self.program.functions.iter().filter(|f| f.exported).map(|f| f.name.as_str()).collect();
+        for function in self.module.get_functions() {
+            if function.count_basic_blocks() == 0 {
+                continue;
+            }
+            let name = function.get_name().to_string_lossy();
+            if exported.contains(name.as_ref()) {
+                if self.windows {
+                    function.as_global_value().set_dll_storage_class(inkwell::DLLStorageClass::Export);
+                }
+            } else {
+                function.set_linkage(Linkage::Internal);
+            }
+        }
+        for global in self.module.get_globals() {
+            if global.get_initializer().is_some() && global.get_linkage() != Linkage::Appending {
+                global.set_linkage(Linkage::Internal);
+            }
+        }
     }
 
     pub(super) fn function(&mut self, value: FunctionValue<'ctx>, f: &'a tir::Function) -> GenResult<()> {

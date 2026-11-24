@@ -2403,6 +2403,33 @@ Open, for the user to decide:
   GL7 lists.
 - **E0302 is a syntax-level error,** so a file that has one reports only that (`spec/check.md` CK4).
 
+## Session: libraries, static and shared (issue #1000)
+
+A `[lib]` table in `burdin.toml` makes a library build an artifact, with the rules in `spec/library.md` (LB1-LB11) and
+the checks in `tests/check_library.py` (fixtures in `tests/library/`). `kind` is `source` (the default, unchanged),
+`static`, or `shared`; `c-header` writes the C header of the exports through the `burdin bindgen --export` code. The
+decisions, each written into the spec:
+
+- No `root` key and no per-profile `[lib]`; `--lto`, `--pgo-generate`, `--pgo-use`, and `--sanitize` are refused (exit 2).
+- The exports are the non-`priv` `extern "C" fn` items. This changes the executable build too: a `priv extern "C" fn`
+  no longer has a C symbol (sema, `declare.rs`).
+- A Burdin dependent still compiles the library's source; the artifact is for C callers.
+- A static or shared library with `src/main.bd` is E0265; `burdin run` refuses a library.
+- `[lib]` is not in `burdin.lock`, and a library's artifact is not cached in `target/` (it is written in the build's bin
+  directory and copied to the output path).
+
+Verified on Linux (WSL, debug): `cargo test --workspace`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --all
+--check`, and `tests/check_library.py` (46 checks, including the C programs linking and running). The conformance suite
+passes 1422 of 1427 with `BURDIN_LD=platform`; the five failures are `s3_http` and `s3_tls` programs that need the
+OpenSSL 3 headers, which this WSL image lacks. The other check scripts that touch the build paths pass as well.
+Not yet verified: the Windows (`lib.exe`, `/LD`, `dllexport`) and macOS (`-shared`, `nm` underscores) artifact paths, and
+the release-mode conformance run. In this WSL image `mold` (on `PATH`) fails to link, so the suite needs
+`BURDIN_LD=platform`.
+
+Known limits: the task runtime's `burdin_rt_ctx_asm_switch` and `burdin_rt_ctx_boot` are global symbols (module assembly),
+and two multi-unit static libraries linked into one program may both define the split's hidden helpers (spec/library.md,
+"Not yet").
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

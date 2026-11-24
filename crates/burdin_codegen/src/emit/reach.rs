@@ -36,16 +36,19 @@ impl Codegen<'_, '_> {
         if let Some(init) = program.static_init {
             mark(init, &mut reachable, &mut pending);
         }
-        for test in &program.tests {
-            mark(test.func, &mut reachable, &mut pending);
-        }
-        // The bench dispatcher calls each bench the same way (`spec/bench.md`, BN4).
-        for bench in &program.benches {
-            mark(bench.func, &mut reachable, &mut pending);
-        }
-        // The test dispatcher replays every fuzz target; a fuzz build's entry point calls its own.
-        for fuzz in &program.fuzzes {
-            mark(fuzz.func, &mut reachable, &mut pending);
+        // A library's artifact holds none of its test, bench, or fuzz blocks (`spec/library.md`, LB6).
+        if !self.library {
+            for test in &program.tests {
+                mark(test.func, &mut reachable, &mut pending);
+            }
+            // The bench dispatcher calls each bench the same way (`spec/bench.md`, BN4).
+            for bench in &program.benches {
+                mark(bench.func, &mut reachable, &mut pending);
+            }
+            // The test dispatcher replays every fuzz target; a fuzz build's entry point calls its own.
+            for fuzz in &program.fuzzes {
+                mark(fuzz.func, &mut reachable, &mut pending);
+            }
         }
         for (i, f) in program.functions.iter().enumerate() {
             if f.exported {

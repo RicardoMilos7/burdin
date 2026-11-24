@@ -458,7 +458,8 @@ impl<'t> Sema<'t> {
                             continue;
                         }
                         let id = self.push_fn(FnItem::plain(&e.decl, name.clone(), module, None));
-                        self.fn_items[id.0].is_exported = true;
+                        // A `priv` one has no C symbol: `priv` hides it from C as from other packages (`spec/library.md`, LB5).
+                        self.fn_items[id.0].is_exported = !e.decl.is_priv;
                         self.globals.modules[module].values.insert(name.clone(), Global::Func(id));
                         self.globals.modules[module].value_priv.insert(name.clone(), e.decl.is_priv);
                         self.export_srcs.push((id, e));

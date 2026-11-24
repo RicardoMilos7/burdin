@@ -192,6 +192,14 @@ close-out checklist in `AGENTS.md`).
   names the function; an absent answer is `None`. `tests/math/` holds about 2,400 known-answer cases generated with exact
   arithmetic (`tests/math/regenerate.py`) and run by `tests/check_math.py`; `tests/s3_math/` is the conformance suite,
   with an end-to-end usage case, a surface case, a compile-fail case for mismatched shapes, and one abort case per panic.
+- Issue #1000: libraries, with static and shared artifacts (`spec/library.md`, LB1-LB11). A `[lib]` table in
+  `burdin.toml` sets `kind` to `source` (the default, no artifact), `static` (an archive: `libNAME.a` or `NAME.lib`), or
+  `shared` (`libNAME.so`, `libNAME.dylib`, or `NAME.dll` with `NAME.lib`), and `c-header` writes the C header of the
+  exports, as `burdin bindgen --export` does. The exports are the non-`priv` `extern "C" fn` items; a `priv` one has no
+  C symbol in any build. `burdin run` refuses a library. An invalid `[lib]` table, or a static or shared library with a
+  `src/main.bd`, is E0265. `--lto`, `--pgo-generate`, `--pgo-use`, and `--sanitize` are refused for a library. Tests:
+  `tests/check_library.py` with the fixtures in `tests/library/`. Verified on Linux; the Windows and macOS artifact paths
+  are not yet exercised by CI.
 
 ## 0.1.2 — 2026-11-21
 

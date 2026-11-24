@@ -40,6 +40,7 @@ pub fn standalone(files: &[(&str, &str)]) -> Db {
             deps: Vec::new(),
             build_allow: Vec::new(),
             link_libs: Vec::new(),
+            lib: Vec::new(),
             root_module: Some(entry),
             lint: Vec::new(),
             rust: Default::default(),

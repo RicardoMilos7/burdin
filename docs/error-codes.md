@@ -2068,6 +2068,30 @@ fn main() {} //~ E0264
 `cargo build` succeed. A layout failure means the crate changed a `repr(C)` type: rebuild so the module is generated
 again.
 
+## E0265: Invalid library configuration
+
+A package's `[lib]` table says what its build writes (`spec/library.md`). The step stops with this error when the table
+has a key other than `kind` and `c-header`, a `kind` that is not `source`, `static`, or `shared` (or is not a string),
+a `c-header` that is not a relative path or that a `source` library has, or a static or shared library with a
+`src/main.bd`, since a library has no entry point. The message names the manifest line.
+
+<!-- error-example: E0265 target=. -->
+```burdin
+// --- burdin.toml ---
+[package]
+name = "greet"
+
+[lib]
+kind = "static"
+
+// --- src/main.bd ---
+fn main() {} //~ E0265
+```
+<!-- /error-example -->
+
+**How to fix:** delete `src/main.bd` from a library, or give the package no `[lib]` table (or `kind = "source"`) if it is
+a program. Use `kind = "static"` or `"shared"` with a `c-header` that is a relative path, such as `include/greet.h`.
+
 ## E0270: Not an allocator
 
 The last type argument of `List<T, A>`, `Map<K, V, A>`, and `Heap<T, A>` is the allocator the container

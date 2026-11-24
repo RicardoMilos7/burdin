@@ -358,6 +358,8 @@ impl Code {
     /// pinned one, a crate that rustdoc or cargo could not build, or a shim whose layout checks failed
     /// (`spec/rust-interop.md`, RI7-RI9).
     pub const RUST_INTEROP: Code = Code("E0264");
+    /// An invalid `[lib]` table, or a static or shared library with a `src/main.bd` (`spec/library.md`, LB1 and LB4).
+    pub const LIBRARY_CONFIG: Code = Code("E0265");
     /// A type argument of an allocator-aware container that does not implement `Allocator`
     /// (`spec/allocators.md`, AL3).
     pub const NOT_AN_ALLOCATOR: Code = Code("E0270");

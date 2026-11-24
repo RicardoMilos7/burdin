@@ -143,6 +143,10 @@ pub struct Options {
     /// module (`spec/target.md`, TG11-TG16). Ignored by every build that always uses one unit for its own reasons
     /// (bitcode, instrumentation, and the inspection outputs).
     pub object_cache: Option<ObjectCache>,
+    /// Build a library rather than a program (`spec/library.md`, LB5 and LB6): no entry point, the static initializer
+    /// runs when the object is loaded, every function that is not an exported `extern "C" fn` is local, and the
+    /// plain allocator is used, as in a program.
+    pub library: bool,
 }
 
 impl Default for Options {
@@ -153,6 +157,7 @@ impl Default for Options {
             debug_assertions: true,
             overflow_checks: true,
             package_flags: Vec::new(),
+            library: false,
             emit_ir: None,
             pgo_ir: None,
             debug: false,
@@ -311,6 +316,7 @@ pub fn emit_object_timed(
             optimized: opts.opt_level.optimized(),
             overflow_checks: opts.overflow_checks,
             packages: opts.package_flags.clone(),
+            library: opts.library,
         },
         debug,
     )?;

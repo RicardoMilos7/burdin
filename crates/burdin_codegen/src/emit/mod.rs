@@ -127,6 +127,8 @@ pub(crate) struct Codegen<'ctx, 'a> {
     /// A sanitizer runtime is linked (AddressSanitizer or ThreadSanitizer): it owns signal handling and crash
     /// reporting, so the runtime does not install its own stack guard (`spec/sanitizers.md`, SAN6).
     pub(crate) sanitized: bool,
+    /// Building a library: no entry point, and its own linkage (`spec/library.md`).
+    pub(crate) library: bool,
     builder: Builder<'ctx>,
     /// Positioned at the end of the current function's `entry` block, for stack slots.
     entry_builder: Builder<'ctx>,
@@ -214,6 +216,8 @@ pub(crate) struct ProfileFlags {
     pub(crate) optimized: bool,
     pub(crate) overflow_checks: bool,
     pub(crate) packages: Vec<crate::PackageFlags>,
+    /// A library rather than a program (`spec/library.md`).
+    pub(crate) library: bool,
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -238,7 +242,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let platform = tir::ioerror::platform(windows, darwin);
         // The checking allocator is a `burdin test` build's (`spec/allocators.md`, AL9): a bench build measures the
         // plain C heap, so its numbers are not the allocator's bookkeeping.
-        let checking = program.main.is_none() && program.benches.is_empty() && program.fuzz_target.is_none();
+        // A library has no test entry point either, so it is not a `burdin test` build (`spec/library.md`, LB6).
+        let checking =
+            !flags.library && program.main.is_none() && program.benches.is_empty() && program.fuzz_target.is_none();
         let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, checking)?;
         Ok(Codegen {
             cx,
@@ -251,6 +257,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             package_flags: flags.packages,
             undefined_checks: false,
             sanitized: false,
+            library: flags.library,
             builder: cx.create_builder(),
             entry_builder: cx.create_builder(),
             usize_ty,
