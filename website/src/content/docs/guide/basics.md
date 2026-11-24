@@ -49,6 +49,9 @@ fn main() {
 }
 ```
 
+`static` declares a global variable instead: one value that lives for the whole program, and `static mut` when it must
+change. Writing to a `static mut` needs `unsafe`. See [Global variables](/guide/globals/).
+
 ## Built-in types
 
 | Kind | Types |

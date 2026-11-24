@@ -45,6 +45,8 @@ The full matrix, with the test behind each row, is in
   git repository in `burdin.toml`. An official package is not declared at all: a `use` of its name loads it.
 - **`Option.as_ref` is not provided.** A reference to a `match` binding is copied into a slot by the code generator, so
   `Some(&v)` is accepted and then dangles. That is a compiler bug, recorded in the specification and not yet fixed.
+- **Statics cannot hold atomics or `Mutex`.** A `static` is built at compile time, and those types cannot be built then.
+  Pass a shared counter to the tasks that use it instead. See [global variables](/guide/globals/).
 - **Some borrows last a whole statement.** `s = s + "x"` does not compile (E0111). Write `let t = s + "x"` and then
   `s = t`.
 - **HTTPS is not in the `http` package.** The `tls` package is the way to secure a connection, and it needs OpenSSL 3 to

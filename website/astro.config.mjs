@@ -99,6 +99,7 @@ export default defineConfig({
 						'guide/errors',
 						'guide/generics-and-interfaces',
 						'guide/comptime',
+						'guide/globals',
 						'guide/closures-and-iterators',
 						'guide/collections',
 						'guide/concurrency',

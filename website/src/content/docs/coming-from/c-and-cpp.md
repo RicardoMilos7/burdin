@@ -76,6 +76,7 @@ Burdin returns the result instead, and a parameter that must change is marked `m
 | `int x = 5;` | `let x: i32 = 5` | Immutable by default. |
 | `int x;` then `x = 5;` | `let mut x: i32 = 0` | Assign later with `mut`. |
 | `const int N = 5;` | `const N: i32 = 5` | Compile-time constant. |
+| `int n = 0;` at file scope | `static mut N: i32 = 0` | Written only in `unsafe`. See [global variables](/guide/globals/). |
 | `int& r = x;` (a reference) | `let r = &x` (read-only) or `let m = &mut x` | Read through `*r`. |
 | `void f(int& x)` | `fn f(mut x: i32)`, called as `f(mut x)` | The call site shows the mutation. |
 | `void f(const T& x)` | `fn f(x: T)` | Read-only parameters are the default. |
