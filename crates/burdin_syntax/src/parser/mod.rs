@@ -1091,4 +1091,47 @@ S {
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert!(messages[0].contains("expected a method name, found `if`"), "{messages:?}");
     }
+
+    #[test]
+    fn module_statics_parse_with_their_kind_and_a_body_static_is_e0302() {
+        // `static` and `static mut` are module items (spec/globals.md, GL1); in a body it is E0302, read as a `let`.
+        let (file, diags) = parse_str(
+            "static mut COUNT: i32 = 0
+static LIMIT: i32 = 3
+fn main() {
+    static inner: i32 = 1
+    let static = 2
+}
+",
+        );
+        let found: Vec<(String, String)> = diags.iter().map(|d| (d.code.0.to_string(), d.message.clone())).collect();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, "E0302", "{found:?}");
+        let kinds: Vec<(&str, ConstKind)> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Const(c) => Some((c.name.name.as_str(), c.kind)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, vec![("COUNT", ConstKind::StaticMut), ("LIMIT", ConstKind::Static)]);
+    }
+
+    #[test]
+    fn static_followed_by_a_colon_is_still_an_impl_block() {
+        // `static: Interface { }` is an impl block for a type named `static`, not a declaration.
+        let (_, diags) = parse_str(
+            "struct static { x: i32 }
+static: Display {
+    fn show(self): str { \"s\" }
+}
+",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code.0 == "E0302"),
+            "{:?}",
+            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+        );
+    }
 }

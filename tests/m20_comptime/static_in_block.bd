@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// A `static` is a module item, not a local (spec/globals.md, GL1): in a body it is E0302.
+
+fn main() {
+    static count: i32 = 0 //~ E0302
+    println(count.to_string())
+}

@@ -52,6 +52,9 @@ fn main() {
 `unwrap()` takes the value out of `Some` and panics on `None`. `expect("message")` does the same and prints your message.
 Use them when a missing value is a bug, not a normal case. `is_some()` and `is_none()` ask without taking the value.
 
+`unwrap_or_default()` gives the value, or the type's default when there is none. `flatten()` turns an
+`Option<Option<T>>` into an `Option<T>`.
+
 ## Result: an operation that may fail
 
 `Result<T, E>` is `Ok(value)` or `Err(error)`. A function that can fail says so in its return type:
@@ -117,6 +120,37 @@ The `from` keyword makes `?` convert a `ParseIntError` into a `ConfigError.Parse
 prints its message, so `println("{e}")` writes `missing key port`. The [bank example](/examples/bank-errors/) uses an error
 enum with `?` from start to finish.
 
+## Any error: AnyError
+
+`Result<T>` with one type argument means `Result<T, AnyError>`: any error type can be returned through it. `AnyError`
+keeps the original error, and `context` adds a message in front of it. Printing the error prints the messages from the
+outside in, then the original error:
+
+```burdin
+error enum ConfigError {
+    Missing(String) "missing key {0}"
+}
+
+fn read_key(own key: String): Result<String, ConfigError> {
+    Err(ConfigError.Missing(key))
+}
+
+fn load(): Result<String> {
+    let value = read_key(String.from("port")).context("loading settings")?
+    Ok(value)
+}
+
+fn main() {
+    match load() {
+        Ok(v) => println("value {v}"),
+        Err(e) => println("{e}"),
+    }
+}
+```
+
+The program prints `loading settings: missing key port`. The `Error` name is the interface that marks an error type. It
+is not the dynamic value, which is `AnyError`.
+
 ## main that returns Result
 
 `main` can return `Result<()>`. Then `?` works in `main`, and an error ends the program:
@@ -144,6 +178,17 @@ fn main(): Result<()> {
 ```
 
 The program prints `ok 5`, then prints the error message to standard error with a trace, and exits with a failure status.
+
+The return type can also be a type alias of a `Result` declared in the same file:
+
+```burdin
+type Outcome = Result<()>
+
+fn main(): Outcome {
+    println("hello")
+    Ok(())
+}
+```
 
 ## Panics
 

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Reading or writing a `static mut` outside an `unsafe` block is E0161 (spec/globals.md, GL4).
+
+static mut COUNT: i32 = 0
+
+fn main() {
+    let v = COUNT //~ E0161
+    COUNT = v + 1 //~ E0161
+    println(v.to_string())
+}

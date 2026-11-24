@@ -15,6 +15,12 @@ close-out checklist in `AGENTS.md`).
   and `generic_variant_modules` (run), `generic_variant_literal_errors` and `generic_variant_modules_errors`
   (compile-fail); the parser keeps each segment's arguments (a unit test in `crates/burdin_syntax/src/parser/mod.rs`),
   and the formatter lays out both forms (a unit test in `crates/burdin_fmt/src/docs.rs`).
+- Issue #485: global variables (`spec/globals.md`, decision 36). `static` declares an immutable global at module scope,
+  and `static mut` a writable one that is used only in `unsafe` code. Each value is computed at compile time and stored
+  before `main` runs; its type must be plain data, so it is never dropped. A `static mut` may not be borrowed. A
+  `static` in a function body is E0302, a non-plain type is E0303, and a borrow of a `static mut` is E0304. Atomics and
+  `Mutex<T>` cannot be a static's type yet (E0221). Tests: `tests/m20_comptime/static_*` and `const_global`, and
+  `tests/s2_tasks/static_in_task`.
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`

@@ -20,6 +20,8 @@ pub(crate) enum Callee {
 pub(crate) enum Global {
     Func(FuncId),
     Const(ConstId),
+    /// A `static` or `static mut`: a constant index whose declaration is a place (`spec/globals.md`, GL1).
+    Static(ConstId),
     /// A generic function: an index into [`Globals::generic_fns`].
     Generic(usize),
     /// An `extern "C"` declaration: an index into [`Globals::externs`].
@@ -208,6 +210,10 @@ pub(crate) struct Globals {
     /// The functions whose return type is `impl I`, in the order they were resolved (`crate::opaque`).
     pub(crate) opaques: Vec<OpaqueRet>,
     pub(crate) const_tys: Vec<Ty>,
+    /// Whether each constant or static is a `const`, a `static`, or a `static mut`, by constant index.
+    pub(crate) const_kinds: Vec<burdin_tir::ConstKind>,
+    /// The name of each constant or static, by constant index, for diagnostics.
+    pub(crate) const_names: Vec<String>,
     /// Whether each function is `unsafe` (`unsafe fn`), by function index.
     pub(crate) fn_unsafe: Vec<bool>,
     // Interfaces and generics (see `generics.rs`).

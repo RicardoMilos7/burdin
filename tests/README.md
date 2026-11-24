@@ -265,6 +265,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0192 | Argument of a format call that the format string does not use |
 | E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
 | E0194 | A format call with arguments whose format string is not a string literal |
+| E0195 | An argument used by more than one placeholder of a format call that is neither a place nor `Copy`, so it cannot be evaluated once |
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
 | E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature); a return type is reported too until #926 lands |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
@@ -308,6 +309,9 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0290 | An invalid `blocking` marker: on a declaration that is not an `extern "C"` function, on a variadic declaration, or two declarations of one C symbol that disagree about it |
 | E0300 | A `#!` shebang line anywhere but the first line of a file |
 | E0301 | Warning: a form the package's edition deprecates and the next edition removes; the fix writes the replacement (`spec/fix.md`, FX11). In the edition that removes the form, a use is E0002 with the same fix |
+| E0302 | A `static` or `static mut` declaration in a function body; a static is a module item (`spec/globals.md`, GL1) |
+| E0303 | A `static` whose type is not plain data: it owns memory, or has a destructor, so it would have to be dropped (`spec/globals.md`, GL2) |
+| E0304 | A borrow of a `static mut`, shared, mutable, or a method's `self`: no reference may alias it (`spec/globals.md`, GL4) |
 
 ### Codes without a compile-fail test
 
@@ -438,7 +442,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Display`/`Debug` (E0193), a specifier that does not apply (E0190), and a call with arguments whose format
     string is not a literal (E0194); the compiler then lowers the string to `Formatter` calls, so no format string
     is parsed at run time. An argument used by two placeholders is evaluated once (a place by borrowing, a `Copy`
-    value by copying). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
+    value by copying), and one that is neither a place nor `Copy` is E0195. A literal with a placeholder is a
+    `String` and one without is a `str` (issue #923; `spec/format.md` FM1). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
     built-in types and by an impl block (or `struct T: Debug`) for a user type. A one-argument output call takes no
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
@@ -634,6 +639,15 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
     place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
     `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
+36. **Globals.** Burdin has global variables, declared at module scope with `static` (immutable) and `static mut`
+    (writable, only in `unsafe` code), with the rules of `spec/globals.md` GL1-GL8 (issue #485). A static's value is
+    computed at compile time and stored before `main` runs; its type is plain data (no memory owned, no destructor),
+    so it is never dropped; a `static mut` may not be borrowed (E0304). A `static` in a function body is E0302. A
+    `const` remains the value copied into each use. Tests: `m20_comptime/static_values`, `static_mut`,
+    `static_view`, `static_in_block`, `static_string`, `static_drop`, `static_assign`, `static_move`,
+    `static_mut_safe`, `static_mut_borrow`, `static_comptime`, `static_const_init`, `static_array_len`,
+    `const_global`, and `s2_tasks/static_in_task`. A lazily initialized process-wide cell (`Once`, `Lazy`) is not
+    part of this decision; it is a later issue.
 
 ## Review of the expected outputs
 

@@ -50,21 +50,43 @@ fn main() {
 }
 ```
 
-Note that a `String` is not equal to a `str` in a comparison. To compare them, view the `String` with `as_str()` first:
+A `String` and a `str` compare directly, in either order, with `==`, `!=`, `<`, `<=`, `>`, and `>=`. The comparison is by
+the bytes of the text:
 
 ```burdin
 fn main() {
     let name = String.from("ana")
-    if name.as_str() == "ana" {
+    if name == "ana" {
         println("found ana")
+    }
+    if name < "bob" {
+        println("ana sorts before bob")
     }
 }
 ```
 
+Two `String` values, or two `str` values, compare the same way. Other pairs of different types do not compare.
+
+To join text, `String + str` returns a new `String` that holds both. Both operands stay usable:
+
+```burdin
+fn main() {
+    let first = String.from("Burdin")
+    let greeting = first + " language"
+    println("{greeting} and {first}")
+}
+```
+
+`str + str` and `String + String` are errors. For two `String` values, write `s + t.as_str()`. `+=` is not available for
+text; use `push_str`.
+
+Slicing a string with `s[a..b]` panics when an end falls inside a multi-byte character. `s.get(a, b)` returns `None` in
+that case instead.
+
 ## Interpolation
 
-A string literal can contain `{...}`. Each hole is an expression, and its value is written into the string. The result is
-a `String`:
+A string literal can contain `{...}`. Each hole is an expression, and its value is written into the string. A literal with at
+least one hole is a `String`; a literal with no hole is a `str`:
 
 ```burdin
 fn main() {

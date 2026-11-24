@@ -108,21 +108,26 @@ library's internal layout free to change.
 ## Official packages
 
 The compiler ships with several official packages: `json`, `toml`, `csv`, `yaml`, `xml`, `http`, `tls`, `regex`,
-`crypto`, and `math`. Declare one with `name = true`:
+`crypto`, and `math`. You do not declare them in `burdin.toml`. A `use` line loads one:
 
-```toml
-[dependencies]
-json = true
+```burdin
+use json
+
+struct Server: Serialize, Deserialize {
+    host: String
+    port: u16
+}
+
+fn main() {
+    let server = Server { host: "example.test".to_string(), port: 8080 }
+    let text = json.to_string_pretty(server).unwrap()
+    println(text)
+}
 ```
 
-or add it from the command line, which writes the same line:
-
-```console
-$ burdin add json
-Added dependency `json` (official)
-```
-
-Then `use json` brings the package in. The [packages reference](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md)
+The compiler reads each `use` in your files and loads only the official packages they name. A package you never import
+is not built, checked, or pinned in `burdin.lock`. Writing `json = true` in `burdin.toml`, or running `burdin add json`,
+is an error that points you to `use json`. The [packages reference](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md)
 describes how the compiler finds official packages and how `burdin.lock` pins them.
 
 ## Checking a package

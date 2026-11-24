@@ -354,6 +354,7 @@ impl<'a> Checker<'a> {
             | K::Str(_)
             | K::Bytes(_)
             | K::Const(_)
+            | K::Static(_)
             | K::None
             | K::Continue(_)
             | K::LayoutOf { .. } => {}
@@ -831,6 +832,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
@@ -968,6 +970,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }

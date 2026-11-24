@@ -32,6 +32,10 @@ impl Codegen<'_, '_> {
         if let Some(main) = program.main {
             mark(main, &mut reachable, &mut pending);
         }
+        // The static initializer runs before `main` (`spec/globals.md`, GL1), so it is reachable with it.
+        if let Some(init) = program.static_init {
+            mark(init, &mut reachable, &mut pending);
+        }
         for test in &program.tests {
             mark(test.func, &mut reachable, &mut pending);
         }
@@ -247,6 +251,7 @@ impl Walker<'_> {
             | K::Bytes(_)
             | K::Local(_)
             | K::Const(_)
+            | K::Static(_)
             | K::Continue(_)
             | K::None
             | K::Return(None)

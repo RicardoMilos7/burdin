@@ -1,0 +1,28 @@
+//@ compile-fail
+
+// The type of a literal follows its placeholders (spec/format.md FM1): a plain literal is a `str`, and a literal with a
+// placeholder is a `String`. Each position below takes the other form, so each is a type mismatch (E0003), or, for a
+// method that only `String` has, an unknown name (E0002). A `str` that is given a `String` temporary is also a view of a
+// temporary (E0122 when returned, E0123 when bound), which the mismatch causes and the test lists too.
+
+struct Tag {
+    text: String
+}
+
+fn plain_as_string(): String {
+    "plain" //~ E0003
+}
+
+fn label_as_str(n: i32): str {
+    "r {n}" //~ E0003 //~ E0122
+}
+
+fn main() {
+    let n = 4
+    let a: str = "n = {n}" //~ E0003 //~ E0123
+    let b: String = "plain" //~ E0003
+    let tag = Tag { text: "plain" } //~ E0003
+    let mut s = "plain"
+    s.push('x') //~ E0002
+    let t: str = format("n = {n}") //~ E0003 //~ E0123
+}

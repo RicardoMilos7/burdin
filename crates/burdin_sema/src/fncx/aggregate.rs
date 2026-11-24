@@ -39,6 +39,7 @@ impl FnCx<'_> {
                 Some(Global::Const(c)) => {
                     return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
                 }
+                Some(Global::Static(c)) => return self.static_place(c, span),
                 Some(_) => {
                     self.diags.error(
                         Code::TYPE_MISMATCH,
@@ -536,5 +537,31 @@ impl FnCx<'_> {
     /// call is still being inferred.
     fn is_foreign_param(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Param(name) if !self.bounds.iter().any(|(n, _)| n == &**name))
+    }
+}
+
+impl FnCx<'_> {
+    /// A `static` or `static mut` named in an expression: a place stored once for the whole program (`spec/globals.md`,
+    /// GL1, GL4). A constant or static initializer may not name one (E0220), and a `static mut` is used only in
+    /// `unsafe` code (E0161).
+    pub(super) fn static_place(&mut self, c: tir::ConstId, span: Span) -> tir::Expr {
+        let name = self.globals.const_names[c.0].clone();
+        if self.const_init {
+            self.diags.error(
+                Code::INVALID_COMPTIME,
+                span,
+                format!("`{name}` is a static, a run-time place, so a constant or a static initializer cannot name it (spec/globals.md, GL1)"),
+            );
+            return error_expr(span);
+        }
+        if self.globals.const_kinds[c.0] == tir::ConstKind::StaticMut && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("`{name}` is a `static mut`, and using it requires an `unsafe` block (spec/globals.md, GL4)"),
+            );
+        }
+        let ty = self.globals.const_tys[c.0].clone();
+        mk(tir::ExprKind::Static(c), ty, span)
     }
 }

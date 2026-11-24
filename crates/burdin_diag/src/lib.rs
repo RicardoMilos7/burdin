@@ -246,6 +246,9 @@ impl Code {
     pub const NOT_FORMATTABLE: Code = Code("E0193");
     /// A format call with arguments whose format string is not a string literal.
     pub const FORMAT_NOT_LITERAL: Code = Code("E0194");
+    /// An argument of a format call that several placeholders use but that is neither a place nor `Copy`, so it
+    /// cannot be evaluated once and reused.
+    pub const FORMAT_ARG_REUSED: Code = Code("E0195");
     /// `any` or `impl` applied to something that is not an interface.
     pub const NOT_AN_INTERFACE: Code = Code("E0200");
     /// `impl Interface` outside a parameter list.
@@ -362,6 +365,13 @@ impl Code {
     pub const SHEBANG_PLACEMENT: Code = Code("E0300");
     /// A warning: a form the package's edition deprecates and the next edition removes (`spec/fix.md`, FX11).
     pub const DEPRECATED: Code = Code("E0301");
+    /// A `static` declared in a function body: statics are module items (`spec/globals.md`, GL1).
+    pub const STATIC_ITEM: Code = Code("E0302");
+    /// A static whose type is not plain data: it owns memory or has a destructor, so it would need dropping at exit
+    /// (`spec/globals.md`, GL2).
+    pub const STATIC_NOT_PLAIN: Code = Code("E0303");
+    /// A borrow of a `static mut`: no reference may alias it (`spec/globals.md`, GL4).
+    pub const STATIC_MUT_BORROW: Code = Code("E0304");
     /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
     /// therefore cannot dispatch through a vtable.
     pub const BUILT_IN_IMPL: Code = Code("E0204");

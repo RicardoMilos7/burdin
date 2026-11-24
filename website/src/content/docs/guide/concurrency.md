@@ -101,6 +101,22 @@ fn main() {
 `Channel<T>.unbounded()` never blocks a sender. `Channel<T>.bounded(n)` holds at most `n` values, and `try_send` reports when it
 is full, so the sender can decide what to do. A channel that is closed returns `None` from `recv` once it is empty.
 
+`send` returns a `Result<(), T>`. `Ok(())` means the value is queued. On a closed channel `send` returns `Err(value)` and
+gives the value back, so nothing is lost. The example above ignores the result with `let _queued`; check it when a value
+must not be dropped:
+
+```burdin
+fn main() {
+    let ch = Channel<i32>.unbounded()
+    let tx = ch.clone()
+    ch.close()
+    match tx.send(7) {
+        Ok(()) => println("queued"),
+        Err(v) => println("closed, got back {v}"),
+    }
+}
+```
+
 ## Shared state with Mutex
 
 When several tasks must change one value, put it in a `Mutex<T>`. `lock` takes a closure that receives the value by
@@ -132,6 +148,34 @@ Each task adds its own amount under the lock, so the final total is the same on 
 A task must not block its worker thread for long, because the other tasks on that worker wait. For a call that blocks,
 such as a long read from a device, start an operating-system thread with `thread.spawn`. It has the same closure rules as a
 task, and it returns a handle with `join()`.
+
+## Parallel iteration
+
+A list can be summed, filtered, or counted on several workers with `par_iter()`. It starts a pipeline on the task pool,
+and the pipeline ends in a consumer. The results are the same as the sequential ones, and `collect` and `find` follow the
+source order:
+
+```burdin
+fn main() {
+    let mut xs = List<i64>.new()
+    for i in 0..1000 {
+        xs.push(i as i64)
+    }
+    let evens = xs.par_iter().filter(|x| **x % 2 == 0).count()
+    let total = xs.par_iter().fold(0 as i64, |sum, x| sum + *x, |a, b| a + b)
+    println("evens {evens}, total {total}")
+}
+```
+
+`fold` takes three arguments: the starting value, the step for one item, and the way to combine two partial results. The
+sources are `par_iter()` (items by reference), `par_iter_mut()`, `par_into_iter()` (items by value), and
+`par_range(start, end)`. The adapters are `map`, `filter`, `filter_map`, `enumerate`, `take`, and `skip`. The consumers are
+`for_each`, `count`, `fold`, `any`, and `all`, and `reduce`, `find`, `min_by`, `max_by`, and `collect` on a pipeline of
+owned items.
+
+Only a pipeline you write runs in parallel. A `for` loop and a sequential iterator chain are not changed. The closures of
+a pipeline must be `Sync`, so they may capture only values that are safe to share. `flat_map`, `rev`, `par_sort`, and
+collecting into a `Set` or `Map` are not part of this first version.
 
 ## What the compiler checks
 

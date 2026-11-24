@@ -1,0 +1,60 @@
+//@ run
+//> plain
+//> n = 4
+//> {x}
+//> r 9
+//> n = 4 (field)
+//> true false
+//> no holes
+//> n = 4
+//> plain 4
+//> n = 4!
+//> len 2 3
+//> plain text
+
+// A literal with no placeholder is a `str`, so it can be returned as one (a static view).
+fn plain_text(): str {
+    "plain text"
+}
+
+// A literal with a placeholder is a `String`, so it can be returned as one.
+fn label(n: i32): String {
+    "r {n}"
+}
+
+struct Tag {
+    text: String
+}
+
+fn main() {
+    let n = 4
+    // A plain literal in a `let` with a `str` annotation.
+    let plain: str = "plain"
+    println(plain)
+    // A literal with a placeholder in a `let` with a `String` annotation.
+    let text: String = "n = {n}"
+    println(text)
+    // `{{` and `}}` are escapes, not placeholders, so this literal is a `str`.
+    let escaped: str = "{{x}}"
+    println(escaped)
+    // A return: each literal keeps the type of its return position.
+    println(label(9))
+    // A field of type `String` takes an interpolated literal.
+    let tag = Tag { text: "n = {n} (field)" }
+    println(tag.text)
+    // A comparison: a `String` against a `String`, and a `str` against a `str`.
+    let same = "v {n}" == String.from("v 4")
+    let diff = "plain" == "other"
+    println("{same} {diff}")
+    // A format call: a format string with no placeholder, and one with placeholders.
+    println("no holes")
+    let made = format("n = {n}")
+    println(made)
+    println("{} {}", plain, n)
+    // A method call: `push` on the `String` form, `len` on both forms.
+    let mut pushed = "n = {n}"
+    pushed.push('!')
+    println(pushed)
+    println("len {"ab".len()} {"v {n}".len()}")
+    println(plain_text())
+}

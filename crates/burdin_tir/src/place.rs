@@ -31,7 +31,7 @@ pub fn through_view(e: &Expr) -> bool {
 /// dereference is always a place: it names the referent, whatever expression produced the reference.
 pub fn is_place_expr(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Local(_) | ExprKind::DerefRef(_) | ExprKind::PtrDeref(_) => true,
+        ExprKind::Local(_) | ExprKind::Static(_) | ExprKind::DerefRef(_) | ExprKind::PtrDeref(_) => true,
         ExprKind::Field(base, _) | ExprKind::Index(base, _) | ExprKind::Deref(base) => is_place_expr(base),
         _ => false,
     }
@@ -79,6 +79,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Break { .. }
         | K::Continue(_)

@@ -309,10 +309,23 @@ pub struct ImplBlock {
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub is_priv: bool,
+    /// Whether the declaration is a `const`, or a `static` (immutable or `static mut`), spec/globals.md.
+    pub kind: ConstKind,
     pub name: Ident,
     pub ty: Type,
     pub value: Expr,
     pub span: Span,
+}
+
+/// The keyword of a module-level value declaration (`spec/globals.md`, GL1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstKind {
+    /// `const NAME: T = expr`: a value copied into each use.
+    Const,
+    /// `static NAME: T = expr`: one value for the whole program, read-only.
+    Static,
+    /// `static mut NAME: T = expr`: one value for the whole program, written in `unsafe` code.
+    StaticMut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

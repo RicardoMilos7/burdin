@@ -99,6 +99,27 @@ fn main() {
 
 The [ownership](/guide/ownership/) chapter explains these conventions in full.
 
+## Extension methods
+
+A method can also be added to a type from outside its block. Such a method is an *extension*, and it is declared with the
+type's name before the method's name:
+
+```burdin
+fn i32.double(self): i32 {
+    self * 2
+}
+
+fn main() {
+    let n: i32 = 21
+    println("{n.double()}")
+}
+```
+
+An extension is visible in the module that declares it, and in every module that imports that module. `use text` brings
+in every extension that `text` declares or re-exports. `use text.shout as yell` brings in one of them under another name,
+and that name is the one calls use. The extension can also be called as a function with its receiver first, as in
+`i32.double(n)`, when the type has no function of that name.
+
 ## Deriving common behavior
 
 A struct can ask the compiler to write standard behavior for it. The names go after the struct's name, after a colon:

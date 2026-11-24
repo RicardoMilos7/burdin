@@ -43,6 +43,10 @@ member names are `any`, `impl`, `error`, `comptime`, and `derive`: the words a `
 name of an extension method follows a `.` in its declaration (`fn Type.name`), so it may be a member name too. A
 keyword is still rejected as the name of a free function or an `extern` function, since no `.` reaches those names.
 
+`static` is not a keyword. A declaration that begins `static` followed by `mut` or a name is a `StaticItem` at module
+scope (`globals.md`, GL1); in a function body it is E0302, and the rest of it is read as a `let`. Otherwise the word is
+an ordinary identifier, so `static: Interface { }` is still an impl block, and `static` may name a local.
+
 Contextual keywords, meaningful only in one position and otherwise ordinary identifiers: `test` (item start, followed
 by a string), `bench` (item start, followed by a string; [`bench.md`](bench.md), BN1), `fuzz` (item start, followed
 by a name and a parameter list; [`fuzz.md`](fuzz.md), FZ1),
@@ -71,7 +75,8 @@ that closes after one character or name is a character literal instead: `'a'` an
 label (issue #275).
 
 **String literals**: `"..."` with escapes `\n \r \t \\ \" \0`, and raw newlines allowed inside. There is no interpolation in
-stage 0: `{` and `}` are ordinary characters.
+stage 0: `{` and `}` are ordinary characters. From milestone 14 a literal with a placeholder is an interpolated string
+typed `String`, and one without a placeholder (`{{` and `}}` are not placeholders) is a `str`; `spec/format.md` FM1.
 
 **Punctuation and operators**:
 
@@ -179,6 +184,7 @@ AssociatedTypeBinding = "type" IDENT "=" Type ;
 
 TypeAlias     = "type" IDENT [ GenericParams ] "=" Type ;
 ConstItem     = "const" IDENT ":" Type "=" Expr ;
+StaticItem    = "static" [ "mut" ] IDENT ":" Type "=" Expr ;   (* module scope only: a `static` in a body is E0302; `spec/globals.md`, GL1-GL2 *)
 
 UseItem       = [ "pub" ] "use" IDENT { "." IDENT } [ "." "{" IDENT { "," IDENT } [ "," ] "}" | "as" IDENT ] ;   (* `pub` re-exports *)
 

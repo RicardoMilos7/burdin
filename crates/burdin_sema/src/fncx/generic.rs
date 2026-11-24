@@ -141,7 +141,7 @@ impl FnCx<'_> {
             for b in bounds {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
                     let (code, message) =
-                        globals.bound_unmet(t, b, &self.bounds, &format!("`{pname}` of `{}`", id.name));
+                        globals.unmet_bound(t, b, &subst, &self.bounds, &format!("`{pname}` of `{}`", id.name));
                     self.diags.error(code, span, message);
                     ok = false;
                 }
@@ -330,7 +330,7 @@ impl FnCx<'_> {
                 for b in bs {
                     if !globals.satisfies_with(t, b, &self.bounds, &bindings) {
                         let (code, message) =
-                            globals.bound_unmet(t, b, &self.bounds, &format!("`{pname}` of `{name}`"));
+                            globals.unmet_bound(t, b, &bindings, &self.bounds, &format!("`{pname}` of `{name}`"));
                         self.diags.error(code, span, message);
                         ok = false;
                     }
@@ -1001,7 +1001,7 @@ impl FnCx<'_> {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
                     let (code, message) =
-                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                        globals.unmet_bound(t, b, &subst, &self.bounds, &format!("`{}` of `{name}`", params[k]));
                     self.diags.error(code, span, message);
                     ok = false;
                 }
@@ -1106,7 +1106,7 @@ impl FnCx<'_> {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
                     let (code, message) =
-                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                        globals.unmet_bound(t, b, &subst, &self.bounds, &format!("`{}` of `{name}`", params[k]));
                     self.diags.error(code, span, message);
                     ok = false;
                 }
@@ -1230,7 +1230,7 @@ impl FnCx<'_> {
             for b in &bounds[k] {
                 if !globals.satisfies_with(t, b, &self.bounds, &subst) {
                     let (code, message) =
-                        globals.bound_unmet(t, b, &self.bounds, &format!("`{}` of `{name}`", params[k]));
+                        globals.unmet_bound(t, b, &subst, &self.bounds, &format!("`{}` of `{name}`", params[k]));
                     self.diags.error(code, span, message);
                     ok = false;
                 }
