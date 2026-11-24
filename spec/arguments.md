@@ -163,3 +163,33 @@ method's parameters opaque.
 E0252 (`const-generics.md` CG6). An argument that does not meet its bound is E0141. An explicit list on a method with
 no parameters of its own, of the wrong length, or of a type that does not match is E0003 (TA2, TA5), and an interface
 with a generic method is not object-safe (E0202).
+
+## Struct literals of generic types (issue #396)
+
+A struct literal names its type with a path, and a generic type takes its arguments there. The rules below are the
+meaning of the literal; `grammar.md` section 4 (`StructLiteral`) is the syntax. The tests are
+`tests/m21_reflect/generic_variant_literal.bd`, `generic_variant_literal_errors.bd`, `generic_variant_modules/` (run),
+and `generic_variant_modules_errors/` (compile-fail); the parser's segment index is a unit test in
+`crates/burdin_syntax/src/parser/mod.rs`, and the formatter's layout is a unit test in `crates/burdin_fmt/src/docs.rs`.
+
+**SL1. Forms.** The arguments are written on one segment of the path, and they belong to that segment: the segment
+that a `.` or the end of the path follows. `Wrapper<i32> { inner: 1 }` for a generic struct, `Shape<i32>.Rect { w: 2,
+h: 3 }` for a struct-like variant of a generic enum (the arguments are on `Shape`), and `sh.Shape<i32>.Rect { ... }` or
+`sh.Wrapper<i32> { ... }` for the same through a module path. At most one segment carries arguments. `Self` takes none.
+
+**SL2. Inference.** A literal without arguments takes them from its field values and the expected type, exactly as
+a tuple variant does (`Shape.Circle(3)`): each value binds the parameter its field's type names, and the expected type
+binds what remains. A parameter that nothing determines is E0003 ("needs type arguments"). `Self.Rect { ... }` inside
+the impl block of a generic enum names the instance the block is for.
+
+**SL3. Explicit arguments.** Arguments on a type segment name the instance, and the literal is checked against that
+instance: a field value of another type is E0003, and an argument list of the wrong length is E0003 (TA2). The
+arguments belong to the type, never to the variant: `Shape.Rect<i32> { ... }` is E0003 ("takes no type arguments"),
+as a call to a variant with arguments is (TA5). `Shape.Rect<i32>` parses, because the parser cannot tell a variant from
+a type in a module path, and the checker decides.
+
+**SL4. Checking.** A struct-like variant literal is checked as a struct variant of a plain enum: each field is given
+exactly once (a missing or repeated field is E0003), a name that is not a field is E0002, a name that is not a variant
+of the enum is E0002, and a tuple or unit variant has no named fields (E0003). Each instance is monomorphized like any
+other, and a non-`Copy` field value is moved into the literal. `match` takes the variant back apart by its field names
+(`Shape.Rect { w, h }`).

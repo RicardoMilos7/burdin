@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A module-qualified literal with arguments is checked like a plain one (issue #396, spec/arguments.md SL3-SL4): a
+// wrong argument, a wrong count, and a variant that takes no arguments of its own are each reported at the literal.
+
+use shapes
+
+fn main() {
+    let a = shapes.Shape<bool>.Rect { w: 1, h: 2 } //~ E0003
+    let b = shapes.Wrapper<i32, i32> { inner: 1 } //~ E0003
+    let c = shapes.Shape.Rect<i32> { w: 1, h: 2 } //~ E0003
+    let d = shapes.Wrapper<i32> { inner: "s" } //~ E0003
+    let e = shapes.Shape<i32>.Nope { w: 1 } //~ E0002
+}

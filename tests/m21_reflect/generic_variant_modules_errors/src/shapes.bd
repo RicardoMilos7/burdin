@@ -1,0 +1,8 @@
+enum Shape<T> {
+    Dot
+    Rect { w: T, h: T }
+}
+
+struct Wrapper<T> {
+    inner: T,
+}

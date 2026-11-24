@@ -772,6 +772,125 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Struct(checked), ty, span)
     }
 
+    /// `Shape.Rect { w: 2, h: 3 }` for a struct-like variant of a generic enum: the type arguments come from the field
+    /// values and the expected type, as for a tuple variant (`assoc_call_template`). A name that is not a variant, or
+    /// a variant without named fields, is reported and the fields are still checked.
+    pub(super) fn generic_variant_literal(
+        &mut self,
+        g: usize,
+        name: &ast::Ident,
+        fields: &[ast::FieldInit],
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        let globals = self.globals;
+        let info = &globals.generic_adts[g];
+        let id = info.identity.1;
+        let written = format!("{}.{}", info.name, name.name);
+        let Some(vi) = globals.enums[id].variants.iter().position(|v| v.name == name.name) else {
+            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown variant `{written}`"));
+            self.check_field_values_untyped(fields);
+            return error_expr(span);
+        };
+        if globals.enums[id].variants[vi].shape != tir::VariantShape::Struct {
+            self.diags.error(Code::TYPE_MISMATCH, span, format!("variant `{written}` has no named fields"));
+            self.check_field_values_untyped(fields);
+            return error_expr(span);
+        }
+        let defs: Vec<tir::FieldDef> = globals.enums[id].variants[vi].fields.clone();
+        let from_other_package = globals.package_of(info.module) != self.package();
+        let mut given = vec![false; defs.len()];
+        let mut checked: Vec<(usize, tir::Expr)> = Vec::new();
+        for f in fields {
+            let shorthand;
+            let value = match &f.value {
+                Some(v) => v,
+                None => {
+                    shorthand = ast::Expr {
+                        kind: ast::ExprKind::Name { name: f.name.clone(), args: Vec::new() },
+                        span: f.name.span,
+                    };
+                    &shorthand
+                }
+            };
+            let Some(index) = defs.iter().position(|d| d.name == f.name.name) else {
+                self.diags.error(
+                    Code::UNKNOWN_NAME,
+                    f.name.span,
+                    format!("`{written}` has no field `{}`", f.name.name),
+                );
+                self.expr(value, None);
+                continue;
+            };
+            if std::mem::replace(&mut given[index], true) {
+                self.diags.error(Code::TYPE_MISMATCH, f.name.span, format!("field `{}` is given twice", f.name.name));
+            }
+            if from_other_package && defs[index].is_priv {
+                self.diags.error(
+                    Code::PRIVATE_ITEM,
+                    f.name.span,
+                    format!("field `{}` of `{written}` is `priv` in another package", f.name.name),
+                );
+            }
+            let hint = if globals.ty_has_param(&defs[index].ty) {
+                let bound_param = match &defs[index].ty {
+                    Ty::Param(name) => info.params.iter().position(|n| n == &**name),
+                    _ => None,
+                };
+                bound_param
+                    .and_then(|k| info.bounds.get(k))
+                    .and_then(|bounds| super::closure::bound_hint(globals, bounds))
+            } else {
+                Some(defs[index].ty.clone())
+            };
+            let v = self.expr(value, hint.as_ref());
+            checked.push((index, v));
+        }
+        let mut bindings = Vec::new();
+        for (i, v) in &checked {
+            globals.unify(&defs[*i].ty, &v.ty, &mut bindings);
+        }
+        let Some(ty) = self.template_instance(g, bindings, expect, span) else { return error_expr(span) };
+        let Ty::Enum(a) = &ty else { return error_expr(span) };
+        let actual = globals.enums[a.id].variants[vi].fields.clone();
+        let checked: Vec<(usize, tir::Expr)> = checked
+            .into_iter()
+            .map(|(i, v)| {
+                let v = self.coerce_arg(v, &actual[i].ty);
+                (i, v)
+            })
+            .collect();
+        let missing: Vec<&str> =
+            actual.iter().zip(&given).filter(|(_, g)| !**g).map(|(d, _)| d.name.as_str()).collect();
+        if !missing.is_empty() {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!("`{written}` is missing the field(s) `{}`", missing.join("`, `")),
+            );
+        }
+        mk(tir::ExprKind::Variant(vi, checked), ty, span)
+    }
+
+    /// Checks the values of a struct literal that cannot be typed (an unknown or non-struct target), so that their own
+    /// errors are still reported. A shorthand field checks the local or name it names.
+    fn check_field_values_untyped(&mut self, fields: &[ast::FieldInit]) {
+        for f in fields {
+            match &f.value {
+                Some(v) => {
+                    self.expr(v, None);
+                }
+                None => {
+                    let shorthand = ast::Expr {
+                        kind: ast::ExprKind::Name { name: f.name.clone(), args: Vec::new() },
+                        span: f.name.span,
+                    };
+                    self.expr(&shorthand, None);
+                }
+            }
+        }
+    }
+
     /// The value of `Type.default()` for a type that derives `Default`.
     pub(super) fn default_expr(&self, ty: &Ty, span: Span) -> tir::Expr {
         use tir::ExprKind as K;

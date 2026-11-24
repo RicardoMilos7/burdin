@@ -1,0 +1,35 @@
+//@ run
+//> 6
+//> 7
+//> 4
+//> 2
+//> 1.5
+
+// A struct-like variant of a generic enum, and a generic struct, named through a module path with arguments on the
+// module's type (`shapes.Shape<i32>.Rect { ... }`, `shapes.Wrapper<i64> { ... }`), as well as inferred through the
+// module (`shapes.Shape.Rect { ... }`). The arguments stand on the segment they follow (issue #396, spec/arguments.md
+// SL1), and a module path is read the same way a plain name is.
+
+use shapes.{Shape, Wrapper}
+
+fn area(s: Shape<i32>): i32 {
+    match s {
+        Shape.Dot => 0,
+        Shape.Rect { w, h } => w * h,
+    }
+}
+
+fn main() {
+    let a = shapes.Shape<i32>.Rect { w: 2, h: 3 }
+    println(area(a).to_string())
+    let w = shapes.Wrapper<i64> { inner: 7 }
+    println("{w.inner}")
+    let s: Shape<i32> = shapes.Shape.Rect { w: 4, h: 1 }
+    println(area(s).to_string())
+    println(area(shapes.Shape<i32>.Rect { w: 2, h: 1 }).to_string())
+    let f = shapes.Shape<f64>.Rect { w: 1.5, h: 2.0 }
+    match f {
+        Shape.Rect { w, h } => println("{w}"),
+        _ => println("none"),
+    }
+}

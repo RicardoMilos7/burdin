@@ -647,8 +647,10 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Box<Expr>,
     },
-    /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
-    StructLit(Vec<Ident>, Vec<FieldInit>),
+    /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`. The type arguments, when written, are
+    /// the segment's index and its arguments: `Shape<i32>.Rect { ... }` has `(0, [i32])` and `sh.Shape<i32>.Rect`
+    /// has `(1, [i32])`.
+    StructLit(Vec<Ident>, Option<(usize, Vec<Type>)>, Vec<FieldInit>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,
