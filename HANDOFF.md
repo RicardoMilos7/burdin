@@ -4,6 +4,21 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Standard-library methods behind stale limits (issue #930, 2026-11-24).** `Option.unwrap_or_default` and
+`Option<Option<T>>.flatten` are in `std/src/option.bd`, and `List.dedup_by_key` is in `std/src/list.bd`. The old "not
+provided" rationale was wrong for each: `T.default()` exists for the built-in `Default` types, and an extension receiver
+may nest a type parameter. Two facts the issue did not state: `Eq` as a bound accepts a float (floats support `==`, so
+`has_eq_in` in `crates/burdin_sema/src/types.rs` says yes), and `Option.as_ref` is still not provided because of a
+**compiler bug**. A binding from a borrowed `match` scrutinee is copied into its own slot by codegen
+(`crates/burdin_codegen/src/emit/pattern.rs`, `bind`), so `Some(&v)` returns a pointer into a dead stack slot; the
+return-origin check (`crates/burdin_check/src/origins.rs`) accepts it, and it also happens in a plain function
+(`fn f<T>(o: Option<T>): Option<&T> { match o { Some(v) => Some(&v), None => None } }` prints garbage). Fix direction: make
+a view binding alias its scrutinee part. Or-patterns bind one local from several places, so the slot would need to hold
+a pointer, and closures capturing a view binding read its slot too. Not fixed in #930. Tests:
+`tests/m24_stdlib/option_flatten`, `option_unwrap_or_default`, `option_unwrap_or_default_needs_default`,
+`list_dedup_by_key`, `list_dedup_by_key_needs_eq`. The full debug conformance run has 5 failures, all `s3_http` and
+`s3_tls` programs that fail to link with `-lssl` on this WSL machine (the same environment note as #936 below).
+
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already

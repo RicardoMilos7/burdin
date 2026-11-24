@@ -1,0 +1,49 @@
+//@ run
+//> 10 20 30
+//> a cc e 3
+//> drop 3
+//> 1
+//> 2
+//> 4
+//> drop 1
+//> drop 2
+//> drop 4
+
+// `dedup_by_key` removes an element whose key equals the key of the element before it, keeping the first of each
+// run. The key is whatever the closure returns: here `"b"` goes with `"a"` when both have one byte. The
+// removed `Token` is dropped when it is removed, and the kept ones when the `for` loop that consumes them ends.
+
+struct Token {
+    id: i32
+}
+
+Token: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    for x in [10, 11, 12, 20, 21, 30] {
+        xs.push(x)
+    }
+    xs.dedup_by_key(|x| *x / 10)
+    println("{xs[0]} {xs[1]} {xs[2]}")
+
+    let mut words = List<String>.new()
+    for w in ["a", "b", "cc", "dd", "e"] {
+        words.push(String.from(w))
+    }
+    words.dedup_by_key(|w| w.len())
+    println("{words[0]} {words[1]} {words[2]} {words.len()}")
+
+    let mut tokens = List<Token>.new()
+    for i in 1..=4 {
+        tokens.push(Token { id: i })
+    }
+    tokens.dedup_by_key(|t| t.id / 2)
+    for t in tokens {
+        println("{t.id}")
+    }
+}
