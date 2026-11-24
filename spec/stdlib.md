@@ -1326,10 +1326,12 @@ when the cell is empty, so it runs at most once. `Lazy` runs its closure the fir
 result; `peek` never computes. The views `get`, `get_or_init`, `force`, and `peek` return keep the cell borrowed, and
 `force` and `get_or_init` take it `mut`, so a cell that is handed out cannot be forced again until the view is gone.
 
-**The static/global story.** Burdin has no mutable global variables, so a cache or a piece of configuration is a value
-that lives in a local or a struct and is passed to whatever needs it, and `Once` and `Lazy` are ordinary values like
-that. A value that is known at compile time is a `const` or a `comptime` expression instead. The concurrency-safe
-`Once` and `Lazy` (a cell several threads can race to fill) arrive with threads in stage 2.
+**The static/global story.** Burdin has global variables, declared with `static` (immutable) and `static mut`
+(writable, in `unsafe` code only), with the rules in `globals.md` (issue #485). A `static` holds plain data: a scalar,
+`str`, or an aggregate of those, never a `String` or a collection (GL2). A value that owns memory, such as a cache or a
+`String` of configuration, is a value that lives in a local or a struct and is passed to whatever needs it, and `Once`
+and `Lazy` are ordinary values like that. A value that is known at compile time is a `const` or a `comptime` expression
+instead. A cell several threads can race to fill is a value handed to the tasks that share it (`globals.md`, GL6).
 
 ## Paths (issue #194)
 

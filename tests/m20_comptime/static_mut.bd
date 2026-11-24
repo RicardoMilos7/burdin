@@ -1,0 +1,33 @@
+//@ run
+//> 0
+//> 3
+//> 6
+//> 9
+
+// A `static mut` is read and written inside `unsafe` blocks, from functions and from `main` (spec/globals.md, GL4).
+
+static mut COUNT: i32 = 0
+static mut TOTALS: [i32; 2] = [0, 0]
+
+fn bump(by: i32) {
+    unsafe {
+        COUNT = COUNT + by
+    }
+}
+
+fn main() {
+    let before = unsafe { COUNT }
+    println("{before}")
+    bump(1)
+    bump(2)
+    let now = unsafe { COUNT }
+    println("{now}")
+    unsafe {
+        TOTALS[1] = now * 2
+        COUNT = COUNT + TOTALS[1]
+    }
+    let total = unsafe { TOTALS[1] }
+    println("{total}")
+    let after = unsafe { COUNT }
+    println("{after}")
+}

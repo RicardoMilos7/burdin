@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// A static owns no memory and is never dropped, so its type must be plain data (spec/globals.md, GL2). A `String`
+// is E0303.
+
+static NAME: String = String.from("x") //~ E0303
+
+fn main() {
+    println(NAME)
+}

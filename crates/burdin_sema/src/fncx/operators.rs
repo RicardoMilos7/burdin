@@ -94,7 +94,9 @@ impl FnCx<'_> {
                 format!("the left side of `{op}` is not a variable or an element of one"),
             );
         } else if !self.place_mutable(place) {
-            let name = place_root(place).map(|root| self.locals[root.0].name.clone());
+            let name = place_root(place)
+                .map(|root| self.locals[root.0].name.clone())
+                .or_else(|| self.static_root(place).map(|id| self.globals.const_names[id.0].clone()));
             let whose = name.unwrap_or_else(|| "this place".to_string());
             let fix = self.mut_binding_fix(place);
             let d =
@@ -511,6 +513,9 @@ impl FnCx<'_> {
                 }
                 if !is_place_expr(&place) {
                     self.diags.error(Code::TYPE_MISMATCH, span, "`&` needs a place to borrow");
+                    return error_expr(span);
+                }
+                if self.static_mut_borrowed(&place, span) {
                     return error_expr(span);
                 }
                 if mutable && !self.place_mutable(&place) {

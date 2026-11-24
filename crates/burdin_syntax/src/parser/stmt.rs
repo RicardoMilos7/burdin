@@ -36,8 +36,9 @@ impl Parser<'_> {
     }
 
     pub(super) fn stmt(&mut self) -> PResult<Stmt> {
-        if self.at(&TokenKind::Let) {
-            let start = self.bump().span;
+        // A `static` in a body is reported (E0302, `spec/globals.md`, GL1) and then read as a `let`.
+        if self.at(&TokenKind::Let) || self.at_static_decl() {
+            let start = if self.at_static_decl() { self.static_in_body() } else { self.bump().span };
             let pattern = self.pattern()?;
             let ty = if self.eat(&TokenKind::Colon) { Some(self.ty()?) } else { None };
             self.expect(&TokenKind::Eq)?;

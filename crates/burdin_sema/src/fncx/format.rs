@@ -202,6 +202,10 @@ impl FnCx<'_> {
         if value.ty == Ty::Error {
             return None;
         }
+        // The argument is borrowed for each use, and a `static mut` may not be borrowed (spec/globals.md, GL4).
+        if is_place_expr(&value) && self.static_mut_borrowed(&value, value.span) {
+            return None;
+        }
         let (bound, stmt) = if is_place_expr(&value) {
             let ty = value.ty.clone();
             let place = value;

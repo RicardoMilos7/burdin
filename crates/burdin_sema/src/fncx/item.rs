@@ -144,6 +144,8 @@ pub(crate) fn check_const(
         decl.name.name.clone(),
         traces,
     );
+    // The initializer is evaluated at compile time, so it may not name a static (`spec/globals.md`, GL1).
+    cx.const_init = true;
     let value = cx.expr(&decl.value, Some(ty));
     let value = cx.expect_ty(value, ty);
     if !globals.materializable(ty) {
@@ -156,9 +158,28 @@ pub(crate) fn check_const(
                  `Result` of those (spec/comptime.md, CT3)"
             ),
         );
+    } else if decl.kind != ast::ConstKind::Const {
+        // A static is never dropped, so it must be plain data (GL2). Every plain, materializable type is `Sync`, so a
+        // static needs no `Sync` check of its own (GL3).
+        if !globals.plain(ty) {
+            cx.diags.error(
+                Code::STATIC_NOT_PLAIN,
+                decl.ty.span,
+                format!(
+                    "a static cannot have type `{ty}`: it is never dropped, so its type must own no memory and have \
+                     no destructor (a scalar, `str`, or a struct, enum, tuple, array, `Option`, or `Result` of those) \
+                     (spec/globals.md, GL2)"
+                ),
+            );
+        }
     }
+    let kind = match decl.kind {
+        ast::ConstKind::Const => tir::ConstKind::Const,
+        ast::ConstKind::Static => tir::ConstKind::Static,
+        ast::ConstKind::StaticMut => tir::ConstKind::StaticMut,
+    };
     let locals = std::mem::take(&mut cx.locals);
-    tir::Const { name: globals.qualified(module, &decl.name.name), span: decl.name.span, value, locals }
+    tir::Const { name: globals.qualified(module, &decl.name.name), kind, span: decl.name.span, value, locals }
 }
 
 /// A function without code. A symbolic function is checked against its bounds and then replaced by one of these:

@@ -126,7 +126,9 @@ A `const` initializer is any expression of a materializable type (CT3); it is ev
 exactly as if written `comptime { initializer }`, with no locals of any function visible. It may call functions,
 declare locals, loop, and build values. Every constant in the program is evaluated once, whether or not it is used, in
 declaration order, evaluating a constant it refers to first; a constant that reaches itself through calls is E0009.
-The value is then materialized (CT3) at every use, so `const` still costs nothing beyond the value itself.
+The value is then materialized (CT3) at every use, so `const` still costs nothing beyond the value itself. A `static`
+is the other global: its initializer is evaluated by these same rules, and its value is stored once before `main` runs
+(`globals.md`, GL1-GL2).
 
 Constants of a struct, enum, tuple, array, `Option`, or `Result` type, and constants that refer to other constants,
 are values like any other. Default arguments (`spec/arguments.md`, AG2) keep their narrower rule: literals, other

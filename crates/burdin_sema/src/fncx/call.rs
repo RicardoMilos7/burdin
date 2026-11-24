@@ -110,7 +110,7 @@ impl FnCx<'_> {
                         return self.generic_call(g, id, args, type_args, span, expect);
                     }
                     Some(Global::Extern(e)) => return self.extern_call(id, e, args, span),
-                    Some(Global::Const(_)) => {
+                    Some(Global::Const(_) | Global::Static(_)) => {
                         self.diags.error(
                             Code::TYPE_MISMATCH,
                             id.span,
@@ -858,6 +858,10 @@ impl FnCx<'_> {
                 // without a default was reported by `arg_slots`.
                 None => p.default.clone().expect("a missing required argument was reported"),
             };
+            // A parameter that borrows its argument may not borrow a `static mut` (spec/globals.md, GL4).
+            if !p.own {
+                self.static_mut_borrowed(&arg, arg.span);
+            }
             let arg = self.coerce_arg(arg, &p.ty);
             // The argument of a `comptime` parameter is a compile-time value (spec/comptime.md, CT4).
             let arg = if p.comptime { self.comptime_argument(arg) } else { arg };
@@ -1380,6 +1384,10 @@ impl FnCx<'_> {
                 );
                 Self::attach_mut_fix(fix, d);
             }
+            // A borrowing receiver may not be a `static mut` (spec/globals.md, GL4).
+            if !receiver.own {
+                self.static_mut_borrowed(&recv, recv.span);
+            }
             let receiver_place = Some((&recv, receiver.exclusive));
             let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
                 return error_expr(span);
@@ -1717,6 +1725,9 @@ impl FnCx<'_> {
             );
         }
         let rest = sig.params[1..].to_vec();
+        if !receiver.own {
+            self.static_mut_borrowed(&recv, recv.span);
+        }
         let receiver_place = Some((&recv, receiver.exclusive));
         let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
             return error_expr(span);
@@ -1745,7 +1756,9 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         self.check_value_visibility(target, &item.name, item.span);
         let value = self.globals.exported_value(target, &item.name);
-        if !explicit.is_empty() && matches!(value, Some(Global::Func(_) | Global::Extern(_) | Global::Const(_))) {
+        if !explicit.is_empty()
+            && matches!(value, Some(Global::Func(_) | Global::Extern(_) | Global::Const(_) | Global::Static(_)))
+        {
             return self.reject_type_args(&item.name, explicit, args, span);
         }
         match value {
@@ -1760,7 +1773,7 @@ impl FnCx<'_> {
             }
             Some(Global::Generic(g)) => self.generic_call(g, item, args, explicit, span, expect),
             Some(Global::Extern(e)) => self.extern_call(item, e, args, span),
-            Some(Global::Const(_)) => {
+            Some(Global::Const(_) | Global::Static(_)) => {
                 self.diags.error(
                     Code::TYPE_MISMATCH,
                     item.span,

@@ -771,6 +771,17 @@ impl<'a> Checker<'a> {
             | K::Const(_) => {}
             K::LayoutOf { .. } => {}
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
+            // A static is storage the whole program shares, so a non-Copy value cannot leave it (spec/globals.md, GL3).
+            K::Static(_) => {
+                if mode == Mode::Move && !self.is_copy(&e.ty) {
+                    self.error(
+                        Code::MOVE_FROM_BORROW,
+                        e.span,
+                        "cannot move out of a static: it is storage the whole program shares",
+                    )
+                    .help(TRACE_HELP);
+                }
+            }
             K::Field(..) | K::Index(..) | K::Deref(_) | K::PtrDeref(_) | K::DerefRef(_) => self.place_expr(e, mode),
             K::Ref { place, .. } => self.expr(place, Mode::Use),
             K::Slice { base, lo, hi, .. } => {
@@ -1176,7 +1187,11 @@ impl<'a> Checker<'a> {
         // A place behind a call (the referent of a user `Index` implementation's reference) has no local root
         // the checker can follow. Reading a non-Copy value from it would move out of borrowed content (MV7,
         // `spec/operators.md`, OP10).
-        if mode == Mode::Move && !self.is_copy(&e.ty) && is_view_place(e) && self.place_of(e).is_none() {
+        if mode == Mode::Move
+            && !self.is_copy(&e.ty)
+            && (is_view_place(e) || reaches_static(e))
+            && self.place_of(e).is_none()
+        {
             self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content").help(TRACE_HELP);
             return;
         }
@@ -1513,6 +1528,15 @@ fn constant_index(e: &tir::Expr) -> Option<usize> {
 }
 
 /// Whether a place expression goes through a reference or a slice, so its storage belongs to someone else.
+/// Whether a place is part of a static, whose storage no function owns (spec/globals.md, GL3).
+fn reaches_static(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::Static(_) => true,
+        tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) => reaches_static(base),
+        _ => false,
+    }
+}
+
 fn is_view_place(e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::DerefRef(_) | tir::ExprKind::PtrDeref(_) => true,

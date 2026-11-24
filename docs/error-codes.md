@@ -2096,3 +2096,64 @@ fn main() {
 **How to fix:** `burdin fix` applies the fix (`unimplemented()` becomes `panic("not implemented")`), and
 `burdin fix --migrate` applies it and moves the package to the next edition, after checking that the package compiles
 there. Write `todo()` instead when the function is still to be written.
+
+## E0302: `static` in a function body
+
+A `static` is a module item: it is declared at module scope, where its value is stored once before `main` runs and
+lives for the whole program (`spec/globals.md`, GL1). A `static` or `static mut` declaration in a function body is
+this error, and it is reported at the `static` keyword. The rest of the declaration is read as a `let`, so the body is
+still checked.
+
+<!-- error-example: E0302 -->
+```burdin
+fn main() {
+    static LIMIT: i32 = 3 //~ E0302
+    println(LIMIT.to_string())
+}
+```
+<!-- /error-example -->
+
+**How to fix:** move the declaration to module scope. A value that is computed inside one function is a `let` binding
+there.
+
+## E0303: `static` of a type that is not plain data
+
+A `static` is never dropped (`spec/globals.md`, GL5), so its type must own no memory and have no destructor. The plain
+types are the scalars, `bool`, `char`, `str`, and tuples, arrays, `Option`, `Result`, ranges, and structs and enums
+whose fields are plain. A `String`, a `List`, a `Map`, a `Heap`, a `Shared`, an `Arena`, a closure, an `any`, or a type
+with a `Drop` implementation is E0303, at the type.
+
+<!-- error-example: E0303 -->
+```burdin
+static NAME: String = String.from("burdin") //~ E0303
+
+fn main() {
+    println(NAME)
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write `const` when the value is known at compile time, which copies it into each use and accepts a
+`String` (`spec/comptime.md`, CT3). A value that a function owns and changes belongs in a `let` or a `mut` parameter.
+
+## E0304: borrow of a `static mut`
+
+A `static mut` may be read and written only in `unsafe` code (E0161), and its value may not be borrowed: no reference
+can alias it, so a read or a write never conflicts with another (`spec/globals.md`, GL4). A borrow of it, `&NAME`,
+`&mut NAME`, or a method call that takes `self` by reference, is E0304 at the borrow.
+
+<!-- error-example: E0304 -->
+```burdin
+static mut COUNT: i32 = 0
+
+fn main() {
+    unsafe {
+        let shared = &COUNT //~ E0304
+        println((*shared).to_string())
+    }
+}
+```
+<!-- /error-example -->
+
+**How to fix:** read the value into a local with a copy, `let count = COUNT`, and borrow the local. An immutable
+`static` may be borrowed freely, since it is never written (`spec/globals.md`, GL3).

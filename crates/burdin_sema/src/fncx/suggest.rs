@@ -158,7 +158,7 @@ impl FnCx<'_> {
             }
             let fits = match module.values.get(name) {
                 Some(Global::Func(_) | Global::Generic(_) | Global::Extern(_)) => true,
-                Some(Global::Const(_)) => !functions,
+                Some(Global::Const(_) | Global::Static(_)) => !functions,
                 None => false,
             };
             if fits {
