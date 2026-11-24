@@ -222,6 +222,35 @@ fn fixes_for(server: &mut Server, i: usize, path: &str, text: &str, d: &Diagnost
         let edit = if only_space { (line_start, line_start, stub) } else { (close, close, format!("\n{stub}")) };
         out.push((format!("add the missing method `{method}`"), vec![edit]));
     }
+    if d.code.0 == "E0002" {
+        // An unknown name that an official package provides (`spec/lsp.md`, LS18). `http.Client` in a file that does
+        // not load `http` imports the package; a bare `Client` (not after a dot) imports the item `http.Client` from
+        // each official package that exports one.
+        let (lo, hi) = (d.span.lo as usize, d.span.hi as usize);
+        let name = text.get(lo..hi).unwrap_or("");
+        let is_name = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let after_dot = text.get(hi..).is_some_and(|after| after.starts_with('.'));
+        let member = text.get(..lo).is_some_and(|before| before.ends_with('.'));
+        if is_name && !member {
+            let official = server.official();
+            let mut paths: Vec<String> = Vec::new();
+            if after_dot && official.get(name).is_some() {
+                paths.push(name.to_string());
+            }
+            for (package, api) in official.packages() {
+                if api.items.iter().any(|item| item.name == name) {
+                    paths.push(format!("{package}.{name}"));
+                }
+            }
+            if !paths.is_empty() {
+                let Some(ix) = Resolver::new(&mut server.packages[i]).index(path) else { return out };
+                for import in paths {
+                    let (at, new_text) = crate::edit::use_at(text, &ix, &import);
+                    out.push((format!("import `{import}`"), vec![(at, at, new_text)]));
+                }
+            }
+        }
+    }
     out
 }
 

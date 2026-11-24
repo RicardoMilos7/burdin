@@ -65,6 +65,76 @@ fn quick_fixes_for_the_errors_of_a_file() {
     assert_eq!(client.shutdown(), 0);
 }
 
+/// `http.Client` in a file that does not load `http` gets a quick fix that adds `use http` (`spec/lsp.md`, LS18); a
+/// name that is not an official package gets none, and after the fix the file checks.
+#[test]
+fn an_official_package_used_without_a_use_is_imported_by_a_quick_fix() {
+    let root = fixture("completion");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let edited = text
+        .replace("    println(", "    let client = http.Client.new()\n    let other = htx.Client.new()\n    println(");
+    client.change(&uri, 2, &edited);
+    let found = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(2));
+    let codes: Vec<&str> = found.iter().map(|d| d.get("code").as_str().unwrap()).collect();
+    assert_eq!(codes, ["E0002", "E0002"]);
+
+    let line = edited.lines().position(|l| l.contains("http.Client.new()")).unwrap() as u32;
+    let fixes = actions(&mut client, &uri, burdin_lsp::text::range_json(line, 20, line, 20), Some("quickfix"));
+    let titles: Vec<&str> = fixes.iter().map(|a| a.get("title").as_str().unwrap()).collect();
+    assert_eq!(titles, ["import `http`"]);
+    let fixed = after(&client, &edited, &fixes[0]);
+    assert!(fixed.starts_with("use util.twice\nuse http\n"), "{fixed}");
+
+    // The unknown name `htx` is not a package: its line offers nothing to import.
+    let other = edited.lines().position(|l| l.contains("htx.Client")).unwrap() as u32;
+    let none = actions(&mut client, &uri, burdin_lsp::text::range_json(other, 20, other, 20), Some("quickfix"));
+    assert!(none.iter().all(|a| !a.get("title").as_str().unwrap().starts_with("import")), "{none:?}");
+
+    // Applying the fix leaves only the unknown `htx`, which no fix imports.
+    client.change(&uri, 3, &fixed);
+    let left = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(3));
+    assert_eq!(left.len(), 1, "{:?}", left.iter().map(Json::to_text).collect::<Vec<_>>());
+    // The `use http` line the fix added moved the line down by one.
+    assert_eq!(left[0].at(&["range", "start", "line"]).as_i64(), Some(other as i64 + 1));
+    assert_eq!(client.shutdown(), 0);
+}
+
+/// A bare `Client` that an official package exports gets a quick fix that imports the item (`spec/lsp.md`, LS18): the
+/// `use http.Client` line the fix adds makes `Client.new()` check. A name no official package exports gets none.
+#[test]
+fn a_bare_official_item_is_imported_by_a_quick_fix() {
+    let root = fixture("completion");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    let edited =
+        text.replace("    println(", "    let made = Client.new()\n    let other = Widget.new()\n    println(");
+    client.change(&uri, 2, &edited);
+    let found = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(2));
+    let codes: Vec<&str> = found.iter().map(|d| d.get("code").as_str().unwrap()).collect();
+    assert_eq!(codes, ["E0002", "E0002"]);
+
+    let line = edited.lines().position(|l| l.contains("Client.new()")).unwrap() as u32;
+    let fixes = actions(&mut client, &uri, burdin_lsp::text::range_json(line, 16, line, 16), Some("quickfix"));
+    let titles: Vec<&str> = fixes.iter().map(|a| a.get("title").as_str().unwrap()).collect();
+    assert_eq!(titles, ["import `http.Client`"]);
+    let fixed = after(&client, &edited, &fixes[0]);
+    assert!(fixed.starts_with("use util.twice\nuse http.Client\n"), "{fixed}");
+
+    let other = edited.lines().position(|l| l.contains("Widget.new()")).unwrap() as u32;
+    let none = actions(&mut client, &uri, burdin_lsp::text::range_json(other, 16, other, 16), Some("quickfix"));
+    assert!(none.iter().all(|a| !a.get("title").as_str().unwrap().starts_with("import")), "{none:?}");
+
+    // The fix leaves only the unknown `Widget`, on the line the `use` moved down by one.
+    client.change(&uri, 3, &fixed);
+    let left = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(3));
+    assert_eq!(left.len(), 1, "{:?}", left.iter().map(Json::to_text).collect::<Vec<_>>());
+    assert_eq!(left[0].at(&["range", "start", "line"]).as_i64(), Some(other as i64 + 1));
+    assert_eq!(client.shutdown(), 0);
+}
+
 #[test]
 fn organize_imports_and_write_a_type() {
     let root = fixture("lints");

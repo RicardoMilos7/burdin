@@ -130,6 +130,11 @@ is not built, checked, or pinned in `burdin.lock`. Writing `json = true` in `bur
 is an error that points you to `use json`. The [packages reference](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md)
 describes how the compiler finds official packages and how `burdin.lock` pins them.
 
+The editor helps with them. Typing the start of a package's name offers it (`htt` offers `http`). Accepting a completion
+from a package that the file does not load adds its `use` line for you: `http.Cli` accepting `Client`, or a bare
+`Client` accepting `http.Client`. Writing `http.Client` without that `use` gets a quick fix titled "import http" that
+adds it, and a bare `Client` gets "import http.Client", which adds `use http.Client`.
+
 ## Libraries
 
 A library package has `src/lib.bd` and no `src/main.bd`. By default it has no build output: other Burdin packages

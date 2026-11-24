@@ -319,6 +319,24 @@ impl Completions {
         self.add(&item.name, completion_kind(item.kind), &item.detail, item.docs.as_deref(), group);
     }
 
+    /// An official package's name, offered as a module that `http.Client` starts with (`htt` offers `http`), with the
+    /// edit that loads the package when the file does not (`spec/lsp.md`, LS12).
+    fn package(&mut self, name: &str, edit: Option<Json>, group: u8) {
+        if self.seen.iter().any(|seen| seen == name) {
+            return;
+        }
+        self.seen.push(name.to_string());
+        let mut json = Json::obj()
+            .with("label", name)
+            .with("kind", 9)
+            .with("detail", "official package")
+            .with("sortText", format!("{group}{name}"));
+        if let Some(edit) = edit {
+            json.set("additionalTextEdits", Json::Arr(vec![edit]));
+        }
+        self.items.push(json);
+    }
+
     /// An item of an official package offered by its qualified name (`http.Client`), filtered by its own name, with
     /// the edit that imports the package when the file does not (`spec/lsp.md`, LS12). `edit` is `None` when the
     /// package's graph already holds it, so the qualified name compiles as written.
@@ -787,9 +805,29 @@ impl Imports {
         let index = LineIndex::new(&self.text, self.encoding);
         let (line, character) = index.position(self.place.offset);
         let at = position_json(line, character);
-        let new_text = if self.place.blank_after { format!("use {package}\n\n") } else { format!("use {package}\n") };
+        let new_text = use_text(&self.place, package);
         Json::obj().with("range", Json::obj().with("start", at.clone()).with("end", at)).with("newText", new_text)
     }
+}
+
+/// Gives the items added since index `from` the edit that loads their package, when there is one.
+fn attach_edit(out: &mut Completions, from: usize, edit: Option<&Json>) {
+    let Some(edit) = edit else { return };
+    for item in &mut out.items[from..] {
+        item.set("additionalTextEdits", Json::Arr(vec![edit.clone()]));
+    }
+}
+
+/// The `use <path>` line, placed where `place` says.
+fn use_text(place: &ImportPlace, path: &str) -> String {
+    if place.blank_after { format!("use {path}\n\n") } else { format!("use {path}\n") }
+}
+
+/// The byte offset and the text of a `use <path>` line in `text`, for a code action that imports an official package
+/// (`http`) or one of its items (`http.Client`): the place a completion's edit uses too (`spec/lsp.md`, LS12, LS18).
+pub(crate) fn use_at(text: &str, ix: &FileIndex, path: &str) -> (u32, String) {
+    let place = import_place(text, ix);
+    (place.offset, use_text(&place, path))
 }
 
 /// After the last `use` declaration's line, or at the start of a file with none. A `use` spans more than one line
@@ -871,7 +909,7 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
             use_completions(&mut r, &path, text[line_start..start].trim_start(), &mut out);
         }
         Context::Member(dot) => {
-            member_completions(&mut r, &official, &path, &ix, &text, dot, &mut out);
+            member_completions(&mut r, &official, &imports, &path, &ix, &text, dot, &mut out);
         }
         Context::Leading(_) => {
             leading_completions(&mut r, expected.as_deref(), &mut out);
@@ -968,9 +1006,11 @@ fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
 
 /// After `x.`: a module's items, a type's variants and associated functions, or a value's fields and methods. An
 /// official package is a module even before anything imports it: the index (`official.rs`) answers for it.
+#[allow(clippy::too_many_arguments)]
 fn member_completions(
     r: &mut Resolver,
     official: &OfficialIndex,
+    imports: &Imports,
     path: &str,
     ix: &FileIndex,
     text: &str,
@@ -999,6 +1039,10 @@ fn member_completions(
             if let Some(api) = official.get(name)
                 && file.as_deref().is_none_or(|file| official.is_root(name, file))
             {
+                // The package is not in the graph until this file loads it: accepting one of its names adds the `use`
+                // (`spec/lsp.md`, LS12), as a completion of a bare name does.
+                let edit = (file.is_none() && imports.supported).then(|| imports.edit(name));
+                let from = out.items.len();
                 for module in &api.modules {
                     out.add(module, 9, &format!("module {name}.{module}"), None, 0);
                 }
@@ -1007,6 +1051,7 @@ fn member_completions(
                         out.item(item, 0);
                     }
                 }
+                attach_edit(out, from, edit.as_ref());
                 return;
             }
             if let Some(file) = file
@@ -1587,10 +1632,10 @@ fn scope_completions(r: &mut Resolver, official: &OfficialIndex, site: &Site<'_>
     }
 }
 
-/// The official packages' items by their qualified name (`http.Client`) while a name is being typed: the whole
-/// standard-library surface without loading a package the file does not use (`spec/lsp.md`, LS12). A local module or
-/// another dependency of the same name shadows the official package, and a package that is not in the graph is
-/// offered only when the client applies the `use` that loads it.
+/// The official packages' names (`http`) and their items by their qualified name (`http.Client`) while a name is being
+/// typed: the whole standard-library surface without loading a package the file does not use (`spec/lsp.md`, LS12).
+/// A local module or another dependency of the same name shadows the official package, and a package that is not in
+/// the graph is offered only when the client applies the `use` that loads it.
 fn official_completions(
     p: &Package,
     official: &OfficialIndex,
@@ -1612,6 +1657,9 @@ fn official_completions(
             continue;
         }
         let edit = (!loaded && imports.supported).then(|| imports.edit(package));
+        if package.starts_with(prefix) {
+            out.package(package, edit.clone(), 6);
+        }
         for item in &api.items {
             if !scope.admits(item.kind) || !item.name.starts_with(prefix) {
                 continue;

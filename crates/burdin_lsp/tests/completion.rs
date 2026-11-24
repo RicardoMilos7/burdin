@@ -430,6 +430,69 @@ fn official_packages_complete_before_any_file_imports_them() {
     assert_eq!(s.client.shutdown(), 0);
 }
 
+/// An official package's name completes like a module (`spec/lsp.md`, LS12): `htt` offers `http`, and accepting it adds
+/// `use http` after the file's last `use` (the edit is absent once the file or the package's graph already loads it).
+#[test]
+fn an_official_package_name_completes_and_loads_itself() {
+    let mut s = open(false);
+    let edited = s.text.replace("    println(", "    htt\n    jso\n    println(");
+    s.edit(&edited);
+    let items = s.complete("    htt\n", 7);
+    let package = item(&items, "http");
+    assert_eq!(package.get("kind").as_i64(), Some(9), "a module");
+    let edits = package.get("additionalTextEdits").as_array();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].get("newText").as_str(), Some("use http\n"));
+    let start = edits[0].at(&["range", "start"]);
+    assert_eq!((start.get("line").as_i64(), start.get("character").as_i64()), (Some(1), Some(0)));
+    assert!(!has(&items, "json"), "`htt` offers only what starts with it: {:?}", labels(&items));
+    let json_items = s.complete("    jso\n", 7);
+    let json_edits = item(&json_items, "json").get("additionalTextEdits").as_array().to_vec();
+    assert_eq!(json_edits[0].get("newText").as_str(), Some("use json\n"));
+    // A file that loads the package already: the name is offered with no edit.
+    let loaded = format!("use http\n{}", s.text);
+    s.edit(&loaded);
+    let items = s.complete("    htt\n", 7);
+    assert!(item(&items, "http").get("additionalTextEdits").is_null(), "already loaded");
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// A member of an official package the file does not load adds its `use` when accepted (`spec/lsp.md`, LS12): `http.Cli`
+/// offers `Client` with `use http` after the file's last `use`. Applying that edit makes the file check, and a file that
+/// already loads the package gets no edit.
+#[test]
+fn a_member_of_an_unloaded_official_package_adds_its_use() {
+    let mut s = open(false);
+    let edited = s.text.replace("    println(", "    let c = http.Cli.new()\n    println(");
+    s.edit(&edited);
+    let items = s.complete("http.Cli.new()", "http.Cli".len());
+    let client = item(&items, "Client");
+    let edits = client.get("additionalTextEdits").as_array().to_vec();
+    assert_eq!(edits.len(), 1, "{}", client.to_text());
+    assert_eq!(edits[0].get("newText").as_str(), Some("use http\n"));
+    let start = edits[0].at(&["range", "start"]);
+    assert_eq!((start.get("line").as_i64(), start.get("character").as_i64()), (Some(1), Some(0)));
+
+    // Accepting `Client` replaces `Cli` and applies the edit: the file then checks.
+    let at = edited.find('\n').unwrap() + 1;
+    let accepted =
+        format!("{}use http\n{}", &edited[..at], &edited[at..]).replace("http.Cli.new()", "http.Client.new()");
+    s.edit(&accepted);
+    let left = s.client.diagnostics(&s.uri, |p| p.get("version").as_i64() == Some(s.version));
+    // Only the lint about the unused `c` is left: no error, so the file checks.
+    assert!(
+        left.iter().all(|d| d.get("source").as_str() == Some("burdin lint")),
+        "{:?}",
+        left.iter().map(Json::to_text).collect::<Vec<_>>()
+    );
+
+    // Once the file loads the package, the name is offered with no edit.
+    s.edit(&format!("use http\n{}", s.text));
+    let items = s.complete("http.Client.new()", "http.Cli".len());
+    assert!(item(&items, "Client").get("additionalTextEdits").is_null(), "already loaded");
+    assert_eq!(s.client.shutdown(), 0);
+}
+
 /// A local module of an official package's name shadows it (`spec/packages.md`, PKG15): `json.` is the package's own
 /// module, not the official one.
 #[test]
