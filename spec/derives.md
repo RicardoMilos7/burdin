@@ -56,8 +56,10 @@ tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` 
 declaration order and are equal when every field is equal. Enums are equal only in the same variant with equal
 payload fields. `Option` and `Result` support `==` when their parts do. A fixed-size array `[T; N]` supports `==` when
 `T` does, comparing element by element (milestone 24, issue #484), and a `Map` supports `==` when its keys and values
-do, comparing its entries whatever the iteration order. Slices, references, `List`, `Heap`, and `Chars` do not
-support `==`.
+do, comparing its entries whatever the iteration order. A `List` supports `==` when its elements do: two lists are
+equal when they have the same length and equal elements in the same order (issue #928). Slices, references, `Heap`,
+and `Chars` do not support `==`. `PriorityHeap` derives `Eq` over its list, and `Deque` implements `==` by hand in the
+standard library, since two deques with the same elements can split them differently between their ends (`stdlib.md`).
 
 ## `Ord`
 
@@ -163,6 +165,7 @@ either interface by hand instead (SER3).
 | --- | --- |
 | `Copy`, `Clone` | `m05_ownership/copy_and_clone`, `m07_generics/derives` |
 | `Eq`, `Ord` | `m07_generics/derives`, `derive_values` |
+| `Eq` on `List` | `m24_stdlib/list_equality`, `list_equality_needs_eq` |
 | `Hash` | `m07_generics/derives`, `derive_values` |
 | `Default` | `m07_generics/derives`, `derive_values` |
 | Requirement failures | `m07_generics/derive_field_not_eq` (E0130), `m05_ownership/copy_with_drop` (E0130) |

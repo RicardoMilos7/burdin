@@ -756,6 +756,8 @@ impl Globals {
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
+            // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
+            Ty::List(t, _) => self.has_eq_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
                 s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
@@ -767,7 +769,6 @@ impl Globals {
             Ty::Heap(_, _)
             | Ty::CPtr(_)
             | Ty::CString
-            | Ty::List(_, _)
             | Ty::MapEntry(..)
             | Ty::Shared(_)
             | Ty::Chars

@@ -4,6 +4,15 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Collection equality (issue #928, 2026-11-24).** Decision: option 1 of the issue, `==` for the collections that hold
+values, not removing `Hash`. `List<T>` has `==` when `T` does (length, then the elements in order), in the codegen's
+`list_eq` beside `map_eq`, and `has_eq_in` for `Ty::List`. `PriorityHeap<T>` derives `Eq` over its sorted list.
+`Deque<T>` already had a hand-written `PartialEq` in `std` (its front/back split is not canonical, so it cannot derive
+`Eq`). Gaps, left as found: `assert_eq`, `assert_ne`, and a `T: Eq` bound reject any type whose `==` is a hand-written
+`PartialEq` impl, so `assert_eq` on a `Deque` or a `Set` is E0141. Fixing that needs a decision between `Eq` and
+`PartialEq` for those bounds. `Deque` and `PriorityHeap` have no `Hash`. Tests: `tests/m24_stdlib/list_equality`,
+`list_equality_needs_eq`, `list_keys`, `heap_equality`, `deque_equality` (run) and `interfaces_missing` (the `EqList`
+case moved to `list_equality`).
 **`send` returns a `Result` (issue #929, 2026-11-24).** `Channel<T>.send` returns `Result<(), T>`: `Ok(())` when the
 value was queued, `Err(value)` when the channel was closed (`spec/channels.md` CH3, CH5; `std/src/channel.bd`). A
 `select` send arm binds the same type; the rewrite calls `__send_outcome` for it (`burdin_syntax/src/parser/select.rs`).

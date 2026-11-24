@@ -896,8 +896,14 @@ struct List<T, A = Global> {
 
 Indexing `xs[i]` is a place: it reads or writes one element, takes a `usize`, and panics when out of bounds.
 `for x in xs` borrows the list for the loop and yields read-only element places (`memory-rules.md`, IT). `T` must be
-storable, so `List<str>` and `List<&T>` are rejected (E0120). The eager iteration helpers `map`, `filter`, `fold`,
-`any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
+storable, so `List<str>` and `List<&T>` are rejected (E0120).
+
+`List<T>` implements `PartialEq` when `T: Eq` (issue #928). Two lists are equal when they have the same length and
+their elements are equal in order: `[1, 2] != [2, 1]` and `[1] != [1, 1]`. Equal lists hash alike (`derives.md`,
+"Hash"). `List` has no `Ord`. `assert_eq` and `assert_ne` take lists of an `Eq` element type, and `contains` searches
+with the same `==`. Tests: `m24_stdlib/list_equality`, `list_equality_needs_eq`.
+
+The eager iteration helpers `map`, `filter`, `fold`, `any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
 (`iterators.md`, IT10); `.any` is resolved to the `std` function named `__list_any` and spelled with the reserved
 word. Every method except `new` and `with_capacity` exists for every allocator argument.
 
@@ -1289,6 +1295,11 @@ struct PriorityHeap<T: Ord> {
 `PriorityHeap<T>` implements `Index<T>` (`h[0]` is the element `pop` returns next; past the end it panics with
 `PriorityHeap index out of bounds`), `Debug` (`[9, 5, 1]`, highest priority first), and `Iterable<&T>`. To get a
 min-heap, wrap the elements in `Reverse<T>`.
+
+`PriorityHeap<T>` derives `Eq` (issue #928, `derives.md`): two heaps are equal when their sorted lists are equal
+element by element, so when their elements are equal in priority order. Elements that `Ord` ranks equal keep their push
+order, so an `Ord` that ignores a field can make two heaps with the same elements unequal. `Hash` is not implemented.
+Tests: `m24_stdlib/heap_equality`.
 
 Tests: `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`,
 `heap_needs_ord`.
@@ -2412,11 +2423,11 @@ table covers, plus `Display` and `Iterable`; `Serialize`/`Deserialize` are in th
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `String` | no | yes | yes | yes | yes | empty string | yes | yes | no (`.chars()`) |
 | `str` | yes | yes | yes | yes | yes | empty view | yes | yes | no (`.chars()`) |
-| `List<T>` | no | `T: Clone` | no | no | `T: Hash` | empty (`Global`) | `T: Debug` | no | yes |
+| `List<T>` | no | `T: Clone` | `T: Eq` | no | `T: Hash` | empty (`Global`) | `T: Debug` | no | yes |
 | `Map<K, V>` | no | `K, V: Clone` | `K, V: Eq` | no | `K, V: Hash` | empty (`Global`) | `K, V: Debug` | no | yes |
 | `Set<T>` | no | `T: Clone` | `T: Eq` | no | no | no | `T: Eq + Debug` | no | yes |
 | `Deque<T>` | no | `T: Clone` | `T: Eq` | no | no | empty | `T: Debug` | no | yes |
-| `PriorityHeap<T>` | no | `T: Clone` | no | no | no | empty | `T: Debug` | no | yes |
+| `PriorityHeap<T>` | no | `T: Clone` | `T: Ord` | no | no | empty | `T: Debug` | no | yes |
 | `Heap<T>` | no | yes | no | no | no | no | `T: Debug` | no | no |
 | `Shared<T>` | no | yes | no | no | no | no | no | no | no |
 | `Option<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | `None` | `T: Debug` | no | no |
@@ -2436,14 +2447,14 @@ table covers, plus `Display` and `Iterable`; `Serialize`/`Deserialize` are in th
 | `Path` | no | yes | yes | no | no | no | yes | yes | no |
 
 A generic container with a stored allocator (`List<T, A>`, `Map<K, V, A>`, `Set<T, A>`) implements `Clone`, `Eq`,
-and `Hash` from its elements and allocator value, and has a `Default` only when it uses `Global`: a stored allocator
-has no value to build a default from.
+and `Hash` from its elements, and has a `Default` only when it uses `Global`: a stored allocator has no value to build
+a default from.
 
 `Hash` and `Eq` agree wherever both are present: equal values hash alike, including two maps with the same entries in
 different insertion order (a map hashes each entry from the offset basis and XORs the results, and a `List` folds its
 length and then its elements in order). A float has no `Hash` because `0.0 == -0.0` and a `NaN` never equals itself;
-`List` has no `Eq`/`Ord` and `Map` has no `Ord`; `String` is not `Copy`; arrays have no `Debug` or `Default`; and
-slices and references have no structural `==`.
+`List` and `Map` have no `Ord`; `String` is not `Copy`; arrays have no `Debug` or `Default`; and slices and references
+have no structural `==`.
 
 The cells that are `no` are deliberate: deriving that interface on a struct that holds the type is E0130 at the
 field, and the compile-fail test `m24_stdlib/interfaces_missing` pins each one. The cells that became `yes` in this
@@ -2576,7 +2587,7 @@ lists them by rule).
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
 | Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_control`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
-| `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord` |
+| `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord`, `heap_equality` |
 | Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_comptime` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_construction`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_construction`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_allocator`, `set_needs_eq` |
