@@ -126,14 +126,14 @@ fn main() {
 ```
 
 The compiler reads each `use` in your files and loads only the official packages they name. A package you never import
-is not built, checked, or pinned in `burdin.lock`.
-
-The editor helps with them. Typing the start of a package's name offers it (`htt` offers `http`), and accepting a
-completion from a package that the file does not load, such as `http.Client`, adds its `use` line for you. Writing
-`http.Client` without that `use` gets a quick fix titled "import http" that adds it, and a bare `Client` gets "import
-http.Client", which adds `use http.Client`. Writing `json = true` in `burdin.toml`, or running `burdin add json`,
+is not built, checked, or pinned in `burdin.lock`. Writing `json = true` in `burdin.toml`, or running `burdin add json`,
 is an error that points you to `use json`. The [packages reference](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md)
 describes how the compiler finds official packages and how `burdin.lock` pins them.
+
+The editor helps with them. Typing the start of a package's name offers it (`htt` offers `http`). Accepting a completion
+from a package that the file does not load adds its `use` line for you: `http.Cli` accepting `Client`, or a bare
+`Client` accepting `http.Client`. Writing `http.Client` without that `use` gets a quick fix titled "import http" that
+adds it, and a bare `Client` gets "import http.Client", which adds `use http.Client`.
 
 ## Libraries
 

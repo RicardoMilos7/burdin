@@ -810,6 +810,14 @@ impl Imports {
     }
 }
 
+/// Gives the items added since index `from` the edit that loads their package, when there is one.
+fn attach_edit(out: &mut Completions, from: usize, edit: Option<&Json>) {
+    let Some(edit) = edit else { return };
+    for item in &mut out.items[from..] {
+        item.set("additionalTextEdits", Json::Arr(vec![edit.clone()]));
+    }
+}
+
 /// The `use <path>` line, placed where `place` says.
 fn use_text(place: &ImportPlace, path: &str) -> String {
     if place.blank_after { format!("use {path}\n\n") } else { format!("use {path}\n") }
@@ -901,7 +909,7 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
             use_completions(&mut r, &path, text[line_start..start].trim_start(), &mut out);
         }
         Context::Member(dot) => {
-            member_completions(&mut r, &official, &path, &ix, &text, dot, &mut out);
+            member_completions(&mut r, &official, &imports, &path, &ix, &text, dot, &mut out);
         }
         Context::Leading(_) => {
             leading_completions(&mut r, expected.as_deref(), &mut out);
@@ -998,9 +1006,11 @@ fn literal_type(text: &str, tok: &Tok) -> Option<&'static str> {
 
 /// After `x.`: a module's items, a type's variants and associated functions, or a value's fields and methods. An
 /// official package is a module even before anything imports it: the index (`official.rs`) answers for it.
+#[allow(clippy::too_many_arguments)]
 fn member_completions(
     r: &mut Resolver,
     official: &OfficialIndex,
+    imports: &Imports,
     path: &str,
     ix: &FileIndex,
     text: &str,
@@ -1029,6 +1039,10 @@ fn member_completions(
             if let Some(api) = official.get(name)
                 && file.as_deref().is_none_or(|file| official.is_root(name, file))
             {
+                // The package is not in the graph until this file loads it: accepting one of its names adds the `use`
+                // (`spec/lsp.md`, LS12), as a completion of a bare name does.
+                let edit = (file.is_none() && imports.supported).then(|| imports.edit(name));
+                let from = out.items.len();
                 for module in &api.modules {
                     out.add(module, 9, &format!("module {name}.{module}"), None, 0);
                 }
@@ -1037,6 +1051,7 @@ fn member_completions(
                         out.item(item, 0);
                     }
                 }
+                attach_edit(out, from, edit.as_ref());
                 return;
             }
             if let Some(file) = file

@@ -457,6 +457,42 @@ fn an_official_package_name_completes_and_loads_itself() {
     assert_eq!(s.client.shutdown(), 0);
 }
 
+/// A member of an official package the file does not load adds its `use` when accepted (`spec/lsp.md`, LS12): `http.Cli`
+/// offers `Client` with `use http` after the file's last `use`. Applying that edit makes the file check, and a file that
+/// already loads the package gets no edit.
+#[test]
+fn a_member_of_an_unloaded_official_package_adds_its_use() {
+    let mut s = open(false);
+    let edited = s.text.replace("    println(", "    let c = http.Cli.new()\n    println(");
+    s.edit(&edited);
+    let items = s.complete("http.Cli.new()", "http.Cli".len());
+    let client = item(&items, "Client");
+    let edits = client.get("additionalTextEdits").as_array().to_vec();
+    assert_eq!(edits.len(), 1, "{}", client.to_text());
+    assert_eq!(edits[0].get("newText").as_str(), Some("use http\n"));
+    let start = edits[0].at(&["range", "start"]);
+    assert_eq!((start.get("line").as_i64(), start.get("character").as_i64()), (Some(1), Some(0)));
+
+    // Accepting `Client` replaces `Cli` and applies the edit: the file then checks.
+    let at = edited.find('\n').unwrap() + 1;
+    let accepted =
+        format!("{}use http\n{}", &edited[..at], &edited[at..]).replace("http.Cli.new()", "http.Client.new()");
+    s.edit(&accepted);
+    let left = s.client.diagnostics(&s.uri, |p| p.get("version").as_i64() == Some(s.version));
+    // Only the lint about the unused `c` is left: no error, so the file checks.
+    assert!(
+        left.iter().all(|d| d.get("source").as_str() == Some("burdin lint")),
+        "{:?}",
+        left.iter().map(Json::to_text).collect::<Vec<_>>()
+    );
+
+    // Once the file loads the package, the name is offered with no edit.
+    s.edit(&format!("use http\n{}", s.text));
+    let items = s.complete("http.Client.new()", "http.Cli".len());
+    assert!(item(&items, "Client").get("additionalTextEdits").is_null(), "already loaded");
+    assert_eq!(s.client.shutdown(), 0);
+}
+
 /// A local module of an official package's name shadows it (`spec/packages.md`, PKG15): `json.` is the package's own
 /// module, not the official one.
 #[test]

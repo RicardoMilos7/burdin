@@ -222,8 +222,10 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   return type, so the list appears on the keystroke that types the dot (issue #879). A name that is an official
   package (`json.`, `crypto.`) lists its public API even when no file of the package imports it: the items its root
   declares and the ones its `pub use` declarations re-export, transitively, and the modules it re-exports by name
-  (`crypto.hash`). The package itself, a local module of that name, or a path or git dependency of it shadows the
-  official package (`spec/packages.md`, PKG15).
+  (`crypto.hash`). Accepting one of those names when the file does not load the package adds its `use` as an
+  `additionalTextEdits` entry, as a bare name does (`http.Cli` accepts `Client` and inserts `use http`), when the client
+  advertises `additionalTextEditsSupport`. The package itself, a local module of that name, or a path or git dependency
+  of it shadows the official package (`spec/packages.md`, PKG15).
 - **After a leading dot** (`.Red`, `.new(3)`, `.{ x: 1 }`, `.Gr`), the members of the type the position expects, as
   `T.` offers them: its variants and its associated functions (no `self`), and `Some` and `None` for `Option`, `Ok` and
   `Err` for `Result`. The expected type is the one the compiler gives the form (`target-typing.md`, TT2). A dot with
@@ -306,7 +308,8 @@ Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_
 `self_and_bounded_parameters_complete_in_an_interface_impl`, `completion_offers_only_what_the_position_takes`,
 `a_dependency_completes_without_a_use_in_the_file`, `a_use_offers_every_official_package`,
 `official_packages_complete_before_any_file_imports_them`, `a_local_module_shadows_an_official_package`
-(`fixtures/official-shadow`), `an_official_package_name_completes_and_loads_itself`; the `builtins.rs` unit test and the
+(`fixtures/official-shadow`), `an_official_package_name_completes_and_loads_itself`,
+`a_member_of_an_unloaded_official_package_adds_its_use`; the `builtins.rs` unit test and the
 `official.rs` unit test.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature

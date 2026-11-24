@@ -230,6 +230,7 @@ modules before anything imports it, and typing `Client` offers `http.Client` wit
 inserts `use http` when the package is not in the graph; a local module or a path or git dependency of the same name
 shadows the official package. Typing the start of a package's name offers the package itself (`htt` offers `http`) with
 the same edit, and an E0002 on an unloaded `http.Client` gets the quick fix "import http" that inserts the `use`
+accepting `http.Cli`'s `Client` adds `use http` the same way (`a_member_of_an_unloaded_official_package_adds_its_use`);
 and a bare `Client` that an official package exports gets "import http.Client" (LS12, LS18;
 `an_official_package_name_completes_and_loads_itself`, `an_official_package_used_without_a_use_is_imported_by_a_quick_fix`,
 and `a_bare_official_item_is_imported_by_a_quick_fix` in `crates/burdin_lsp/tests/`). Tests: `tests/check_packages.py` (implicit build, golden lockfile, local-module
