@@ -66,8 +66,8 @@ nothing.
 
 * The values already queued stay in the channel. `recv` keeps returning them, in order, and returns `None` only when the
   channel is closed *and* empty.
-* `send` on a closed channel does not queue anything. It returns `Some(value)`: the value it was given, so nothing is
-  lost. (`send` returns `None` when the value was queued.) A sender that was waiting for room when the channel closed
+* `send` on a closed channel does not queue anything. It returns `Err(value)`: the value it was given, so nothing is
+  lost. (`send` returns `Ok(())` when the value was queued.) A sender that was waiting for room when the channel closed
   gets its value back the same way.
 * `is_closed(self): bool` reports whether `close` has been called.
 
@@ -77,7 +77,9 @@ senders went away.
 
 Why `send` hands the value back instead of panicking (Go) or failing without the value (`Result<()>`): a close races with
 senders by design, so a send on a closed channel is an ordinary outcome, not a bug; and a value that is moved in and then
-refused would otherwise be lost silently.
+refused would otherwise be lost silently. The result is `Result<(), T>`, so `Ok` means "queued" and `Err` means "refused,
+and here is the value" (issue #929). It is not `Option<T>`: there `None` meant success and `Some` meant failure, the
+reverse of what `recv` returns.
 
 ## CH4. Ownership, drops, and no sharing (decision, issues #208 and #211)
 
@@ -107,7 +109,7 @@ refused would otherwise be lost silently.
 fn Channel<T>.bounded(capacity: usize): Channel<T>
 fn Channel<T>.unbounded(): Channel<T>
 Channel<T> {
-    fn send(self, own value: T): Option<T>      // None: queued. Some(value): the channel is closed
+    fn send(self, own value: T): Result<(), T> // Ok(()): queued. Err(value): the channel is closed
     fn recv(self): Option<T>                    // None: closed and empty
     fn try_send(self, own value: T): TrySend<T> // never waits
     fn try_recv(self): TryRecv<T>               // never waits
@@ -130,15 +132,15 @@ empty channel (`Empty`) from a closed one (`Closed`).
 handle, so the loop does not borrow `ch`, and it removes values from the channel like `recv` does.
 
 `clone` is a method of `Channel<T>`, not an implementation of the `Clone` interface: writing a built-in interface by
-hand is not implemented yet (issue #402). Because `send` returns the value or `None`, a call used as the last expression
-of a block is an `Option<T>`; write `let _ = ch.send(x)` where the block should be `()`.
+hand is not implemented yet (issue #402). Because `send` returns a `Result<(), T>`, a call used as the last expression
+of a block has that type; write `let _ = ch.send(x)` where the block should be `()`.
 
 ## CH6. `select` (decision, issue #208; implemented in issue #210)
 
 ```
 select {
     v = rx.recv() => body          // receive: v is the Option<T> that rx.recv() returns
-    tx.send(value) => body         // send; "r = tx.send(value) => body" binds the Option<T> that send returns
+    tx.send(value) => body         // send; "r = tx.send(value) => body" binds the Result<(), T> that send returns
     default => body                // optional
 }
 ```
@@ -171,7 +173,7 @@ type with `__select_new`) are public only because the rewritten code lives in th
 them.
 
 **What the arm's binding is.** The same thing the method would have returned: for a `recv` arm an `Option<T>` (`None` when
-the channel is closed and empty), for a `send` arm an `Option<T>` (`None` when the value was queued, `Some(value)` when
+the channel is closed and empty), for a `send` arm a `Result<(), T>` (`Ok(())` when the value was queued, `Err(value)` when
 the channel was closed). The arm may leave the binding out or use `_`.
 
 **When an arm can run.** A `recv` arm can run when the channel has a value or is closed. A `send` arm can run when the
@@ -208,6 +210,10 @@ value back); CH8 shows how a loop turns such an arm off.
   ends; it is not given back to the variable it came from. The move is visible to the move checker, so using the value after
   the `select` is E0100 (`select_value_moved`), and an unchosen value is dropped exactly once (`select_unchosen_dropped`).
   To keep a value for the case where its arm does not run, send a clone, or test with `try_send` first.
+  This stays eager on purpose (issue #929). Moving the value only when its arm runs would have to evaluate the value
+  while the send is being tried, which is either user code under the scheduler lock or a reservation in the channel
+  followed by a second step; and the value would still be moved on one path through the rewritten loop, so the move
+  checker would refuse a use of it in the arm bodies, `default` included. The caller's side is the cheap fix.
 * The *channel* expressions are evaluated once too, whatever they are (`a`, `self.jobs`, `make_channel()`), by cloning the
   handle, so the handle count goes up by one for the length of the `select`.
 
@@ -246,9 +252,9 @@ such method). `select` introduces no new error code (`select_type_errors`, `send
 | --- | --- |
 | CH1 | `s2_channels/producer_consumer`, `many_producers`, `many_consumers`, `pipeline`, `thread_and_task` |
 | CH2 | `s2_channels/fifo_unbounded`, `bounded_capacity`, `bounded_zero_panics`, `ping_pong` |
-| CH3 | `s2_channels/close_semantics`, `close_wakes_receiver`, `close_wakes_sender`, `stress_close_race` |
+| CH3 | `s2_channels/close_semantics`, `close_wakes_receiver`, `close_wakes_sender`, `stress_close_race`, `send_result` |
 | CH4 | `s2_channels/queued_values_dropped`, `send_moves_value`, `scoped_tasks`, `leak_free`, `send_borrowed` (E0003, E0120), `use_after_send` (E0100) |
-| CH5 | `s2_channels/try_recv`, `bounded_capacity`, `fifo_unbounded`, `producer_consumer` |
+| CH5 | `s2_channels/try_recv`, `bounded_capacity`, `fifo_unbounded`, `producer_consumer`, `send_result` |
 | CH6 | `s2_channels/select_binding_forms`, `select_break_continue`, `select_fan_in`, `select_syntax_errors` (E0001) |
 | CH7 | `s2_channels/select_priority`, `select_waits`, `select_stress` |
 | CH8 | `s2_channels/select_default`, `select_send`, `select_priority`, `select_fan_in`, `select_all_off_panics`, `select_value_moved` (E0100), `select_unchosen_dropped` |

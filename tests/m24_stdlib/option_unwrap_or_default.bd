@@ -1,0 +1,38 @@
+//@ run
+//> 0
+//> 7
+//> []
+//> kept
+//> false
+//> 0 0
+//> 0
+
+// `unwrap_or_default` gives the payload of a `Some`, or the default value of `T` for a `None`. The default is the
+// built-in one of each type (`0`, the empty string, `false`, the empty list) or the derived one of a struct.
+
+struct Point: Default {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let a: Option<i32> = None
+    let b: Option<i32> = Some(7)
+    println("{a.unwrap_or_default()}")
+    println("{b.unwrap_or_default()}")
+
+    let s: Option<String> = None
+    println("[{s.unwrap_or_default()}]")
+    let k: Option<String> = Some(String.from("kept"))
+    println("{k.unwrap_or_default()}")
+
+    let flag: Option<bool> = None
+    println("{flag.unwrap_or_default()}")
+
+    let p: Option<Point> = None
+    let q = p.unwrap_or_default()
+    println("{q.x} {q.y}")
+
+    let xs: Option<List<i32>> = None
+    println("{xs.unwrap_or_default().len()}")
+}

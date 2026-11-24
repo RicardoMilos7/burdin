@@ -103,10 +103,11 @@ named arguments are matched to parameter names, and that interface signatures an
 defaults). The new diagnostics are E0213 (invalid default) and E0214 (invalid named argument).
 
 Milestone 18 is complete: `tests/m18_extension` and every earlier folder pass in debug and release, and the rules
-are recorded in `spec/extensions.md` EX1-EX8 (the decisions that an extension is visible in its declaring module and
-in modules that import it by name, that a call tries the type's methods before a visible extension, and that a
-shadowed extension gets a warning at its declaration). The new diagnostics are E0215 (a warning: a shadowed
-extension method) and E0216 (an invalid extension declaration or import).
+are recorded in `spec/extensions.md` EX1-EX9 (the decisions that an extension is visible in its declaring module and
+in modules that import it, that a call tries the type's methods before a visible extension, and that a shadowed
+extension gets a warning at its declaration; issue #925 later added whole-module imports, aliases, and the associated
+form). The new diagnostics are E0215 (a warning: a shadowed extension method) and E0216 (an invalid extension
+declaration).
 
 Milestone 19 is complete: `tests/m19_operators` and every earlier folder pass in debug and release, and the rules
 are recorded in `spec/operators.md` OP1-OP13 (the decisions that the operator interfaces are ordinary `std`
@@ -317,7 +318,7 @@ code; do not invent them inside the implementation.
    A call tries the type's methods (inherent and interface, including compiler-provided ones) before a visible
    extension. A method always wins over a same-named extension, which gets the warning E0215 at its declaration;
    E0216 reports an invalid declaration, and E0007 a duplicate receiver or import. The rules are
-   `spec/extensions.md` EX1-EX8 and the tests are `tests/m18_extension/`.
+   `spec/extensions.md` EX1-EX9 and the tests are `tests/m18_extension/`.
 
 ## Not in stage 1
 

@@ -1618,6 +1618,65 @@ impl FnCx<'_> {
         None
     }
 
+    /// `Type.name(recv, args)` through an extension method `name` that applies to `Type` (`spec/extensions.md`, EX9).
+    /// The first argument is the receiver and the rest are the arguments of `recv.name(args)`, with the same
+    /// conventions. `None` when no visible extension applies to `Type` or the call has no receiver argument; the
+    /// caller then reports the missing function.
+    pub(super) fn extension_assoc_call(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<tir::Expr> {
+        let first = args.first()?;
+        let candidates = self.globals.modules[self.module].extensions.get(&name.name)?.clone();
+        let ext = candidates
+            .into_iter()
+            .map(|id| self.globals.extensions[id].clone())
+            .find(|ext| crate::extensions::extension_applies(self.globals, ext, ty))?;
+        let recv = self.expr(&first.expr, Some(ty));
+        // A receiver takes no call-site marker, as a method's does (CV4), so `Type.name(mut recv)` is E0115.
+        if first.mut_marker {
+            let error = self.diags.error(
+                Code::UNNEEDED_MUT_MARKER,
+                first.expr.span,
+                format!("this parameter of `{}` is not `mut`; the argument takes no `mut` marker", name.name),
+            );
+            if let Some(mut_span) = first.mut_span {
+                error.suggest_safe(
+                    Span::new(mut_span.file, mut_span.lo, first.expr.span.lo),
+                    "remove the `mut` marker",
+                    "",
+                );
+            }
+        }
+        if recv.ty != Ty::Error && !crate::extensions::extension_applies(self.globals, &ext, &recv.ty) {
+            let found = recv.ty.clone();
+            self.diags.error(Code::TYPE_MISMATCH, recv.span, format!("expected `{ty}`, found `{found}`"));
+            return Some(self.args_then_error(&args[1..], span));
+        }
+        Some(self.extension_call_inner(&ext, recv, name, &args[1..], span))
+    }
+
+    /// The error of `Type.name(...)` when `Type` has no function or variant `name`. A visible extension of that name
+    /// that applies to `Type` is called instead (`spec/extensions.md`, EX9); otherwise `message` is reported. The
+    /// type's own functions and the compiler's come first, so an extension never shadows them.
+    fn no_assoc_function(
+        &mut self,
+        ty: &Ty,
+        name: &ast::Ident,
+        message: String,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> tir::Expr {
+        if let Some(call) = self.extension_assoc_call(ty, name, args, span) {
+            return call;
+        }
+        self.diags.error(Code::UNKNOWN_NAME, name.span, message);
+        self.args_then_error(args, span)
+    }
+
     fn extension_call_inner(
         &mut self,
         ext: &crate::globals::ExtensionInfo,
@@ -2179,8 +2238,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Builtin(Builtin::CStrToString, checked), sig.ret, span);
             }
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CPtr` has no function `{}`", name.name));
-            return self.args_then_error(args, span);
+            return self.no_assoc_function(ty, name, format!("`CPtr` has no function `{}`", name.name), args, span);
         }
         // `List<T>.new()`, `List<T>.new_in(alloc)`, and the same for a map.
         if let Ty::List(elem, written_alloc) = ty {
@@ -2276,12 +2334,8 @@ impl FnCx<'_> {
                 return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
             }
             if name.name != "parse" && name.name != "default" {
-                self.diags.error(
-                    Code::UNKNOWN_NAME,
-                    name.span,
-                    format!("`{}` has no function `{}`", i.name(), name.name),
-                );
-                return self.args_then_error(args, span);
+                let message = format!("`{}` has no function `{}`", i.name(), name.name);
+                return self.no_assoc_function(ty, name, message, args, span);
             }
             // `default` falls through to the `Type.default()` lookup below, like the other built-in types.
             if name.name == "parse" {
@@ -2361,12 +2415,8 @@ impl FnCx<'_> {
                 "new" => Builtin::StringNew,
                 "from" => Builtin::StringFrom,
                 _ => {
-                    self.diags.error(
-                        Code::UNKNOWN_NAME,
-                        name.span,
-                        format!("`String` has no function `{}`", name.name),
-                    );
-                    return self.args_then_error(args, span);
+                    let message = format!("`String` has no function `{}`", name.name);
+                    return self.no_assoc_function(ty, name, message, args, span);
                 }
             };
             let sig = builtin_sig(b, self.globals);
@@ -2386,8 +2436,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
             }
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`str` has no function `{}`", name.name));
-            return self.args_then_error(args, span);
+            return self.no_assoc_function(ty, name, format!("`str` has no function `{}`", name.name), args, span);
         }
         // The C string bridge.
         if *ty == Ty::CString {
@@ -2398,8 +2447,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Builtin(Builtin::CStringFrom, checked), sig.ret, span);
             }
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`CString` has no function `{}`", name.name));
-            return self.args_then_error(args, span);
+            return self.no_assoc_function(ty, name, format!("`CString` has no function `{}`", name.name), args, span);
         }
         if let Ty::Enum(a) = ty
             && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
@@ -2428,12 +2476,8 @@ impl FnCx<'_> {
             if name.name == "default" && args.is_empty() && self.globals.has_default(ty) {
                 return self.default_expr(ty, span);
             }
-            self.diags.error(
-                Code::UNKNOWN_NAME,
-                name.span,
-                format!("`{ty}` has no function or variant `{}`", name.name),
-            );
-            return self.args_then_error(args, span);
+            let message = format!("`{ty}` has no function or variant `{}`", name.name);
+            return self.no_assoc_function(ty, name, message, args, span);
         };
         if let Some(key) = adt_key(ty) {
             self.check_member_access(ty, key, name);

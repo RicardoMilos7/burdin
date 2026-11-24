@@ -17,7 +17,7 @@ use ops.Index
 /// h.push(2)
 /// assert_eq(h.pop(), Some(2))
 /// ```
-struct PriorityHeap<T: Ord>: Default {
+struct PriorityHeap<T: Ord>: Default, Eq {
     items: List<T>
 }
 

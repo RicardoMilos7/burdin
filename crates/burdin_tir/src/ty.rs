@@ -334,6 +334,14 @@ pub enum Ty {
         /// The associated type's name.
         name: Rc<str>,
     },
+    /// The error type of a conversion, `<T as TryFrom<S>>.Error` (`spec/stdlib.md`, TF9): the `E` of the `try_from`
+    /// that converts an `S` into `T`. It is opaque like a projection, and resolves once `self_ty` is concrete, to
+    /// `TryFromIntError` for an integer target or to the error of the target's `try_from` block.
+    TryFromError {
+        self_ty: Box<Ty>,
+        /// The source type the conversion takes.
+        source: Box<Ty>,
+    },
     /// A const generic argument: the value `Matrix<f64, 2, 3>` gives `R` and `C`. Values from `1 << 100` up are
     /// expressions over const parameters that sema has not folded yet, only seen while a generic body is checked
     /// (`spec/const-generics.md`). It has no run-time representation.
@@ -469,6 +477,7 @@ impl fmt::Display for Ty {
                 }
                 write!(f, ">.{name}")
             }
+            Ty::TryFromError { self_ty, source } => write!(f, "<{self_ty} as TryFrom<{source}>>.Error"),
             Ty::Const(v) if *v >= 1 << 100 => f.write_str("_"),
             Ty::Const(v) => write!(f, "{v}"),
             Ty::Error => f.write_str("{error}"),
@@ -624,6 +633,10 @@ mod tests {
                     name: "Item".into(),
                 },
                 "<i32 as Container<i32>>.Item",
+            ),
+            (
+                Ty::TryFromError { self_ty: Box::new(Ty::Param("T".into())), source: Box::new(i32_.clone()) },
+                "<T as TryFrom<i32>>.Error",
             ),
             (Ty::Error, "{error}"),
         ];

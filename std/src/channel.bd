@@ -299,16 +299,19 @@ Channel<T> {
         }
     }
 
-    /// Moves `value` into the channel, waiting while a bounded channel is full. Returns `None` when the value was
-    /// queued, and `Some(value)` (the same value) when the channel is closed.
+    /// Moves `value` into the channel, waiting while a bounded channel is full. Returns `Ok(())` when the value was
+    /// queued, and `Err(value)` (the same value) when the channel is closed.
     ///
     /// ```
     /// let ch: Channel<i32> = Channel.bounded(1)
-    /// assert(ch.send(1).is_none())
+    /// assert(ch.send(1).is_ok())
     /// ch.close()
-    /// assert_eq(ch.send(2), Some(2))
+    /// match ch.send(2) {
+    ///     Err(v) => assert_eq(v, 2),
+    ///     Ok(()) => assert(false),
+    /// }
     /// ```
-    fn send(self, own value: T): Option<T> {
+    fn send(self, own value: T): Result<(), T> {
         let mut slot = Some(value)
         unsafe {
             let h = self.head as CPtr<Head>
@@ -316,7 +319,7 @@ Channel<T> {
             let done = __send_ready(h, mut slot)
             __sched_unlock()
             if done {
-                return slot.take()
+                return self.__send_outcome(mut slot)
             }
             let waiter = __waiter_new()
             let link = __link_new(waiter, h, 1)
@@ -336,7 +339,7 @@ Channel<T> {
             __dealloc(link as CPtr<u8>, Link.size(), 8)
             __waiter_free(waiter)
         }
-        slot.take()
+        self.__send_outcome(mut slot)
     }
 
     /// Takes the oldest value out of the channel, waiting while it is empty. Returns `None` when the channel is closed
@@ -547,6 +550,15 @@ Channel<T> {
     /// The value in `slot`, leaving it empty.
     fn __take(self, mut slot: Option<T>): Option<T> {
         slot.take()
+    }
+
+    /// What `send` returns for a slot after the send was tried: `Ok` when the value was queued (the slot is empty),
+    /// `Err` with the value when the channel was closed (the slot still holds it).
+    fn __send_outcome(self, mut slot: Option<T>): Result<(), T> {
+        match slot.take() {
+            None => Ok(()),
+            Some(v) => Err(v),
+        }
     }
 
     /// `recv` without waiting, into `slot`; true when the receive case can run.

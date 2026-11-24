@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// Under `use text.shout as yell` the method is `yell`; the declared name `shout` is not visible through this import
+// (EX2).
+
+use text.shout as yell
+
+fn main() {
+    println(String.from("hi").yell())
+    println(String.from("hi").shout()) //~ E0002
+}

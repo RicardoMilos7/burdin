@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A receiver takes no call-site marker in the associated form either: `Counter.bump(mut c)` is E0115 (EX9, CV4).
+
+struct Counter {
+    n: i32,
+}
+
+fn Counter.bump(mut self) {
+    self.n = self.n + 1
+}
+
+fn main() {
+    let mut c = Counter { n: 1 }
+    Counter.bump(mut c) //~ E0115
+}

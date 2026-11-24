@@ -2031,6 +2031,55 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(self.builder.build_select(empty, one, hash, "").map_err(llvm_err)?.into_int_value())
     }
 
+    /// Structural equality of two lists (`spec/stdlib.md`, "List"): the same length, and equal elements in order.
+    pub(super) fn list_eq(
+        &mut self,
+        l: PointerValue<'ctx>,
+        r: PointerValue<'ctx>,
+        elem: &Ty,
+        alloc: &burdin_tir::Alloc,
+    ) -> GenResult<IntValue<'ctx>> {
+        let left = self.seq_load_at(l, alloc)?;
+        let right = self.seq_load_at(r, alloc)?;
+        let bool_ty = self.cx.bool_type();
+        let same_len = self.builder.build_int_compare(IntPredicate::EQ, left.len, right.len, "").map_err(llvm_err)?;
+        // A zero-sized element has nothing to compare, so equal lengths are equal lists.
+        if self.llvm_ty(elem).is_none() {
+            return Ok(same_len);
+        }
+        let result = self.alloca(bool_ty.into(), "list.eq.result")?;
+        self.builder.build_store(result, same_len).map_err(llvm_err)?;
+        let scan = self.new_block("list.eq.scan");
+        let end = self.new_block("list.eq.end");
+        self.builder.build_conditional_branch(same_len, scan, end).map_err(llvm_err)?;
+        self.builder.position_at_end(scan);
+        let index = self.alloca(self.usize_ty.into(), "list.eq.i")?;
+        self.builder.build_store(index, self.usize_zero()).map_err(llvm_err)?;
+        let header = self.new_block("list.eq.cond");
+        let body = self.new_block("list.eq.body");
+        let next = self.new_block("list.eq.next");
+        let fail = self.new_block("list.eq.fail");
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(header);
+        let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+        let more = self.builder.build_int_compare(IntPredicate::ULT, i, left.len, "").map_err(llvm_err)?;
+        self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+        self.builder.position_at_end(body);
+        let a = self.elem_ptr_at(left.data, elem, i).expect("a list element has a type");
+        let b = self.elem_ptr_at(right.data, elem, i).expect("a list element has a type");
+        let same = self.eq_at(a, b, elem)?;
+        self.builder.build_conditional_branch(same, next, fail).map_err(llvm_err)?;
+        self.builder.position_at_end(fail);
+        self.builder.build_store(result, bool_ty.const_zero()).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(next);
+        let next_i = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+        self.builder.build_store(index, next_i).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        Ok(self.builder.build_load(bool_ty, result, "").map_err(llvm_err)?.into_int_value())
+    }
+
     /// Structural equality of two maps (`spec/stdlib.md`, "Map"): the same number of entries, and every entry of
     /// the left map found in the right one with an equal value. The iteration order does not matter.
     pub(super) fn map_eq(

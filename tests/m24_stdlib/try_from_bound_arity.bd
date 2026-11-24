@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `TryFrom` takes exactly one type argument (spec/stdlib.md, TF7), as `From` does: a bare `TryFrom` or two arguments
+// are E0003 at the bound.
+
+fn bare<T: TryFrom>(v: i32) { //~ E0003
+}
+
+fn two<T: TryFrom<i32, i32>>(v: i32) { //~ E0003
+}
+
+fn main() {}

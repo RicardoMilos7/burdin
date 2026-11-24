@@ -31,7 +31,7 @@
 //!     }
 //!     match i {
 //!         0 => { let v = c0.__take(mut s0); body0 }
-//!         else => { let _ = c1.__take(mut s1); body1 }
+//!         else => { let _ = c1.__send_outcome(mut s1); body1 }   // a send arm: its `Result<(), T>`
 //!     }
 //! }
 //! ```
@@ -357,7 +357,9 @@ fn lower(id: usize, arms: Vec<Arm>, span: Span) -> Expr {
         if a.kind != Kind::Default {
             let c = name(&temp(&format!("c{i}")), a_span);
             let s = name(&temp(&format!("s{i}")), a_span);
-            let taken = method(c, "__take", vec![mut_arg(s)], a_span);
+            // A send arm binds the `Result<(), T>` that `send` returns; a receive arm binds the `Option<T>` of `recv`.
+            let taken_by = if a.kind == Kind::Send { "__send_outcome" } else { "__take" };
+            let taken = method(c, taken_by, vec![mut_arg(s)], a_span);
             let pattern = a.binding.unwrap_or(Pattern { kind: PatternKind::Wild, span: a_span });
             body_stmts.push(let_stmt(pattern, taken, a_span));
         }

@@ -1,0 +1,27 @@
+//@ run
+//> open channel: queued
+//> full then closed: Err(9)
+//> closed: Err(2)
+
+// `send` returns `Ok(())` when the value was queued and `Err(value)` when the channel was closed, the value it was given
+// (CH3, CH5). A sender that waits for room in a full channel gets `Err` when the channel closes under it (issue #929).
+
+fn main() {
+    let ch = Channel<i32>.bounded(1)
+    match ch.send(1) {
+        Ok(()) => println("open channel: queued"),
+        Err(_) => println("open channel: refused"),
+    }
+    let tx = ch.clone()
+    let waiting = task.spawn(|| tx.send(9))
+    task.yield()
+    ch.close()
+    match waiting.join() {
+        Err(v) => println("full then closed: Err({})", v),
+        Ok(()) => println("full then closed: queued"),
+    }
+    match ch.send(2) {
+        Err(v) => println("closed: Err({})", v),
+        Ok(()) => println("closed: queued"),
+    }
+}

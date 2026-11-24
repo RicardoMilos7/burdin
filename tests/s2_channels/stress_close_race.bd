@@ -21,8 +21,8 @@ fn round(n: i32): bool {
         let tx = full.clone()
         handles.push(task.spawn(|| {
             match tx.send(n) {
-                Some(_) => true,
-                None => false,
+                Err(_) => true,
+                Ok(()) => false,
             }
         }))
         k = k + 1

@@ -1,0 +1,12 @@
+//@ run
+//> hi!
+//> 42
+
+// `use text` brings every extension `text` declares, without naming them (EX2).
+
+use text
+
+fn main() {
+    println(String.from("hi").shout())
+    println(21.doubled().to_string())
+}

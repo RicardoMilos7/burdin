@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A list compares its elements, so a list of a type without `==` has no `==` (E0003 on the operator) and no
+// comparison assertion (E0141). A struct that derives `Eq` over such a list is E0130 at the field (issue #928).
+
+struct Plain {
+    id: i32
+}
+
+struct EqPlain: Eq {
+    items: List<Plain> //~ E0130
+}
+
+fn main() {
+    let a = List<Plain>.new()
+    let b = List<Plain>.new()
+    let same = a == b //~ E0003
+    assert_eq(a, b) //~ E0141
+}

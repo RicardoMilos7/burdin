@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `pub use text` in the dependency re-exports the module name only. A module import of `lib` brings no extensions
+// from `text`, so `shout` is E0002; `pub use text.shout` would re-export it (EX2).
+
+use lib
+
+fn main() {
+    println(String.from("x").shout()) //~ E0002
+}

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `T.try_from` takes the bound's source type (spec/stdlib.md, TF7): an `i64` is not an `i32`, so it is E0003.
+
+fn check<T: TryFrom<i32>>(v: i64) {
+    let r = T.try_from(v) //~ E0003
+}
+
+fn main() {}

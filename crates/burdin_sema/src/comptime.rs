@@ -67,7 +67,8 @@ impl Globals {
             | Ty::SliceWindows(..)
             | Ty::Param(_)
             | Ty::Const(_)
-            | Ty::Projection { .. } => false,
+            | Ty::Projection { .. }
+            | Ty::TryFromError { .. } => false,
         }
     }
 }

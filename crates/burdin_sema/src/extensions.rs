@@ -129,13 +129,32 @@ impl<'t> Sema<'t> {
     }
 
     /// The two whole-program diagnostics of extension methods: a second declaration for the same receiver type
-    /// in one module (E0007), and an extension a method of its receiver type shadows (E0215, a warning).
+    /// in one module (E0007), and an extension a method of its receiver type shadows (E0215, a warning). A call
+    /// uses the name the extension is visible under, so an extension imported under another name (`use text.shout
+    /// as len`) is checked under that name, at its declaration.
     pub(crate) fn check_extension_problems(&self, diags: &mut Diagnostics) {
+        let mut warned_aliases = std::collections::HashSet::new();
         for module in 0..self.globals.modules.len() {
-            for ids in self.globals.modules[module].extensions.values() {
+            for (method, ids) in &self.globals.modules[module].extensions {
                 for (k, &id) in ids.iter().enumerate() {
                     let ext = &self.globals.extensions[id];
-                    if ext.module != module || ext.func.is_none() || ext.recv == Ty::Error {
+                    if ext.func.is_none() || ext.recv == Ty::Error {
+                        continue;
+                    }
+                    if ext.module != module {
+                        if *method != ext.name
+                            && warned_aliases.insert((id, method.clone()))
+                            && self.receiver_has_method(&ext.recv, method)
+                        {
+                            diags.warning(
+                                Code::EXTENSION_SHADOWED,
+                                ext.span,
+                                format!(
+                                    "the extension method `{method}` is shadowed by a method of `{}`; calls use the method",
+                                    ext.recv
+                                ),
+                            );
+                        }
                         continue;
                     }
                     let duplicate = ids[..k].iter().any(|&other| {

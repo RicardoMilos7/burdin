@@ -25,6 +25,52 @@ separate decision. The rule is CL11 in `spec/memory-rules.md`; the code is `cons
 error at the call (`crates/burdin_sema/src/fncx/generic.rs`). Tests: `tests/m12_closures/closure_function_value` (extended),
 `closure_constructor_value` (run), and the compile-fail `closure_constructor_untyped`, `closure_constructor_mismatch`,
 and `closure_constructor_open`.
+**Extensions in modules and as associated functions (issue #925, 2026-11-24).** The issue's fix 1 (`spec/extensions.md`
+EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; a `priv` extension of
+another package is not brought, and that is not an error. `use text.shout as yell` brings one under the method name
+`yell`, and the alias is the name calls use. `Type.name(recv, args)` calls an extension with its receiver first, and it
+is reached only when `Type` has no function or variant of that name: the six "has no function" sites in `assoc_call`
+go through `no_assoc_function`. The receiver takes no marker (E0115) and a `mut self` receiver needs a mutable place
+(E0113). Two different declarations under one method name in one module are E0007 at the `use`; the same declaration
+brought twice is not an error. Module imports are recorded in `ModuleInfo::module_imports` and copied by
+`Sema::import_module_extensions` after `resolve_imports` and before the prelude. The E0216 for an alias is gone; E0216
+is only the invalid-declaration error. Changed tests: `not_imported` (a module's own imports stay private) and
+`aliased_import` (now a run test). New tests: `tests/m18_extension/module_import*`, `module_reexport`, `alias_*`,
+`assoc_call*`. Not done: item 3 of the issue, the allocator receivers of the std convenience methods (`fn List<T>.retain`
+is `List<T, Global>`). Not supported: the associated form with a generic type written without its arguments, which keeps
+the template error. Found, not fixed: `Counter.bump(c)` with an immutable `c` and a `mut self` impl method is accepted,
+when it should be E0113. The impl path in `assoc_call` passes no receiver place to `args`; the extension path checks it.
+**Standard-library methods behind stale limits (issue #930, 2026-11-24).** `Option.unwrap_or_default` and
+`Option<Option<T>>.flatten` are in `std/src/option.bd`, and `List.dedup_by_key` is in `std/src/list.bd`. The old "not
+provided" rationale was wrong for each: `T.default()` exists for the built-in `Default` types, and an extension receiver
+may nest a type parameter. Two facts the issue did not state: `Eq` as a bound accepts a float (floats support `==`, so
+`has_eq_in` in `crates/burdin_sema/src/types.rs` says yes), and `Option.as_ref` is still not provided because of a
+**compiler bug**. A binding from a borrowed `match` scrutinee is copied into its own slot by codegen
+(`crates/burdin_codegen/src/emit/pattern.rs`, `bind`), so `Some(&v)` returns a pointer into a dead stack slot; the
+return-origin check (`crates/burdin_check/src/origins.rs`) accepts it, and it also happens in a plain function
+(`fn f<T>(o: Option<T>): Option<&T> { match o { Some(v) => Some(&v), None => None } }` prints garbage). Fix direction: make
+a view binding alias its scrutinee part. Or-patterns bind one local from several places, so the slot would need to hold
+a pointer, and closures capturing a view binding read its slot too. Not fixed in #930. Tests:
+`tests/m24_stdlib/option_flatten`, `option_unwrap_or_default`, `option_unwrap_or_default_needs_default`,
+`list_dedup_by_key`, `list_dedup_by_key_needs_eq`. The full debug conformance run has 5 failures, all `s3_http` and
+`s3_tls` programs that fail to link with `-lssl` on this WSL machine (the same environment note as #936 below).
+**Collection equality (issue #928, 2026-11-24).** Decision: option 1 of the issue, `==` for the collections that hold
+values, not removing `Hash`. `List<T>` has `==` when `T` does (length, then the elements in order), in the codegen's
+`list_eq` beside `map_eq`, and `has_eq_in` for `Ty::List`. `PriorityHeap<T>` derives `Eq` over its sorted list.
+`Deque<T>` already had a hand-written `PartialEq` in `std` (its front/back split is not canonical, so it cannot derive
+`Eq`). Gaps, left as found: `assert_eq`, `assert_ne`, and a `T: Eq` bound reject any type whose `==` is a hand-written
+`PartialEq` impl, so `assert_eq` on a `Deque` or a `Set` is E0141. Fixing that needs a decision between `Eq` and
+`PartialEq` for those bounds. `Deque` and `PriorityHeap` have no `Hash`. Tests: `tests/m24_stdlib/list_equality`,
+`list_equality_needs_eq`, `list_keys`, `heap_equality`, `deque_equality` (run) and `interfaces_missing` (the `EqList`
+case moved to `list_equality`).
+**`send` returns a `Result` (issue #929, 2026-11-24).** `Channel<T>.send` returns `Result<(), T>`: `Ok(())` when the
+value was queued, `Err(value)` when the channel was closed (`spec/channels.md` CH3, CH5; `std/src/channel.bd`). A
+`select` send arm binds the same type; the rewrite calls `__send_outcome` for it (`burdin_syntax/src/parser/select.rs`).
+`Result<(), T>` was chosen over a `SendError<T>` struct: it keeps the value and needs no new named type. The second half
+of the issue, not losing an unchosen send arm's value, is declined: CH8 now records why the move stays eager. Tests: the
+new `s2_channels/send_result`, and `close_semantics`, `close_wakes_sender`, `stress_close_race`, and `select_send` now
+match on `Ok`/`Err`.
+
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already
@@ -335,7 +381,8 @@ interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
 `lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
-(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+(FR7). An integer literal given to `T.from(v)` takes an integer `T` as its type, so `u8.from(5)` is valid and
+`u8.from(300)` is E0008 (FR2, issue #937); `into` on a literal receiver is not changed (FR4). `TryFrom<S>` is a bound (TF7, TF9): `T.try_from(v)` in a generic body returns `Result<T, <T as TryFrom<S>>.Error>`, and the error resolves once `T` is concrete (issue #937, part). Not done: `From` blocks on generic types (TF8), and `Drop` as a bound (E9000, `bound-drop-from`).
 Tests: `tests/m24_stdlib/from_*` and `into_*`.
 
 **`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
@@ -347,8 +394,7 @@ one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the a
 `check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
 conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
 blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
-with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
-(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+with two `from` variants of different sources could not compile; both work now. Not done: a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
 from `char`, and `try_from` for other primitive types. Tests:
 `tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
@@ -2174,8 +2220,10 @@ written in their generators (`tests/gen_atomic_std.py`, `tests/gen_int_std.py`),
 
 Fixed on the way: `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`); `swap_bytes` on 8-bit
 integers panicked (the int generator); `burdin doc --std` listed compiler-internal `__` methods, against DC7
-(`crates/burdin_doc/src/extract.rs`); and several compiler-only items are now `priv` (`task.bd`, `channel.bd`,
-`float.bd`'s `strtod`/`strtof`).
+(`crates/burdin_doc/src/extract.rs`), including the `__` members of an interface, which were not filtered; and several
+compiler-only items are now `priv` (`task.bd`, `channel.bd`, `float.bd`'s `strtod`/`strtof`). The `std.parallel`
+items (`std/src/parallel.bd`, issue #971, merged before this gate) got their examples in the same pass: each is a
+`burdin run` example in its own doc comment, not a baseline entry.
 
 Open:
 

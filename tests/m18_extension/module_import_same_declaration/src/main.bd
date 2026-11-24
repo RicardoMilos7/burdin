@@ -1,0 +1,11 @@
+//@ run
+//> hi!
+
+// Bringing one declaration twice, by the module and by its name, is not a collision (EX2).
+
+use text
+use text.shout
+
+fn main() {
+    println(String.from("hi").shout())
+}

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// Two modules declare `String.shout`. Each module import brings its own, and bringing both under one method name is
+// a duplicate: the second `use` is E0007 (EX2, EX5).
+
+use a
+use b //~ E0007
+
+fn main() {}

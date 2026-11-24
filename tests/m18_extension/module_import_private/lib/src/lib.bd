@@ -1,0 +1,7 @@
+fn String.open(self): String {
+    String.from("open")
+}
+
+priv fn String.secret(self): String {
+    String.from("secret")
+}
