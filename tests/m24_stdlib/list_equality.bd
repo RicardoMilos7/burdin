@@ -1,0 +1,80 @@
+//@ run
+//> true true false
+//> false false true
+//> true false
+//> true false
+//> true
+//> false true
+//> true false
+//> true false
+//> true
+//> true
+
+// A list is equal to another with the same length and equal elements in the same order (issue #928). `==` and `!=`,
+// `assert_eq`, the `Eq` bound, a derived `Eq` over a list field, and `contains` all use that rule.
+
+struct Tagged: Eq {
+    id: i32
+    tags: List<String>
+}
+
+struct EqList: Eq {
+    value: List<i32>
+}
+
+fn same<T: Eq>(a: T, b: T): bool {
+    a == b
+}
+
+fn main() {
+    let a = List<i32>.from([1, 2, 3])
+    let b = List<i32>.from([1, 2, 3])
+    let c = List<i32>.from([1, 2, 4])
+    let short = List<i32>.from([1, 2])
+    let reordered = List<i32>.from([3, 2, 1])
+    let one = List<i32>.from([1])
+    let one_again = List<i32>.from([1])
+    println("{a == b} {a != c} {a == c}")
+    println("{a == short} {a == reordered} {one == one_again}")
+
+    let e1 = List<i32>.new()
+    let e2 = List<i32>.new()
+    println("{e1 == e2} {e1 == one}")
+
+    assert_eq(a, b)
+    assert_ne(a, c)
+    println("{same(a, b)} {same(a, c)}")
+
+    let mut names = List<String>.new()
+    names.push(String.from("ann"))
+    let mut other = List<String>.new()
+    other.push(String.from("ann"))
+    let same_names = names == other
+    println("{same_names}")
+    other.push(String.from("bo"))
+    let longer = names != other
+    println("{names == other} {longer}")
+
+    let mut opts = List<Option<i32>>.new()
+    opts.push(Some(1))
+    opts.push(None)
+    let mut opts_same = List<Option<i32>>.new()
+    opts_same.push(Some(1))
+    opts_same.push(None)
+    let mut opts_other = List<Option<i32>>.new()
+    opts_other.push(None)
+    opts_other.push(Some(1))
+    println("{opts == opts_same} {opts == opts_other}")
+
+    let x = Tagged { id: 1, tags: List<String>.from([String.from("x")]) }
+    let y = Tagged { id: 1, tags: List<String>.from([String.from("x")]) }
+    let z = Tagged { id: 1, tags: List<String>.from([String.from("y")]) }
+    let p = EqList { value: [4, 5].to_list() }
+    let q = EqList { value: [4, 5].to_list() }
+    println("{x == y} {x == z}")
+    println("{p == q}")
+
+    let nests = List<List<i32>>.from([List<i32>.from([1]), List<i32>.from([1, 2])])
+    let found = nests.contains(List<i32>.from([1, 2]))
+    println("{found}")
+}

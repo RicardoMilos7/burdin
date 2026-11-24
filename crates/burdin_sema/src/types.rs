@@ -213,6 +213,49 @@ impl Globals {
         Some(self.resolve_assoc_projection(base_ty, None, &name.name, subst, bounds, module, diags))
     }
 
+    /// `<T as TryFrom<S>>.Error` (`spec/stdlib.md`, TF9): the error of the conversion from `S` into `T`. A type
+    /// parameter must have the `TryFrom<S>` bound and stays symbolic until it is concrete. A concrete type resolves
+    /// now to the error of its conversion (`TryFromIntError` for an integer, else the block's `E`), or is E0141 when
+    /// there is none. A type that still mentions a parameter stays symbolic.
+    fn try_from_error_projection(
+        &self,
+        self_ty: Ty,
+        source: Ty,
+        assoc: &str,
+        span: Span,
+        bounds: &[(String, Vec<crate::generics::Bound>)],
+        diags: &mut Diagnostics,
+    ) -> Ty {
+        use crate::generics::Bound;
+        if assoc != "Error" {
+            let message = format!("`TryFrom` declares one associated type, `Error`, not `{assoc}`");
+            diags.error(Code::ASSOC_PROJECTION, span, message);
+            return Ty::Error;
+        }
+        if let Ty::Param(p) = &self_ty {
+            if !self.bound_in_env(p, &Bound::TryFrom(source.clone()), bounds) {
+                let message = format!("`{p}` does not implement `TryFrom<{source}>`, so its `Error` is not available");
+                diags.error(Code::BOUND_NOT_SATISFIED, span, message);
+                return Ty::Error;
+            }
+            return Ty::TryFromError { self_ty: Box::new(self_ty), source: Box::new(source) };
+        }
+        if self_ty == Ty::Error || source == Ty::Error {
+            return Ty::Error;
+        }
+        if self.ty_has_param(&self_ty) || self.ty_has_param(&source) {
+            return Ty::TryFromError { self_ty: Box::new(self_ty), source: Box::new(source) };
+        }
+        match self.try_from_error_of(&self_ty, &source) {
+            Some(ty) => ty,
+            None => {
+                let message = format!("`{self_ty}` does not convert from `{source}`, so it has no `TryFrom` error");
+                diags.error(Code::BOUND_NOT_SATISFIED, span, message);
+                Ty::Error
+            }
+        }
+    }
+
     /// Resolves `self_ty.Name` or `<self_ty as Interface>.Name` (`spec/associated-types.md`, AT3).
     #[allow(clippy::too_many_arguments)]
     fn resolve_assoc_projection(
@@ -236,6 +279,10 @@ impl Globals {
             let Some(bound) = self.resolve_bound(iface_ast, subst, module, diags) else {
                 return Ty::Error;
             };
+            if let Bound::TryFrom(source) = &bound {
+                let source = source.clone();
+                return self.try_from_error_projection(self_ty, source, assoc, name.span, bounds, diags);
+            }
             let Bound::User(iface, args) = bound else {
                 diags.error(
                     Code::ASSOC_PROJECTION,
@@ -709,6 +756,8 @@ impl Globals {
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
+            // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
+            Ty::List(t, _) => self.has_eq_in(t, env),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
                 s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
@@ -720,7 +769,6 @@ impl Globals {
             Ty::Heap(_, _)
             | Ty::CPtr(_)
             | Ty::CString
-            | Ty::List(_, _)
             | Ty::MapEntry(..)
             | Ty::Shared(_)
             | Ty::Chars
@@ -735,6 +783,7 @@ impl Globals {
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::Projection { .. }
+            | Ty::TryFromError { .. }
             | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,
         }

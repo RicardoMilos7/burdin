@@ -241,7 +241,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // The endpoints of a range are integers, so a range owns nothing.
             Ty::Range(..) => Ok(()),
             // A projection is resolved before code generation and owns nothing on its own.
-            Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } => Ok(()),
+            Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
             // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map; the
             // chunks and windows iterators only borrow their slice.

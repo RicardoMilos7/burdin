@@ -393,7 +393,9 @@ executable form. The design document leaves them open; where a rule says "deviat
     field of a temporary does not extend its life. A block's tail-expression temporaries drop before its locals.
     `spec/memory-rules.md` DR5.
 15. **Derives** provide `hash(self): u64` (FNV-1a, exact values pinned), a static `default()` for structs, and the
-    documented `Eq`/`Ord` field and variant orders. `spec/derives.md`.
+    documented `Eq`/`Ord` field and variant orders. `spec/derives.md`. Collections compare by their elements in
+    order (issue #928): `List<T>` has `==` when `T` does, like `Map` and `Set`, `PriorityHeap` derives `Eq` over its
+    list, and `Deque` implements `PartialEq` in `std`. `List` keeps its `Hash`, which agrees with its `==`.
 16. **Exclusivity works on places.** A place is a local or parameter followed by struct fields (`p.a`, `o.inner.b`).
     Different places do not overlap, so `swap_vals(mut p.a, mut p.b)` is allowed. A place never continues through
     indexing, a `Heap` dereference, a reference dereference, or a method call, so `xs[0].a` and `xs[1].a` are one

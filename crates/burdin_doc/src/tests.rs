@@ -139,6 +139,26 @@ fn type_pages_gather_operators_interfaces_derives_and_extensions() {
 }
 
 #[test]
+fn compiler_internal_members_of_an_interface_are_left_out() {
+    // A required `__` method is the protocol a compiler desugaring calls; it is not documented (spec/doc.md, DC7),
+    // in an interface as in an impl block.
+    let source = "\
+/// A pipeline.
+interface Pipeline {
+    fn __len(self): usize
+    fn __hook(self) {}
+    /// The first item.
+    fn first(self): i32
+}
+";
+    let f = Fixture::new(&[("", source)]);
+    let (api, diags) = f.api(false);
+    assert_eq!(diags, "");
+    let pipeline = api.item(&[], "Pipeline").unwrap();
+    assert_eq!(pipeline.methods.iter().map(|x| x.signature.as_str()).collect::<Vec<_>>(), vec!["fn first(self): i32"]);
+}
+
+#[test]
 fn private_items_need_the_flag() {
     let f = Fixture::new(&[("", SHAPES)]);
     let (api, _) = f.api(true);

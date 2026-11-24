@@ -18,6 +18,22 @@ a pointer, and closures capturing a view binding read its slot too. Not fixed in
 `tests/m24_stdlib/option_flatten`, `option_unwrap_or_default`, `option_unwrap_or_default_needs_default`,
 `list_dedup_by_key`, `list_dedup_by_key_needs_eq`. The full debug conformance run has 5 failures, all `s3_http` and
 `s3_tls` programs that fail to link with `-lssl` on this WSL machine (the same environment note as #936 below).
+**Collection equality (issue #928, 2026-11-24).** Decision: option 1 of the issue, `==` for the collections that hold
+values, not removing `Hash`. `List<T>` has `==` when `T` does (length, then the elements in order), in the codegen's
+`list_eq` beside `map_eq`, and `has_eq_in` for `Ty::List`. `PriorityHeap<T>` derives `Eq` over its sorted list.
+`Deque<T>` already had a hand-written `PartialEq` in `std` (its front/back split is not canonical, so it cannot derive
+`Eq`). Gaps, left as found: `assert_eq`, `assert_ne`, and a `T: Eq` bound reject any type whose `==` is a hand-written
+`PartialEq` impl, so `assert_eq` on a `Deque` or a `Set` is E0141. Fixing that needs a decision between `Eq` and
+`PartialEq` for those bounds. `Deque` and `PriorityHeap` have no `Hash`. Tests: `tests/m24_stdlib/list_equality`,
+`list_equality_needs_eq`, `list_keys`, `heap_equality`, `deque_equality` (run) and `interfaces_missing` (the `EqList`
+case moved to `list_equality`).
+**`send` returns a `Result` (issue #929, 2026-11-24).** `Channel<T>.send` returns `Result<(), T>`: `Ok(())` when the
+value was queued, `Err(value)` when the channel was closed (`spec/channels.md` CH3, CH5; `std/src/channel.bd`). A
+`select` send arm binds the same type; the rewrite calls `__send_outcome` for it (`burdin_syntax/src/parser/select.rs`).
+`Result<(), T>` was chosen over a `SendError<T>` struct: it keeps the value and needs no new named type. The second half
+of the issue, not losing an unchosen send arm's value, is declined: CH8 now records why the move stays eager. Tests: the
+new `s2_channels/send_result`, and `close_semantics`, `close_wakes_sender`, `stress_close_race`, and `select_send` now
+match on `Ok`/`Err`.
 
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
@@ -329,7 +345,8 @@ interpreter does not refuse allocations (AL11.7). Tests: `tests/m24_stdlib/try_a
 built-in `From` impl (`spec/stdlib.md`, "Numeric conversions: `From`, `into`, and `as`", FR1). `T.from(v)`, `v.into()`
 (the target is the expected type, FR4), and `as` on such a pair all lower to one cast (`fncx/conversion.rs`,
 `lossless_from`); every other `as` cast is unchanged. A receiver with its own `into` method uses that method. `From<S>` is a bound
-(FR7). Not done: `From` blocks on generic types (TF8), and `TryFrom` as a bound (E9000, `bound-drop-from`).
+(FR7). An integer literal given to `T.from(v)` takes an integer `T` as its type, so `u8.from(5)` is valid and
+`u8.from(300)` is E0008 (FR2, issue #937); `into` on a literal receiver is not changed (FR4). `TryFrom<S>` is a bound (TF7, TF9): `T.try_from(v)` in a generic body returns `Result<T, <T as TryFrom<S>>.Error>`, and the error resolves once `T` is concrete (issue #937, part). Not done: `From` blocks on generic types (TF8), and `Drop` as a bound (E9000, `bound-drop-from`).
 Tests: `tests/m24_stdlib/from_*` and `into_*`.
 
 **`TryFrom` and fallible conversions (issue #274, 2026-11-21).** `Type: TryFrom<Source> { fn try_from(value: Source):
@@ -341,8 +358,7 @@ one per source type; `conversion_call` (`fncx/call.rs`) picks the block by the a
 `check_conversion_signatures` (`resolve.rs`) checks each block's signature where it is declared. The symbol of a
 conversion is `Type.from<Source>`, since codegen needs unique names. **Fixed on the way:** a type with two `From`
 blocks of different sources was rejected with E0007, although ERR3 promised one per source type, so an error enum
-with two `from` variants of different sources could not compile; both work now. Not done: `TryFrom` as a bound
-(E9000, the `bound-drop-from` site), a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
+with two `from` variants of different sources could not compile; both work now. Not done: a `From`/`TryFrom` block on a generic type (accepted as an ordinary impl; TF8), conversions
 from `char`, and `try_from` for other primitive types. Tests:
 `tests/m24_stdlib/try_from_*` (20 conformance files, run with `python3 tests/run_tests.py try_from`).
 **Labeled loops (issue #275, 2026-11-21).** `'outer: while|loop|for` and `break 'outer` / `continue 'outer`
@@ -2168,8 +2184,10 @@ written in their generators (`tests/gen_atomic_std.py`, `tests/gen_int_std.py`),
 
 Fixed on the way: `SocketAddr.parse` rejected every text with a port (`std/src/net.bd`); `swap_bytes` on 8-bit
 integers panicked (the int generator); `burdin doc --std` listed compiler-internal `__` methods, against DC7
-(`crates/burdin_doc/src/extract.rs`); and several compiler-only items are now `priv` (`task.bd`, `channel.bd`,
-`float.bd`'s `strtod`/`strtof`).
+(`crates/burdin_doc/src/extract.rs`), including the `__` members of an interface, which were not filtered; and several
+compiler-only items are now `priv` (`task.bd`, `channel.bd`, `float.bd`'s `strtod`/`strtof`). The `std.parallel`
+items (`std/src/parallel.bd`, issue #971, merged before this gate) got their examples in the same pass: each is a
+`burdin run` example in its own doc comment, not a baseline entry.
 
 Open:
 

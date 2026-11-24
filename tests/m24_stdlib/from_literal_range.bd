@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A literal given to an integer `T.from(v)` takes the type `T` (spec/stdlib.md, FR2), so a literal out of `T`'s range
+// is E0008, and a negative literal for an unsigned `T` is E0003. A literal for a target that is not an integer is an
+// `i32`, so it does not convert into a `char`.
+
+fn main() {
+    let a = u8.from(300) //~ E0008
+    let b = u8.from(-5) //~ E0003
+    let c = char.from(65) //~ E0003
+    let d = i8.from(-129) //~ E0008
+    println("{} {} {} {}", a, b, c, d)
+}
