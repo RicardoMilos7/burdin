@@ -61,7 +61,7 @@ $ burdin test --list .
 | --- | --- |
 | `new` | Create a new package in a new directory. |
 | `init` | Create a package in an existing directory. |
-| `add` | Add a path, git, or official dependency to `burdin.toml`, for example `burdin add json`. |
+| `add` | Add a path or git dependency to `burdin.toml`, for example `burdin add geo --path ../geo`. Official packages are not added: `use json` loads one. |
 | `vendor` | Copy the git dependencies into `vendor/` for offline builds. |
 | `package` | Write the package's reproducible archive to `target/package`. |
 | `bindgen` | Generate a Burdin module from a C header or a Rust crate, or a C header from a package. |

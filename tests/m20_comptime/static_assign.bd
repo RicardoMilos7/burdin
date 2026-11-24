@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An immutable static is not a variable, so an assignment to it is E0005 (spec/globals.md, GL3).
+
+static LIMIT: i32 = 3
+
+fn main() {
+    LIMIT = 4 //~ E0005
+    println(LIMIT.to_string())
+}

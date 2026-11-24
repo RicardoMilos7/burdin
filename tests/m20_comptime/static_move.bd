@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// Reading a non-Copy value out of an immutable static would move it out of the program's storage: E0101
+// (spec/globals.md, GL3).
+
+struct Owner {
+    n: i32
+}
+
+static OWNER: Owner = Owner { n: 1 }
+
+fn main() {
+    let o = OWNER //~ E0101
+    println(o.n.to_string())
+}

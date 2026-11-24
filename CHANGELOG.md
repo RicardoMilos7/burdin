@@ -6,6 +6,21 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #396: a struct-like variant of a generic enum can be built with a literal, `Shape<i32>.Rect { w: 2, h: 3 }`
+  with explicit arguments on the head, or `Shape.Rect { w: 2, h: 3 }` with the arguments inferred from the field values
+  and the expected type, as a tuple variant is (`spec/arguments.md`, SL1-SL4). The variant is matched by its fields
+  like any other, and `Self.Rect { ... }` works inside the impl block. A module path takes the arguments too:
+  `sh.Shape<i32>.Rect { ... }` and `sh.Wrapper<i32> { ... }`. The literal's errors are the ones a plain struct literal
+  gives (E0002, E0003), and a variant with arguments of its own is E0003. Tests: `tests/m21_reflect/generic_variant_literal`
+  and `generic_variant_modules` (run), `generic_variant_literal_errors` and `generic_variant_modules_errors`
+  (compile-fail); the parser keeps each segment's arguments (a unit test in `crates/burdin_syntax/src/parser/mod.rs`),
+  and the formatter lays out both forms (a unit test in `crates/burdin_fmt/src/docs.rs`).
+- Issue #485: global variables (`spec/globals.md`, decision 36). `static` declares an immutable global at module scope,
+  and `static mut` a writable one that is used only in `unsafe` code. Each value is computed at compile time and stored
+  before `main` runs; its type must be plain data, so it is never dropped. A `static mut` may not be borrowed. A
+  `static` in a function body is E0302, a non-plain type is E0303, and a borrow of a `static mut` is E0304. Atomics and
+  `Mutex<T>` cannot be a static's type yet (E0221). Tests: `tests/m20_comptime/static_*` and `const_global`, and
+  `tests/s2_tasks/static_in_task`.
 - Issue #486: array and slice patterns, `let [a, b] = arr` and `match names { [first, ..rest] => ... }`, on a fixed-size
   array `[T; n]` and on a slice view `[T]` (`spec/array-patterns.md`, AP1-AP12). `..` or `..name` stands for the elements
   the pattern does not name; `..name` binds an array on an array and a view on a slice. A slice pattern is refutable

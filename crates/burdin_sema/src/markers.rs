@@ -202,4 +202,22 @@ impl Globals {
             format!("`{ty}` does not implement `{}`, which {subject} requires", self.bound_name(bound)),
         )
     }
+
+    /// `bound_unmet` for a bound of a declaration whose type parameters are replaced by `subst`. A projected bound
+    /// (`where I.Item: Eq`) is about its projection under `subst`, so the message names the type the projection stands
+    /// for, and the projection itself as the subject (spec/associated-types.md, AT7).
+    pub(crate) fn unmet_bound(
+        &self,
+        ty: &Ty,
+        bound: &Bound,
+        subst: &[(String, Ty)],
+        env: &Env,
+        subject: &str,
+    ) -> (Code, String) {
+        if let Bound::Projected(projection, inner) = bound {
+            let value = self.subst_ty(projection, subst);
+            return self.bound_unmet(&value, inner, env, &format!("`{projection}`"));
+        }
+        self.bound_unmet(ty, bound, env, subject)
+    }
 }

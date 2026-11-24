@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An array length is a constant expression, so a static cannot give it (E0251, spec/globals.md, GL7).
+
+static SIZE: usize = 3
+static ITEMS: [i32; SIZE] = [1, 2, 3] //~ E0251
+
+fn main() {
+    println(ITEMS[0].to_string())
+}

@@ -3,7 +3,7 @@
 Issue #486. A pattern `[p, ...]` destructures a fixed-size array `[T; n]` or a slice view `[T]`. A `..` (or `..name`)
 inside the brackets stands for the elements the pattern does not name, as the rest patterns of tuples do
 (`spec/rest-patterns.md`). This page is the behavior the compiler implements and the tests that witness it.
-`tests/array_patterns/` holds the conformance programs. Decision 38 in `tests/README.md` records the choices; the
+`tests/array_patterns/` holds the conformance programs. Decision 39 in `tests/README.md` records the choices; the
 grammar is `spec/grammar.md`, rule 7.2.
 
 Every rule below is witnessed by the tests named in it. A rule without a witness is not a rule.

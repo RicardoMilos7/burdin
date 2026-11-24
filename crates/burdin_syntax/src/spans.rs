@@ -448,8 +448,11 @@ impl Mapper<'_> {
                 }
                 self.expr(body);
             }
-            ExprKind::StructLit(path, fields, base) => {
+            ExprKind::StructLit(path, type_args, fields, base) => {
                 self.idents(path);
+                if let Some((_, args)) = type_args {
+                    args.iter_mut().for_each(|a| self.ty(a));
+                }
                 for fi in fields {
                     self.ident(&mut fi.name);
                     if let Some(v) = &mut fi.value {

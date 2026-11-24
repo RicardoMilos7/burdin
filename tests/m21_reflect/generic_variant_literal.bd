@@ -1,0 +1,86 @@
+//@ run
+//> 6
+//> 20
+//> 9
+//> 7
+//> 5 2
+//> left/3
+//> x
+//> 1.5
+
+// A struct-like variant of a generic enum built with a literal (issue #396). The type arguments are written on the
+// head (`Shape<i32>.Rect { ... }`) or inferred from the field values and the expected type (`Shape.Rect { ... }`),
+// the same way a tuple variant's are (`Shape.Circle(3)`). The variant is then matched like any other struct variant,
+// `Self.Rect { ... }` works inside the impl of the type, and a non-`Copy` field value is moved into the literal.
+
+struct Wrapper<T> {
+    inner: T,
+}
+
+enum Pair2<A, B> {
+    P { a: A, b: B }
+    Q(A)
+}
+
+enum Shape<T> {
+    Dot
+    Circle(T)
+    Rect { w: T, h: T }
+}
+
+Shape<T> {
+    fn grow(self, by: T): Shape<T> {
+        match self {
+            Shape.Dot => Shape.Dot,
+            Shape.Circle(r) => Shape.Circle(r),
+            Shape.Rect { w, h } => Self.Rect { w: by, h: h },
+        }
+    }
+}
+
+fn area(s: Shape<i32>): i32 {
+    match s {
+        Shape.Dot => 0,
+        Shape.Circle(r) => r * r,
+        Shape.Rect { w, h } => w * h,
+    }
+}
+
+fn describe(own p: Pair2<String, i32>): String {
+    match p {
+        Pair2.P { a, b } => "{a}/{b}",
+        Pair2.Q(a) => a,
+    }
+}
+
+fn main() {
+    // Explicit arguments on the head.
+    let a = Shape<i32>.Rect { w: 2, h: 3 }
+    println(area(a).to_string())
+    // Arguments from the expected type.
+    let b: Shape<i32> = Shape.Rect { w: 4, h: 5 }
+    println(area(b).to_string())
+    // Arguments from a tuple variant of the same enum, passed to a function.
+    println(area(Shape.Circle(3)).to_string())
+    // A generic struct with an explicit argument: its field is an `i64`, and the literal's `7` takes that type.
+    let w = Wrapper<i64> { inner: 7 }
+    println("{w.inner}")
+    // Arguments inferred from the field values, then the variant matched by its fields.
+    let s = Shape.Rect { w: 1, h: 2 }
+    match s.grow(5) {
+        Shape.Rect { w, h } => println("{w} {h}"),
+        _ => println("other"),
+    }
+    // Two parameters, both inferred: one from a `String` value that is moved into the literal.
+    let name = "left".to_string()
+    let p = Pair2.P { a: name, b: 3 }
+    println(describe(p))
+    let q: Pair2<String, i32> = Pair2.Q("x".to_string())
+    println(describe(q))
+    // A float instance: the explicit argument fixes the fields' type.
+    let f = Shape<f64>.Rect { w: 1.5, h: 2.0 }
+    match f {
+        Shape.Rect { w, h } => println("{w}"),
+        _ => println("none"),
+    }
+}

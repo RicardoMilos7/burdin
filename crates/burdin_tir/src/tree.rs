@@ -5,12 +5,24 @@ use crate::program::ParamSig;
 use crate::ty::*;
 use burdin_diag::Span;
 
-/// A constant. Its initializer is evaluated by the comptime engine (`spec/comptime.md`, CT7), which replaces
-/// `value` with the materialized result; that value is expanded at every use, so it costs nothing at run time
-/// beyond the expression itself.
+/// What a module-level value declaration is (`spec/globals.md`, GL1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstKind {
+    /// A `const`: its value is expanded at every use.
+    Const,
+    /// A `static`: one value for the whole program, read-only (`ExprKind::Static`).
+    Static,
+    /// A `static mut`: one value for the whole program, written in `unsafe` code.
+    StaticMut,
+}
+
+/// A constant or a static. Its initializer is evaluated by the comptime engine (`spec/comptime.md`, CT7), which
+/// replaces `value` with the materialized result. A `const` is expanded at every use, so it costs nothing at run time
+/// beyond the expression itself; a static is stored once, before `main` runs (`spec/globals.md`, GL1).
 #[derive(Clone, Debug)]
 pub struct Const {
     pub name: String,
+    pub kind: ConstKind,
     /// Where the constant was declared, for diagnostics about its evaluation.
     pub span: Span,
     pub value: Expr,
@@ -231,6 +243,9 @@ pub enum ExprKind {
     Bytes(Vec<u8>),
     Local(LocalId),
     Const(ConstId),
+    /// A `static` or `static mut` (`ConstId` names the declaration). A place, stored once for the whole program
+    /// (`spec/globals.md`, GL3, GL4); it has no local root, so the memory checks treat it as static storage.
+    Static(ConstId),
     Call(FuncId, Vec<Expr>),
     /// A call to the C function `n` of [`crate::Program::externs`].
     ExternCall(usize, Vec<Expr>),

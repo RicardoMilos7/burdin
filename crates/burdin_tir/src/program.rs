@@ -33,6 +33,9 @@ pub struct Program {
     /// The fuzz target a `burdin fuzz` build is for, an index into [`Program::fuzzes`]. Code generation gives it
     /// libFuzzer's entry point, `LLVMFuzzerTestOneInput`, instead of a `main` (FZ3).
     pub fuzz_target: Option<usize>,
+    /// The function that stores every static's initial value, before `main` runs (`spec/globals.md`, GL1). `None`
+    /// when the program declares no static. Code generation calls it from every entry point.
+    pub static_init: Option<FuncId>,
     /// The interface instances an `any` type names, indexed by [`AnyRef::id`].
     pub any_ifaces: Vec<AnyIface>,
     /// One vtable per (concrete type, interface instance) the program boxes, indexed by `ExprKind::BoxAny`.

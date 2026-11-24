@@ -39,6 +39,7 @@ impl FnCx<'_> {
                 Some(Global::Const(c)) => {
                     return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
                 }
+                Some(Global::Static(c)) => return self.static_place(c, span),
                 Some(_) => {
                     self.diags.error(
                         Code::TYPE_MISMATCH,
@@ -144,80 +145,104 @@ impl FnCx<'_> {
     pub(super) fn struct_literal(
         &mut self,
         path: &[ast::Ident],
+        type_args: Option<&(usize, Vec<ast::Type>)>,
         fields: &[ast::FieldInit],
         base: Option<&ast::Expr>,
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
-        // A generic type, plain or module-qualified: the arguments come from the field values and the expected type.
-        if let Some((g, found)) = self.generic_adt_path(path) {
-            if let Some(name) = path.last() {
-                self.check_type_visibility(found, &name.name, name.span);
-            }
-            return self.generic_struct_literal(g, fields, base, expect, span);
-        }
         let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
         let text = text.join(".");
+        // A generic type written with its arguments names the instance: `Wrapper<i32> { ... }`,
+        // `Shape<i32>.Rect { ... }`, and `sh.Shape<i32>.Rect { ... }` check the literal against that instance.
+        let written = type_args.map(|(index, args)| self.written_instance(&path[..=*index], *index, args, span));
+        if written.is_none() {
+            // A generic type, plain or module-qualified: the arguments come from the field values and the expected type.
+            if let Some((g, found)) = self.generic_adt_path(path) {
+                if let Some(name) = path.last() {
+                    self.check_type_visibility(found, &name.name, name.span);
+                }
+                return self.generic_struct_literal(g, fields, base, expect, span);
+            }
+            // A struct-like variant of a generic enum: `Shape.Rect { ... }`. The arguments come from the field values
+            // and the expected type, as for a tuple variant.
+            if let Some((variant, type_path)) = path.split_last()
+                && let Some((g, found)) = self.generic_adt_path(type_path)
+                && self.globals.generic_adts[g].is_enum
+            {
+                if let Some(name) = type_path.last() {
+                    self.check_type_visibility(found, &name.name, name.span);
+                }
+                if let Some(base) = base {
+                    // As for a plain variant, the base cannot update one (SU7).
+                    self.diags.error(
+                        Code::BASE_VARIANT,
+                        span,
+                        format!("`..base` cannot update the variant `{text}`: struct update is for structs only"),
+                    );
+                    self.expr(base, None);
+                    return error_expr(span);
+                }
+                return self.generic_variant_literal(g, variant, fields, expect, span);
+            }
+        }
         // `(type, variant, package that declares the type)`.
         let mut target: Option<(Ty, Option<usize>, usize)> = None;
-        if path.len() == 1 && path[0].name == "Self" {
-            let name = &path[0];
-            match self.self_ty.clone() {
-                Some(Ty::Struct(a)) => target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id])),
-                Some(Ty::Error) => {}
-                Some(other) => {
-                    self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
+        match &written {
+            // The instance the arguments name. An instance that failed to resolve has already been reported.
+            Some(Ty::Error) => {}
+            Some(instance) => match self.adt_path(path, instance) {
+                Some((ty, variant, found, type_name)) => {
+                    self.check_type_visibility(found, &type_name.name, type_name.span);
+                    target = self.literal_target(ty, variant, span, &text);
                 }
                 None => {
-                    self.diags.error(Code::UNKNOWN_NAME, name.span, "`Self` is only available inside a method block");
-                }
-            }
-        } else if path.len() == 1 {
-            let name = &path[0];
-            match self.globals.named_type(self.module, &name.name) {
-                Some(ty) => match ty {
-                    Ty::Struct(a) => {
-                        target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id]));
-                    }
-                    Ty::Error => {}
-                    other => {
-                        self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
-                    }
-                },
-                None => {
-                    self.diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{}`", name.name));
-                }
-            }
-        } else if let Some((ty, variant, found, type_name)) = self.adt_path(path, &Ty::Error) {
-            self.check_type_visibility(found, &type_name.name, type_name.span);
-            match (&ty, &variant) {
-                (Ty::Struct(a), None) => {
-                    target = Some((ty.clone(), None, self.globals.struct_pkg[a.id]));
-                }
-                (Ty::Enum(a), Some(v)) => {
-                    match self.globals.enums[a.id].variants.iter().position(|x| x.name == v.name) {
-                        Some(i) if self.globals.enums[a.id].variants[i].shape == tir::VariantShape::Struct => {
-                            target = Some((ty.clone(), Some(i), self.globals.enum_pkg[a.id]));
-                        }
-                        Some(_) => {
-                            self.diags.error(
-                                Code::TYPE_MISMATCH,
-                                span,
-                                format!("variant `{text}` has no named fields"),
-                            );
-                        }
-                        None => {
-                            self.diags.error(Code::UNKNOWN_NAME, v.span, format!("unknown variant `{text}`"));
-                        }
-                    }
-                }
-                (Ty::Error, _) => {}
-                _ => {
                     self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
                 }
+            },
+            None if path.len() == 1 && path[0].name == "Self" => {
+                let name = &path[0];
+                match self.self_ty.clone() {
+                    Some(Ty::Struct(a)) => target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id])),
+                    Some(Ty::Error) => {}
+                    Some(other) => {
+                        self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
+                    }
+                    None => {
+                        self.diags.error(
+                            Code::UNKNOWN_NAME,
+                            name.span,
+                            "`Self` is only available inside a method block",
+                        );
+                    }
+                }
             }
-        } else {
-            self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
+            None if path.len() == 1 => {
+                let name = &path[0];
+                match self.globals.named_type(self.module, &name.name) {
+                    Some(ty) => match ty {
+                        Ty::Struct(a) => {
+                            target = Some((Ty::Struct(a.clone()), None, self.globals.struct_pkg[a.id]));
+                        }
+                        Ty::Error => {}
+                        other => {
+                            self.diags.error(Code::TYPE_MISMATCH, name.span, format!("`{other}` is not a struct"));
+                        }
+                    },
+                    None => {
+                        self.diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{}`", name.name));
+                    }
+                }
+            }
+            None => match self.adt_path(path, &Ty::Error) {
+                Some((ty, variant, found, type_name)) => {
+                    self.check_type_visibility(found, &type_name.name, type_name.span);
+                    target = self.literal_target(ty, variant, span, &text);
+                }
+                None => {
+                    self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
+                }
+            },
         }
         let defs: Vec<tir::FieldDef> = match &target {
             Some((Ty::Struct(a), _, _)) => self.globals.structs[a.id].fields.clone(),
@@ -365,6 +390,73 @@ impl FnCx<'_> {
         }
         let tail = mk(tir::ExprKind::Struct(fields), ty.clone(), span);
         mk(tir::ExprKind::Block(tir::Block::synthetic(stmts, Some(Box::new(tail)), span)), ty.clone(), span)
+    }
+
+    /// The instance of the generic type that a literal's head names with arguments: `path[index]` is the type, and
+    /// `args` are its arguments (`spec/arguments.md`, SL1). A segment that is not a generic type (a variant, or a
+    /// plain type) takes none, which is E0003 (TA5). `Ty::Error` after reporting it.
+    fn written_instance(&mut self, path: &[ast::Ident], index: usize, args: &[ast::Type], span: Span) -> Ty {
+        let self_ty = self.self_ty.clone();
+        if index == 0 {
+            return self.globals.generic_type(
+                &path[0],
+                args,
+                self_ty.as_ref(),
+                &self.subst,
+                &self.bounds,
+                self.module,
+                self.diags,
+            );
+        }
+        let Some((g, found)) = self.generic_adt_path(path) else {
+            let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
+            self.diags.error(Code::TYPE_MISMATCH, span, format!("`{}` takes no type arguments", text.join(".")));
+            return Ty::Error;
+        };
+        let name = &path[index];
+        self.check_type_visibility(found, &name.name, name.span);
+        self.globals.generic_adt_type(
+            g,
+            name.span,
+            args,
+            self_ty.as_ref(),
+            &self.subst,
+            &self.bounds,
+            self.module,
+            self.diags,
+        )
+    }
+
+    /// The struct or the struct-like variant that a literal of `ty` (and `variant`) builds, with the package that
+    /// declares it. `None` after reporting that the path names neither.
+    fn literal_target(
+        &mut self,
+        ty: Ty,
+        variant: Option<ast::Ident>,
+        span: Span,
+        text: &str,
+    ) -> Option<(Ty, Option<usize>, usize)> {
+        match (&ty, &variant) {
+            (Ty::Struct(a), None) => Some((ty.clone(), None, self.globals.struct_pkg[a.id])),
+            (Ty::Enum(a), Some(v)) => match self.globals.enums[a.id].variants.iter().position(|x| x.name == v.name) {
+                Some(i) if self.globals.enums[a.id].variants[i].shape == tir::VariantShape::Struct => {
+                    Some((ty.clone(), Some(i), self.globals.enum_pkg[a.id]))
+                }
+                Some(_) => {
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("variant `{text}` has no named fields"));
+                    None
+                }
+                None => {
+                    self.diags.error(Code::UNKNOWN_NAME, v.span, format!("unknown variant `{text}`"));
+                    None
+                }
+            },
+            (Ty::Error, _) => None,
+            _ => {
+                self.diags.error(Code::UNKNOWN_NAME, span, format!("`{text}` is not a struct or an enum variant"));
+                None
+            }
+        }
     }
 
     pub(super) fn index(&mut self, base: &ast::Expr, index: &ast::Expr, span: Span) -> tir::Expr {
@@ -539,5 +631,31 @@ impl FnCx<'_> {
     /// call is still being inferred.
     fn is_foreign_param(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Param(name) if !self.bounds.iter().any(|(n, _)| n == &**name))
+    }
+}
+
+impl FnCx<'_> {
+    /// A `static` or `static mut` named in an expression: a place stored once for the whole program (`spec/globals.md`,
+    /// GL1, GL4). A constant or static initializer may not name one (E0220), and a `static mut` is used only in
+    /// `unsafe` code (E0161).
+    pub(super) fn static_place(&mut self, c: tir::ConstId, span: Span) -> tir::Expr {
+        let name = self.globals.const_names[c.0].clone();
+        if self.const_init {
+            self.diags.error(
+                Code::INVALID_COMPTIME,
+                span,
+                format!("`{name}` is a static, a run-time place, so a constant or a static initializer cannot name it (spec/globals.md, GL1)"),
+            );
+            return error_expr(span);
+        }
+        if self.globals.const_kinds[c.0] == tir::ConstKind::StaticMut && self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("`{name}` is a `static mut`, and using it requires an `unsafe` block (spec/globals.md, GL4)"),
+            );
+        }
+        let ty = self.globals.const_tys[c.0].clone();
+        mk(tir::ExprKind::Static(c), ty, span)
     }
 }

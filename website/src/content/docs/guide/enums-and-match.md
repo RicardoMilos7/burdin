@@ -117,6 +117,39 @@ fn main() {
 `*left` reads the value out of the box. The [ownership](/guide/ownership/) chapter explains why the match above moves the
 boxes out of `t`.
 
+### Struct-like variants
+
+A variant with named fields can be built with a literal, and a generic enum's variant works the same way. The type
+arguments can be written on the enum, or left out and taken from the field values and the expected type, as a tuple
+variant takes them:
+
+```burdin
+enum Shape<T> {
+    Dot
+    Circle(T)
+    Rect { w: T, h: T }
+}
+
+fn area(s: Shape<i32>): i32 {
+    match s {
+        Shape.Dot => 0,
+        Shape.Circle(r) => r * r,
+        Shape.Rect { w, h } => w * h,
+    }
+}
+
+fn main() {
+    let a = Shape<i32>.Rect { w: 2, h: 3 }
+    let b: Shape<i32> = Shape.Rect { w: 4, h: 5 }
+    println("{area(a)} {area(b)}")
+}
+```
+
+The literal is checked like any other struct literal: every field is given once, and each value must have the field's
+type. A module path works too, as in `shapes.Shape<i32>.Rect { w: 2, h: 3 }`. The arguments belong to the type, so a
+variant with its own arguments, `Shape.Rect<i32> { ... }`, is an error. Inside the impl block of a generic enum,
+`Self.Rect { ... }` builds the variant of that same instance.
+
 ## Enums in other forms
 
 - An enum that derives `Copy` is copied on assignment. Its variants must all hold `Copy` data.

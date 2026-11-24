@@ -141,6 +141,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let program = self.program;
                 self.expr_mode(&program.consts[id.0].value, mode)?
             }
+            K::Static(_) => self.expr_place(e, mode)?,
             K::Call(f, args) => {
                 let program = self.program;
                 let callee = &program.functions[f.0];

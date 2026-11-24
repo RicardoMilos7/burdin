@@ -747,7 +747,7 @@ impl Globals {
             Ty::Const(_) | Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
-            Ty::Param(name) => self.bound_in_env(name, &crate::generics::Bound::Eq, env),
+            Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &crate::generics::Bound::Eq, env),
             Ty::Option(t) => self.has_eq_in(t, env),
             // A map compares by its entries, whatever the iteration order.
             Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
@@ -782,7 +782,6 @@ impl Globals {
             | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
-            | Ty::Projection { .. }
             | Ty::TryFromError { .. }
             | Ty::Any(_) => false,
             Ty::Ref { .. } | Ty::Slice(_) => false,

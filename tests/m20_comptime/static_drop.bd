@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// A type with a destructor cannot be a static: it would have to be dropped at exit (spec/globals.md, GL2, GL5).
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println(self.id.to_string())
+    }
+}
+
+static NOISY: Noisy = Noisy { id: 1 } //~ E0303
+
+fn main() {
+    println(NOISY.id.to_string())
+}

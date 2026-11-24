@@ -140,6 +140,10 @@ pub(crate) struct Codegen<'ctx, 'a> {
     any_ty: StructType<'ctx>,
     rt: Runtime<'ctx>,
     functions: Vec<FunctionValue<'ctx>>,
+    /// The global of each `static` and `static mut`, by constant index; `None` for a `const` (`spec/globals.md`).
+    statics: Vec<Option<PointerValue<'ctx>>>,
+    /// The function that stores every static's value before `main` runs, when the program declares a static.
+    static_init: Option<FunctionValue<'ctx>>,
     /// The body function of each entry of `Program::closures`, in the same order.
     closure_funcs: Vec<FunctionValue<'ctx>>,
     /// The capture-record destructor of each closure, in the same order.
@@ -257,6 +261,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             any_ty,
             rt,
             functions: Vec::new(),
+            statics: Vec::new(),
+            static_init: None,
             closure_funcs: Vec::new(),
             closure_drops: Vec::new(),
             externs: Vec::new(),

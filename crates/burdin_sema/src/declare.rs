@@ -3,7 +3,9 @@
 //! instances of generic types).
 
 use crate::builtins::{builtin, builtin_type};
-use crate::generics::{BUILTIN_INTERFACES, Bound, GenericAdt, GenericFn, IfaceMethod, InterfaceInfo, param_ty};
+use crate::generics::{
+    BUILTIN_INTERFACES, Bound, GenericAdt, GenericFn, IfaceMethod, InterfaceInfo, param_ty, projection_owner,
+};
 use crate::globals::{ExternInfo, Global, Globals, TypeName};
 use crate::session::{FnItem, NamedSrc, Sema};
 use burdin_diag::{Code, Diagnostics};
@@ -423,11 +425,20 @@ impl<'t> Sema<'t> {
                             );
                             continue;
                         }
-                        self.globals.modules[module]
-                            .values
-                            .insert(name.clone(), Global::Const(ConstId(self.const_decls.len())));
+                        let id = ConstId(self.const_decls.len());
+                        let global = match c.kind {
+                            ast::ConstKind::Const => Global::Const(id),
+                            ast::ConstKind::Static | ast::ConstKind::StaticMut => Global::Static(id),
+                        };
+                        self.globals.modules[module].values.insert(name.clone(), global);
                         self.globals.modules[module].value_priv.insert(name.clone(), c.is_priv);
                         self.globals.const_tys.push(Ty::Error);
+                        self.globals.const_kinds.push(match c.kind {
+                            ast::ConstKind::Const => tir::ConstKind::Const,
+                            ast::ConstKind::Static => tir::ConstKind::Static,
+                            ast::ConstKind::StaticMut => tir::ConstKind::StaticMut,
+                        });
+                        self.globals.const_names.push(name.clone());
                         // A copy that lives as long as the compilation: array lengths and const arguments read
                         // the initializers of the constants they name (`crate::consteval`).
                         let init: &'static ast::Expr = Box::leak(Box::new(c.value.clone()));
@@ -754,6 +765,7 @@ pub(crate) fn method_bounds(
     subst.extend(base.iter().cloned());
     let mut all: Vec<Vec<Bound>> =
         f.generics.iter().map(|p| globals.generic_param_bounds(p, &subst, module, diags)).collect();
+    let mut projections = Vec::new();
     for pred in &f.where_clause {
         let index = match &pred.ty.kind {
             ast::TypeKind::Path(segs) if segs.len() == 1 && segs[0].args.is_empty() => {
@@ -767,13 +779,34 @@ pub(crate) fn method_bounds(
                     pred.bounds.iter().filter_map(|b| globals.resolve_bound(b, &subst, module, diags)).collect();
                 all[i].extend(extra);
             }
-            None => {
+            None => projections.push(pred),
+        }
+    }
+    // A predicate on an associated-type projection of a parameter (`where I.Item: Eq`, AT7) comes after the parameter
+    // predicates, so the projection resolves with every bound its parameter has.
+    for pred in projections {
+        let bounds_so_far: Vec<(String, Vec<Bound>)> =
+            f.generics.iter().map(|g| g.name.name.clone()).zip(all.iter().cloned()).collect();
+        let subject = globals.resolve_type_bounded(&pred.ty, None, &subst, &bounds_so_far, module, diags);
+        let param_names: Vec<&str> = f.generics.iter().map(|g| g.name.name.as_str()).collect();
+        match projection_owner(&subject, &param_names) {
+            Some(i) => {
+                let extra: Vec<Bound> = pred
+                    .bounds
+                    .iter()
+                    .filter_map(|b| globals.resolve_bound(b, &subst, module, diags))
+                    .map(|b| Bound::Projected(subject.clone(), Box::new(b)))
+                    .collect();
+                all[i].extend(extra);
+            }
+            None if subject != Ty::Error => {
                 diags.error(
                     Code::UNSUPPORTED, // e9000: declare-where-non-param
                     pred.ty.span,
-                    "a `where` clause on something other than a type parameter is not implemented in this compiler yet",
+                    "a `where` clause on something other than a type parameter or its associated type is not implemented in this compiler yet",
                 );
             }
+            None => {}
         }
     }
     all

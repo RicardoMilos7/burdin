@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A `static mut` may not be borrowed: no reference can alias it, so a read or a write never conflicts (E0304,
+// spec/globals.md, GL4).
+
+static mut COUNT: i32 = 0
+
+fn main() {
+    unsafe {
+        let shared = &COUNT //~ E0304
+        let exclusive = &mut COUNT //~ E0304
+        println((*shared).to_string())
+        println((*exclusive).to_string())
+    }
+}

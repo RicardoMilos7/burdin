@@ -15,8 +15,8 @@ mod value;
 use burdin_diag::{Code, Diagnostics, FileId, Span};
 use burdin_tir::visit::{Visit, VisitMut, walk_expr, walk_expr_mut};
 use burdin_tir::{
-    BindMode, Block, Expr, ExprKind as K, FuncId, Function, Local, LocalId, LocalKind, Pat, Program, Signature, Stmt,
-    TestOutcome, Ty, TypeDefs,
+    BindMode, Block, ConstId, ConstKind, Expr, ExprKind as K, FuncId, Function, Local, LocalId, LocalKind, Pat,
+    Program, Signature, Stmt, TestOutcome, Ty, TypeDefs,
 };
 use interp::{ConstState, Fault, Interp};
 pub use session::{Bindings, Fault as SessionFault};
@@ -178,6 +178,44 @@ pub fn evaluate(program: &mut Program, opts: Options, diags: &mut Diagnostics) {
         program.functions.push(spec.func);
         program.signatures.push(spec.sig);
     }
+    program.static_init = static_init(program);
+}
+
+/// Builds the function that stores every static's value, in declaration order, before `main` runs (`spec/globals.md`,
+/// GL1), and returns its id. A static's initializer is already a materialized value (CT3) and names no static (GL1),
+/// so the order does not matter. `None` when the program declares no static.
+fn static_init(program: &mut Program) -> Option<FuncId> {
+    let statics: Vec<usize> =
+        (0..program.consts.len()).filter(|&i| program.consts[i].kind != ConstKind::Const).collect();
+    let first = *statics.first()?;
+    let stmts = statics
+        .iter()
+        .map(|&i| {
+            let c = &program.consts[i];
+            let place = Expr { kind: K::Static(ConstId(i)), ty: c.value.ty.clone(), span: c.span };
+            let store = K::Assign(Box::new(place), Box::new(c.value.clone()));
+            Stmt::Expr(Expr { kind: store, ty: Ty::Unit, span: c.span })
+        })
+        .collect();
+    let span = program.consts[first].span;
+    let func = Function {
+        name: "static.init".to_string(),
+        span,
+        params: Vec::new(),
+        ret: Ty::Unit,
+        locals: Vec::new(),
+        body: Block { stmts, tail: None, close: span },
+        moved: Vec::new(),
+        debug_kills: Vec::new(),
+        ret_origins: Vec::new(),
+        symbolic: false,
+        exported: false,
+        events: Vec::new(),
+    };
+    let id = FuncId(program.functions.len());
+    program.functions.push(func);
+    program.signatures.push(Signature { params: Vec::new(), ret: Ty::Unit, has_self: false, ret_origins: Vec::new() });
+    Some(id)
 }
 
 /// Runs the function of one `comptime generate` block, which takes no arguments and returns a `String`, and returns

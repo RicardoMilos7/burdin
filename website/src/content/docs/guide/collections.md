@@ -59,6 +59,10 @@ Changing an element with `xs[i] = value` needs the list to be `let mut`. Reading
 non-`Copy` element, read it through a reference: `&xs[i]`, or with `match xs.last() { Some(v) => ..., None => ... }`,
 which gives a reference.
 
+A list is equal to another list when both have the same elements in the same order, and the elements can be compared with
+`==`. `[1, 2] == [2, 1]` is false. `dedup_by_key(key)` removes each element whose key is equal to the key of the element
+before it, so a run of equal keys is reduced to its first element.
+
 ## Map
 
 `Map<K, V>` pairs keys with values. A key type must be comparable and hashable: `String`, the integers, and any struct

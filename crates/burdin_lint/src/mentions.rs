@@ -121,7 +121,7 @@ impl Visit for Mentions {
         match &e.kind {
             ExprKind::Name { name, .. } => self.add(&name.name),
             ExprKind::Field(_, name) => self.add(&name.name),
-            ExprKind::StructLit(path, fields, _) => {
+            ExprKind::StructLit(path, _, fields, _) => {
                 self.path(path);
                 for f in fields {
                     if f.value.is_none() {

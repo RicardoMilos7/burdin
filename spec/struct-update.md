@@ -2,7 +2,7 @@
 
 Issue #994. `Pair { left: 1, ..other }` builds a struct from the fields written in the literal and takes every other field
 from a base value after `..`, as Rust's struct update syntax does. This page is the behavior the compiler implements and
-the tests that witness it. `tests/struct_update/` holds the conformance programs. Decision 37 in `tests/README.md` records
+the tests that witness it. `tests/struct_update/` holds the conformance programs. Decision 38 in `tests/README.md` records
 the choices; the grammar is `spec/grammar.md`, rules 6 and 8.12.
 
 Every rule below is witnessed by the tests named in it. A rule without a witness is not a rule.

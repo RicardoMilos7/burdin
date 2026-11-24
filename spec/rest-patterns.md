@@ -2,7 +2,7 @@
 
 Issue #993. A `..` in a pattern stands for the elements or fields the pattern does not name, as Rust's `..` does. This
 page is the behavior the compiler implements and the tests that witness it. `tests/rest_patterns/` holds the conformance
-programs. Decision 36 in `tests/README.md` records the choices; the grammar is `spec/grammar.md`, rule 7.1.
+programs. Decision 37 in `tests/README.md` records the choices; the grammar is `spec/grammar.md`, rule 7.1.
 
 Every rule below is witnessed by the tests named in it. A rule without a witness is not a rule.
 

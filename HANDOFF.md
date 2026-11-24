@@ -1,9 +1,42 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, and fifty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, fifty-second, and fifty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
+**Struct-like variants of generic enums built with a literal (issue #396, 2026-11-24).** `Shape<i32>.Rect { w: 2, h: 3 }`
+names the instance on the head, and `Shape.Rect { w: 2, h: 3 }` infers the arguments from the field values and the
+expected type, as a tuple variant does (`spec/arguments.md`, SL1-SL4). The bare form already parsed and was refused with
+E0002, not E9000 as the issue said; the explicit form did not parse at all, because the AST's `StructLit` had no room
+for the head's arguments. Now it does: `ExprKind::StructLit` carries the head's type arguments, and the formatter treats a
+generic head as a path (`crates/burdin_fmt/src/exprs.rs`). The checker is `struct_literal` and `literal_target` in
+`crates/burdin_sema/src/fncx/aggregate.rs` (an instance named by the arguments goes through `adt_path`, as a `match`
+scrutinee does), and `generic_variant_literal` in `fncx/generic.rs` (the inferred case, which mirrors
+`generic_struct_literal`). The arguments sit on the segment they follow: `StructLit` carries `(index, args)`, so
+`sh.Shape<i32>.Rect { ... }` has them on segment 1 (`parser/expr.rs`, `struct_head`). The checker resolves that
+segment as a module-qualified generic type (`written_instance` in `aggregate.rs`, which uses `generic_adt_path` and
+`generic_adt_type`); a segment that is not a generic type, such as a variant, takes none, which is E0003. The parser
+cannot tell a variant from a type in a module path, so `Shape.Rect<i32> { ... }` parses and the checker refuses it.
+No E9000 row existed for this construct, so `spec/e9000-audit.md` is unchanged. Tests:
+`tests/m21_reflect/generic_variant_literal` and `generic_variant_modules` (run), `generic_variant_literal_errors` and
+`generic_variant_modules_errors` (compile-fail, codes E0002 and E0003), the parser unit test
+`a_struct_literal_keeps_the_type_arguments_on_their_segment`, and the formatter unit test
+`a_struct_literal_of_a_generic_variant_keeps_its_arguments`.
+
+**Where clauses on associated types (issue #394, 2026-11-24).** A `where` predicate may bound a projection of one of
+the declaration's own parameters: `where I.Item: Eq`, `where <I as Container>.Item: Describe` (`spec/associated-types.md`,
+AT7). The predicate is a `Bound::Projected(projection, bound)` in the list of the parameter the projection starts from,
+so a body's bound environment and each instance's check see it without a second table. A projected bound is checked on
+its projection under the instance's arguments, so an unmet one is E0141 at the call; on an impl block it decides whether
+the impl applies (E0002 at a method call). `==` and `<` (`has_eq_in`, `has_ord_in`, `has_hash_in`), method calls
+(`bound_method`, `param_method_call`), and `{}` read a projection's bounds through `Globals::env_bounds_of`. The projection
+is resolved after the plain predicates, in `method_bounds` (`declare.rs`) and `impl_wheres` (`impls.rs`). Still E9000:
+a predicate on a type that is not a parameter's projection (`where i32: Eq`), a `where` clause on a non-generic impl
+block, and `Self.Item` in an interface default method (`spec/e9000-audit.md`). Tests: `tests/m21_reflect/associated_where`
+and `associated_where_errors` (run and compile-fail), and the unit test `satisfies_reads_the_projected_bounds_of_a_projection`.
+Verified on Linux x86-64 here: the full debug and release conformance runs (1356 and 1343 passing; the 5 failures are
+the `s3_http` and `s3_tls` programs that need `libssl.so`, which this WSL machine lacks), `cargo test --workspace` (944),
+clippy, fmt, and `check_e9000.py`.
 **Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
 (`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or
 enum, and the value's parameters are the declared ones, the receiver first. `p.double` written without a call, where
@@ -2254,7 +2287,7 @@ Open:
 
 ## Session: rest patterns, struct update, and array patterns (issues #993, #994, #486)
 
-Decided first: `spec/rest-patterns.md` (RP1-RP7) and `spec/struct-update.md` (SU1-SU10), with decisions 36 and 37 in
+Decided first: `spec/rest-patterns.md` (RP1-RP7) and `spec/struct-update.md` (SU1-SU10), with decisions 37 and 38 in
 `tests/README.md`. Rest patterns desugar to wildcards in sema (`fncx/pattern.rs`), so the checks, codegen, and comptime
 see no rest form. Struct update lowers in `fncx/aggregate.rs` (`struct_update`) to a TIR struct literal whose fields
 read the base: a place base gives partial moves, a temporary base is held in a compiler-made `Block` local (SU5).
@@ -2262,7 +2295,7 @@ Diagnostics E0010-E0015 are registered and documented in `docs/error-codes.md`. 
 programs), `tests/struct_update/` (12 programs and a private-package fixture),
 `tests/fmt/rest_update`, and `tests/lint/unused/rest_patterns.bd` (no report on `..`). CI registers both folders.
 
-Array and slice patterns (#486) are decided in `spec/array-patterns.md` (AP1-AP12), with decision 38 in `tests/README.md`
+Array and slice patterns (#486) are decided in `spec/array-patterns.md` (AP1-AP12), with decision 39 in `tests/README.md`
 and grammar rule 7.2. The parser reads `[...]` as `PatternKind::Slice` with `..` or `..name` as `PatternKind::Rest`.
 Sema types the pattern (`fncx/pattern.rs`, `slice_pattern`) and lowers it to `Pat::Slice { prefix, rest, suffix }`,
 which the checks, codegen, and comptime read. Exhaustiveness (`exhaust.rs`) checks each length of a slice: lengths
@@ -2310,6 +2343,49 @@ Open:
   fail in both modes, all in `s3_http` and `s3_tls`: they fail to link (`cannot find -lssl`, `-lcrypto`), because the WSL
   machine lacks the OpenSSL development files. On this machine `mold` on `PATH` cannot link the WSL libc, so the runs
   set `BURDIN_LD=platform`.
+## Session: global variables and `static` (issue #485)
+
+Burdin has global variables: `static` (immutable) and `static mut` (writable, only in `unsafe` code), with the rules
+in `spec/globals.md` (GL1-GL8) and decision 36 in `tests/README.md`. The session first decided that Burdin would have
+no globals, then the user reversed that decision, and the design above is the reversal. A `const` remains the value
+copied into each use.
+
+What is in place:
+
+- **Syntax.** `static [mut] NAME: Type = expr` at module scope (`ast::ConstDecl` with `ConstKind::Static` or
+  `StaticMut`; `crates/burdin_syntax/src/parser/items.rs`). A `static` in a function body is E0302 at the keyword and
+  is read as a `let`, so the body still checks. `static` stays an ordinary identifier unless a declaration starts with
+  it (`static` then `mut` or a name).
+- **Sema.** `Global::Static`; the type must be plain data, which is `Globals::plain` (E0303). A `static mut` needs
+  `unsafe` (E0161) and may not be borrowed (E0304, `FnCx::static_mut_borrowed`, which covers `&`, `&mut`, a `self`
+  receiver, a formatted argument, and a `comptime` argument). An initializer that names a static is E0220
+  (`FnCx::const_init`).
+- **Checks.** Moving a static out is E0101 (`moves.rs`); `&STATIC` is a static view, with the origin of a literal
+  (`origins.rs`).
+- **Comptime.** `evaluate` builds the function `static.init`, which stores each static's value in declaration order,
+  and records it in `Program::static_init`. The interpreter refuses a static (E0224 at compile time); `--interpret`
+  skips a test that touches one, with the reason (GL7).
+- **Codegen.** One internal, zeroed LLVM global per static (`declare_statics`, `place_ptr`). `static.init` runs from
+  `prepare_main` (for `main`, test, and bench entry points) and from `LLVMFuzzerInitialize` (fuzz), before any user
+  code. `reach.rs` keeps it.
+- **Tooling.** `burdin fmt` reads the `static` item. Every other tool matches the new typed-tree variant.
+
+Tests: `tests/m20_comptime/static_values`, `static_mut`, `static_view`, `static_in_block` (E0302), `static_string`
+(E0303), `static_drop` (E0303), `static_assign` (E0005), `static_move` (E0101), `static_mut_safe` (E0161),
+`static_mut_borrow` (E0304), `static_comptime` (E0224), `static_const_init` (E0220), `static_array_len` (E0251),
+`const_global`; `tests/s2_tasks/static_in_task`; the parser unit tests in `crates/burdin_syntax/src/parser/mod.rs`.
+
+Open, for the user to decide:
+
+- **Atomics and `Mutex<T>` cannot be a static's type yet.** They are not materializable (CT3), so
+  `static COUNT: AtomicI64 = AtomicI64.new(0)` is E0221. A counter that every task updates therefore has no static
+  form. Options: a compile-time constructor for the atomic types, or a zero-initialized static form that the runtime
+  fills in. GL3 says this, and no test covers it.
+- **`burdin doc` lists a static as a constant** with the `const` keyword, because the documentation model has no
+  separate kind. A follow-up with a golden page change.
+- **A lazily initialized cell (`Once`, `Lazy`) is not part of this decision.** It is a later issue, with the answers
+  GL7 lists.
+- **E0302 is a syntax-level error,** so a file that has one reports only that (`spec/check.md` CK4).
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -2323,6 +2399,9 @@ Open:
 - Stage 0 has no closures, string interpolation, `any`/`impl`, `error` declarations, comptime, tasks, or leak detection.
 - Syntax choices: `fn f(): T`, `let` / `let mut`, `Type: Interface { }`, `struct T: Copy, Eq { }`, `priv` means package-private,
   `?` and `orelse`, `else` arm in `match`, call-site `mut` marker.
+- Interpolated literals (issue #923): a string literal with a placeholder is a `String`, and one without is a `str`; only
+  the placeholders decide. Recorded in `spec/format.md` FM1, with `tests/m14_format/literal_type*.bd`. A format argument
+  that several placeholders use but that is neither a place nor `Copy` is E0195 (FM5).
 
 ## Decided in the second session
 

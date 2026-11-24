@@ -1236,7 +1236,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             }
         }
         K::Closure { body, .. } => out.push(body),
-        K::StructLit(_, inits, base) => {
+        K::StructLit(_, _, inits, base) => {
             out.extend(inits.iter().filter_map(|i| i.value.as_ref()));
             out.extend(base.as_deref());
         }

@@ -309,10 +309,23 @@ pub struct ImplBlock {
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub is_priv: bool,
+    /// Whether the declaration is a `const`, or a `static` (immutable or `static mut`), spec/globals.md.
+    pub kind: ConstKind,
     pub name: Ident,
     pub ty: Type,
     pub value: Expr,
     pub span: Span,
+}
+
+/// The keyword of a module-level value declaration (`spec/globals.md`, GL1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstKind {
+    /// `const NAME: T = expr`: a value copied into each use.
+    Const,
+    /// `static NAME: T = expr`: one value for the whole program, read-only.
+    Static,
+    /// `static mut NAME: T = expr`: one value for the whole program, written in `unsafe` code.
+    StaticMut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -645,9 +658,10 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Box<Expr>,
     },
-    /// `Path { field: value, ..base }`; the path is a type name or `Enum.Variant`. The base, when there is one, takes
-    /// every field the literal does not name (`spec/struct-update.md`).
-    StructLit(Vec<Ident>, Vec<FieldInit>, Option<Box<Expr>>),
+    /// `Path { field: value, ..base }`; the path is a type name or `Enum.Variant`. The type arguments, when written, are
+    /// the segment's index and its arguments: `Shape<i32>.Rect { ... }` has `(0, [i32])` and `sh.Shape<i32>.Rect`
+    /// has `(1, [i32])`. The base, when there is one, takes every field the literal does not name (`spec/struct-update.md`).
+    StructLit(Vec<Ident>, Option<(usize, Vec<Type>)>, Vec<FieldInit>, Option<Box<Expr>>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,

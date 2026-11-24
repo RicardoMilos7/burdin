@@ -204,7 +204,10 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             }
             v.expr(body);
         }
-        K::StructLit(_, fields, base) => {
+        K::StructLit(_, type_args, fields, base) => {
+            if let Some((_, args)) = type_args {
+                args.iter().for_each(|a| v.ty(a));
+            }
             for f in fields {
                 if let Some(x) = &f.value {
                     v.expr(x);

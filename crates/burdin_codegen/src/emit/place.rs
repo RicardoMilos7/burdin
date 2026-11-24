@@ -2,6 +2,7 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_tir::{self as tir, IntTy, Ty};
+use inkwell::module::Linkage;
 use inkwell::values::{BasicValueEnum, PointerValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -71,6 +72,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.bounds_facts.iter().any(|(i, c)| i == index && c == collection)
     }
 
+    /// Declares one LLVM global for each `static` and `static mut` (`spec/globals.md`, GL1). The static initializer
+    /// stores each value before `main` runs, so every global starts zeroed.
+    pub(super) fn declare_statics(&mut self) {
+        let program = self.program;
+        self.statics = vec![None; program.consts.len()];
+        for (i, c) in program.consts.iter().enumerate() {
+            if c.kind == tir::ConstKind::Const {
+                continue;
+            }
+            let Some(t) = self.llvm_ty(&c.value.ty) else { continue };
+            let global = self.module.add_global(t, None, &format!("burdin.static.{}", c.name));
+            global.set_initializer(&t.const_zero());
+            global.set_linkage(Linkage::Internal);
+            self.statics[i] = Some(global.as_pointer_value());
+        }
+    }
+
     /// The address of a place expression that starts at a local, without spilling anything.
     pub(super) fn direct_place_ptr(&mut self, e: &'a tir::Expr) -> GenResult<Option<PointerValue<'ctx>>> {
         if self.place_path(e).is_none() {
@@ -84,6 +102,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn place_ptr(&mut self, e: &'a tir::Expr) -> GenResult<Option<PointerValue<'ctx>>> {
         match &e.kind {
             tir::ExprKind::Local(id) => Ok(self.slots[id.0]),
+            tir::ExprKind::Static(id) => Ok(self.statics[id.0]),
             tir::ExprKind::Field(base, index) => {
                 let base_ptr = self.place_ptr(base)?;
                 let (Some(ptr), Some(t)) = (base_ptr, self.llvm_ty(&base.ty)) else { return Ok(None) };

@@ -237,6 +237,25 @@ mod tests {
     }
 
     #[test]
+    fn a_struct_literal_of_a_generic_variant_keeps_its_arguments() {
+        // `Shape<i32>.Rect { ... }` is a path with type arguments, so its fields lay out as a struct literal (issue #396).
+        let out = format_code("let s=Shape<i32>.Rect{w:1,h:2}", 100).expect("formats");
+        assert_eq!(out, "let s = Shape<i32>.Rect { w: 1, h: 2 }");
+        // A module-qualified head with arguments, `sh.Shape<i32>.Rect { ... }`, and `sh.Wrapper<i32> { ... }`.
+        let out = format_code(
+            "let s=sh.Shape<i32>.Rect{w:1,h:2}
+let t=sh.Wrapper<i32>{inner:1}",
+            100,
+        )
+        .expect("formats");
+        assert_eq!(
+            out,
+            "let s = sh.Shape<i32>.Rect { w: 1, h: 2 }
+let t = sh.Wrapper<i32> { inner: 1 }"
+        );
+    }
+
+    #[test]
     fn code_that_does_not_parse_is_left_alone() {
         assert_eq!(format_code("let = = 1", 100), None);
     }

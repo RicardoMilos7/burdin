@@ -575,6 +575,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
@@ -944,7 +945,7 @@ impl FreeNames {
                 self.expr(body);
                 self.scopes.pop();
             }
-            K::StructLit(_, fields, base) => {
+            K::StructLit(_, _, fields, base) => {
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.expr(v);
@@ -1058,7 +1059,7 @@ fn contains_return(e: &ast::Expr) -> bool {
             contains_return(scrutinee)
                 || arms.iter().any(|arm| arm.guard.as_ref().is_some_and(contains_return) || contains_return(&arm.body))
         }
-        K::StructLit(_, fields, base) => {
+        K::StructLit(_, _, fields, base) => {
             fields.iter().any(|f| f.value.as_ref().is_some_and(contains_return))
                 || base.as_deref().is_some_and(contains_return)
         }

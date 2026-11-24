@@ -1,0 +1,19 @@
+//@ run
+//> 6 burdin
+
+// A borrow of an immutable static is a static view, so a function may return it (spec/globals.md, GL3).
+
+static NAME: str = "burdin"
+static TABLE: [i32; 3] = [5, 6, 7]
+
+fn second(): &i32 {
+    &TABLE[1]
+}
+
+fn name(): str {
+    NAME
+}
+
+fn main() {
+    println("{} {}", (*second()).to_string(), name())
+}
