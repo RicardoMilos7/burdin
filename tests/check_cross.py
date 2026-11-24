@@ -336,19 +336,20 @@ with harness.temporary_dir("burdin-cross-") as work:
             check(any(a.startswith("/Fe:") for a in args), f"clang-cl: the MSVC link arguments are missing: {args}")
             check(not any(a.startswith("-fuse-ld") for a in args), "clang-cl: a -fuse-ld flag was passed")
 
-    # No cross linker anywhere: the error names the variables, and `--emit obj` still has its object.
-    empty = work / "empty-path"
-    empty.mkdir(exist_ok=True)
-    env = environment({"PATH": str(empty)})
-    lonely = harness.run(
-        [burdin, "build", "hello.bd", "--target", "aarch64-apple-darwin", "--emit", "obj", "-o", "lonely"],
-        cwd=work,
-        env=env,
-    )
-    err = harness.text(lonely.stderr)
-    check(lonely.returncode != 0, "a cross link without a linker succeeded")
-    check("BURDIN_CC_AARCH64_APPLE_DARWIN" in err and "BURDIN_SYSROOT_AARCH64_APPLE_DARWIN" in err, f"no-linker error: {err}")
-    check((work / "lonely.o").exists(), "the object of a build whose link failed was not kept")
+    # No cross linker anywhere: the error names the variables, and `--emit obj` still has its object. (not on a Windows host, where an empty PATH also hides LLVM's DLL from the driver itself)
+    if not WINDOWS_HOST:
+        empty = work / "empty-path"
+        empty.mkdir(exist_ok=True)
+        env = environment({"PATH": str(empty)})
+        lonely = harness.run(
+            [burdin, "build", "hello.bd", "--target", "aarch64-apple-darwin", "--emit", "obj", "-o", "lonely"],
+            cwd=work,
+            env=env,
+        )
+        err = harness.text(lonely.stderr)
+        check(lonely.returncode != 0, "a cross link without a linker succeeded")
+        check("BURDIN_CC_AARCH64_APPLE_DARWIN" in err and "BURDIN_SYSROOT_AARCH64_APPLE_DARWIN" in err, f"no-linker error: {err}")
+        check((work / "lonely.o").exists(), "the object of a build whose link failed was not kept")
 
     # A failing cross linker reports its output and the sysroot hint.
     failing = work / "failing"
