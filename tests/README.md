@@ -278,7 +278,6 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
 | E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature); a return type is reported too until #926 lands |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
-| E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 | E0205 | The concrete type of an `impl Interface` return cannot be found: the body's returns depend on the function itself, or it never returns a value |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
@@ -464,16 +463,17 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
     implicitly wherever an expected type is known (an annotation, an argument, a return, a field, an element, a
-    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires`, is never
+    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires` and converts to `any J` for each such `J`, is never
     `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
     prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
     receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
     (E0202). `impl Interface` is accepted in a parameter list and as a return type (E0201 anywhere else; the compiler reports a
     return type as E0201 until #926) and is sugar for one hidden generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
     compiler-known on `any I`, written with member type arguments; the downcast consumes the box. The boxed type
-    must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
-    `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
-    `spec/existentials.md` AN1-AN12, `tests/m15_any/`.
+    must implement the interface (E0141) and be first-class (E0120). A primitive's or built-in container's
+    compiler-provided `Display`/`Debug` implementation is boxable: its vtable entry is a generated thunk (AN14);
+    E0204 is retired. A `match` on an `any I` has type arms `name: T` and requires a catch-all (AN15; E0006 without one).
+    `spec/existentials.md` AN1-AN15, `tests/m15_any/`.
 
 21. **Errors.** `error enum` is an ordinary enum plus generated impls: `Display` from each variant's message
     template (whose placeholders name payload fields), `Error` (the std marker interface, which requires

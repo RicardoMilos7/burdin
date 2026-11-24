@@ -292,6 +292,14 @@ pub enum ExprKind {
         target: Ty,
         type_id: usize,
     },
+    /// `x` of type `any A` used as `any B` where `A requires B` (AN13): the same allocation, with the vtable
+    /// replaced by the `(T, B)` table that `A`'s vtable holds in its `slot`-th super slot. `from` indexes
+    /// [`crate::Program::any_ifaces`] (the interface of `value`).
+    AnyUpcast {
+        value: Box<Expr>,
+        from: usize,
+        slot: usize,
+    },
     /// Borrows a `String` as a `str` (the one implicit coercion, tests/README.md assumption 2).
     StringAsStr(Box<Expr>),
     Block(Block),

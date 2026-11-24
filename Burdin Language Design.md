@@ -329,8 +329,7 @@ error enum ConfigError {
 }
 ```
 
-**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `AnyError` type that any error converts into, so applications can use `?` everywhere without naming error types. An `AnyError` is inspected or downcast with `is` and `downcast`, not with `match`: a pattern cannot name a boxed type
-(`spec/existentials.md`, AN10).
+**Dynamic errors.** `Result<T>` with no second parameter uses a boxed `AnyError` type that any error converts into, so applications can use `?` everywhere without naming error types. An `AnyError` is inspected or downcast with `is` and `downcast`, or matched with a type pattern (`e: ParseError => ...` and a catch-all, `spec/existentials.md` AN15).
 
 **Context** wraps an error with a message and keeps the original as its source:
 

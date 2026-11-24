@@ -71,6 +71,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         K::BoxAny { value: inner, .. }
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
+        | K::AnyUpcast { value: inner, .. }
         | K::StringAsStr(inner)
         | K::Unary(_, inner)
         | K::Cast(inner)
@@ -214,6 +215,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         K::BoxAny { value: inner, .. }
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
+        | K::AnyUpcast { value: inner, .. }
         | K::StringAsStr(inner)
         | K::Unary(_, inner)
         | K::Cast(inner)

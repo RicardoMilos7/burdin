@@ -925,6 +925,7 @@ impl<'a> Checker<'a> {
             K::BoxAny { value, .. } => self.with_dest(None, Mode::Move, value),
             K::AnyIs { value, .. } => self.expr(value, Mode::Use),
             K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
+            K::AnyUpcast { value, .. } => self.expr(value, Mode::Move),
             // A dynamic call borrows the box (it can never take `own self`); its arguments follow the interface
             // method's conventions.
             K::AnyCall { recv, params, args, .. } => {

@@ -1,0 +1,72 @@
+//@ run
+//> circle 3
+//> dropped square
+//> square 4
+//> other 5
+//> count 2
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Circle {
+    r: i32
+}
+
+struct Square {
+    side: i32
+}
+
+struct Tri {
+    base: i32
+}
+
+Circle: Shape {
+    fn area(self): i32 {
+        self.r
+    }
+}
+
+Square: Shape {
+    fn area(self): i32 {
+        self.side
+    }
+}
+
+Tri: Shape {
+    fn area(self): i32 {
+        self.base
+    }
+}
+
+Square: Drop {
+    fn drop(mut self) {
+        println("dropped square")
+    }
+}
+
+fn describe(own shape: any Shape): String {
+    match shape {
+        c: Circle => "circle {c.r}",
+        s: Square => "square {s.side}",
+        other => "other {other.area()}",
+    }
+}
+
+fn main() {
+    println(describe(Circle { r: 3 }))
+    println(describe(Square { side: 4 }))
+    println(describe(Tri { base: 5 }))
+    let mut shapes: List<any Shape> = List<any Shape>.new()
+    shapes.push(Circle { r: 1 })
+    shapes.push(Tri { base: 2 })
+    let mut circles = 0
+    while let Some(shape) = shapes.pop() {
+        match shape {
+            _: Circle => circles += 1,
+            _: Tri => circles += 1,
+            else => println("unreachable"),
+        }
+    }
+    println("count {circles}")
+}

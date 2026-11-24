@@ -1,0 +1,55 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Circle {
+    r: i32
+}
+
+Circle: Shape {
+    fn area(self): i32 {
+        self.r
+    }
+}
+
+fn guarded(own shape: any Shape, flag: bool): i32 {
+    match shape {
+        c: Circle if flag => c.r, //~ E0003
+        _ => 0,
+    }
+}
+
+fn not_any(n: i32): i32 {
+    match n { //~ E0003
+        v: i32 => v,
+        _ => 0,
+    }
+}
+
+fn after_catch_all(own shape: any Shape): i32 {
+    match shape {
+        _ => 0,
+        c: Circle => c.r, //~ E0003
+    }
+}
+
+fn mixed(own shape: any Shape): i32 {
+    match shape {
+        Some(x) => 1, //~ E0003
+        _ => 0,
+    }
+}
+
+fn used_after(own shape: any Shape): i32 {
+    let n = match shape {
+        c: Circle => c.r,
+        _ => 0,
+    }
+    n + shape.area() //~ E0100
+}
+
+fn main() {
+    println("{}", guarded(Circle { r: 1 }, true))
+}

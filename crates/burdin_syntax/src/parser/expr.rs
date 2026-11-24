@@ -626,7 +626,7 @@ impl Parser<'_> {
                 return Err(self.unexpected("`}`"));
             }
             let arm_start = self.span();
-            let pattern = if self.eat(&TokenKind::Else) { None } else { Some(self.pattern()?) };
+            let pattern = if self.eat(&TokenKind::Else) { None } else { Some(self.arm_pattern()?) };
             let guard = if pattern.is_some() && self.eat(&TokenKind::If) { Some(self.expr()?) } else { None };
             self.expect(&TokenKind::FatArrow)?;
             let body = self.expr()?;

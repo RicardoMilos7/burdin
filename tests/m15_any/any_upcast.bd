@@ -1,0 +1,119 @@
+//@ run
+//> 5
+//> 10
+//> 7
+//> 8
+//> 3
+//> 5
+//> 9
+//> 4
+//> drop 9
+
+interface Named {
+    fn value(self): i32
+}
+
+interface Scaled requires Named {
+    fn scale(mut self, by: i32)
+}
+
+interface Drawable requires Scaled {
+    fn draw(self): i32
+}
+
+interface Store<T> {
+    fn get(self): T
+}
+
+interface Counted requires Store<i32> {
+    fn bump(mut self)
+}
+
+struct Box {
+    v: i32
+}
+
+Box: Named {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+Box: Scaled {
+    fn scale(mut self, by: i32) {
+        self.v = self.v * by
+    }
+}
+
+Box: Drawable {
+    fn draw(self): i32 {
+        self.v + 2
+    }
+}
+
+Box: Drop {
+    fn drop(mut self) {
+        if self.v == 9 {
+            println("drop 9")
+        }
+    }
+}
+
+struct Tally {
+    n: i32
+}
+
+Tally: Store<i32> {
+    fn get(self): i32 {
+        self.n
+    }
+}
+
+Tally: Counted {
+    fn bump(mut self) {
+        self.n = self.n + 1
+    }
+}
+
+fn read(x: any Named): i32 {
+    x.value()
+}
+
+fn grow(mut x: any Scaled) {
+    x.scale(2)
+}
+
+fn pick(own x: any Scaled): any Named {
+    x
+}
+
+fn main() {
+    // A direct requirement, and the original box's own calls.
+    let d: any Drawable = Box { v: 5 }
+    println(read(d).to_string())
+    // The same type is the identity: no conversion.
+    let mut s: any Scaled = Box { v: 5 }
+    grow(mut s)
+    println(s.value().to_string())
+    // A transitive requirement: `Drawable requires Scaled requires Named`.
+    let t: any Drawable = Box { v: 7 }
+    let n: any Named = t
+    println(n.value().to_string())
+    // A returned box, and a list element.
+    let r = pick(Box { v: 8 })
+    println(r.value().to_string())
+    let mut list: List<any Named> = List<any Named>.new()
+    let a: any Scaled = Box { v: 3 }
+    list.push(a)
+    println(list[0].value().to_string())
+    // The generic requirement keeps its argument.
+    let mut c: any Counted = Tally { n: 3 }
+    c.bump()
+    let st: any Store<i32> = c
+    println((st.get() + 1).to_string())
+    // The value is dropped once, at the end of `main`, through the converted box.
+    let z: any Drawable = Box { v: 9 }
+    let zn: any Named = z
+    println(zn.value().to_string())
+    println(4.to_string())
+}

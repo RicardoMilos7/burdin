@@ -1,0 +1,14 @@
+//@ run
+//> 7
+//> true
+//> false
+//> Some(7)
+
+// The box holds the value and its type identity, so `is` and `downcast` see an `i32` (AN14).
+fn main() {
+    let x: any Display = 7
+    println("{x}")
+    println("{x.is<i32>()}")
+    println("{x.is<i64>()}")
+    println("{x.downcast<i32>():?}")
+}

@@ -1,0 +1,51 @@
+//@ run
+//> config: missing key port
+//> io: cannot read cfg.toml: not found
+//> other: parse failed
+//> config
+//> kept: loading: missing key y
+
+// `match` on a dynamic `AnyError` and on an `any Error` takes the original error out by type (AN15).
+
+error enum ConfigError {
+    Missing(String) "missing key {0}"
+}
+
+error enum OtherError {
+    Parse "parse failed"
+}
+
+fn classify(own err: AnyError): String {
+    match err {
+        c: ConfigError => "config: {c}",
+        i: IoError => "io: {i}",
+        rest => "other: {rest}",
+    }
+}
+
+fn main() {
+    println(classify(ConfigError.Missing("port".to_string())))
+    let io: AnyError = IoError.Read {
+        path: "cfg.toml".to_string(),
+        kind: IoErrorKind.NotFound,
+        os_code: None,
+    }
+    println(classify(io))
+    println(classify(OtherError.Parse))
+
+    let boxed: any Error = ConfigError.Missing("x".to_string())
+    match boxed {
+        _: IoError => println("io"),
+        _: ConfigError => println("config"),
+        else => println("?"),
+    }
+
+    let failed: Result<i32> = Err(ConfigError.Missing("y".to_string()))
+    match failed.context("loading") {
+        Ok(_) => println("ok"),
+        Err(e) => match e {
+            _: IoError => println("io"),
+            rest => println("kept: {rest}"),
+        },
+    }
+}

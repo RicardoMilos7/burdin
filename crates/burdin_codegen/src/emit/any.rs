@@ -25,6 +25,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         for _ in &self.program.any_ifaces[iface].methods {
             fields.push(ptr.into());
         }
+        // One pointer per required interface: the `(T, J)` table that an upcast to `any J` switches to (AN13).
+        for _ in &self.program.any_ifaces[iface].supers {
+            fields.push(ptr.into());
+        }
         self.cx.struct_type(&fields, false)
     }
 
@@ -51,6 +55,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ];
         for entry in &vtable.entries {
             fields.push(self.functions[entry.0].as_global_value().as_pointer_value().into());
+        }
+        for &sup in &vtable.supers {
+            fields.push(self.vtable_global(sup).as_pointer_value().into());
         }
         let global = self.module.add_global(ty, None, &format!("burdin.vtable.{index}"));
         global.set_initializer(&ty.const_named_struct(&fields));
@@ -82,6 +89,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         agg = self.builder.build_insert_value(agg, data, 0, "any.data").map_err(llvm_err)?.into_struct_value();
         agg = self.builder.build_insert_value(agg, vtable, 1, "any.vtable").map_err(llvm_err)?.into_struct_value();
         Ok(Some(agg.into()))
+    }
+
+    /// `any A` used as `any J` where `A requires J` (AN13): the box moves, and its vtable pointer is replaced by
+    /// the `(T, J)` table stored in the `slot`-th super slot of the `(T, A)` table.
+    pub(super) fn any_upcast(
+        &mut self,
+        value: &'a tir::Expr,
+        from: usize,
+        slot: usize,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let v = self.expr_mode(value, Mode::Move)?;
+        let boxed = self.need(v, &value.ty).into_struct_value();
+        let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        let vtable = self.builder.build_extract_value(boxed, 1, "any.vtable").map_err(llvm_err)?.into_pointer_value();
+        let vtable_ty = self.vtable_struct_ty(from);
+        let index = (4 + self.program.any_ifaces[from].methods.len() + slot) as u32;
+        let slot_ptr = self.builder.build_struct_gep(vtable_ty, vtable, index, "any.super").map_err(llvm_err)?;
+        let upper = self.builder.build_load(ptr_ty, slot_ptr, "any.vtable.up").map_err(llvm_err)?;
+        let agg = self.builder.build_insert_value(boxed, upper, 1, "any.up").map_err(llvm_err)?;
+        Ok(Some(agg.into_struct_value().into()))
     }
 
     /// A borrowed `any` value, as its two words. A box that is not a place is a temporary of the statement, so

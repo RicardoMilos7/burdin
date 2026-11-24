@@ -55,6 +55,14 @@ impl FnCx<'_> {
                 let (id, mode) = self.declare_binding(name, ty, *mutable, owned);
                 Pat::Binding(id, mode)
             }
+            P::Typed { .. } => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    p.span,
+                    "a type pattern is the whole pattern of a `match` arm on an `any` value",
+                );
+                Pat::Wild
+            }
             P::At(name, inner) => {
                 let inner = self.pattern(inner, ty, owned);
                 let (id, mode) = self.declare_binding(name, ty, false, owned);

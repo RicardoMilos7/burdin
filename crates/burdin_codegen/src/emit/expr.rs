@@ -194,6 +194,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::AnyCall { recv, iface, slot, params, args } => {
                 self.any_call(recv, *iface, *slot, params, args, &e.ty)?
             }
+            K::AnyUpcast { value, from, slot } => self.any_upcast(value, *from, *slot)?,
             K::AnyIs { value, type_id, .. } => self.any_is(value, *type_id)?,
             K::AnyDowncast { value, target, type_id } => self.any_downcast(value, target, *type_id)?,
             K::StringAsStr(inner) => {

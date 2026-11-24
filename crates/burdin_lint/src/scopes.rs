@@ -181,6 +181,7 @@ impl Resolver {
                 self.bind_name(name, false, seen);
                 self.bind_into(inner, seen);
             }
+            PatternKind::Typed { name: Some(name), .. } => self.bind_name(name, false, seen),
             PatternKind::Tuple(ps) | PatternKind::Or(ps) | PatternKind::TupleStruct(_, ps) => {
                 ps.iter().for_each(|p| self.bind_into(p, seen));
             }

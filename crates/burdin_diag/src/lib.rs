@@ -389,9 +389,6 @@ impl Code {
     pub const STATIC_NOT_PLAIN: Code = Code("E0303");
     /// A borrow of a `static mut`: no reference may alias it (`spec/globals.md`, GL4).
     pub const STATIC_MUT_BORROW: Code = Code("E0304");
-    /// An interface implementation the compiler provides directly (such as `Display` for a primitive) and
-    /// therefore cannot dispatch through a vtable.
-    pub const BUILT_IN_IMPL: Code = Code("E0204");
     /// Not in the registry: a construct the language has but this compiler does not implement yet.
     /// Every remaining site is assigned to a milestone in `spec/e9000-audit.md`, and `tests/check_e9000.py`
     /// fails when a site is unassigned, stale, or belongs to a milestone that has shipped.

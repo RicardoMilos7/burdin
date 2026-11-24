@@ -198,6 +198,7 @@ impl Delta {
                 any.ifaces.push(key.clone());
                 any.names.push(name.clone());
                 any.methods.push(None);
+                any.supers.push(None);
             }
             for entry in &self.uses {
                 if !any.uses.contains(entry) {

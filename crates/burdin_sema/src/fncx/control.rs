@@ -484,6 +484,9 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
+        if arms.iter().any(|a| matches!(a.pattern.as_ref().map(|p| &p.kind), Some(ast::PatternKind::Typed { .. }))) {
+            return self.any_match(scrutinee, arms, expect, span);
+        }
         let value = self.expr(scrutinee, None);
         let moves = arms.iter().any(|a| a.pattern.as_ref().is_some_and(pattern_has_binding));
         let (scrutinee, owned_temp) = if moves { self.own_scrutinee_temp(value) } else { (value, None) };
@@ -793,7 +796,7 @@ fn pattern_has_binding(pattern: &ast::Pattern) -> bool {
             false
         }
         ast::PatternKind::Rest(name) => name.is_some(),
-        ast::PatternKind::Binding { .. } | ast::PatternKind::At(..) => true,
+        ast::PatternKind::Binding { .. } | ast::PatternKind::At(..) | ast::PatternKind::Typed { .. } => true,
         ast::PatternKind::Tuple(subs) | ast::PatternKind::Slice(subs) => subs.iter().any(pattern_has_binding),
         ast::PatternKind::TupleStruct(_, subs) => subs.iter().any(pattern_has_binding),
         ast::PatternKind::Struct(_, fields, _) => {

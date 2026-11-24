@@ -501,6 +501,12 @@ pub enum PatternKind {
     Rest(Option<Ident>),
     /// `[p, ..., q]`: an array or slice pattern (`spec/array-patterns.md`). Its elements are patterns or rest elements.
     Slice(Vec<Pattern>),
+    /// `name: T` or `_: T`, the whole pattern of a `match` arm: the arm runs when the `any I` scrutinee holds exactly a
+    /// `T`, and `name` owns the value moved out of the box (`spec/existentials.md`, AN15).
+    Typed {
+        name: Option<Ident>,
+        ty: Type,
+    },
 }
 
 #[derive(Clone, Debug)]

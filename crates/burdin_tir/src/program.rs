@@ -70,6 +70,9 @@ pub struct AnyIface {
     pub name: String,
     /// One slot per method, in vtable order. The receiver is `sig.params[0]`.
     pub methods: Vec<AnyMethod>,
+    /// The interface instances this one requires, transitively (indexes of `any_ifaces`): the `any` it can be
+    /// converted to (AN13). Each vtable of this interface ends with one pointer per entry.
+    pub supers: Vec<usize>,
 }
 
 /// One vtable slot: the interface method's substituted signature. Every object-safe implementation matches it, so
@@ -91,6 +94,8 @@ pub struct AnyVTable {
     pub iface: usize,
     /// The concrete implementation of each slot of `iface`, in order.
     pub entries: Vec<FuncId>,
+    /// The `(T, J)` vtable (an index into `any_vtables`) for each entry of the interface's `supers` (AN13).
+    pub supers: Vec<usize>,
 }
 
 /// One `test "name" [attrs] { ... }` block, compiled as the function `func`.

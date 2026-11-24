@@ -166,7 +166,7 @@ impl Visit for Bindings<'_> {
         match &p.kind {
             // An uppercase name is a unit variant or a constant, not a binding (`spec/grammar.md`, PatPath).
             PatternKind::Binding { name, .. } if starts_lowercase(&name.name) => self.binding(name),
-            PatternKind::At(name, _) => self.binding(name),
+            PatternKind::At(name, _) | PatternKind::Typed { name: Some(name), .. } => self.binding(name),
             _ => {}
         }
         walk_pattern(self, p);

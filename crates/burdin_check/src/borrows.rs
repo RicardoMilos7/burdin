@@ -468,6 +468,7 @@ impl<'a> Checker<'a> {
             },
             // Boxing moves (or copies) the value into the box; `downcast` consumes the box; `is` only reads it.
             K::BoxAny { value, .. } => self.expr(value, Mode::Move),
+            K::AnyUpcast { value, .. } => self.expr(value, Mode::Move),
             K::AnyIs { value, .. } => self.expr(value, Mode::Use),
             K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
             // A dynamic call borrows the box: shared for `self`, exclusive for `mut self`. Its result is always
@@ -872,6 +873,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::BoxAny { value: inner, .. }
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
+        | K::AnyUpcast { value: inner, .. }
         | K::Comptime(inner) => locals_used(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
@@ -1010,6 +1012,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::BoxAny { value: inner, .. }
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
+        | K::AnyUpcast { value: inner, .. }
         | K::Comptime(inner) => uses_expr(inner, stmt, last),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),

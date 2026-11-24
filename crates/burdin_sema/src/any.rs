@@ -2,10 +2,10 @@
 //! (spec/existentials.md). The checker builds these while it resolves types and checks bodies; `Sema::finish`
 //! copies them into the program for code generation.
 
-use crate::generics::Bound;
+use crate::generics::{Bound, Request};
 use crate::globals::{Globals, adt_key};
 use burdin_diag::{Code, Diagnostics, Span};
-use burdin_tir::{AnyIface, AnyMethod, AnyRef, AnyVTable, Signature, Ty};
+use burdin_tir::{AnyIface, AnyMethod, AnyRef, AnyVTable, FuncId, Signature, Ty};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -21,6 +21,8 @@ pub(crate) struct AnyState {
     pub(crate) names: Vec<String>,
     /// The vtable method list of each instance, computed on first use.
     pub(crate) methods: Vec<Option<Vec<AnyMethod>>>,
+    /// The interface instances each instance requires, transitively (ids), computed on first use (AN13).
+    pub(crate) supers: Vec<Option<Vec<usize>>>,
     /// Every `any Interface` written in a type, with the span it was written at, for E0202.
     pub(crate) uses: Vec<(usize, Span)>,
     /// Types with a runtime identity: boxed concrete types and downcast targets.
@@ -46,6 +48,7 @@ impl Globals {
                 state.ifaces.push((iface, args.clone()));
                 state.names.push(name);
                 state.methods.push(None);
+                state.supers.push(None);
                 id
             }
         };
@@ -82,6 +85,48 @@ impl Globals {
         self.collect_any_methods(iface, &args, &anyref, &mut methods, &mut seen);
         self.any.borrow_mut().methods[id] = Some(methods.clone());
         methods
+    }
+
+    /// The interface instance with this id.
+    fn any_ref_of(&self, id: usize) -> AnyRef {
+        let state = self.any.borrow();
+        let (iface, args) = state.ifaces[id].clone();
+        AnyRef { id, name: Rc::from(state.names[id].clone()), iface, args }
+    }
+
+    /// The interfaces an instance requires, transitively and deduplicated by interface: the `any` types it
+    /// converts to (AN13).
+    pub(crate) fn any_supers(&self, id: usize) -> Vec<AnyRef> {
+        if let Some(Some(supers)) = self.any.borrow().supers.get(id) {
+            let supers = supers.clone();
+            return supers.into_iter().map(|s| self.any_ref_of(s)).collect();
+        }
+        let (iface, args) = match self.any.borrow().ifaces.get(id) {
+            Some(found) => found.clone(),
+            None => return Vec::new(),
+        };
+        let mut found = Vec::new();
+        let mut seen = vec![iface];
+        self.collect_any_supers(iface, &args, &mut found, &mut seen);
+        let ids: Vec<usize> = found.into_iter().map(|(j, jargs)| self.any_iface(j, jargs).id).collect();
+        self.any.borrow_mut().supers[id] = Some(ids.clone());
+        ids.into_iter().map(|s| self.any_ref_of(s)).collect()
+    }
+
+    fn collect_any_supers(&self, iface: usize, args: &[Ty], out: &mut Vec<(usize, Vec<Ty>)>, seen: &mut Vec<usize>) {
+        let info = &self.interfaces[iface];
+        let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
+        for bound in info.requires.clone() {
+            if let Bound::User(j, rargs) = bound {
+                if seen.contains(&j) {
+                    continue;
+                }
+                seen.push(j);
+                let rargs: Vec<Ty> = rargs.iter().map(|a| self.subst_ty(a, &subst)).collect();
+                out.push((j, rargs.clone()));
+                self.collect_any_supers(j, &rargs, out, seen);
+            }
+        }
     }
 
     fn collect_any_methods(
@@ -224,8 +269,8 @@ impl Globals {
     }
 
     /// The vtable index for boxing `concrete` as `iface`, creating it on first use. The concrete type must have a
-    /// callable implementation of every slot; a compiler-provided implementation (Display for a primitive) has no
-    /// function to dispatch to and is E0204 (AN3). An interface with no methods needs no slots at all, so any type
+    /// callable implementation of every slot. A compiler-provided `Display`/`Debug` implementation is supplied by a std
+    /// helper (AN14); every other implementation is an impl block's method (AN3). An interface with no methods needs no slots at all, so any type
     /// that satisfies it can be boxed (a marker such as `Iterable<i32>`).
     pub(crate) fn any_vtable(
         &self,
@@ -241,35 +286,34 @@ impl Globals {
         let methods = self.any_methods(iface.id);
         let mut entries = Vec::new();
         if !methods.is_empty() {
-            let Some(key_adt) = adt_key(concrete) else {
-                diags.error(
-                    Code::BUILT_IN_IMPL,
-                    span,
-                    format!(
-                        "`{concrete}` implements `{}` in the compiler itself, so it has no function to dispatch \
-                         to through `any {}`",
-                        iface.name, iface.name
-                    ),
-                );
-                return None;
-            };
             for method in &methods {
-                match self.methods.get(&(key_adt, method.name.clone())) {
-                    Some(&f) => entries.push(f),
-                    None => {
-                        diags.error(
-                            Code::BUILT_IN_IMPL,
-                            span,
-                            format!(
-                                "`{concrete}` implements `{}` in the compiler itself, so it has no function to \
-                                 dispatch to through `any {}`",
-                                iface.name, iface.name
-                            ),
-                        );
-                        return None;
-                    }
+                let found = adt_key(concrete).and_then(|k| self.methods.get(&(k, method.name.clone())).copied());
+                match found {
+                    Some(f) => entries.push(f),
+                    None => match self.builtin_format_entry(concrete, iface, methods.len()) {
+                        BuiltinEntry::Func(f) => entries.push(f),
+                        // The instance of the std helper is allocated before the next pass; this pass's result is
+                        // discarded (the same protocol as a generic call that finds no instance).
+                        BuiltinEntry::Requested => return None,
+                        BuiltinEntry::None => {
+                            diags.error(
+                                Code::BOUND_NOT_SATISFIED,
+                                span,
+                                format!(
+                                    "`{concrete}` has no implementation of `{}` that `any {}` can dispatch to",
+                                    iface.name, iface.name
+                                ),
+                            );
+                            return None;
+                        }
+                    },
                 }
             }
+        }
+        // The table of every required interface, so an `any I` converts to `any J` (AN13).
+        let mut supers = Vec::new();
+        for sup in self.any_supers(iface.id) {
+            supers.push(self.any_vtable(concrete, &sup, span, diags)?);
         }
         let type_id = self.any_type_id(concrete);
         let mut state = self.any.borrow_mut();
@@ -278,28 +322,56 @@ impl Globals {
             return Some(id);
         }
         let id = state.vtables.len();
-        state.vtables.push(AnyVTable { concrete: concrete.clone(), type_id, iface: iface.id, entries });
+        state.vtables.push(AnyVTable { concrete: concrete.clone(), type_id, iface: iface.id, entries, supers });
         state.vtable_index.insert(key, id);
         Some(id)
     }
 
+    /// The vtable entry for a compiler-provided `Display`/`Debug` implementation (AN14): the instance of the std
+    /// helper `__any_display`/`__any_debug` for `concrete`, whose body is the ordinary formatting call. When the
+    /// instance does not exist yet it is requested, and the caller abandons this pass.
+    fn builtin_format_entry(&self, concrete: &Ty, iface: &AnyRef, methods: usize) -> BuiltinEntry {
+        let helper = if Some(iface.iface) == self.display_iface {
+            "__any_display"
+        } else if Some(iface.iface) == self.debug_iface {
+            "__any_debug"
+        } else {
+            return BuiltinEntry::None;
+        };
+        let Some(g) = self.std_generic(helper) else { return BuiltinEntry::None };
+        if methods != 1 {
+            return BuiltinEntry::None;
+        }
+        let key = (g, vec![concrete.clone()]);
+        match self.fn_instances.get(&key) {
+            Some(&f) => BuiltinEntry::Func(f),
+            None => {
+                self.requests.borrow_mut().push(Request::Func(key.0, key.1));
+                BuiltinEntry::Requested
+            }
+        }
+    }
+
     /// The interface instances, with their method lists, for the program.
     pub(crate) fn any_program_ifaces(&self) -> (Vec<AnyIface>, Vec<AnyVTable>, Vec<Ty>) {
-        let state = self.any.borrow();
-        let ifaces: Vec<AnyIface> =
-            (0..state.ifaces.len()).map(|id| AnyIface { name: state.names[id].clone(), methods: Vec::new() }).collect();
-        drop(state);
-        let ifaces: Vec<AnyIface> = ifaces
-            .into_iter()
-            .enumerate()
-            .map(|(id, mut iface)| {
-                iface.methods = self.any_methods(id);
-                iface
-            })
-            .collect();
+        // Finding the supers of an instance can create instances, so the count is read again each time.
+        let mut ifaces: Vec<AnyIface> = Vec::new();
+        while ifaces.len() < self.any.borrow().ifaces.len() {
+            let id = ifaces.len();
+            let name = self.any.borrow().names[id].clone();
+            let supers = self.any_supers(id).into_iter().map(|s| s.id).collect();
+            ifaces.push(AnyIface { name, methods: self.any_methods(id), supers });
+        }
         let state = self.any.borrow();
         (ifaces, state.vtables.clone(), state.type_ids.clone())
     }
+}
+
+/// What supplies the vtable entry of a method that no impl block declares.
+enum BuiltinEntry {
+    Func(FuncId),
+    Requested,
+    None,
 }
 
 /// Whether a written type names `Self` anywhere.
