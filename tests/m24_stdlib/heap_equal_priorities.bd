@@ -4,7 +4,7 @@
 //> c
 //> d
 
-// A type that is only `PartialOrd` works as a priority. Elements of equal priority come out in the order they were
+// A type that is only `Ord` works as a priority. Elements of equal priority come out in the order they were
 // pushed.
 
 struct Job {
@@ -12,7 +12,7 @@ struct Job {
     name: String
 }
 
-Job: PartialOrd {
+Job: Ord {
     fn lt(self, other: Job): bool {
         self.priority < other.priority
     }

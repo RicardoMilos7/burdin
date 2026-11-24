@@ -6,11 +6,48 @@ use inkwell::values::{IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// Whether `ty` is a struct or enum that does not derive `Eq`.
+    fn derives_no_eq(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Struct(a) => !self.program.structs[a.id].derives.eq,
+            Ty::Enum(a) => !self.program.enums[a.id].derives.eq,
+            _ => false,
+        }
+    }
+
+    /// The hand-written `eq` (or, with `ordering`, `lt`) of a struct or enum that implements the interface instead
+    /// of deriving it.
+    fn user_comparison(&self, ty: &Ty, ordering: bool) -> Option<inkwell::values::FunctionValue<'ctx>> {
+        let derives = match ty {
+            Ty::Struct(a) => &self.program.structs[a.id].derives,
+            Ty::Enum(a) => &self.program.enums[a.id].derives,
+            _ => return None,
+        };
+        let id = if ordering { derives.lt_method } else { derives.eq_method }?;
+        Some(self.functions[id.0])
+    }
+
     /// Whether the values at `l` and `r` (of type `ty`) are equal, field by field.
     pub(super) fn eq_at(&mut self, l: PointerValue<'ctx>, r: PointerValue<'ctx>, ty: &Ty) -> GenResult<IntValue<'ctx>> {
         let bool_ty = self.cx.bool_type();
         let yes = bool_ty.const_int(1, false);
         let Some(t) = self.llvm_ty(ty) else { return Ok(yes) };
+        // A type with a hand-written `Eq` implementation compares through its `eq` (`spec/derives.md`, issue #918).
+        if let Some(f) = self.user_comparison(ty, false) {
+            let call = self.builder.build_call(f, &[l.into(), r.into()], "eq").map_err(llvm_err)?;
+            return Ok(call.try_as_basic_value().basic().expect("eq returns a bool").into_int_value());
+        }
+        // A type with a hand-written `Ord` implementation and no equality of its own is equal when neither is less.
+        if self.derives_no_eq(ty)
+            && let Some(f) = self.user_comparison(ty, true)
+        {
+            let less = self.builder.build_call(f, &[l.into(), r.into()], "lt").map_err(llvm_err)?;
+            let less = less.try_as_basic_value().basic().expect("lt returns a bool").into_int_value();
+            let greater = self.builder.build_call(f, &[r.into(), l.into()], "gt").map_err(llvm_err)?;
+            let greater = greater.try_as_basic_value().basic().expect("lt returns a bool").into_int_value();
+            let either = self.builder.build_or(less, greater, "").map_err(llvm_err)?;
+            return self.builder.build_not(either, "").map_err(llvm_err);
+        }
         match ty {
             Ty::Int(_) | Ty::Bool | Ty::Char => {
                 let a = self.builder.build_load(t, l, "").map_err(llvm_err)?.into_int_value();
@@ -212,6 +249,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<IntValue<'ctx>> {
         let i32_ty = self.cx.i32_type();
         let Some(t) = self.llvm_ty(ty) else { return Ok(i32_ty.const_zero()) };
+        // A type with a hand-written `Ord` implementation orders through its `lt` (`spec/derives.md`, issue #918).
+        if let Some(f) = self.user_comparison(ty, true) {
+            let less = self.builder.build_call(f, &[l.into(), r.into()], "lt").map_err(llvm_err)?;
+            let less = less.try_as_basic_value().basic().expect("lt returns a bool").into_int_value();
+            let greater = self.builder.build_call(f, &[r.into(), l.into()], "gt").map_err(llvm_err)?;
+            let greater = greater.try_as_basic_value().basic().expect("lt returns a bool").into_int_value();
+            let after = self
+                .builder
+                .build_select(greater, i32_ty.const_int(1, false), i32_ty.const_zero(), "")
+                .map_err(llvm_err)?
+                .into_int_value();
+            let order =
+                self.builder.build_select(less, i32_ty.const_all_ones(), after, "").map_err(llvm_err)?.into_int_value();
+            return Ok(order);
+        }
         match ty {
             Ty::Int(_) | Ty::Bool | Ty::Char => {
                 let signed = matches!(ty, Ty::Int(i) if i.signed());

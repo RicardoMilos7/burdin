@@ -97,7 +97,7 @@ impl Globals {
                     && *item == Ty::Tuple(vec![(**key).clone(), (**value).clone()])
                     && !key.is_second_class()
                     && !value.is_second_class()
-                    && self.has_eq_in(key, env)
+                    && self.has_key_eq_in(key, env)
             }
             Ty::String => match item {
                 Ty::Char | Ty::Str | Ty::String => true,

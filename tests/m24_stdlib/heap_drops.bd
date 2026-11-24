@@ -10,7 +10,7 @@ struct Token {
     id: i32
 }
 
-Token: PartialOrd {
+Token: Ord {
     fn lt(self, other: Token): bool {
         self.id < other.id
     }

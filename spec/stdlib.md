@@ -523,12 +523,12 @@ interface BitXor   { fn bitxor(self, other: Self): Self }
 interface Neg      { fn neg(self): Self }
 interface Not      { fn not(self): Self }
 
-interface PartialEq {
+interface Eq {
     fn eq(self, other: Self): bool
     fn ne(self, other: Self): bool      // default: !self.eq(other)
 }
 
-interface PartialOrd {
+interface Ord {
     fn lt(self, other: Self): bool
     fn le(self, other: Self): bool      // default: !self.gt(other)
     fn gt(self, other: Self): bool      // default: other.lt(self)
@@ -798,7 +798,7 @@ struct Bytes {                            // read-only; clones and slices share 
 ```
 
 `BytesMut` and `Bytes` implement `Index<u8>` (`b[i]`; an index past the end panics with `BytesMut index out of bounds` /
-`Bytes index out of bounds`), `BytesMut` also `IndexMut<u8>` (`b[i] = x`), and both implement `PartialEq` (same bytes)
+`Bytes index out of bounds`), `BytesMut` also `IndexMut<u8>` (`b[i] = x`), and both implement `Eq` (same bytes)
 and `Debug` (`Bytes[1, 2, 3]`). `Bytes` is `Clone`.
 
 The relationship to the other byte types: `List<u8>` is the plain owned vector, and `[u8]` is a borrowed view
@@ -898,7 +898,7 @@ Indexing `xs[i]` is a place: it reads or writes one element, takes a `usize`, an
 `for x in xs` borrows the list for the loop and yields read-only element places (`memory-rules.md`, IT). `T` must be
 storable, so `List<str>` and `List<&T>` are rejected (E0120).
 
-`List<T>` implements `PartialEq` when `T: Eq` (issue #928). Two lists are equal when they have the same length and
+`List<T>` implements `Eq` when `T: Eq` (issue #928). Two lists are equal when they have the same length and
 their elements are equal in order: `[1, 2] != [2, 1]` and `[1] != [1, 1]`. Equal lists hash alike (`derives.md`,
 "Hash"). `List` has no `Ord`. `assert_eq` and `assert_ne` take lists of an `Eq` element type, and `contains` searches
 with the same `==`. Tests: `m24_stdlib/list_equality`, `list_equality_needs_eq`.
@@ -1162,7 +1162,7 @@ holds the entries plus `additional` more without passing the load factor, and `s
 smallest table that holds the entries (and frees the buffer of an empty map). A request that would need more than
 2^62 slots panics with `Map capacity overflow`.
 
-`Map<K, V>` implements `PartialEq` (the same entries with equal values, whatever the insertion order),
+`Map<K, V>` implements `Eq` (the same entries with equal values, whatever the insertion order),
 `Clone` (when `K` and `V` are `Clone`), `Debug` (when `K` and `V` are `Debug`, as `{k: v, ...}` in iteration
 order), and `Default` (an empty map; only for the default allocator). A struct that holds a `Map` derives each of
 these when its key and value types allow it.
@@ -1217,7 +1217,7 @@ fn is_superset(self, other: Set<T>): bool
 fn is_disjoint(self, other: Set<T>): bool
 ```
 
-`Set<T>` implements `PartialEq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order),
+`Set<T>` implements `Eq` (same elements, regardless of order), `Debug` (`{1, 2, 3}`, in iteration order),
 `Iterable<&T>`, and, for the default allocator, `FromIterator<T>` (issue #708). `MapEntries<K, V>` is the nameable type of the iterator `map.iter()` returns, added so a library type
 can wrap it. Operations that copy elements need `Clone`; they return a set that uses the default allocator.
 
@@ -1257,7 +1257,7 @@ struct Deque<T> {
 ```
 
 `Deque<T>` implements `Index<T>` and `IndexMut<T>` (`d[i]` counts from the front and panics with `Deque index out of
-bounds` past the end), `PartialEq` (same length and equal elements), `Debug` (`[1, 2, 3]`), and `Iterable<&T>`.
+bounds` past the end), `Eq` (same length and equal elements), `Debug` (`[1, 2, 3]`), and `Iterable<&T>`.
 `DequeIter<D, T>` is generic over the view of the deque it walks and needs `D: Index<T> + DequeLen`; for that, a
 shared view `&X` satisfies an interface bound that `X` satisfies. `DequeIterMut<D, T>` needs `D: IndexMut<T> + DequeLen`,
 and a mutable view `&mut X` satisfies the bounds `X` does as well.
@@ -1272,7 +1272,7 @@ element is the last one: `peek` and `pop` are O(1), `push` finds its place with 
 comparisons) and moves the elements above it, and iterating in priority order is walking the list backwards. It is
 not a binary heap: swapping two elements of one list needs a placeholder value the language does not have, and the
 sorted list gives iteration in priority order for free. Elements that compare equal come out in the order they were
-pushed. The element type only needs an `Ord` bound, which a type with a `PartialOrd` impl also satisfies.
+pushed. The element type only needs an `Ord` bound, which a type with an `Ord` impl also satisfies.
 
 ```
 struct PriorityHeap<T: Ord> {
@@ -1738,7 +1738,7 @@ fn cmp.max_by<T, F: FnMut(&T, &T): Ordering>(a: T, b: T, compare: F): T
 fn cmp.min_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
 fn cmp.max_by_key<T, K: Ord, F: FnMut(&T): K>(a: T, b: T, key: F): T
 
-struct Reverse<T>: Copy, Clone, Eq, Debug { value: T }   // `<` is `T`'s `>`; `T: Ord` through `PartialOrd`
+struct Reverse<T>: Copy, Clone, Eq, Debug { value: T }   // `<` is `T`'s `>`; `Ord` is written by hand
 ```
 
 `a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
@@ -1749,13 +1749,13 @@ before every `Some`; every `Ok` before every `Err`; contents compared when the k
 `<` still does not apply to them. Floats have `<` but no total order, so `f64.cmp` is E0002 (`total_cmp` is the float
 order, issue #703). The decisions behind it:
 
-- **`cmp` is not an interface method.** `PartialOrd` keeps `lt`/`le`/`gt`/`ge` and `Ord` stays the compiler-known
-  bound, so a derive generates nothing new: `cmp` is `<` read twice. `Ord` and `Eq` remain independent derives.
-- **A hand-written `PartialOrd` satisfies an `Ord` bound.** A type that implements `PartialOrd` (its `lt` is the
-  order) is accepted wherever `T: Ord` is required, which is how `Reverse<T>` works with `cmp.min`, `max_by_key`, and
-  later `PriorityHeap` and `sort_by_key`. The built-in `<` does not apply to such a type (`has_ord` is false), so a
-  generic body instantiated for it calls `lt`; the compiler-implemented `List.sort` still wants a derived `Ord`
-  (E0141). Hand-written `Eq`/`Ord`/`Hash` beyond this stay E9000 under #402 (`Hash`: HS5).
+- **`cmp` is not an interface method.** The `Ord` interface keeps `lt`/`le`/`gt`/`ge`, so a derive
+  generates nothing new: `cmp` is `<` read twice.
+- **`Eq` and `Ord` are each one name for the derive and the interface.** A type that implements `Ord` (its `lt` is
+  the order) is accepted wherever `T: Ord` is required, which is how `Reverse<T>` works with `cmp.min`,
+  `max_by_key`, `PriorityHeap`, and `sort`; a type that implements `Eq` is accepted wherever `T: Eq` is. The compiler-implemented `List.sort`, `contains`, `dedup`, and the
+  `Map`/`Set` lookups call the type's `lt` and `eq` (`derives.md`, issue #918); a hand-written-`eq` key must also
+  derive `Hash`. Hand-written `Eq`/`Ord`/`Hash` stay E9000 under #402 (`Hash`: HS5).
 - A closure comparator or key function sees views of the values (`&T`), so the helpers return an owned `T`: `min`
   and friends cannot be called on two `str` views (E0121, a view cannot come from two parameters); use `String`.
 

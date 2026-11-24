@@ -61,7 +61,11 @@ impl<'t> Sema<'t> {
             // namespace is still E0007.
             if module_info.ifaces.contains_key(name)
                 || builtin_type(name).is_some()
-                || BUILTIN_INTERFACES.contains(&name.as_str())
+                || (BUILTIN_INTERFACES.contains(&name.as_str())
+                    && !(matches!(name.as_str(), "Eq" | "Ord") && {
+                        let pkg = &self.globals.packages[self.globals.modules[module].package];
+                        pkg.name == "std" && !pkg.is_root
+                    }))
             {
                 diags.error(Code::DUPLICATE_NAME, i.name.span, format!("`{name}` is defined more than once"));
                 return;

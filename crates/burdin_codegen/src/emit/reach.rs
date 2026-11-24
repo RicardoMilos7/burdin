@@ -15,6 +15,7 @@
 
 use crate::emit::Codegen;
 use burdin_tir as tir;
+use std::collections::HashSet;
 
 /// What the program can reach: flags indexed like `program.functions` and `program.closures`.
 pub(super) struct Reach {
@@ -83,14 +84,15 @@ impl Codegen<'_, '_> {
             mark(fns.reallocate, &mut reachable, &mut pending);
             mark(fns.deallocate, &mut reachable, &mut pending);
         }
+        let mut seen: HashSet<(bool, usize)> = HashSet::new();
         let mut calls: Vec<tir::FuncId> = Vec::new();
         let mut closures: Vec<usize> = Vec::new();
         let mut pending_closures: Vec<usize> = Vec::new();
         loop {
             if let Some(i) = pending.pop() {
-                refs_in(&program.functions[i].body, &mut calls, &mut closures);
+                refs_in(program, &program.functions[i].body, &mut calls, &mut closures, &mut seen);
             } else if let Some(c) = pending_closures.pop() {
-                refs_in(&program.closures[c].func.body, &mut calls, &mut closures);
+                refs_in(program, &program.closures[c].func.body, &mut calls, &mut closures, &mut seen);
             } else {
                 break;
             }
@@ -118,14 +120,24 @@ fn mark(id: tir::FuncId, reachable: &mut [bool], pending: &mut Vec<usize>) {
 }
 
 /// Every function `b` calls and every closure it creates, in any expression it contains.
-fn refs_in(b: &tir::Block, calls: &mut Vec<tir::FuncId>, closures: &mut Vec<usize>) {
-    let mut walk = Walker { out: calls, closures };
+fn refs_in(
+    program: &tir::Program,
+    b: &tir::Block,
+    calls: &mut Vec<tir::FuncId>,
+    closures: &mut Vec<usize>,
+    seen: &mut HashSet<(bool, usize)>,
+) {
+    let mut walk = Walker { program, out: calls, closures, seen };
     walk.block(b);
 }
 
 struct Walker<'a> {
+    program: &'a tir::Program,
     out: &'a mut Vec<tir::FuncId>,
     closures: &'a mut Vec<usize>,
+    /// The structs and enums whose values a reachable body mentions; their hand-written `eq` and `lt` are reachable,
+    /// because the built-in comparisons (`==` on a list, `contains`, `sort`, map keys) call them (issue #918).
+    seen: &'a mut HashSet<(bool, usize)>,
 }
 
 impl Walker<'_> {
@@ -152,8 +164,51 @@ impl Walker<'_> {
         }
     }
 
+    /// Notes every struct and enum a type mentions, and the types of their fields.
+    fn note_ty(&mut self, ty: &tir::Ty) {
+        use tir::Ty;
+        match ty {
+            Ty::Struct(a) | Ty::Enum(a) => {
+                let is_enum = matches!(ty, Ty::Enum(_));
+                if !self.seen.insert((is_enum, a.id)) {
+                    return;
+                }
+                let (derives, fields): (&tir::Derives, Vec<&Ty>) = if is_enum {
+                    let e = &self.program.enums[a.id];
+                    (&e.derives, e.variants.iter().flat_map(|v| v.fields.iter().map(|f| &f.ty)).collect())
+                } else {
+                    let s = &self.program.structs[a.id];
+                    (&s.derives, s.fields.iter().map(|f| &f.ty).collect())
+                };
+                self.out.extend([derives.eq_method, derives.lt_method].into_iter().flatten());
+                for f in fields {
+                    self.note_ty(f);
+                }
+            }
+            Ty::Ref { inner: t, .. }
+            | Ty::Slice(t)
+            | Ty::Array(t, _)
+            | Ty::Option(t)
+            | Ty::List(t, _)
+            | Ty::Heap(t, _)
+            | Ty::Shared(t)
+            | Ty::Range(t, _) => self.note_ty(t),
+            Ty::Result(a, b) | Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
+                self.note_ty(a);
+                self.note_ty(b);
+            }
+            Ty::Tuple(ts) => {
+                for t in ts {
+                    self.note_ty(t);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn expr(&mut self, e: &tir::Expr) {
         use tir::ExprKind as K;
+        self.note_ty(&e.ty);
         match &e.kind {
             K::Call(f, args) => {
                 self.out.push(*f);

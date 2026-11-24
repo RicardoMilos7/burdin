@@ -13,20 +13,20 @@
 //> true
 //> false
 
-// `PartialEq` and `PartialOrd` lower the six comparison operators; the defaults provide `ne`, `le`, `gt`, and
+// `Eq` and `Ord` lower the six comparison operators; the defaults provide `ne`, `le`, `gt`, and
 // `ge` from `eq` and `lt` (spec/operators.md OP1, OP2, OP5).
 
 struct Meter {
     v: i32
 }
 
-Meter: PartialEq {
+Meter: Eq {
     fn eq(self, other: Meter): bool {
         self.v == other.v
     }
 }
 
-Meter: PartialOrd {
+Meter: Ord {
     fn lt(self, other: Meter): bool {
         self.v < other.v
     }
@@ -38,7 +38,7 @@ struct Rank {
     level: i32
 }
 
-Rank: PartialOrd {
+Rank: Ord {
     fn lt(self, other: Rank): bool {
         self.level < other.level
     }
@@ -48,7 +48,7 @@ struct Key {
     id: i32
 }
 
-Key: PartialEq {
+Key: Eq {
     fn eq(self, other: Key): bool {
         self.id == other.id
     }

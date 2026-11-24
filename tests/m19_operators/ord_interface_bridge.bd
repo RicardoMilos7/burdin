@@ -1,0 +1,55 @@
+//@ run
+//> 3 2 1
+//> 2
+//> true
+//> true
+//> 3
+//> false
+//> true
+
+// A hand-written `Ord` on a type that has `==` satisfies `T: Ord` and is what every built-in ordering
+// calls: `List.sort`, `PriorityHeap`, `cmp.min`, and a generic `T: Ord` body (spec/derives.md, issue #918).
+
+struct Down: Eq, Copy, Clone {
+    n: i32
+}
+
+Down: Ord {
+    fn lt(self, other: Down): bool {
+        other.n < self.n
+    }
+}
+
+fn smallest<T: Ord>(a: T, b: T): T {
+    if b < a { b } else { a }
+}
+
+fn tied<T: Ord>(a: T, b: T): bool {
+    a == b
+}
+
+fn main() {
+    let mut xs = List<Down>.new()
+    xs.push(Down { n: 2 })
+    xs.push(Down { n: 3 })
+    xs.push(Down { n: 1 })
+    xs.sort()
+    println("{xs[0].n} {xs[1].n} {xs[2].n}")
+
+    println(smallest(Down { n: 1 }, Down { n: 2 }).n.to_string())
+    println((Down { n: 5 } < Down { n: 4 }).to_string())
+    println(tied(Down { n: 1 }, Down { n: 1 }).to_string())
+
+    let mut heap = PriorityHeap<Down>.new()
+    heap.push(Down { n: 3 })
+    heap.push(Down { n: 9 })
+    match heap.pop() {
+        Some(d) => println(d.n.to_string()),
+        None => println("empty"),
+    }
+    // A tuple and an `Option` of the type order by its `lt`, too.
+    println(((Down { n: 1 }, 1) < (Down { n: 2 }, 1)).to_string())
+    let a: Option<Down> = Some(Down { n: 9 })
+    let b: Option<Down> = Some(Down { n: 1 })
+    println((a < b).to_string())
+}

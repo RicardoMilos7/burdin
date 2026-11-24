@@ -1,6 +1,6 @@
 //@ compile-fail
 
-// The ordering operators on a user type need `PartialOrd` (E0141, spec/operators.md OP3, OP5).
+// The ordering operators on a user type need `Ord` (E0141, spec/operators.md OP3, OP5).
 
 struct Plain {
     n: i32

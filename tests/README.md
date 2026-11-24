@@ -30,7 +30,7 @@ tests/
   m16_errors/          `error` declarations, messages, `from`, dynamic `AnyError`, `context`, traces, `main`
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
-  m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
+  m19_operators/       operator overloading, Eq/Ord, Index/IndexMut, built-in regressions
   m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
   m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
                        specific instances
@@ -413,7 +413,9 @@ executable form. The design document leaves them open; where a rule says "deviat
 15. **Derives** provide `hash(self): u64` (FNV-1a, exact values pinned), a static `default()` for structs, and the
     documented `Eq`/`Ord` field and variant orders. `spec/derives.md`. Collections compare by their elements in
     order (issue #928): `List<T>` has `==` when `T` does, like `Map` and `Set`, `PriorityHeap` derives `Eq` over its
-    list, and `Deque` implements `PartialEq` in `std`. `List` keeps its `Hash`, which agrees with its `==`.
+    list, and `Deque` implements `Eq` in `std`. `List` keeps its `Hash`, which agrees with its `==`. `Eq`/`Ord` are one name for the derive and
+    the interface (issue #918; the former `PartialEq`/`PartialOrd` are gone): `Ord` implies `Eq` in the derive and in the
+    bound, and an `Eq`/`Ord` block on a type that derives the same one is E0007.
 16. **Exclusivity works on places.** A place is a local or parameter followed by struct fields (`p.a`, `o.inner.b`).
     Different places do not overlap, so `swap_vals(mut p.a, mut p.b)` is allowed. A place never continues through
     indexing, a `Heap` dereference, a reference dereference, or a method call, so `xs[0].a` and `xs[1].a` are one
@@ -512,12 +514,12 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `tests/m18_extension/`.
 
 24. **Operator overloading and `Index`.** The operator interfaces are the ordinary `std` interfaces `Add`, `Sub`,
-    `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and
+    `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `Eq`, `Ord`, `Index<T>`, and
     `IndexMut<T>` in `std.ops`, visible through the prelude. Both operands of an operator have the same type, and a
     type implements each interface at most once. The stage 0 built-in rule and a derived `Eq`/`Ord` are always tried
-    first; a user struct or enum then uses its interface implementation, and a type parameter its bounds. Comparisons
-    use the new `PartialEq`/`PartialOrd` interfaces, not the derive-only `Eq`/`Ord`, so every stage 0 derive keeps
-    its exact behavior. `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
+    first (a derive is the type's own `Eq`/`Ord` implementation, so a block of the same interface next to it is E0007, issue #918); a
+    user struct or enum then uses its interface implementation, and a type parameter its bounds. Comparisons
+    use the `Eq`/`Ord` interfaces, which the derives implement. `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
     `x[i]` is a place; a write (assignment, `&mut x[i]`, `mut x[i]`, or an index inside a written place) selects
     `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a

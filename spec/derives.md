@@ -50,6 +50,31 @@ tuples and arrays of `Copy` types, `&T`, `str`, `[T]`, and `CPtr<T>` are `Copy` 
 `Clone`. `Copy` types clone by copying; `String` copies its buffer; `Heap<T>` allocates and clones the pointee; a
 `List` clones its elements; structs, tuples, arrays, and enums clone field by field.
 
+## `Eq`, `Ord`, and the comparison interfaces (issue #918)
+
+`Eq` and `Ord` are each one thing with two spellings: a derive (`struct P: Eq, Ord`) installs the structural
+`==` and `<`, and an impl block (`P: Eq { fn eq(self, other: P): bool { ... } }`, `P: Ord { fn lt(...) }`) writes
+them by hand. There is no separate "partial" interface: the interfaces are `Eq { eq, ne }` and
+`Ord { lt, le, gt, ge }` in `std.ops` (`spec/operators.md`). A type that derives `Eq` or `Ord` (or derives `Ord`,
+which brings `Eq`) and also writes the interface block has two implementations of it and is rejected with E0007;
+remove the derive to write the comparison by hand. Nothing is silently ignored.
+
+Both bounds are satisfied by the derive or by the hand-written interface, and the compiler's built-in comparisons
+call whichever the type has. `T: Eq` and `T: Ord` accept the derive or the impl block. A type with an `Ord` block and
+no `Eq` of its own has `==` from its order (equal when neither is less), because `Ord` brings `Eq`. `Map`, `Set`, `List.contains`,
+slice `contains`, `dedup`, `sort`, `PriorityHeap`, `cmp.min`, `assert_eq`, and `==`/`<` on a list, tuple, array,
+`Option`, `Result`, or field that holds such a type then call the type's `eq` and `lt` (for sorting, `a` before `b` when
+`a.lt(b)`, equal when neither is less). Two limits:
+
+- A `Map` key or `Set` element whose `==` is hand-written must also derive `Hash` (E0141 otherwise). Keys are hashed
+  structurally and hand-writing `Hash` is E9000 (#402), so the derive is the promise that values equal by `eq` hash
+  alike; a hand-written `eq` coarser than the structure breaks lookups.
+- The compile-time interpreter compares structurally inside a list, tuple, or field, so a hand-written `eq` there
+  is not called in a `comptime` evaluation (a direct `a == b` on the type is).
+
+Hand-writing `Hash` or `Clone` is E9000 (issue #402); the `Eq` and `Ord` blocks are how the equality and order of
+a collection are customized.
+
 ## `Eq`
 
 `==` and `!=` compare values. The derive requires every field to support `==`. Structs and tuples compare fields in
@@ -73,9 +98,9 @@ Comparison is lexicographic:
 - integers compare numerically (signed or unsigned as written), `bool` as `false < true`, `char` by scalar value,
   `String` and `str` byte by byte.
 
-`Ord` does not imply `Eq` for a derive: a type that needs both lists both. A generic bound `T: Ord` is different: the
-body of `fn f<T: Ord>(a: T, b: T)` may use `a == b`, because the bound adds `Eq` (`bound_closure`). The derive and the bound
-disagree today; #918 decides one rule for both. A float field has no derived ordering, so a struct with
+`Ord` implies `Eq`, in the derive and in the bound alike (issue #918): a type that derives `Ord` also has `==` and
+`!=`, and the body of `fn f<T: Ord>(a: T, b: T)` may use `a == b` (`bound_closure`). Deriving both is allowed and
+means the same as deriving `Ord`. A float field has no derived ordering, so a struct with
 an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option` orders `None`
 before `Some` and then by payload; `Result` orders `Ok` before `Err` (its declared variant order) and then by the
 payload of the same variant. References and `List` do not support `<`.

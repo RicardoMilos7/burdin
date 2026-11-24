@@ -736,7 +736,7 @@ implementation can inherit.
 
 A generic call passes a type argument that does not meet the bound, an `impl` does not satisfy the interface's
 `requires`, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an
-operator interface (`Add`, `Neg`, `PartialEq`, `PartialOrd`, `Index`, `IndexMut`, ...) that the expression needs. The
+operator interface (`Add`, `Neg`, `Eq`, `Ord`, `Index`, `IndexMut`, ...) that the expression needs. The
 message names the missing interface or bound.
 
 <!-- error-example: E0141 -->
