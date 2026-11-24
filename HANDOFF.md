@@ -1,9 +1,23 @@
 # Handoff: where the project stands
 
-Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, and fifty-second. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
+Written at the end of the first session, updated at the end of the second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-fourth, twenty-fifth, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth, thirtieth, thirty-first, thirty-second, thirty-third, thirty-fourth, thirty-fifth, thirty-sixth, thirty-seventh, thirty-eighth, thirty-ninth, fiftieth, fifty-first, fifty-second, and fifty-third. Read `CLAUDE.md` first, then this file. Delete this file once its open items are done.
 
 ## State
 
+**Where clauses on associated types (issue #394, 2026-11-24).** A `where` predicate may bound a projection of one of
+the declaration's own parameters: `where I.Item: Eq`, `where <I as Container>.Item: Describe` (`spec/associated-types.md`,
+AT7). The predicate is a `Bound::Projected(projection, bound)` in the list of the parameter the projection starts from,
+so a body's bound environment and each instance's check see it without a second table. A projected bound is checked on
+its projection under the instance's arguments, so an unmet one is E0141 at the call; on an impl block it decides whether
+the impl applies (E0002 at a method call). `==` and `<` (`has_eq_in`, `has_ord_in`, `has_hash_in`), method calls
+(`bound_method`, `param_method_call`), and `{}` read a projection's bounds through `Globals::env_bounds_of`. The projection
+is resolved after the plain predicates, in `method_bounds` (`declare.rs`) and `impl_wheres` (`impls.rs`). Still E9000:
+a predicate on a type that is not a parameter's projection (`where i32: Eq`), a `where` clause on a non-generic impl
+block, and `Self.Item` in an interface default method (`spec/e9000-audit.md`). Tests: `tests/m21_reflect/associated_where`
+and `associated_where_errors` (run and compile-fail), and the unit test `satisfies_reads_the_projected_bounds_of_a_projection`.
+Verified on Linux x86-64 here: the full debug and release conformance runs (1356 and 1343 passing; the 5 failures are
+the `s3_http` and `s3_tls` programs that need `libssl.so`, which this WSL machine lacks), `cargo test --workspace` (944),
+clippy, fmt, and `check_e9000.py`.
 **Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
 (`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or
 enum, and the value's parameters are the declared ones, the receiver first. `p.double` written without a call, where

@@ -1,0 +1,119 @@
+//@ run
+//> true
+//> false
+//> 7
+//> num
+//> 12
+//> false
+//> num
+//> true
+//> true
+//> <7>
+
+// A `where` predicate on an associated-type projection of a type parameter (`where C.Item: Eq`, or the qualified
+// `where <C as I>.Item: Describe`) bounds the projection, not the parameter (spec/associated-types.md, AT7). A body may
+// use the projection as its bound says, and each instance checks the bound on the type its implementation binds.
+
+interface Container {
+    type Item
+    fn get(own self): Self.Item
+}
+
+struct Counter {
+    n: i32
+}
+
+Counter: Container {
+    type Item = i32
+    fn get(own self): Self.Item { self.n }
+}
+
+struct Label {
+    text: String
+}
+
+Label: Container {
+    type Item = String
+    fn get(own self): Self.Item { self.text }
+}
+
+interface Describe {
+    fn describe(own self): String
+}
+
+struct Num {
+    n: i32
+}
+
+Num: Describe {
+    fn describe(own self): String { String.from("num") }
+}
+
+struct Tagged {
+    tag: Num
+}
+
+Tagged: Container {
+    type Item = Num
+    fn get(own self): Self.Item { self.tag }
+}
+
+// The bound on the projection is `Eq`, so `==` on two projected values is allowed.
+fn same<C: Container>(own a: C, own b: C): bool where C.Item: Eq {
+    a.get() == b.get()
+}
+
+// The predicate may come before the parameter's own bound, which the projection needs.
+fn first<C>(own c: C): <C as Container>.Item where <C as Container>.Item: Copy, C: Container {
+    c.get()
+}
+
+// A method of the bound's interface is callable on the projection.
+fn show<C>(own c: C): String where C: Container, <C as Container>.Item: Describe {
+    c.get().describe()
+}
+
+// An impl block's projected predicate: `Wrapper<C>` describes itself through its projection.
+struct Wrapper<C: Container> {
+    inner: C
+}
+
+Wrapper<C>: Describe where C.Item: Describe {
+    fn describe(own self): String { self.inner.get().describe() }
+}
+
+// A method's own parameter may carry the projected predicate too.
+Counter {
+    fn matches<U: Container>(self, own u: U): bool where U.Item: Eq {
+        let v = u.get()
+        v == v
+    }
+}
+
+// `Ord` on a projection orders its values with `<`.
+fn smaller<C: Container>(own a: C, own b: C): bool where C.Item: Ord {
+    a.get() < b.get()
+}
+
+// `{}` formatting of a projection value, under a `Display` bound on it.
+fn label<C: Container>(own c: C): String where C.Item: Display {
+    format("<{}>", c.get())
+}
+
+fn total<C: Container>(own c: C): i32 where C.Item: Eq {
+    let v = c.get()
+    if v == v { 1 } else { 0 }
+}
+
+fn main() {
+    println("{}", same(Counter { n: 7 }, Counter { n: 7 }))
+    println("{}", same(Counter { n: 7 }, Counter { n: 8 }))
+    println("{}", first(Counter { n: 7 }))
+    println("{}", Wrapper { inner: Tagged { tag: Num { n: 1 } } }.describe())
+    println("{}", total(Counter { n: 3 }) + 11)
+    println("{}", same(Label { text: String.from("a") }, Label { text: String.from("b") }))
+    println("{}", show(Tagged { tag: Num { n: 2 } }))
+    println("{}", Counter { n: 4 }.matches(Label { text: String.from("x") }))
+    println("{}", smaller(Counter { n: 3 }, Counter { n: 5 }))
+    println("{}", label(Counter { n: 7 }))
+}
