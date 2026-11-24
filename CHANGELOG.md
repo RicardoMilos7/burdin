@@ -12,6 +12,13 @@ close-out checklist in `AGENTS.md`).
   calls an extension with its receiver first, when `Type` has no function or variant of that name. Two different
   extensions under one method name in one module are E0007 at the `use`, and the E0216 for an alias is gone. Tests:
   `tests/m18_extension/module_import*`, `module_reexport`, `not_imported`, `aliased_import`, `alias_*`, and `assoc_call*`.
+- Issue #930: `Option<T>.unwrap_or_default()` and `Option<Option<T>>.flatten()` are in `std`, and `List<T>.dedup_by_key`
+  removes a run of elements whose key repeats (`spec/stdlib.md`, "Option and Result combinators" and "List convenience
+  methods"). The old note that these need a limit the compiler no longer has is gone. `Option.as_ref` stays out: a view
+  of a `match` binding is copied into a slot by the code generator, so `Some(&v)` is accepted and dangles. That is a
+  compiler bug, recorded in the spec, not fixed here. Tests: `tests/m24_stdlib/option_flatten`,
+  `option_unwrap_or_default`, `option_unwrap_or_default_needs_default`, `list_dedup_by_key`, and
+  `list_dedup_by_key_needs_eq`.
 - Issue #933: a keyword can name a method declared in an `impl` block, an `interface`, or a `derive` body, so `std`
   declares the `Iterator` default method as `fn any` and the `any_item` workaround is gone (`spec/grammar.md`,
   "Keywords"; `spec/iterators.md`, IT9). The words are the ones a `.` already lets stand as names: `any`, `impl`,

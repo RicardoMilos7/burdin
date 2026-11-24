@@ -142,6 +142,42 @@ fn List<T>.dedup(mut self) where T: Eq {
     }
 }
 
+/// Whether the last element of `list` has the same key as `x`. `K` is a parameter of the caller, which names it: the
+/// checker cannot infer it from `key`'s bound alone.
+priv fn __last_key_equals<T, K: Eq, F: FnMut(&T): K>(mut key: F, list: List<T>, x: T): bool {
+    match list.last() {
+        Some(previous) => key(previous) == key(&x),
+        None => false,
+    }
+}
+
+/// Removes every element whose key equals the key of the element before it, keeping the first of each run.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(10)
+/// l.push(15)
+/// l.push(20)
+/// l.dedup_by_key(|x| *x / 10)
+/// assert_eq(l.len(), 2)
+/// assert_eq(l[1], 20)
+/// ```
+fn List<T>.dedup_by_key<K: Eq, F: FnMut(&T): K>(mut self, own key: F) {
+    let mut key = key
+    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    loop {
+        match items.pop() {
+            Some(x) => {
+                let same = __last_key_equals<T, K, F>(mut key, self, x)
+                if !same {
+                    self.push(x)
+                }
+            },
+            None => break,
+        }
+    }
+}
+
 /// Moves every element of `other` to the end of the list, in order.
 ///
 /// ```

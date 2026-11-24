@@ -61,6 +61,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 result.add_incoming(&[(&yes, head), (&bool_ty.const_zero(), body_end)]);
                 Ok(result.as_basic_value().into_int_value())
             }
+            // A list compares by length and then its elements in order (`spec/stdlib.md`, "List").
+            Ty::List(elem, alloc) => self.list_eq(l, r, elem, alloc),
             // A map compares by its entries, whatever the iteration order (`spec/stdlib.md`, "Map").
             Ty::Map(key, value, alloc) => self.map_eq(l, r, key, value, alloc),
             Ty::Range(inner, _) => {

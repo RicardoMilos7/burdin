@@ -19,6 +19,37 @@ is only the invalid-declaration error. Changed tests: `not_imported` (a module's
 is `List<T, Global>`). Not supported: the associated form with a generic type written without its arguments, which keeps
 the template error. Found, not fixed: `Counter.bump(c)` with an immutable `c` and a `mut self` impl method is accepted,
 when it should be E0113. The impl path in `assoc_call` passes no receiver place to `args`; the extension path checks it.
+**Standard-library methods behind stale limits (issue #930, 2026-11-24).** `Option.unwrap_or_default` and
+`Option<Option<T>>.flatten` are in `std/src/option.bd`, and `List.dedup_by_key` is in `std/src/list.bd`. The old "not
+provided" rationale was wrong for each: `T.default()` exists for the built-in `Default` types, and an extension receiver
+may nest a type parameter. Two facts the issue did not state: `Eq` as a bound accepts a float (floats support `==`, so
+`has_eq_in` in `crates/burdin_sema/src/types.rs` says yes), and `Option.as_ref` is still not provided because of a
+**compiler bug**. A binding from a borrowed `match` scrutinee is copied into its own slot by codegen
+(`crates/burdin_codegen/src/emit/pattern.rs`, `bind`), so `Some(&v)` returns a pointer into a dead stack slot; the
+return-origin check (`crates/burdin_check/src/origins.rs`) accepts it, and it also happens in a plain function
+(`fn f<T>(o: Option<T>): Option<&T> { match o { Some(v) => Some(&v), None => None } }` prints garbage). Fix direction: make
+a view binding alias its scrutinee part. Or-patterns bind one local from several places, so the slot would need to hold
+a pointer, and closures capturing a view binding read its slot too. Not fixed in #930. Tests:
+`tests/m24_stdlib/option_flatten`, `option_unwrap_or_default`, `option_unwrap_or_default_needs_default`,
+`list_dedup_by_key`, `list_dedup_by_key_needs_eq`. The full debug conformance run has 5 failures, all `s3_http` and
+`s3_tls` programs that fail to link with `-lssl` on this WSL machine (the same environment note as #936 below).
+**Collection equality (issue #928, 2026-11-24).** Decision: option 1 of the issue, `==` for the collections that hold
+values, not removing `Hash`. `List<T>` has `==` when `T` does (length, then the elements in order), in the codegen's
+`list_eq` beside `map_eq`, and `has_eq_in` for `Ty::List`. `PriorityHeap<T>` derives `Eq` over its sorted list.
+`Deque<T>` already had a hand-written `PartialEq` in `std` (its front/back split is not canonical, so it cannot derive
+`Eq`). Gaps, left as found: `assert_eq`, `assert_ne`, and a `T: Eq` bound reject any type whose `==` is a hand-written
+`PartialEq` impl, so `assert_eq` on a `Deque` or a `Set` is E0141. Fixing that needs a decision between `Eq` and
+`PartialEq` for those bounds. `Deque` and `PriorityHeap` have no `Hash`. Tests: `tests/m24_stdlib/list_equality`,
+`list_equality_needs_eq`, `list_keys`, `heap_equality`, `deque_equality` (run) and `interfaces_missing` (the `EqList`
+case moved to `list_equality`).
+**`send` returns a `Result` (issue #929, 2026-11-24).** `Channel<T>.send` returns `Result<(), T>`: `Ok(())` when the
+value was queued, `Err(value)` when the channel was closed (`spec/channels.md` CH3, CH5; `std/src/channel.bd`). A
+`select` send arm binds the same type; the rewrite calls `__send_outcome` for it (`burdin_syntax/src/parser/select.rs`).
+`Result<(), T>` was chosen over a `SendError<T>` struct: it keeps the value and needs no new named type. The second half
+of the issue, not losing an unchosen send arm's value, is declined: CH8 now records why the move stays eager. Tests: the
+new `s2_channels/send_result`, and `close_semantics`, `close_wakes_sender`, `stress_close_race`, and `select_send` now
+match on `Ok`/`Err`.
+
 **Keyword method names (issue #933, 2026-11-23).** A keyword can now name a method declared in an `impl` block, an
 `interface`, or a `derive` body (`spec/grammar.md`, `MemberFnSig`), so `std` declares the `Iterator` default method as
 `fn any` and `any_item` is gone (it was kept by the decision in #707). The member names are the words a `.` already

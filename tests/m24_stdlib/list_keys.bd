@@ -1,0 +1,29 @@
+//@ run
+//> 2 Some(20)
+//> 1 false
+//> true true
+
+// A list is a valid `Map` key and `Set` element, because it has `==` and `Hash` when its elements have them
+// (issue #928). A derived `Eq` and `Hash` over a list field compare and hash the list by its elements.
+
+struct Cell: Eq, Hash {
+    key: List<i32>
+    label: String
+}
+
+fn main() {
+    let mut m = Map<List<i32>, i32>.new()
+    m.insert(List<i32>.from([1, 2]), 10)
+    m.insert(List<i32>.from([1, 2]), 20)
+    m.insert(List<i32>.from([2, 1]), 30)
+    println("{m.len()} {m.get(List<i32>.from([1, 2])):?}")
+
+    let mut s = Set<List<i32>>.new()
+    s.insert(List<i32>.from([3]))
+    let added = s.insert(List<i32>.from([3]))
+    println("{s.len()} {added}")
+
+    let c = Cell { key: List<i32>.from([7]), label: String.from("x") }
+    let d = Cell { key: List<i32>.from([7]), label: String.from("x") }
+    println("{c == d} {c.hash() == d.hash()}")
+}
