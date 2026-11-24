@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// The converted `String` is a temporary, so the returned view is the same E0122 as an explicit `as_str()`.
+
+fn make(): str {
+    return String.from("x") //~ E0122
+}
+
+fn main() {}

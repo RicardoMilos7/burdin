@@ -1,0 +1,49 @@
+//@ run
+//> let abc
+//> assign xyz
+//> return abc
+//> tail abc
+//> array abc,abc
+//> tuple abc 1
+//> field abc
+//> abc
+
+// IC1 applies at every type-directed position: `let`, assignment, `return`, a function's tail, an array element,
+// a tuple element, and a struct-literal field of a generic struct. The `String` stays usable afterwards.
+
+struct Holder<T> {
+    value: T,
+}
+
+fn pick(s: String): str {
+    return s
+}
+
+fn tail(s: String): str {
+    s
+}
+
+fn main() {
+    let s = String.from("abc")
+    let a: str = s
+    println("let {a}")
+
+    let other = String.from("xyz")
+    let mut b: str = "init"
+    b = other
+    println("assign {b}")
+
+    println("return {pick(s)}")
+    println("tail {tail(s)}")
+
+    let arr: [str; 2] = [s, s]
+    println("array {arr[0]},{arr[1]}")
+
+    let pair: (str, i32) = (s, 1)
+    println("tuple {pair.0} {pair.1}")
+
+    let h: Holder<str> = Holder { value: s }
+    println("field {h.value}")
+
+    println(s)
+}

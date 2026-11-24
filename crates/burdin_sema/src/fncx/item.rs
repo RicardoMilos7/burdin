@@ -269,7 +269,15 @@ fn check_function_with(
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
     let params = cx.declare_params(f, sig);
-    let (body, body_ty) = cx.block(&f.body, Some(&ret));
+    let (mut body, mut body_ty) = cx.block(&f.body, Some(&ret));
+    // A `String` tail where the return type is `str` is borrowed, as `return` borrows it.
+    if body_ty == Ty::String
+        && ret == Ty::Str
+        && let Some(tail) = body.tail.take()
+    {
+        body.tail = Some(Box::new(cx.coerce_arg(*tail, &ret)));
+        body_ty = Ty::Str;
+    }
     // An `impl Interface` return whose type is not known has its error reported where it is found.
     let unresolved = globals.opaque_unresolved(&ret) || globals.opaque_unresolved(&body_ty);
     if !compatible(&body_ty, &ret) && !unresolved {
