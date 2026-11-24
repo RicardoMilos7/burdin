@@ -134,6 +134,21 @@ fn Option<T>.unwrap_or_else<F: FnOnce(): T>(own self, own f: F): T {
     }
 }
 
+/// The value of a `Some`, or the default value of `T` for a `None`.
+///
+/// ```
+/// let a: Option<i32> = None
+/// let b: Option<String> = Some(String.from("kept"))
+/// assert_eq(a.unwrap_or_default(), 0)
+/// assert_eq(b.unwrap_or_default(), String.from("kept"))
+/// ```
+fn Option<T>.unwrap_or_default(own self): T where T: Default {
+    match self {
+        Some(x) => x,
+        None => T.default(),
+    }
+}
+
 /// `f` applied to the value of a `Some`, or `default` for a `None`.
 ///
 /// ```
@@ -255,6 +270,21 @@ fn Option<T>.take(mut self): Option<T> {
 /// ```
 fn Option<T>.replace(mut self, own value: T): Option<T> {
     mem.replace(mut self, Some(value))
+}
+
+/// The value of the inner `Some`; a `None` at either level gives `None`.
+///
+/// ```
+/// let a: Option<Option<i32>> = Some(Some(4))
+/// let b: Option<Option<i32>> = Some(None)
+/// assert_eq(a.flatten(), Some(4))
+/// assert(b.flatten().is_none())
+/// ```
+fn Option<Option<T>>.flatten(own self): Option<T> {
+    match self {
+        Some(inner) => inner,
+        None => None,
+    }
 }
 
 // ---- Result ----

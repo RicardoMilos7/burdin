@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// The key of `dedup_by_key` is compared with `==`, so it needs a type that supports `==`; a struct that does not
+// derive `Eq` does not.
+
+struct Key {
+    a: i32,
+}
+
+fn main() {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.dedup_by_key(|x| Key { a: *x }) //~ E0141
+}

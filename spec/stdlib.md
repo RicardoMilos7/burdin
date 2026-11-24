@@ -1879,17 +1879,23 @@ the methods the compiler provides (`unwrap`, `expect`, `is_some`, `is_none`, `is
 `replace` change the receiver in place.
 
 ```
-Option<T>:     map, and_then, or_else, or, and, xor, zip, unwrap_or, unwrap_or_else, map_or, map_or_else,
+Option<T>:     map, and_then, or_else, or, and, xor, zip, unwrap_or, unwrap_or_else, unwrap_or_default, map_or, map_or_else,
                ok_or, ok_or_else, filter, is_some_and, is_none_or, take, replace
+Option<Option<T>>: flatten
 Result<T, E>:  map, map_err, and_then, or_else, unwrap_or, unwrap_or_else, map_or, ok, err, unwrap_err,
                is_ok_and, is_err_and
 ```
 
 The error-conversion helpers are `map_err` (apply a conversion to the error), `ok_or`/`ok_or_else` (an absent value
-becomes an error), `ok`/`err` (drop one side), and the `?` operator, which keeps converting through `From`. The two
-`unwrap_or_default` methods, `Option.flatten`, and `as_ref` are not provided: `T.default()` does not exist for the
-built-in types, an extension receiver may not nest a type parameter (`Option<Option<T>>`), and a view returned from
-an extension would dangle. A closure whose result mentions a type parameter that only the closure fixes
+becomes an error), `ok`/`err` (drop one side), and the `?` operator, which keeps converting through `From`. `Option<T>.unwrap_or_default()` (for a `T` that is `Default`; `T.default()` is the built-in default of `derives.md`) and
+`Option<Option<T>>.flatten()` are provided (issue #930): an extension receiver may nest a type parameter, and
+`Option<Option<T>>` is one. `Option.as_ref` is **not provided**, and the reason is a compiler bug, not a limit of
+extensions. A binding of a borrowed `match` scrutinee is a read-only place (MV8), but the code generator copies its value
+into the binding's own slot, so `Some(&v)` in `fn Option<T>.as_ref(self): Option<&T>` passes the return-origin check
+(RT2) and returns a pointer into that slot, which is dead when the function returns. A plain function with the same body,
+`fn f<T>(o: Option<T>): Option<&T> { match o { Some(v) => Some(&v), None => None } }`, returns garbage too. `as_ref`
+stays out until a view of a binding aliases the scrutinee's part; then it is the extension over `Some(v) => Some(&v)`.
+A closure whose result mentions a type parameter that only the closure fixes
 (`and_then(|x| Some(x))`, `F: FnOnce(T): Option<U>`) is typed from its body; a body that cannot say every part of the
 type by itself (`or_else(|e| Err(e.len()))`, which leaves the `Ok` type open) needs a named function or a typed
 binding.
@@ -1910,6 +1916,7 @@ fn List<T>.position<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.reverse(mut self)
 fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
+fn List<T>.dedup_by_key<K: Eq, F: FnMut(&T): K>(mut self, own key: F)   // removes a run whose key repeats
 fn List<T>.extend(mut self, own other: List<T>)             // moves the elements of `other`
 fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, iter: I) where A: Allocator   // issue #708
 fn List<T>.extend_from(mut self, other: List<T>) where T: Clone
@@ -1918,10 +1925,11 @@ fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
 
 `is_empty` is a method the compiler provides, so it exists for a list with any allocator argument, and so are
 `truncate` and `swap`; the extension list above leaves them out. `find` is the eager helper of `iterators.md` IT10
-(it clones the element). `dedup_by_key` is not provided: a key function would need its result type fixed by a bound
-the checker cannot yet match against a type parameter.
+(it clones the element). `dedup_by_key` removes an element whose key `==` the key of the element before it (issue #930).
+Its key type `K` is a parameter of the method, as `sort_by_key`'s is, so the closure's result fixes it; a key type that
+does not support `==` (a struct that does not derive `Eq`) is E0141.
 
-Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops`,
+Tests: `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_dedup_by_key`, `list_dedup_by_key_needs_eq`, `list_position`, `list_extend_resize`, `list_drops`,
 `list_swap_out_of_bounds`.
 
 ## Collecting and extending (issue #708)

@@ -1,0 +1,22 @@
+//@ run
+//> Some(4)
+//> None
+//> None
+//> Some("moved")
+//> true
+
+// `flatten` gives the inner `Some`; a `None` at either level gives `None`. A non-`Copy` payload moves out.
+
+fn main() {
+    let a: Option<Option<i32>> = Some(Some(4))
+    let b: Option<Option<i32>> = Some(None)
+    let c: Option<Option<i32>> = None
+    println("{a.flatten():?}")
+    println("{b.flatten():?}")
+    println("{c.flatten():?}")
+
+    let s: Option<Option<String>> = Some(Some(String.from("moved")))
+    let t = s.flatten()
+    println("{t:?}")
+    println("{t.is_some()}")
+}
