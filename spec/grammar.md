@@ -299,8 +299,9 @@ capability hierarchy for calling: a value of `Fn` may be used where `FnMut` or `
 where `FnOnce` is expected, never the other way (`memory-rules.md` CL5). A closure type written in a signature is
 owned; only a type parameter's `Fn` bound keeps the closure's concrete capture mode and lets a borrowing closure cross
 the call (`memory-rules.md` CL9). A non-generic function name, a built-in function name, or `Some`, `Ok`, or `Err` is an
-expression of a closure type when the context expects one (`memory-rules.md` CL11); `f(args)` calls any expression of
-a closure type, including a field, an element, or a call result.
+expression of a closure type when the context expects one (`memory-rules.md` CL11). So is a method value: `Type.name`
+of a non-generic type, and `local.name` or `self.name` written without a call (`memory-rules.md`, CL11, method values).
+`f(args)` calls any expression of a closure type, including a field, an element, or a call result.
 
 `any I` is an owned, first-class existential: a two-word box whose data is a heap allocation and whose vtable points
 at the constant table for `(T, I)`. It is stored, moved, and dropped like any other owned value, satisfies `I` and

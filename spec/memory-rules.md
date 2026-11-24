@@ -489,8 +489,19 @@ fix: `Ok` takes its error type from the expected result, and `Err` its value typ
 E0003. An argument the expected type leaves open is E0003 as well, so `xs.map(Ok)` whose result is only `U` is
 E0003: nothing in the call says what the error type is. A constructor with no expected closure type is E0003.
 
-Tests: `tests/m12_closures/` (`closure_function_value.bd`, `closure_constructor_value.bd`, and the compile-fail
-`closure_constructor_untyped.bd`, `closure_constructor_mismatch.bd`, `closure_constructor_open.bd`).
+**Method values.** `Type.name`, where `Type` is a non-generic struct or enum and `name` is one of its associated functions
+or methods, is a function value like a named function. Its parameters are the declared ones, and a method's receiver is
+its first parameter, so `Point.double` is `Fn(Point): i32`. The value forwards the receiver with the method's own
+convention (a read-only or `mut` receiver by address, an `own self` by value), as a named function does.
+`recv.name` written without a call is a method value on a bound receiver, where `recv` is a local name or `self`: the
+value is the closure `|args| recv.name(args)`, with the method's parameter types. Its captures follow CL2: a read-only
+or `mut` method borrows the receiver, an `own self` method moves it, and an owned closure type expected by the context
+moves it too. A receiver that is any other expression, and a method with type parameters of its own, are E0002; the
+message says to bind the receiver to a name or to write a closure.
+
+Tests: `tests/m12_closures/` (`closure_function_value.bd`, `closure_constructor_value.bd`, `closure_method_value.bd`,
+and the compile-fail `closure_constructor_untyped.bd`, `closure_constructor_mismatch.bd`, `closure_constructor_open.bd`,
+`closure_method_value_errors.bd`).
 
 ## 13. Scoped tasks (SK)
 

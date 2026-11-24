@@ -5,7 +5,9 @@
 
 use super::{FnCx, error_expr, mk};
 use crate::builtins::builtin_sig;
+use crate::globals::adt_key;
 use burdin_diag::{Code, Span};
+use burdin_syntax::ast;
 use burdin_tir::{self as tir, Builtin, FnSig, FuncId, LocalKind, Ty};
 use std::rc::Rc;
 
@@ -49,14 +51,6 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         }
-        if sig.has_self {
-            self.diags.error(
-                Code::UNKNOWN_NAME,
-                span,
-                "a method cannot be used as a value; write a closure that calls it instead",
-            );
-            return error_expr(span);
-        }
         if sig.ret.is_second_class() {
             self.diags.error(
                 Code::CLOSURE_ESCAPES,
@@ -68,7 +62,8 @@ impl FnCx<'_> {
         }
         let fn_sig =
             FnSig { params: sig.params.iter().map(|p| p.ty.clone()).collect(), ret: Box::new(sig.ret.clone()) };
-        let mutable: Vec<bool> = sig.params.iter().map(|p| p.mut_param).collect();
+        // A parameter the callee borrows exclusively (`mut x`, `mut self`) needs a mutable argument local.
+        let mutable: Vec<bool> = sig.params.iter().map(|p| p.mut_param || (p.by_ref && p.exclusive)).collect();
         let ret = sig.ret.clone();
         self.value_closure(fn_sig, &mutable, span, |args| mk(tir::ExprKind::Call(f, args), ret, span))
     }
@@ -164,6 +159,103 @@ impl FnCx<'_> {
             format!("cannot tell the type of `{name}` used as a value; write the closure type, as in `{example}`"),
         );
         error_expr(span)
+    }
+
+    /// The user method or associated function `name` of the struct or enum `ty`, if there is one. The member-access
+    /// rules (`priv`) apply to a method used as a value as they do to a call.
+    pub(super) fn user_method(&mut self, ty: &Ty, name: &ast::Ident) -> Option<FuncId> {
+        let key = adt_key(ty)?;
+        let f = *self.globals.methods.get(&(key, name.name.clone()))?;
+        self.check_member_access(ty, key, name);
+        Some(f)
+    }
+
+    /// The type of a method value's receiver when it is a name: a local of this function, an enclosing function's
+    /// local seen from a closure body, or `self`. Any other receiver expression has no name to bind a method value to,
+    /// so it gives `None`.
+    pub(super) fn local_receiver_ty(&self, base: &ast::Expr) -> Option<Ty> {
+        match &base.kind {
+            ast::ExprKind::Name { name, args } if args.is_empty() => match self.lookup(&name.name) {
+                Some(local) => Some(self.locals[local.0].ty.clone()),
+                None => self.outer_local_ty(&name.name),
+            },
+            ast::ExprKind::SelfValue => match self.self_local {
+                Some(local) => Some(self.locals[local.0].ty.clone()),
+                None => self.outer_local_ty("self"),
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether the struct `ty` has a field named `name`. A field of that name wins over a method of the same name.
+    pub(super) fn has_field(&self, ty: &Ty, name: &ast::Ident) -> bool {
+        matches!(ty, Ty::Struct(a) if self.globals.structs[a.id].fields.iter().any(|f| f.name == name.name))
+    }
+
+    /// `Point.name` read without a call, where `name` is a user method or associated function with no type
+    /// parameters of its own: a function value whose parameters are the declared ones (CL11).
+    pub(super) fn method_function_value(&mut self, f: FuncId, name: &ast::Ident, span: Span) -> tir::Expr {
+        if self.globals.method_templates.contains_key(&f) {
+            self.diags.error(
+                Code::UNKNOWN_NAME,
+                name.span,
+                format!(
+                    "`{}` has type parameters of its own, so it cannot be a value; write a closure that calls it",
+                    name.name
+                ),
+            );
+            return error_expr(span);
+        }
+        self.function_value(f, span)
+    }
+
+    /// `recv.name` read without a call, where `recv` is a local and `name` is one of its methods: the closure
+    /// `|args| recv.name(args)`, typed by the method's declared parameters (CL11). The closure borrows the receiver
+    /// the way any closure does (CL2): an `own self` method moves it, and so does an owned closure type expected by
+    /// the context. The closure is checked as written, so its captures and its kind come from its body.
+    pub(super) fn bound_method_value(
+        &mut self,
+        recv: &ast::Expr,
+        name: &ast::Ident,
+        f: FuncId,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        if self.globals.method_templates.contains_key(&f) {
+            return self.method_function_value(f, name, span);
+        }
+        let sig = self.globals.sigs[f.0].clone();
+        if !sig.has_self {
+            self.diags.error(
+                Code::UNKNOWN_NAME,
+                name.span,
+                format!("`{}` has no `self` parameter, so it is not a method value; write a closure", name.name),
+            );
+            return error_expr(span);
+        }
+        let owned = sig.params[0].own || matches!(expect, Some(Ty::Fn { borrowed: false, .. }));
+        let rest = &sig.params[1..];
+        let params: Vec<ast::ClosureParam> = (0..rest.len())
+            .map(|i| ast::ClosureParam { name: ast::Ident { name: format!("arg{i}"), span }, ty: None })
+            .collect();
+        let args: Vec<ast::Arg> = params
+            .iter()
+            .map(|p| ast::Arg {
+                name: None,
+                mut_marker: false,
+                mut_span: None,
+                expr: ast::Expr { kind: ast::ExprKind::Name { name: p.name.clone(), args: Vec::new() }, span },
+            })
+            .collect();
+        let callee = ast::Expr { kind: ast::ExprKind::Field(Box::new(recv.clone()), name.clone()), span };
+        let body = ast::Expr { kind: ast::ExprKind::Call(Box::new(callee), args), span };
+        let expected = Ty::Fn {
+            sig: Rc::new(FnSig { params: rest.iter().map(|p| p.ty.clone()).collect(), ret: Box::new(sig.ret.clone()) }),
+            kind: tir::FnKind::FnOnce,
+            borrowed: !owned,
+            send: tir::FnSend::unknown(),
+        };
+        self.closure(&params, None, &body, Some(&expected), span)
     }
 
     /// A type parameter the call has not bound yet (`U` in `fn map<U, F: Fn(T): U>`), as opposed to one of this

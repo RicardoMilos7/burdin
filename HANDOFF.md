@@ -4,6 +4,15 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
+(`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or
+enum, and the value's parameters are the declared ones, the receiver first. `p.double` written without a call, where
+`p` is a local or `self`, is the closure `|args| p.double(args)`: its captures follow CL2, so a read-only or `mut`
+method borrows `p` and an `own self` method moves it. Limits, kept as E0002 with a message: the receiver must be a local
+name (`make().double` and `self.inner.double` are not), and a method with type parameters of its own is not a value.
+An enclosing function's local is a receiver inside a closure body too. Built-in
+methods (`s.len`) and extension methods (EX8) are still not values. Tests: `tests/m12_closures/closure_method_value` (run)
+and `closure_method_value_errors` (compile-fail).
 **Prelude constructors as function values (issue #931, 2026-11-24).** Decision: one rule for `Some`, `Ok`, and `Err`,
 not a special case for `Some`. The expected closure type fixes the constructor's type arguments: its one parameter is
 the payload, and the expected result gives the other argument (`Ok`'s error type, `Err`'s value type). `Some` builds

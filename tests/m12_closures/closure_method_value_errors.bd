@@ -1,0 +1,31 @@
+//@ compile-fail
+
+// A bound method value needs a local receiver: the closure names it. Any other receiver is E0002, and so is a method
+// with type parameters of its own, which only a closure can call with its arguments. A `mut self` method on an
+// immutable local is E0113, as it is in a closure.
+struct Point {
+    x: i32,
+}
+
+Point {
+    fn new(x: i32): Point {
+        Point { x: x }
+    }
+    fn double(self): i32 {
+        self.x * 2
+    }
+    fn bump(mut self) {
+        self.x = self.x + 1
+    }
+    fn tag<T>(self, t: T): i32 {
+        self.x
+    }
+}
+
+fn main() {
+    let a = Point.new(1).double //~ E0002
+    let b = Point.new(2)
+    let c = b.tag //~ E0002
+    let d = Point.new(3)
+    let e = d.bump //~ E0113
+}

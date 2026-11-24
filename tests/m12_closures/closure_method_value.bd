@@ -1,0 +1,75 @@
+//@ run
+//> 3
+//> 10
+//> 12
+//> 8
+//> 4
+//> 3
+//> 7
+//> 8
+
+// A method value (CL11). `Point.new` and `Point.double` are function values: the receiver of a method is its first
+// parameter. `p.scale` and `p.double` are closures over a local receiver, and they follow the closure rules: a
+// read-only or `mut` method borrows the receiver, and an `own self` method moves it.
+struct Point {
+    x: i32,
+}
+
+Point {
+    fn new(x: i32): Point {
+        Point { x: x }
+    }
+    fn double(self): i32 {
+        self.x * 2
+    }
+    fn scale(self, k: i32): i32 {
+        self.x * k
+    }
+    fn bump(mut self) {
+        self.x = self.x + 1
+    }
+    fn take(own self): i32 {
+        self.x
+    }
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+
+    // An associated function with no `self` is a function value.
+    let made = xs.iter().map(Point.new).to_list()
+    println(made.len().to_string())
+
+    // A method is a function value whose first parameter is the receiver.
+    let double: Fn(Point): i32 = Point.double
+    println(double(Point { x: 5 }).to_string())
+
+    // A bound method with a parameter takes the method's argument types.
+    let p = Point { x: 4 }
+    let scaled = xs.iter().map(p.scale).to_list()
+    println(scaled[2].to_string())
+
+    // A read-only method borrows the receiver, so `p` is still usable afterwards.
+    let d = p.double
+    println(d().to_string())
+    println(p.x.to_string())
+
+    // A `mut self` method changes the receiver, which the closure borrows mutably.
+    let mut q = Point { x: 1 }
+    let mut bump = q.bump
+    bump()
+    bump()
+    println(q.x.to_string())
+
+    // An `own self` method moves the receiver into the closure.
+    let r = Point { x: 7 }
+    let take = r.take
+    println(take().to_string())
+
+    // Inside a closure, an enclosing local is the receiver too: `p` is captured by the closure like any other name.
+    let inner = || {
+        let g = p.double
+        g()
+    }
+    println(inner().to_string())
+}
