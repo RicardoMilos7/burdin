@@ -1,0 +1,20 @@
+//@ run
+//> 1 2
+//> 0 2
+
+// The comptime interpreter reads the same tree as the code generator (SU2 and SU3): a base that is a constant is a
+// value, and the struct update is evaluated while compiling.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+const ORIGIN: Pair = Pair { left: 0, right: 2 }
+
+fn main() {
+    let c = comptime Pair { left: 1, ..ORIGIN }
+    println("{c.left} {c.right}")
+    let d = Pair { left: 0, ..ORIGIN }
+    println("{d.left} {d.right}")
+}

@@ -3,7 +3,7 @@
 use super::{PResult, Parser, Restriction};
 use crate::ast::*;
 use crate::token::TokenKind;
-use burdin_diag::Span;
+use burdin_diag::{Code, Span};
 
 impl Parser<'_> {
     pub fn expr(&mut self) -> PResult<Expr> {
@@ -532,21 +532,47 @@ impl Parser<'_> {
         self.at(&TokenKind::LBrace) && !self.nl() && r == Restriction::None && looks_like_struct_literal(self)
     }
 
+    /// `Path { field: value, ..base }`. The base is the last item and comes once (`spec/struct-update.md`, SU1): a
+    /// second base is E0013, and a field or a separator after the base is E0014. Both are reported and the literal
+    /// still parses, so the rest of the file is checked.
     pub(super) fn struct_literal(&mut self, path: Vec<Ident>, start: Span) -> PResult<Expr> {
         self.open(&TokenKind::LBrace, true)?;
         let mut fields = Vec::new();
+        let mut base: Option<Box<Expr>> = None;
         if !self.at(&TokenKind::RBrace) {
             loop {
-                let name = self.ident("a field name")?;
-                let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
-                fields.push(FieldInit { name, value });
+                if self.at(&TokenKind::DotDot) {
+                    let dots = self.span();
+                    self.bump();
+                    let value = self.expr()?;
+                    if base.is_some() {
+                        self.diags.error(Code::BASE_REPEATED, dots, "a struct literal may have only one `..base`");
+                    } else {
+                        base = Some(Box::new(value));
+                    }
+                } else {
+                    let name = self.ident("a field name")?;
+                    let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
+                    if base.is_some() {
+                        self.diags.error(
+                            Code::BASE_POSITION,
+                            name.span,
+                            "`..base` must be the last item of a struct literal",
+                        );
+                    }
+                    fields.push(FieldInit { name, value });
+                }
+                if base.is_some() && self.at(&TokenKind::Comma) && *self.nth_kind(1) == TokenKind::RBrace {
+                    let comma = self.span();
+                    self.diags.error(Code::BASE_POSITION, comma, "no separator may follow `..base`");
+                }
                 if !self.brace_list_sep("field")? {
                     break;
                 }
             }
         }
         let close = self.close(&TokenKind::RBrace)?;
-        Ok(Expr { kind: ExprKind::StructLit(path, fields), span: start.to(close.span) })
+        Ok(Expr { kind: ExprKind::StructLit(path, fields, base), span: start.to(close.span) })
     }
 
     pub(super) fn match_expr(&mut self) -> PResult<Expr> {

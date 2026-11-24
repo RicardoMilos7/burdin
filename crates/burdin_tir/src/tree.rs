@@ -451,4 +451,12 @@ pub enum Pat {
     Product(Vec<Pat>),
     /// A variant of an enum: its index and one pattern per field, in declaration order.
     Variant(usize, Vec<Pat>),
+    /// `[prefix, rest, suffix]` on an array or a slice (`spec/array-patterns.md`). `rest` is `None` when the pattern
+    /// has no rest element, which then names every element of an array and matches exactly its length on a slice.
+    /// Otherwise it is the pattern of the rest: a binding of the elements the rest stands for, or a wildcard.
+    Slice {
+        prefix: Vec<Pat>,
+        rest: Option<Box<Pat>>,
+        suffix: Vec<Pat>,
+    },
 }

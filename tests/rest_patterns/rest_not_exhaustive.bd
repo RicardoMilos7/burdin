@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// A `..` in one arm still leaves the other variants uncovered (spec/rest-patterns.md, RP5).
+
+enum Shape {
+    Rect { w: i32, h: i32 }
+    Circle(i32)
+    Dot
+}
+
+fn size(s: Shape): i32 {
+    match s { //~ E0006
+        Shape.Rect { w, .. } => w
+        Shape.Circle(..) => 1
+    }
+}
+
+fn main() {
+    println("{size(Shape.Dot)}")
+}

@@ -184,7 +184,7 @@ impl Resolver {
             PatternKind::Tuple(ps) | PatternKind::Or(ps) | PatternKind::TupleStruct(_, ps) => {
                 ps.iter().for_each(|p| self.bind_into(p, seen));
             }
-            PatternKind::Struct(_, fields) => {
+            PatternKind::Struct(_, fields, _) => {
                 for f in fields {
                     match &f.pattern {
                         Some(p) => self.bind_into(p, seen),
@@ -287,12 +287,15 @@ impl Visit for Resolver {
                 self.expr(target);
                 self.expr(value);
             }
-            ExprKind::StructLit(_, fields) => {
+            ExprKind::StructLit(_, fields, base) => {
                 for f in fields {
                     match &f.value {
                         Some(v) => self.expr(v),
                         None => self.use_name(&f.name.name),
                     }
+                }
+                if let Some(b) = base {
+                    self.expr(b);
                 }
             }
             ExprKind::Closure { params, ret, body } => {

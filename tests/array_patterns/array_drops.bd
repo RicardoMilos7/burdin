@@ -1,0 +1,25 @@
+//@ run
+//> got 1
+//> drop 1
+//> drop 2
+//> drop 3
+
+// The elements a pattern does not move stay in the array and drop with it (AP10). `first` takes element 0; at the end
+// of `main`, `first` drops, and then the array drops its remaining elements in index order.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        let id = self.id
+        println("drop {id}")
+    }
+}
+
+fn main() {
+    let items = [Noisy { id: 1 }, Noisy { id: 2 }, Noisy { id: 3 }]
+    let [first, ..] = items
+    println("got {first.id}")
+}

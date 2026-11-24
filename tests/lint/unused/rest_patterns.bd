@@ -1,0 +1,22 @@
+// A `..` in a pattern binds nothing and names no variable, and a `..base` in a struct literal uses its base. Neither
+// adds an unused-variable report, so every binding here is used and nothing is reported (spec/rest-patterns.md,
+// RP6; spec/struct-update.md, SU2).
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let Pair { .. } = p
+    let (first, ..) = (1, 2, 3)
+    println("{first}")
+    let Pair { left, .. } = p
+    println("{left}")
+    let q = Pair { left: 5, ..p }
+    println("{q.left} {q.right}")
+    match p {
+        Pair { right, .. } => println("{right}")
+    }
+}

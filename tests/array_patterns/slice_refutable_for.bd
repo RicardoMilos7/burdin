@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The items of an array of slices are slices, whose length is not known, so a `for` pattern that names two of them
+// is refutable and is E0006 (AP7).
+
+fn show(rows: [[i32]; 1]) {
+    for [a, b] in rows { //~ E0006
+        println("{a} {b}")
+    }
+}
+
+fn main() {
+    let arr = [1, 2]
+    show([arr[0..2]])
+}

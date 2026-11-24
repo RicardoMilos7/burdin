@@ -187,6 +187,21 @@ impl Code {
     pub const LITERAL_RANGE: Code = Code("E0008");
     /// A declaration that depends on itself: a constant, a type alias, or a type that contains itself.
     pub const CYCLIC_DECLARATION: Code = Code("E0009");
+    /// A second `..` in one pattern (`spec/rest-patterns.md`, RP3).
+    pub const REST_REPEATED: Code = Code("E0010");
+    /// A `..` in a pattern that stands for no element or field (RP4).
+    pub const REST_IGNORES_NOTHING: Code = Code("E0011");
+    /// A `..` before a field, or a field after a `..`, in a struct pattern (RP3).
+    pub const REST_POSITION: Code = Code("E0012");
+    /// A second `..base` in one struct literal (`spec/struct-update.md`, SU1).
+    pub const BASE_REPEATED: Code = Code("E0013");
+    /// A `..base` that is followed by a field or a separator (SU1).
+    pub const BASE_POSITION: Code = Code("E0014");
+    /// A `..base` on a struct-like enum variant (SU7).
+    pub const BASE_VARIANT: Code = Code("E0015");
+    /// A `..name` in a pattern that is not an array or slice pattern: a tuple has no rest binding (`spec/array-patterns.md`,
+    /// AP6).
+    pub const NAMED_REST: Code = Code("E0016");
     pub const MOVED: Code = Code("E0100");
     pub const MOVE_FROM_BORROW: Code = Code("E0101");
     pub const PARTIAL_MOVE_FROM_DROP: Code = Code("E0103");

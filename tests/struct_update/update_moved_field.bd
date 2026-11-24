@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The base's `host` was taken (moved) by `q`, so using `p.host` afterwards is E0100 (SU4).
+
+struct Config {
+    host: String
+    port: i32
+}
+
+fn main() {
+    let p = Config { host: String.from("a"), port: 1 }
+    let q = Config { port: 2, ..p }
+    println("{p.host}") //~ E0100
+    println("{q.host}")
+}

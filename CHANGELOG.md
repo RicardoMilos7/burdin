@@ -6,6 +6,22 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #486: array and slice patterns, `let [a, b] = arr` and `match names { [first, ..rest] => ... }`, on a fixed-size
+  array `[T; n]` and on a slice view `[T]` (`spec/array-patterns.md`, AP1-AP12). `..` or `..name` stands for the elements
+  the pattern does not name; `..name` binds an array on an array and a view on a slice. A slice pattern is refutable
+  unless it is `[..]` or `[..name]`, and a `match` over slices is exhaustive over every length. An owned array moves only
+  the elements it binds, by constant index; a slice's elements are views. A named rest in a tuple is E0016. Tests:
+  `tests/array_patterns/`.
+- Issue #994: struct update syntax, `Point { x: 1, ..base }`, sets the named fields and takes the others from `base`,
+  which must have the literal's type and come last (`spec/struct-update.md`, SU1-SU10). A place base gives its taken
+  fields as partial moves; a temporary base is held for the statement. A `Drop` type may be updated only when every
+  taken field is `Copy`; an enum variant has no update form (E0015). Tests: `tests/struct_update/`.
+- Issue #993: `..` in a tuple, tuple-variant, or struct pattern stands for the parts the pattern does not name
+  (`spec/rest-patterns.md`, RP1-RP7). The ignored parts stay where they were and drop with their owner. A `..` that
+  stands for nothing is E0011, a second one E0010, and a struct pattern's `..` out of place E0012. Slice and array rest
+  patterns are in #486. Tests: `tests/rest_patterns/`.
+- Fixed with #993: a destructuring `let` of a place moved the whole place, and the untouched parts of a temporary
+  destructured by `let` were never dropped. Both now follow the `match` rules (MV8, DR5).
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`

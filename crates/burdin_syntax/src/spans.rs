@@ -274,20 +274,30 @@ impl Mapper<'_> {
     fn pat(&mut self, p: &mut Pattern) {
         match &mut p.kind {
             PatternKind::Wild | PatternKind::Lit(_) | PatternKind::Range(..) => {}
+            PatternKind::Rest(name) => {
+                if let Some(name) = name {
+                    self.ident(name);
+                }
+            }
             PatternKind::Binding { name, .. } => self.ident(name),
-            PatternKind::Tuple(ps) | PatternKind::Or(ps) => ps.iter_mut().for_each(|x| self.pat(x)),
+            PatternKind::Tuple(ps) | PatternKind::Or(ps) | PatternKind::Slice(ps) => {
+                ps.iter_mut().for_each(|x| self.pat(x))
+            }
             PatternKind::Path(path) => self.idents(path),
             PatternKind::TupleStruct(path, ps) => {
                 self.idents(path);
                 ps.iter_mut().for_each(|x| self.pat(x));
             }
-            PatternKind::Struct(path, fields) => {
+            PatternKind::Struct(path, fields, rest) => {
                 self.idents(path);
                 for fp in fields {
                     self.ident(&mut fp.name);
                     if let Some(x) = &mut fp.pattern {
                         self.pat(x);
                     }
+                }
+                if let Some(span) = rest {
+                    (self.f)(span);
                 }
             }
             PatternKind::At(name, inner) => {
@@ -438,13 +448,16 @@ impl Mapper<'_> {
                 }
                 self.expr(body);
             }
-            ExprKind::StructLit(path, fields) => {
+            ExprKind::StructLit(path, fields, base) => {
                 self.idents(path);
                 for fi in fields {
                     self.ident(&mut fi.name);
                     if let Some(v) = &mut fi.value {
                         self.expr(v);
                     }
+                }
+                if let Some(b) = base {
+                    self.expr(b);
                 }
             }
             ExprKind::IfLet { pattern, scrutinee, then_block, else_expr } => {

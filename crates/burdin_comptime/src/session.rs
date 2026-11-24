@@ -118,6 +118,11 @@ fn pattern_ids(pat: &Pat, out: &mut Vec<LocalId>) {
                 pattern_ids(sub, out);
             }
         }
+        Pat::Slice { prefix, rest, suffix } => {
+            for sub in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                pattern_ids(sub, out);
+            }
+        }
         Pat::Or(alts) => {
             for alt in alts {
                 pattern_ids(alt, out);

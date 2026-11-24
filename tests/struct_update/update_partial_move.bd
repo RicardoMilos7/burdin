@@ -1,0 +1,21 @@
+//@ run
+//> b.example 1 t
+//> a.example
+//> 1
+
+// A field taken from the base is moved out of a non-Copy place (SU4), so the base is partly moved; a field the literal
+// names is not read from the base, so the base keeps it.
+
+struct Config {
+    host: String
+    port: i32
+    tags: String
+}
+
+fn main() {
+    let p = Config { host: String.from("a.example"), port: 1, tags: String.from("t") }
+    let q = Config { host: String.from("b.example"), ..p }
+    println("{q.host} {q.port} {q.tags}")
+    println("{p.host}")
+    println("{p.port}")
+}

@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// of `x.to_string()`).
 enum Value<'a> {
     Ast(&'a ast::Expr),
-    Typed(tir::Expr),
+    Typed(Box<tir::Expr>),
 }
 
 enum Piece<'a> {
@@ -97,7 +97,7 @@ impl FnCx<'_> {
     /// `x.to_string()` for a value whose type implements `Display`.
     pub(super) fn display_to_string(&mut self, recv: tir::Expr, span: Span) -> tir::Expr {
         let spec = ast::FormatSpec::plain(span);
-        let pieces = vec![Piece::value(Value::Typed(recv), spec, span)];
+        let pieces = vec![Piece::value(Value::Typed(Box::new(recv)), spec, span)];
         self.format_pieces(pieces, Vec::new(), span)
     }
 
@@ -160,14 +160,14 @@ impl FnCx<'_> {
                         Value::Ast(arg)
                     } else {
                         match shared.get(&index) {
-                            Some(local) => Value::Typed(local.clone()),
+                            Some(local) => Value::Typed(Box::new(local.clone())),
                             None => {
                                 let value = self.check_shared(index, arg, hole.span);
                                 match value {
                                     Some((local, stmt)) => {
                                         shared.insert(index, local.clone());
                                         prelude.push(stmt);
-                                        Value::Typed(local)
+                                        Value::Typed(Box::new(local))
                                     }
                                     None => {
                                         broken.push(index);
@@ -271,7 +271,7 @@ impl FnCx<'_> {
                     let PieceValue { value, spec, span: hole } = *piece;
                     let e = match value {
                         Value::Ast(a) => self.expr(a, None),
-                        Value::Typed(t) => t,
+                        Value::Typed(t) => *t,
                     };
                     if e.ty == Ty::Error {
                         continue;

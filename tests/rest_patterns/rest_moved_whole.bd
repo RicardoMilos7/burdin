@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A `..` leaves the parts it stands for in the scrutinee, so the bound part is moved out and the whole tuple is
+// partly moved: using it as a whole is E0100 (spec/memory-rules.md, MV5 and MV8).
+
+fn main() {
+    let pair = (String.from("a"), 2)
+    let (s, ..) = pair
+    let whole = pair //~ E0100
+    println("{s} {whole.1}")
+}

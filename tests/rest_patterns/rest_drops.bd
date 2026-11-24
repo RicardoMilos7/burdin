@@ -1,0 +1,62 @@
+//@ run
+//> bound a 1
+//> drop 1
+//> after block
+//> drop 3
+//> drop 13
+//> after temp
+//> drop 4
+//> kept b 14
+//> age 30 name Ann
+//> drop 14
+//> drop 2
+
+// The parts a `..` stands for stay where they were (spec/rest-patterns.md, RP2): an owned place keeps them and drops
+// them with itself (DR7), and a temporary drops them at the end of its statement (DR5).
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        let id = self.id
+        println("drop {id}")
+    }
+}
+
+// Pair has no Drop of its own, so a field can be moved out of it.
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+struct Named {
+    name: String
+    age: i32
+}
+
+fn make_pair(id: i32): Pair {
+    Pair { a: Noisy { id }, b: Noisy { id: id + 10 } }
+}
+
+fn main() {
+    let p = Pair { a: Noisy { id: 1 }, b: Noisy { id: 2 } }
+    {
+        let Pair { a, .. } = p
+        println("bound a {a.id}")
+    }
+    println("after block")
+
+    let Pair { .. } = make_pair(3)
+    println("after temp")
+
+    let Pair { b, .. } = make_pair(4)
+    println("kept b {b.id}")
+
+    // Only the Copy field is bound, so the String stays in `n` and `n.name` is still usable.
+    let n = Named { name: String.from("Ann"), age: 30 }
+    let Named { age, .. } = n
+    println("age {age} name {n.name}")
+    // end of main: `b` drops (declared last), then the remaining field p.b
+}

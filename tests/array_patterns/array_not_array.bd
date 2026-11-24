@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// An array pattern matches an array or a slice and nothing else: an integer, and a reference to an array, are E0003
+// (AP2). The reference is not looked through.
+
+fn main() {
+    let arr = [1, 2]
+    let [a] = 5 //~ E0003
+    let [b] = &arr //~ E0003
+}

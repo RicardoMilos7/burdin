@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A slice match must cover every length. `[x]` and `[x, y, ..]` leave the empty slice out (AP8), and the match is
+// reported at its own line.
+
+fn show(xs: [i32]) {
+    match xs { //~ E0006
+        [x] => println("one {x}")
+        [x, y, ..] => println("two {x} {y}")
+    }
+}
+
+fn main() {
+    let arr = [1, 2]
+    show(arr[0..2])
+}

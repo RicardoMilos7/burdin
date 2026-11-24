@@ -350,6 +350,11 @@ impl<'a> Analyzer<'a> {
                     self.bind_pattern(sub, origin, allow_temp, span);
                 }
             }
+            Pat::Slice { prefix, rest, suffix } => {
+                for sub in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                    self.bind_pattern(sub, origin, allow_temp, span);
+                }
+            }
         }
     }
 

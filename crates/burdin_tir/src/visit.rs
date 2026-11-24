@@ -289,6 +289,13 @@ pub fn pat_locals(p: &Pat, out: &mut Vec<crate::LocalId>) {
         }
         Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pat_locals(inner, out),
         Pat::Or(ps) | Pat::Product(ps) | Pat::Variant(_, ps) => ps.iter().for_each(|q| pat_locals(q, out)),
+        Pat::Slice { prefix, rest, suffix } => {
+            prefix.iter().for_each(|q| pat_locals(q, out));
+            if let Some(rest) = rest {
+                pat_locals(rest, out);
+            }
+            suffix.iter().for_each(|q| pat_locals(q, out));
+        }
         Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
     }
 }

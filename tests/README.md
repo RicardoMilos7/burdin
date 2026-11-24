@@ -228,6 +228,13 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0007 | A name is declared or imported more than once (type, interface, function, constant, test, type parameter, field, variant, member, or import); a loop label that repeats the label of an enclosing loop |
 | E0008 | Literal out of range for its type |
 | E0009 | A declaration depends on itself: a constant (also through the calls of its compile-time evaluation), a type alias, or a type that contains itself |
+| E0010 | A second `..` in one pattern: a tuple, tuple-variant, or struct pattern (`spec/rest-patterns.md`, RP3) |
+| E0011 | A `..` in a pattern that stands for no element or field, so it ignores nothing (RP4) |
+| E0012 | In a struct pattern, a `..` before a field, or a field after a `..` (RP3) |
+| E0013 | A second `..base` in one struct literal (`spec/struct-update.md`, SU1) |
+| E0014 | `..base` in a struct literal followed by a field or a separator, so it is not the last item (SU1) |
+| E0015 | `..base` on a struct-like enum variant: struct update is for structs only (SU7) |
+| E0016 | A `..name` in a pattern that is not an array or slice pattern: a tuple has no rest binding (`spec/array-patterns.md`, AP6) |
 | E0100 | Use of a moved or possibly moved value |
 | E0101 | Move out of borrowed content (for example returning a read-only parameter by value) |
 | E0103 | Partial move out of a type that implements `Drop` |
@@ -634,6 +641,28 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     and so on), with no interface of its own; a missing one is E0141, and `<<=`/`>>=` on a user type are E0003. The
     place is evaluated twice there, a known gap (CA5). Rules CA1-CA6 in `spec/compound-assignment.md`;
     `compound_assign/`, `fmt/compound_assign`, and `m19_operators/compound_assignment`.
+36. **Rest patterns.** `..` in a tuple or tuple-variant pattern stands for the elements it does not name, anywhere in
+    the list, at most once; in a struct pattern it is last and stands for the fields it does not name. The parts it
+    stands for are wildcards: they bind nothing, move nothing, and stay in an owned scrutinee (dropped with it), and
+    `..` never changes exhaustiveness. A `..` that stands for nothing is E0011, a second one is E0010, and a struct
+    pattern's `..` out of place is E0012. `Pair { .. }` and `(..)` are accepted and bind nothing. A struct pattern
+    without `..` may leave fields out, as before. Rules RP1-RP7 in `spec/rest-patterns.md`; `rest_patterns/`.
+    Array and slice patterns, with their own rest forms, are decision 38.
+37. **Struct update.** `Pair { left: 1, ..base }` sets the named fields and takes every other field from `base`, which
+    must have the literal's type exactly. The named values are evaluated first, in source order, then the base. A
+    base that is a place gives up only the non-`Copy` fields it takes (a partial move); a temporary base is held by
+    the literal and its untaken fields drop with it. A `Drop` type may be a base, but a non-`Copy` field may not be
+    taken from it (E0103). The base is the last item, once (E0013, E0014), and a variant's fields cannot be taken from
+    one (E0015). Rules SU1-SU10 in `spec/struct-update.md`; `struct_update/`, with a two-package fixture for privacy.
+38. **Array and slice patterns.** `[p, ..]` destructures a fixed-size array `[T; n]` or a slice view `[T]`, in `let`,
+    `match`, `if let`, `while let`, `for`, and closure parameters. A `..` or `..name` inside the brackets stands for the
+    elements the pattern does not name, as a tuple's rest does; `..name` binds an array of those elements on an array
+    and a view `[T]` of them on a slice (E0016 for a named rest anywhere else). A pattern on an array names its length
+    (E0003 otherwise, and E0011 and E0010 for the rest). A slice pattern is refutable unless it is `[..]` or `[..name]`,
+    and a `match` over slices is exhaustive when every length is covered. A pattern on an owned array moves only the
+    elements it binds, by constant index; a pattern on a slice takes views, so it never moves out of one. The choices
+    are rules AP1-AP12 in `spec/array-patterns.md`; `array_patterns/`, with the compile-fail codes E0003, E0006,
+    E0010, E0011, and E0016.
 
 ## Review of the expected outputs
 

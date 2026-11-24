@@ -634,6 +634,22 @@ fn destructure(pat: &Pat, v: &Value, out: &mut Vec<(LocalId, Value)>) {
                 destructure(a, v, out);
             }
         }
+        Pat::Slice { prefix, rest, suffix } => {
+            if let Some(vs) = interp::sequence(v) {
+                let n = vs.len();
+                for (p, x) in prefix.iter().zip(vs) {
+                    destructure(p, x, out);
+                }
+                if let Some(rest) = rest
+                    && let Pat::Binding(id, _) = &**rest
+                {
+                    out.push((*id, interp::middle(v, prefix.len(), n - suffix.len())));
+                }
+                for (s, x) in suffix.iter().zip(&vs[n - suffix.len()..]) {
+                    destructure(s, x, out);
+                }
+            }
+        }
         _ => {}
     }
 }

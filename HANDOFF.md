@@ -2252,6 +2252,65 @@ Open:
 - **`fn main(): Result<(), IoError>` (a `Result` whose error is not `Error`) fails in the wrapper** with E0002 (no
   `print_trace` on `IoError`), before and after this change. Aliases behave the same way; the wrapper only supports `Result<T>`.
 
+## Session: rest patterns, struct update, and array patterns (issues #993, #994, #486)
+
+Decided first: `spec/rest-patterns.md` (RP1-RP7) and `spec/struct-update.md` (SU1-SU10), with decisions 36 and 37 in
+`tests/README.md`. Rest patterns desugar to wildcards in sema (`fncx/pattern.rs`), so the checks, codegen, and comptime
+see no rest form. Struct update lowers in `fncx/aggregate.rs` (`struct_update`) to a TIR struct literal whose fields
+read the base: a place base gives partial moves, a temporary base is held in a compiler-made `Block` local (SU5).
+Diagnostics E0010-E0015 are registered and documented in `docs/error-codes.md`. Tests: `tests/rest_patterns/` (10
+programs), `tests/struct_update/` (12 programs and a private-package fixture),
+`tests/fmt/rest_update`, and `tests/lint/unused/rest_patterns.bd` (no report on `..`). CI registers both folders.
+
+Array and slice patterns (#486) are decided in `spec/array-patterns.md` (AP1-AP12), with decision 38 in `tests/README.md`
+and grammar rule 7.2. The parser reads `[...]` as `PatternKind::Slice` with `..` or `..name` as `PatternKind::Rest`.
+Sema types the pattern (`fncx/pattern.rs`, `slice_pattern`) and lowers it to `Pat::Slice { prefix, rest, suffix }`,
+which the checks, codegen, and comptime read. Exhaustiveness (`exhaust.rs`) checks each length of a slice: lengths
+0 through the longest named one plus one, so a rest arm covers every longer length. The only new code is E0016 (a named
+rest outside an array or slice). Tests: `tests/array_patterns/` (23 programs: `//@ run` for the matching, moves, drops,
+and comptime cases; `compile-fail` for E0003, E0006, E0010, E0011, and E0016). The formatter handles `[...]` and
+`..name` (`tests/fmt/array_patterns`).
+
+- **A `match` over a large array no arm destructures is not split into columns.** `exhaust.rs` (`seq_lengths`) splits
+  an array into one column per element only when some row matches it by a sequence pattern. Before that guard, a
+  large const-generic array (`[f64; N]` in `packages/math`) made `missing` build a `Ty` per element and panicked with
+  a capacity overflow. The `s3_math` programs witness it, and `array_patterns/array_wild_column.bd` covers the path.
+
+Choices in the #486 work:
+
+- **A slice's elements are views, not moves (AP9, revised).** A pattern on a slice takes its elements the way a `match`
+  on a reference does, so a `String` element is read through the view and is never moved out of the slice. An owned
+  array moves the elements it binds by constant index. The first draft of AP9 said a slice element move is E0101; the
+  parameters of a slice are views (`owns_scrutinee` is false), so that was wrong. E0101 remains only as a defensive
+  check. Witnesses: `array_patterns/array_moves.bd`, `slice_view_elements.bd`.
+- **A `for` over an array of slices is refutable** (E0006) because the items are slices of unknown length (AP7).
+
+
+Fixed on the way, both pre-existing:
+
+- A destructuring `let` of a place moved the whole place (`let Pair { left, .. } = p` then a use of `p` was E0100).
+  `burdin_check` now takes the `match` rule (MV8) for `let` too (`crates/burdin_check/src/moves.rs`, `destructures`).
+- The untouched parts of a temporary destructured by `let` were never dropped (`let (_, y) = make()` leaked the first
+  element). `burdin_codegen` registers those parts as temporaries of the statement (`emit/scope.rs`,
+  `add_unmoved_parts`).
+
+Open:
+
+- Closed: a struct pattern without `..` may leave fields out. The author decided this is fine ("this is ok"), so
+  `let Pair { left } = p` stays legal and no diagnostic is added. An earlier draft of #993 made it E0003; it was
+  reverted. `spec/rest-patterns.md` records the decision.
+- **Drop timing of a temporary struct-update base** follows block locals (SU5), not the statement end that a `let`
+  temporary follows (DR5). This is a deliberate choice written into SU5; reconsider it if a program depends on the
+  difference.
+- Verified on this change (#993, #994, #486): the full conformance suite in debug (1399 passed, 5 failed, 7 skipped)
+  and release (1386 passed, 5 failed, 20 skipped), both with `BURDIN_PACKAGES` pointing at `packages/` and
+  `BURDIN_LD=platform`; `cargo test --workspace` (every binary passes); `cargo fmt --all --check`;
+  `cargo clippy --all-targets -- -D warnings`; and the registry and doc checks (`check_tests`, `check_e9000`,
+  `check_unit_tests`, `check_error_docs`, `check_docs`, `check_fmt`, `check_lint`, `check_ci`). The same five programs
+  fail in both modes, all in `s3_http` and `s3_tls`: they fail to link (`cannot find -lssl`, `-lcrypto`), because the WSL
+  machine lacks the OpenSSL development files. On this machine `mold` on `PATH` cannot link the WSL libc, so the runs
+  set `BURDIN_LD=platform`.
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

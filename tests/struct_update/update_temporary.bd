@@ -1,0 +1,34 @@
+//@ run
+//> drop 1
+//> built
+//> drop 10
+//> drop 2
+
+// A base that is a call is held by the literal (SU5): the fields it takes are moved out, and the field the literal
+// names is dropped when the literal has been evaluated.
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        let id = self.id
+        println("drop {id}")
+    }
+}
+
+struct Pair {
+    a: Noisy
+    b: Noisy
+}
+
+fn make(id: i32): Pair {
+    Pair { a: Noisy { id }, b: Noisy { id: id + 1 } }
+}
+
+fn main() {
+    let x = Pair { a: Noisy { id: 10 }, ..make(1) }
+    println("built")
+    // end of main: x drops its fields in declaration order
+}

@@ -452,6 +452,9 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone)]
+// `Let` holds its whole `Pattern` inline, and a struct pattern's `..` span (spec/rest-patterns.md, RP3) made that
+// pattern larger than the expression variant. Boxing every `let` pattern would cost more than the size difference.
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     Let { pattern: Pattern, ty: Option<Type>, init: Expr, else_block: Option<Block>, span: Span },
     Expr(Expr),
@@ -473,10 +476,18 @@ pub enum PatternKind {
     Path(Vec<Ident>),
     /// `Path(p, ...)`, such as `Some(v)`.
     TupleStruct(Vec<Ident>, Vec<Pattern>),
-    /// `Path { field, field: p, ... }`.
-    Struct(Vec<Ident>, Vec<FieldPat>),
+    /// `Path { field, field: p, ... }`, with the span of its `..` when the pattern has one (`spec/rest-patterns.md`,
+    /// RP3): the fields it does not name are then ignored.
+    Struct(Vec<Ident>, Vec<FieldPat>, Option<Span>),
     Or(Vec<Pattern>),
     At(Ident, Box<Pattern>),
+    /// A `..` rest element: an element of a tuple, tuple-variant, or array or slice pattern, which stands for the
+    /// elements the pattern does not name (`spec/rest-patterns.md`). The type checker turns it into wildcards. A
+    /// `..name` binds the elements it stands for, which only an array or slice pattern may do (`spec/array-patterns.md`,
+    /// AP6).
+    Rest(Option<Ident>),
+    /// `[p, ..., q]`: an array or slice pattern (`spec/array-patterns.md`). Its elements are patterns or rest elements.
+    Slice(Vec<Pattern>),
 }
 
 #[derive(Clone, Debug)]
@@ -634,8 +645,9 @@ pub enum ExprKind {
         ret: Option<Type>,
         body: Box<Expr>,
     },
-    /// `Path { field: value, ... }`; the path is a type name or `Enum.Variant`.
-    StructLit(Vec<Ident>, Vec<FieldInit>),
+    /// `Path { field: value, ..base }`; the path is a type name or `Enum.Variant`. The base, when there is one, takes
+    /// every field the literal does not name (`spec/struct-update.md`).
+    StructLit(Vec<Ident>, Vec<FieldInit>, Option<Box<Expr>>),
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,

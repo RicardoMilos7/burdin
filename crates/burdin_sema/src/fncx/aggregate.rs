@@ -145,6 +145,7 @@ impl FnCx<'_> {
         &mut self,
         path: &[ast::Ident],
         fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
@@ -153,7 +154,7 @@ impl FnCx<'_> {
             if let Some(name) = path.last() {
                 self.check_type_visibility(found, &name.name, name.span);
             }
-            return self.generic_struct_literal(g, fields, expect, span);
+            return self.generic_struct_literal(g, fields, base, expect, span);
         }
         let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
         let text = text.join(".");
@@ -267,7 +268,26 @@ impl FnCx<'_> {
             let v = self.coerce_arg(v, &fty);
             checked.push((index, v));
         }
-        let Some((ty, variant, _)) = target else { return error_expr(span) };
+        let Some((ty, variant, owner)) = target else {
+            if let Some(base) = base {
+                self.expr(base, None);
+            }
+            return error_expr(span);
+        };
+        if let Some(base) = base {
+            if variant.is_some() {
+                // A variant's fields depend on which variant the base holds (SU7).
+                self.diags.error(
+                    Code::BASE_VARIANT,
+                    span,
+                    format!("`..base` cannot update the variant `{text}`: struct update is for structs only"),
+                );
+                self.expr(base, None);
+                return error_expr(span);
+            }
+            let owner = owner != self.package();
+            return self.struct_update(&ty, &defs, checked, base, owner, span);
+        }
         let missing: Vec<&str> = defs.iter().zip(&given).filter(|(_, g)| !**g).map(|(d, _)| d.name.as_str()).collect();
         if !missing.is_empty() {
             self.diags.error(
@@ -281,6 +301,70 @@ impl FnCx<'_> {
             None => tir::ExprKind::Struct(checked),
         };
         mk(kind, ty, span)
+    }
+
+    /// `Type { field: value, ..base }` (`spec/struct-update.md`): the literal's fields in `checked`, and every other
+    /// field read from `base`. The base must have the literal's type `ty`. `defs` are the struct's fields as the
+    /// literal sees them; `from_other_package` is whether the struct is declared in another package.
+    ///
+    /// A base that is a place is read field by field, so each taken field is a partial move out of it (SU4). A base
+    /// that is anything else is held in a compiler-made local of a block, and the named values are held there too, so
+    /// they are evaluated before the base as the source order says (SU3 and SU5).
+    pub(super) fn struct_update(
+        &mut self,
+        ty: &Ty,
+        defs: &[tir::FieldDef],
+        checked: Vec<(usize, tir::Expr)>,
+        base: &ast::Expr,
+        from_other_package: bool,
+        span: Span,
+    ) -> tir::Expr {
+        let base = self.expr(base, Some(ty));
+        let base = self.expect_ty(base, ty);
+        if base.ty == Ty::Error {
+            return error_expr(span);
+        }
+        let taken: Vec<usize> = (0..defs.len()).filter(|i| !checked.iter().any(|(j, _)| j == i)).collect();
+        if from_other_package && let Some(i) = taken.iter().find(|i| defs[**i].is_priv) {
+            self.diags.error(
+                Code::PRIVATE_ITEM,
+                base.span,
+                format!("field `{}` is `priv` in another package, so `..base` cannot take it", defs[*i].name),
+            );
+        }
+        if is_place_expr(&base) {
+            let mut fields = checked;
+            for i in taken {
+                let read =
+                    tir::Expr { kind: tir::ExprKind::Field(Box::new(base.clone()), i), ty: defs[i].ty.clone(), span };
+                fields.push((i, read));
+            }
+            return mk(tir::ExprKind::Struct(fields), ty.clone(), span);
+        }
+        // A temporary base: the named values become locals first, then the base, then the struct reads them.
+        let mut stmts = Vec::new();
+        let mut fields = Vec::new();
+        for (n, (i, value)) in checked.into_iter().enumerate() {
+            let name = format!("<update field {n}>");
+            let value_ty = value.ty.clone();
+            let mode = self.bind_mode(&value_ty, true);
+            let id = self.declare(&name, value_ty.clone(), false, tir::LocalKind::Owned, span);
+            stmts.push(tir::Stmt::Let(tir::Pat::Binding(id, mode), value, None));
+            fields.push((i, mk(tir::ExprKind::Local(id), value_ty, span)));
+        }
+        let mode = self.bind_mode(ty, true);
+        let base_id = self.declare("<update base>", ty.clone(), false, tir::LocalKind::Owned, span);
+        stmts.push(tir::Stmt::Let(tir::Pat::Binding(base_id, mode), base, None));
+        for i in taken {
+            let read = tir::Expr {
+                kind: tir::ExprKind::Field(Box::new(mk(tir::ExprKind::Local(base_id), ty.clone(), span)), i),
+                ty: defs[i].ty.clone(),
+                span,
+            };
+            fields.push((i, read));
+        }
+        let tail = mk(tir::ExprKind::Struct(fields), ty.clone(), span);
+        mk(tir::ExprKind::Block(tir::Block::synthetic(stmts, Some(Box::new(tail)), span)), ty.clone(), span)
     }
 
     pub(super) fn index(&mut self, base: &ast::Expr, index: &ast::Expr, span: Span) -> tir::Expr {

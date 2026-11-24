@@ -1,0 +1,21 @@
+//@ run
+//> both 1 2
+//> one 3
+//> none
+
+// Array patterns nest with other patterns: here, the elements are options (AP1, AP2). The three arms cover every pair
+// of options, so the match is exhaustive.
+
+fn describe(pair: [Option<i32>; 2]) {
+    match pair {
+        [Some(a), Some(b)] => println("both {a} {b}")
+        [Some(a), None] => println("one {a}")
+        [None, _] => println("none")
+    }
+}
+
+fn main() {
+    describe([Some(1), Some(2)])
+    describe([Some(3), None])
+    describe([None, Some(9)])
+}

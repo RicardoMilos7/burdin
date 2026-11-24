@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A rest element that stands for no element of an array ignores nothing (AP4, RP4): `[a, b, ..]` on a two-element
+// array is E0011.
+
+fn main() {
+    let pair = [1, 2]
+    let [a, b, ..] = pair //~ E0011
+}

@@ -330,6 +330,11 @@ impl An<'_> {
             }
             Pat::Or(ps) | Pat::Product(ps) | Pat::Variant(_, ps) => ps.iter().for_each(|p| self.bind(p)),
             Pat::Some(p) | Pat::Ok(p) | Pat::Err(p) => self.bind(p),
+            Pat::Slice { prefix, rest, suffix } => {
+                for p in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                    self.bind(p);
+                }
+            }
             _ => {}
         }
     }

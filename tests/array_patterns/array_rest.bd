@@ -1,0 +1,25 @@
+//@ run
+//> head 1
+//> tail 2 3 4
+//> last 4
+//> ends 1 4
+//> middle 2 3
+//> whole 4
+
+// A rest element in an array pattern stands for the elements it does not name (AP4). `..name` binds them as an array
+// (AP6): `tail` is `[i32; 3]`, `middle` is `[i32; 2]`, and `whole` is the whole array.
+
+fn main() {
+    let arr = [1, 2, 3, 4]
+    let [head, ..tail] = arr
+    println("head {head}")
+    println("tail {tail[0]} {tail[1]} {tail[2]}")
+    let [.., last] = arr
+    println("last {last}")
+    let [first, .., end] = arr
+    println("ends {first} {end}")
+    let [_, ..middle, _] = arr
+    println("middle {middle[0]} {middle[1]}")
+    let [..whole] = arr
+    println("whole {whole[3]}")
+}

@@ -1,0 +1,34 @@
+//@ run
+//> u 2 5
+//> drop tracker 4
+//> v 3 9
+//> drop tracker 3
+//> drop tracker 2
+//> drop tracker 1
+
+// A type with a `Drop` implementation may be a base when the fields taken from it are `Copy` (SU6). Its own
+// destructor runs for the base once the base is gone, and the temporary base runs it when the literal is evaluated.
+
+struct Tracker {
+    id: i32
+    count: i32
+}
+
+Tracker: Drop {
+    fn drop(mut self) {
+        let id = self.id
+        println("drop tracker {id}")
+    }
+}
+
+fn make_tracker(id: i32): Tracker {
+    Tracker { id, count: 9 }
+}
+
+fn main() {
+    let t = Tracker { id: 1, count: 5 }
+    let u = Tracker { id: 2, ..t }
+    println("u {u.id} {u.count}")
+    let v = Tracker { id: 3, ..make_tracker(4) }
+    println("v {v.id} {v.count}")
+}

@@ -1,0 +1,20 @@
+//@ run
+//> first 1
+//> second 2
+//> third 3
+//> sum 6
+//> pair 4 5 6 7
+
+// Fixed-size array patterns name every element, in order (spec/array-patterns.md, AP1 and AP3). A nested pattern
+// destructures an array of arrays.
+
+fn main() {
+    let arr = [1, 2, 3]
+    let [first, second, third] = arr
+    println("first {first}")
+    println("second {second}")
+    println("third {third}")
+    println("sum {first + second + third}")
+    let [[a, b], [c, d]] = [[4, 5], [6, 7]]
+    println("pair {a} {b} {c} {d}")
+}

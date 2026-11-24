@@ -1,0 +1,12 @@
+//@ run
+//> 3
+//> 7
+
+// A `for` pattern destructures each item. The items are arrays of known length, so the pattern is irrefutable (AP7).
+
+fn main() {
+    let pairs = [[1, 2], [3, 4]]
+    for [a, b] in pairs {
+        println("{a + b}")
+    }
+}

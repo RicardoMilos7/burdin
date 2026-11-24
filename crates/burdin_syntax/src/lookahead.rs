@@ -227,7 +227,7 @@ pub fn extension_ahead(toks: &[Token], pos: usize) -> bool {
 pub fn looks_like_struct_literal(toks: &[Token], brace: usize) -> bool {
     let nth = |n: usize| toks.get((brace + n).min(toks.len().saturating_sub(1))).map(|t| &t.kind);
     match nth(1) {
-        Some(TokenKind::RBrace) => true,
+        Some(TokenKind::RBrace | TokenKind::DotDot) => true,
         Some(TokenKind::Ident(_)) => matches!(nth(2), Some(TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace)),
         _ => false,
     }

@@ -1,0 +1,48 @@
+//@ run
+//> first 1
+//> last 4
+//> abc 1 2 3
+//> ends 1 4
+//> any tuple
+//> first of triple 6
+//> last of triple 8
+//> ends of triple 1 3
+//> some 7
+
+// `..` in tuple and tuple-variant patterns, anywhere in the list, once (spec/rest-patterns.md, RP1).
+
+enum Token {
+    Triple(i32, i32, i32)
+    Num(i32)
+}
+
+fn main() {
+    let t = (1, 2, 3, 4)
+    let (first, ..) = t
+    println("first {first}")
+    let (.., last) = t
+    println("last {last}")
+    let (a, b, c, ..) = t
+    println("abc {a} {b} {c}")
+    let (head, .., tail) = t
+    println("ends {head} {tail}")
+    let (..) = t
+    println("any tuple")
+
+    let tok = Token.Triple(6, 7, 8)
+    match tok {
+        Token.Triple(x, ..) => println("first of triple {x}")
+        Token.Num(n) => println("num {n}")
+    }
+    match tok {
+        Token.Triple(.., z) => println("last of triple {z}")
+        Token.Num(_) => println("never")
+    }
+    match Token.Triple(1, 2, 3) {
+        Token.Triple(p, .., q) => println("ends of triple {p} {q}")
+        Token.Num(n) => println("num {n}")
+    }
+    if let Some((s, ..)) = Some((7, 8)) {
+        println("some {s}")
+    }
+}

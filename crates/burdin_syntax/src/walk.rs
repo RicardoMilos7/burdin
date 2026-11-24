@@ -50,11 +50,12 @@ pub fn walk_pattern<V: Visit + ?Sized>(v: &mut V, p: &Pattern) {
         | PatternKind::Binding { .. }
         | PatternKind::Lit(_)
         | PatternKind::Range(..)
+        | PatternKind::Rest(_)
         | PatternKind::Path(_) => {}
-        PatternKind::Tuple(ps) | PatternKind::Or(ps) | PatternKind::TupleStruct(_, ps) => {
+        PatternKind::Tuple(ps) | PatternKind::Or(ps) | PatternKind::TupleStruct(_, ps) | PatternKind::Slice(ps) => {
             ps.iter().for_each(|p| v.pattern(p));
         }
-        PatternKind::Struct(_, fields) => {
+        PatternKind::Struct(_, fields, _) => {
             for f in fields {
                 if let Some(p) = &f.pattern {
                     v.pattern(p);
@@ -203,11 +204,14 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             }
             v.expr(body);
         }
-        K::StructLit(_, fields) => {
+        K::StructLit(_, fields, base) => {
             for f in fields {
                 if let Some(x) = &f.value {
                     v.expr(x);
                 }
+            }
+            if let Some(b) = base {
+                v.expr(b);
             }
         }
         K::IfLet { pattern, scrutinee, then_block, else_expr } => {
