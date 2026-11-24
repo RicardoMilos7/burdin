@@ -2477,7 +2477,7 @@ folder (`tasks.md` lists them by rule).
 fn Channel<T>.bounded(capacity: usize): Channel<T>     // capacity >= 1
 fn Channel<T>.unbounded(): Channel<T>
 Channel<T> {
-    fn send(self, own value: T): Option<T>             // None: queued; Some(value): the channel is closed
+    fn send(self, own value: T): Result<(), T>         // Ok(()): queued; Err(value): the channel is closed
     fn recv(self): Option<T>                           // None: closed and empty
     fn try_send(self, own value: T): TrySend<T>        // Sent | Full(T) | Closed(T)
     fn try_recv(self): TryRecv<T>                      // Value(T) | Empty | Closed
