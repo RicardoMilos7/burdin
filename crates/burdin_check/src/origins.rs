@@ -509,7 +509,10 @@ impl<'a> Analyzer<'a> {
                 Origin::default()
             }
             // A box, a type test, and a downcast are owned values; they carry no view out of the value.
-            K::BoxAny { value, .. } | K::AnyIs { value, .. } | K::AnyDowncast { value, .. } => {
+            K::BoxAny { value, .. }
+            | K::AnyIs { value, .. }
+            | K::AnyDowncast { value, .. }
+            | K::AnyUpcast { value, .. } => {
                 self.expr(value);
                 Origin::default()
             }

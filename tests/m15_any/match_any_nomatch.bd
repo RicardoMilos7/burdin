@@ -1,0 +1,76 @@
+//@ run
+//> first
+//> drop 1
+//> second
+//> drop 2
+//> fallback 3
+//> drop 3
+
+// The box is consumed only by the arm that takes it: the arm for another type leaves the box alone, so the
+// catch-all still owns the whole value (AN15, rules 2 and 3).
+
+interface Thing {
+    fn id(self): i32
+}
+
+struct First {
+    id: i32
+}
+
+struct Second {
+    id: i32
+}
+
+struct Third {
+    id: i32
+}
+
+First: Thing {
+    fn id(self): i32 {
+        self.id
+    }
+}
+
+Second: Thing {
+    fn id(self): i32 {
+        self.id
+    }
+}
+
+Third: Thing {
+    fn id(self): i32 {
+        self.id
+    }
+}
+
+First: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+Second: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+Third: Drop {
+    fn drop(mut self) {
+        println("drop {self.id}")
+    }
+}
+
+fn run(own thing: any Thing) {
+    match thing {
+        _: First => println("first"),
+        s: Second => println("second"),
+        other => println("fallback {other.id()}"),
+    }
+}
+
+fn main() {
+    run(First { id: 1 })
+    run(Second { id: 2 })
+    run(Third { id: 3 })
+}

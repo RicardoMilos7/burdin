@@ -1317,23 +1317,6 @@ a `where`-bounded generic function, give every method a `self` or `mut self` rec
 of a view, remove or move out its associated types, and make the `requires` interfaces object-safe too. When a vtable is not needed, `impl Interface` or a
 generic bound dispatches statically and does not require object safety.
 
-## E0204: Boxing a type whose implementation is compiler-provided
-
-The compiler implements `Display` and `Debug` for the primitive types and the built-in containers directly, without
-a method, so there is no function for an `any Display`/`any Debug` vtable to dispatch to. A user type with a
-`Type: Display` block or `struct T: Debug` can be boxed, because it has callable methods.
-
-<!-- error-example: E0204 -->
-```burdin
-fn main() {
-    let x: any Display = 3 //~ E0204
-}
-```
-<!-- /error-example -->
-
-**How to fix:** format the value directly (`println("{}", 3)`), or wrap it in a user type that implements the
-interface with a method and box that. `any Interface` needs a callable implementation for every vtable slot.
-
 ## E0205: The concrete type of an `impl` return cannot be found
 
 A function declared `-> impl Interface` returns one concrete type, which the compiler finds from its body. The type

@@ -220,7 +220,10 @@ impl Fmt<'_> {
                 }
                 TokenKind::Dot => {
                     let after_int = self.pos > 0 && matches!(self.toks[self.pos - 1].kind, TokenKind::Int(_));
+                    // After `break 'a` a dot on the same line would start a target-typed value, so the field stays on its own line.
+                    let after_label = self.pos > 0 && matches!(self.toks[self.pos - 1].kind, TokenKind::Label(_));
                     let dot = self.tok_doc();
+                    let dot = if after_label { concat(vec![Doc::Hard, dot]) } else { dot };
                     hug = false;
                     block_like = false;
                     match self.kind().clone() {

@@ -598,6 +598,13 @@ impl<'a> FnCx<'a> {
             if have == any {
                 return e;
             }
+            // `any A` where `any B` is expected and `A requires B`: the same box with `B`'s table (AN13).
+            let slot = self.globals.any_supers(have.id).iter().position(|s| s.id == any.id);
+            if let Some(slot) = slot {
+                let span = e.span;
+                let from = have.id;
+                return mk(tir::ExprKind::AnyUpcast { value: Box::new(e), from, slot }, want.clone(), span);
+            }
             self.mismatch(e.span, want, &e.ty);
             // Type the value as the expected type: the program is rejected, and this avoids an E0003 cascade at
             // the enclosing position.

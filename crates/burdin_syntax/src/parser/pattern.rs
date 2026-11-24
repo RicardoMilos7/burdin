@@ -19,6 +19,24 @@ impl Parser<'_> {
         Ok(Pattern { kind: PatternKind::Or(alts), span })
     }
 
+    /// The pattern of a `match` arm: a pattern, or the type pattern `name: T` / `_: T` of an `any` scrutinee
+    /// (`spec/existentials.md`, AN15). A type pattern is only the whole pattern of an arm, so `let x: T = v` keeps its meaning.
+    pub(super) fn arm_pattern(&mut self) -> PResult<Pattern> {
+        let pattern = self.pattern()?;
+        if !self.at(&TokenKind::Colon) {
+            return Ok(pattern);
+        }
+        let name = match &pattern.kind {
+            PatternKind::Wild => None,
+            PatternKind::Binding { name, mutable: false } => Some(name.clone()),
+            _ => return Err(self.unexpected("`=>`")),
+        };
+        self.bump();
+        let ty = self.ty()?;
+        let span = pattern.span.to(ty.span);
+        Ok(Pattern { kind: PatternKind::Typed { name, ty }, span })
+    }
+
     pub(super) fn at_pattern(&mut self) -> PResult<Pattern> {
         if matches!(self.kind(), TokenKind::Ident(_)) && matches!(self.nth_kind(1), TokenKind::At) {
             let name = self.ident("a name")?;

@@ -1,6 +1,55 @@
-//@ compile-fail
+//@ run
+//> 3
+//> 4.5
+//> true
+//> x
+//> hello
+//> tag 7
+//> 3|4.5|true|x|hello|tag 7
+//> [1, 2]!
+
+struct Tag {
+    v: i32
+}
+
+Tag: Display {
+    fn fmt(self, mut f: Formatter) {
+        f.write_str("tag ")
+        self.v.fmt(mut f)
+    }
+}
+
+fn show(x: any Display): String {
+    "{x}!"
+}
 
 fn main() {
-    let text: any Display = 3 //~ E0204
-    let _ = text
+    // A built-in `Display` implementation is boxed like a user one (AN14).
+    let one: any Display = 3
+    println("{one}")
+    let mut items: List<any Display> = List<any Display>.new()
+    items.push(4.5)
+    items.push(true)
+    items.push('x')
+    items.push(String.from("hello"))
+    items.push(Tag { v: 7 })
+    for item in items {
+        println("{item}")
+    }
+    let mut all: List<any Display> = List<any Display>.new()
+    all.push(3)
+    all.push(4.5)
+    all.push(true)
+    all.push('x')
+    all.push(String.from("hello"))
+    all.push(Tag { v: 7 })
+    let mut out = String.new()
+    for item in all {
+        if out.len() > 0 {
+            out.push('|')
+        }
+        out.push_str("{item}")
+    }
+    println(out)
+    println(show(String.from("[1, 2]")))
 }

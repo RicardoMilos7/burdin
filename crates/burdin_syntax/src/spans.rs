@@ -304,6 +304,12 @@ impl Mapper<'_> {
                 self.ident(name);
                 self.pat(inner);
             }
+            PatternKind::Typed { name, ty } => {
+                if let Some(name) = name {
+                    self.ident(name);
+                }
+                self.ty(ty);
+            }
         }
         (self.f)(&mut p.span);
     }

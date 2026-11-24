@@ -210,7 +210,10 @@ impl Walker<'_> {
                 self.expr(recv);
                 self.all(args);
             }
-            K::BoxAny { value, .. } | K::AnyIs { value, .. } | K::AnyDowncast { value, .. } => self.expr(value),
+            K::BoxAny { value, .. }
+            | K::AnyIs { value, .. }
+            | K::AnyDowncast { value, .. }
+            | K::AnyUpcast { value, .. } => self.expr(value),
             // The comptime pass replaces these before code generation (spec/comptime.md, CT13); what they call is
             // not reachable from the generated program.
             K::Comptime(_) | K::ComptimeFor { .. } => {}

@@ -1,0 +1,33 @@
+//@ run
+//> 3
+//> "hi"
+//> 'c'
+//> Some(5)
+//> [1, 2, 3]
+//> (1, true)
+//> D { v: 3 }
+//> 3 "hi" 'c' Some(5) [1, 2, 3] (1, true) D { v: 3 }
+
+struct D: Debug {
+    v: i32
+}
+
+fn main() {
+    let mut items: List<any Debug> = List<any Debug>.new()
+    items.push(3)
+    items.push(String.from("hi"))
+    items.push('c')
+    items.push(Some(5))
+    items.push([1, 2, 3].to_list())
+    items.push((1, true))
+    items.push(D { v: 3 })
+    let mut out = String.new()
+    for item in items {
+        println("{item:?}")
+        if out.len() > 0 {
+            out.push(' ')
+        }
+        out.push_str("{item:?}")
+    }
+    println(out)
+}

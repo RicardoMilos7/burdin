@@ -4,6 +4,25 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`match` on an `any I` (issue #926 item 4, 2026-11-24).** A `match` arm may be a type pattern `name: T` or `_: T`
+(`spec/existentials.md` AN15, `spec/grammar.md` `TypePat`), on an `any I` or an `AnyError`; a final catch-all (`else`, `_`, or a
+binding that receives the whole box) is required (E0006 without one). Decision: the design said an `Error` is inspected "with
+`match`", so the pattern exists, spelled `name: T` (not `T(v)`, which would collide with a tuple-struct pattern). It is only the
+whole pattern of an arm (`PatternKind::Typed`, parsed by `arm_pattern`, so `let x: T = v` is unchanged), takes no guard (E0003), and
+consumes the scrutinee (no borrowing form, as there is no borrowing `downcast`). Implementation is sugar in sema, no new IR:
+`FnCx::any_match` (`crates/burdin_sema/src/fncx/any.rs`) moves the scrutinee into the hidden local `__any` and checks the AST chain
+`if __any.is<T>() { let name = __any.downcast<T>().unwrap(); body } else ...`, so the existing moves, drops, and E0141/E0120 checks
+apply (`any_target` is shared with `is`/`downcast`). The formatter takes the arm (`burdin_fmt/src/blocks.rs`, `tests/fmt/any_patterns`).
+Tests: `tests/m15_any/match_any*`. With this, the existential gaps of #926 are all closed.
+
+**Boxing the built-in `Display`/`Debug` (issue #926 item 3, 2026-11-24).** `let x: any Display = 1` and `List<any Debug>` of
+ints, floats, `String`s, `Option`s, lists, and tuples now work (`spec/existentials.md` AN14). `Globals::any_vtable` finds no impl
+method for such a type and takes the entry from the std helper `__any_display<T>`/`__any_debug<T>` (`std/src/fmt.bd`), whose body
+is the ordinary `v.fmt(mut f)` call; it requests the instance (`Request::Func`) and abandons that pass until it exists. E0204 is
+retired: nothing remains that it covered (a view is still E0120). Tests: `tests/m15_any/builtin_display_box`, `builtin_debug_box`,
+`builtin_display_downcast` (run) and `builtin_display_view` (E0120). Also fixed in `cache.rs`: replaying a cached `any` interface
+now pushes the `supers` slot (AN13). A string literal is a `str` view, so `any Display = "hi"` is E0120; box a `String`.
+
 **Target-typed initializers (issue #998, 2026-11-24).** `.name`, `.name(args)`, and `.{ fields }` take their type from the
 expected type of their position, meaning `T.name`, `T.name(args)`, and `T { fields }` for that `T`. The rule is
 `spec/target-typing.md` TT1-TT12, the grammar is `TargetExpr` in `spec/grammar.md`, and the tests are

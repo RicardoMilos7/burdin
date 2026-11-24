@@ -130,6 +130,9 @@ The exact output of `Debug` for a value of each built-in type:
 
 `Display` output is the type's own: the digits of a number, the bytes of text, `true`/`false`, the character.
 
+The compiler-provided implementations can be boxed as `any Display`/`any Debug` (`spec/existentials.md`, AN14); the boxed
+value prints exactly as the value would.
+
 `x.to_string()` formats a value with `Display`. It exists for the types that have a built-in `to_string` already
 (integers, `bool`, `char`, `str`) and for floats, and for a struct or enum whose type implements `Display`; a type
 with neither is E0002.

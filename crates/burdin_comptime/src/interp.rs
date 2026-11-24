@@ -435,6 +435,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 recv_place.path.push(Step::Deref);
                 self.call(func, Some(recv_place), args, span)?
             }
+            K::AnyUpcast { value, slot, .. } => match self.eval(value, Mode::Move)? {
+                Value::Any(vt, inner) => Value::Any(self.p.any_vtables[vt].supers[*slot], inner),
+                _ => return Err(Fault::Internal("an upcast of a value that is not boxed".into(), span).into()),
+            },
             K::AnyIs { value, type_id, .. } => match self.eval(value, Mode::Use)?.deref() {
                 Value::Any(vt, _) => Value::Bool(self.p.any_vtables[vt].type_id == *type_id),
                 _ => return Err(Fault::Internal("`is` on a value that is not boxed".into(), span).into()),
