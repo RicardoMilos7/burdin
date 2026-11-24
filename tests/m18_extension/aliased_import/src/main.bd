@@ -1,7 +1,11 @@
-//@ compile-fail
+//@ run
+//> !
 
-// An extension is called by its declared name, so it cannot be imported under another name (EX2).
+// An extension can be imported under another method name: `use text.shout as yell` makes `yell` the method, and
+// the call uses that name (EX2).
 
-use text.shout as yell //~ E0216
+use text.shout as yell
 
-fn main() {}
+fn main() {
+    println(String.from("hi").yell())
+}

@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// The associated form passes the receiver as its first argument, so `String.shout()` has no receiver and names no
+// function (EX9).
+
+fn String.shout(self): String {
+    String.from("!")
+}
+
+fn main() {
+    let s = String.shout() //~ E0002
+    println(s)
+}

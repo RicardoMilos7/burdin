@@ -185,6 +185,7 @@ pub fn check_cached<'a>(
     sema.declare_types(diags);
     sema.declare_values(diags);
     sema.resolve_imports(diags);
+    sema.import_module_extensions(diags);
     sema.install_prelude();
     sema.declare_bounds(diags);
     sema.register_impls(diags);

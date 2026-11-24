@@ -42,27 +42,40 @@ method name.
   extension's name package-private, like every other declaration.
 - Type arguments on a path segment other than the receiver's last one are E0216 (a module path cannot be generic).
 
-Extension methods are not values: they are not in the module's value namespace, so `shout(x)` is E0002, and there is no
-associated-function form (`Type.name()` with no receiver).
+Extension methods are not values: they are not in the module's value namespace, so `shout(x)` is E0002. An extension
+has an associated form, `Type.shout(x)`, which calls it with its receiver as the first argument (EX9).
 
 ## EX2: Visibility and imports
 
-An extension is visible in the module that declares it and in every module that imports it **by name**:
+An extension is visible in the module that declares it. Another module gets it in one of three ways:
 
 ```burdin
-use text.shout          // one extension name
-use text.{shout, loud}  // several
+use text                  // every extension text declares, or re-exports with `pub use`
+use text.shout            // one extension, by its method name
+use text.{shout, loud}    // several
+use text.shout as yell    // one extension, called `yell` in this module
 ```
 
-The imported name is the method name; every declaration in the target module with that name comes along (one per
-receiver type). This follows the ordinary item rules: an imported extension is not re-exported, `pub use` re-exports
-it, and a `priv` extension cannot be imported from another package (E0150). An extension may be imported under a name
-its target module does not declare only if that is a duplicate, which is E0007; importing an extension `as another`
-name is E0216, because a call always uses the declared method name.
+- **`use text`** (also `use text as t`) brings every extension that `text` declares, and every one it re-exports with
+  `pub use`. It is not an error for `text` to have none. An extension `text` only imports from elsewhere is not
+  brought: imports are not re-exported, as for every other item. A `priv` extension of another package is not brought,
+  and that is not an error (its method simply is not visible); a `priv` extension of the same package is.
+- **`use text.shout`** brings every declaration with that name, one per receiver type, under its own method name.
+  `pub use` re-exports it.
+- **`use text.shout as yell`** brings the same declarations under the method name `yell`. Calls in this module use
+  `yell`; `shout` is not visible through this import, so `x.shout()` is E0002. `pub use text.shout as yell` re-exports
+  the alias. A `priv` extension of another package is E0150 for an item import, as for any item.
+- Importing a module does not import its other items, and `pub use text` re-exports the module name only: the
+  extensions `text` brings are re-exported only by a `pub use text.shout`.
+- Within one module a method name stands for one extension declaration per receiver type. Two different declarations
+  under one name in one module, whether declared there or brought by an import (`use text`, `use text.shout`, or
+  `use text.shout as shout`), are E0007 at the `use` that brings the second one. Bringing the same declaration twice
+  (`use text` and `use text.shout`) is not an error.
+- The standard library's extensions are visible in every module (`spec/stdlib.md`). A method name the module declares
+  or brings itself hides the standard library's extension of that name, as before.
 
-Importing a module (`use text`) or another item of it (`use text.other`) does **not** make its extensions visible. A
-dependency's extension is reachable only through a `use` that names it (or through a `pub use` in the module that
-imports it).
+A dependency's extension is reachable from another package only through a `use` that names it, or through a `use` of
+the dependency's root module that the root re-exports (`pub use`).
 
 ## EX3: Resolution order
 
@@ -98,10 +111,10 @@ the type's impl blocks declare.
 - Two extensions in one module may share a name when their receiver types differ (`fn String.label` and
   `fn Gadget.label`). A second declaration for the same receiver type — after parameter renaming, so
   `fn Pair<T>.m` and `fn Pair<U>.m` collide — is E0007 at the second declaration.
-- Importing two different extension declarations under one name into a module (from two modules, or a declaration
-  and an import) is E0007, like any duplicate import.
-- A declaration without `self` first, with type arguments on an intermediate receiver segment, with a `where`
-  predicate naming a non-parameter, or imported under another name is E0216.
+- Two different extension declarations under one method name in one module (from two modules, or a declaration and
+  an import, a module import included) are E0007 at the `use` that brings the second one (EX2).
+- A declaration without `self` first, with type arguments on an intermediate receiver segment, or with a `where`
+  predicate naming a non-parameter is E0216.
 - An extension whose receiver type does not resolve reports the ordinary unknown-type diagnostic (E0002/E0003).
 
 ## EX6: Calls and conventions
@@ -136,18 +149,46 @@ An extension method becomes an ordinary Burdin function whose first parameter is
 
 ## EX8: Not a function value
 
-An extension is not callable by its name alone and has no associated form. There is no value of a "method" type, no
-way to take a reference to an extension, and no way to pass one where a closure is expected.
+An extension is not callable by its name alone. There is no value of a "method" type, no way to take a reference to
+an extension, and no way to pass one where a closure is expected. `shout(s)` is E0002; the associated form of EX9 is a
+call with a type in front, not a value.
+
+## EX9: Associated form
+
+An extension is also called with its receiver type in front, as an associated function:
+
+```burdin
+String.shout(s)          // the same call as s.shout()
+Point.manhattan(p)
+List<i32>.total(xs)
+i32.doubled(21)
+```
+
+- `Type.name(recv, args...)` calls the extension `name` whose receiver applies to `Type` (EX3), passing the first
+  argument as the receiver and the others as the remaining arguments. It is checked as `recv.name(args...)`: the
+  receiver's argument is checked against the extension's receiver, so `Point.manhattan(s)` with a `String` `s` is a
+  type mismatch (E0003).
+- The receiver follows the receiver conventions of a method call: it takes no call-site marker (`Counter.bump(c)`; a
+  `mut` marker on it is E0115), and a `mut self` extension needs a mutable place (E0113).
+- `Type` is written in full: a type name, a built-in type, or a generic type with its arguments (`List<i32>`). The
+  form is not a template: a generic type written without its arguments is not a receiver here.
+- Resolution: the type's own functions come first. An associated function or variant of `Type` with the name (an
+  impl function, a compiler-provided associated function such as `String.from`, or a variant) is called, and the
+  extension is tried only when `Type` has none. Without a receiver argument (`String.shout()`), or when no visible
+  extension applies to `Type`, the call is E0002: no function or variant `name` on `Type`.
+- The extension must be visible in the calling module (EX2). The rules of EX6 apply to the call as they do to
+  `recv.name(...)`.
 
 ## Tests
 
 | Rule | Tests |
 | --- | --- |
 | EX1 declaration, receiver types, generics | `m18_extension/string_extension.bd`, `user_type_extension.bd`, `enum_extension.bd`, `concrete_receiver_args.bd`, `generic_receiver.bd`, `generic_user_type.bd`, `method_type_params.bd`, `missing_self.bd`, `where_not_parameter.bd`, `duplicate_receiver_arg.bd` |
-| EX2 visibility and imports | `m18_extension/imported_extension/`, `not_imported/`, `aliased_import/`, `duplicate_import/`, `private_extension/`, `imported_type_extension/`, `reexported_extension/` |
+| EX2 visibility and imports | `m18_extension/imported_extension/`, `module_import/`, `module_import_same_declaration/`, `module_import_collision/`, `module_import_private/`, `module_reexport/`, `not_imported/`, `aliased_import/`, `alias_hides_declared_name/`, `alias_collision/`, `alias_shadowed/`, `duplicate_import/`, `private_extension/`, `imported_type_extension/`, `reexported_extension/` |
 | EX3 resolution order | `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, `shadowed_interface_method.bd`, `receiver_mismatch.bd`, `receiver_concrete_arg_mismatch.bd`, `receiver_allocator_mismatch.bd`, `not_callable_by_name.bd` |
 | EX4 shadowing warning | `m18_extension/shadowed_method.bd`, `shadowed_builtin_method.bd`, `shadowed_interface_method.bd` |
-| EX5 conflicts | `m18_extension/same_name_different_receivers.bd`, `duplicate_extension.bd`, `duplicate_receiver_arg.bd`, `duplicate_import/`, `missing_self.bd`, `where_not_parameter.bd`, `aliased_import/` |
+| EX5 conflicts | `m18_extension/same_name_different_receivers.bd`, `duplicate_extension.bd`, `duplicate_receiver_arg.bd`, `duplicate_import/`, `module_import_collision/`, `alias_collision/`, `missing_self.bd`, `where_not_parameter.bd` |
 | EX6 calls and conventions | `m18_extension/mut_receiver.bd`, `own_receiver_drop.bd`, `mut_requires_mutable.bd`, `view_of_self.bd`, `view_of_temporary.bd`, `generic_body_calls_extension.bd`, `unsafe_extension.bd`, `unsafe_extension_outside.bd` |
 | EX7 code generation | `m18_extension/own_receiver_drop.bd`, `generic_receiver.bd`, `generic_user_type.bd` |
 | EX8 not a function value | `m18_extension/not_callable_by_name.bd` |
+| EX9 associated form | `m18_extension/assoc_call.bd`, `assoc_call_shadowed.bd`, `assoc_call_no_receiver.bd`, `assoc_call_wrong_receiver.bd`, `assoc_call_marker.bd`, `assoc_call_not_mutable.bd`, `assoc_call_not_visible/` |

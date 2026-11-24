@@ -1,0 +1,12 @@
+//@ run
+//@ stderr: warning[E0215]
+//> 2
+
+// The alias `len` is a name calls use, and `String` has a method of that name, so the method wins and the compiler
+// warns at the extension's declaration (EX4).
+
+use text.shout as len
+
+fn main() {
+    println(String.from("hi").len().to_string())
+}

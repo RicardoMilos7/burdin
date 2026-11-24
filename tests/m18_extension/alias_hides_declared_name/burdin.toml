@@ -1,0 +1,3 @@
+[package]
+name = "alias_hides_declared_name"
+version = "0.1.0"

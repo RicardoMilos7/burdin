@@ -1,3 +1,3 @@
-fn String.shout(self): String {
-    String.from("!")
-}
+// Declares no extension of its own: it imports `shout` from `other`, and that import is private to this module.
+
+use other.shout

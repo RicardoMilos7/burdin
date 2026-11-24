@@ -1370,8 +1370,7 @@ meant to replace the method, remove the method or call a differently named exten
 An extension method is `fn Type.name(self, ...)`: the receiver is a type path in scope and `self` is its first
 parameter. This error reports a declaration without `self` first, type arguments on a segment of the receiver path
 other than the type itself, a `where` predicate naming something that is not one of the extension's type
-parameters, and importing an extension under another name (its calls always use the declared name).
-`spec/extensions.md` EX1, EX2, EX5.
+parameters. `spec/extensions.md` EX1, EX5.
 
 <!-- error-example: E0216 -->
 ```burdin

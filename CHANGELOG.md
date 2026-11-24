@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
+  EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
+  brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`
+  calls an extension with its receiver first, when `Type` has no function or variant of that name. Two different
+  extensions under one method name in one module are E0007 at the `use`, and the E0216 for an alias is gone. Tests:
+  `tests/m18_extension/module_import*`, `module_reexport`, `not_imported`, `aliased_import`, `alias_*`, and `assoc_call*`.
 - Issue #933: a keyword can name a method declared in an `impl` block, an `interface`, or a `derive` body, so `std`
   declares the `Iterator` default method as `fn any` and the `any_item` workaround is gone (`spec/grammar.md`,
   "Keywords"; `spec/iterators.md`, IT9). The words are the ones a `.` already lets stand as names: `any`, `impl`,

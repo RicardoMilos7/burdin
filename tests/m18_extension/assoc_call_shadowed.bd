@@ -1,0 +1,24 @@
+//@ run
+//@ stderr: warning[E0215]
+//> 0
+
+// The type's own associated function wins over an extension of the same name (EX9): `Point.origin()` calls the
+// function. The extension is shadowed, so the compiler warns at its declaration (EX4).
+
+struct Point {
+    x: i32,
+}
+
+Point {
+    fn origin(): Point {
+        Point { x: 0 }
+    }
+}
+
+fn Point.origin(self): i32 {
+    99
+}
+
+fn main() {
+    println(Point.origin().x.to_string())
+}

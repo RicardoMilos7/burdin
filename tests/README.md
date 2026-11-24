@@ -276,7 +276,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 | E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
-| E0216 | Invalid extension method declaration: no `self` first parameter, a receiver path with type arguments on a segment other than the type, a `where` clause naming something that is not one of its type parameters, or an extension imported under another name |
+| E0216 | Invalid extension method declaration: no `self` first parameter, or a receiver path with type arguments on a segment other than the type, or a `where` clause naming something that is not one of its type parameters |
 | E0220 | Invalid comptime construct: a run-time local, `self`, or capture used in a compile-time context; `comptime` on a parameter that cannot take it (`mut`/`own`, `self`, an interface method or its implementation, an `extern` declaration); a comptime-parameter function used as a value; `break`/`continue` leaving a `comptime for`; a `mut` `comptime for` binding; or a `comptime assert` message that is not a string literal |
 | E0221 | A compile-time value whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
 | E0222 | Compile-time evaluation panicked |
@@ -476,13 +476,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     local, imported, or built-in; the receiver's type arguments declare its type parameters (`fn List<T>.sum(self)`),
     and a `<...>` after the method name adds method-level ones. `self` must be first, and `mut self`/`own self`
     follow the method conventions. An extension is visible in its declaring module and in modules that import it by
-    name (`use text.shout`, `use text.{shout}`); importing the module, an alias, or `use text.other` does not bring
-    it, and `priv` is package-private (E0150). `x.f()` tries the type's methods first (inherent and interface, and
-    the methods the compiler provides for built-in types) and a visible extension last; a same-named extension
-    always loses and gets E0215 at its declaration. A second extension for the same receiver in one module, and a
-    second import of one extension name, are E0007; an extension without `self`, a malformed receiver path, a
-    `where` naming a non-parameter, and an import under another name are E0216.
-    `spec/extensions.md` EX1-EX8, `tests/m18_extension/`.
+    name (`use text.shout`, `use text.{shout}`), and `use text` brings every extension the module declares or
+    re-exports with `pub use`; `use text.shout as yell` brings one under another method name. Imports are not
+    re-exported, and `priv` is package-private (E0150, and a `priv` extension of another package is not brought by
+    a module import). `x.f()` tries the type's methods first (inherent and interface, and the methods the compiler
+    provides for built-in types) and a visible extension last; a same-named extension always loses and gets E0215
+    at its declaration. Two different extension declarations under one method name in one module are E0007 at the
+    `use`; an extension without `self`, a malformed receiver path, and a `where` naming a non-parameter are E0216.
+    An extension has an associated form, `Type.name(recv, args)`, reached only when `Type` has no function of that
+    name, with the receiver as the first argument and no marker on it (EX9). `spec/extensions.md` EX1-EX9,
+    `tests/m18_extension/`.
 
 24. **Operator overloading and `Index`.** The operator interfaces are the ordinary `std` interfaces `Add`, `Sub`,
     `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and
