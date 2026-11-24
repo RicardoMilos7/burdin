@@ -35,6 +35,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 tir::Stmt::Let(pat, init, else_block) => {
                     let v = self.expr_mode(init, Mode::Move)?;
+                    let temporary = !is_place(init);
                     let place = self.spill(v, &init.ty)?;
                     if let Some(else_block) = else_block {
                         let ok = self.pat_test(pat, place, &init.ty)?;
@@ -48,6 +49,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         self.builder.position_at_end(bind_bb);
                     }
                     self.pat_bind(pat, place, &init.ty, None, &mut Vec::new())?;
+                    // A temporary keeps the parts its pattern did not move, and they drop at the end of this
+                    // statement, as the parts of a temporary `match` scrutinee do (MV8, DR5).
+                    if temporary {
+                        let mut moved = Vec::new();
+                        self.pattern_moved_paths(pat, &init.ty, &mut Vec::new(), &mut moved);
+                        if let Some(place) = place {
+                            self.add_unmoved_parts(place, &init.ty, &moved)?;
+                        }
+                    }
                     let mut bound = Vec::new();
                     collect_bindings(pat, &mut bound);
                     for id in bound {
@@ -405,6 +415,54 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(slot, v).map_err(llvm_err)?;
         let live = self.mark_temp_live()?;
         self.temps.last_mut().expect("a temporary frame is open").push((slot, ty.clone(), live));
+        Ok(())
+    }
+
+    /// Registers the parts of the value at `place` that the moves in `moved` did not take as temporaries of the
+    /// current statement. `moved` holds field paths relative to `place`; an empty path is the whole value. A type
+    /// with a `Drop` implementation cannot be taken apart (DR8), so it is never partly moved and is registered whole.
+    pub(super) fn add_unmoved_parts(
+        &mut self,
+        place: PointerValue<'ctx>,
+        ty: &Ty,
+        moved: &[Vec<usize>],
+    ) -> GenResult<()> {
+        if !self.needs_drop(ty) || moved.iter().any(|path| path.is_empty()) {
+            return Ok(());
+        }
+        if moved.is_empty() {
+            self.add_temp_slot(place, ty);
+            return Ok(());
+        }
+        // An array's elements are its constant indices: each one is registered on its own (`spec/array-patterns.md`,
+        // AP10).
+        if let Ty::Array(elem, n) = ty {
+            let Some(t) = self.llvm_ty(ty) else { return Ok(()) };
+            let elem = (**elem).clone();
+            let zero = self.usize_ty.const_int(0, false);
+            for i in 0..*n as usize {
+                let below: Vec<Vec<usize>> =
+                    moved.iter().filter(|path| path.first() == Some(&i)).map(|path| path[1..].to_vec()).collect();
+                let index = self.usize_ty.const_int(i as u64, false);
+                // SAFETY (LLVM): `i` is an element of the array.
+                let element =
+                    unsafe { self.builder.build_in_bounds_gep(t, place, &[zero, index], "") }.map_err(llvm_err)?;
+                self.add_unmoved_parts(element, &elem, &below)?;
+            }
+            return Ok(());
+        }
+        let fields: Vec<Ty> = match ty {
+            Ty::Tuple(ts) => ts.clone(),
+            Ty::Struct(a) => self.program.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
+            _ => return Ok(()),
+        };
+        let Some(t) = self.llvm_ty(ty) else { return Ok(()) };
+        for (i, field_ty) in fields.iter().enumerate() {
+            let below: Vec<Vec<usize>> =
+                moved.iter().filter(|path| path.first() == Some(&i)).map(|path| path[1..].to_vec()).collect();
+            let field = self.builder.build_struct_gep(t.into_struct_type(), place, i as u32, "").map_err(llvm_err)?;
+            self.add_unmoved_parts(field, field_ty, &below)?;
+        }
         Ok(())
     }
 

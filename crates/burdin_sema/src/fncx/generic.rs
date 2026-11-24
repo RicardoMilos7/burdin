@@ -688,6 +688,7 @@ impl FnCx<'_> {
         &mut self,
         g: usize,
         fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
         expect: Option<&Ty>,
         span: Span,
     ) -> tir::Expr {
@@ -760,6 +761,10 @@ impl FnCx<'_> {
                 (i, v)
             })
             .collect();
+        if let Some(base) = base {
+            let from_other_package = globals.package_of(info.module) != self.package();
+            return self.struct_update(&ty, actual, checked, base, from_other_package, span);
+        }
         let missing: Vec<&str> =
             actual.iter().zip(&given).filter(|(_, g)| !**g).map(|(d, _)| d.name.as_str()).collect();
         if !missing.is_empty() {

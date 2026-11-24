@@ -1,0 +1,37 @@
+//@ run
+//> 5
+//> 1
+//> 0
+//> any
+
+// `..` does not change what a match covers (spec/rest-patterns.md, RP5): the arms below cover every variant.
+
+enum Shape {
+    Rect { w: i32, h: i32 }
+    Circle(i32)
+    Dot
+}
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn size(s: Shape): i32 {
+    match s {
+        Shape.Rect { w, .. } => w
+        Shape.Circle(..) => 1
+        Shape.Dot => 0
+    }
+}
+
+fn main() {
+    let rect = Shape.Rect { w: 5, h: 2 }
+    println("{size(rect)}")
+    println("{size(Shape.Circle(9))}")
+    println("{size(Shape.Dot)}")
+    let pair = Pair { left: 1, right: 2 }
+    match pair {
+        Pair { .. } => println("any")
+    }
+}

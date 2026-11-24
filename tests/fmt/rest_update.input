@@ -1,0 +1,14 @@
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let p = Pair { left:   1, ..base }
+    let q = Pair { left: 1,   right: 2,   ..p }
+    let Pair { left, .. } = p
+    let (first,   ..) = (1, 2, 3)
+    match p {
+        Pair { left, right: r, .. } => println("{left} {r}")
+    }
+}

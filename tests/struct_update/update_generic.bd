@@ -1,0 +1,37 @@
+//@ run
+//> 5 2
+//> x z
+//> 7 1
+
+// A generic struct takes its type arguments from the named fields and the expected type, and the base must be the
+// same instance (SU2). `Self { ... ..Self.default() }` is the common form inside a method block.
+
+struct Pair<T> {
+    left: T
+    right: T
+}
+
+struct Counter {
+    n: i32
+    step: i32
+}
+
+Counter {
+    fn reset(self): Counter {
+        Self { n: 7, ..self }
+    }
+}
+
+fn main() {
+    let a = Pair { left: 1, right: 2 }
+    let b = Pair { left: 5, ..a }
+    println("{b.left} {b.right}")
+
+    let s = Pair { left: String.from("x"), right: String.from("y") }
+    let t = Pair { right: String.from("z"), ..s }
+    println("{t.left} {t.right}")
+
+    let c = Counter { n: 0, step: 1 }
+    let d = c.reset()
+    println("{d.n} {d.step}")
+}

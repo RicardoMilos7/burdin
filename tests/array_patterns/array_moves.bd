@@ -1,0 +1,13 @@
+//@ run
+//> first ann
+//> rest bob cy
+
+// Destructuring an owned array moves the elements the pattern binds (AP9). Here `first` takes element 0, and the rest
+// binding takes the other two as a new array.
+
+fn main() {
+    let names = ["ann".to_string(), "bob".to_string(), "cy".to_string()]
+    let [first, ..rest] = names
+    println("first {first}")
+    println("rest {rest[0]} {rest[1]}")
+}

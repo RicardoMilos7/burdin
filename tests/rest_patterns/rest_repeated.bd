@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// A second `..` in one pattern is E0010 (spec/rest-patterns.md, RP3), in a tuple and in a struct pattern.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+fn main() {
+    let (a, .., b, ..) = (1, 2, 3) //~ E0010
+    let Pair { left, .., .. } = Pair { left: 1, right: 2 } //~ E0010
+    println("{a} {b} {left}")
+}

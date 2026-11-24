@@ -816,6 +816,11 @@ fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
                 view_bindings(sub, locals, out);
             }
         }
+        Pat::Slice { prefix, rest, suffix } => {
+            for sub in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                view_bindings(sub, locals, out);
+            }
+        }
     }
 }
 

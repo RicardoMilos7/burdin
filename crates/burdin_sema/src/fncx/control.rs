@@ -792,10 +792,11 @@ fn pattern_has_binding(pattern: &ast::Pattern) -> bool {
         ast::PatternKind::Wild | ast::PatternKind::Lit(_) | ast::PatternKind::Range(..) | ast::PatternKind::Path(_) => {
             false
         }
+        ast::PatternKind::Rest(name) => name.is_some(),
         ast::PatternKind::Binding { .. } | ast::PatternKind::At(..) => true,
-        ast::PatternKind::Tuple(subs) => subs.iter().any(pattern_has_binding),
+        ast::PatternKind::Tuple(subs) | ast::PatternKind::Slice(subs) => subs.iter().any(pattern_has_binding),
         ast::PatternKind::TupleStruct(_, subs) => subs.iter().any(pattern_has_binding),
-        ast::PatternKind::Struct(_, fields) => {
+        ast::PatternKind::Struct(_, fields, _) => {
             fields.iter().any(|f| f.pattern.as_ref().is_none_or(pattern_has_binding))
         }
         ast::PatternKind::Or(alts) => alts.iter().any(pattern_has_binding),

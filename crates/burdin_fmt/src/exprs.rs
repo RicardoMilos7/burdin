@@ -385,7 +385,8 @@ impl Fmt<'_> {
             && !self.raw[(self.pos + 1).min(self.raw.len() - 1)].nl_before
     }
 
-    /// `{ name: value, name }`: the fields of a struct literal, separated by `,` or a line break.
+    /// `{ name: value, name, ..base }`: the fields of a struct literal, separated by `,` or a line break. The base,
+    /// when there is one, is last and has no separator after it (`spec/struct-update.md`, SU1).
     fn struct_literal_body(&mut self) -> R<D> {
         let open = self.open(&TokenKind::LBrace, true)?;
         let mut elems = Vec::new();
@@ -393,6 +394,13 @@ impl Fmt<'_> {
         while !self.at(&TokenKind::RBrace) {
             if self.at_eof() {
                 return Err(self.error("expected `}`"));
+            }
+            if self.at(&TokenKind::DotDot) {
+                let dots = self.tok_doc();
+                let base = self.expr()?;
+                elems.push(Elem { doc: concat(vec![dots, base.doc]), after: Doc::Nil });
+                trailing_comma = false;
+                continue;
             }
             let mut doc = self.ident()?;
             if self.at(&TokenKind::Colon) {

@@ -281,7 +281,7 @@ impl Pattern {
                         guard && self.matches(cx, &x.body, &y.body, bound)
                     })
             }
-            (ExprKind::StructLit(path_a, args_a, f1), ExprKind::StructLit(path_b, args_b, f2)) => {
+            (ExprKind::StructLit(path_a, args_a, f1, b1), ExprKind::StructLit(path_b, args_b, f2, b2)) => {
                 path_a.len() == path_b.len()
                     && path_a.iter().zip(path_b).all(|(x, y)| x.name == y.name)
                     && match (args_a, args_b) {
@@ -291,6 +291,11 @@ impl Pattern {
                                 && xa.len() == xb.len()
                                 && xa.iter().zip(xb).all(|(x, y)| cx.type_text(x) == cx.type_text(y))
                         }
+                        _ => false,
+                    }
+                    && match (b1, b2) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => self.matches(cx, a, b, bound),
                         _ => false,
                     }
                     && f1.len() == f2.len()

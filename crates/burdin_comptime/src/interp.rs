@@ -921,6 +921,30 @@ impl<'p, 'c> Interp<'p, 'c> {
                 }
                 Ok(())
             }
+            Pat::Slice { prefix, rest, suffix } => {
+                // The pattern has matched, so the value is a sequence of the length it names. The rest binds a copy
+                // of its elements: an array, or a view of the same storage.
+                let v = self.place_mut(p, span)?.clone();
+                let Some(n) = sequence(&v).map(<[Value]>::len) else { return Ok(()) };
+                for (i, sub) in prefix.iter().enumerate() {
+                    let mut q = p.clone();
+                    q.path.push(Step::Index(i));
+                    self.bind(sub, &q, take, span)?;
+                }
+                if let Some(rest) = rest
+                    && let Pat::Binding(id, _) = &**rest
+                {
+                    let mid = middle(&v, prefix.len(), n - suffix.len());
+                    self.frame().slots[id.0] = Slot::Val(mid);
+                    self.frame().scope.push(id.0);
+                }
+                for (j, sub) in suffix.iter().enumerate() {
+                    let mut q = p.clone();
+                    q.path.push(Step::Index(n - suffix.len() + j));
+                    self.bind(sub, &q, take, span)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1346,6 +1370,24 @@ fn stmt_span(s: &Stmt) -> Span {
     }
 }
 
+/// The elements of an array or a `[T]` view, for an array or slice pattern (`spec/array-patterns.md`, AP11).
+pub(crate) fn sequence(v: &Value) -> Option<&[Value]> {
+    match v {
+        Value::Array(vs) => Some(vs),
+        Value::Slice(vs, lo, hi) => Some(&vs[*lo..*hi]),
+        _ => None,
+    }
+}
+
+/// The elements of `v` from `start` to `end`, as the rest of a sequence pattern binds them: a view of the same
+/// elements for a view, and a new array otherwise.
+pub(crate) fn middle(v: &Value, start: usize, end: usize) -> Value {
+    match v {
+        Value::Slice(vs, lo, _) => Value::Slice(vs.clone(), lo + start, lo + end),
+        other => Value::Array(sequence(other).unwrap_or(&[])[start..end].to_vec()),
+    }
+}
+
 /// Whether `v` matches `pat`, without binding anything.
 pub(crate) fn pattern_matches(pat: &Pat, v: &Value) -> bool {
     let v = match v {
@@ -1379,6 +1421,15 @@ pub(crate) fn pattern_matches(pat: &Pat, v: &Value) -> bool {
         Pat::Variant(i, subs) => match v {
             Value::Variant(j, fs) => i == j && subs.iter().zip(fs).all(|(p, f)| pattern_matches(p, f)),
             _ => false,
+        },
+        Pat::Slice { prefix, rest, suffix } => match sequence(v) {
+            Some(vs) => {
+                let fits =
+                    if rest.is_some() { vs.len() >= prefix.len() + suffix.len() } else { vs.len() == prefix.len() };
+                fits && prefix.iter().zip(vs).all(|(p, x)| pattern_matches(p, x))
+                    && suffix.iter().zip(&vs[vs.len() - suffix.len()..]).all(|(p, x)| pattern_matches(p, x))
+            }
+            None => false,
         },
     }
 }

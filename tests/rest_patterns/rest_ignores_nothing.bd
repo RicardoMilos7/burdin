@@ -1,0 +1,25 @@
+//@ compile-fail
+
+// A `..` that stands for no element or field ignores nothing, so it is E0011 (spec/rest-patterns.md, RP4). The type of
+// the matched value decides it.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+enum Token {
+    Num(i32)
+}
+
+fn main() {
+    let p = Pair { left: 1, right: 2 }
+    let Pair { left, right, .. } = p //~ E0011
+    let (a, b, ..) = (1, 2) //~ E0011
+    let (..) = () //~ E0011
+    let t = Token.Num(4)
+    match t {
+        Token.Num(n, ..) => println("{n}") //~ E0011
+    }
+    println("{left} {right} {a} {b}")
+}

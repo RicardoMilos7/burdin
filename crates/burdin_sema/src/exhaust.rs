@@ -17,6 +17,8 @@ enum Ctor {
     Range(i128, i128),
     /// One string literal. The `str` domain is open, so its presence never makes a match exhaustive.
     Str(String),
+    /// An array or slice of exactly this length. Only the lengths `seq_lengths` tries are ever used.
+    Slice(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +26,13 @@ enum P {
     Wild,
     Ctor(Ctor, Vec<P>),
     Or(Vec<P>),
+    /// An array or slice pattern: the elements before its rest, the elements after it, and whether it has a rest. A
+    /// pattern without a rest has no suffix and names exactly its length (`spec/array-patterns.md`, AP8).
+    Seq {
+        prefix: Vec<P>,
+        suffix: Vec<P>,
+        rest: bool,
+    },
 }
 
 fn lower(p: &Pat) -> P {
@@ -42,6 +51,11 @@ fn lower(p: &Pat) -> P {
         Pat::Err(inner) => P::Ctor(Ctor::Variant(1), vec![lower(inner)]),
         Pat::Product(fields) => P::Ctor(Ctor::Single, fields.iter().map(lower).collect()),
         Pat::Variant(i, fields) => P::Ctor(Ctor::Variant(*i), fields.iter().map(lower).collect()),
+        Pat::Slice { prefix, rest, suffix } => P::Seq {
+            prefix: prefix.iter().map(lower).collect(),
+            suffix: suffix.iter().map(lower).collect(),
+            rest: rest.is_some(),
+        },
     }
 }
 
@@ -55,6 +69,13 @@ pub fn exhaustive(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> bool {
 fn missing(rows: Vec<Vec<P>>, tys: &[Ty], adts: &TypeDefs) -> bool {
     let Some((first, rest)) = tys.split_first() else { return rows.is_empty() };
     let rows = expand_or(rows);
+    if let Some(lengths) = seq_lengths(first, &rows) {
+        return lengths.into_iter().any(|len| {
+            let mut sub = sub_tys(first, Ctor::Slice(len), adts);
+            sub.extend_from_slice(rest);
+            missing(specialize_len(&rows, len), &sub, adts)
+        });
+    }
     let heads: Vec<Ctor> =
         rows.iter().filter_map(|r| if let P::Ctor(c, _) = &r[0] { Some(c.clone()) } else { None }).collect();
     match complete_ctors(first, &heads, adts) {
@@ -91,6 +112,65 @@ fn expand_or(rows: Vec<Vec<P>>) -> Vec<Vec<P>> {
     out
 }
 
+/// The lengths to try for an array or slice column, when its type is one (`spec/array-patterns.md`, AP8). An array has
+/// one length. A slice is tried at every length up to one more than the longest pattern: a longer slice matches the
+/// same rows as that last length, so it need not be tried on its own.
+fn seq_lengths(ty: &Ty, rows: &[Vec<P>]) -> Option<Vec<usize>> {
+    let seq_heads = rows.iter().any(|r| matches!(r[0], P::Seq { .. }));
+    match ty {
+        // An array is split into one column per element, so it is split only when some row matches it by a
+        // sequence pattern. A column of wildcards (a large array no row destructures) takes the default path below.
+        Ty::Array(_, n) => seq_heads.then(|| vec![*n as usize]),
+        Ty::Slice(_) if !seq_heads => None,
+        Ty::Slice(_) => {
+            let longest = rows
+                .iter()
+                .filter_map(|r| match &r[0] {
+                    P::Seq { prefix, suffix, .. } => Some(prefix.len() + suffix.len()),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0);
+            Some((0..=longest + 1).collect())
+        }
+        _ => None,
+    }
+}
+
+/// The subpatterns of an array or slice pattern at length `len`, or `None` when the pattern matches no such length.
+fn seq_subs(prefix: &[P], suffix: &[P], rest: bool, len: usize) -> Option<Vec<P>> {
+    if rest {
+        let named = prefix.len() + suffix.len();
+        if named > len {
+            return None;
+        }
+        let mut out = prefix.to_vec();
+        out.extend(std::iter::repeat_n(P::Wild, len - named));
+        out.extend_from_slice(suffix);
+        Some(out)
+    } else {
+        (prefix.len() == len).then(|| prefix.to_vec())
+    }
+}
+
+/// The rows that match an array or slice of length `len`, with that length's subpatterns in place of the column.
+fn specialize_len(rows: &[Vec<P>], len: usize) -> Vec<Vec<P>> {
+    let mut out = Vec::new();
+    for row in rows {
+        let mut new_row = match &row[0] {
+            P::Wild => vec![P::Wild; len],
+            P::Seq { prefix, suffix, rest } => match seq_subs(prefix, suffix, *rest, len) {
+                Some(subs) => subs,
+                None => continue,
+            },
+            _ => continue,
+        };
+        new_row.extend_from_slice(&row[1..]);
+        out.push(new_row);
+    }
+    out
+}
+
 fn covers(outer: &Ctor, inner: &Ctor) -> bool {
     match (outer, inner) {
         (Ctor::Range(a, b), Ctor::Range(x, y)) => a <= x && y <= b,
@@ -120,6 +200,7 @@ fn sub_tys(ty: &Ty, c: Ctor, adts: &TypeDefs) -> Vec<Ty> {
         (Ty::Result(_, err), Ctor::Variant(1)) => vec![(**err).clone()],
         (Ty::Tuple(elems), Ctor::Single) => elems.clone(),
         (Ty::Struct(a), Ctor::Single) => adts.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
+        (Ty::Array(t, _) | Ty::Slice(t), Ctor::Slice(len)) => vec![(**t).clone(); len],
         (Ty::Enum(a), Ctor::Variant(i)) => adts.enums[a.id].variants[i].fields.iter().map(|f| f.ty.clone()).collect(),
         _ => Vec::new(),
     }
@@ -383,5 +464,70 @@ mod tests {
         assert!(!exhaustive_with(&Ty::Unit, &[]));
         assert!(exhaustive_with(&Ty::Unit, &[Pat::Product(vec![])]));
         assert!(exhaustive_with(&Ty::Unit, &[Pat::Wild]));
+    }
+
+    /// A pattern `[prefix, .., suffix]` (or `[prefix, suffix]` without a rest) on an array or slice.
+    fn seq(prefix: Vec<Pat>, rest: bool, suffix: Vec<Pat>) -> Pat {
+        Pat::Slice { prefix, rest: rest.then(|| Box::new(Pat::Wild)), suffix }
+    }
+
+    #[test]
+    fn slices_need_every_length() {
+        let slice = Ty::Slice(Box::new(Ty::Bool));
+        // `[]` alone leaves every longer slice out; `[..]` takes every length.
+        assert!(!exhaustive_with(&slice, &[seq(vec![], false, vec![])]));
+        assert!(exhaustive_with(&slice, &[seq(vec![], true, vec![])]));
+        // `[_, ..]` and `[]` cover every length.
+        assert!(exhaustive_with(&slice, &[seq(vec![Pat::Wild], true, vec![]), seq(vec![], false, vec![])]));
+        // `[_]` and `[_, _, ..]` leave the empty slice out (AP8).
+        let one = seq(vec![Pat::Wild], false, vec![]);
+        let two_or_more = seq(vec![Pat::Wild, Pat::Wild], true, vec![]);
+        assert!(!exhaustive_with(&slice, &[one.clone(), two_or_more.clone()]));
+        assert!(exhaustive_with(&slice, &[seq(vec![], false, vec![]), one, two_or_more]));
+    }
+
+    #[test]
+    fn a_slice_rest_with_named_elements_needs_the_shorter_lengths() {
+        let slice = Ty::Slice(Box::new(Ty::Bool));
+        // `[a, .., b]` matches only slices of two or more elements.
+        let named = seq(vec![Pat::Bool(true)], true, vec![Pat::Bool(true)]);
+        assert!(!exhaustive_with(&slice, std::slice::from_ref(&named)));
+        // `[]` and `[_]` cover the short lengths, but `named` covers only some of the longer ones.
+        assert!(!exhaustive_with(
+            &slice,
+            &[named.clone(), seq(vec![], false, vec![]), seq(vec![Pat::Wild], false, vec![])]
+        ));
+        // `[.., _]` matches every slice of one element or more, so with `[]` the whole type is covered.
+        assert!(exhaustive_with(&slice, &[seq(vec![], false, vec![]), seq(vec![], true, vec![Pat::Wild])]));
+    }
+
+    #[test]
+    fn an_array_pattern_names_its_length() {
+        let array = Ty::Array(Box::new(Ty::Bool), 2);
+        // The elements are checked one by one: `[true, _]` leaves `[false, _]` out.
+        assert!(!exhaustive_with(&array, &[seq(vec![Pat::Bool(true), Pat::Wild], false, vec![])]));
+        assert!(exhaustive_with(&array, &[seq(vec![Pat::Wild, Pat::Wild], false, vec![])]));
+        // A rest on an array stands for the elements it does not name: `[true, ..]` and `[false, ..]` cover it.
+        assert!(!exhaustive_with(&array, &[seq(vec![Pat::Bool(true)], true, vec![])]));
+        assert!(exhaustive_with(
+            &array,
+            &[seq(vec![Pat::Bool(true)], true, vec![]), seq(vec![Pat::Bool(false)], true, vec![])],
+        ));
+        assert!(exhaustive_with(
+            &array,
+            &[
+                seq(vec![Pat::Bool(true), Pat::Wild], false, vec![]),
+                seq(vec![Pat::Bool(false), Pat::Wild], false, vec![]),
+            ],
+        ));
+    }
+
+    #[test]
+    fn a_wildcard_column_of_a_large_array_is_not_split() {
+        // A large array that no row destructures is not split into one column per element (`seq_lengths`): the
+        // wildcard alone is exhaustive, and the length is never walked.
+        let large = Ty::Array(Box::new(Ty::Bool), u64::MAX);
+        assert!(exhaustive_with(&large, &[Pat::Wild]));
+        assert!(!exhaustive_with(&large, &[]));
     }
 }

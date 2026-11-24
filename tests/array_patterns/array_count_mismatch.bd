@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// An array pattern with no rest element must name every element of the array (AP3). Two names for a three-element
+// array is a type mismatch (E0003).
+
+fn main() {
+    let arr = [1, 2, 3]
+    let [a, b] = arr //~ E0003
+}

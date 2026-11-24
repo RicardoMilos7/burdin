@@ -884,16 +884,16 @@ struct Point { x: i32 }
         let Item::Fn(main) = &file.items[0] else { unreachable!() };
         let Stmt::Expr(call) = &main.body.stmts[0] else { unreachable!() };
         let ExprKind::Call(_, args) = &call.kind else { unreachable!() };
-        let ExprKind::StructLit(path, type_args, _) = &args[0].expr.kind else { unreachable!() };
+        let ExprKind::StructLit(path, type_args, _, _) = &args[0].expr.kind else { unreachable!() };
         assert_eq!(path.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Shape", "Rect"]);
         assert!(matches!(type_args, Some((0, a)) if a.len() == 1));
-        let ExprKind::StructLit(path, type_args, _) = &args[1].expr.kind else { unreachable!() };
+        let ExprKind::StructLit(path, type_args, _, _) = &args[1].expr.kind else { unreachable!() };
         assert_eq!(path.len(), 2);
         assert!(type_args.is_none());
-        let ExprKind::StructLit(path, type_args, _) = &args[2].expr.kind else { unreachable!() };
+        let ExprKind::StructLit(path, type_args, _, _) = &args[2].expr.kind else { unreachable!() };
         assert_eq!(path.len(), 1);
         assert!(matches!(type_args, Some((0, a)) if a.len() == 1));
-        let ExprKind::StructLit(path, type_args, _) = &args[3].expr.kind else { unreachable!() };
+        let ExprKind::StructLit(path, type_args, _, _) = &args[3].expr.kind else { unreachable!() };
         assert_eq!(path.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["sh", "Shape", "Rect"]);
         assert!(matches!(type_args, Some((1, a)) if a.len() == 1));
     }

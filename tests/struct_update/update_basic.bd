@@ -1,0 +1,49 @@
+//@ run
+//> example.org 9090 3 false
+//> 8080
+//> example.org 9090
+//> [] 3
+//> 5 2
+//> x z
+
+// `Name { field: value, ..base }` sets the named fields and takes the rest from the base (spec/struct-update.md,
+// SU1 and SU2): a `Copy` field is copied, and the base's type is the literal's type.
+
+struct Config {
+    host: String
+    port: i32
+    retries: i32
+    verbose: bool
+}
+
+struct Opts: Default {
+    level: i32
+    name: String
+}
+
+struct Pair<T> {
+    left: T
+    right: T
+}
+
+fn main() {
+    let p = Config { host: String.from("example.org"), port: 8080, retries: 3, verbose: false }
+    let q = Config { port: 9090, ..p }
+    println("{q.host} {q.port} {q.retries} {q.verbose}")
+
+    // `p.port` was named in no literal taken from p, and it is `Copy`, so it is still there.
+    println("{p.port}")
+    let r = Config { ..q }
+    println("{r.host} {r.port}")
+
+    let o = Opts { level: 3, ..Opts.default() }
+    println("[{o.name}] {o.level}")
+
+    let a = Pair { left: 1, right: 2 }
+    let b = Pair { left: 5, ..a }
+    println("{b.left} {b.right}")
+
+    let s = Pair { left: String.from("x"), right: String.from("y") }
+    let t = Pair { right: String.from("z"), ..s }
+    println("{t.left} {t.right}")
+}

@@ -122,7 +122,7 @@ impl Finder<'_, '_> {
         match &p.kind {
             PatternKind::Or(ps) => ps.iter().for_each(|p| self.variants_of(p, out)),
             PatternKind::At(_, inner) => self.variants_of(inner, out),
-            PatternKind::Path(path) | PatternKind::TupleStruct(path, _) | PatternKind::Struct(path, _)
+            PatternKind::Path(path) | PatternKind::TupleStruct(path, _) | PatternKind::Struct(path, _, _)
                 if path.len() >= 2 =>
             {
                 let mut enum_name = path[path.len() - 2].name.clone();

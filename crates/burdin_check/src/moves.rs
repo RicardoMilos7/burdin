@@ -555,6 +555,9 @@ impl<'a> Checker<'a> {
                     path.pop();
                 }
             }
+            Pat::Slice { prefix, rest, suffix } => {
+                self.check_slice_drop_moves(prefix, rest.as_deref(), suffix, root_ty, ty, path, span);
+            }
             Pat::Product(subs) => {
                 let tys: Vec<Ty> = match ty {
                     Ty::Tuple(ts) => ts.clone(),
@@ -1349,9 +1352,18 @@ impl<'a> Checker<'a> {
                 tir::Stmt::Let(pat, init, else_block) => {
                     // `let _ = e` does not bind, so a place in `e` is only read (DR5); an rvalue is a temporary.
                     let init_mode = if matches!(pat, Pat::Wild) { Mode::Use } else { Mode::Move };
-                    // The value a `let` binds is where a move in its initializer goes (`move a -> b`).
-                    let dest = if init_mode == Mode::Move { single_binding(pat, self.locals) } else { None };
-                    self.with_dest(dest, init_mode, init);
+                    // A destructuring `let` of a tracked place takes its parts the way `match` does (MV8): the place
+                    // is read, and only the non-Copy parts the pattern binds move out of it. The rest stays in the
+                    // place (`spec/rest-patterns.md`, RP2; `spec/struct-update.md`, SU4).
+                    let root = if destructures(pat) && is_tracked_place(init) { self.place_of(init) } else { None };
+                    match &root {
+                        Some(_) => self.expr(init, Mode::Use),
+                        None => {
+                            // The value a `let` binds is where a move in its initializer goes (`move a -> b`).
+                            let dest = if init_mode == Mode::Move { single_binding(pat, self.locals) } else { None };
+                            self.with_dest(dest, init_mode, init);
+                        }
+                    }
                     // `let _ = e` binds nothing, so a value it leaves is a temporary (DR5).
                     if matches!(pat, Pat::Wild) && self.env.defs.needs_drop(&init.ty) {
                         let at = Span::new(init.span.file, init.span.hi.saturating_sub(1), init.span.hi);
@@ -1370,10 +1382,10 @@ impl<'a> Checker<'a> {
                         self.states = after_init;
                     }
                     let ty = init.ty.clone();
-                    if pattern_moves(pat) {
+                    if root.is_none() && pattern_moves(pat) {
                         self.check_pattern_drop_moves(pat, &ty, &ty, &mut Vec::new(), init.span);
                     }
-                    self.bind_pattern(pat, &ty, &mut Vec::new(), None, init.span);
+                    self.bind_pattern(pat, &ty, &mut Vec::new(), root.as_ref(), init.span);
                     let mut bound = Vec::new();
                     collect_bindings(pat, &mut bound);
                     for id in bound {
@@ -1451,6 +1463,9 @@ impl<'a> Checker<'a> {
                 self.bind_pattern(inner, err, path, root, span);
                 path.pop();
             }
+            Pat::Slice { prefix, rest, suffix } => {
+                self.bind_slice(prefix, rest.as_deref(), suffix, ty, path, root, span);
+            }
             Pat::Product(subs) => {
                 let tys: Vec<Ty> = match ty {
                     Ty::Tuple(ts) => ts.clone(),
@@ -1478,6 +1493,107 @@ impl<'a> Checker<'a> {
                     path.pop();
                 }
             }
+        }
+    }
+
+    /// Binds an array or slice pattern (`spec/array-patterns.md`, AP9). An array's elements are constant indices of
+    /// its place, so a move of one is a partial move of that element, and a rest binding moves each element it covers.
+    /// A slice is a view, so a binding cannot move out of it: E0101, and the bindings are only initialized.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_slice(
+        &mut self,
+        prefix: &[Pat],
+        rest: Option<&Pat>,
+        suffix: &[Pat],
+        ty: &Ty,
+        path: &mut Vec<usize>,
+        root: Option<&(LocalId, Vec<usize>)>,
+        span: Span,
+    ) {
+        match ty {
+            Ty::Array(elem, n) => {
+                let elem = (**elem).clone();
+                let suffix_start = (*n as usize).saturating_sub(suffix.len());
+                for (i, sub) in prefix.iter().enumerate() {
+                    path.push(i);
+                    self.bind_pattern(sub, &elem, path, root, span);
+                    path.pop();
+                }
+                if let Some(Pat::Binding(id, mode)) = rest {
+                    // The rest is a new array: it is initialized here, and each element it takes is a partial move.
+                    self.init_binding(*id, *mode, &[], None, span);
+                    if *mode == BindMode::Move
+                        && let Some((root, base)) = root
+                    {
+                        let dest = self.locals[id.0].name.clone();
+                        let saved = self.move_dest.replace(dest);
+                        for i in prefix.len()..suffix_start {
+                            let mut full = base.clone();
+                            full.extend_from_slice(path);
+                            full.push(i);
+                            self.move_place(*root, &full, span);
+                        }
+                        self.move_dest = saved;
+                    }
+                }
+                for (j, sub) in suffix.iter().enumerate() {
+                    path.push(suffix_start + j);
+                    self.bind_pattern(sub, &elem, path, root, span);
+                    path.pop();
+                }
+            }
+            Ty::Slice(elem) => {
+                let elem = (**elem).clone();
+                if prefix.iter().chain(rest).chain(suffix).any(pattern_moves) {
+                    self.error(Code::MOVE_FROM_BORROW, span, "cannot move out of a slice element");
+                }
+                for sub in prefix.iter().chain(rest).chain(suffix) {
+                    self.bind_pattern(sub, &elem, &mut Vec::new(), None, span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The move checks of an array or slice pattern whose scrutinee has no tracked place (a temporary, or a `let`
+    /// initializer): the same rules as [`Self::bind_slice`], without the moves.
+    #[allow(clippy::too_many_arguments)]
+    fn check_slice_drop_moves(
+        &mut self,
+        prefix: &[Pat],
+        rest: Option<&Pat>,
+        suffix: &[Pat],
+        root_ty: &Ty,
+        ty: &Ty,
+        path: &mut Vec<usize>,
+        span: Span,
+    ) {
+        match ty {
+            Ty::Array(elem, n) => {
+                let elem = (**elem).clone();
+                let suffix_start = (*n as usize).saturating_sub(suffix.len());
+                for (i, sub) in prefix.iter().enumerate() {
+                    path.push(i);
+                    self.check_pattern_drop_moves(sub, root_ty, &elem, path, span);
+                    path.pop();
+                }
+                if let Some(Pat::Binding(_, BindMode::Move)) = rest {
+                    for i in prefix.len()..suffix_start {
+                        path.push(i);
+                        self.check_partial_move(root_ty, path, span);
+                        path.pop();
+                    }
+                }
+                for (j, sub) in suffix.iter().enumerate() {
+                    path.push(suffix_start + j);
+                    self.check_pattern_drop_moves(sub, root_ty, &elem, path, span);
+                    path.pop();
+                }
+            }
+            Ty::Slice(_) if prefix.iter().chain(rest).chain(suffix).any(pattern_moves) => {
+                self.error(Code::MOVE_FROM_BORROW, span, "cannot move out of a slice element");
+            }
+            _ => {}
         }
     }
 
@@ -1546,6 +1662,12 @@ fn is_view_place(e: &tir::Expr) -> bool {
     }
 }
 
+/// Whether `pat` takes parts of its scrutinee rather than the whole value: every pattern but a plain binding, `name @`
+/// binding, or `_`.
+fn destructures(pat: &Pat) -> bool {
+    !matches!(pat, Pat::Binding(..) | Pat::At(..) | Pat::Wild)
+}
+
 /// Whether any binding in `pat` takes its value by moving it out of the scrutinee.
 fn pattern_moves(pat: &Pat) -> bool {
     match pat {
@@ -1556,6 +1678,7 @@ fn pattern_moves(pat: &Pat) -> bool {
         Pat::Some(inner) => pattern_moves(inner),
         Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
+        Pat::Slice { prefix, rest, suffix } => prefix.iter().chain(rest.as_deref()).chain(suffix).any(pattern_moves),
         _ => false,
     }
 }
@@ -1582,6 +1705,11 @@ fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
         Pat::Some(inner) => collect_bindings(inner, out),
         Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
+        Pat::Slice { prefix, rest, suffix } => {
+            for s in prefix.iter().chain(rest.as_deref()).chain(suffix) {
+                collect_bindings(s, out);
+            }
+        }
     }
 }
 

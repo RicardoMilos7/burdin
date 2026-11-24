@@ -1,0 +1,25 @@
+//@ compile-fail
+
+// The base has the literal's type exactly (SU2): another struct, or another instance of a generic struct, is E0003.
+
+struct Pair {
+    left: i32
+    right: i32
+}
+
+struct Other {
+    left: i32
+    right: i32
+}
+
+struct Box2<T> {
+    v: T
+}
+
+fn main() {
+    let a = Pair { left: 1, right: 2 }
+    let o = Other { left: 1, ..a } //~ E0003
+    let b = Box2 { v: 1 }
+    let c: Box2<i64> = Box2 { v: 2, ..b } //~ E0003
+    println("{o.left} {c.v}")
+}

@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// Struct update is for structs only: a struct-like enum variant's fields depend on the variant the base holds, so a
+// base on a variant is E0015 (SU7).
+
+enum Shape {
+    Rect { w: i32, h: i32 }
+    Dot
+}
+
+fn main() {
+    let r = Shape.Rect { w: 2, h: 3 }
+    let s = Shape.Rect { w: 4, ..r } //~ E0015
+    let _ = s
+}

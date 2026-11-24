@@ -81,11 +81,13 @@ impl FnCx<'_> {
             }
             P::TupleStruct(path, elems) if path.len() == 1 && path[0].name == "Some" && self.is_prelude("Some") => {
                 match ty {
-                    Ty::Option(inner) if elems.len() == 1 => Pat::Some(Box::new(self.pattern(&elems[0], inner, owned))),
-                    Ty::Option(_) => {
-                        self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
-                        Pat::Wild
-                    }
+                    Ty::Option(inner) => match self.rest_positions(elems, 1) {
+                        Some(positions) => Pat::Some(Box::new(self.sub_pattern(positions[0], inner, owned))),
+                        None => {
+                            self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
+                            Pat::Wild
+                        }
+                    },
                     Ty::Error => {
                         elems.iter().for_each(|e| {
                             self.pattern(e, &Ty::Error, owned);
@@ -102,16 +104,18 @@ impl FnCx<'_> {
             {
                 let ok = path[0].name == "Ok";
                 match ty {
-                    Ty::Result(t, e) if elems.len() == 1 => {
-                        let payload = if ok { (**t).clone() } else { (**e).clone() };
-                        let inner = self.pattern(&elems[0], &payload, owned);
-                        if ok { Pat::Ok(Box::new(inner)) } else { Pat::Err(Box::new(inner)) }
-                    }
-                    Ty::Result(..) => {
-                        let name = if ok { "Ok" } else { "Err" };
-                        self.diags.error(Code::ARG_COUNT, p.span, format!("`{name}` takes one pattern"));
-                        Pat::Wild
-                    }
+                    Ty::Result(t, e) => match self.rest_positions(elems, 1) {
+                        Some(positions) => {
+                            let payload = if ok { (**t).clone() } else { (**e).clone() };
+                            let inner = self.sub_pattern(positions[0], &payload, owned);
+                            if ok { Pat::Ok(Box::new(inner)) } else { Pat::Err(Box::new(inner)) }
+                        }
+                        None => {
+                            let name = if ok { "Ok" } else { "Err" };
+                            self.diags.error(Code::ARG_COUNT, p.span, format!("`{name}` takes one pattern"));
+                            Pat::Wild
+                        }
+                    },
                     Ty::Error => {
                         elems.iter().for_each(|e| {
                             self.pattern(e, &Ty::Error, owned);
@@ -129,11 +133,19 @@ impl FnCx<'_> {
                 }
                 Pat::Or(alts)
             }
+            P::Rest(_) => Pat::Wild, // only a list holds a rest; the list handles it
+            P::Slice(elems) => self.slice_pattern(p.span, elems, ty, owned),
             P::Tuple(elems) => match ty {
-                Ty::Tuple(ts) if ts.len() == elems.len() => {
-                    Pat::Product(elems.iter().zip(ts).map(|(e, t)| self.pattern(e, t, owned)).collect())
-                }
-                Ty::Unit if elems.is_empty() => Pat::Product(Vec::new()),
+                Ty::Tuple(ts) => match self.rest_positions(elems, ts.len()) {
+                    Some(positions) => Pat::Product(
+                        positions.into_iter().zip(ts).map(|(e, t)| self.sub_pattern(e, t, owned)).collect(),
+                    ),
+                    None => pat_mismatch(self, &format!("a tuple pattern with {} elements", elems.len())),
+                },
+                Ty::Unit => match self.rest_positions(elems, 0) {
+                    Some(_) => Pat::Product(Vec::new()),
+                    None => pat_mismatch(self, &format!("a tuple pattern with {} elements", elems.len())),
+                },
                 Ty::Error => {
                     elems.iter().for_each(|e| {
                         self.pattern(e, &Ty::Error, owned);
@@ -163,7 +175,9 @@ impl FnCx<'_> {
                     });
                     return Pat::Wild;
                 };
-                if shape != tir::VariantShape::Tuple || field_tys.len() != elems.len() {
+                let positions =
+                    if shape == tir::VariantShape::Tuple { self.rest_positions(elems, field_tys.len()) } else { None };
+                let Some(positions) = positions else {
                     let code = if shape == tir::VariantShape::Tuple { Code::ARG_COUNT } else { Code::TYPE_MISMATCH };
                     self.diags.error(
                         code,
@@ -174,10 +188,13 @@ impl FnCx<'_> {
                         self.pattern(e, &Ty::Error, owned);
                     });
                     return Pat::Wild;
-                }
-                Pat::Variant(index, elems.iter().zip(&field_tys).map(|(e, t)| self.pattern(e, t, owned)).collect())
+                };
+                Pat::Variant(
+                    index,
+                    positions.into_iter().zip(&field_tys).map(|(e, t)| self.sub_pattern(e, t, owned)).collect(),
+                )
             }
-            P::Struct(path, fields) => {
+            P::Struct(path, fields, rest) => {
                 // A struct, or a variant with named fields.
                 let owner;
                 let (variant, defs): (Option<usize>, Vec<tir::FieldDef>) =
@@ -226,6 +243,7 @@ impl FnCx<'_> {
                     };
                 let from_other_package = owner != self.package();
                 let mut subs: Vec<Pat> = defs.iter().map(|_| Pat::Wild).collect();
+                let mut named = vec![false; defs.len()];
                 for f in fields {
                     let Some(i) = defs.iter().position(|d| d.name == f.name.name) else {
                         self.diags.error(Code::UNKNOWN_NAME, f.name.span, format!("no field `{}` here", f.name.name));
@@ -242,6 +260,7 @@ impl FnCx<'_> {
                         );
                     }
                     let fty = defs[i].ty.clone();
+                    named[i] = true;
                     subs[i] = match &f.pattern {
                         Some(sub) => self.pattern(sub, &fty, owned),
                         None => {
@@ -250,6 +269,11 @@ impl FnCx<'_> {
                         }
                     };
                 }
+                // A `..` that ignores no field is E0011 (RP4). A pattern without `..` may leave fields out: the
+                // omitted fields are not bound and stay where they are (`spec/rest-patterns.md`, "Omitted fields").
+                if let Some(span) = rest.filter(|_| named.iter().all(|n| *n)) {
+                    self.diags.error(Code::REST_IGNORES_NOTHING, span, "this `..` stands for no field");
+                }
                 match variant {
                     Some(index) => Pat::Variant(index, subs),
                     None if *ty == Ty::Error => Pat::Wild,
@@ -257,6 +281,122 @@ impl FnCx<'_> {
                 }
             }
         }
+    }
+
+    /// `[p, ..., q]` against an array or a slice (`spec/array-patterns.md`, AP2-AP6). The first rest element counts;
+    /// a later one was reported by the parser (E0010) and is skipped here. An array pattern without a rest names every
+    /// element; with one, the rest stands for the elements the pattern does not name, and for an array that is none
+    /// it is E0011 (AP4). A slice pattern with a rest matches every length from the named count up (AP5).
+    fn slice_pattern(&mut self, span: Span, elems: &[ast::Pattern], ty: &Ty, owned: bool) -> Pat {
+        use ast::PatternKind as P;
+        let (elem, length) = match ty {
+            Ty::Array(t, n) => ((**t).clone(), Some(*n)),
+            Ty::Slice(t) => ((**t).clone(), None),
+            _ => {
+                if *ty != Ty::Error {
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("expected `{ty}`, found an array pattern"));
+                }
+                // The names the pattern binds are still declared, so a use of them is not reported as unknown.
+                for e in elems {
+                    match &e.kind {
+                        P::Rest(Some(name)) => {
+                            self.declare_binding(name, &Ty::Error, false, owned);
+                        }
+                        _ => {
+                            self.pattern(e, &Ty::Error, owned);
+                        }
+                    }
+                }
+                return Pat::Wild;
+            }
+        };
+        let rest = elems.iter().position(|e| matches!(e.kind, P::Rest(_)));
+        let named = elems.iter().filter(|e| !matches!(e.kind, P::Rest(_))).count();
+        let (prefix_elems, suffix_elems): (&[ast::Pattern], Vec<&ast::Pattern>) = match rest {
+            Some(r) => (&elems[..r], elems[r + 1..].iter().filter(|e| !matches!(e.kind, P::Rest(_))).collect()),
+            None => (elems, Vec::new()),
+        };
+        let fits = match (length, rest) {
+            (Some(n), Some(_)) => named as u64 <= n,
+            (Some(n), None) => named as u64 == n,
+            (None, _) => true,
+        };
+        if !fits {
+            let n = length.unwrap_or(0);
+            let expected = if rest.is_some() { format!("at most {n}") } else { n.to_string() };
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                span,
+                format!(
+                    "expected `{ty}`, found an array pattern with {named} element(s) where {expected} are expected"
+                ),
+            );
+            for e in elems {
+                self.pattern(e, &Ty::Error, owned);
+            }
+            return Pat::Wild;
+        }
+        // The rest's type: the elements it stands for. An array rest that stands for none ignores nothing (E0011).
+        let stands = length.map(|n| n - named as u64);
+        if let (Some(0), Some(r)) = (stands, rest) {
+            self.diags.error(Code::REST_IGNORES_NOTHING, elems[r].span, "this `..` stands for no element");
+        }
+        let rest_ty = match stands {
+            Some(k) => Ty::Array(Box::new(elem.clone()), k),
+            None => Ty::Slice(Box::new(elem.clone())),
+        };
+        let prefix: Vec<Pat> = prefix_elems.iter().map(|e| self.sub_pattern(Some(e), &elem, owned)).collect();
+        let rest_pat = rest.map(|r| match &elems[r].kind {
+            P::Rest(Some(name)) => {
+                let (id, mode) = self.declare_binding(name, &rest_ty, false, owned);
+                Box::new(Pat::Binding(id, mode))
+            }
+            _ => Box::new(Pat::Wild),
+        });
+        let suffix: Vec<Pat> = suffix_elems.into_iter().map(|e| self.sub_pattern(Some(e), &elem, owned)).collect();
+        Pat::Slice { prefix, rest: rest_pat, suffix }
+    }
+
+    /// The sub-pattern for one position of a tuple, variant, or `Some`/`Ok`/`Err` pattern: a wildcard where a `..`
+    /// stands for the position (`spec/rest-patterns.md`, RP1), otherwise the written pattern.
+    fn sub_pattern(&mut self, p: Option<&ast::Pattern>, ty: &Ty, owned: bool) -> Pat {
+        match p {
+            Some(p) => self.pattern(p, ty, owned),
+            None => Pat::Wild,
+        }
+    }
+
+    /// The positions of a tuple-like pattern with `arity` positions: one entry per position, `None` where a `..`
+    /// stands for it. The first `..` is the one that counts; a later one was reported by the parser (E0010) and is
+    /// skipped here. `None` when the number of named positions does not fit `arity`, which the caller reports. A
+    /// `..` that stands for no position is E0011 (RP4).
+    fn rest_positions<'a>(&mut self, elems: &'a [ast::Pattern], arity: usize) -> Option<Vec<Option<&'a ast::Pattern>>> {
+        use ast::PatternKind as P;
+        // A name on a rest is only allowed in an array or slice pattern (E0016): a tuple has no rest binding.
+        for e in elems {
+            if let P::Rest(Some(name)) = &e.kind {
+                self.diags.error(
+                    Code::NAMED_REST,
+                    e.span,
+                    format!("`..{}` binds a rest only in an array or slice pattern", name.name),
+                );
+            }
+        }
+        let Some(rest) = elems.iter().position(|e| matches!(e.kind, P::Rest(_))) else {
+            return (elems.len() == arity).then(|| elems.iter().map(Some).collect());
+        };
+        let named = elems.iter().filter(|e| !matches!(e.kind, P::Rest(_))).count();
+        if named > arity {
+            return None;
+        }
+        let stands = arity - named;
+        if stands == 0 {
+            self.diags.error(Code::REST_IGNORES_NOTHING, elems[rest].span, "this `..` stands for no element");
+        }
+        let mut out: Vec<Option<&ast::Pattern>> = elems[..rest].iter().map(Some).collect();
+        out.extend(std::iter::repeat_n(None, stands));
+        out.extend(elems[rest + 1..].iter().filter(|e| !matches!(e.kind, P::Rest(_))).map(Some));
+        Some(out)
     }
 
     /// Resolves `Enum.Variant` in a pattern against the scrutinee type: the variant's index, shape, and field
