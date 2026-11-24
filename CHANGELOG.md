@@ -10,7 +10,10 @@ close-out checklist in `AGENTS.md`).
   type of their position, as `T.name`, `T.name(args)`, and `T { fields }` do for the `T` the position gives
   (`spec/target-typing.md`, TT1-TT12; `spec/grammar.md`, `TargetExpr`). `let list: List<String> = .new()`,
   `a(.{ x: 10, y: 20 })`, and `pick(.Red)` need no repeated type. No new error code: E0003 for a form with no usable
-  expected type, E0002 for a name the type lacks, and E0001 for a bare `.`. Tests: `tests/target_typing/`.
+  expected type, E0002 for a name the type lacks, and E0001 for a bare `.`. Tests: `tests/target_typing/`. The language
+  server treats a leading dot as its explicit spelling: definition, hover, references, and rename of `.Green` and
+  `.{ x: 1 }`, and completion after a bare dot offers the members of the expected type (`spec/lsp.md`, LS8 and LS12;
+  `crates/burdin_lsp/tests/leading_dot.rs`).
 - Issue #925: extension methods come with their module and can be called as associated functions (`spec/extensions.md`,
   EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; `use text.shout as yell`
   brings one under another method name, and the alias replaces the declared name for calls. `Type.name(recv, args)`

@@ -137,7 +137,9 @@ Tests: `every_error_of_a_file_is_published_with_its_code_and_span` (`broken-diag
 **LS8. Definition.** `textDocument/definition` (and `declaration`, the same) resolves the name under the cursor: a
 declaration names itself; a local or parameter its binding; a `use` path its module or item; a call, type, constant,
 or variant its declaration; a field or method after `.` the member of the receiver's type (through the analysis); a
-field in a struct literal the struct's field, and a shorthand field (`Rect { w, h }`) the local it reads. A name of the
+field in a struct literal the struct's field, and a shorthand field (`Rect { w, h }`) the local it reads. A name after a
+leading dot resolves as its explicit spelling does (`target-typing.md`): `.Green` is the variant `Color.Green`, `.new(1,
+2)` the method `Point.new`, and the `x` of `.{ x: 3 }` the field of the struct the position expects. A name of the
 standard library opens a copy of its source materialized under the temporary directory. The standard library is part of
 every package's database (embedded, read-only, and memoized like a dependency: an edit never checks it again). The
 compiler's built-ins have no Burdin source (`println`, `format`, `panic`, the built-in types, and their compiler-provided
@@ -222,6 +224,17 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   declares and the ones its `pub use` declarations re-export, transitively, and the modules it re-exports by name
   (`crypto.hash`). The package itself, a local module of that name, or a path or git dependency of it shadows the
   official package (`spec/packages.md`, PKG15).
+- **After a leading dot** (`.Red`, `.new(3)`, `.{ x: 1 }`, `.Gr`), the members of the type the position expects, as
+  `T.` offers them: its variants and its associated functions (no `self`), and `Some` and `None` for `Option`, `Ok` and
+  `Err` for `Result`. The expected type is the one the compiler gives the form (`target-typing.md`, TT2). A dot with
+  nothing after it is completed through a copy of the text that names a placeholder after the dot and closes the
+  brackets its line still needs; the document's own text is put back before the answer. A dot whose position gives no
+  type offers nothing (TT3). Tests: `leading_dot.rs`.
+- **At a field's name inside a struct literal's braces** (`Point { x: 1, `, `.{ x: 1, `), the fields of the struct the
+  literal builds that it has not written yet, then the names in scope for shorthand (`Point { x, y }`). A literal is
+  `Point {` (an uppercase name before the brace, which names a struct) or a leading `.{`, whose struct is the type the
+  dot's position expects, read from the document as it stands. Only a brace in a code body counts, so a struct's own
+  declaration offers nothing here. Tests: `leading_dot.rs`.
 - **In a `use` path**, the modules and the public items below the path written so far, from the package and its
   dependencies (a dependency's `priv` items are left out).
 - **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a

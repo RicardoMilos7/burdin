@@ -270,6 +270,13 @@ impl<'a> Resolver<'a> {
             return self.use_name(path, &u, &tok, &name);
         }
         let prev_dot = ti >= 2 && ix.tokens[ti - 1].kind == Tk::Dot;
+        // A name after a leading dot (`.Green`, `.new(1, 2)`) is a member of the type its position expects, the same
+        // member `Color.Green` names (`spec/lsp.md`, LS8).
+        if prev_dot && leading_dot(&ix, ti - 1) {
+            let dot = ix.tokens[ti - 1].lo;
+            let ty = self.p.current().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
+            return ty.and_then(|ty| self.member(path, &ty, &name));
+        }
         // The analysis's answer for an expression.
         if let Some(analysis) = self.p.current()
             && let Some(r) = analysis.resolve_at(path, tok.lo)
@@ -360,7 +367,7 @@ impl<'a> Resolver<'a> {
         }
         // A field name in a struct literal or pattern (`Rect { w: 1 }`).
         if ix.tokens.get(ti + 1).is_some_and(|t| t.kind == Tk::Colon)
-            && let Some(owner) = literal_owner(&ix, ti)
+            && let Some(owner) = self.literal_type(path, &ix, ti)
             && let Some(s) = self.member(path, &owner, &name)
         {
             return Some(s);
@@ -370,6 +377,18 @@ impl<'a> Resolver<'a> {
             i.kind.is_type() || matches!(i.kind, Kind::Function | Kind::Const | Kind::ExternFn | Kind::Derive)
         })
         .or_else(|| self.find(path, &name, |i| i.kind == Kind::Variant))
+    }
+
+    /// The type a struct literal that holds token `ti` builds: `Point` for `Point { ... }`, and for `.{ ... }` the type
+    /// its position expects, which the analysis gives at the dot.
+    fn literal_type(&mut self, path: &str, ix: &FileIndex, ti: usize) -> Option<String> {
+        if let Some(owner) = literal_owner(ix, ti) {
+            return Some(owner);
+        }
+        let brace = enclosing_brace(ix, ti)?;
+        let dot = ix.tokens.get(brace.checked_sub(1)?).filter(|t| t.kind == Tk::Dot)?;
+        let ty = self.p.current().and_then(|a| a.type_at(path, dot.lo)).map(|t| t.ty)?;
+        Some(base_type(&ty))
     }
 
     /// Whether the identifier is a local or parameter in scope (so `x.f` is a member of a value, not of a module).
@@ -441,8 +460,26 @@ pub fn base_type(ty: &str) -> String {
     t.split(['<', '[', '(']).next().unwrap_or(t).trim().to_string()
 }
 
-/// The type a struct literal or pattern that holds token `ti` names: the identifier before its unmatched `{`.
-pub fn literal_owner(ix: &FileIndex, ti: usize) -> Option<String> {
+/// Whether the dot token at `i` starts an expression (`.Red`, `.{ x: 1 }`, `name(.new())`) rather than follows one
+/// (`a.b`, `f().b`). A dot after an operator, a `(`, a `,`, `=`, `:`, or a keyword starts one.
+pub fn leading_dot(ix: &FileIndex, i: usize) -> bool {
+    let Some(before) = i.checked_sub(1).map(|b| &ix.tokens[b].kind) else { return true };
+    !matches!(
+        before,
+        Tk::Ident(_)
+            | Tk::RParen
+            | Tk::RBracket
+            | Tk::RBrace
+            | Tk::Num
+            | Tk::Str
+            | Tk::SelfValue
+            | Tk::SelfType
+            | Tk::Keyword("true" | "false")
+    )
+}
+
+/// The `{` that opens the braces holding token `ti`, when no `(` or `[` comes between them.
+pub fn enclosing_brace(ix: &FileIndex, ti: usize) -> Option<usize> {
     let mut depth = 0i32;
     let mut i = ti;
     while i > 0 {
@@ -452,15 +489,18 @@ pub fn literal_owner(ix: &FileIndex, ti: usize) -> Option<String> {
             Tk::LParen | Tk::LBracket if depth > 0 => depth -= 1,
             Tk::LParen | Tk::LBracket => return None,
             Tk::LBrace if depth > 0 => depth -= 1,
-            Tk::LBrace => {
-                let before = ix.tokens.get(i.checked_sub(1)?)?;
-                let name = before.ident()?;
-                return name.starts_with(|c: char| c.is_ascii_uppercase()).then(|| name.to_string());
-            }
+            Tk::LBrace => return Some(i),
             _ => {}
         }
     }
     None
+}
+
+/// The type a struct literal or pattern that holds token `ti` names: the identifier before its unmatched `{`.
+pub fn literal_owner(ix: &FileIndex, ti: usize) -> Option<String> {
+    let brace = enclosing_brace(ix, ti)?;
+    let name = ix.tokens.get(brace.checked_sub(1)?)?.ident()?;
+    name.starts_with(|c: char| c.is_ascii_uppercase()).then(|| name.to_string())
 }
 
 /// Whether token `ti` is a field written in shorthand (`Rect { w, h }`): the type it belongs to.

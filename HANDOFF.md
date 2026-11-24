@@ -15,6 +15,10 @@ new registry code: E0001 for a bare `.`, E0002 for a name the type lacks, and E0
 parameter, a reference, a view, or a `.{ }` on a non-struct. The expected type never comes from a later use, a method
 receiver, or the other operand of a binary operator. The folder is outside the milestone list, and CI runs it with the
 other non-milestone folders. Not done: tuple and array forms (TT7 leaves them out). `burdin fmt` reads and prints the forms.
+The language server answers a leading dot as its explicit spelling (LS8, LS12 in `spec/lsp.md`): `symbol_at` resolves
+`.Green` and `.{ x: 1 }` through the type the analysis gives the form at its dot, and completion after a bare dot
+analyzes a copy of the text with a placeholder name (`expected_type_at` in `edit.rs`) to read that type. The unknown-name
+case in `target_value` keeps its expected type on the error node for this. Tests: `crates/burdin_lsp/tests/leading_dot.rs`.
 
 **Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
 (`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or

@@ -86,7 +86,12 @@ impl FnCx<'_> {
                 );
                 error_expr(span)
             }
-            _ => self.unit_variant(ty.clone(), name, span),
+            _ => {
+                let value = self.unit_variant(ty.clone(), name, span);
+                // A name the expected type does not have keeps that type, so the editor can complete the name at the
+                // dot (`spec/lsp.md`, LS12). The error is already reported; no other check reads this node's kind.
+                if matches!(value.ty, Ty::Error) { mk(tir::ExprKind::Unit, ty.clone(), span) } else { value }
+            }
         }
     }
 
