@@ -471,16 +471,37 @@ E0002 and putting one in a derived comparison is E0130. A closure may be stored 
 `Option`, or `Result` only when it owns its captures (CL3).
 
 **CL11 Function values.** A non-generic function name, a built-in function name (`println`, `panic`, the runtime
-helpers), or `Some` may be used where a closure type is expected. It becomes a captureless closure of kind `Fn`
-whose body forwards its arguments to the function, so CL6's rule applies: every closure parameter is owned and each
-argument is moved into the call. Forwarding uses the function's own conventions (a read-only or `mut` parameter is
-passed by address, an `own` parameter by value). The value is first-class and owns only its empty capture record. A
-function whose return type is a view (`str`, `&T`, `[T]`) cannot be used this way: the returned view would point
-into the closure's own argument, which is dropped when the call returns (E0171). An `unsafe fn` cannot be used as a
-value either, because a closure call has no `unsafe` boundary (E0161); write a closure that calls it in an `unsafe`
-block. A generic function or an `extern` function as a value is E9000 for now.
+helpers), or one of the prelude constructors `Some`, `Ok`, or `Err` may be used where a closure type is expected. It
+becomes a captureless closure of kind `Fn` whose body forwards its arguments to the function, so CL6's rule applies:
+every closure parameter is owned and each argument is moved into the call. Forwarding uses the function's own
+conventions (a read-only or `mut` parameter is passed by address, an `own` parameter by value). The value is
+first-class and owns only its empty capture record. A function whose return type is a view (`str`, `&T`, `[T]`)
+cannot be used this way: the returned view would point into the closure's own argument, which is dropped when the call
+returns (E0171). An `unsafe fn` cannot be used as a value either, because a closure call has no `unsafe` boundary
+(E0161); write a closure that calls it in an `unsafe` block. A generic function or an `extern` function as a value is
+E9000 for now.
 
-Tests: `tests/m12_closures/`.
+A constructor has no signature, so the expected closure type fixes its type arguments. The closure has exactly one
+parameter, the payload: `Some`, `Ok`, and `Err` each take one argument, so a closure with another number of parameters
+is E0003. `Some` builds `Option<P>` from the payload alone, so its result may be open in the call that takes it (a
+`map` whose result is still `U` binds `U` to `Option<P>`). `Ok` and `Err` also need the argument the payload does not
+fix: `Ok` takes its error type from the expected result, and `Err` its value type. A result of the wrong shape is
+E0003. An argument the expected type leaves open is E0003 as well, so `xs.map(Ok)` whose result is only `U` is
+E0003: nothing in the call says what the error type is. A constructor with no expected closure type is E0003.
+
+**Method values.** `Type.name`, where `Type` is a non-generic struct or enum and `name` is one of its associated functions
+or methods, is a function value like a named function. Its parameters are the declared ones, and a method's receiver is
+its first parameter, so `Point.double` is `Fn(Point): i32`. The value forwards the receiver with the method's own
+convention (a read-only or `mut` receiver by address, an `own self` by value), as a named function does.
+`recv.name` written without a call is a method value on a bound receiver, where `recv` is a local name or `self`: the
+value is the closure `|args| recv.name(args)`, with the method's parameter types. Its captures follow CL2: a read-only
+or `mut` method borrows the receiver, an `own self` method moves it, and an owned closure type expected by the context
+moves it too. A receiver that is any other expression, and a method with type parameters of its own, are E0002; the
+message says to bind the receiver to a name or to write a closure.
+
+Tests: `tests/m12_closures/` (`closure_function_value.bd`, `closure_constructor_value.bd`, `closure_method_value.bd`,
+and the compile-fail `closure_constructor_untyped.bd`, `closure_constructor_mismatch.bd`, `closure_constructor_open.bd`,
+`closure_method_value_errors.bd`).
 
 ## 13. Scoped tasks (SK)
 

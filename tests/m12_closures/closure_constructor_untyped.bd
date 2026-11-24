@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// A constructor used as a value needs an expected closure type to fix its type arguments. Without one, each use is
+// E0003, and each of the three is reported on its own line.
+fn main() {
+    let a = Some //~ E0003
+    let b = Ok //~ E0003
+    let c = Err //~ E0003
+}

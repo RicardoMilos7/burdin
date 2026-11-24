@@ -104,9 +104,14 @@ impl FnCx<'_> {
             match bindings.iter().find(|(n, _)| n == pname) {
                 Some((_, t)) => targs.push(t.clone()),
                 None => {
-                    // A closure argument whose body already failed has no result type to bind; the failure is
-                    // reported where it happened, not again here.
-                    if checked.iter().flatten().any(|e| matches!(&e.ty, Ty::Fn { sig, .. } if *sig.ret == Ty::Error)) {
+                    // A closure argument whose body already failed has no result type to bind, and an argument that
+                    // failed (`map(Ok)` with no error type) binds nothing; the failure is reported where it
+                    // happened, not again here.
+                    if checked
+                        .iter()
+                        .flatten()
+                        .any(|e| e.ty == Ty::Error || matches!(&e.ty, Ty::Fn { sig, .. } if *sig.ret == Ty::Error))
+                    {
                         return error_expr(span);
                     }
                     let k = info.params.iter().position(|p| p == pname).unwrap_or(0);

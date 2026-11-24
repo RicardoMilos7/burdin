@@ -4,6 +4,27 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Method values (follow-up to issue #931, 2026-11-24).** A method is now a function value in two forms, both in CL11
+(`spec/memory-rules.md`). `Point.double` and `Point.new` name a method or associated function of a non-generic struct or
+enum, and the value's parameters are the declared ones, the receiver first. `p.double` written without a call, where
+`p` is a local or `self`, is the closure `|args| p.double(args)`: its captures follow CL2, so a read-only or `mut`
+method borrows `p` and an `own self` method moves it. Limits, kept as E0002 with a message: the receiver must be a local
+name (`make().double` and `self.inner.double` are not), and a method with type parameters of its own is not a value.
+An enclosing function's local is a receiver inside a closure body too. Built-in
+methods (`s.len`) and extension methods (EX8) are still not values. Tests: `tests/m12_closures/closure_method_value` (run)
+and `closure_method_value_errors` (compile-fail).
+**Prelude constructors as function values (issue #931, 2026-11-24).** Decision: one rule for `Some`, `Ok`, and `Err`,
+not a special case for `Some`. The expected closure type fixes the constructor's type arguments: its one parameter is
+the payload, and the expected result gives the other argument (`Ok`'s error type, `Err`'s value type). `Some` builds
+`Option<P>` from the payload alone, so `xs.iter().map(Some)` works now and `map`'s `U` is bound to `Option<i32>`. Any
+argument the expected type leaves open is E0003, so `xs.iter().map(Ok)` is still E0003: the call cannot know the error
+type, and inference does not defer to the later `collect`. Write the closure type instead (`let f: Fn(i32): Result<i32,
+String> = Ok`, then `xs.iter().map(f)`). User enum variants are unchanged: `Shape.Circle` as a value is still E0003, a
+separate decision. The rule is CL11 in `spec/memory-rules.md`; the code is `constructor_value` in
+`crates/burdin_sema/src/fncx/fnvalue.rs`. A failed argument no longer adds a second "cannot tell what `U` stands for"
+error at the call (`crates/burdin_sema/src/fncx/generic.rs`). Tests: `tests/m12_closures/closure_function_value` (extended),
+`closure_constructor_value` (run), and the compile-fail `closure_constructor_untyped`, `closure_constructor_mismatch`,
+and `closure_constructor_open`.
 **Extensions in modules and as associated functions (issue #925, 2026-11-24).** The issue's fix 1 (`spec/extensions.md`
 EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; a `priv` extension of
 another package is not brought, and that is not an error. `use text.shout as yell` brings one under the method name

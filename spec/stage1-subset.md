@@ -228,9 +228,10 @@ code; do not invent them inside the implementation.
    the closure's last use. The body's use of the captures decides the kind: `FnOnce` if it moves one out, `FnMut` if
    it writes one, else `Fn`; a value may be used at a lower capability. The rules are `spec/memory-rules.md`
    CL1-CL11, the syntax is `spec/grammar.md` section 4, and the tests are `tests/m12_closures/`.
-   A non-generic function name, a built-in function name, or `Some` may also be used where a closure type
-   is expected: it becomes a captureless `Fn` value that forwards to the function (CL11). A generic or
-   `extern` function as a value is still E9000 and belongs to the Stage 1 work.
+   A non-generic function name, a built-in function name, or `Some`, `Ok`, or `Err` may also be used where a closure
+   type is expected: it becomes a captureless `Fn` value that forwards to the function, and the expected closure type
+   fixes its type arguments (CL11). A generic or `extern` function as a value is still E9000 and belongs to the
+   Stage 1 work.
 
 2. **Iterator protocol.** Stage 0 interfaces have no associated types. Options:
    - a generic interface `Iterator<T> { fn next(mut self): Option<T> }` with `Iterable<T> { fn iter(self): ... }`

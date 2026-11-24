@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// `Ok` takes its error type from the expected closure type. `map`'s result `U` is not an error type, so nothing
+// fixes it here and the value is E0003. The call adds no second error for the `U` it could not bind.
+fn main() {
+    let xs = [1, 2, 3]
+    let rs = xs.iter().map(Ok) //~ E0003
+}

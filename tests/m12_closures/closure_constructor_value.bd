@@ -1,0 +1,40 @@
+//@ run
+//> 4
+//> 3
+//> 5
+//> 9
+//> 3
+
+// `Some`, `Ok`, and `Err` take their type arguments from the expected closure type (CL11). `Some` builds its result
+// from its payload alone, so an open result in a generic call (`apply`'s `U`, `map`'s `U`) is bound by the call.
+// `Ok` and `Err` take the other argument from the expected result.
+fn apply<U>(f: Fn(i32): U): U {
+    f(4)
+}
+
+fn apply_result<U>(f: Fn(i32): Result<U, String>): Result<U, String> {
+    f(5)
+}
+
+fn wrap<T>(t: T): Option<T> {
+    let f: Fn(T): Option<T> = Some
+    f(t)
+}
+
+fn main() {
+    let opt: Option<i32> = apply(Some)
+    println(opt.unwrap().to_string())
+
+    let xs = [1, 2, 3]
+    let opts: List<Option<i32>> = xs.iter().map(Some).collect()
+    println(opts.len().to_string())
+
+    let r: Result<i32, String> = apply_result(Ok)
+    println(r.unwrap().to_string())
+
+    println(wrap(9).unwrap().to_string())
+
+    let fixed: Fn(i32): Result<i32, String> = Ok
+    let rs: List<Result<i32, String>> = xs.iter().map(fixed).collect()
+    println(rs.len().to_string())
+}

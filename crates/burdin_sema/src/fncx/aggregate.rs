@@ -53,6 +53,13 @@ impl FnCx<'_> {
                 }
             }
         }
+        // `local.name` read without a call, where `name` is a method of the local's type: a method value (CL11).
+        if let Some(ty) = self.local_receiver_ty(base)
+            && !self.has_field(&ty, name)
+            && let Some(f) = self.user_method(&ty, name)
+        {
+            return self.bound_method_value(base, name, f, expect, span);
+        }
         let base = self.expr(base, None);
         let base = self.auto_deref(base);
         let field = match &base.ty {
@@ -74,6 +81,17 @@ impl FnCx<'_> {
             _ => None,
         };
         let Some((index, ty, is_priv, owner)) = field else {
+            if self.user_method(&base.ty, name).is_some() {
+                self.diags.error(
+                    Code::UNKNOWN_NAME,
+                    name.span,
+                    format!(
+                        "`{}` is a method of `{}`, and a method value needs its receiver in a local name; bind the                          receiver to a name first, or write a closure",
+                        name.name, base.ty
+                    ),
+                );
+                return error_expr(span);
+            }
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no field `{}` on type `{}`", name.name, base.ty));
             return error_expr(span);
         };
@@ -113,6 +131,10 @@ impl FnCx<'_> {
                 return error_expr(span);
             }
             return mk(tir::ExprKind::Variant(index, Vec::new()), ty, span);
+        }
+        // `Point.double` or `Point.new`: a method or associated function named through its type (CL11).
+        if let Some(f) = self.user_method(&ty, name) {
+            return self.method_function_value(f, name, span);
         }
         self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{ty}` has no variant `{}`", name.name));
         error_expr(span)

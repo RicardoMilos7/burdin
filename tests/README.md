@@ -413,8 +413,11 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     last use. Its kind follows the body: `FnOnce` if it moves a captured value out, `FnMut` if it mutates one, else
     `Fn`; a value may be used at a lower capability (`Fn` as `FnMut` as `FnOnce`). Calling borrows `Fn` shared,
     `FnMut` exclusively, and moves `FnOnce`. The representation is a boxed capture record behind a code pointer, so
-    closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Some` is
-    a value of a closure type when the context expects one: it becomes a captureless `Fn` closure (CL11).
+    closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Some`, `Ok`,
+    or `Err` is a value of a closure type when the context expects one: it becomes a captureless `Fn` closure, and the
+    expected closure type fixes its type arguments (CL11). `Type.name` of a non-generic struct or enum is a function
+    value too, its receiver the first parameter, and `local.name` read without a call is the closure
+    `|args| local.name(args)` (CL11, method values).
     `spec/grammar.md` section 4, `spec/memory-rules.md` CL1-CL11, `tests/m12_closures/`.
 
 18. **Iteration.** `std` declares `interface Iterator<T> { fn next(mut self): Option<T> }` and the marker

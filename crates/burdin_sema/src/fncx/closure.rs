@@ -39,6 +39,12 @@ impl FnCx<'_> {
         self.capture.as_ref().is_some_and(|ctx| ctx.outer.iter().any(|o| o.name == name))
     }
 
+    /// The type of the enclosing function's local `name`, when this is a closure body that can capture it.
+    pub(super) fn outer_local_ty(&self, name: &str) -> Option<Ty> {
+        let ctx = self.capture.as_ref()?;
+        ctx.outer.iter().find(|o| o.name == name).map(|o| o.ty.clone())
+    }
+
     /// Resolves a name in a closure body: the closure's own bindings first, then the enclosing function's visible
     /// locals, which are captured on first use (CL1). `None` when the name is not an enclosing local.
     pub(super) fn capture_name(&mut self, name: &str, span: Span) -> Option<tir::Expr> {

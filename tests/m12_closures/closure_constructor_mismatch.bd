@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// The expected closure type must match the constructor: one parameter (the payload), and a result of the
+// constructor's own shape. Anything else is E0003.
+fn main() {
+    let two: Fn(i32, i32): Option<i32> = Some //~ E0003
+    let plain: Fn(i32): i32 = Some //~ E0003
+    let not_result: Fn(i32): Option<i32> = Ok //~ E0003
+    let wrong_payload: Fn(String): Result<i32, String> = Ok //~ E0003
+}
