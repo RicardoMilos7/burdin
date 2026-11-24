@@ -6,6 +6,10 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.3 — 2026-11-24
+
 - Issue #998: target-typed initializers. `.name`, `.name(args)`, and `.{ fields }` take their type from the expected
   type of their position, as `T.name`, `T.name(args)`, and `T { fields }` do for the `T` the position gives
   (`spec/target-typing.md`, TT1-TT12; `spec/grammar.md`, `TargetExpr`). `let list: List<String> = .new()`,
