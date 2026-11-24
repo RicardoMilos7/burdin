@@ -106,6 +106,9 @@ struct FnCx<'a> {
     module: usize,
     /// How many `unsafe` blocks (or `unsafe fn` bodies) enclose this expression.
     unsafe_depth: usize,
+    /// The body is the initializer of a `const` or a `static`, which is evaluated at compile time: it may not name
+    /// a static (`spec/globals.md`, GL1).
+    const_init: bool,
     /// The body is checked against bounds only and is discarded: it has no code, so it registers no vtable and
     /// no type identity (AN3, AN6).
     symbolic: bool,
@@ -183,6 +186,7 @@ impl<'a> FnCx<'a> {
             bounds: Vec::new(),
             module,
             unsafe_depth: usize::from(is_unsafe),
+            const_init: false,
             symbolic,
             closures,
             capture: None,
@@ -454,6 +458,7 @@ impl<'a> FnCx<'a> {
     pub(super) fn place_mutable(&self, e: &tir::Expr) -> bool {
         match &e.kind {
             tir::ExprKind::Local(id) => self.locals[id.0].mutable,
+            tir::ExprKind::Static(id) => self.globals.const_kinds[id.0] == tir::ConstKind::StaticMut,
             tir::ExprKind::Field(base, _) | tir::ExprKind::Deref(base) => self.place_mutable(base),
             tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
             // Writing through a raw pointer writes C memory; it does not mutate the binding that holds the
@@ -465,6 +470,34 @@ impl<'a> FnCx<'a> {
             }
             _ => false,
         }
+    }
+
+    /// The static a place is part of, when its root is one (`spec/globals.md`).
+    pub(super) fn static_root(&self, e: &tir::Expr) -> Option<tir::ConstId> {
+        match &e.kind {
+            tir::ExprKind::Static(id) => Some(*id),
+            tir::ExprKind::Field(base, _) | tir::ExprKind::Index(base, _) => self.static_root(base),
+            _ => None,
+        }
+    }
+
+    /// Reports E0304 when `place` is part of a `static mut` that is borrowed: no reference may alias it
+    /// (`spec/globals.md`, GL4). Returns whether it did.
+    pub(super) fn static_mut_borrowed(&mut self, place: &tir::Expr, span: Span) -> bool {
+        let Some(id) = self.static_root(place) else { return false };
+        if self.globals.const_kinds[id.0] != tir::ConstKind::StaticMut {
+            return false;
+        }
+        let name = self.globals.const_names[id.0].clone();
+        self.diags.error(
+            Code::STATIC_MUT_BORROW,
+            span,
+            format!(
+                "`{name}` is a `static mut`, which cannot be borrowed: no reference may alias it, so a read or a \
+                 write of it never conflicts (spec/globals.md, GL4)"
+            ),
+        );
+        true
     }
 
     /// Whether a pattern matching `e` takes ownership of it: a place rooted at an owned local, or a temporary.

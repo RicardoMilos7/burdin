@@ -73,6 +73,48 @@ impl Globals {
     }
 }
 
+impl Globals {
+    /// Whether a value of `ty` is plain data (`spec/globals.md`, GL2): it owns no memory and has no destructor, so a
+    /// static of this type is never dropped. A `String`, a collection, a handle, and a closure are not plain.
+    pub(crate) fn plain(&self, ty: &Ty) -> bool {
+        self.plain_in(ty, &mut Vec::new())
+    }
+
+    fn plain_in(&self, ty: &Ty, seen: &mut Vec<(bool, usize)>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
+            Ty::Tuple(ts) => ts.iter().all(|t| self.plain_in(t, seen)),
+            Ty::Array(t, _) | Ty::Option(t) | Ty::Range(t, _) => self.plain_in(t, seen),
+            Ty::Result(t, e) => self.plain_in(t, seen) && self.plain_in(e, seen),
+            Ty::Struct(a) | Ty::Enum(a) => {
+                let is_enum = matches!(ty, Ty::Enum(_));
+                let key = (is_enum, a.id);
+                // A recursive type reaches itself through a `Heap` or a `List`, which are not plain already.
+                if seen.contains(&key) {
+                    return true;
+                }
+                let has_drop = if is_enum {
+                    self.enums[a.id].drop_method.is_some()
+                } else {
+                    self.structs[a.id].drop_method.is_some()
+                };
+                if has_drop {
+                    return false;
+                }
+                seen.push(key);
+                let ok = if is_enum {
+                    self.enums[a.id].variants.iter().all(|v| v.fields.iter().all(|f| self.plain_in(&f.ty, seen)))
+                } else {
+                    self.structs[a.id].fields.iter().all(|f| self.plain_in(&f.ty, seen))
+                };
+                seen.pop();
+                ok
+            }
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

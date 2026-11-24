@@ -324,6 +324,8 @@ impl<'p, 'c> Interp<'p, 'c> {
                     Slot::Val(_) => Place { frame, root: Root::Local(id.0), path: Vec::new() },
                 })
             }
+            // Global storage is not part of a compile-time evaluation (spec/globals.md, GL7).
+            K::Static(id) => Err(impure(&format!("using the static `{}`", self.p.consts[id.0].name), e.span)),
             K::Field(base, n) => {
                 let mut p = self.eval_place(base)?;
                 p.path.push(Step::Field(*n));
@@ -391,6 +393,9 @@ impl<'p, 'c> Interp<'p, 'c> {
                 v
             }
             K::Const(id) => self.const_value(id.0, span)?,
+            K::Static(id) => {
+                return Err(impure(&format!("reading the static `{}`", self.p.consts[id.0].name), span));
+            }
             K::Call(f, args) => self.call(*f, None, args, span)?,
             K::ExternCall(n, _) => {
                 let name = self.p.externs.get(*n).map(|x| x.symbol.clone()).unwrap_or_default();

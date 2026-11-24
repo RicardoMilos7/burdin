@@ -397,6 +397,7 @@ impl An<'_> {
             | K::Str(_)
             | K::Bytes(_)
             | K::Const(_)
+            | K::Static(_)
             | K::None
             | K::Continue(_)
             | K::Return(None)
@@ -675,6 +676,7 @@ fn invariant(e: &Expr, allocates: &mut bool) -> bool {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
+        | K::Static(_)
         | K::None => true,
         K::Array(es) | K::Tuple(es) => es.iter().all(|x| invariant(x, allocates)),
         K::Struct(fs) | K::Variant(_, fs) => fs.iter().all(|(_, x)| invariant(x, allocates)),

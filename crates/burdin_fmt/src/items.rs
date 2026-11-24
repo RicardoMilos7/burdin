@@ -91,6 +91,11 @@ impl Fmt<'_> {
             TokenKind::Interface => self.interface_decl()?,
             TokenKind::Type => self.type_alias()?,
             TokenKind::Const => self.const_decl()?,
+            TokenKind::Ident(word)
+                if word == "static" && matches!(self.nth(1), TokenKind::Mut | TokenKind::Ident(_)) =>
+            {
+                self.static_decl()?
+            }
             TokenKind::Comptime if !is_priv => self.comptime_item()?,
             TokenKind::Extern => self.extern_item()?,
             TokenKind::Reserved(word) if word == "derive" => self.derive_decl()?,
@@ -362,7 +367,24 @@ impl Fmt<'_> {
     }
 
     fn const_decl(&mut self) -> R<D> {
-        let mut parts = vec![self.tok_doc(), space(), self.ident()?];
+        let parts = vec![self.tok_doc(), space()];
+        self.named_const(parts)
+    }
+
+    /// `static [mut] name: Type = value` (`spec/globals.md`, GL1): the constant's layout after the keyword and an
+    /// optional `mut`.
+    fn static_decl(&mut self) -> R<D> {
+        let mut parts = vec![self.tok_doc(), space()];
+        if self.at(&TokenKind::Mut) {
+            parts.push(self.tok_doc());
+            parts.push(space());
+        }
+        self.named_const(parts)
+    }
+
+    /// `name: Type = value`, the rest of a constant or static after its keyword (and its `mut`).
+    fn named_const(&mut self, mut parts: Vec<D>) -> R<D> {
+        parts.push(self.ident()?);
         parts.push(self.take(&TokenKind::Colon)?);
         parts.push(space());
         parts.push(self.ty()?);

@@ -44,6 +44,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Bytes(_)
         | K::Local(_)
         | K::Const(_)
+        | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
         | K::None
@@ -186,6 +187,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Bytes(_)
         | K::Local(_)
         | K::Const(_)
+        | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
         | K::None

@@ -444,6 +444,7 @@ pub(crate) fn define_main<'ctx>(
     cx: &'ctx Context,
     module: &Module<'ctx>,
     program_main: FunctionValue<'ctx>,
+    statics: Option<FunctionValue<'ctx>>,
     windows: bool,
     sanitized: bool,
 ) -> GenResult<()> {
@@ -452,7 +453,7 @@ pub(crate) fn define_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows, sanitized)?;
+    prepare_main(&b, module, f, statics, windows, sanitized)?;
     b.build_call(program_main, &[], "").map_err(llvm_err)?;
     b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
     Ok(())
@@ -483,6 +484,7 @@ pub(crate) fn define_fuzz_entry<'ctx>(
     module: &Module<'ctx>,
     target: FunctionValue<'ctx>,
     usize_ty: IntType<'ctx>,
+    statics: Option<FunctionValue<'ctx>>,
     windows: bool,
     sanitized: bool,
 ) -> GenResult<()> {
@@ -497,6 +499,10 @@ pub(crate) fn define_fuzz_entry<'ctx>(
     let argc = b.build_load(i32_ty, argc_ptr, "argc").map_err(llvm_err)?.into_int_value();
     let argv = b.build_load(ptr_ty, argv_ptr, "argv").map_err(llvm_err)?.into_pointer_value();
     prepare_process(&b, module, argc, argv, windows, sanitized)?;
+    // The statics store their values once, before the first input (`spec/globals.md`, GL1).
+    if let Some(init) = statics {
+        b.build_call(init, &[], "").map_err(llvm_err)?;
+    }
     b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
 
     let one =
@@ -617,6 +623,7 @@ pub(crate) fn define_test_main<'ctx>(
     fuzzes: &[FunctionValue<'ctx>],
     usize_ty: IntType<'ctx>,
     leak_check: Option<FunctionValue<'ctx>>,
+    statics: Option<FunctionValue<'ctx>>,
     windows: bool,
     sanitized: bool,
 ) -> GenResult<()> {
@@ -625,7 +632,7 @@ pub(crate) fn define_test_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows, sanitized)?;
+    prepare_main(&b, module, f, statics, windows, sanitized)?;
 
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
@@ -757,6 +764,7 @@ pub(crate) fn define_bench_main<'ctx>(
     module: &Module<'ctx>,
     benches: &[FunctionValue<'ctx>],
     rt: &Runtime<'ctx>,
+    statics: Option<FunctionValue<'ctx>>,
     windows: bool,
     sanitized: bool,
 ) -> GenResult<()> {
@@ -767,7 +775,7 @@ pub(crate) fn define_bench_main<'ctx>(
     let f = module.add_function("main", i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], false), None);
     let b = cx.create_builder();
     b.position_at_end(cx.append_basic_block(f, "entry"));
-    prepare_main(&b, module, f, windows, sanitized)?;
+    prepare_main(&b, module, f, statics, windows, sanitized)?;
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
     let has_mode =
@@ -1118,12 +1126,18 @@ fn prepare_main<'ctx>(
     b: &Builder<'ctx>,
     module: &Module<'ctx>,
     f: FunctionValue<'ctx>,
+    statics: Option<FunctionValue<'ctx>>,
     windows: bool,
     sanitized: bool,
 ) -> GenResult<()> {
     let argc = f.get_nth_param(0).expect("main has argc").into_int_value();
     let argv = f.get_nth_param(1).expect("main has argv").into_pointer_value();
-    prepare_process(b, module, argc, argv, windows, sanitized)
+    prepare_process(b, module, argc, argv, windows, sanitized)?;
+    // The statics store their values before `main` runs (`spec/globals.md`, GL1).
+    if let Some(init) = statics {
+        b.build_call(init, &[], "").map_err(llvm_err)?;
+    }
+    Ok(())
 }
 
 /// What every entry point does before Burdin code runs: records the arguments, makes output binary-safe on

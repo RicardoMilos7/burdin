@@ -2252,6 +2252,50 @@ Open:
 - **`fn main(): Result<(), IoError>` (a `Result` whose error is not `Error`) fails in the wrapper** with E0002 (no
   `print_trace` on `IoError`), before and after this change. Aliases behave the same way; the wrapper only supports `Result<T>`.
 
+## Session: global variables and `static` (issue #485)
+
+Burdin has global variables: `static` (immutable) and `static mut` (writable, only in `unsafe` code), with the rules
+in `spec/globals.md` (GL1-GL8) and decision 36 in `tests/README.md`. The session first decided that Burdin would have
+no globals, then the user reversed that decision, and the design above is the reversal. A `const` remains the value
+copied into each use.
+
+What is in place:
+
+- **Syntax.** `static [mut] NAME: Type = expr` at module scope (`ast::ConstDecl` with `ConstKind::Static` or
+  `StaticMut`; `crates/burdin_syntax/src/parser/items.rs`). A `static` in a function body is E0302 at the keyword and
+  is read as a `let`, so the body still checks. `static` stays an ordinary identifier unless a declaration starts with
+  it (`static` then `mut` or a name).
+- **Sema.** `Global::Static`; the type must be plain data, which is `Globals::plain` (E0303). A `static mut` needs
+  `unsafe` (E0161) and may not be borrowed (E0304, `FnCx::static_mut_borrowed`, which covers `&`, `&mut`, a `self`
+  receiver, a formatted argument, and a `comptime` argument). An initializer that names a static is E0220
+  (`FnCx::const_init`).
+- **Checks.** Moving a static out is E0101 (`moves.rs`); `&STATIC` is a static view, with the origin of a literal
+  (`origins.rs`).
+- **Comptime.** `evaluate` builds the function `static.init`, which stores each static's value in declaration order,
+  and records it in `Program::static_init`. The interpreter refuses a static (E0224 at compile time); `--interpret`
+  skips a test that touches one, with the reason (GL7).
+- **Codegen.** One internal, zeroed LLVM global per static (`declare_statics`, `place_ptr`). `static.init` runs from
+  `prepare_main` (for `main`, test, and bench entry points) and from `LLVMFuzzerInitialize` (fuzz), before any user
+  code. `reach.rs` keeps it.
+- **Tooling.** `burdin fmt` reads the `static` item. Every other tool matches the new typed-tree variant.
+
+Tests: `tests/m20_comptime/static_values`, `static_mut`, `static_view`, `static_in_block` (E0302), `static_string`
+(E0303), `static_drop` (E0303), `static_assign` (E0005), `static_move` (E0101), `static_mut_safe` (E0161),
+`static_mut_borrow` (E0304), `static_comptime` (E0224), `static_const_init` (E0220), `static_array_len` (E0251),
+`const_global`; `tests/s2_tasks/static_in_task`; the parser unit tests in `crates/burdin_syntax/src/parser/mod.rs`.
+
+Open, for the user to decide:
+
+- **Atomics and `Mutex<T>` cannot be a static's type yet.** They are not materializable (CT3), so
+  `static COUNT: AtomicI64 = AtomicI64.new(0)` is E0221. A counter that every task updates therefore has no static
+  form. Options: a compile-time constructor for the atomic types, or a zero-initialized static form that the runtime
+  fills in. GL3 says this, and no test covers it.
+- **`burdin doc` lists a static as a constant** with the `const` keyword, because the documentation model has no
+  separate kind. A follow-up with a golden page change.
+- **A lazily initialized cell (`Once`, `Lazy`) is not part of this decision.** It is a later issue, with the answers
+  GL7 lists.
+- **E0302 is a syntax-level error,** so a file that has one reports only that (`spec/check.md` CK4).
+
 ## Decisions already made (do not reopen without a reason)
 
 - Compiler: Rust, LLVM only (no Cranelift; lowest optimization level for debug). It stays in Rust: no self-hosting, at least

@@ -214,6 +214,7 @@ fn same_global(a: &Global, b: &Global) -> bool {
     match (a, b) {
         (Global::Func(x), Global::Func(y)) => x == y,
         (Global::Const(x), Global::Const(y)) => x == y,
+        (Global::Static(x), Global::Static(y)) => x == y,
         (Global::Generic(x), Global::Generic(y)) => x == y,
         (Global::Extern(x), Global::Extern(y)) => x == y,
         _ => false,

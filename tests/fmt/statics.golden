@@ -1,0 +1,9 @@
+static LIMIT: i32 = 3
+static mut COUNT: i32 = 0
+const NAME: str = "x"
+static NAMES: [i32; 2] = [1, 2]
+
+fn main() {
+    unsafe { COUNT = LIMIT + 1 }
+    println(NAME)
+}

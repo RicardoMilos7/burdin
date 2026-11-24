@@ -423,11 +423,20 @@ impl<'t> Sema<'t> {
                             );
                             continue;
                         }
-                        self.globals.modules[module]
-                            .values
-                            .insert(name.clone(), Global::Const(ConstId(self.const_decls.len())));
+                        let id = ConstId(self.const_decls.len());
+                        let global = match c.kind {
+                            ast::ConstKind::Const => Global::Const(id),
+                            ast::ConstKind::Static | ast::ConstKind::StaticMut => Global::Static(id),
+                        };
+                        self.globals.modules[module].values.insert(name.clone(), global);
                         self.globals.modules[module].value_priv.insert(name.clone(), c.is_priv);
                         self.globals.const_tys.push(Ty::Error);
+                        self.globals.const_kinds.push(match c.kind {
+                            ast::ConstKind::Const => tir::ConstKind::Const,
+                            ast::ConstKind::Static => tir::ConstKind::Static,
+                            ast::ConstKind::StaticMut => tir::ConstKind::StaticMut,
+                        });
+                        self.globals.const_names.push(name.clone());
                         // A copy that lives as long as the compilation: array lengths and const arguments read
                         // the initializers of the constants they name (`crate::consteval`).
                         let init: &'static ast::Expr = Box::leak(Box::new(c.value.clone()));

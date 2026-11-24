@@ -380,6 +380,7 @@ impl<'t> Sema<'t> {
             benches: self.benches,
             fuzzes: self.fuzzes,
             fuzz_target: None,
+            static_init: None,
             any_ifaces,
             any_vtables,
             any_type_ids,

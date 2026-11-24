@@ -68,6 +68,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             };
             self.functions.push(value);
         }
+        // Every static is one global, zeroed until the static initializer stores its value (`spec/globals.md`, GL1).
+        self.declare_statics();
+        self.static_init = program.static_init.map(|id| self.functions[id.0]);
         // Closures: their functions are declared (and their record destructors generated) before any body that
         // may create a closure value.
         self.declare_closures()?;
@@ -97,9 +100,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
 
         match program.main {
-            Some(main) => {
-                crate::runtime::define_main(self.cx, self.module, self.functions[main.0], self.windows, self.sanitized)?
-            }
+            Some(main) => crate::runtime::define_main(
+                self.cx,
+                self.module,
+                self.functions[main.0],
+                self.static_init,
+                self.windows,
+                self.sanitized,
+            )?,
             // A `burdin fuzz` build: libFuzzer supplies `main` and calls the target once per input
             // (`spec/fuzz.md`, FZ3).
             None if program.fuzz_target.is_some() => {
@@ -109,6 +117,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.module,
                     self.functions[target.func.0],
                     self.usize_ty,
+                    self.static_init,
                     self.windows,
                     self.sanitized,
                 )?
@@ -122,6 +131,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.module,
                     &benches,
                     &self.rt,
+                    self.static_init,
                     self.windows,
                     self.sanitized,
                 )?
@@ -137,6 +147,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     &fuzzes,
                     self.usize_ty,
                     self.rt.leak_check,
+                    self.static_init,
                     self.windows,
                     self.sanitized,
                 )?

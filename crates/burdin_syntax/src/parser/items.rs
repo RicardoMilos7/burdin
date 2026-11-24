@@ -97,6 +97,11 @@ impl Parser<'_> {
             );
             self.bump();
         }
+        // `static NAME: T = e` and `static mut NAME: T = e` are module items (`spec/globals.md`, GL1).
+        if self.at_static_decl() {
+            let kind = self.static_keyword();
+            return Ok(Some(Item::Const(self.named_const(is_priv, start, kind)?)));
+        }
         match self.kind() {
             // `unsafe Type: Send { }`: an `unsafe` followed by a type name is an impl block, not a function.
             TokenKind::Unsafe if !is_priv && matches!(self.nth_kind(1), TokenKind::Ident(_) | TokenKind::SelfType) => {
@@ -847,15 +852,46 @@ impl Parser<'_> {
         ))
     }
 
+    /// Whether the next tokens are `static` followed by `mut` or a name, which is a static declaration (GL2). A
+    /// `static` followed by anything else is an ordinary name, so `static: Interface { }` is still an impl block.
+    pub(super) fn at_static_decl(&self) -> bool {
+        matches!(self.kind(), TokenKind::Ident(word) if word == "static")
+            && matches!(self.nth_kind(1), TokenKind::Mut | TokenKind::Ident(_))
+    }
+
+    /// A `static` in a function body is E0302: statics are module items (`spec/globals.md`, GL1). It is read as a
+    /// `let`, so the rest of the body still parses.
+    pub(super) fn static_in_body(&mut self) -> Span {
+        let span = self.span();
+        self.diags.error(
+            Code::STATIC_ITEM,
+            span,
+            "a `static` is a module item: declare it at module scope, not in a function body (`spec/globals.md`, GL1)",
+        );
+        self.static_keyword();
+        span
+    }
+
+    /// Consumes the `static` keyword and an optional `mut`, and says which declaration follows (`spec/globals.md`).
+    pub(super) fn static_keyword(&mut self) -> ConstKind {
+        self.bump();
+        if self.eat(&TokenKind::Mut) { ConstKind::StaticMut } else { ConstKind::Static }
+    }
+
     pub(super) fn const_decl(&mut self, is_priv: bool, start: Span) -> PResult<ConstDecl> {
         self.expect(&TokenKind::Const)?;
+        self.named_const(is_priv, start, ConstKind::Const)
+    }
+
+    /// `name: Type = value`, the rest of a constant or static declaration after its keyword.
+    fn named_const(&mut self, is_priv: bool, start: Span, kind: ConstKind) -> PResult<ConstDecl> {
         let name = self.ident("a constant name")?;
         self.expect(&TokenKind::Colon)?;
         let ty = self.ty()?;
         self.expect(&TokenKind::Eq)?;
         let value = self.expr()?;
         let span = start.to(value.span);
-        Ok(ConstDecl { is_priv, name, ty, value, span })
+        Ok(ConstDecl { is_priv, kind, name, ty, value, span })
     }
 
     /// `comptime assert(condition, "message")` at module scope (spec/comptime.md, CT8). It is a private constant of
@@ -869,7 +905,7 @@ impl Parser<'_> {
         self.comptime_asserts += 1;
         let name = Ident { name: format!("comptime assert {}", self.comptime_asserts), span: start };
         let ty = Type { kind: TypeKind::Unit, span: start };
-        Ok(ConstDecl { is_priv: true, name, ty, span: start.to(value.span), value })
+        Ok(ConstDecl { is_priv: true, kind: ConstKind::Const, name, ty, span: start.to(value.span), value })
     }
 
     /// At `comptime generate {`: `generate` is a keyword only right after `comptime`, so it stays an ordinary

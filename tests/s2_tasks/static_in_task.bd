@@ -1,0 +1,17 @@
+//@ run
+//> 12 12
+
+// Tasks read an immutable static. It is `Sync`, so each task may read it while another does, and a static is not a
+// capture (spec/globals.md, GL3 and GL6).
+
+static STEP: i32 = 4
+
+fn work(n: i32): i32 {
+    n * STEP
+}
+
+fn main() {
+    let a = task.spawn(|| work(3))
+    let b = task.spawn(|| STEP * 3)
+    println("{} {}", a.join(), b.join())
+}
