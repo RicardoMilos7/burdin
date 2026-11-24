@@ -612,6 +612,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         K::BoxAny { value, .. } => walk(value, captures, globals, usage, Mode::Move),
         K::AnyIs { value, .. } => walk(value, captures, globals, usage, Mode::Use),
         K::AnyDowncast { value, .. } => walk(value, captures, globals, usage, Mode::Move),
+        K::AnyUpcast { value, .. } => walk(value, captures, globals, usage, Mode::Move),
         K::AnyCall { recv, params, args, .. } => {
             walk(recv, captures, globals, usage, Mode::Use);
             for (a, p) in args.iter().zip(params) {
@@ -1011,6 +1012,7 @@ fn pattern_names(pat: &ast::Pattern, out: &mut Vec<String>) {
             out.push(name.name.clone());
             pattern_names(inner, out);
         }
+        ast::PatternKind::Typed { name, .. } => out.extend(name.iter().map(|n| n.name.clone())),
     }
 }
 

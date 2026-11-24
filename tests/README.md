@@ -30,7 +30,7 @@ tests/
   m16_errors/          `error` declarations, messages, `from`, dynamic `AnyError`, `context`, traces, `main`
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
-  m19_operators/       operator overloading, PartialEq/PartialOrd, Index/IndexMut, built-in regressions
+  m19_operators/       operator overloading, Eq/Ord, Index/IndexMut, built-in regressions
   m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
   m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
                        specific instances
@@ -278,7 +278,6 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
 | E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature); a return type is reported too until #926 lands |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
-| E0204 | Boxing a type whose implementation of the interface is compiler-provided (`Display`/`Debug` for primitives and built-in containers), so there is no function to dispatch to |
 | E0205 | The concrete type of an `impl Interface` return cannot be found: the body's returns depend on the function itself, or it never returns a value |
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
@@ -367,9 +366,11 @@ executable form. The design document leaves them open; where a rule says "deviat
    moves the value. A read-only parameter is passed plainly and borrows. A `mut self` receiver takes no marker (a
    marker there is a syntax error, E0001). `spec/grammar.md` 8.4, `spec/memory-rules.md` CV2-CV4.
 2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str` and stays usable.
-   This is the only implicit conversion, and it applies only to argument-like positions (call arguments, `Some`/`Ok`/
-   `Err` payloads, `assert_eq`, `mem.replace`); a `let`, assignment, return, array or tuple element, struct-literal
-   field, or comparison does not convert. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
+   This is the only implicit conversion, and it applies at every position that has a `str` type (call arguments,
+   `Some`/`Ok`/`Err` payloads, `assert_eq`, `mem.replace`, a `let` annotation, assignment, `return` and a function's
+   tail, an array or tuple element, and a struct-literal field of a generic struct instantiated with `str`); it does
+   not look inside another type (`Option<String>` is not `Option<str>`). A comparison borrows the `String` operand
+   as before. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
    `spec/memory-rules.md` IC1.
 3. **Views are copyable.** `str`, `[T]`, `&T`, and `CPtr<T>` can be used many times without a derive. `&mut T` cannot
    be copied: assigning it moves it (E0100), while passing it to `&mut` or dereferencing reborrows it.
@@ -413,7 +414,9 @@ executable form. The design document leaves them open; where a rule says "deviat
 15. **Derives** provide `hash(self): u64` (FNV-1a, exact values pinned), a static `default()` for structs, and the
     documented `Eq`/`Ord` field and variant orders. `spec/derives.md`. Collections compare by their elements in
     order (issue #928): `List<T>` has `==` when `T` does, like `Map` and `Set`, `PriorityHeap` derives `Eq` over its
-    list, and `Deque` implements `PartialEq` in `std`. `List` keeps its `Hash`, which agrees with its `==`.
+    list, and `Deque` implements `Eq` in `std`. `List` keeps its `Hash`, which agrees with its `==`. `Eq`/`Ord` are one name for the derive and
+    the interface (issue #918; the former `PartialEq`/`PartialOrd` are gone): `Ord` implies `Eq` in the derive and in the
+    bound, and an `Eq`/`Ord` block on a type that derives the same one is E0007.
 16. **Exclusivity works on places.** A place is a local or parameter followed by struct fields (`p.a`, `o.inner.b`).
     Different places do not overlap, so `swap_vals(mut p.a, mut p.b)` is allowed. A place never continues through
     indexing, a `Heap` dereference, a reference dereference, or a method call, so `xs[0].a` and `xs[1].a` are one
@@ -462,16 +465,17 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
     implicitly wherever an expected type is known (an annotation, an argument, a return, a field, an element, a
-    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires`, is never
+    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires` and converts to `any J` for each such `J`, is never
     `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
     prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
     receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
     (E0202). `impl Interface` is accepted in a parameter list and as a return type (E0201 anywhere else; the compiler reports a
     return type as E0201 until #926) and is sugar for one hidden generic parameter with the interface as its bound. `x.is<T>(): bool` and `x.downcast<T>(): Option<T>` are
     compiler-known on `any I`, written with member type arguments; the downcast consumes the box. The boxed type
-    must implement the interface (E0141) and be first-class (E0120); boxing a primitive's compiler-provided
-    `Display`/`Debug` implementation is E0204, because there is no function to dispatch to.
-    `spec/existentials.md` AN1-AN12, `tests/m15_any/`.
+    must implement the interface (E0141) and be first-class (E0120). A primitive's or built-in container's
+    compiler-provided `Display`/`Debug` implementation is boxable: its vtable entry is a generated thunk (AN14);
+    E0204 is retired. A `match` on an `any I` has type arms `name: T` and requires a catch-all (AN15; E0006 without one).
+    `spec/existentials.md` AN1-AN15, `tests/m15_any/`.
 
 21. **Errors.** `error enum` is an ordinary enum plus generated impls: `Display` from each variant's message
     template (whose placeholders name payload fields), `Error` (the std marker interface, which requires
@@ -512,12 +516,12 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `tests/m18_extension/`.
 
 24. **Operator overloading and `Index`.** The operator interfaces are the ordinary `std` interfaces `Add`, `Sub`,
-    `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`, `PartialOrd`, `Index<T>`, and
+    `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `Eq`, `Ord`, `Index<T>`, and
     `IndexMut<T>` in `std.ops`, visible through the prelude. Both operands of an operator have the same type, and a
     type implements each interface at most once. The stage 0 built-in rule and a derived `Eq`/`Ord` are always tried
-    first; a user struct or enum then uses its interface implementation, and a type parameter its bounds. Comparisons
-    use the new `PartialEq`/`PartialOrd` interfaces, not the derive-only `Eq`/`Ord`, so every stage 0 derive keeps
-    its exact behavior. `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
+    first (a derive is the type's own `Eq`/`Ord` implementation, so a block of the same interface next to it is E0007, issue #918); a
+    user struct or enum then uses its interface implementation, and a type parameter its bounds. Comparisons
+    use the `Eq`/`Ord` interfaces, which the derives implement. `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`, so
     `x[i]` is a place; a write (assignment, `&mut x[i]`, `mut x[i]`, or an index inside a written place) selects
     `index_mut` and needs a mutable receiver. A literal never adopts a user type, so `v + 1` is E0003. A missing
     operator or index implementation is E0141, `index_mut` through an immutable place is E0113, and moving a
@@ -763,7 +767,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   writes `fn max_of<T: Ord>(own a: T, own b: T): T` (`m07_generics/generic_functions.bd`). Returning a read-only
   parameter is E0101 (`m06_conventions/move_out_of_readonly_param.bd`; CV1, RT2).
 - **One implicit conversion (deviation).** A `String` passed where `str` is expected is borrowed as a `str`; no other
-  conversion is implicit, and it applies only to argument-like positions. The design says "no implicit conversions".
+  conversion is implicit, and it applies at every position that has a `str` type. The design says "no implicit conversions".
   Decision 2; [memory rules](../spec/memory-rules.md) IC1; `m06_conventions/str_views.bd`,
   `m06_conventions/string_str_conversion.bd`, `m09_stdlib/string_ops.bd`.
 - **Views are copyable without deriving `Copy` (deviation).** `&T`, `str`, `[T]`, and `CPtr<T>` are Copy; `&mut T` is

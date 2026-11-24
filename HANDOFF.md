@@ -21,6 +21,24 @@ machine here), and the non-host `SysLayout` tables are from the C headers, not m
 `bench`, `fuzz`, `asm`, `bloat`, and `expand` have no `--target`; `--sanitize`, PGO, and `[rust.crates]` are refused
 with it; the toolchain manager still refuses target components (`spec/toolchain.md` TC11), which is the next step if
 cross sysroots are ever distributed; `tests/check_cross.py` skips the clang-cl stand-in on a Windows host.
+**`match` on an `any I` (issue #926 item 4, 2026-11-24).** A `match` arm may be a type pattern `name: T` or `_: T`
+(`spec/existentials.md` AN15, `spec/grammar.md` `TypePat`), on an `any I` or an `AnyError`; a final catch-all (`else`, `_`, or a
+binding that receives the whole box) is required (E0006 without one). Decision: the design said an `Error` is inspected "with
+`match`", so the pattern exists, spelled `name: T` (not `T(v)`, which would collide with a tuple-struct pattern). It is only the
+whole pattern of an arm (`PatternKind::Typed`, parsed by `arm_pattern`, so `let x: T = v` is unchanged), takes no guard (E0003), and
+consumes the scrutinee (no borrowing form, as there is no borrowing `downcast`). Implementation is sugar in sema, no new IR:
+`FnCx::any_match` (`crates/burdin_sema/src/fncx/any.rs`) moves the scrutinee into the hidden local `__any` and checks the AST chain
+`if __any.is<T>() { let name = __any.downcast<T>().unwrap(); body } else ...`, so the existing moves, drops, and E0141/E0120 checks
+apply (`any_target` is shared with `is`/`downcast`). The formatter takes the arm (`burdin_fmt/src/blocks.rs`, `tests/fmt/any_patterns`).
+Tests: `tests/m15_any/match_any*`. With this, the existential gaps of #926 are all closed.
+
+**Boxing the built-in `Display`/`Debug` (issue #926 item 3, 2026-11-24).** `let x: any Display = 1` and `List<any Debug>` of
+ints, floats, `String`s, `Option`s, lists, and tuples now work (`spec/existentials.md` AN14). `Globals::any_vtable` finds no impl
+method for such a type and takes the entry from the std helper `__any_display<T>`/`__any_debug<T>` (`std/src/fmt.bd`), whose body
+is the ordinary `v.fmt(mut f)` call; it requests the instance (`Request::Func`) and abandons that pass until it exists. E0204 is
+retired: nothing remains that it covered (a view is still E0120). Tests: `tests/m15_any/builtin_display_box`, `builtin_debug_box`,
+`builtin_display_downcast` (run) and `builtin_display_view` (E0120). Also fixed in `cache.rs`: replaying a cached `any` interface
+now pushes the `supers` slot (AN13). A string literal is a `str` view, so `any Display = "hi"` is E0120; box a `String`.
 
 **Target-typed initializers (issue #998, 2026-11-24).** `.name`, `.name(args)`, and `.{ fields }` take their type from the
 expected type of their position, meaning `T.name`, `T.name(args)`, and `T { fields }` for that `T`. The rule is
@@ -215,7 +233,7 @@ generation and decision 35 compound assignment; the stage 0 count is 294 (`run_t
 stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
 now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
 (`m13_iterators/generic_bound_default_methods`). Still open, and the spec states the current behavior with these numbers:
-the allocator's 8-byte alignment cap (#917), `Eq`/`Ord` between a derive and a bound (#918), the `String`-to-`str`
+the allocator's 8-byte alignment cap (#917), the `String`-to-`str`
 struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`, which the compiler rejects until #926
 (`m15_any/impl_not_parameter` pins the E0201 until then).
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static

@@ -318,13 +318,14 @@ implement `I` (E0141) and be first-class, so a view is E0120 (AN3). `any I` is a
 interface: no generic methods, no method without a `self` receiver, no `own self`, no `Self` outside the receiver, no
 view return, and every `requires` interface object-safe (E0202; AN2). `I` may be an interface path with type
 arguments (`any Store<i32>`); `any` applied to a type, a type parameter, or a built-in bound such as `Copy` is E0200,
-and boxing a primitive's compiler-provided `Display`/`Debug` implementation is E0204 (AN12).
+and a primitive's or built-in container's compiler-provided `Display`/`Debug` implementation can be boxed (AN14).
 
 `impl I` is accepted in a parameter list and as a return type (E0201 anywhere else). In a parameter list it is sugar
 for one hidden type parameter with `I` as its bound, so `fn f(x: impl I)` is `fn f<T: I>(x: T)`, dispatch is static,
 and `I` need not be object-safe. As a return type it is one concrete type that the body determines; callers see only
-`I` (AN4). `any I` cannot appear in an `extern "C"` signature, as an `impl` target of a block, or in a pattern; use
-`is`/`downcast` instead (AN10).
+`I` (AN4). `any I` cannot appear in an `extern "C"` signature or as an `impl` target of a block. A `match` arm on an `any I` is
+written `name: T` or `_: T`, a type pattern that moves the value out of the box when it holds a `T` (AN15); `is`/`downcast`
+remain (AN6, AN10).
 
 `i32`, `str`, `bool`, `String`, `Range<T>`, `RangeInclusive<T>`, `Self` and the other built-in names are ordinary
 type paths resolved in the prelude. `Self` means the type of the enclosing impl block, there and in expressions and
@@ -418,7 +419,8 @@ TargetExpr    = "." IDENT | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" 
 IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
 Cond          = Expr | "let" Pattern "=" Expr ;
 MatchExpr     = "match" Expr "{" { Arm } "}" ;
-Arm           = ( "else" | Pattern [ "if" Expr ] ) "=>" ( Block | Expr ) [ Sep ] ;
+Arm           = ( "else" | Pattern [ "if" Expr ] | TypePat ) "=>" ( Block | Expr ) [ Sep ] ;
+TypePat       = ( IDENT | "_" ) ":" Type ;            (* only the whole pattern of a `match` arm on an `any I`, existentials.md AN15 *)
 SelectExpr    = "select" "{" { SelectArm } "}" ;      (* `select` is contextual and the `{` is on the same line; the parser
                                                          rewrites it to ordinary code, `channels.md` CH6-CH8 *)
 SelectArm     = [ SelectBind "=" ] Expr "." "recv" "(" ")" [ "if" Expr ] "=>" ( Block | Expr ) [ Sep ]

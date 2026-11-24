@@ -80,7 +80,7 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** make the two types agree. Convert explicitly, for example with `to_string`, `parse`, or `as` for a
-numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position. For
+numeric conversion. The one implicit conversion in the language is `String` to `str` at a position that has a `str` type. For
 a generic type, write its type arguments, as in `Map<String, i32>.new()`, or give the context that determines them.
 
 ## E0004: Wrong number of arguments
@@ -736,7 +736,7 @@ implementation can inherit.
 
 A generic call passes a type argument that does not meet the bound, an `impl` does not satisfy the interface's
 `requires`, a generic body uses an operation its bounds do not provide, or a user type has no implementation of an
-operator interface (`Add`, `Neg`, `PartialEq`, `PartialOrd`, `Index`, `IndexMut`, ...) that the expression needs. The
+operator interface (`Add`, `Neg`, `Eq`, `Ord`, `Index`, `IndexMut`, ...) that the expression needs. The
 message names the missing interface or bound.
 
 <!-- error-example: E0141 -->
@@ -1316,23 +1316,6 @@ fn main() {}
 a `where`-bounded generic function, give every method a `self` or `mut self` receiver, return an owned value instead
 of a view, remove or move out its associated types, and make the `requires` interfaces object-safe too. When a vtable is not needed, `impl Interface` or a
 generic bound dispatches statically and does not require object safety.
-
-## E0204: Boxing a type whose implementation is compiler-provided
-
-The compiler implements `Display` and `Debug` for the primitive types and the built-in containers directly, without
-a method, so there is no function for an `any Display`/`any Debug` vtable to dispatch to. A user type with a
-`Type: Display` block or `struct T: Debug` can be boxed, because it has callable methods.
-
-<!-- error-example: E0204 -->
-```burdin
-fn main() {
-    let x: any Display = 3 //~ E0204
-}
-```
-<!-- /error-example -->
-
-**How to fix:** format the value directly (`println("{}", 3)`), or wrap it in a user type that implements the
-interface with a method and box that. `any Interface` needs a callable implementation for every vtable slot.
 
 ## E0205: The concrete type of an `impl` return cannot be found
 

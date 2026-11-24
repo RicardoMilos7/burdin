@@ -187,6 +187,12 @@ impl Fmt<'_> {
                 head.push(self.tok_doc());
             } else {
                 head.push(self.pattern()?);
+                // `name: T`, the type pattern of an `any` scrutinee (spec/existentials.md, AN15).
+                if self.at(&TokenKind::Colon) {
+                    head.push(self.tok_doc());
+                    head.push(space());
+                    head.push(self.ty()?);
+                }
                 if self.at(&TokenKind::If) {
                     head.push(space());
                     head.push(self.tok_doc());

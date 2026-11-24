@@ -740,6 +740,47 @@ impl Globals {
         self.has_eq_in(ty, &[])
     }
 
+    /// Whether `ty` is a struct or enum whose derived `Eq` holds: the derive is written and every field has `==`.
+    pub(crate) fn has_derived_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
+        match ty {
+            Ty::Struct(a) => {
+                let s = &self.structs[a.id];
+                s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
+            }
+            Ty::Enum(a) => {
+                let e = &self.enums[a.id];
+                e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` can be a `Map` key or a `Set` element. Keys are hashed structurally, so a key whose `==` is
+    /// hand-written must also derive `Hash`: that derive is the promise that equal values hash alike
+    /// (`spec/derives.md`, issue #918).
+    pub(crate) fn has_key_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
+        self.has_eq_in(ty, env) && self.hand_written_eq_hashes(ty)
+    }
+
+    fn hand_written_eq_hashes(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Option(t) | Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => self.hand_written_eq_hashes(t),
+            Ty::Result(a, b) | Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
+            Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
+            Ty::Struct(a) => {
+                let s = &self.structs[a.id];
+                s.derives.hash || (s.derives.eq && s.fields.iter().all(|f| self.hand_written_eq_hashes(&f.ty)))
+            }
+            Ty::Enum(a) => {
+                let e = &self.enums[a.id];
+                e.derives.hash
+                    || (e.derives.eq
+                        && e.variants.iter().all(|v| v.fields.iter().all(|f| self.hand_written_eq_hashes(&f.ty))))
+            }
+            _ => true,
+        }
+    }
+
     /// Whether `==` and `!=` apply to values of `ty`, with the bounds of the type parameters in scope. A derived
     /// `Eq` on `Wrapper<T>` holds when the fields do, which is what a `T: Eq` bound provides (issue #69).
     pub(crate) fn has_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
@@ -758,13 +799,10 @@ impl Globals {
             Ty::Array(t, _) => self.has_eq_in(t, env),
             // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
             Ty::List(t, _) => self.has_eq_in(t, env),
-            Ty::Struct(a) => {
-                let s = &self.structs[a.id];
-                s.derives.eq && s.fields.iter().all(|f| self.has_eq_in(&f.ty, env))
-            }
-            Ty::Enum(a) => {
-                let e = &self.enums[a.id];
-                e.derives.eq && e.variants.iter().all(|v| v.fields.iter().all(|f| self.has_eq_in(&f.ty, env)))
+            // A derived `Eq` or a hand-written `Eq` implementation: a derive is the type's own implementation of the
+            // interface (`spec/derives.md`, issue #918).
+            Ty::Struct(_) | Ty::Enum(_) => {
+                self.has_derived_eq_in(ty, env) || self.implements_eq_iface(ty, env) || self.eq_from_order(ty, env)
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)

@@ -1,0 +1,47 @@
+//@ compile-fail
+
+interface Named {
+    fn value(self): i32
+}
+
+interface Scaled {
+    fn scale(self): i32
+}
+
+interface Drawable requires Named {
+    fn draw(self): i32
+}
+
+struct Box {
+    v: i32
+}
+
+Box: Named {
+    fn value(self): i32 {
+        self.v
+    }
+}
+
+Box: Scaled {
+    fn scale(self): i32 {
+        self.v
+    }
+}
+
+Box: Drawable {
+    fn draw(self): i32 {
+        self.v
+    }
+}
+
+fn read(x: any Scaled): i32 {
+    x.scale()
+}
+
+fn main() {
+    let d: any Drawable = Box { v: 1 }
+    let _ = read(d) //~ E0003
+    let n: any Named = Box { v: 2 }
+    let w: any Drawable = n //~ E0003
+    let _ = w
+}

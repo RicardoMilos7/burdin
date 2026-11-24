@@ -1,0 +1,25 @@
+//@ compile-fail
+
+interface Shape {
+    fn area(self): i32
+}
+
+struct Circle {
+    r: i32
+}
+
+Circle: Shape {
+    fn area(self): i32 {
+        self.r
+    }
+}
+
+fn describe(own shape: any Shape): i32 {
+    match shape { //~ E0006
+        c: Circle => c.r,
+    }
+}
+
+fn main() {
+    println("{}", describe(Circle { r: 1 }))
+}

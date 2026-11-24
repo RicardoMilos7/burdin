@@ -84,3 +84,19 @@ fn a_fuzz_target_keeps_its_signature_and_body() {
     let out = format("fuzz parse( data : [u8] ){\nlet n=data.len()\n}\nfn main() {}\n");
     assert_eq!(out, "fuzz parse(data: [u8]) {\n    let n = data.len()\n}\nfn main() {}\n");
 }
+
+#[test]
+fn a_type_pattern_of_a_match_arm_keeps_its_colon() {
+    // `name: T` and `_: T` are the type patterns of an `any` scrutinee (spec/existentials.md, AN15).
+    let out = format(
+        "fn f(own s: any Shape) {\n    match s {\n        c : Circle => 1,\n        _:Square => 2,\n        other => 3,\n    }\n}\n",
+    );
+    assert!(out.contains("c: Circle => 1,") && out.contains("_: Square => 2,"), "{out}");
+}
+
+#[test]
+fn a_field_after_a_break_label_stays_on_its_own_line() {
+    // `break 'a .5` on one line would give the `break` a target-typed value (`.5`), a different program.
+    let out = format("fn main() {\n    'a: loop {\n        break 'a\n.5\n    }\n}\n");
+    assert!(out.contains("break 'a\n"), "{out}");
+}

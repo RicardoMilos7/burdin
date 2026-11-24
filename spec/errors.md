@@ -94,6 +94,8 @@ The dynamic value supports the ordinary inspection surface:
 
 - `e.is<T>()` is true when the box holds a `T`;
 - `e.downcast<T>()` yields `Some(value)` when it holds a `T` and consumes the box;
+- `match e { v: T => ..., other => ... }` takes the value out in the arm whose type the box holds and needs a
+  catch-all (`spec/existentials.md`, AN15);
 - `{}` prints the wrapped error's `Display`;
 - moving, dropping, and passing an `AnyError` are ordinary moves.
 

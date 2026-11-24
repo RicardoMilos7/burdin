@@ -63,6 +63,7 @@ pub fn walk_pattern<V: Visit + ?Sized>(v: &mut V, p: &Pattern) {
             }
         }
         PatternKind::At(_, p) => v.pattern(p),
+        PatternKind::Typed { ty, .. } => v.ty(ty),
     }
 }
 

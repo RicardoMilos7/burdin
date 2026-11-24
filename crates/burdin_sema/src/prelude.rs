@@ -57,8 +57,8 @@ impl Sema<'_> {
                 bitxor: find_iface(&self.globals, "BitXor")?,
                 neg: find_iface(&self.globals, "Neg")?,
                 not: find_iface(&self.globals, "Not")?,
-                partial_eq: find_iface(&self.globals, "PartialEq")?,
-                partial_ord: find_iface(&self.globals, "PartialOrd")?,
+                eq: find_iface(&self.globals, "Eq")?,
+                ord: find_iface(&self.globals, "Ord")?,
                 index: find_iface(&self.globals, "Index")?,
                 index_mut: find_iface(&self.globals, "IndexMut")?,
             })

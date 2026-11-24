@@ -92,8 +92,8 @@ time), `spec/derives.md` for `Debug`, and `spec/stdlib.md` for the output functi
 Milestone 15 is complete: `tests/m15_any` and every earlier folder pass in debug and release, and the rules are
 recorded in `spec/existentials.md` AN1-AN12 (the decision that `any Interface` is an owned heap box with a vtable,
 `impl Interface` is a hidden generic parameter, and `is`/`downcast` are compiler-known). The new diagnostics are
-E0200 (not an interface), E0201 (`impl` outside a parameter list), E0202 (not object-safe), and E0204 (a
-compiler-provided implementation has no function to dispatch to); `tests/README.md`, `docs/error-codes.md`, and
+E0200 (not an interface), E0201 (`impl` outside a parameter list), and E0202 (not object-safe) (E0204, a
+compiler-provided implementation with no function to dispatch to, was retired by AN14); `tests/README.md`, `docs/error-codes.md`, and
 `spec/grammar.md` are updated with them.
 
 Milestone 16 is complete: `tests/m16_errors` and every earlier folder pass in debug and release, and the rules
@@ -117,8 +117,8 @@ declaration).
 Milestone 19 is complete: `tests/m19_operators` and every earlier folder pass in debug and release, and the rules
 are recorded in `spec/operators.md` OP1-OP13 (the decisions that the operator interfaces are ordinary `std`
 interfaces declared in `std.ops`, with same-type operands and no mixed types; that the built-in operators and the
-`Eq`/`Ord` derives always win; that `PartialEq`/`PartialOrd` are new interfaces rather than the derive-only `Eq` and
-`Ord`; that `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; and that
+`Eq`/`Ord` derives are the type's own implementation (issue #918 merged the former `PartialEq`/`PartialOrd` into
+`Eq`/`Ord`); that `Index<T>`/`IndexMut<T>` name the element type, take a `usize`, and return `&T`/`&mut T`; and that
 compound assignment and shifts are not overloadable; issue #277 later made compound assignment take the operator's interface, `spec/compound-assignment.md` CA5). The existing diagnostics E0141 (a missing operator or index
 implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
 (wrong operand types) cover the new rejections; no new error code was needed.
@@ -213,8 +213,8 @@ registry code, a test, and a spec update **before** the code, per the working ru
 an owned two-word heap box `{data, vtable}`, a concrete value is boxed implicitly wherever an expected type is known,
 `any I` requires an object-safe `I` (E0202), `impl Interface` in a parameter list is sugar for a hidden generic
 parameter with the interface as its bound, and `x.is<T>()`/`x.downcast<T>()` are compiler-known (the downcast
-consumes the box). A primitive's compiler-provided `Display`/`Debug` implementation has no function to dispatch to,
-so boxing it is E0204. The tests are `tests/m15_any/`; milestone 14's formatting decision remains in
+consumes the box). A primitive's compiler-provided `Display`/`Debug` implementation is boxed through a generated
+thunk (AN14). The tests are `tests/m15_any/`; milestone 14's formatting decision remains in
 `spec/format.md`.
 
 ## Decisions needed before milestone 12
@@ -307,12 +307,11 @@ code; do not invent them inside the implementation.
    `tests/m17_arguments/`.
 
 8. **Operator overloading and `Index` — settled with milestone 19.** The operator interfaces are the ordinary
-   `std` interfaces `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `PartialEq`,
-   `PartialOrd`, `Index<T>`, and `IndexMut<T>`, declared in `std/src/ops.bd` and visible through the prelude. Each
+   `std` interfaces `Add`, `Sub`, `Mul`, `Div`, `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Neg`, `Not`, `Eq`,
+   `Ord`, `Index<T>`, and `IndexMut<T>`, declared in `std/src/ops.bd` and visible through the prelude. Each
    takes the same type on both sides and is implemented at most once per type. The stage 0 built-in rule, and a
    derived `Eq`/`Ord`, is always tried first; a user type falls back to its interface implementation, and a type
-   parameter to its bounds. Comparisons use new `PartialEq`/`PartialOrd` interfaces rather than the derive-only
-   `Eq`/`Ord`, so every stage 0 derive keeps its exact behavior. `Index<T>`/`IndexMut<T>` name the element type,
+   parameter to its bounds. Comparisons use the `Eq`/`Ord` interfaces, which the `Eq`/`Ord` derives implement (issue #918). `Index<T>`/`IndexMut<T>` name the element type,
    take a `usize`, and return `&T`/`&mut T`, which makes `x[i]` a place; a write selects `index_mut` and requires a
    mutable receiver. A literal never adopts a user type (`v + 1` is E0003). Compound assignment and the shift
    operators were not overloadable at this milestone (issue #277 changed compound assignment, CA5). The rules are `spec/operators.md` OP1-OP13 and the tests are

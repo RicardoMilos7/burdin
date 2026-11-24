@@ -720,6 +720,20 @@ priv fn __debug_char(c: char, mut f: Formatter) {
     f.pad_plain(q)
 }
 
+// ----- boxing a built-in implementation (spec/existentials.md, AN14) ----------------------------------------
+//
+// The vtable entry of `any Display`/`any Debug` for a type whose implementation the compiler provides. A borrowed
+// parameter is passed by address, as the vtable's `self` pointer is, so the entry is the instance of one of these
+// for the boxed type.
+
+priv fn __any_display<T: Display>(v: T, mut f: Formatter) {
+    v.fmt(mut f)
+}
+
+priv fn __any_debug<T: Debug>(v: T, mut f: Formatter) {
+    v.debug(mut f)
+}
+
 // ----- compound types ---------------------------------------------------------------------------------------
 
 priv fn __debug_unit(mut f: Formatter) {

@@ -7,7 +7,7 @@
 
 use encoding.{DecodeError, from_utf8, hex_encode, to_utf8}
 use fmt.{Debug, Formatter}
-use ops.{Index, IndexMut, PartialEq}
+use ops.{Index, IndexMut}
 
 /// A growable, owned buffer of bytes.
 ///
@@ -238,7 +238,7 @@ BytesMut: IndexMut<u8> {
     }
 }
 
-BytesMut: PartialEq {
+BytesMut: Eq {
     fn eq(self, other: BytesMut): bool {
         __same_bytes(self.as_slice(), other.as_slice())
     }
@@ -401,7 +401,7 @@ Bytes: Index<u8> {
     }
 }
 
-Bytes: PartialEq {
+Bytes: Eq {
     fn eq(self, other: Bytes): bool {
         __same_bytes(self.as_slice(), other.as_slice())
     }

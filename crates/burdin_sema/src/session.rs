@@ -355,8 +355,14 @@ impl<'t> Sema<'t> {
         diags.absorb(checks);
         let (any_ifaces, any_vtables, any_type_ids) = self.globals.any_program_ifaces();
         let allocator_fns = self.globals.allocator_fns();
+        let comparison_methods = self.globals.comparison_methods();
         let global_alloc_ty = self.globals.global_alloc_ty.clone();
-        let Globals { structs, enums, sigs, externs, embedded, .. } = self.globals;
+        let Globals { mut structs, mut enums, sigs, externs, embedded, .. } = self.globals;
+        for (key, eq, lt) in comparison_methods {
+            let derives = if key.0 { &mut enums[key.1].derives } else { &mut structs[key.1].derives };
+            derives.eq_method = eq;
+            derives.lt_method = lt;
+        }
         let externs = externs
             .into_iter()
             .map(|e| tir::ExternFn {

@@ -118,6 +118,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::BoxAny { value: inner, .. }
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
+        | K::AnyUpcast { value: inner, .. }
         | K::Comptime(inner) => {
             place_mentions(inner, out);
         }

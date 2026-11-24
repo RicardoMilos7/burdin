@@ -476,6 +476,7 @@ impl An<'_> {
             K::BoxAny { value: inner, .. }
             | K::AnyIs { value: inner, .. }
             | K::AnyDowncast { value: inner, .. }
+            | K::AnyUpcast { value: inner, .. }
             | K::StringAsStr(inner)
             | K::Unary(_, inner)
             | K::Cast(inner)

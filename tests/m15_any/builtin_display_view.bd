@@ -1,0 +1,7 @@
+//@ compile-fail
+
+// A view is not boxable, whatever implements its `Display` (AN3, E0120).
+fn main() {
+    let text: any Display = "hi" //~ E0120
+    let _ = text
+}

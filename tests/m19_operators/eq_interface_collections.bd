@@ -1,0 +1,32 @@
+//@ run
+//> eq
+//> true
+//> eq
+//> 7
+//> eq
+//> 1
+
+// A key whose `==` is hand-written and that derives `Hash` works in a `Map` and a `Set`: lookups call its `eq`
+// (spec/derives.md, issue #918). The `eq` here prints, so the call is visible.
+
+struct Id: Hash, Copy, Clone {
+    n: i32
+}
+
+Id: Eq {
+    fn eq(self, other: Id): bool {
+        println("eq")
+        self.n == other.n
+    }
+}
+
+fn main() {
+    let mut m = Map<Id, i32>.new()
+    m.insert(Id { n: 1 }, 7)
+    println(m.contains_key(Id { n: 1 }).to_string())
+    println(m.get_or(Id { n: 1 }, 0).to_string())
+    let mut s = Set<Id>.new()
+    s.insert(Id { n: 4 })
+    s.insert(Id { n: 4 })
+    println(s.len().to_string())
+}

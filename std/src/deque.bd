@@ -6,7 +6,7 @@
 
 use fmt.{Debug, Formatter}
 use iter.{DoubleEndedIterator, FromIterator, Iterable, Iterator}
-use ops.{Index, IndexMut, PartialEq}
+use ops.{Index, IndexMut}
 
 /// A double-ended queue. Its default is the empty deque.
 ///
@@ -409,7 +409,7 @@ Deque<T> where T: Clone {
     }
 }
 
-Deque<T>: PartialEq where T: Eq {
+Deque<T>: Eq where T: Eq {
     fn eq(self, other: Deque<T>): bool {
         if self.len() != other.len() {
             return false

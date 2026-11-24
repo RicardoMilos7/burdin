@@ -1111,6 +1111,7 @@ fn pattern_names(p: &ast::Pattern, out: &mut Vec<String>) {
             pattern_names(p, out);
         }
         P::Rest(name) => out.extend(name.iter().map(|n| n.name.clone())),
+        P::Typed { name, .. } => out.extend(name.iter().map(|n| n.name.clone())),
         P::Wild | P::Lit(_) | P::Range(..) | P::Path(_) => {}
     }
 }
