@@ -154,6 +154,39 @@ fn main() {
 }
 ```
 
+## Returning an interface: impl
+
+A return type can be `impl I`. The function returns one concrete type, which its body decides, and the caller sees only
+the interface. The caller can call the interface's methods and pass the value where `I` is expected. Every `return` and
+the final expression must have the same concrete type, and that type must implement `I`:
+
+```burdin
+interface Shape {
+    fn area(self): i32
+}
+
+struct Square {
+    side: i32
+}
+
+Square: Shape {
+    fn area(self): i32 {
+        self.side * self.side
+    }
+}
+
+fn make_square(side: i32): impl Shape {
+    Square { side: side }
+}
+
+fn main() {
+    let s = make_square(3)
+    println("area {s.area()}")
+}
+```
+
+When different branches must return different types, use `any Shape` instead, as the next section describes.
+
 ## Existential values: any
 
 A generic function needs one concrete type at each call. A `List` of different shapes needs a different tool. The type

@@ -31,12 +31,13 @@ what each area is for, and the type to start with.
 ## Text and bytes
 
 - **`String` and `str`.** Building, editing, searching, splitting, and trimming text. A `str` is a view, and a `String`
-  owns its text.
+  owns its text. `String + str` builds a new `String`, and a `String` compares with a `str` in either order.
 - **Encodings and byte buffers.** UTF-8 checks, checked slicing, and byte buffers for binary data.
 
 ## Collections
 
-- **`List<T>`** and **slices** `[T]`. Growable lists, sorting with a comparator, and read-only or mutable views.
+- **`List<T>`** and **slices** `[T]`. Growable lists, sorting with a comparator, and read-only or mutable views. A list
+  compares with `==` when its elements do, and has eager `map`, `filter`, `fold`, `any`, `all`, and `find` methods.
 - **`Map<K, V>`** and **`Set<T>`**. Hash-based collections with entry operations and views. A map has no order.
 - **`Deque<T>`** and **`PriorityHeap<T>`**. A double-ended queue and a priority queue.
 - **`Once<T>`** and **`Lazy<T, F>`**. Values computed once, on first use.
@@ -45,12 +46,15 @@ what each area is for, and the type to start with.
 ## Iteration
 
 `Iterable<T>` and `Iterator<T>`, `iter()` and `into_iter()`, and the lazy adapters `map`, `filter`, `take`, and `fold`.
-`Range<T>` and `RangeInclusive<T>` are iterators too. See [closures and iterators](/guide/closures-and-iterators/).
+`Range<T>` and `RangeInclusive<T>` are iterators too. `collect` takes an explicit target, as in `collect<List<i32>>()`.
+See [closures and iterators](/guide/closures-and-iterators/).
 
 ## Errors and results
 
-- **`Option<T>` and `Result<T, E>`.** Combinators such as `map`, `and_then`, and `unwrap_or`, and the `?` operator.
-- **`Error` and `context`.** The dynamic error type, the `Result<T>` shorthand, and adding context to a chain of errors.
+- **`Option<T>` and `Result<T, E>`.** Combinators such as `map`, `and_then`, `unwrap_or`, and `unwrap_or_default`, and the
+  `?` operator. `Option<Option<T>>` has `flatten`.
+- **`AnyError`, `Error`, and `context`.** `AnyError` is the dynamic error type. `Result<T>` means `Result<T, AnyError>`,
+  `Error` is the interface that marks an error type, and `context` adds a message to a chain of errors.
   See [errors](/guide/errors/).
 
 ## Memory
@@ -78,7 +82,9 @@ TCP sockets and their addresses. Inside a task, socket operations wait without b
 
 - **Tasks and threads.** `task.spawn` and `task.scope` run work on the task pool; `thread.spawn` starts a thread for
   blocking calls.
-- **Channels.** `Channel<T>` with `send`, `recv`, and `select` over several channels.
+- **Channels.** `Channel<T>` with `send` (which returns `Result<(), T>`), `recv`, and `select` over several channels.
+- **Parallel iteration.** `par_iter()` and related methods on a list run a `map`, `filter`, or `fold` pipeline on the
+  task pool. See [concurrency](/guide/concurrency/).
 - **Shared state.** `Send` and `Sync`, atomics, `Mutex<T>`, `RwLock<T>`, and `Shared<T>`.
 
 ## Serialization
@@ -94,8 +100,8 @@ to a C function is `unsafe`. See [coming from C and C++](/coming-from/c-and-cpp/
 
 ## Official packages
 
-Some libraries ship with the compiler and are added with `name = true` in `burdin.toml`, or with `burdin add name`:
-`json`, `toml`, `crypto`, `math`, `http`, and `tls`. Their specifications are in the repository:
+Some libraries ship with the compiler. A `use` line loads one, with no entry in `burdin.toml`: `use json`. The official
+packages are `json`, `toml`, `csv`, `yaml`, `xml`, `http`, `tls`, `regex`, `crypto`, and `math`. Their specifications are in the repository:
 [packages](https://github.com/RicardoMilos7/burdin/blob/main/spec/packages.md),
 [http](https://github.com/RicardoMilos7/burdin/blob/main/spec/http-client.md),
 [crypto](https://github.com/RicardoMilos7/burdin/blob/main/spec/crypto.md),
