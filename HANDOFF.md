@@ -2264,6 +2264,9 @@ Open:
 - Stage 0 has no closures, string interpolation, `any`/`impl`, `error` declarations, comptime, tasks, or leak detection.
 - Syntax choices: `fn f(): T`, `let` / `let mut`, `Type: Interface { }`, `struct T: Copy, Eq { }`, `priv` means package-private,
   `?` and `orelse`, `else` arm in `match`, call-site `mut` marker.
+- Interpolated literals (issue #923): a string literal with a placeholder is a `String`, and one without is a `str`; only
+  the placeholders decide. Recorded in `spec/format.md` FM1, with `tests/m14_format/literal_type*.bd`. A format argument
+  that several placeholders use but that is neither a place nor `Copy` is E0195 (FM5).
 
 ## Decided in the second session
 

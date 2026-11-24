@@ -265,6 +265,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0192 | Argument of a format call that the format string does not use |
 | E0193 | Value in a placeholder whose type does not implement `Display` (`Debug` for `{:?}`) |
 | E0194 | A format call with arguments whose format string is not a string literal |
+| E0195 | An argument used by more than one placeholder of a format call that is neither a place nor `Copy`, so it cannot be evaluated once |
 | E0200 | `any` or `impl` applied to something that is not an interface (a type, a type parameter, or a built-in bound such as `Copy`) |
 | E0201 | `impl Interface` outside a parameter list and a return type (a local annotation, a field, an element, a bound, or an `extern` signature); a return type is reported too until #926 lands |
 | E0202 | An interface that cannot be used as `any` because it is not object-safe |
@@ -438,7 +439,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `Display`/`Debug` (E0193), a specifier that does not apply (E0190), and a call with arguments whose format
     string is not a literal (E0194); the compiler then lowers the string to `Formatter` calls, so no format string
     is parsed at run time. An argument used by two placeholders is evaluated once (a place by borrowing, a `Copy`
-    value by copying). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
+    value by copying), and one that is neither a place nor `Copy` is E0195. A literal with a placeholder is a
+    `String` and one without is a `str` (issue #923; `spec/format.md` FM1). `Display` and `Debug` are ordinary `std` interfaces implemented by the compiler for the
     built-in types and by an impl block (or `struct T: Debug`) for a user type. A one-argument output call takes no
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed

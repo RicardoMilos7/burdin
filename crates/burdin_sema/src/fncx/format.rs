@@ -196,7 +196,7 @@ impl FnCx<'_> {
     }
 
     /// The local that holds an argument used more than once: a reference to it when it is a place, or a copy when
-    /// it is `Copy`. `None` (with E0191) when the value can be had only once.
+    /// it is `Copy`. `None` (with E0195) when the value can be had only once.
     fn check_shared(&mut self, index: usize, arg: &ast::Expr, span: Span) -> Option<(tir::Expr, tir::Stmt)> {
         let value = self.expr(arg, None);
         if value.ty == Ty::Error {
@@ -220,9 +220,9 @@ impl FnCx<'_> {
             (local, binding)
         } else {
             self.diags.error(
-                Code::FORMAT_ARG_MISSING,
+                Code::FORMAT_ARG_REUSED,
                 span,
-                format!("argument {index} is used more than once and is not a place; bind it to a variable first"),
+                format!("argument {index} is used more than once and is neither a place nor Copy; bind it to a variable first"),
             );
             return None;
         };

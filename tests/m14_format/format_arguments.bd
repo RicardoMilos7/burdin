@@ -12,7 +12,8 @@ fn main() {
     println("{}") //~ E0191
     println("{0}") //~ E0191
     let plain = "no argument for {}" //~ E0191
-    println("{0} {0}", made()) //~ E0191
+    println("{0} {0}", made()) //~ E0195
+    println("{0} {0}", String.from("x")) //~ E0195
     println("{}", 1, 2) //~ E0192
     println("{0}", 1, 2) //~ E0192
     println("no placeholder", name) //~ E0192
