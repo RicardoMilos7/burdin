@@ -19,7 +19,10 @@ impl FnCx<'_> {
                     let declared = ty.as_ref().map(|t| self.resolve(t));
                     let init = self.expr(init, declared.as_ref());
                     let init = match &declared {
-                        Some(d) => self.expect_ty(init, d),
+                        Some(d) => {
+                            let init = self.coerce_arg(init, d);
+                            self.expect_ty(init, d)
+                        }
                         None => init,
                     };
                     diverges |= init.ty == Ty::Never;

@@ -80,7 +80,7 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** make the two types agree. Convert explicitly, for example with `to_string`, `parse`, or `as` for a
-numeric conversion. The one implicit conversion in the language is `String` to `str` in an argument-like position. For
+numeric conversion. The one implicit conversion in the language is `String` to `str` at a position that has a `str` type. For
 a generic type, write its type arguments, as in `Map<String, i32>.new()`, or give the context that determines them.
 
 ## E0004: Wrong number of arguments
