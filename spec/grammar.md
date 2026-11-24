@@ -71,7 +71,8 @@ that closes after one character or name is a character literal instead: `'a'` an
 label (issue #275).
 
 **String literals**: `"..."` with escapes `\n \r \t \\ \" \0`, and raw newlines allowed inside. There is no interpolation in
-stage 0: `{` and `}` are ordinary characters.
+stage 0: `{` and `}` are ordinary characters. From milestone 14 a literal with a placeholder is an interpolated string
+typed `String`, and one without a placeholder (`{{` and `}}` are not placeholders) is a `str`; `spec/format.md` FM1.
 
 **Punctuation and operators**:
 

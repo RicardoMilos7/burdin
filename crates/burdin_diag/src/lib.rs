@@ -246,6 +246,9 @@ impl Code {
     pub const NOT_FORMATTABLE: Code = Code("E0193");
     /// A format call with arguments whose format string is not a string literal.
     pub const FORMAT_NOT_LITERAL: Code = Code("E0194");
+    /// An argument of a format call that several placeholders use but that is neither a place nor `Copy`, so it
+    /// cannot be evaluated once and reused.
+    pub const FORMAT_ARG_REUSED: Code = Code("E0195");
     /// `any` or `impl` applied to something that is not an interface.
     pub const NOT_AN_INTERFACE: Code = Code("E0200");
     /// `impl Interface` outside a parameter list.

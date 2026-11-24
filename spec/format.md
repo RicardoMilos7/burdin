@@ -33,7 +33,19 @@ A string literal may contain placeholders `{...}`:
 - A placeholder stays on one line. Its expression may contain brackets, character literals, and string literals;
   the specifier starts at the first `:` outside any brackets.
 
-The value of an interpolated string is a `String`.
+The type of a string literal depends only on whether it has a placeholder (issue #923; decision 19 and decision 4 in
+`tests/README.md`):
+
+- A literal with at least one placeholder (`{...}`, `{}`, or `{n}`) is an interpolated string. Its value is a `String`,
+  built where the literal is written, whatever its placeholders hold.
+- A literal with no placeholder is a `str`, a static view as in stage 0. A literal whose only braces are the escapes `{{`
+  and `}}` has no placeholder, so `"{{}}"` is a `str`.
+
+So `"plain"` and `"a {n}"` differ in type, Copy-ness, storage, which methods they have, and whether they can be stored, and
+the difference is decided by the placeholders alone. A format call's format string is not an expression of either
+type; FM5 and FM6 check it. Tests: `tests/m14_format/literal_type.bd` (the run rule: a `let`, a return, a field, a
+comparison, a format call, and a method call on each form) and `tests/m14_format/literal_type_mismatch.bd` (the same
+positions with the other type, which are E0003).
 
 ## FM2. Escapes, raw strings, and multi-line strings
 
@@ -133,9 +145,12 @@ The checker reports, at the format string's span, every error in it, not just th
 | the value's type does not implement the interface the placeholder needs | E0193 |
 | a specifier does not apply to the value's type | E0190 |
 | a call with arguments whose format string is not a literal | E0194 |
+| an argument used by more than one placeholder that is neither a place nor `Copy` | E0195 |
 
 An argument used by more than one placeholder is evaluated once: a place is borrowed, and a `Copy` value is
-copied. A value that is neither (a call returning a `String`, say) is E0191 for the second use; bind it first.
+copied. A value that is neither (a call returning a `String`, say) is E0195 for the second use, whatever its type;
+bind it first. `println("{0} {0}", String.from("x"))` is E0195, not E0191: the argument exists, it just cannot be
+used twice.
 
 A specifier that cannot be parsed at all (an unknown type letter, a `.` with no digits, a width over 4096) is
 E0190 from the parser; if any such error is present, the rest of the file is not checked, as with any syntax
