@@ -1,7 +1,7 @@
 //@ compile-fail
 
-// Importing a module does not import its extensions: only `use text.shout` does (EX2). The call sees no method
-// `shout` on `String`.
+// Importing a module brings the extensions it declares, not the ones it imports from elsewhere: imports are not
+// re-exported (EX2). `text` imports `shout` from `other`, so `shout` is not visible here.
 
 use text
 

@@ -222,6 +222,7 @@ impl<'t> Sema<'t> {
                     pub_ifaces: Default::default(),
                     pub_modules: Default::default(),
                     pub_extensions: Default::default(),
+                    module_imports: Default::default(),
                 });
                 module_asts.push(module.ast);
             }

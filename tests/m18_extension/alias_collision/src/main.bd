@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// An alias is a method name like any other: `yell` here is already the method of this module's own `String`
+// extension, so the import is a duplicate (EX2, EX5).
+
+use text.shout as yell //~ E0007
+
+fn String.yell(self): String {
+    String.from("own")
+}
+
+fn main() {}

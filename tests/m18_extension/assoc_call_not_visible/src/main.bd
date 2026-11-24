@@ -1,0 +1,8 @@
+//@ compile-fail
+
+// The associated form needs the extension in scope, the same as a method call: `text` is not imported here, so
+// `String.shout` names no function (EX9, EX2).
+
+fn main() {
+    println(String.shout(String.from("hi"))) //~ E0002
+}

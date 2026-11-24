@@ -71,6 +71,9 @@ pub(crate) struct ModuleInfo {
     pub(crate) pub_modules: std::collections::HashSet<String>,
     pub(crate) pub_extensions: std::collections::HashSet<String>,
     pub(crate) pub_derives: std::collections::HashSet<String>,
+    /// The modules this module imports whole (`use text`, `use text as t`), with the span of the `use`. Their
+    /// extensions are brought in by `Sema::import_module_extensions`, after every `use` is resolved (EX2).
+    pub(crate) module_imports: Vec<(usize, Span)>,
 }
 
 /// One extension method declaration: `fn Type.name(self, ...)`.

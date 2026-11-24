@@ -1,0 +1,62 @@
+//@ run
+//> hi!
+//> 7
+//> 42
+//> 3
+//> 2
+
+// An extension is called as an associated function with its receiver type in front: `Type.name(recv, args)` is the
+// call `recv.name(args)` (EX9). The receiver takes no marker, the same as an impl method's receiver.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Counter {
+    n: i32,
+}
+
+Counter {
+    fn value(self): i32 {
+        self.n
+    }
+}
+
+fn String.shout(self): String {
+    let mut out = String.new()
+    out.push_str(self)
+    out.push_str("!")
+    out
+}
+
+fn Point.manhattan(self): i32 {
+    self.x.abs() + self.y.abs()
+}
+
+fn Counter.bump(mut self) {
+    self.n = self.n + 1
+}
+
+fn i32.doubled(self): i32 {
+    self * 2
+}
+
+fn List<T>.count_all(self): usize {
+    self.len()
+}
+
+fn main() {
+    println(String.shout(String.from("hi")))
+    let p = Point { x: 3, y: -4 }
+    println(Point.manhattan(p).to_string())
+    println(i32.doubled(21).to_string())
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    println(List<i32>.count_all(xs).to_string())
+    let mut c = Counter { n: 1 }
+    Counter.bump(c)
+    println(Counter.value(c).to_string())
+}

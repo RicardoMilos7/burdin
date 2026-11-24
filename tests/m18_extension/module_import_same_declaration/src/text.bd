@@ -1,0 +1,6 @@
+fn String.shout(self): String {
+    let mut out = String.new()
+    out.push_str(self)
+    out.push_str("!")
+    out
+}

@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// `use lib` brings the dependency's public extensions. Its `priv` extension is package-private, so it is not brought
+// and the call is E0002, not E0150: a module import names no item (EX2).
+
+use lib
+
+fn main() {
+    println(String.from("x").open())
+    println(String.from("x").secret()) //~ E0002
+}

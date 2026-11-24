@@ -4,6 +4,21 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Extensions in modules and as associated functions (issue #925, 2026-11-24).** The issue's fix 1 (`spec/extensions.md`
+EX2 and EX9). `use text` brings every extension `text` declares or re-exports with `pub use`; a `priv` extension of
+another package is not brought, and that is not an error. `use text.shout as yell` brings one under the method name
+`yell`, and the alias is the name calls use. `Type.name(recv, args)` calls an extension with its receiver first, and it
+is reached only when `Type` has no function or variant of that name: the six "has no function" sites in `assoc_call`
+go through `no_assoc_function`. The receiver takes no marker (E0115) and a `mut self` receiver needs a mutable place
+(E0113). Two different declarations under one method name in one module are E0007 at the `use`; the same declaration
+brought twice is not an error. Module imports are recorded in `ModuleInfo::module_imports` and copied by
+`Sema::import_module_extensions` after `resolve_imports` and before the prelude. The E0216 for an alias is gone; E0216
+is only the invalid-declaration error. Changed tests: `not_imported` (a module's own imports stay private) and
+`aliased_import` (now a run test). New tests: `tests/m18_extension/module_import*`, `module_reexport`, `alias_*`,
+`assoc_call*`. Not done: item 3 of the issue, the allocator receivers of the std convenience methods (`fn List<T>.retain`
+is `List<T, Global>`). Not supported: the associated form with a generic type written without its arguments, which keeps
+the template error. Found, not fixed: `Counter.bump(c)` with an immutable `c` and a `mut self` impl method is accepted,
+when it should be E0113. The impl path in `assoc_call` passes no receiver place to `args`; the extension path checks it.
 **Standard-library methods behind stale limits (issue #930, 2026-11-24).** `Option.unwrap_or_default` and
 `Option<Option<T>>.flatten` are in `std/src/option.bd`, and `List.dedup_by_key` is in `std/src/list.bd`. The old "not
 provided" rationale was wrong for each: `T.default()` exists for the built-in `Default` types, and an extension receiver

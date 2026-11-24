@@ -86,7 +86,7 @@ impl Sema<'_> {
         // `use path`: a module, or the last segment of the path is an item.
         if let Some(target) = self.globals.resolve_module_path(module, &names) {
             let name = u.alias.clone().unwrap_or_else(|| u.path.last().expect("a use path is not empty").clone());
-            self.bind_module(module, name, target, u.is_pub, diags);
+            self.bind_module(module, name, target, u.is_pub, u.span, diags);
             return;
         }
         if names.len() > 1
@@ -130,8 +130,17 @@ impl Sema<'_> {
     }
 
     /// Binds `name` to the module `target` in `module`. A `pub use` also makes the alias a public module of
-    /// `module`, so another package can reach it as a qualified path (issue #79).
-    fn bind_module(&mut self, module: usize, name: ast::Ident, target: usize, is_pub: bool, diags: &mut Diagnostics) {
+    /// `module`, so another package can reach it as a qualified path (issue #79). The `use` also brings the
+    /// extensions of `target` (EX2), which [`Sema::import_module_extensions`] copies once every `use` is resolved.
+    fn bind_module(
+        &mut self,
+        module: usize,
+        name: ast::Ident,
+        target: usize,
+        is_pub: bool,
+        span: burdin_diag::Span,
+        diags: &mut Diagnostics,
+    ) {
         if let Some(&previous) = self.globals.modules[module].modules.get(&name.name) {
             if previous != target {
                 diags.error(Code::DUPLICATE_NAME, name.span, format!("`{}` is imported more than once", name.name));
@@ -152,6 +161,65 @@ impl Sema<'_> {
             self.globals.modules[module].pub_modules.insert(name.name.clone());
         }
         self.globals.modules[module].modules.insert(name.name, target);
+        self.globals.modules[module].module_imports.push((target, span));
+    }
+
+    /// Brings the extensions of every module that a module imports whole (`use text`), once every `use` is
+    /// resolved, so that a `pub use` inside `text` is already in place (`spec/extensions.md`, EX2). The extensions
+    /// `text` declares and re-exports come along; a `priv` extension of another package does not, and that is not
+    /// an error.
+    pub(crate) fn import_module_extensions(&mut self, diags: &mut Diagnostics) {
+        for module in 0..self.globals.modules.len() {
+            let imports = self.globals.modules[module].module_imports.clone();
+            for (target, span) in imports {
+                let mut names: Vec<String> = self.globals.modules[target]
+                    .extension_priv
+                    .keys()
+                    .chain(self.globals.modules[target].pub_extensions.iter())
+                    .cloned()
+                    .collect();
+                names.sort();
+                names.dedup();
+                let other_package = self.globals.package_of(module) != self.globals.package_of(target);
+                for name in names {
+                    let private = self.globals.modules[target].extension_priv.get(&name).copied().unwrap_or(false);
+                    if other_package && private {
+                        continue;
+                    }
+                    if let Some(ids) = self.globals.exported_extension(target, &name) {
+                        self.add_extensions(module, &name, ids, span, diags);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Brings the extension declarations `ids` into `module` under the method name `name` (`spec/extensions.md`,
+    /// EX2 and EX5). Bringing the same declarations again is not a collision. Different declarations under one name
+    /// are E0007 at `span`, the `use` that brings the second one.
+    fn add_extensions(
+        &mut self,
+        module: usize,
+        name: &str,
+        ids: Vec<usize>,
+        span: burdin_diag::Span,
+        diags: &mut Diagnostics,
+    ) {
+        match self.globals.modules[module].extensions.get(name) {
+            Some(existing) if *existing == ids => {}
+            Some(_) => {
+                diags.error(
+                    Code::DUPLICATE_NAME,
+                    span,
+                    format!(
+                        "`{name}` is defined more than once: this module already has an extension method of that name"
+                    ),
+                );
+            }
+            None => {
+                self.globals.modules[module].extensions.insert(name.to_string(), ids);
+            }
+        }
     }
 
     /// Imports one item, keeping its name.
@@ -248,26 +316,10 @@ impl Sema<'_> {
         }
         let mut has_extensions = false;
         if let Some(extensions) = extensions {
-            if name.name != item.name {
-                // An extension method is called by its declared name; a `use ... as` would bind a name no call
-                // can reach (`spec/extensions.md`, EX2).
-                diags.error(
-                    Code::INVALID_EXTENSION,
-                    name.span,
-                    format!(
-                        "an extension method cannot be imported under another name: `{}` is called by its declared name",
-                        item.name
-                    ),
-                );
-            } else {
-                has_extensions = true;
-                match self.globals.modules[module].extensions.entry(name_text.clone()) {
-                    Entry::Occupied(_) => duplicate = true,
-                    Entry::Vacant(slot) => {
-                        slot.insert(extensions);
-                    }
-                }
-            }
+            // The method is called by the name it is imported under, so `use text.shout as yell` makes `yell` the
+            // method (`spec/extensions.md`, EX2).
+            has_extensions = true;
+            self.add_extensions(module, &name_text, extensions, name.span, diags);
         }
         let mut has_derive = false;
         if let Some(derive) = derive {

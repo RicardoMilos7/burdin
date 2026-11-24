@@ -1,0 +1,16 @@
+//@ compile-fail
+
+// A `mut self` extension in the associated form needs a mutable receiver, as a method call does (EX6, E0113).
+
+struct Counter {
+    n: i32,
+}
+
+fn Counter.bump(mut self) {
+    self.n = self.n + 1
+}
+
+fn main() {
+    let c = Counter { n: 1 }
+    Counter.bump(c) //~ E0113
+}
