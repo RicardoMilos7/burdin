@@ -39,6 +39,11 @@ pub(crate) enum Bound {
     /// The parameter is a const parameter of this type (`const N: usize`); it has no interfaces to meet
     /// (`spec/const-generics.md`).
     ConstOf(Ty),
+    /// A `where` predicate on an associated-type projection of a type parameter (`where I.Item: Eq`): the projection,
+    /// written with the declaration's parameters, must meet the inner bound. It sits in the list of the parameter the
+    /// projection starts from, so a body sees it and each instance checks it (`spec/associated-types.md`, AT7). A
+    /// projected bound is checked on its projection, not on the argument it sits beside.
+    Projected(Ty, Box<Bound>),
 }
 
 pub(crate) const BUILTIN_INTERFACES: &[&str] =
@@ -471,6 +476,9 @@ impl Globals {
             Bound::User(i, args) => Bound::User(*i, args.iter().map(|a| self.subst_ty(a, subst)).collect()),
             Bound::From(source) => Bound::From(self.subst_ty(source, subst)),
             Bound::TryFrom(source) => Bound::TryFrom(self.subst_ty(source, subst)),
+            Bound::Projected(ty, inner) => {
+                Bound::Projected(self.subst_ty(ty, subst), Box::new(self.subst_bound(inner, subst)))
+            }
             other => other.clone(),
         }
     }
@@ -496,6 +504,30 @@ impl Globals {
             Bound::TryFrom(source) => format!("TryFrom<{source}>"),
             Bound::Fn(i, kind) => self.fn_sig_name(*i, *kind),
             Bound::ConstOf(ty) => format!("const {ty}"),
+            Bound::Projected(ty, inner) => format!("{ty}: {}", self.bound_name(inner)),
+        }
+    }
+
+    /// The bounds the environment gives `ty` (spec/associated-types.md, AT7): a type parameter's own bounds, without
+    /// the projected bounds written beside it, or, for a projection, the bounds a `where` clause puts on exactly that
+    /// projection. Any other type has none, so it is met only by its own impls and the built-in rules.
+    pub(crate) fn env_bounds_of(&self, ty: &Ty, env: &Env) -> Vec<Bound> {
+        match ty {
+            Ty::Param(name) => env
+                .iter()
+                .filter(|(n, _)| n == &**name)
+                .flat_map(|(_, bs)| bs.iter().filter(|b| !matches!(b, Bound::Projected(..))).cloned())
+                .collect(),
+            Ty::Projection { .. } => env
+                .iter()
+                .flat_map(|(_, bs)| {
+                    bs.iter().filter_map(|b| match b {
+                        Bound::Projected(p, inner) if p == ty => Some((**inner).clone()),
+                        _ => None,
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -831,15 +863,28 @@ impl Globals {
     }
 
     pub(crate) fn satisfies_with(&self, ty: &Ty, bound: &Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
+        // A projected bound is about its projection, under `subst`; the argument it sits beside is not consulted.
+        if let Bound::Projected(projection, inner) = bound {
+            let subject = self.subst_ty(projection, subst);
+            return self.satisfies_with(&subject, inner, env, subst);
+        }
         let want = self.subst_bound(bound, subst);
         match ty {
             Ty::Error | Ty::Never => true,
-            Ty::Param(name) => env.iter().any(|(n, bs)| {
-                n == &**name
-                    && bs
-                        .iter()
-                        .any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, &want, subst)))
-            }),
+            // A parameter meets only what its bounds provide. A projection meets what the projected bounds on it provide
+            // (AT7); without one it falls through to the rules for types, which know nothing of it.
+            Ty::Param(_) => self
+                .env_bounds_of(ty, env)
+                .iter()
+                .any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, &want, subst))),
+            Ty::Projection { .. }
+                if self
+                    .env_bounds_of(ty, env)
+                    .iter()
+                    .any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, &want, subst))) =>
+            {
+                true
+            }
             _ => match want {
                 Bound::Copy => self.is_copy(ty),
                 Bound::Clone => self.is_clone(ty),
@@ -855,6 +900,7 @@ impl Globals {
                     _ => false,
                 },
                 Bound::ConstOf(_) => matches!(ty, Ty::Const(_)),
+                Bound::Projected(..) => unreachable!("a projected bound is checked above"),
             },
         }
     }
@@ -1079,7 +1125,7 @@ impl Globals {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
-            Ty::Param(name) => self.bound_in_env(name, &Bound::Ord, env),
+            Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Ord, env),
             // `None < Some(_)`, and `Ok(_) < Err(_)`; two of a kind compare their payloads
             // (`spec/stdlib.md`, "Interface coverage").
             Ty::Option(t) => self.has_ord_in(t, env),
@@ -1126,7 +1172,7 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             // Text hashes its bytes (`spec/derives.md`, `Hash`).
             Ty::Str | Ty::String => true,
-            Ty::Param(name) => self.bound_in_env(name, &Bound::Hash, env),
+            Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Hash, env),
             Ty::Option(t) => self.has_hash_in(t, env),
             // A list hashes its elements in order and a map its entries in any order
             // (`spec/stdlib.md`, "Interface coverage").
@@ -1147,6 +1193,13 @@ impl Globals {
             }
             _ => false,
         }
+    }
+
+    /// Whether the bounds the environment gives `ty` (a parameter's or a projection's) provide `bound`.
+    pub(crate) fn env_provides(&self, ty: &Ty, bound: &Bound, env: &Env) -> bool {
+        self.env_bounds_of(ty, env)
+            .iter()
+            .any(|b| self.bound_closure(b).iter().any(|have| self.bound_provides(have, bound, &[])))
     }
 
     /// Whether a type parameter's bounds provide `bound`.
@@ -1188,28 +1241,22 @@ impl Globals {
     /// has one) and result, with `Self` replaced by the parameter, whether it has a receiver, and whether it is
     /// `unsafe`.
     pub(crate) fn bound_method(&self, recv: &Ty, name: &str, env: &Env) -> Option<(Signature, bool, bool)> {
-        let Ty::Param(pname) = recv else { return None };
-        for (n, bounds) in env {
-            if n != &**pname {
-                continue;
-            }
-            for bound in bounds {
-                for b in self.bound_closure(bound) {
-                    let Bound::User(i, args) = b else { continue };
-                    let iface = &self.interfaces[i];
-                    if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
-                        // `Self` is the receiver and the interface's parameters are the bound's arguments.
-                        let mut subst: Vec<(String, Ty)> = vec![("Self".to_string(), recv.clone())];
-                        subst.extend(iface.params.iter().cloned().zip(args.iter().cloned()));
-                        let sig = &m.sig;
-                        let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
-                        let ret = self.subst_ty(&sig.ret, &subst);
-                        return Some((
-                            Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
-                            sig.has_self,
-                            m.is_unsafe,
-                        ));
-                    }
+        for bound in self.env_bounds_of(recv, env) {
+            for b in self.bound_closure(&bound) {
+                let Bound::User(i, args) = b else { continue };
+                let iface = &self.interfaces[i];
+                if let Some(m) = iface.methods.iter().find(|m| m.name == name) {
+                    // `Self` is the receiver and the interface's parameters are the bound's arguments.
+                    let mut subst: Vec<(String, Ty)> = vec![("Self".to_string(), recv.clone())];
+                    subst.extend(iface.params.iter().cloned().zip(args.iter().cloned()));
+                    let sig = &m.sig;
+                    let params = sig.params.iter().map(|p| self.subst_param(p, &subst)).collect();
+                    let ret = self.subst_ty(&sig.ret, &subst);
+                    return Some((
+                        Signature { params, ret, has_self: sig.has_self, ret_origins: Vec::new() },
+                        sig.has_self,
+                        m.is_unsafe,
+                    ));
                 }
             }
         }
@@ -1222,24 +1269,18 @@ impl Globals {
     /// those replacements themselves, which a caller seeds its inference with. `None` for a method without its own
     /// type parameters.
     pub(crate) fn bound_method_generics(&self, recv: &Ty, name: &str, env: &Env) -> Option<BoundMethodGenerics> {
-        let Ty::Param(pname) = recv else { return None };
-        for (n, bounds) in env {
-            if n != &**pname {
-                continue;
-            }
-            for bound in bounds {
-                for b in self.bound_closure(bound) {
-                    let Bound::User(i, args) = b else { continue };
-                    let iface = &self.interfaces[i];
-                    let Some(m) = iface.methods.iter().find(|m| m.name == name) else { continue };
-                    if !m.generic {
-                        return None;
-                    }
-                    let subst: Vec<(String, Ty)> = iface.params.iter().cloned().zip(args.iter().cloned()).collect();
-                    let bounds =
-                        m.bounds.iter().map(|bs| bs.iter().map(|b| self.subst_bound(b, &subst)).collect()).collect();
-                    return Some((m.params.clone(), bounds, subst));
+        for bound in self.env_bounds_of(recv, env) {
+            for b in self.bound_closure(&bound) {
+                let Bound::User(i, args) = b else { continue };
+                let iface = &self.interfaces[i];
+                let Some(m) = iface.methods.iter().find(|m| m.name == name) else { continue };
+                if !m.generic {
+                    return None;
                 }
+                let subst: Vec<(String, Ty)> = iface.params.iter().cloned().zip(args.iter().cloned()).collect();
+                let bounds =
+                    m.bounds.iter().map(|bs| bs.iter().map(|b| self.subst_bound(b, &subst)).collect()).collect();
+                return Some((m.params.clone(), bounds, subst));
             }
         }
         None
@@ -1257,6 +1298,15 @@ impl Globals {
         let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
         format!("{name}<{}>", args.join(", "))
     }
+}
+
+/// The index of the type parameter a projection starts from (`I` in `I.Item`), when `subject` is a projection on one of
+/// `params`; `None` for any other type. A `where` predicate on such a projection is a projected bound on that parameter
+/// (spec/associated-types.md, AT7).
+pub(crate) fn projection_owner(subject: &Ty, params: &[&str]) -> Option<usize> {
+    let Ty::Projection { self_ty, .. } = subject else { return None };
+    let Ty::Param(name) = &**self_ty else { return None };
+    params.iter().position(|p| *p == &**name)
 }
 
 pub(crate) fn param_ty(name: &str) -> Ty {
@@ -1611,5 +1661,39 @@ mod tests {
         assert!(!g.satisfies(&Ty::String, &Bound::Copy, &[]));
         assert!(g.satisfies(&Ty::Error, &Bound::Hash, &[]));
         assert!(g.satisfies(&Ty::Never, &Bound::Copy, &[]));
+    }
+
+    #[test]
+    fn satisfies_reads_the_projected_bounds_of_a_projection() {
+        // `where T.Item: Eq` puts a projected bound beside `T`, and the projection is what it bounds (AT7).
+        let g = Globals::default();
+        let item = Ty::Projection {
+            self_ty: Box::new(param("T")),
+            iface: 0,
+            iface_name: Rc::from("Container"),
+            args: Vec::new(),
+            name: Rc::from("Item"),
+        };
+        let other = Ty::Projection {
+            self_ty: Box::new(param("T")),
+            iface: 0,
+            iface_name: Rc::from("Container"),
+            args: Vec::new(),
+            name: Rc::from("Other"),
+        };
+        let env: &[(String, Vec<Bound>)] =
+            &[("T".to_string(), vec![Bound::Projected(item.clone(), Box::new(Bound::Ord))])];
+        assert!(g.satisfies(&item, &Bound::Ord, env));
+        assert!(g.satisfies(&item, &Bound::Eq, env), "Ord implies Eq on a projection too");
+        assert!(!g.satisfies(&item, &Bound::Hash, env));
+        // The projected bound is about `item` alone, not about `T` or its other projections.
+        assert!(!g.satisfies(&param("T"), &Bound::Eq, env));
+        assert!(!g.satisfies(&other, &Bound::Eq, env));
+        // Substituting a concrete self type checks the projection's bound on that type's binding.
+        let concrete = &[("T".to_string(), i32_())];
+        assert!(
+            !g.satisfies_with(&param("T"), &Bound::Projected(item.clone(), Box::new(Bound::Eq)), &[], concrete),
+            "no impl binds `Item` for i32, so the projection stays opaque and the bound is not met"
+        );
     }
 }

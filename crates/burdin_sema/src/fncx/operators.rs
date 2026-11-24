@@ -227,9 +227,11 @@ impl FnCx<'_> {
                                 format!("`{op_name}` cannot be applied to `{ty}`"),
                             );
                         }
-                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                        Ty::Param(_) | Ty::Projection { .. } | Ty::Struct(_) | Ty::Enum(_) => {
                             let reason = match (&ty, iface) {
-                                (Ty::Param(_), Some(name)) => format!(": its bounds do not provide `{name}`"),
+                                (Ty::Param(_) | Ty::Projection { .. }, Some(name)) => {
+                                    format!(": its bounds do not provide `{name}`")
+                                }
                                 (_, Some(name)) => format!(": it does not implement `{name}`"),
                                 _ => String::new(),
                             };
@@ -300,7 +302,7 @@ impl FnCx<'_> {
     fn overloaded_binary(&mut self, op: ast::BinOp, l: tir::Expr, r: tir::Expr, span: Span) -> Option<tir::Expr> {
         let (iface, method, _) = self.op_interface(op)?;
         match l.ty.clone() {
-            Ty::Param(_) => {
+            Ty::Param(_) | Ty::Projection { .. } => {
                 let (sig, _, _) = self.globals.bound_method(&l.ty, method, &self.bounds)?;
                 if sig.params.len() != 2 || !sig.has_self {
                     return None;
@@ -328,7 +330,7 @@ impl FnCx<'_> {
     /// Lowers `-a` or `!a` to its interface method call when the built-in operator does not apply.
     fn overloaded_unary(&mut self, iface: usize, method: &str, e: tir::Expr, span: Span) -> Option<tir::Expr> {
         match e.ty.clone() {
-            Ty::Param(_) => {
+            Ty::Param(_) | Ty::Projection { .. } => {
                 let (sig, _, _) = self.globals.bound_method(&e.ty, method, &self.bounds)?;
                 if sig.params.len() != 1 || !sig.has_self {
                     return None;
@@ -419,9 +421,9 @@ impl FnCx<'_> {
                         return call;
                     }
                     match &e.ty {
-                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                        Ty::Param(_) | Ty::Projection { .. } | Ty::Struct(_) | Ty::Enum(_) => {
                             let reason = match &e.ty {
-                                Ty::Param(_) => "its bounds do not provide `Neg`",
+                                Ty::Param(_) | Ty::Projection { .. } => "its bounds do not provide `Neg`",
                                 _ => "it does not implement `Neg`",
                             };
                             self.diags.error(
@@ -449,9 +451,9 @@ impl FnCx<'_> {
                         return call;
                     }
                     match &e.ty {
-                        Ty::Param(_) | Ty::Struct(_) | Ty::Enum(_) => {
+                        Ty::Param(_) | Ty::Projection { .. } | Ty::Struct(_) | Ty::Enum(_) => {
                             let reason = match &e.ty {
-                                Ty::Param(_) => "its bounds do not provide `Not`",
+                                Ty::Param(_) | Ty::Projection { .. } => "its bounds do not provide `Not`",
                                 _ => "it does not implement `Not`",
                             };
                             self.diags.error(

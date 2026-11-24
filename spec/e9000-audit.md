@@ -20,7 +20,7 @@ page.
 | --- | --- | --- | --- | --- |
 | `move-runtime-index-match` | `crates/burdin_check/src/moves.rs` | Matching a pattern that moves out of a non-`Copy` element through a runtime index (`match xs[i] { ... }`, non-constant `i`) | Stage 1 | #493 |
 | `move-runtime-index-place` | `crates/burdin_check/src/moves.rs` | Moving a non-`Copy` value through a runtime index (`let x = xs[i]`, non-constant `i`) | Stage 1 | #493 |
-| `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter, such as an associated-type projection | Stage 1 | #394 |
+| `declare-where-non-param` | `crates/burdin_sema/src/declare.rs` | A `where` predicate on something other than a type parameter or a projection of one (`where i32: Eq`, `where Vec<T>: Eq`) | Stage 1 | #394 |
 | `function-value` | `crates/burdin_sema/src/fncx/literals.rs` | Using a generic or `extern` function as a value | Stage 1 | #493 |
 | `unsupported-helper` | `crates/burdin_sema/src/fncx/mod.rs` | The shared `unsupported()` helper that reports the `E9000` sites in expression checking; not a construct | helper | - |
 | `pattern-constant` | `crates/burdin_sema/src/fncx/pattern.rs` | A constant used as a pattern | Stage 1 | #493 |
@@ -31,7 +31,7 @@ page.
 | `impl-where-concrete` | `crates/burdin_sema/src/impls.rs` | A `where` clause on a non-generic impl block | Stage 1 | #394 |
 | `impl-builtin-hand` | `crates/burdin_sema/src/impls.rs` | A built-in interface implemented by hand (`Type: Eq { ... }`) | Stage 1 | #402 |
 | `impl-interface-path-kind` | `crates/burdin_sema/src/impls.rs` | An interface path that is not a type path | Stage 1 | #400 |
-| `impl-where-non-param` | `crates/burdin_sema/src/impls.rs` | A `where` predicate on something other than a type parameter in an impl block | Stage 1 | #394 |
+| `impl-where-non-param` | `crates/burdin_sema/src/impls.rs` | A `where` predicate on something other than a type parameter or a projection of one in an impl block | Stage 1 | #394 |
 | `instances-limit` | `crates/burdin_sema/src/instances.rs` | The monomorphization limit (the diagnostic fires when a generic type or function instantiates itself without end). This is a compiler safety limit, not a language construct, so it has no feature issue; the limit should get a permanent code when it is next reworked | Stage 1 | #493 |
 
 ## Why the owners differ
@@ -50,8 +50,8 @@ page.
   impl blocks for specific instances (#395), and built-in interfaces on generic types (#401). Those sites are gone
   (`spec/type-aliases.md`, `spec/impls.md`); the one built-in interface still unimplemented by hand is #402, below.
 - `Stage 1` is the milestone for the cross-cutting work with no single feature milestone: the remaining pattern
-  forms (a constant pattern and a binding shared by or-alternatives), the unsupported bound forms, associated-type
-  `where` clauses, and the runtime-index move forms. Their issue links are specific where one exists, and #493 is
+  forms (a constant pattern and a binding shared by or-alternatives), the unsupported bound forms, the `where`
+  predicates on types that are not parameters or their projections (#394), and the runtime-index move forms. Their issue links are specific where one exists, and #493 is
   the umbrella.
 - A qualified interface path (#400) is grouped with the generic-interface sites it usually appears with (#390): a
   qualified path with type arguments needs both, and the non-path form is the remaining #400 work.

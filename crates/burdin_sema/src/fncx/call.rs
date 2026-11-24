@@ -1337,7 +1337,7 @@ impl FnCx<'_> {
         if let Ty::Any(any) = recv.ty.clone() {
             return self.any_method_call(recv, &any, name, args, span);
         }
-        if let Ty::Param(_) = recv.ty {
+        if matches!(recv.ty, Ty::Param(_) | Ty::Projection { .. }) {
             return self.param_method_call(recv, name, explicit, args, span, expect);
         }
         // `v.into()`: the conversion into the type the context expects (spec/stdlib.md, FR4), unless the receiver
