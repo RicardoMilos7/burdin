@@ -8,7 +8,7 @@ it makes no stability promise. Programs can change from one version to the next,
 
 ## Where the work stands
 
-The record below is from `HANDOFF.md` in the repository, as of 2026-11-20. That file is updated with each session, so the
+The record below is from `HANDOFF.md` in the repository, as of 2026-11-24. That file is updated with each session, so the
 [repository](https://github.com/RicardoMilos7/burdin/blob/main/HANDOFF.md) has the latest state.
 
 | Part | Status |
@@ -41,8 +41,12 @@ The full matrix, with the test behind each row, is in
 
 - **Not for production.** The compiler, the standard library, and the tools are an experiment and may change without
   notice.
-- **Packages come from paths, git, and the official set.** There is no package registry. A dependency is a directory, a
-  git repository, or one of the official packages named with `name = true`.
+- **Packages come from paths, git, and the official set.** There is no package registry. A dependency is a directory or a
+  git repository in `burdin.toml`. An official package is not declared at all: a `use` of its name loads it.
+- **`Option.as_ref` is not provided.** A reference to a `match` binding is copied into a slot by the code generator, so
+  `Some(&v)` is accepted and then dangles. That is a compiler bug, recorded in the specification and not yet fixed.
+- **Some borrows last a whole statement.** `s = s + "x"` does not compile (E0111). Write `let t = s + "x"` and then
+  `s = t`.
 - **HTTPS is not in the `http` package.** The `tls` package is the way to secure a connection, and it needs OpenSSL 3 to
   link.
 - **The cryptography is a demonstration.** The `crypto` package implements the algorithms in pure Burdin and checks them
