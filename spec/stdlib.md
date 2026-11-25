@@ -44,10 +44,10 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::Struct`, `Ty::Enum` | stays | What `std` declares its own types with. |
 | `Ty::Any` | stays | A boxed value behind a vtable (`existentials.md`, AN1). |
 | `Ty::CPtr` | stays | The raw pointer every `std` collection is written over. |
-| `Ty::Option`, `Ty::Result` | moves | Ordinary enums. Needs the lang-item registry (#1073) for `?`, `orelse`, `context`, and exhaustiveness; the work is #1076. |
-| `Ty::List`, `Ty::Map`, `Ty::MapEntry`, `Ty::Heap`, `Ty::Shared`, `Ty::CString` | moves | Ordinary generic structs with `Drop` over `__alloc` and `mem`. Needs the lang-item registry and intrinsic markers (#1073); the work, and deleting the LSP method table, is #1077. |
-| `Ty::ListIntoIter`, `Ty::ArrayIntoIter`, `Ty::MapIntoIter`, `Ty::RangeIter`, `Ty::Range` | moves | They own what they walk and hold no view, so they are plain structs implementing `Iterator<T>`; a range literal lowers to the lang item. Needs #1073; the work is #1075. |
-| `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | blocked | They hold a view, and a struct field cannot (SC2, E0120). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. Blocked on #1074; then each is a plain struct. |
+| `Ty::Option`, `Ty::Result` | moves | Ordinary enums. Needs generic types that carry their arguments (#1079) and the lang-item registry (#1073) for `?`, `orelse`, `context`, and exhaustiveness; the work is #1076. |
+| `Ty::List`, `Ty::Map`, `Ty::MapEntry`, `Ty::Heap`, `Ty::Shared`, `Ty::CString` | moves | Ordinary generic structs with `Drop` over `__alloc` and `mem`. Needs #1079 and the lang-item registry (#1073); the work is #1077. The intrinsic markers and the LSP table are done: the declarations are `std/src/builtins.bd`, and a unit test in `burdin_sema` fails when one drifts from the method table. |
+| `Ty::ListIntoIter`, `Ty::ArrayIntoIter`, `Ty::MapIntoIter`, `Ty::RangeIter`, `Ty::Range` | moves | They own what they walk and hold no view, so they are plain structs implementing `Iterator<T>`; a range literal lowers to the lang item. Needs #1079 and #1073; the work is #1075. |
+| `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. |
 
 Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
 (`fn List<T>.push(mut self, own x: T)`, `enum Option<T> { Some(T) None }`), each with its `///` documentation. The

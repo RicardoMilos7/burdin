@@ -1294,6 +1294,60 @@ mod tests {
         assert_eq!(found, Method::MapShrinkToFit);
     }
 
+    /// Every method `std/src/builtins.bd` declares with a `self` exists in the compiler's method table with the same
+    /// number of parameters, so the declarations the tools read cannot drift from what the compiler provides.
+    #[test]
+    fn the_declarations_in_builtins_bd_match_the_method_table() {
+        use burdin_diag::{Diagnostics, FileId};
+        use burdin_syntax::ast::{Item, ParamKind, TypeKind};
+        use burdin_tir::Alloc;
+        let source = include_str!("../../../std/src/builtins.bd");
+        let ast = burdin_syntax::parse(FileId(0), source, &mut Diagnostics::default());
+        let param = |n: &str| Ty::Param(n.into());
+        let mut checked = 0;
+        let mut problems = Vec::new();
+        for item in &ast.items {
+            let Item::Extension(x) = item else { continue };
+            if !x.func.params.iter().any(|p| matches!(p.kind, ParamKind::SelfParam)) {
+                continue;
+            }
+            let recv = match &x.recv.kind {
+                TypeKind::Slice(_) => Ty::Slice(Box::new(param("T"))),
+                TypeKind::Array(..) => Ty::Array(Box::new(param("T")), 3),
+                TypeKind::Path(segments) => match segments[0].name.name.as_str() {
+                    "List" => Ty::List(Box::new(param("T")), Alloc::Global),
+                    "Map" => Ty::Map(Box::new(param("K")), Box::new(param("V")), Alloc::Global),
+                    "Heap" => Ty::Heap(Box::new(param("T")), Alloc::Global),
+                    "Option" => Ty::Option(Box::new(param("T"))),
+                    "Result" => Ty::Result(Box::new(param("T")), Box::new(param("E"))),
+                    other => match builtin_type(other) {
+                        Some(ty) => ty,
+                        None => continue,
+                    },
+                },
+                _ => continue,
+            };
+            let name = &x.func.name.name;
+            // Provided outside the method table: `clone` through the `Clone` rules, a float's `to_string` through the
+            // formatter, and `context` by the call checker (`spec/errors.md`).
+            if matches!((name.as_str(), &recv), ("clone", _) | ("to_string", Ty::Float(_)) | ("context", _)) {
+                continue;
+            }
+            let declared = x.func.params.len() - 1;
+            checked += 1;
+            match method(name, &recv) {
+                None => problems.push(format!("{recv}.{name}: declared in builtins.bd, not provided by the compiler")),
+                Some((_, params, _)) if params.len() != declared => problems.push(format!(
+                    "{recv}.{name}: builtins.bd declares {declared} parameters, the compiler takes {}",
+                    params.len()
+                )),
+                Some(_) => {}
+            }
+        }
+        assert!(checked > 100, "only {checked} declarations were checked");
+        assert!(problems.is_empty(), "{} drifted: {}", problems.len(), problems.join("; "));
+    }
+
     #[test]
     fn method_resolution_dispatches_on_the_receiver() {
         let i32_ = Ty::Int(IntTy::I32);
