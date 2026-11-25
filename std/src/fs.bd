@@ -8,7 +8,7 @@
 
 use fmt.{Debug, Formatter}
 use path.Path
-use reactor.__offload
+use reactor.offload
 use rw.{Read, Seek, SeekFrom, Write}
 use sort.sort_by
 use std.{IoError, IoErrorKind}
@@ -98,7 +98,7 @@ Metadata {
 /// remove_dir_all("burdin-doc-list").unwrap()
 /// ```
 fn read_dir(path: str): Result<List<String>, IoError> {
-    match __offload(|| __read_dir(path)) {
+    match offload(|| __read_dir(path)) {
         Result.Ok(names) => Result.Ok(names),
         Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
@@ -117,7 +117,7 @@ fn read_dir(path: str): Result<List<String>, IoError> {
 /// remove_dir("burdin-doc-make-dir").unwrap()
 /// ```
 fn create_dir(path: str): Result<(), IoError> {
-    match __offload(|| __create_dir(path)) {
+    match offload(|| __create_dir(path)) {
         Result.Ok(_) => Result.Ok(()),
         Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
@@ -162,7 +162,7 @@ fn create_dir_all(path: str): Result<(), IoError> {
 /// assert(!exists("burdin-doc-remove-dir"))
 /// ```
 fn remove_dir(path: str): Result<(), IoError> {
-    match __offload(|| __remove_dir(path)) {
+    match offload(|| __remove_dir(path)) {
         Result.Ok(_) => Result.Ok(()),
         Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
@@ -180,7 +180,7 @@ fn remove_dir(path: str): Result<(), IoError> {
 /// assert(!exists("burdin-doc-remove.txt"))
 /// ```
 fn remove_file(path: str): Result<(), IoError> {
-    match __offload(|| __remove_file(path)) {
+    match offload(|| __remove_file(path)) {
         Result.Ok(_) => Result.Ok(()),
         Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
@@ -207,13 +207,13 @@ fn remove_dir_all(path: str): Result<(), IoError> {
         // `std` sees the kind itself here; no system call failed.
         return Result.Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.NotADirectory, os_code: Option.None })
     }
-    __remove_entry(path)
+    remove_entry(path)
 }
 
 /// Removes one entry: a file, a link, an empty directory, or a non-empty directory with its contents. Trying the
 /// two removals first keeps a link a link: `remove_dir` then `remove_file` succeed for it before any listing, so
 /// its target is never walked.
-priv fn __remove_entry(path: str): Result<(), IoError> {
+priv fn remove_entry(path: str): Result<(), IoError> {
     if remove_dir(path).is_ok() {
         return Result.Ok(())
     }
@@ -234,7 +234,7 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
     }
     for name in names {
         let child = Path.new(path).join(name.as_str())
-        __remove_entry(child.as_str())?
+        remove_entry(child.as_str())?
     }
     remove_dir(path)
 }
@@ -249,7 +249,7 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
 /// remove_file("burdin-doc-new-name.txt").unwrap()
 /// ```
 fn rename(from: str, to: str): Result<(), IoError> {
-    match __offload(|| __rename(from, to)) {
+    match offload(|| __rename(from, to)) {
         Result.Ok(_) => Result.Ok(()),
         Result.Err(code) => Result.Err(IoError.Write {
             path: to.to_string(),
@@ -270,13 +270,13 @@ fn rename(from: str, to: str): Result<(), IoError> {
 /// remove_file("burdin-doc-metadata.txt").unwrap()
 /// ```
 fn metadata(path: str): Result<Metadata, IoError> {
-    match __offload(|| __metadata(path)) {
+    match offload(|| __metadata(path)) {
         Result.Ok((size, mode, modified, accessed, flags)) => Result.Ok(Metadata {
             size,
             mode: mode as u32,
             modified,
             accessed,
-            kind: __file_kind(flags),
+            kind: file_kind(flags),
         }),
         Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
@@ -286,7 +286,7 @@ fn metadata(path: str): Result<Metadata, IoError> {
     }
 }
 
-priv fn __file_kind(flags: u64): FileKind {
+priv fn file_kind(flags: u64): FileKind {
     if flags & 4 != 0 {
         FileKind.Symlink
     } else if flags & 2 != 0 {
@@ -307,7 +307,7 @@ priv fn __file_kind(flags: u64): FileKind {
 /// assert(p.len() > 0)
 /// ```
 fn canonicalize(path: str): Result<String, IoError> {
-    match __offload(|| __canonicalize(path)) {
+    match offload(|| __canonicalize(path)) {
         Result.Ok(text) => Result.Ok(text),
         Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
@@ -330,7 +330,7 @@ fn canonicalize(path: str): Result<String, IoError> {
 /// ```
 fn walk(root: str): Result<List<String>, IoError> {
     let mut out = List<String>.new()
-    match __walk(root, "", mut out) {
+    match walk_tree(root, "", mut out) {
         Result.Ok(()) => {}
         Result.Err(failure) => return Result.Err(failure),
     }
@@ -356,14 +356,14 @@ fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
     let pat = pattern.to_char_list()
     let mut out = List<String>.new()
     for rel in all {
-        if __glob_match(pat, 0, rel.to_char_list(), 0) {
+        if glob_match(pat, 0, rel.to_char_list(), 0) {
             out.push(rel.clone())
         }
     }
     Result.Ok(out)
 }
 
-priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoError> {
+priv fn walk_tree(root: str, prefix: str, mut out: List<String>): Result<(), IoError> {
     let dir = if prefix.len() == 0 {
         root.to_string()
     } else {
@@ -389,18 +389,18 @@ priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoErro
         }
         out.push(rel.clone())
         if info.is_dir() && !info.is_symlink() {
-            __walk(root, rel.as_str(), mut out)?
+            walk_tree(root, rel.as_str(), mut out)?
         }
     }
     Result.Ok(())
 }
 
-priv fn __glob_sep(c: char): bool {
+priv fn glob_sep(c: char): bool {
     c == '/' || c == '\\'
 }
 
 /// Whether `text[ti..]` matches `pattern[pi..]`, with `*`, `?`, and `**` as `walk_glob` describes.
-priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize): bool {
+priv fn glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize): bool {
     if pi == pattern.len() {
         return ti == text.len()
     }
@@ -408,14 +408,14 @@ priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize
     if pc == '*' {
         if pi + 1 < pattern.len() && pattern[pi + 1] == '*' {
             // `**/` matches zero path segments: try the rest of the pattern at the same position.
-            if pi + 2 < pattern.len() && __glob_sep(pattern[pi + 2]) {
-                if __glob_match(pattern, pi + 3, text, ti) {
+            if pi + 2 < pattern.len() && glob_sep(pattern[pi + 2]) {
+                if glob_match(pattern, pi + 3, text, ti) {
                     return true
                 }
             }
             let mut k = ti
             loop {
-                if __glob_match(pattern, pi + 2, text, k) {
+                if glob_match(pattern, pi + 2, text, k) {
                     return true
                 }
                 if k == text.len() {
@@ -426,10 +426,10 @@ priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize
         }
         let mut k = ti
         loop {
-            if __glob_match(pattern, pi + 1, text, k) {
+            if glob_match(pattern, pi + 1, text, k) {
                 return true
             }
-            if k == text.len() || __glob_sep(text[k]) {
+            if k == text.len() || glob_sep(text[k]) {
                 return false
             }
             k = k + 1
@@ -439,12 +439,12 @@ priv fn __glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize
         return false
     }
     if pc == '?' {
-        return !__glob_sep(text[ti]) && __glob_match(pattern, pi + 1, text, ti + 1)
+        return !glob_sep(text[ti]) && glob_match(pattern, pi + 1, text, ti + 1)
     }
-    if __glob_sep(pc) {
-        return __glob_sep(text[ti]) && __glob_match(pattern, pi + 1, text, ti + 1)
+    if glob_sep(pc) {
+        return glob_sep(text[ti]) && glob_match(pattern, pi + 1, text, ti + 1)
     }
-    pc == text[ti] && __glob_match(pattern, pi + 1, text, ti + 1)
+    pc == text[ti] && glob_match(pattern, pi + 1, text, ti + 1)
 }
 
 Path {
@@ -512,12 +512,12 @@ Path {
 
 /// The kind of a file failure. The primitives report 0 when no system call gave a code, which is `Other`
 /// (`spec/errors.md`, ERR10-ERR11).
-priv fn __io_error_kind(code: i32): IoErrorKind {
+priv fn io_error_kind(code: i32): IoErrorKind {
     if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
 }
 
 /// The OS code of a file failure, when the primitive reported one.
-priv fn __io_error_code(code: i32): Option<i32> {
+priv fn io_error_code(code: i32): Option<i32> {
     if code > 0 { Option.Some(code) } else { Option.None }
 }
 
@@ -669,7 +669,7 @@ OpenOptions {
         let truncate = self.truncate
         let create = self.create
         let create_new = self.create_new
-        match __offload(|| __file_open(path, read, write, append, truncate, create, create_new)) {
+        match offload(|| __file_open(path, read, write, append, truncate, create, create_new)) {
             Result.Ok(fd) => Result.Ok(File { fd: fd, path: path.to_string() }),
             Result.Err(_) => {
                 let code = __file_error()
@@ -677,14 +677,14 @@ OpenOptions {
                 if changes {
                     Result.Err(IoError.Write {
                         path: path.to_string(),
-                        kind: __io_error_kind(code),
-                        os_code: __io_error_code(code),
+                        kind: io_error_kind(code),
+                        os_code: io_error_code(code),
                     })
                 } else {
                     Result.Err(IoError.Read {
                         path: path.to_string(),
-                        kind: __io_error_kind(code),
-                        os_code: __io_error_code(code),
+                        kind: io_error_kind(code),
+                        os_code: io_error_code(code),
                     })
                 }
             }
@@ -750,14 +750,14 @@ File {
     /// ```
     fn sync_all(self): Result<(), IoError> {
         let fd = self.fd
-        match __offload(|| __file_sync(fd)) {
+        match offload(|| __file_sync(fd)) {
             Result.Ok(()) => Result.Ok(()),
             Result.Err(_) => {
                 let code = __file_error()
                 Result.Err(IoError.Write {
                     path: self.path.clone(),
-                    kind: __io_error_kind(code),
-                    os_code: __io_error_code(code),
+                    kind: io_error_kind(code),
+                    os_code: io_error_code(code),
                 })
             }
         }
@@ -775,14 +775,14 @@ File {
     /// ```
     fn set_len(mut self, size: u64): Result<(), IoError> {
         let fd = self.fd
-        match __offload(|| __file_set_len(fd, size)) {
+        match offload(|| __file_set_len(fd, size)) {
             Result.Ok(()) => Result.Ok(()),
             Result.Err(_) => {
                 let code = __file_error()
                 Result.Err(IoError.Write {
                     path: self.path.clone(),
-                    kind: __io_error_kind(code),
-                    os_code: __io_error_code(code),
+                    kind: io_error_kind(code),
+                    os_code: io_error_code(code),
                 })
             }
         }
@@ -807,8 +807,8 @@ File {
                 let code = __file_error()
                 Result.Err(IoError.Write {
                     path: me.path.clone(),
-                    kind: __io_error_kind(code),
-                    os_code: __io_error_code(code),
+                    kind: io_error_kind(code),
+                    os_code: io_error_code(code),
                 })
             }
         }
@@ -820,7 +820,7 @@ File: Read {
         let fd = self.fd
         let buf_ptr = unsafe { (&mut buf) as CPtr<List<u8>> }
         match unsafe {
-            __offload(|| unsafe {
+            offload(|| unsafe {
                 __file_read(fd, mut *buf_ptr, max)
             })
         } {
@@ -829,8 +829,8 @@ File: Read {
                 let code = __file_error()
                 Result.Err(IoError.Read {
                     path: self.path.clone(),
-                    kind: __io_error_kind(code),
-                    os_code: __io_error_code(code),
+                    kind: io_error_kind(code),
+                    os_code: io_error_code(code),
                 })
             }
         }
@@ -840,14 +840,14 @@ File: Read {
 File: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         let fd = self.fd
-        match __offload(|| __file_write(fd, data)) {
+        match offload(|| __file_write(fd, data)) {
             Result.Ok(n) => Result.Ok(n),
             Result.Err(_) => {
                 let code = __file_error()
                 Result.Err(IoError.Write {
                     path: self.path.clone(),
-                    kind: __io_error_kind(code),
-                    os_code: __io_error_code(code),
+                    kind: io_error_kind(code),
+                    os_code: io_error_code(code),
                 })
             }
         }
@@ -867,7 +867,7 @@ File: Seek {
             SeekFrom.Current(d) => (d, 1),
         }
         let fd = self.fd
-        match __offload(|| __file_seek(fd, offset, whence)) {
+        match offload(|| __file_seek(fd, offset, whence)) {
             Result.Ok(position) => Result.Ok(position as u64),
             Result.Err(_) => Result.Err(IoError.Seek),
         }

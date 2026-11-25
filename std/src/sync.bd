@@ -7,14 +7,14 @@
 //
 // Waiting is cooperative. A task that has to wait parks (its worker runs other tasks) and a thread blocks; both are
 // woken by the thread that releases the lock. The lock's state and the list of waiters are guarded by the scheduler's
-// one lock (`__sched_lock`), the lock that guards channels, so a wake-up cannot be lost. A task may keep a lock while it
+// one lock (`sched_lock`), the lock that guards channels, so a wake-up cannot be lost. A task may keep a lock while it
 // waits for something else, such as a channel; the other tasks that want the lock wait for it.
 //
 // There is no poisoning: a panic aborts the whole process (spec/tasks.md, TK8), so no task can ever see a lock that a
 // panicking task left behind.
 
 use marker.{Send, Sync}
-use task.{__Waiter, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
+use task.{Waiter, sched_lock, sched_unlock, waiter_block, waiter_free, waiter_new, waiter_notify}
 
 /// The type-erased state of a lock. Guarded by the scheduler's lock.
 priv struct LockHead repr(C) {
@@ -31,12 +31,12 @@ priv struct LockHead repr(C) {
 /// A waiter's registration with one lock: it is in the lock's list while `linked` is 1.
 priv struct LockLink repr(C) {
     next: CPtr<LockLink>
-    waiter: CPtr<__Waiter>
+    waiter: CPtr<Waiter>
     head: CPtr<LockHead>
     linked: usize
 }
 
-priv fn __new_head(): CPtr<LockHead> {
+priv fn new_head(): CPtr<LockHead> {
     unsafe {
         let h = __alloc(LockHead.size(), 8) as CPtr<LockHead>
         (*h).writer = 0
@@ -47,7 +47,7 @@ priv fn __new_head(): CPtr<LockHead> {
     }
 }
 
-priv fn __free_head(h: CPtr<LockHead>) {
+priv fn free_head(h: CPtr<LockHead>) {
     unsafe {
         __dealloc(h as CPtr<u8>, LockHead.size(), 8)
     }
@@ -55,7 +55,7 @@ priv fn __free_head(h: CPtr<LockHead>) {
 
 // ---- the lock protocol (the scheduler's lock must be held, except where said) ----------------------------------------
 
-priv fn __link(l: CPtr<LockLink>) {
+priv fn link_lock(l: CPtr<LockLink>) {
     unsafe {
         let h = (*l).head
         (*l).next = (*h).waiters
@@ -64,7 +64,7 @@ priv fn __link(l: CPtr<LockLink>) {
     }
 }
 
-priv fn __unlink(l: CPtr<LockLink>) {
+priv fn unlink(l: CPtr<LockLink>) {
     unsafe {
         if (*l).linked == 0 {
             return
@@ -85,17 +85,17 @@ priv fn __unlink(l: CPtr<LockLink>) {
 }
 
 /// Wakes everyone waiting. A waiter that is woken looks at the lock again and waits again if it still has to.
-priv fn __wake_all(h: CPtr<LockHead>) {
+priv fn wake_all(h: CPtr<LockHead>) {
     unsafe {
         let mut l = (*h).waiters
         while !l.is_null() {
-            __waiter_notify((*l).waiter)
+            waiter_notify((*l).waiter)
             l = (*l).next
         }
     }
 }
 
-priv fn __try_write(h: CPtr<LockHead>): bool {
+priv fn try_write(h: CPtr<LockHead>): bool {
     unsafe {
         if (*h).writer == 0 && (*h).readers == 0 {
             (*h).writer = 1
@@ -105,7 +105,7 @@ priv fn __try_write(h: CPtr<LockHead>): bool {
     }
 }
 
-priv fn __try_read(h: CPtr<LockHead>): bool {
+priv fn try_read(h: CPtr<LockHead>): bool {
     unsafe {
         if (*h).writer == 0 && (*h).queued_writers == 0 {
             (*h).readers = (*h).readers + 1
@@ -115,23 +115,23 @@ priv fn __try_read(h: CPtr<LockHead>): bool {
     }
 }
 
-/// Waits until `__try_write` (`writer` is true) or `__try_read` succeeds, then returns with the lock held. Takes and
+/// Waits until `try_write` (`writer` is true) or `try_read` succeeds, then returns with the lock held. Takes and
 /// releases the scheduler's lock itself.
-priv fn __acquire(h: CPtr<LockHead>, writer: bool) {
+priv fn acquire(h: CPtr<LockHead>, writer: bool) {
     unsafe {
-        __sched_lock()
-        if writer && __try_write(h) {
-            __sched_unlock()
+        sched_lock()
+        if writer && try_write(h) {
+            sched_unlock()
             return
         }
-        if !writer && __try_read(h) {
-            __sched_unlock()
+        if !writer && try_read(h) {
+            sched_unlock()
             return
         }
         if writer {
             (*h).queued_writers = (*h).queued_writers + 1
         }
-        let waiter = __waiter_new()
+        let waiter = waiter_new()
         let link = __alloc(LockLink.size(), 8) as CPtr<LockLink>
         (*link).next = CPtr.null()
         (*link).waiter = waiter
@@ -139,55 +139,55 @@ priv fn __acquire(h: CPtr<LockHead>, writer: bool) {
         (*link).linked = 0
         loop {
             (*waiter).notified = 0
-            __link(link)
-            __waiter_block(waiter)
-            __sched_lock()
-            __unlink(link)
+            link_lock(link)
+            waiter_block(waiter)
+            sched_lock()
+            unlink(link)
             if writer {
-                // This writer is already counted in `queued_writers`, which `__try_write` does not look at.
-                if __try_write(h) {
+                // This writer is already counted in `queued_writers`, which `try_write` does not look at.
+                if try_write(h) {
                     (*h).queued_writers = (*h).queued_writers - 1
                     break
                 }
-            } else if __try_read(h) {
+            } else if try_read(h) {
                 break
             }
         }
-        __sched_unlock()
+        sched_unlock()
         __dealloc(link as CPtr<u8>, LockLink.size(), 8)
-        __waiter_free(waiter)
+        waiter_free(waiter)
     }
 }
 
 /// Takes the lock without waiting: `true` when it is held now.
-priv fn __try_acquire(h: CPtr<LockHead>, writer: bool): bool {
+priv fn try_acquire(h: CPtr<LockHead>, writer: bool): bool {
     unsafe {
-        __sched_lock()
-        let got = if writer { __try_write(h) } else { __try_read(h) }
-        __sched_unlock()
+        sched_lock()
+        let got = if writer { try_write(h) } else { try_read(h) }
+        sched_unlock()
         got
     }
 }
 
 /// Lets a writer go and wakes the waiters.
-priv fn __release_write(h: CPtr<LockHead>) {
+priv fn release_write(h: CPtr<LockHead>) {
     unsafe {
-        __sched_lock()
+        sched_lock()
         (*h).writer = 0
-        __wake_all(h)
-        __sched_unlock()
+        wake_all(h)
+        sched_unlock()
     }
 }
 
 /// Lets a reader go; the last reader wakes the waiters.
-priv fn __release_read(h: CPtr<LockHead>) {
+priv fn release_read(h: CPtr<LockHead>) {
     unsafe {
-        __sched_lock()
+        sched_lock()
         (*h).readers = (*h).readers - 1
         if (*h).readers == 0 {
-            __wake_all(h)
+            wake_all(h)
         }
-        __sched_unlock()
+        sched_unlock()
     }
 }
 
@@ -226,7 +226,7 @@ Mutex<T> {
     fn new(own value: T): Mutex<T> {
         let mut list = List<T>.new()
         list.push(value)
-        Mutex { head: unsafe { __new_head() as CPtr<u8> }, value: list }
+        Mutex { head: unsafe { new_head() as CPtr<u8> }, value: list }
     }
 
     /// Waits until no other task holds the mutex, runs `f` with an exclusive view of the value, releases the mutex, and
@@ -241,10 +241,10 @@ Mutex<T> {
     /// ```
     fn lock<R, F: FnOnce(&mut T): R>(self, own f: F): R {
         unsafe {
-            __acquire(self.head as CPtr<LockHead>, true)
+            acquire(self.head as CPtr<LockHead>, true)
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
-            __release_write(self.head as CPtr<LockHead>)
+            release_write(self.head as CPtr<LockHead>)
             result
         }
     }
@@ -257,12 +257,12 @@ Mutex<T> {
     /// ```
     fn try_lock<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
-            if !__try_acquire(self.head as CPtr<LockHead>, true) {
+            if !try_acquire(self.head as CPtr<LockHead>, true) {
                 return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
-            __release_write(self.head as CPtr<LockHead>)
+            release_write(self.head as CPtr<LockHead>)
             Option.Some(result)
         }
     }
@@ -298,7 +298,7 @@ Mutex<T> {
 Mutex<T>: Drop {
     fn drop(mut self) {
         unsafe {
-            __free_head(self.head as CPtr<LockHead>)
+            free_head(self.head as CPtr<LockHead>)
         }
     }
 }
@@ -335,7 +335,7 @@ RwLock<T> {
     fn new(own value: T): RwLock<T> {
         let mut list = List<T>.new()
         list.push(value)
-        RwLock { head: unsafe { __new_head() as CPtr<u8> }, value: list }
+        RwLock { head: unsafe { new_head() as CPtr<u8> }, value: list }
     }
 
     /// Waits until no writer holds the lock, runs `f` with a shared view of the value, and returns what `f` returned.
@@ -346,10 +346,10 @@ RwLock<T> {
     /// ```
     fn read<R, F: FnOnce(&T): R>(self, own f: F): R {
         unsafe {
-            __acquire(self.head as CPtr<LockHead>, false)
+            acquire(self.head as CPtr<LockHead>, false)
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&(*p))
-            __release_read(self.head as CPtr<LockHead>)
+            release_read(self.head as CPtr<LockHead>)
             result
         }
     }
@@ -363,10 +363,10 @@ RwLock<T> {
     /// ```
     fn write<R, F: FnOnce(&mut T): R>(self, own f: F): R {
         unsafe {
-            __acquire(self.head as CPtr<LockHead>, true)
+            acquire(self.head as CPtr<LockHead>, true)
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
-            __release_write(self.head as CPtr<LockHead>)
+            release_write(self.head as CPtr<LockHead>)
             result
         }
     }
@@ -379,12 +379,12 @@ RwLock<T> {
     /// ```
     fn try_read<R, F: FnOnce(&T): R>(self, own f: F): Option<R> {
         unsafe {
-            if !__try_acquire(self.head as CPtr<LockHead>, false) {
+            if !try_acquire(self.head as CPtr<LockHead>, false) {
                 return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&(*p))
-            __release_read(self.head as CPtr<LockHead>)
+            release_read(self.head as CPtr<LockHead>)
             Option.Some(result)
         }
     }
@@ -400,12 +400,12 @@ RwLock<T> {
     /// ```
     fn try_write<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
-            if !__try_acquire(self.head as CPtr<LockHead>, true) {
+            if !try_acquire(self.head as CPtr<LockHead>, true) {
                 return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
-            __release_write(self.head as CPtr<LockHead>)
+            release_write(self.head as CPtr<LockHead>)
             Option.Some(result)
         }
     }
@@ -440,7 +440,7 @@ RwLock<T> {
 RwLock<T>: Drop {
     fn drop(mut self) {
         unsafe {
-            __free_head(self.head as CPtr<LockHead>)
+            free_head(self.head as CPtr<LockHead>)
         }
     }
 }

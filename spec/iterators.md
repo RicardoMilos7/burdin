@@ -196,7 +196,7 @@ adapter after it. An owning iterator is not `Clone`, so `into_iter().cycle()` is
 **Consumers that need a bound on the item (issue #707).** `min`, `max`, `eq`, and `cmp` between iterators need
 `T: Ord` (`T: Eq` for `eq`) on the interface's own item type, which a default method cannot state (a method-level
 `where` names only the method's own parameters, E9000). They are therefore generic functions in `std`
-(`__iter_min`, `__iter_max`, `__iter_eq`, `__iter_cmp`) that the compiler calls for an iterator receiver, handing them the
+(`iter_min`, `iter_max`, `iter_eq`, `iter_cmp`) that the compiler calls for an iterator receiver, handing them the
 item type as `T`; they are not interface methods, so a user type cannot override them, and on a type parameter bounded by
 `Iterator<T>` they work too (`fn smallest<I: Iterator<i32>>(own it: I) { it.min() }`).
 
@@ -377,7 +377,7 @@ fn evens(xs: List<i32>): List<i32> { xs.into_iter().filter(|x| *x % 2 == 0).coll
 Only `collect` takes an explicit target. The other `Iterator<T>` defaults and the adapters keep their refusal (TA5).
 
 **IT18 Built-in targets.** The compiler implements `FromIterator` for these types without an impl block, and
-`Type.from_iter(it)` is the call of a `std` function that builds it (`__list_from_iter` and the others in `iter.bd`):
+`Type.from_iter(it)` is the call of a `std` function that builds it (`list_from_iter` and the others in `iter.bd`):
 
 | Target | Items | Rule |
 | --- | --- | --- |

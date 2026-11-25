@@ -1560,8 +1560,10 @@ fn type_members(all: &[(String, Item)], name: &str, out: &mut Completions) {
             _ => {}
         }
     }
-    let hidden = [format!("__{name}_"), format!("__{}_", name.to_lowercase())];
-    for (_, item) in all.iter().filter(|(p, i)| p.starts_with("<std>/") && i.parent.is_none()) {
+    // The standard library's package-private `<type>_<name>` functions and constants are the members the compiler
+    // maps `T.name` onto (spec/stdlib.md, "Integer functions" and "Floats").
+    let hidden = [format!("{name}_"), format!("{}_", name.to_lowercase())];
+    for (_, item) in all.iter().filter(|(p, i)| p.starts_with("<std>/") && i.parent.is_none() && i.is_priv) {
         let Some(short) = hidden.iter().find_map(|h| item.name.strip_prefix(h.as_str())) else { continue };
         if !matches!(item.kind, Kind::Function | Kind::Const) || short.is_empty() {
             continue;

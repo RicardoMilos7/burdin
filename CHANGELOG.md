@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #1018: the standard library's helpers have plain names. The `__` prefix is gone from the 385 helpers in
+  `std/src`, which are package-private (`priv`): `__split` is `split_text`, `__f64_parse` is `f64_parse`,
+  `__serialize_i8` is `serialize_value_i8`, and the compiler's name maps follow (`u32.from_le_bytes`, `f64.PI`, the
+  formatters, the eager `List` methods). `__` now marks the compiler's own names: intrinsics (`__alloc`), generated
+  locals and functions, and the public protocol members a `select` expression and a parallel interface reach from
+  other packages (`spec/stdlib.md`, "Names the standard library keeps private"). Ownership events still leave out the
+  compiler's own calls to helpers (`Function.internal`), and member completion and the REPL's std root hide the private
+  members. No behavior change intended.
+
 - Issue #1068: language server gaps closed (children #1039, #1040, #1041, #1042, #1043, #1044, #1045, #1015).
   Completion after arrays, slices, ranges, tuples, and built-in iterators; completion, hover, and definition keep
   working beside a syntax error (the query library keeps a partial typed program, `spec/query.md` QL10, and the parser

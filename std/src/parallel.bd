@@ -6,8 +6,8 @@
 // second pool: `task.set_workers` is the only worker-count knob.
 //
 // A pipeline is shared by every worker, so each adapter closure is `Fn + Send + Sync` (spec/shared.md, SH4) and each
-// source is `Sync`. The `__`-prefixed methods are the protocol between a source and its consumers; they are not part of
-// the surface a program uses.
+// source is `Sync`. The private methods are the protocol between a source and its consumers; they are not part of the
+// surface a program uses.
 
 use atomic.{AtomicBool, AtomicUsize}
 use cmp.Ordering
@@ -19,15 +19,15 @@ use sync.Mutex
 
 /// A chunk never holds fewer positions than this, and a pipeline of this many positions or fewer runs on the calling
 /// task without starting any (spec/parallel.md, PR4).
-const __CHUNK_MIN: usize = 1024
+priv const CHUNK_MIN: usize = 1024
 
 /// A pipeline starts at most this many tasks.
-const __CHUNK_MAX: usize = 64
+priv const CHUNK_MAX: usize = 64
 
 /// A pipeline is neither pure nor deterministic, so constant evaluation may not run one (spec/const-eval.md, CE6).
 /// This touches a raw pointer, which compile-time evaluation reports as E0224 whatever the size of the pipeline; at run time it is
 /// free.
-priv fn __not_in_const() {
+priv fn not_in_const() {
     unsafe {
         let p: CPtr<u8> = CPtr.null()
         let _ = p.is_null()
@@ -36,16 +36,16 @@ priv fn __not_in_const() {
 
 /// Runs `f` on consecutive ranges of `0..len` and returns the results in range order. `f` runs on several workers at
 /// once when `len` is above the threshold.
-fn __chunks<Out: Send, F: Fn(usize, usize): Out + Sync>(len: usize, f: F): List<Out> {
-    __not_in_const()
+priv fn chunks<Out: Send, F: Fn(usize, usize): Out + Sync>(len: usize, f: F): List<Out> {
+    not_in_const()
     let mut out = List<Out>.new()
-    if len <= __CHUNK_MIN {
+    if len <= CHUNK_MIN {
         out.push(f(0, len))
         return out
     }
-    let mut size: usize = (len + __CHUNK_MAX - 1) / __CHUNK_MAX
-    if size < __CHUNK_MIN {
-        size = __CHUNK_MIN
+    let mut size: usize = (len + CHUNK_MAX - 1) / CHUNK_MAX
+    if size < CHUNK_MIN {
+        size = CHUNK_MIN
     }
     let count: usize = (len + size - 1) / size
     let slots = Mutex.new(List<(usize, Out)>.new())
@@ -76,12 +76,12 @@ fn __chunks<Out: Send, F: Fn(usize, usize): Out + Sync>(len: usize, f: F): List<
 }
 
 /// Whether `better` prefers `a` to `b`. The values are only read, so the caller keeps them.
-priv fn __beats<T, F: Fn(&T, &T): bool>(better: F, a: T, b: T): bool {
+priv fn beats<T, F: Fn(&T, &T): bool>(better: F, a: T, b: T): bool {
     better(&a, &b)
 }
 
 /// Whether `f` accepts `x`, which the caller keeps.
-priv fn __accepts<T, F: Fn(&T): bool>(f: F, x: T): bool {
+priv fn accepts<T, F: Fn(&T): bool>(f: F, x: T): bool {
     f(&x)
 }
 
@@ -134,7 +134,7 @@ interface ParallelIterator<T> requires Sync {
     /// assert_eq(hits.load(), 4950)
     /// ```
     fn for_each<F: Fn(T) + Send + Sync>(self, own f: F) {
-        let _ = __chunks(self.__par_len(), |lo, hi| {
+        let _ = chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
             while i < hi {
                 match self.__par_get(i) {
@@ -152,7 +152,7 @@ interface ParallelIterator<T> requires Sync {
     /// assert_eq(par_range(0, 7).filter(|x| *x > 2).count(), 4)
     /// ```
     fn count(self): usize {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut n: usize = 0
             let mut i = lo
             while i < hi {
@@ -183,7 +183,7 @@ interface ParallelIterator<T> requires Sync {
         own op: F,
         own combine: G,
     ): A {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut acc = init.clone()
             let mut i = lo
             while i < hi {
@@ -210,7 +210,7 @@ interface ParallelIterator<T> requires Sync {
     /// ```
     fn any<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let found = AtomicBool.new(false)
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
             while i < hi && !found.load() {
                 match self.__par_get(i) {
@@ -236,7 +236,7 @@ interface ParallelIterator<T> requires Sync {
     /// ```
     fn all<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let failed = AtomicBool.new(false)
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
             while i < hi && !failed.load() {
                 match self.__par_get(i) {
@@ -268,7 +268,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     /// assert_eq(par_range(1, 5).reduce(|| 1, |a, b| a * b), 24)
     /// ```
     fn reduce<I: Fn(): T + Send + Sync, F: Fn(T, T): T + Send + Sync>(self, own identity: I, own op: F): T {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut acc = identity()
             let mut i = lo
             while i < hi {
@@ -293,7 +293,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     /// assert_eq(par_range(0, 100).find(|x| *x * *x > 50), Option.Some(8))
     /// ```
     fn find<F: Fn(&T): bool + Send + Sync>(self, own f: F): Option<T> {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut found: Option<T> = Option.None
             let mut i = lo
             while i < hi && found.is_none() {
@@ -356,7 +356,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     /// The item that wins every comparison `better(candidate, best)`, where a later item replaces an earlier one
     /// when `better` says so.
     fn __best<F: Fn(&T, &T): bool + Send + Sync>(self, own better: F): Option<T> {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut best: Option<T> = Option.None
             let mut i = lo
             while i < hi {
@@ -364,7 +364,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
                     Option.Some(x) => {
                         best = match best {
                             Option.Some(b) => {
-                                if __beats(better, x, b) {
+                                if beats(better, x, b) {
                                     Option.Some(x)
                                 } else {
                                     Option.Some(b)
@@ -383,7 +383,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
         for part in parts.into_iter() {
             best = match (best, part) {
                 (Option.Some(b), Option.Some(x)) => {
-                    if __beats(better, x, b) {
+                    if beats(better, x, b) {
                         Option.Some(x)
                     } else {
                         Option.Some(b)
@@ -403,7 +403,7 @@ interface ParallelValues<T: Send> requires ParallelIterator<T> {
     /// assert_eq(xs[3], 9)
     /// ```
     fn collect(self): List<T> {
-        let parts = __chunks(self.__par_len(), |lo, hi| {
+        let parts = chunks(self.__par_len(), |lo, hi| {
             let mut items = List<T>.new()
             let mut i = lo
             while i < hi {
@@ -498,7 +498,7 @@ ParFilter<I, T, F>: ParallelIterator<T> where I: ParallelIterator<T>, F: Fn(&T):
     fn __par_get(self, i: usize): Option<T> {
         match self.inner.__par_get(i) {
             Option.Some(x) => {
-                if __accepts(self.f, x) {
+                if accepts(self.f, x) {
                     Option.Some(x)
                 } else {
                     Option.None
@@ -750,7 +750,7 @@ ParSliceMut<[T]> where T: Send {
     /// ```
     fn for_each<F: Fn(&mut T) + Send + Sync>(self, own f: F) {
         let base = self.addr
-        let _ = __chunks(self.xs.len(), |lo, hi| {
+        let _ = chunks(self.xs.len(), |lo, hi| {
             let mut i = lo
             while i < hi {
                 unsafe {
@@ -773,7 +773,7 @@ ParSliceMut<[T]> where T: Send {
     /// ```
     fn for_each_indexed<F: Fn(usize, &mut T) + Send + Sync>(self, own f: F) {
         let base = self.addr
-        let _ = __chunks(self.xs.len(), |lo, hi| {
+        let _ = chunks(self.xs.len(), |lo, hi| {
             let mut i = lo
             while i < hi {
                 unsafe {

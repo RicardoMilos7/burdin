@@ -177,6 +177,7 @@ fn static_init(program: &mut Program) -> Option<FuncId> {
         symbolic: false,
         exported: false,
         events: Vec::new(),
+        internal: false,
     };
     let id = FuncId(program.functions.len());
     program.functions.push(func);

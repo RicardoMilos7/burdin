@@ -67,13 +67,13 @@ pub(crate) fn candidates(db: &mut Db, analysis: &Analysis, before: &str, prefix:
             out.push(name);
         }
     }
-    for name in module_items(db, SESSION_FILE) {
+    for name in module_items(db, SESSION_FILE, false) {
         if name.starts_with(prefix) {
             out.push(name);
         }
     }
     // The standard library's root is visible everywhere.
-    for name in module_items(db, "<std>/std.bd") {
+    for name in module_items(db, "<std>/std.bd", true) {
         if name.starts_with(prefix) {
             out.push(name);
         }
@@ -135,11 +135,16 @@ fn receiver_type(db: &mut Db, analysis: &Analysis, receiver: &str) -> Option<Str
 }
 
 /// The names of a module's top-level items and `use` declarations, from its syntax tree.
-fn module_items(db: &mut Db, path: &str) -> Vec<String> {
+/// The names a module declares and imports. `public_only` leaves out the items that are `priv`: the standard
+/// library's root has package-private helpers that a program cannot name.
+fn module_items(db: &mut Db, path: &str, public_only: bool) -> Vec<String> {
     let Some(tree) = db.syntax_tree(path) else { return Vec::new() };
     let file = tree.ast();
     let mut out = Vec::new();
     for item in &file.items {
+        if public_only && item_is_priv(item) {
+            continue;
+        }
         if let Some(name) = item_name(item) {
             out.push(name);
         }
@@ -159,6 +164,24 @@ fn module_items(db: &mut Db, path: &str) -> Vec<String> {
 }
 
 /// The name an item declares, if it has one.
+/// Whether an item is `priv` (package-private).
+fn item_is_priv(item: &burdin_syntax::ast::Item) -> bool {
+    use burdin_syntax::ast::Item;
+    match item {
+        Item::Fn(f) => f.is_priv,
+        Item::Extension(e) => e.func.is_priv,
+        Item::Const(c) => c.is_priv,
+        Item::Struct(s) => s.is_priv,
+        Item::Enum(e) => e.is_priv,
+        Item::ErrorEnum(e) => e.is_priv,
+        Item::TypeAlias(a) => a.is_priv,
+        Item::Interface(i) => i.is_priv,
+        Item::ExternFn(f) => f.decl.is_priv,
+        Item::Derive(d) => d.is_priv,
+        Item::Impl(_) | Item::Extern(_) => false,
+    }
+}
+
 fn item_name(item: &burdin_syntax::ast::Item) -> Option<String> {
     use burdin_syntax::ast::Item;
     match item {

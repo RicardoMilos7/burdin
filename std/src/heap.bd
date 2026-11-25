@@ -60,7 +60,7 @@ PriorityHeap<T>: HeapLen where T: Ord {
 }
 
 /// The index of the first element of `items` that is not less than `value`.
-priv fn __lower_bound<T: Ord>(items: List<T>, value: T): usize {
+priv fn lower_bound<T: Ord>(items: List<T>, value: T): usize {
     let mut low: usize = 0
     let mut high = items.len()
     while low < high {
@@ -140,7 +140,7 @@ PriorityHeap<T> where T: Ord {
     /// assert_eq(*h.peek().unwrap(), 8)
     /// ```
     fn push(mut self, own value: T) {
-        let at = __lower_bound(self.items, value)
+        let at = lower_bound(self.items, value)
         self.items.insert(at, value)
     }
 

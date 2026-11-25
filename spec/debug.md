@@ -47,8 +47,8 @@ tests `m02_basics/panic_backtrace.bd` and `panic_backtrace_names.bd` pin that pa
 `path:LINE:COL:` prefix is unchanged.
 
 **DBG3 — error traces carry the function.** A debug-build error trace frame names the Burdin function the
-error passed through, not only the site: `TraceFrame` gains `func: String`, the `__error_at` and
-`__error_frame` helpers take the function first, and sema passes the enclosing function's qualified name.
+error passed through, not only the site: `TraceFrame` gains `func: String`, the `error_at` and
+`error_frame` helpers take the function first, and sema passes the enclosing function's qualified name.
 `TraceFrame`'s `Display` is `at {func} ({file}:{line}:{col})`. The wrappers that print an error — the generated
 `main` of `fn main(): Result<T>` and the test wrapper — print the frames after the message, one per line; a
 release build records no frames, so it prints none and its output is unchanged (`spec/errors.md`, ERR7-ERR8

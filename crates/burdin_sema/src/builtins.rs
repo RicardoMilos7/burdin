@@ -120,7 +120,7 @@ fn rt_sig(op: RtOp) -> Signature {
         RtOp::CpuCount | RtOp::ConfigGet => (Vec::new(), usize_ty()),
         RtOp::ConfigSet => (vec![plain(usize_ty())], Ty::Unit),
         // The reactor (`spec/io.md`, IO2). A wait record is a raw pointer the standard library lays out
-        // (`__Wait`, `reactor.bd`); the reactor primitives only link records through their first word.
+        // (`Wait`, `reactor.bd`); the reactor primitives only link records through their first word.
         RtOp::IoNew => (Vec::new(), ptr()),
         RtOp::IoWatch => (vec![plain(ptr()), plain(i64_ty()), plain(i32_ty()), plain(ptr())], i32_ty()),
         RtOp::IoUnwatch => (vec![plain(ptr()), plain(i64_ty())], Ty::Unit),

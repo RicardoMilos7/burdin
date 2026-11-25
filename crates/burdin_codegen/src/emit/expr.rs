@@ -39,8 +39,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_store(slot, value).map_err(llvm_err)?;
         }
         let thunk = self.blocking_thunk(id)?;
-        let shim = self.module.get_function("burdin.std.__offload_blocking").ok_or(
-            "a `blocking` extern needs the standard library's `__offload_blocking` function (`spec/io.md`, IO4)",
+        let shim = self.module.get_function("burdin.std.offload_blocking").ok_or(
+            "a `blocking` extern needs the standard library's `offload_blocking` function (`spec/io.md`, IO4)",
         )?;
         let thunk_ptr = thunk.as_global_value().as_pointer_value();
         self.builder.build_call(shim, &[thunk_ptr.into(), env.into()], "").map_err(llvm_err)?;

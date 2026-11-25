@@ -198,6 +198,7 @@ fn stub(item: &FnItem) -> tir::Function {
         symbolic: true,
         exported: item.is_exported,
         events: Vec::new(),
+        internal: false,
     }
 }
 
@@ -315,6 +316,7 @@ fn check_function_with(
         symbolic: false,
         exported: item.is_exported,
         events: Vec::new(),
+        internal: item.decl.is_priv && globals.std_modules.contains(&item.module),
     };
     (function, candidates)
 }

@@ -2,7 +2,7 @@
 ; for calls that block. The scheduler in `std/src/reactor.bd` owns the timers and wakes the waiting tasks; this
 ; file only reports which waits fired.
 ;
-; A wait record (`__Wait` in `std/src/reactor.bd`) is read through two fixed offsets:
+; A wait record (`Wait` in `std/src/reactor.bd`) is read through two fixed offsets:
 ;   0  next: ptr        the runtime links fired waits through this word
 ;   24 kind: i32        1 = ready, 2 = completed (written by the runtime)
 ; A record is returned at most once: the fd registration is one-shot and a completion is taken out of its list.

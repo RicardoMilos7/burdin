@@ -40,7 +40,7 @@ error enum Utf8Error: Eq, Debug {
 /// The byte offset of the first byte that does not start a well-formed UTF-8 sequence, or `None` when every byte
 /// belongs to one. The same rules as `from_utf8`: a bad lead or continuation byte, an overlong form, a surrogate,
 /// a value past U+10FFFF, or a sequence cut off by the end.
-priv fn __utf8_error_at(data: [u8]): Option<usize> {
+priv fn utf8_error_at(data: [u8]): Option<usize> {
     let n = data.len()
     let mut i: usize = 0
     while i < n {
@@ -85,7 +85,7 @@ priv fn __utf8_error_at(data: [u8]): Option<usize> {
 
 /// The character starting at byte `at`, with the number of bytes it takes, or `None` when the bytes there are not
 /// a well-formed UTF-8 sequence. Callers know `at < data.len()`.
-priv fn __utf8_char_at(data: [u8], at: usize): Option<(char, usize)> {
+priv fn utf8_char_at(data: [u8], at: usize): Option<(char, usize)> {
     let n = data.len()
     let lead = data[at] as u32
     let mut extra: usize = 0
@@ -125,7 +125,7 @@ priv fn __utf8_char_at(data: [u8], at: usize): Option<(char, usize)> {
 }
 
 /// U+FFFD REPLACEMENT CHARACTER. It is built from its code point because string literals have no `\u` escape.
-priv fn __replacement_char(): char {
+priv fn replacement_char(): char {
     match (65533 as u32).to_char() {
         Option.Some(c) => c,
         Option.None => '?',
@@ -133,7 +133,7 @@ priv fn __replacement_char(): char {
 }
 
 /// Appends the UTF-8 bytes of `c`.
-priv fn __push_utf8(mut out: List<u8>, c: char) {
+priv fn push_utf8(mut out: List<u8>, c: char) {
     let n = c as u32
     if n < 128 {
         out.push(n as u8)
@@ -162,7 +162,7 @@ priv fn __push_utf8(mut out: List<u8>, c: char) {
 fn str.to_utf8(self): List<u8> {
     let mut out = List<u8>.new()
     for c in self.chars() {
-        __push_utf8(mut out, c)
+        push_utf8(mut out, c)
     }
     out
 }
@@ -237,9 +237,9 @@ fn from_utf8(data: [u8]): Result<String, DecodeError> {
 
 /// The text `bytes` spell, or the first invalid byte's offset. This is `String.from_utf8`
 /// (`spec/stdlib.md`, "String bytes and UTF-8 validation").
-fn __string_from_utf8(own bytes: List<u8>): Result<String, Utf8Error> {
+priv fn string_from_utf8(own bytes: List<u8>): Result<String, Utf8Error> {
     let data = bytes[0..bytes.len()]
-    match __utf8_error_at(data) {
+    match utf8_error_at(data) {
         Option.Some(index) => Result.Err(Utf8Error.Invalid { index }),
         // The bytes were just checked, so the unchecked view cast is sound here.
         Option.None => Result.Ok(String.from(unsafe { __view_as_text(data) })),
@@ -248,8 +248,8 @@ fn __string_from_utf8(own bytes: List<u8>): Result<String, Utf8Error> {
 
 /// A `str` view of `data` when it is valid UTF-8, or the first invalid byte's offset. The view borrows the
 /// caller's bytes; the unchecked reinterpretation happens only after the bytes have been checked.
-fn __str_from_utf8(data: [u8]): Result<str, Utf8Error> {
-    match __utf8_error_at(data) {
+priv fn str_from_utf8(data: [u8]): Result<str, Utf8Error> {
+    match utf8_error_at(data) {
         Option.Some(index) => Result.Err(Utf8Error.Invalid { index }),
         Option.None => Result.Ok(unsafe { __view_as_text(data) }),
     }
@@ -257,18 +257,18 @@ fn __str_from_utf8(data: [u8]): Result<str, Utf8Error> {
 
 /// The text `data` spells, with every byte that is not part of a well-formed sequence replaced by U+FFFD. One
 /// replacement character is emitted per invalid byte (`spec/stdlib.md`).
-fn __string_from_utf8_lossy(data: [u8]): String {
+priv fn string_from_utf8_lossy(data: [u8]): String {
     let mut out = String.new()
     let mut i: usize = 0
     while i < data.len() {
-        match __utf8_char_at(data, i) {
+        match utf8_char_at(data, i) {
             Option.Some(pair) => {
                 let (c, width) = pair
                 out.push(c)
                 i = i + width
             }
             Option.None => {
-                out.push(__replacement_char())
+                out.push(replacement_char())
                 i = i + 1
             }
         }
@@ -278,7 +278,7 @@ fn __string_from_utf8_lossy(data: [u8]): String {
 
 // ---- hexadecimal ----
 
-priv fn __hex_char(n: u32, upper: bool): char {
+priv fn hex_char(n: u32, upper: bool): char {
     if n < 10 {
         return (48 + n) as char
     }
@@ -288,13 +288,13 @@ priv fn __hex_char(n: u32, upper: bool): char {
     (87 + n) as char
 }
 
-priv fn __hex_encode(data: [u8], upper: bool): String {
+priv fn encode_hex(data: [u8], upper: bool): String {
     let mut out = String.new()
     let mut i: usize = 0
     while i < data.len() {
         let b = data[i] as u32
-        out.push(__hex_char(b >> 4, upper))
-        out.push(__hex_char(b & 15, upper))
+        out.push(hex_char(b >> 4, upper))
+        out.push(hex_char(b & 15, upper))
         i = i + 1
     }
     out
@@ -308,7 +308,7 @@ priv fn __hex_encode(data: [u8], upper: bool): String {
 /// assert_eq(hex_encode(m.as_slice()), String.from("ff"))
 /// ```
 fn hex_encode(data: [u8]): String {
-    __hex_encode(data, false)
+    encode_hex(data, false)
 }
 
 /// The bytes as uppercase hexadecimal, two digits per byte.
@@ -319,11 +319,11 @@ fn hex_encode(data: [u8]): String {
 /// assert_eq(hex_encode_upper(m.as_slice()), String.from("FF"))
 /// ```
 fn hex_encode_upper(data: [u8]): String {
-    __hex_encode(data, true)
+    encode_hex(data, true)
 }
 
 /// The value of a hexadecimal digit.
-priv fn __hex_value(c: char): Option<u32> {
+priv fn hex_value(c: char): Option<u32> {
     let n = c as u32
     if n >= 48 && n <= 57 {
         return Option.Some(n - 48)
@@ -354,7 +354,7 @@ fn hex_decode(text: str): Result<List<u8>, DecodeError> {
     let mut have_high = false
     let mut index: usize = 0
     for c in text.chars() {
-        match __hex_value(c) {
+        match hex_value(c) {
             Option.Some(v) => {
                 if have_high {
                     out.push(((high << 4) | v) as u8)
@@ -378,7 +378,7 @@ fn hex_decode(text: str): Result<List<u8>, DecodeError> {
 
 // ---- base64 ----
 
-priv fn __b64_char(v: u32, url: bool): char {
+priv fn b64_char(v: u32, url: bool): char {
     if v < 26 {
         return (65 + v) as char
     }
@@ -400,7 +400,7 @@ priv fn __b64_char(v: u32, url: bool): char {
     '/'
 }
 
-priv fn __b64_value(c: char, url: bool): Option<u32> {
+priv fn b64_value(c: char, url: bool): Option<u32> {
     let n = c as u32
     if n >= 65 && n <= 90 {
         return Option.Some(n - 65)
@@ -429,32 +429,32 @@ priv fn __b64_value(c: char, url: bool): Option<u32> {
     Option.None
 }
 
-priv fn __base64_encode(data: [u8], url: bool): String {
+priv fn encode_base64(data: [u8], url: bool): String {
     let mut out = String.new()
     let n = data.len()
     let mut i: usize = 0
     while i + 2 < n {
         let v = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32)
-        out.push(__b64_char((v >> 18) & 63, url))
-        out.push(__b64_char((v >> 12) & 63, url))
-        out.push(__b64_char((v >> 6) & 63, url))
-        out.push(__b64_char(v & 63, url))
+        out.push(b64_char((v >> 18) & 63, url))
+        out.push(b64_char((v >> 12) & 63, url))
+        out.push(b64_char((v >> 6) & 63, url))
+        out.push(b64_char(v & 63, url))
         i = i + 3
     }
     let rest = n - i
     if rest == 1 {
         let v = (data[i] as u32) << 16
-        out.push(__b64_char((v >> 18) & 63, url))
-        out.push(__b64_char((v >> 12) & 63, url))
+        out.push(b64_char((v >> 18) & 63, url))
+        out.push(b64_char((v >> 12) & 63, url))
         if !url {
             out.push('=')
             out.push('=')
         }
     } else if rest == 2 {
         let v = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8)
-        out.push(__b64_char((v >> 18) & 63, url))
-        out.push(__b64_char((v >> 12) & 63, url))
-        out.push(__b64_char((v >> 6) & 63, url))
+        out.push(b64_char((v >> 18) & 63, url))
+        out.push(b64_char((v >> 12) & 63, url))
+        out.push(b64_char((v >> 6) & 63, url))
         if !url {
             out.push('=')
         }
@@ -469,7 +469,7 @@ priv fn __base64_encode(data: [u8], url: bool): String {
 /// assert_eq(base64_encode(b.as_slice()), String.from("aGk="))
 /// ```
 fn base64_encode(data: [u8]): String {
-    __base64_encode(data, false)
+    encode_base64(data, false)
 }
 
 /// The bytes in URL-safe base64 (`-` and `_`), without padding.
@@ -479,10 +479,10 @@ fn base64_encode(data: [u8]): String {
 /// assert_eq(base64_url_encode(b.as_slice()), String.from("aGk"))
 /// ```
 fn base64_url_encode(data: [u8]): String {
-    __base64_encode(data, true)
+    encode_base64(data, true)
 }
 
-priv fn __base64_decode(text: str, url: bool): Result<List<u8>, DecodeError> {
+priv fn decode_base64(text: str, url: bool): Result<List<u8>, DecodeError> {
     let mut values = List<u32>.new()
     let mut pad: usize = 0
     let mut index: usize = 0
@@ -493,7 +493,7 @@ priv fn __base64_decode(text: str, url: bool): Result<List<u8>, DecodeError> {
             if pad > 0 {
                 return Result.Err(DecodeError.InvalidCharacter { index: index })
             }
-            match __b64_value(c, url) {
+            match b64_value(c, url) {
                 Option.Some(v) => {
                     values.push(v)
                 }
@@ -543,7 +543,7 @@ priv fn __base64_decode(text: str, url: bool): Result<List<u8>, DecodeError> {
 /// assert_eq(bytes.to_text(), Result.Ok(String.from("hi")))
 /// ```
 fn base64_decode(text: str): Result<List<u8>, DecodeError> {
-    __base64_decode(text, false)
+    decode_base64(text, false)
 }
 
 /// The bytes of URL-safe base64 text, with or without its padding.
@@ -553,13 +553,13 @@ fn base64_decode(text: str): Result<List<u8>, DecodeError> {
 /// assert_eq(bytes.to_text(), Result.Ok(String.from("hi")))
 /// ```
 fn base64_url_decode(text: str): Result<List<u8>, DecodeError> {
-    __base64_decode(text, true)
+    decode_base64(text, true)
 }
 
 // ---- percent-encoding ----
 
 /// Whether the byte stays as it is in a URL component: `A`-`Z`, `a`-`z`, `0`-`9`, `-`, `.`, `_`, and `~`.
-priv fn __is_unreserved(b: u32): bool {
+priv fn is_unreserved(b: u32): bool {
     (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 45 || b == 46 || b == 95 || b == 126
 }
 
@@ -575,12 +575,12 @@ fn url_encode(text: str): String {
     let mut i: usize = 0
     while i < bytes.len() {
         let b = bytes[i] as u32
-        if __is_unreserved(b) {
+        if is_unreserved(b) {
             out.push(b as char)
         } else {
             out.push('%')
-            out.push(__hex_char(b >> 4, true))
-            out.push(__hex_char(b & 15, true))
+            out.push(hex_char(b >> 4, true))
+            out.push(hex_char(b & 15, true))
         }
         i = i + 1
     }
@@ -602,7 +602,7 @@ fn url_decode(text: str): Result<String, DecodeError> {
     let mut index: usize = 0
     for c in text.chars() {
         if pending > 0 {
-            match __hex_value(c) {
+            match hex_value(c) {
                 Option.Some(v) => {
                     if pending == 2 {
                         high = v
@@ -619,7 +619,7 @@ fn url_decode(text: str): Result<String, DecodeError> {
         } else if c == '%' {
             pending = 2
         } else {
-            __push_utf8(mut bytes, c)
+            push_utf8(mut bytes, c)
         }
         index = index + c.len_utf8()
     }

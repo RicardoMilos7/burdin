@@ -18,9 +18,9 @@ struct Env<'a> {
     /// Which functions are `Scope.spawn` (spec/tasks.md, TK7): the closure they are given borrows from the scope's
     /// surroundings until the scope body ends.
     scoped_spawns: &'a [bool],
-    /// Every function's name, indexed by `FuncId`. The ownership events leave out the compiler's own generated
-    /// forwarding calls (an interpolated string expands to them), whose names start with `__`.
-    names: &'a [String],
+    /// Which functions are package-private standard-library functions, indexed by `FuncId`. The ownership events
+    /// leave out the calls the compiler makes to them itself (an interpolated string expands to such calls).
+    internal: &'a [bool],
 }
 
 /// Runs every memory check on `program`, filling in what later stages need: the return origin of each function and
@@ -32,13 +32,13 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     origins::check(signatures, functions, diags);
 
     let scoped_spawns: Vec<bool> = functions.iter().map(|f| is_scope_spawn(&f.name)).collect();
-    let names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
+    let internal: Vec<bool> = functions.iter().map(|f| f.internal).collect();
     let env = Env {
         defs: TypeDefs { structs, enums },
         sigs: signatures,
         any_ifaces,
         scoped_spawns: &scoped_spawns,
-        names: &names,
+        internal: &internal,
     };
     for func in functions.iter_mut().filter(|f| !f.symbolic) {
         let (moved, debug_kills, events) = moves::check_function(func, env, diags);
@@ -80,6 +80,7 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
             symbolic: false,
             exported: false,
             events: Vec::new(),
+            internal: false,
         };
         moves::check_function(&func, env, diags);
         borrows::check(&func, env, &[], diags);

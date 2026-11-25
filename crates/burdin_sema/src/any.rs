@@ -328,13 +328,13 @@ impl Globals {
     }
 
     /// The vtable entry for a compiler-provided `Display`/`Debug` implementation (AN14): the instance of the std
-    /// helper `__any_display`/`__any_debug` for `concrete`, whose body is the ordinary formatting call. When the
+    /// helper `any_display`/`any_debug` for `concrete`, whose body is the ordinary formatting call. When the
     /// instance does not exist yet it is requested, and the caller abandons this pass.
     fn builtin_format_entry(&self, concrete: &Ty, iface: &AnyRef, methods: usize) -> BuiltinEntry {
         let helper = if Some(iface.iface) == self.display_iface {
-            "__any_display"
+            "any_display"
         } else if Some(iface.iface) == self.debug_iface {
-            "__any_debug"
+            "any_debug"
         } else {
             return BuiltinEntry::None;
         };

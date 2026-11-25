@@ -402,7 +402,7 @@ interface Iterator<T> {
         loop {
             match self.next() {
                 Option.Some(x) => {
-                    if __accepts(mut f, x) {
+                    if accepts(mut f, x) {
                         yes.push(x)
                     } else {
                         no.push(x)
@@ -428,7 +428,7 @@ interface Iterator<T> {
                 loop {
                     match self.next() {
                         Option.Some(x) => {
-                            if __is_less(mut f, x, best) {
+                            if is_less(mut f, x, best) {
                                 best = x
                             }
                         }
@@ -455,7 +455,7 @@ interface Iterator<T> {
                 loop {
                     match self.next() {
                         Option.Some(x) => {
-                            if !__is_less(mut f, x, best) {
+                            if !is_less(mut f, x, best) {
                                 best = x
                             }
                         }
@@ -629,7 +629,7 @@ interface Iterator<T> {
 }
 
 /// `it.min()`: the least item; the first of equal items. `None` when the iterator is empty. The compiler supplies `T`.
-priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+priv fn iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
     let mut it = it
     match it.next() {
         Option.Some(first) => {
@@ -652,7 +652,7 @@ priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
 }
 
 /// `it.max()`: the greatest item; the last of equal items. `None` when the iterator is empty.
-priv fn __iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
+priv fn iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
     let mut it = it
     match it.next() {
         Option.Some(first) => {
@@ -675,7 +675,7 @@ priv fn __iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
 }
 
 /// `a.eq(b)`: whether both iterators yield equal items and end together.
-priv fn __iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bool {
+priv fn iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bool {
     let mut a = a
     let mut b = b
     loop {
@@ -700,7 +700,7 @@ priv fn __iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bo
 }
 
 /// `a.cmp(b)`: compares item by item; the shorter iterator is less when it is a prefix of the other.
-priv fn __iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): Ordering {
+priv fn iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): Ordering {
     let mut a = a
     let mut b = b
     loop {
@@ -730,13 +730,13 @@ priv fn __iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): 
 
 /// Whether the comparator `f` puts `a` strictly before `b`. The items are plain (borrowed) parameters, so the views
 /// handed to `f` end with the call and the caller can still move the items.
-priv fn __is_less<T, F: FnMut(&T, &T): Ordering>(mut f: F, a: T, b: T): bool {
+priv fn is_less<T, F: FnMut(&T, &T): Ordering>(mut f: F, a: T, b: T): bool {
     f(&a, &b).is_lt()
 }
 
 /// Whether the predicate `f` accepts `x`. `x` is a plain (borrowed) parameter, so the view handed to `f` ends with the
 /// call and the caller can still move `x`.
-priv fn __accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
+priv fn accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
     f(&x)
 }
 
@@ -1422,28 +1422,28 @@ PeekIter<I, T>: Iterator<T> where I: Iterator<T> {
 // on any iterator to these functions (spec/iterators.md, IT13).
 
 /// `it.flatten()`: the items of each iterator the source yields.
-priv fn __iter_flatten<I: Iterator<J>, J: Iterator<U>, U>(own it: I): FlattenIter<I, J, U> {
+priv fn iter_flatten<I: Iterator<J>, J: Iterator<U>, U>(own it: I): FlattenIter<I, J, U> {
     let current: Option<J> = Option.None
     FlattenIter { inner: it, current: current }
 }
 
 /// `it.cloned()`: owned clones of the items a source of views yields.
-priv fn __iter_cloned<I: Iterator<&U>, U: Clone>(own it: I): ClonedIter<I, U> {
+priv fn iter_cloned<I: Iterator<&U>, U: Clone>(own it: I): ClonedIter<I, U> {
     ClonedIter { inner: it }
 }
 
 /// `it.copied()`: copies of the items a source of views yields.
-priv fn __iter_copied<I: Iterator<&U>, U: Copy>(own it: I): CopiedIter<I, U> {
+priv fn iter_copied<I: Iterator<&U>, U: Copy>(own it: I): CopiedIter<I, U> {
     CopiedIter { inner: it }
 }
 
 /// `it.rev()`: the items from the back; the source must be double-ended.
-priv fn __iter_rev<I: Iterator<T> + DoubleEndedIterator<T>, T>(own it: I): RevIter<I, T> {
+priv fn iter_rev<I: Iterator<T> + DoubleEndedIterator<T>, T>(own it: I): RevIter<I, T> {
     RevIter { inner: it }
 }
 
 /// `it.cycle()`: the items again and again; the source must be clonable.
-priv fn __iter_cycle<I: Iterator<T> + Clone, T>(own it: I): CycleIter<I, T> {
+priv fn iter_cycle<I: Iterator<T> + Clone, T>(own it: I): CycleIter<I, T> {
     let original = it.clone()
     CycleIter { original: original, current: it }
 }
@@ -1455,7 +1455,7 @@ priv fn __iter_cycle<I: Iterator<T> + Clone, T>(own it: I): CycleIter<I, T> {
 // `filter` and `find` clone the items they keep, while the lazy `filter` and `find` never clone.
 
 /// `xs.map(f)`: a new list of the closure's results.
-priv fn __list_map<T, U, F: FnMut(&T): U>(list: List<T>, own f: F): List<U> {
+priv fn list_map<T, U, F: FnMut(&T): U>(list: List<T>, own f: F): List<U> {
     let mut out: List<U> = List<U>.new()
     let mut f = f
     for x in list {
@@ -1465,7 +1465,7 @@ priv fn __list_map<T, U, F: FnMut(&T): U>(list: List<T>, own f: F): List<U> {
 }
 
 /// `xs.filter(f)`: a new list of the items `f` accepts.
-priv fn __list_filter<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): List<T> {
+priv fn list_filter<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): List<T> {
     let mut out: List<T> = List<T>.new()
     let mut f = f
     for x in list {
@@ -1477,7 +1477,7 @@ priv fn __list_filter<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Li
 }
 
 /// `xs.fold(init, f)`: the items folded into an accumulator, left to right.
-priv fn __list_fold<T, A, F: FnMut(A, &T): A>(list: List<T>, own init: A, own f: F): A {
+priv fn list_fold<T, A, F: FnMut(A, &T): A>(list: List<T>, own init: A, own f: F): A {
     let mut acc = init
     let mut f = f
     for x in list {
@@ -1487,7 +1487,7 @@ priv fn __list_fold<T, A, F: FnMut(A, &T): A>(list: List<T>, own init: A, own f:
 }
 
 /// `xs.any(f)`: whether `f` accepts any element.
-priv fn __list_any<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
+priv fn list_any<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
     let mut f = f
     for x in list {
         if f(&x) {
@@ -1498,7 +1498,7 @@ priv fn __list_any<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
 }
 
 /// `xs.all(f)`: whether `f` accepts every element.
-priv fn __list_all<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
+priv fn list_all<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
     let mut f = f
     for x in list {
         if !f(&x) {
@@ -1509,7 +1509,7 @@ priv fn __list_all<T, F: FnMut(&T): bool>(list: List<T>, own f: F): bool {
 }
 
 /// `xs.find(f)`: the first element `f` accepts, cloned so the result is owned.
-priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Option<T> {
+priv fn list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Option<T> {
     let mut f = f
     for x in list {
         if f(&x) {
@@ -1522,10 +1522,10 @@ priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Opti
 // The `FromIterator` implementations of the built-in collections (spec/iterators.md, IT18). The compiler resolves
 // `List<T>.from_iter(it)`, `Map<K, V>.from_iter(it)`, `String.from_iter(it)`, `Option<C>.from_iter(it)`, and
 // `Result<C, E>.from_iter(it)` to these functions, and `List<T>.from(array)` and `Map<K, V>.from(array)` to the
-// `__list_from` and `__map_from` pair at the end.
+// `list_from` and `map_from` pair at the end.
 
 /// `List<T>.from_iter(it)`: every item, in order.
-priv fn __list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
+priv fn list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
     let mut it = iter
     let mut out = List<T>.new()
     loop {
@@ -1541,7 +1541,7 @@ priv fn __list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
 }
 
 /// `Map<K, V>.from_iter(it)`: a pair whose key is already there replaces the earlier value, like `insert`.
-priv fn __map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
+priv fn map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
     let mut it = iter
     let mut out = Map<K, V>.new()
     loop {
@@ -1557,7 +1557,7 @@ priv fn __map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
 }
 
 /// `String.from_iter(it)` over `char` items.
-priv fn __string_from_chars<I: Iterator<char>>(own iter: I): String {
+priv fn string_from_chars<I: Iterator<char>>(own iter: I): String {
     let mut it = iter
     let mut out = String.new()
     loop {
@@ -1573,7 +1573,7 @@ priv fn __string_from_chars<I: Iterator<char>>(own iter: I): String {
 }
 
 /// `String.from_iter(it)` over `str` items.
-priv fn __string_from_strs<I: Iterator<str>>(own iter: I): String {
+priv fn string_from_strs<I: Iterator<str>>(own iter: I): String {
     let mut it = iter
     let mut out = String.new()
     loop {
@@ -1589,7 +1589,7 @@ priv fn __string_from_strs<I: Iterator<str>>(own iter: I): String {
 }
 
 /// `String.from_iter(it)` over `String` items, which are consumed.
-priv fn __string_from_strings<I: Iterator<String>>(own iter: I): String {
+priv fn string_from_strings<I: Iterator<String>>(own iter: I): String {
     let mut it = iter
     let mut out = String.new()
     loop {
@@ -1605,7 +1605,7 @@ priv fn __string_from_strings<I: Iterator<String>>(own iter: I): String {
 }
 
 /// `String.from_iter(it)` over views of `String` items.
-priv fn __string_from_string_views<I: Iterator<&String>>(own iter: I): String {
+priv fn string_from_string_views<I: Iterator<&String>>(own iter: I): String {
     let mut it = iter
     let mut out = String.new()
     loop {
@@ -1622,7 +1622,7 @@ priv fn __string_from_string_views<I: Iterator<&String>>(own iter: I): String {
 
 /// `Option<C>.from_iter(it)`: `Some` of the collected items, or `None` at the first `None` item, which stops the
 /// iterator there. The items are gathered in a list first, so the target is built only when every item is `Some`.
-priv fn __option_from_iter<T, C: FromIterator<T>, I: Iterator<Option<T>>>(own iter: I): Option<C> {
+priv fn option_from_iter<T, C: FromIterator<T>, I: Iterator<Option<T>>>(own iter: I): Option<C> {
     let mut it = iter
     let mut items = List<T>.new()
     loop {
@@ -1646,7 +1646,7 @@ priv fn __option_from_iter<T, C: FromIterator<T>, I: Iterator<Option<T>>>(own it
 
 /// `Result<C, E>.from_iter(it)`: `Ok` of the collected items, or the first `Err` item, which stops the iterator
 /// there. The items are gathered in a list first, so the target is built only when every item is `Ok`.
-priv fn __result_from_iter<T, E, C: FromIterator<T>, I: Iterator<Result<T, E>>>(own iter: I): Result<C, E> {
+priv fn result_from_iter<T, E, C: FromIterator<T>, I: Iterator<Result<T, E>>>(own iter: I): Result<C, E> {
     let mut it = iter
     let mut items = List<T>.new()
     loop {
@@ -1669,11 +1669,11 @@ priv fn __result_from_iter<T, E, C: FromIterator<T>, I: Iterator<Result<T, E>>>(
 }
 
 /// `List<T>.from([a, b, c])`: the elements of an array.
-priv fn __list_from<T, const N: usize>(own items: [T; N]): List<T> {
-    __list_from_iter(items.into_iter())
+priv fn list_from<T, const N: usize>(own items: [T; N]): List<T> {
+    list_from_iter(items.into_iter())
 }
 
 /// `Map<K, V>.from([(k, v), ...])`: the pairs of an array, a later pair replacing an earlier one with the same key.
-priv fn __map_from<K: Eq, V, const N: usize>(own items: [(K, V); N]): Map<K, V> {
-    __map_from_iter(items.into_iter())
+priv fn map_from<K: Eq, V, const N: usize>(own items: [(K, V); N]): Map<K, V> {
+    map_from_iter(items.into_iter())
 }

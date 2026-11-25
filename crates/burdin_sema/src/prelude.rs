@@ -79,10 +79,10 @@ impl Sema<'_> {
                 Some(Global::Generic(g)) => Some(g),
                 _ => None,
             };
-            self.globals.error_plain = func(&self.globals, "__error_plain");
-            self.globals.error_at = func(&self.globals, "__error_at");
-            self.globals.error_frame = func(&self.globals, "__error_frame");
-            self.globals.error_context = func(&self.globals, "__error_context");
+            self.globals.error_plain = func(&self.globals, "error_plain");
+            self.globals.error_at = func(&self.globals, "error_at");
+            self.globals.error_frame = func(&self.globals, "error_frame");
+            self.globals.error_context = func(&self.globals, "error_context");
             // The assertion declarations the compiler lowers to `Builtin::Assertion` (`spec/stdlib.md`).
             self.globals.assert_fn = func(&self.globals, "assert");
             self.globals.assert_eq_gen = generic(&self.globals, "assert_eq");
@@ -91,12 +91,12 @@ impl Sema<'_> {
             self.globals.debug_assert_eq_gen = generic(&self.globals, "debug_assert_eq");
             self.globals.debug_assert_ne_gen = generic(&self.globals, "debug_assert_ne");
             self.globals.snapshot_gen = generic(&self.globals, "assert_snapshot");
-            self.globals.snapshot_debug_gen = generic(&self.globals, "__snapshot_debug");
-            self.globals.snapshot_display_gen = generic(&self.globals, "__snapshot_display");
+            self.globals.snapshot_debug_gen = generic(&self.globals, "snapshot_debug");
+            self.globals.snapshot_display_gen = generic(&self.globals, "snapshot_display");
             if self.mode == crate::EntryMode::Test {
-                self.globals.test_assert = func(&self.globals, "__test_assert");
-                self.globals.test_assert_eq = generic(&self.globals, "__test_assert_eq");
-                self.globals.test_assert_ne = generic(&self.globals, "__test_assert_ne");
+                self.globals.test_assert = func(&self.globals, "test_assert");
+                self.globals.test_assert_eq = generic(&self.globals, "test_assert_eq");
+                self.globals.test_assert_ne = generic(&self.globals, "test_assert_ne");
             }
         }
         self.globals.io_error_kind_ty = self.globals.std_adt_ty("IoErrorKind");
@@ -192,7 +192,7 @@ impl Sema<'_> {
             return;
         };
         for (public, hidden) in
-            [("assert", "__test_assert"), ("assert_eq", "__test_assert_eq"), ("assert_ne", "__test_assert_ne")]
+            [("assert", "test_assert"), ("assert_eq", "test_assert_eq"), ("assert_ne", "test_assert_ne")]
         {
             let Some(test_global) = self.globals.exported_value(std_module, hidden) else { continue };
             let panicking = self.globals.exported_value(std_module, public);

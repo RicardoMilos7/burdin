@@ -1,5 +1,5 @@
 ; The reactor for Windows (spec/io.md, IO2): an I/O completion port carries the completed helper calls, Winsock
-; `WSAPoll` reports socket readiness, and a loopback UDP datagram wakes the poll. A wait record (`__Wait` in
+; `WSAPoll` reports socket readiness, and a loopback UDP datagram wakes the poll. A wait record (`Wait` in
 ; `std/src/reactor.bd`) is read through two fixed offsets: 0 is `next` (the runtime's result chain) and 24 is
 ; `kind` (1 ready, 2 completed).
 ;

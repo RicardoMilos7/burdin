@@ -115,15 +115,15 @@ impl FnCx<'_> {
         if matches!(ty, Ty::Option(_)) && name.name == "None" {
             return mk(tir::ExprKind::None, ty, span);
         }
-        // `u32.MAX`: an integer type's constants are `std` constants named `__<type>_<name>`.
+        // `u32.MAX`: an integer type's constants are `std` constants named `<type>_<name>`.
         if let Ty::Int(i) = &ty
-            && let Some(Global::Const(c)) = self.globals.std_value(&format!("__{}_{}", i.name(), name.name))
+            && let Some(Global::Const(c)) = self.globals.std_value(&format!("{}_{}", i.name(), name.name))
         {
             return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
         }
         // `f64.MAX`: so are a float type's constants.
         if let Ty::Float(_) = &ty
-            && let Some(Global::Const(c)) = self.globals.std_value(&format!("__{}_{}", ty, name.name))
+            && let Some(Global::Const(c)) = self.globals.std_value(&format!("{}_{}", ty, name.name))
         {
             return mk(tir::ExprKind::Const(c), self.globals.const_tys[c.0].clone(), span);
         }

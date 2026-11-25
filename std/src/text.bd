@@ -12,7 +12,7 @@ use unicode.{is_whitespace, len_utf8}
 /// Whether the bytes of `needle` are in `text` at byte offset `at`. The caller keeps `at + needle.len()` within the
 /// text. It compares bytes rather than slices of the text: a slice that splits a character panics (`spec/stdlib.md`),
 /// and a valid needle starts with a byte that does not continue a character, so a match starts on a boundary.
-priv fn __matches_at(text: str, at: usize, needle: str): bool {
+priv fn matches_at(text: str, at: usize, needle: str): bool {
     let hay = text.as_bytes()
     let pat = needle.as_bytes()
     let mut k: usize = 0
@@ -26,11 +26,11 @@ priv fn __matches_at(text: str, at: usize, needle: str): bool {
 }
 
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
-priv fn __index_of(text: str, needle: str, from: usize): usize {
+priv fn index_of(text: str, needle: str, from: usize): usize {
     let n = needle.len()
     let mut i = from
     while i + n <= text.len() {
-        if __matches_at(text, i, needle) {
+        if matches_at(text, i, needle) {
             return i
         }
         i = i + 1
@@ -39,13 +39,13 @@ priv fn __index_of(text: str, needle: str, from: usize): usize {
 }
 
 /// A copy of `text[from..to]`.
-priv fn __copy(text: str, from: usize, to: usize): String {
+priv fn copy_text(text: str, from: usize, to: usize): String {
     String.from(text[from..to])
 }
 
 /// The text of `a` followed by the text of `b`, in a new string: the built-in `String + str` (`spec/operators.md`,
 /// OP14). Both operands are borrowed.
-priv fn __concat(a: str, b: str): String {
+priv fn concat(a: str, b: str): String {
     let mut out = String.with_capacity(a.len() + b.len())
     out.push_str(a)
     out.push_str(b)
@@ -53,33 +53,33 @@ priv fn __concat(a: str, b: str): String {
 }
 
 /// The pieces of `text` between occurrences of `sep`, in order.
-priv fn __split(text: str, sep: str): List<String> {
+priv fn split_text(text: str, sep: str): List<String> {
     if sep.len() == 0 {
         panic("split: the separator is empty")
     }
     let mut out = List<String>.new()
     let mut start: usize = 0
     loop {
-        let at = __index_of(text, sep, start)
+        let at = index_of(text, sep, start)
         if at >= text.len() {
             break
         }
-        out.push(__copy(text, start, at))
+        out.push(copy_text(text, start, at))
         start = at + sep.len()
     }
-    out.push(__copy(text, start, text.len()))
+    out.push(copy_text(text, start, text.len()))
     out
 }
 
 /// A string holding the one character `c`.
-priv fn __one(c: char): String {
+priv fn one(c: char): String {
     let mut s = String.new()
     s.push(c)
     s
 }
 
 /// The strings of `parts` in the opposite order.
-priv fn __reverse_strings(own parts: List<String>): List<String> {
+priv fn reverse_strings(own parts: List<String>): List<String> {
     let mut parts = parts
     let mut out = List<String>.new()
     loop {
@@ -109,7 +109,7 @@ fn str.is_empty(self): bool {
 /// assert("hello".contains("ell"))
 /// ```
 fn str.contains(self, needle: str): bool {
-    needle.len() == 0 || __index_of(self, needle, 0) < self.len()
+    needle.len() == 0 || index_of(self, needle, 0) < self.len()
 }
 
 /// Whether the text ends with `suffix`.
@@ -118,7 +118,7 @@ fn str.contains(self, needle: str): bool {
 /// assert("file.bd".ends_with(".bd"))
 /// ```
 fn str.ends_with(self, suffix: str): bool {
-    suffix.len() <= self.len() && __matches_at(self, self.len() - suffix.len(), suffix)
+    suffix.len() <= self.len() && matches_at(self, self.len() - suffix.len(), suffix)
 }
 
 /// The text without leading and trailing white space (`char.is_whitespace`).
@@ -185,7 +185,7 @@ fn str.trim_end(self): str {
 /// assert_eq("a::b".split("::")[1], String.from("b"))
 /// ```
 fn str.split(self, sep: str): List<String> {
-    __split(self, sep)
+    split_text(self, sep)
 }
 
 /// The pieces between occurrences of the character `c`, in order.
@@ -194,7 +194,7 @@ fn str.split(self, sep: str): List<String> {
 /// assert_eq("a,b".split_char(',').len(), 2)
 /// ```
 fn str.split_char(self, c: char): List<String> {
-    __split(self, __one(c).as_str())
+    split_text(self, one(c).as_str())
 }
 
 /// The pieces between occurrences of `sep`, last piece first.
@@ -203,7 +203,7 @@ fn str.split_char(self, c: char): List<String> {
 /// assert_eq("a::b::c".rsplit("::")[0], String.from("c"))
 /// ```
 fn str.rsplit(self, sep: str): List<String> {
-    __reverse_strings(__split(self, sep))
+    reverse_strings(split_text(self, sep))
 }
 
 /// The pieces between occurrences of the character `c`, last piece first.
@@ -212,7 +212,7 @@ fn str.rsplit(self, sep: str): List<String> {
 /// assert_eq("a,b,c".rsplit_char(',')[0], String.from("c"))
 /// ```
 fn str.rsplit_char(self, c: char): List<String> {
-    __reverse_strings(__split(self, __one(c).as_str()))
+    reverse_strings(split_text(self, one(c).as_str()))
 }
 
 /// The runs of non-white-space characters, in order.
@@ -256,13 +256,13 @@ fn str.lines(self): List<String> {
             if end > start && bytes[end - 1] == 13 {
                 end = end - 1
             }
-            out.push(__copy(self, start, end))
+            out.push(copy_text(self, start, end))
             start = i + 1
         }
         i = i + 1
     }
     if start < self.len() {
-        out.push(__copy(self, start, self.len()))
+        out.push(copy_text(self, start, self.len()))
     }
     out
 }
@@ -279,7 +279,7 @@ fn str.replace(self, from: str, to: str): String {
     let mut out = String.new()
     let mut start: usize = 0
     loop {
-        let at = __index_of(self, from, start)
+        let at = index_of(self, from, start)
         if at >= self.len() {
             break
         }
@@ -395,7 +395,7 @@ fn String.trim_end(self): str {
 /// assert_eq(parts[1], String.from("b"))
 /// ```
 fn String.split(self, sep: str): List<String> {
-    __split(self.as_str(), sep)
+    split_text(self.as_str(), sep)
 }
 
 /// The pieces between occurrences of the character `c`, in order.
@@ -404,7 +404,7 @@ fn String.split(self, sep: str): List<String> {
 /// assert_eq(String.from("a,b").split_char(',').len(), 2)
 /// ```
 fn String.split_char(self, c: char): List<String> {
-    __split(self.as_str(), __one(c).as_str())
+    split_text(self.as_str(), one(c).as_str())
 }
 
 /// The pieces between occurrences of `sep`, last piece first.
@@ -414,7 +414,7 @@ fn String.split_char(self, c: char): List<String> {
 /// assert_eq(parts[0], String.from("c"))
 /// ```
 fn String.rsplit(self, sep: str): List<String> {
-    __reverse_strings(__split(self.as_str(), sep))
+    reverse_strings(split_text(self.as_str(), sep))
 }
 
 /// The pieces between occurrences of the character `c`, last piece first.
@@ -424,7 +424,7 @@ fn String.rsplit(self, sep: str): List<String> {
 /// assert_eq(parts[0], String.from("c"))
 /// ```
 fn String.rsplit_char(self, c: char): List<String> {
-    __reverse_strings(__split(self.as_str(), __one(c).as_str()))
+    reverse_strings(split_text(self.as_str(), one(c).as_str()))
 }
 
 /// The runs of non-white-space characters, in order.
@@ -750,7 +750,7 @@ fn String.pop(mut self): Option<char> {
 /// assert_eq(s, String.from("abc"))
 /// ```
 fn String.insert(mut self, at: usize, c: char) {
-    self.insert_str(at, __one(c).as_str())
+    self.insert_str(at, one(c).as_str())
 }
 
 /// Removes and returns the character that starts at byte index `at`.
@@ -942,7 +942,7 @@ fn str.rfind_str(self, needle: str): Option<usize> {
     }
     let mut i = self.len() - n
     loop {
-        if __matches_at(self, i, needle) {
+        if matches_at(self, i, needle) {
             return Option.Some(i)
         }
         if i == 0 {
@@ -974,7 +974,7 @@ fn str.match_indices(self, needle: str): List<(usize, String)> {
     let mut out = List<(usize, String)>.new()
     let mut start: usize = 0
     loop {
-        let at = __index_of(self, needle, start)
+        let at = index_of(self, needle, start)
         if at >= self.len() {
             break
         }

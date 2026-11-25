@@ -4,6 +4,17 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Standard library helpers without `__` (2026-11-25, issue #1018).** The 385 private helpers of `std/src` have plain
+names and are `priv`; `spec/stdlib.md` ("Names the standard library keeps private") states what `__` still means:
+intrinsics, compiler-generated names, and the public protocol members of `select` (`__select_new`, `__Select`,
+`__empty`, `__wrap`, `__take`, `__send_outcome`, `__try_recv_slot`, `__try_send_slot`) and of the parallel interfaces
+(`__par_len`, `__par_get`), which other packages must reach. `tir::Function.internal` replaces the name test the
+ownership checks used to make, and `tests/gen_int_std.py` emits the new names. Not done: the official packages in
+`packages/` still prefix their private helpers with `__` (90 distinct names in 7 packages); the same rule applies to
+them. `tests/m24_stdlib/float_constants.bd` has a comment that names `__f64_NAME` and `__u32_MAX`, which are now `f64_NAME`
+and `u32_MAX`; tests were not edited for this. The `s3_http` and `s3_tls` tests fail at link time in the WSL image, which has no
+`libssl`/`libcrypto`.
+
 **Language server gaps closed (2026-11-25, issue #1068).** All eight children are implemented (see `CHANGELOG.md`).
 Known limits: `p.` followed by a line that starts with an identifier still parses as a method chain, so completion uses
 the text fallbacks there; a call cut off by `}` is dropped by the parser; the editor's "add parameter" code action

@@ -685,7 +685,7 @@ impl<'a> Checker<'a> {
     fn call(&mut self, f: usize, args: &[tir::Expr]) {
         // A call the compiler generated (an interpolated string's formatter) borrows for real, but the lens does
         // not show its internals.
-        let generated = self.env.names.get(f).is_some_and(|name| generated_name(name));
+        let generated = self.env.internal.get(f).copied().unwrap_or(false);
         let saved = self.suppress_events;
         self.suppress_events = saved || generated;
         let sig = &self.env.sigs[f];
@@ -1107,9 +1107,4 @@ fn uses_stmt(stmt: &tir::Stmt, index: usize, last: &mut [Option<usize>]) {
         tir::Stmt::Let(_, init, _) => uses_expr(init, index, last),
         tir::Stmt::Expr(e) => uses_expr(e, index, last),
     }
-}
-
-/// Whether a function name is one the compiler generated (an interpolated string's formatter).
-fn generated_name(name: &str) -> bool {
-    name.rsplit('.').next().is_some_and(|segment| segment.starts_with("__"))
 }

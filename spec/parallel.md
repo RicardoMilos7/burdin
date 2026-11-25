@@ -163,7 +163,7 @@ and a second pool are non-goals.
 The default methods of `ParallelIterator<T>`, `ParallelValues<T>`, and `IndexedParallelIterator<T>` are instantiated
 on demand at each call, as the `Iterator<T>` defaults are (`spec/iterators.md`, IT9), and an impl block does not
 register them. A source whose impl is written in `std` (`ParRange`) would otherwise instantiate every consumer's body,
-with its `__chunks` helper and its `Mutex` per output type, in every program that names `std`, and that count counts
+with its `chunks` helper and its `Mutex` per output type, in every program that names `std`, and that count counts
 against the instance limit (`spec/inspect.md`, INS12). The behavior is the same: a call finds the default by name on
 the receiver's interface, and the arguments are checked the same way.
 

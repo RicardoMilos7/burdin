@@ -183,12 +183,12 @@ impl FnCx<'_> {
             return None;
         }
         let std_name = match (ty, from_array) {
-            (Ty::List(..), false) => "__list_from_iter",
-            (Ty::List(..), true) => "__list_from",
-            (Ty::Map(..), false) => "__map_from_iter",
-            (Ty::Map(..), true) => "__map_from",
-            (Ty::Option(_), false) => "__option_from_iter",
-            (Ty::Result(..), false) => "__result_from_iter",
+            (Ty::List(..), false) => "list_from_iter",
+            (Ty::List(..), true) => "list_from",
+            (Ty::Map(..), false) => "map_from_iter",
+            (Ty::Map(..), true) => "map_from",
+            (Ty::Option(_), false) => "option_from_iter",
+            (Ty::Result(..), false) => "result_from_iter",
             (Ty::String, false) => "",
             _ => return None,
         };
@@ -259,7 +259,7 @@ impl FnCx<'_> {
             check_storable(key, span, "a `Map` key", self.diags);
             check_storable(value, span, "a `Map` value", self.diags);
         }
-        let std_name = if collection == "List" { "__list_from" } else { "__map_from" };
+        let std_name = if collection == "List" { "list_from" } else { "map_from" };
         let ty = expect.filter(|ty| matches!((collection, ty), ("List", Ty::List(..)) | ("Map", Ty::Map(..))));
         let Some(g) = self.globals.std_generic(std_name) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{collection}.from` needs the standard library"));
@@ -291,10 +291,10 @@ impl FnCx<'_> {
                 return error_expr(span);
             };
             match &item {
-                Ty::Char => "__string_from_chars",
-                Ty::Str => "__string_from_strs",
-                Ty::String => "__string_from_strings",
-                Ty::Ref { inner, .. } if **inner == Ty::String => "__string_from_string_views",
+                Ty::Char => "string_from_chars",
+                Ty::Str => "string_from_strs",
+                Ty::String => "string_from_strings",
+                Ty::Ref { inner, .. } if **inner == Ty::String => "string_from_string_views",
                 _ => {
                     self.diags.error(
                         Code::BOUND_NOT_SATISFIED,
