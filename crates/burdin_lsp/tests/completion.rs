@@ -1,6 +1,7 @@
 //! Completion contexts, the built-ins, and the standard library (issues #819-#824; `spec/lsp.md` LS8, LS12, LS13):
 //! members after a type name, a literal, and a primitive; the built-in functions and the prelude; `self` as a
-//! method's first parameter; snippets; call parentheses; and the `: A, B` list after a type's name.
+//! method's first parameter; snippets; call parentheses; and the `: A, B` list after a type's name. It also covers
+//! members of arrays, slices, ranges, and tuples (issue #1039) and completion beside errors (issue #1015, LS21).
 
 mod common;
 
@@ -584,6 +585,287 @@ fn member_chains_offer_their_members_on_the_dot_that_starts_them() {
         let items = s.complete(&format!("{line}\n"), line.len());
         for name in expected {
             assert!(has(&items, name), "`{line}`: {name} missing: {:?}", labels(&items));
+        }
+        assert_eq!(s.client.shutdown(), 0);
+    }
+}
+
+/// A fixture's `main.bd`, open; its diagnostics are not checked (a fixture may hold errors on purpose).
+fn open_fixture(name: &str) -> Session {
+    let root = fixture(name);
+    let mut client = Client::with(&[&root], default_caps(), Json::Null);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+    Session { client, uri, text, version: 1 }
+}
+
+/// The slice methods an array or a slice offers (`spec/lsp.md`, LS12): the extensions of `std/src/slice.bd`.
+const SLICE_METHODS: &[&str] = &["first", "contains", "sort", "reverse", "binary_search", "split_at", "is_empty"];
+/// The methods the compiler itself provides on an array or a slice, and the iterator adapters.
+const SLICE_BUILTINS: &[&str] = &["len", "iter", "get", "last", "swap", "fill", "chunks", "windows", "to_list"];
+
+/// The labels completion offers after typing `line` in place of `anchor` in the `arrays` fixture's `main.bd`.
+fn typed_in_arrays(anchor: &str, line: &str) -> Vec<String> {
+    let mut s = open_fixture("arrays");
+    let edited = s.text.replacen(
+        anchor,
+        &format!(
+            "{line}
+{anchor}"
+        ),
+        1,
+    );
+    s.edit(&edited);
+    let items = s.complete(
+        &format!(
+            "{line}
+"
+        ),
+        line.len(),
+    );
+    assert_eq!(s.client.shutdown(), 0);
+    labels(&items)
+}
+
+/// An array local, an array literal, a slice parameter, and a `[u8]` complete with the slice methods; a `List` does not
+/// offer the ones that need `as_slice()` (issue #1039; `spec/lsp.md`, LS12).
+#[test]
+fn arrays_and_slices_offer_the_slice_methods_and_a_list_does_not() {
+    let array_cases = [
+        (typed_in_arrays("    let text", "    xs."), "an array local"),
+        (typed_in_arrays("    let text", "    [1, 2]."), "an array literal"),
+        (typed_in_arrays("    let text", "    let t = xs."), "an array local in a `let`"),
+    ];
+    for (items, what) in &array_cases {
+        for name in SLICE_METHODS.iter().chain(SLICE_BUILTINS).chain(&["iter_mut", "clone"]) {
+            assert!(items.iter().any(|l| l == name), "{what}: {name} missing: {items:?}");
+        }
+        // An array is not itself an iterator: `xs.map(...)` is E0002, and `xs.iter().map(...)` is the spelling.
+        assert!(excludes(items, &["map", "filter", "is_ascii", "join", "concat"]), "{what}: {items:?}");
+    }
+    // A slice parameter is an `Iterator` (`spec/iterators.md`, IT5), so the adapters apply to it directly; it has no
+    // `iter_mut`, and its element type picks the specialised extensions.
+    let slice = labels_in_function(
+        "fn sum_of(xs: [i32]): i32 {
+",
+        "    xs.",
+    );
+    for name in SLICE_METHODS.iter().chain(&["map", "filter", "fold", "len"]) {
+        assert!(slice.iter().any(|l| l == name), "{name}: {slice:?}");
+    }
+    assert!(excludes(&slice, &["iter_mut", "is_ascii", "join", "concat", "to_ascii_lowercase"]), "{slice:?}");
+    let bytes = labels_in_function(
+        "fn size_of(data: [u8]): usize {
+",
+        "    data.",
+    );
+    for name in SLICE_METHODS.iter().chain(&["is_ascii", "to_ascii_lowercase", "eq_ignore_ascii_case", "len"]) {
+        assert!(bytes.iter().any(|l| l == name), "{name}: {bytes:?}");
+    }
+    // A `List` has its own methods (its `first`, `contains`, and `sort` are built in) but not the slice extensions: a
+    // list is viewed with `as_slice()`, so `list.binary_search(1)` is E0002 and is not offered.
+    let list = typed_in_arrays("    let text", "    list.");
+    for name in ["push", "pop", "len", "as_slice", "iter", "first", "contains", "sort"] {
+        assert!(list.iter().any(|l| l == name), "{name}: {list:?}");
+    }
+    assert!(excludes(&list, &["binary_search", "split_at", "ends_with", "rotate_left"]), "{list:?}");
+}
+
+/// The labels completion offers after `line`, typed as the first statement of the function that starts with `header`.
+fn labels_in_function(header: &str, line: &str) -> Vec<String> {
+    let mut s = open_fixture("arrays");
+    let edited = s.text.replacen(
+        header,
+        &format!(
+            "{header}{line}
+"
+        ),
+        1,
+    );
+    s.edit(&edited);
+    let items = s.complete(
+        &format!(
+            "{line}
+"
+        ),
+        line.len(),
+    );
+    assert_eq!(s.client.shutdown(), 0);
+    labels(&items)
+}
+
+/// The `partial` fixture opened as it is, with an unknown function and a type mismatch in other functions, so no
+/// analysis of it ever checked without errors.
+fn open_partial() -> Session {
+    open_fixture("partial")
+}
+
+/// What completion must offer after `p.`, and in an expression, however the rest of the file is broken.
+fn expect_members_and_names(s: &mut Session, what: &str) {
+    let members = s.complete("    p.\n", 6);
+    for name in ["x", "y", "sum", "clone"] {
+        assert!(has(&members, name), "{what}: `p.` lacks {name}: {:?}", labels(&members));
+    }
+    let names = s.complete("    let q = \n", 12);
+    for name in ["p", "total", "Point", "main", "println"] {
+        assert!(has(&names, name), "{what}: an expression lacks {name}: {:?}", labels(&names));
+    }
+}
+
+/// Completion does not depend on the file being error-free (issue #1015; `spec/lsp.md`, LS12): an unknown name, a type
+/// mismatch, or an unfinished statement elsewhere leaves the position's own answers alone, in the same function and in
+/// another, even when the file never checked without errors.
+#[test]
+fn completion_does_not_wait_for_the_rest_of_the_file_to_be_error_free() {
+    // Other functions already hold an unknown name and a mismatch; the cursor's line is the only one being typed.
+    let mut s = open_partial();
+    let edited = s.text.replace("    println(\"{total}\")", "    p.\n    let q = \n    println(\"{total}\")");
+    s.edit(&edited);
+    expect_members_and_names(&mut s, "errors in other functions");
+    // The same function holds each kind of error on another line: an unknown name, a mismatch, an unfinished statement.
+    for (broken, what) in [
+        ("    let bad = nothing_here + 1\n", "an unknown name on another line"),
+        ("    let wrong: i32 = \"text\"\n", "a type mismatch on another line"),
+        ("    let half = (1 +\n", "an unfinished statement on another line"),
+        ("    let half = Point.\n", "an unfinished member on another line"),
+    ] {
+        let mut s = open_partial();
+        let edited = s
+            .text
+            .replace("    println(\"{total}\")", &format!("{broken}    p.\n    let q = \n    println(\"{{total}}\")"));
+        s.edit(&edited);
+        expect_members_and_names(&mut s, what);
+        assert_eq!(s.client.shutdown(), 0);
+    }
+    // Errors after the cursor's line, in the same function.
+    let mut s = open_partial();
+    let edited = s.text.replace(
+        "    println(\"{total}\")",
+        "    p.\n    let q = \n    let bad = nothing_here\n    println(\"{total}\")",
+    );
+    s.edit(&edited);
+    expect_members_and_names(&mut s, "an error on a later line");
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// Hover and definition answer at a name whose code resolves, whatever else is wrong in the file.
+#[test]
+fn hover_and_definition_work_beside_an_unrelated_error() {
+    let mut s = open_partial();
+    let hover = s.call("textDocument/hover", "p.sum()", 0);
+    let text = hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string();
+    assert!(text.contains("let p: Point"), "{text}");
+    let hover = s.call("textDocument/hover", "p.sum()", 2);
+    let text = hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string();
+    assert!(text.contains("fn sum(self): i32"), "{text}");
+    let definition = s.call("textDocument/definition", "p.sum()", 2);
+    assert_eq!(definition.at(&["range", "start", "line"]).as_i64(), Some(6), "{}", definition.to_text());
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// A file that has had a syntax error since it was opened has no typed tree at all, so the receiver of a dot is read
+/// from its declaration: a struct literal, an associated function's return type, an array literal, an annotation, a
+/// parameter's type, and a function's return type (issue #1015; `spec/lsp.md`, LS12).
+#[test]
+fn completion_works_in_a_file_that_never_parsed() {
+    let mut s = open_fixture("partial-syntax");
+    let cases: [(&str, usize, &[&str]); 6] = [
+        ("    p.\n", 6, &["x", "y", "sum", "clone"]),
+        ("    q.\n", 6, &["x", "y", "sum", "clone"]),
+        ("    xs.\n", 7, &["len", "first", "sort", "iter"]),
+        ("    n.\n", 6, &["to_string", "wrapping_add"]),
+        ("    make().\n", 11, &["x", "sum"]),
+        ("    data.\n", 9, &["len", "is_ascii", "first", "map"]),
+    ];
+    for (needle, delta, expected) in cases {
+        let items = s.complete(needle, delta);
+        for name in expected {
+            assert!(has(&items, name), "`{}`: {name} missing: {:?}", needle.trim(), labels(&items));
+        }
+    }
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// Hover, definition, and signature help know the methods of arrays and slices: the compiler's own (`len`, `swap`,
+/// `iter_mut`, which have no Burdin source and land in the built-ins' file) and the extensions of `std/src/slice.bd`
+/// (`first`, `binary_search`), through an array's implicit view (issue #1039; `spec/lsp.md`, LS8, LS11, LS13).
+#[test]
+fn array_and_slice_methods_answer_hover_definition_and_signature_help() {
+    let mut s = open_fixture("arrays");
+    let edited = s.text.replace(
+        "    println(",
+        "    let mut ys = [1, 2, 3]\n    ys.swap(0, 1)\n    let a = xs.len()\n    let b = xs.first()\n    let c = xs.binary_search(1)\n    let d = ys.iter_mut()\n    println(",
+    );
+    s.edit(&edited);
+    let hover_text = |s: &mut Session, needle: &str, delta: usize| {
+        let hover = s.call("textDocument/hover", needle, delta);
+        hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string()
+    };
+    let len = hover_text(&mut s, "xs.len()", 3);
+    assert!(len.contains("fn len(self): usize") && len.contains("method of `[T]`"), "{len}");
+    let first = hover_text(&mut s, "xs.first()", 3);
+    assert!(first.contains("fn [T].first(self): Option<&T>"), "{first}");
+    let search = hover_text(&mut s, "xs.binary_search(1)", 3);
+    assert!(search.contains("binary_search"), "{search}");
+    let iter_mut = hover_text(&mut s, "ys.iter_mut()", 3);
+    assert!(
+        iter_mut.contains("fn iter_mut(mut self): IterMut<T>") && iter_mut.contains("method of `[T; N]`"),
+        "{iter_mut}"
+    );
+    // Definition: a built-in lands in `builtins.bd`, an extension in `slice.bd`.
+    let location = s.call("textDocument/definition", "xs.len()", 3);
+    assert!(location.get("uri").as_str().unwrap().ends_with("/builtins.bd"), "{}", location.to_text());
+    let location = s.call("textDocument/definition", "xs.first()", 3);
+    assert!(location.get("uri").as_str().unwrap().ends_with("/slice.bd"), "{}", location.to_text());
+    // Signature help marks the active parameter; the label lists `self`, which the call does not write.
+    for (needle, delta, label, active) in [
+        ("ys.swap(0, 1)", 11, "fn swap(mut self, a: usize, b: usize)", 2),
+        ("xs.binary_search(1)", 17, "binary_search", 1),
+    ] {
+        let help = s.call("textDocument/signatureHelp", needle, delta);
+        let shown = help.get("signatures").as_array()[0].get("label").as_str().unwrap().to_string();
+        assert!(shown.contains(label), "{shown}");
+        assert_eq!(help.get("activeParameter").as_i64(), Some(active), "{}", help.to_text());
+    }
+    assert_eq!(s.client.shutdown(), 0);
+}
+
+/// Ranges, tuples, `Chars`, and the result of `iter()` complete too (issue #1039; `spec/lsp.md`, LS12): the members the
+/// compiler gives them without a declaration, and the `Iterator` adapters on its own iterators.
+#[test]
+fn ranges_tuples_and_iterators_have_members() {
+    let cases: [(&str, &[&str], &[&str]); 5] = [
+        // A range clones, compares, and gives its iterator; it is not an iterator (`r.map(...)` is E0002).
+        ("r", &["clone", "cmp", "iter", "into_iter"], &["map", "filter", "contains"]),
+        ("t", &["clone", "cmp"], &["iter", "map"]),
+        // `Chars` is an iterator: the adapters, and `next_back`.
+        ("ch", &["map", "count", "filter", "next_back", "enumerate"], &["len", "iter"]),
+        // `[1, 2].iter()` is a slice, an iterator too.
+        ("it", &["map", "fold", "first", "len", "contains"], &["iter_mut", "clone"]),
+        ("unit", &[], &["clone", "map"]),
+    ];
+    for (name, expected, absent) in cases {
+        let mut s = open_fixture("receivers");
+        let edited = s.text.replace(
+            "    println(",
+            &format!(
+                "    {name}.
+    println("
+            ),
+        );
+        s.edit(&edited);
+        let items = s.complete(
+            &format!(
+                "    {name}.
+"
+            ),
+            name.len() + 5,
+        );
+        for label in expected {
+            assert!(has(&items, label), "`{name}.`: {label} missing: {:?}", labels(&items));
+        }
+        for label in absent {
+            assert!(!has(&items, label), "`{name}.`: {label} is not a member: {:?}", labels(&items));
         }
         assert_eq!(s.client.shutdown(), 0);
     }

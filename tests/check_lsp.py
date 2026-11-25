@@ -17,6 +17,8 @@ What it checks:
     field the queries name exists, and Zed's `highlights.scm` is a copy of the grammar's and is declared at a commit;
   * `burdin lsp` (LS1, LS2): it initializes, publishes the diagnostics of an opened file with an error, and exits 0
     after shutdown and exit; an unknown argument is a usage error (exit status 2);
+  * the capabilities (LS18, LS22-LS24): type definition, resolving completion items and code actions, formatting as
+    the user types, the file renames, and the refactoring commands are announced by the driver's server;
   * the test lenses (LS19): the lens above a passing test runs it through `workspace/executeCommand` with the real
     `burdin test`, the answer counts it as passed, and the next lenses show `✓ passed`; the lens of a file runs every
     test, a failing one included, and the failing test's lens shows `✗ failed` with the reason.
@@ -306,6 +308,17 @@ def check_server(burdin: str) -> None:
             },
         )
         check("result" in initialized, f"initialize failed: {initialized}")
+        announced = initialized.get("result", {}).get("capabilities", {})
+        # The features of LS22-LS24 and the refactorings of LS18 are announced by the driver's server too.
+        check(announced.get("typeDefinitionProvider") is True, "typeDefinitionProvider is not announced")
+        check(announced.get("completionProvider", {}).get("resolveProvider") is True, "completion does not resolve")
+        check(announced.get("codeActionProvider", {}).get("resolveProvider") is True, "code actions do not resolve")
+        check("documentOnTypeFormattingProvider" in announced, "documentOnTypeFormattingProvider is not announced")
+        rename = announced.get("workspace", {}).get("fileOperations", {})
+        check("willRename" in rename and "didRename" in rename, f"file operations are {rename}")
+        commands = announced.get("executeCommandProvider", {}).get("commands", [])
+        for command in ["burdin.searchReplace", "burdin.changeSignature", "burdin.moveItem"]:
+            check(command in commands, f"the command {command} is not announced: {commands}")
         server.notify("initialized", {})
         broken = text.replace('let label = "área"', 'let label: i32 = "área"')
         document = {"uri": uri(main), "languageId": "burdin", "version": 1, "text": broken}

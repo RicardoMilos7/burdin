@@ -52,16 +52,29 @@ it is parenthesized: `$a * 2` with `$a = x + 1` becomes `(x + 1) * 2`.
 - Without `==>>`, `burdin ssr` lists every match as `<path>:<line>:<col>: <text>` and exits 1 when there is none.
 - With it, the matches are replaced and every touched file is formatted. `--dry-run` prints the unified diff and writes
   nothing; the version-control check of `spec/fix.md` FX7 applies (`--allow-dirty`).
-- In the language server, the command `burdin.structuralSearchReplace` takes
-  `{ "pattern": "...", "replacement": "...", "root": "<package directory>" }` and returns a workspace edit.
+- In the language server, the command `burdin.searchReplace` (also spelled `burdin.structuralSearchReplace`) takes
+  `{ "pattern": "...", "replacement": "...", "root": "<package directory>" }` and returns a workspace edit. When the
+  engine refuses, the command answers an error with the reason and the server logs it.
 
 ## RF7 — `burdin refactor`
 
 `burdin refactor <refactoring> <file>:<line>:<col>[-<line>:<col>] [OPTIONS]`. A position is a 1-based line and column;
 a range's end is the position one past its last character. Each refactoring reads the package the file belongs to (the
 nearest directory above it with a `burdin.toml`), and refuses a package that has errors. `--dry-run`, `--allow-dirty`,
-and the formatting of touched files are those of `burdin fix` (FX7-FX9). The refactorings are also code actions in the
-language server: `refactor.extract` for a selection, `refactor.inline` at a position.
+and the formatting of touched files are those of `burdin fix` (FX7-FX9). Every refactoring is also in the language
+server (`spec/lsp.md`, LS18), computed by the same functions:
+
+| Refactoring | In the editor |
+| --- | --- |
+| extract variable, extract function | `refactor.extract` actions for a selection |
+| inline variable, inline function | `refactor.inline` actions at a name |
+| change signature | `refactor.rewrite` actions on a function's name (add a parameter) and on a parameter (remove it, move it before or after its neighbor), and the command `burdin.changeSignature` for the rest (`--reorder`, `--add` with a name, a type, and a default, `--remove`, `--rename`) |
+| move item | `refactor.move` actions on an item's name, one per module, and the command `burdin.moveItem` |
+| structural search and replace | the command `burdin.searchReplace` |
+
+No refactoring of this file is missing from the editor. When the engine refuses (RF8), the editor shows no action and
+the refusal's text goes to the server's log; the command line prints the same text. A client that resolves code
+actions lazily gets the menu without the edits, and the refusal answers the resolve.
 
 ## RF8 — What "the same meaning" means
 
