@@ -16,27 +16,30 @@ fn kind(code: i32): IoErrorKind {
     __io_kind(code)
 }
 
+const EOF_IS_UNEXPECTED: bool = __io_kind(38) == IoErrorKind.UnexpectedEof
+const INTERRUPT_IS_INTERRUPTED: bool = __io_kind(4) == IoErrorKind.Interrupted
+
 fn main() {
     println("{}", kind(2) == IoErrorKind.NotFound) // ENOENT / ERROR_FILE_NOT_FOUND
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         println("{}", kind(5) == IoErrorKind.PermissionDenied) // ERROR_ACCESS_DENIED
         println("{}", kind(183) == IoErrorKind.AlreadyExists) // ERROR_ALREADY_EXISTS
         println("{}", kind(267) == IoErrorKind.NotADirectory) // ERROR_DIRECTORY
         println("{}", kind(145) == IoErrorKind.DirectoryNotEmpty) // ERROR_DIR_NOT_EMPTY
         println("{}", kind(13) == IoErrorKind.InvalidData) // ERROR_INVALID_DATA
-        println("{}", comptime (__io_kind(38) == IoErrorKind.UnexpectedEof)) // ERROR_HANDLE_EOF
+        println("{}", EOF_IS_UNEXPECTED) // ERROR_HANDLE_EOF
     } else {
         println("{}", kind(13) == IoErrorKind.PermissionDenied) // EACCES
         println("{}", kind(17) == IoErrorKind.AlreadyExists) // EEXIST
         println("{}", kind(20) == IoErrorKind.NotADirectory) // ENOTDIR
-        comptime if target.os() == target.Os.MacOs {
+        if target.os() == target.Os.MacOs {
             println("{}", kind(66) == IoErrorKind.DirectoryNotEmpty) // ENOTEMPTY
             println("{}", kind(92) == IoErrorKind.InvalidData) // EILSEQ
         } else {
             println("{}", kind(39) == IoErrorKind.DirectoryNotEmpty) // ENOTEMPTY
             println("{}", kind(84) == IoErrorKind.InvalidData) // EILSEQ
         }
-        println("{}", comptime (__io_kind(4) == IoErrorKind.Interrupted)) // EINTR
+        println("{}", INTERRUPT_IS_INTERRUPTED) // EINTR
     }
     println("{}", kind(987654) == IoErrorKind.Other)
 }

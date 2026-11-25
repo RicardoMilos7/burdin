@@ -27,7 +27,7 @@ Burdin (file extension `.bd`) is a statically typed, natively compiled language 
 **Design principles**
 
 - Costs are visible: heap allocation is spelled `Heap<T>`, and arenas are chosen explicitly.
-- One mechanism per job: no `defer`, no macros (comptime covers them), no inheritance.
+- One mechanism per job: no `defer`, no macros yet (`comptime` was removed and a macro system is planned), no inheritance.
 - Public by default, with a single visibility keyword, `priv`.
 - Everything in this document can change; there are no users to break.
 
@@ -279,7 +279,7 @@ List<T>: Clone where T: Clone { ... }
 fn max<T: Ord>(a: T, b: T): T
 ```
 
-Const generics take compile-time values (`Matrix<T, const R: usize, const C: usize>`), and `comptime` is used for type-level computation, not for checking generic bodies.
+Const generics take compile-time values (`Matrix<T, const R: usize, const C: usize>`), and compile-time evaluation is not used for checking generic bodies.
 
 **Dispatch**
 
@@ -309,7 +309,7 @@ struct Point: Copy, Clone, Eq, Hash {
 | `Debug` | All fields are `Debug` |
 | `Serialize`, `Deserialize` | All fields support them |
 
-Derives are written in the language with `comptime` and reflection (see Comptime), not as macros. There is no `macro_rules`. Hand-written implementations are allowed for the standard and user interfaces (`Display`, `Debug`, `From`, `Drop`, and
+Derives are written in the language with reflection (see Comptime, whose `comptime` forms were removed), not as macros. There is no `macro_rules`. Hand-written implementations are allowed for the standard and user interfaces (`Display`, `Debug`, `From`, `Drop`, and
 your own). The derive-only interfaces (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`) come from a derive, and writing
 one by hand is not yet allowed (`spec/impls.md`, IM8; issue #402). A derive on a generic type requires the same bound on its parameters, and a failing derive reports the offending field.
 
@@ -407,6 +407,12 @@ for order in orders { ... }
 ```
 
 ## Comptime and build.bd
+
+> **Status (2026-11-25): `comptime` was removed from the language.** The `comptime` expressions, parameters, `comptime
+> if`/`for`/`assert`, and `comptime generate` described below no longer exist, and `comptime` is an ordinary
+> identifier. What remains is `const` evaluation (`spec/const-eval.md`), a plain `if` with a compile-time condition,
+> a plain `for` over `Type.fields`/`Type.variants` (`spec/reflection.md`), and `embed`. A macro system is planned to
+> cover what `comptime` was meant to do; the text below is the original design and is kept for its rationale.
 
 `comptime` runs ordinary code during compilation and replaces macros, `#ifdef`, and most code generation, while `build.bd` is an optional script for anything that needs real side effects.
 
@@ -638,7 +644,7 @@ A single command-line tool, `burdin`, handles building, testing, formatting, and
 
 1. Source files are parsed into an AST and then a typed intermediate form.
 2. The typed form is lowered to a MIR (mid-level IR), where the parameter-convention checks, drop insertion, and generic instantiation happen.
-3. Backends and the comptime interpreter both read the MIR, so comptime behavior matches compiled behavior.
+3. Backends and the comptime interpreter both read the MIR, so compile-time behavior matches compiled behavior.
 4. LLVM generates code for all builds: the lowest optimization level for debug, higher levels for release. There is no Cranelift backend.
 
 **Build speed.** LLVM at its lowest level is slower than a dedicated fast backend, so speed comes from elsewhere: a fast front end, parallel code generation per module, cached object files so only changed modules rebuild, and a fast linker. A custom debug backend is a possible future project.
@@ -646,7 +652,7 @@ A single command-line tool, `burdin`, handles building, testing, formatting, and
 **Implementation plan**
 
 1. **Stage 0:** a Rust compiler for the core subset of the language, enough to write compiler-sized programs: structs, enums, `match`, generics with interfaces, `List`, `Map`, `String`, file I/O, `Result` with `?`, and arenas with handles. It enforces the memory-model checks (parameter conventions, exclusivity, drops) from the start and skips tasks and comptime at first.
-2. **Stage 1:** the same Rust compiler grows the rest of the core language: closures and iterators, formatting and interpolation, `error` declarations, comptime, allocators, and then tasks.
+2. **Stage 1:** the same Rust compiler grows the rest of the core language: closures and iterators, formatting and interpolation, `error` declarations, constant evaluation, allocators, and then tasks.
 
 **No self-hosting for now.** Burdin is not bootstrapped into itself. The compiler is mostly written by AI, which has no prior experience with Burdin, and a self-hosted compiler would mean building every feature twice and debugging two unproven things at once (the program and the compiler compiling it). Self-hosting may be reconsidered once the language is mature and at least its core features are complete. It is not a goal that shapes the language or the compiler before then.
 
@@ -675,7 +681,7 @@ The design is settled at the level of ideas, and these details still need decisi
 
 **Possible later additions**
 
-- Declaration generation in comptime beyond structs, enums, and functions, and hygiene (`spec/generate.md`, issue #280).
+- Declaration generation by a macro system (issue #280's `comptime generate` was removed; a macro system is planned).
 - Compiler-inserted preemption checks for tasks.
 - Doc tests and `bench` blocks.
 - Direct Rust interop through generated C-ABI shims.

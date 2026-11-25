@@ -6,7 +6,7 @@ Usage: tests/check_inspect.py [--bless]
 BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin is used.
 
 What it checks (spec/inspect.md has the rules, INS1-INS19):
-  * `burdin expand` (INS1-INS6): the golden expansion of fixtures from m17_arguments, m19_operators, m20_comptime, and
+  * `burdin expand` (INS1-INS6): the golden expansion of fixtures from m17_arguments, m19_operators, m20_const, and
     m21_reflect and of tests/inspect/expand_mix.bd (`--bless` rewrites the goldens from the driver's output; review
     the diff before committing it); `--item`; `--instances`; a package target; the failure and usage paths;
   * the contract that makes expansion trustworthy: the expansion of every conformance program that builds in those four
@@ -44,16 +44,14 @@ EXPAND_GOLDENS = [
     ("m19_operators", "arith_ops"),
     ("m19_operators", "unary_ops"),
     ("m19_operators", "vector_add_index"),
-    ("m20_comptime", "comptime_expr"),
-    ("m20_comptime", "comptime_for_unroll"),
-    ("m20_comptime", "comptime_if_dead_branch"),
-    ("m20_comptime", "const_values"),
+    ("m20_const", "const_if_dead_branch"),
+    ("m20_const", "const_values"),
     ("m21_reflect", "derive_describe"),
     ("m21_reflect", "reflect_members"),
     ("m21_reflect", "computed_field_access"),
 ]
 # The folders whose every program is expanded, checked again, and compared by what it prints.
-EXPAND_FOLDERS = ["m17_arguments", "m19_operators", "m20_comptime", "m21_reflect"]
+EXPAND_FOLDERS = ["m17_arguments", "m19_operators", "m20_const", "m21_reflect"]
 
 
 def add_problem(message: str) -> None:
@@ -115,13 +113,13 @@ def check_expand_goldens() -> None:
     for needle, why in [
         ("a.add(b)", "an operator is the interface method call (INS3)"),
         ('greet("world", 5)', "named and default arguments are listed in parameter order (INS3)"),
-        ("(64 as usize)", "a `comptime` expression is its value (INS2)"),
-        ("n * 2", "a `comptime if` is the branch it chose (INS2)"),
+        ("SIZE + 1", "a `const` initializer stays a constant (INS2)"),
+        ("n * 2", "an `if` with a compile-time condition is the branch it chose (INS2)"),
         ('"hi".shout()', "an extension call stays a method call: extensions are not values (INS3)"),
         ("struct P: Clone, Eq {", "a built-in derive stays (INS5)"),
     ]:
         check(needle in out, f"expand expand_mix.bd: {why}: `{needle}` missing")
-    for needle in ["comptime SIZE", "comptime if", "a + b", "greet(times: 5)"]:
+    for needle in ["a + b", "greet(times: 5)"]:
         check(needle not in out, f"expand expand_mix.bd: `{needle}` should be expanded away")
 
 
@@ -199,7 +197,7 @@ def check_expand_package() -> None:
     check("// ==== src/main.bd ====" in out.replace("\\", "/") and "// ==== src/shapes.bd ====" in out.replace("\\", "/"),
           "expand package: each file starts with its header")
     out, err, code = driver(["expand", ".", "--item", "shapes.area"], cwd=package)
-    check(code == 0 and out.startswith("fn area(h: i32, w: i32 = UNIT): i32 {") and "w * h" in out and "comptime" not in out,
+    check(code == 0 and out.startswith("fn area(h: i32, w: i32 = UNIT): i32 {") and "w * h" in out,
           f"expand --item shapes.area: exit {code}\n{out}{err}")
     out, err, code = driver(["expand", ".", "--item", "expand_pkg.shapes.area"], cwd=package)
     check(code == 0 and "w * h" in out, "expand --item with the package-qualified name")

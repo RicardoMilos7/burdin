@@ -20,7 +20,7 @@ pub use tree::*;
 pub use ty::*;
 
 /// The operating system programs are compiled for, as `target.os()` reports it: the compiler's own host
-/// (`spec/comptime.md`, CT5; the compiler does not cross-compile).
+/// (`spec/const-eval.md`, CE4; the compiler does not cross-compile).
 pub fn target_os() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"

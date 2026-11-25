@@ -433,8 +433,8 @@ fn compile_jobs() -> Arg {
     jobs("Compile on at most n threads (default: BURDIN_JOBS, then the number of CPUs)")
 }
 
-fn comptime_steps() -> Arg {
-    option("comptime-steps", "n", "The step budget of each compile-time evaluation (default: 10000000)")
+fn const_steps() -> Arg {
+    option("const-steps", "n", "The step budget of each compile-time evaluation (default: 10000000)")
 }
 
 fn release(help: &'static str) -> Arg {
@@ -557,7 +557,7 @@ fn build() -> Command {
                 link_lib(),
                 sanitize(),
                 compile_jobs(),
-                comptime_steps(),
+                const_steps(),
             ])
             .args(
                 [
@@ -609,7 +609,7 @@ fn run() -> Command {
                 link_lib(),
                 sanitize(),
                 compile_jobs(),
-                comptime_steps(),
+                const_steps(),
             ])
             .args(watch_options())
             .args(verbosity())
@@ -721,7 +721,7 @@ fn test() -> Command {
                     offline(),
                     sanitize(),
                     jobs("Run at most n tests at once, and compile on at most n threads (default: the number of CPUs)"),
-                    comptime_steps(),
+                    const_steps(),
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
@@ -762,7 +762,7 @@ fn fuzz() -> Command {
                     all_features(),
                     offline(),
                     compile_jobs(),
-                    comptime_steps(),
+                    const_steps(),
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
@@ -826,7 +826,7 @@ fn bench() -> Command {
                     all_features(),
                     offline(),
                     jobs("Compile on at most n threads; benches are measured one at a time"),
-                    comptime_steps(),
+                    const_steps(),
                 ]
                 .map(|arg| arg.help_heading(COMPILATION)),
             )
@@ -857,7 +857,7 @@ fn check() -> Command {
                     "With --print-instances: human (default) or json; with --explain-ownership: text (default) or json",
                 ),
                 jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
-                comptime_steps(),
+                const_steps(),
             ])
             .args(
                 [
@@ -952,7 +952,7 @@ fn lint() -> Command {
                 flag("list", "Print every lint with its code and default level"),
                 option("explain", "lint", "Print the reference entry for a lint (a name or a code)"),
                 jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help(
                 "Levels also come from the [lint] table of burdin.toml (name = \"allow\" | \"warn\" | \"deny\"); \
@@ -973,7 +973,7 @@ fn fix() -> Command {
                 flag("allow-dirty", "Write even when the version-control working tree has uncommitted changes"),
                 flag("migrate", "Also move the package to the next edition, after checking it compiles there"),
                 jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help(
                 "Fixes apply round after round until nothing changes, conflicting fixes are skipped and reported,                  and a round that would add errors is undone. The touched files are formatted. The behavior is                  spec/fix.md.",
@@ -1072,7 +1072,7 @@ fn doc() -> Command {
                 flag("coverage", "Print how much of the public interface is documented, per module"),
                 flag("deny-warnings", "Exit with status 1 when a doc comment has a broken link"),
                 jobs("Parse on at most n threads (default: BURDIN_JOBS, then the number of CPUs)"),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help("The behavior is spec/doc.md."),
     )
@@ -1190,10 +1190,10 @@ fn repl() -> Command {
         Command::new("repl")
             .about("Start an interactive session")
             .override_usage("burdin repl [OPTIONS]")
-            .args([release("Evaluate the way a release build does"), compile_jobs(), comptime_steps()])
+            .args([release("Evaluate the way a release build does"), compile_jobs(), const_steps()])
             .after_help(
                 "The session is one growing program: inputs are items, statements, or expressions, each checked \
-                 by the real front end and evaluated by the comptime interpreter; an expression's value prints with \
+                 by the real front end and evaluated by the interpreter; an expression's value prints with \
                  Debug. The meta-commands (:help lists them) include :type, :ownership, :explain, :load, :ir, \
                  :compile, and :reset. Standard input that is not a terminal disables interactive editing, so a \
                  scripted session is deterministic. The behavior is spec/repl.md.",
@@ -1234,7 +1234,7 @@ fn debug() -> Command {
 fn expand() -> Command {
     with_diagnostics(
         Command::new("expand")
-            .about("Print the source after comptime, derives, default arguments, and operators")
+            .about("Print the source after constants, derives, default arguments, and operators")
             .override_usage("burdin expand [file.bd | package directory] [OPTIONS]")
             .arg(target_or_here())
             .args([
@@ -1246,7 +1246,7 @@ fn expand() -> Command {
                 flag("instances", "After the source, print each monomorphized instance of a generic function"),
                 flag("no-format", "Print the expansion as built, without running the formatter over it"),
                 compile_jobs(),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help(
                 "The output is Burdin source: `burdin check` accepts it wherever it accepted the input. The behavior \
@@ -1273,7 +1273,7 @@ fn asm() -> Command {
                 flag("llvm", "Print the function's optimized LLVM IR instead of assembly"),
                 flag("no-source", "Leave out the interleaved source lines"),
                 compile_jobs(),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help("The behavior is spec/inspect.md."),
     )
@@ -1290,7 +1290,7 @@ fn bloat() -> Command {
                 option("top", "n", "List the n largest functions and generics (default: 20)"),
                 option("format", "human|json", "A table (default) or one JSON object"),
                 compile_jobs(),
-                comptime_steps(),
+                const_steps(),
             ])
             .after_help("The behavior is spec/inspect.md."),
     )

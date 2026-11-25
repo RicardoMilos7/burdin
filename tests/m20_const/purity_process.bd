@@ -1,0 +1,20 @@
+//@ compile-fail
+
+// Starting a process and its pipes is not available at compile time (spec/const-eval.md, CE6).
+
+fn start(): bool {
+    let mut cmd = Command.new("true")
+    cmd.spawn().is_err()
+}
+
+fn capture(): bool {
+    let mut cmd = Command.new("true")
+    cmd.stdout(Stdio.Piped)
+    let mut child = cmd.spawn().unwrap()
+    child.stdout().unwrap().read_line().is_err()
+}
+
+const A: bool = start() //~ E0224
+const B: bool = capture() //~ E0224
+
+fn main() {}

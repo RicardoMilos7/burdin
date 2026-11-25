@@ -602,7 +602,7 @@ pub fn official_names() -> Vec<String> {
 /// The scan reads every `.bd` file under `dir/src` and keeps the first name of each `use` declaration (`use json`,
 /// `use json.{Value}`, `pub use json as j`) that names an official package, is not already declared (`deps`,
 /// `dev_deps`, and their target tables), is not the package itself, and is not one of the package's own top-level
-/// modules. The result is sorted. A module a build script or `comptime generate` produced is not on disk when the
+/// modules. The result is sorted. A module a build script produced is not on disk when the
 /// package is loaded, so it cannot bring one in on its own (PKG18).
 pub fn implicit_official_deps(dir: &Path, manifest: &Manifest) -> Vec<String> {
     implicit_official_deps_with(dir, manifest, &HashMap::new())

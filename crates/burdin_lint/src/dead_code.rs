@@ -80,7 +80,7 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
         if c.name == "main" || c.name.starts_with('_') {
             continue;
         }
-        // A name the source does not spell (the `comptime assert 1` constants) belongs to generated code.
+        // A name the source does not spell belongs to generated code.
         if cx.slice(c.span) != c.name {
             continue;
         }

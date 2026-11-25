@@ -17,14 +17,14 @@ What it checks (spec/check.md has the rules, CK1-CK8):
     accepted (exit 0). That is the contract: `check` stops exactly where code generation would start;
   * no code generation and no linking: a clean check succeeds with a linker that does not exist, writes no file,
     and rejects the options that only a build has (`-o`, `--emit-ir`, `--link-lib`);
-  * `--release`, `--tests`, `--comptime-steps`, the machine-readable output (JSON and SARIF), and the command line
+  * `--release`, `--tests`, `--const-steps`, the machine-readable output (JSON and SARIF), and the command line
     (usage errors exit 2, a missing target exits 1, `--help` exits 0);
   * the JSON result (CK12): every line validates against docs/diagnostic.schema.json, the last line is the check
     summary with its counts, `files`, and `elapsed_ms` (masked in the golden), a clean program prints the summary
     alone, `--explain` adds no text trace, and the human format is unchanged.
 
 Fixture directives are comment lines at the top of a `.bd` file:
-    //% args: --comptime-steps 1000      extra command line arguments
+    //% args: --const-steps 1000      extra command line arguments
     //% exit: 1                          the expected exit status
     //% stderr: some text                text the output must contain
 """
@@ -531,7 +531,7 @@ for bad, reason in [
     (["a.bd", "b.bd"], "unexpected argument `b.bd`"),
     (["--bogus", "a.bd"], "unknown option `--bogus`"),
     (["--release=yes", "a.bd"], "takes no value"),
-    (["--comptime-steps", "0", "a.bd"], "positive number of steps"),
+    (["--const-steps", "0", "a.bd"], "positive number of steps"),
     (["--diagnostic-format", "xml", "a.bd"], "unknown diagnostic format"),
 ]:
     output, status = driver("check", bad, CHECK)

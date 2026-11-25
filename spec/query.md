@@ -7,14 +7,14 @@ so a second question about an edited program costs only what the edit can affect
 other. This file is the exact behavior, with a rule ID for each point and the tests that cover it.
 
 The crate is `crates/burdin_query`. It depends on `burdin_syntax`, `burdin_sema`, `burdin_check`, and
-`burdin_comptime`, and never on `burdin_codegen`, so a tool that wants the checker does not link LLVM. The command
+`burdin_interp`, and never on `burdin_codegen`, so a tool that wants the checker does not link LLVM. The command
 line keeps the code generation, the driver, and the package layout handling (`package.rs`, moved here from the driver
 so the library can open a package too).
 
 ```
 Db::open / Db::from_files / Db::from_workspace   the inputs: a package on disk, or files in memory
 db.set_file(path, text)                           an edit
-db.analyze()                                      parse -> declare -> check bodies -> memory checks -> comptime
+db.analyze()                                      parse -> declare -> check bodies -> memory checks -> const evaluation
 analysis.diagnostics / analysis.program           the answer
 db.stats() / db.counters()                        what the analysis did
 ```
@@ -47,7 +47,7 @@ A body that is replayed contributes its diagnostics, closures, instantiation req
 new run, with its spans moved to their new positions.
 
 **QL3. What is not incremental.** Two whole-program passes run on every analysis: the memory checks
-(`burdin_check`) and compile-time evaluation (`burdin_comptime`). The return-origin inference is a fixpoint over all
+(`burdin_check`) and compile-time evaluation (`burdin_interp`). The return-origin inference is a fixpoint over all
 signatures, and the move and borrow checks read the whole program's signatures; compile-time evaluation rewrites the
 program. Both are measured by the benchmark (`QL9`), and both are cheap next to a cold analysis on the packages the
 tests use. The step that makes them per function is a later refinement, not a hidden behavior.

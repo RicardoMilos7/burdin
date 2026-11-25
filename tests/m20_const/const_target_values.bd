@@ -1,0 +1,14 @@
+//@ run
+//> true
+//> true
+
+// `target.os()` and `target.arch()` are ordinary functions, so constant evaluation and run-time code see the same
+// target (spec/const-eval.md, CE4).
+
+const OS: target.Os = target.os()
+const ARCH: target.Arch = target.arch()
+
+fn main() {
+    println("{OS == target.os()}")
+    println("{ARCH == target.arch()}")
+}

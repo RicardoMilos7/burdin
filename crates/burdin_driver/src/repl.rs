@@ -1,6 +1,6 @@
 //! `burdin repl`: the interactive session (`spec/repl.md`). The command parses its options, builds the two
 //! closures that need the LLVM back end (`:compile` and `:ir`), and runs the REPL crate; everything else —
-//! checking, evaluating, printing, the meta-commands — is the crate's, over the query library and the comptime
+//! checking, evaluating, printing, the meta-commands — is the crate's, over the query library and the
 //! interpreter.
 
 use crate::{
@@ -14,7 +14,7 @@ use std::process::{Command, ExitCode};
 #[derive(Debug, Default)]
 struct ReplArgs {
     release: bool,
-    comptime_steps: Option<u64>,
+    const_steps: Option<u64>,
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
 }
@@ -34,14 +34,14 @@ fn parse(argv: &[String]) -> Result<ReplArgs, String> {
         match a {
             "--release" => args.release = flag_without_value(a, inline)?,
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
-            "--comptime-steps" => {
+            "--const-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
                     .parse()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
-                args.comptime_steps = Some(steps);
+                    .ok_or_else(|| format!("`--const-steps` needs a positive number of steps, got `{value}`"))?;
+                args.const_steps = Some(steps);
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ => return Err(format!("unexpected argument `{a}`: `burdin repl` reads its session from standard input")),
@@ -66,7 +66,7 @@ fn session_options<'a>(args: &'a ReplArgs, jobs: usize, emit_ir: Option<&'a Path
         // program, so they are stripped as in every build.
         mode: crate::EntryMode::Build,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         // A one-file target has no package directory, so there is no build script to run.
@@ -117,7 +117,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
     };
     let mut config = burdin_repl::Config {
         release: args.release,
-        steps: args.comptime_steps,
+        steps: args.const_steps,
         jobs,
         render: render_options(&args.diagnostics, std::io::stderr().is_terminal()),
         native,
@@ -195,9 +195,9 @@ mod tests {
 
     #[test]
     fn the_repl_takes_its_own_options_only() {
-        let args = parse(&argv(&["--release", "--comptime-steps=50"])).unwrap();
+        let args = parse(&argv(&["--release", "--const-steps=50"])).unwrap();
         assert!(args.release);
-        assert_eq!(args.comptime_steps, Some(50));
+        assert_eq!(args.const_steps, Some(50));
         assert_eq!(parse(&argv(&["-j", "3"])).unwrap().jobs, Some(3));
     }
 
@@ -206,7 +206,7 @@ mod tests {
         assert!(parse(&argv(&["app"])).unwrap_err().contains("standard input"));
         assert!(parse(&argv(&["--bogus"])).unwrap_err().contains("unknown option `--bogus`"));
         assert!(parse(&argv(&["--release=yes"])).unwrap_err().contains("takes no value"));
-        assert!(parse(&argv(&["--comptime-steps", "0"])).unwrap_err().contains("positive number"));
+        assert!(parse(&argv(&["--const-steps", "0"])).unwrap_err().contains("positive number"));
         assert!(parse(&argv(&["--diagnostic-format", "xml"])).unwrap_err().contains("unknown diagnostic format"));
     }
 }

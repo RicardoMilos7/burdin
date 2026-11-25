@@ -74,7 +74,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         link_libs: &args.link_libs,
         mode: EntryMode::Fuzz,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,

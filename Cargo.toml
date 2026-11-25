@@ -15,7 +15,7 @@ burdin_doc = { path = "crates/burdin_doc" }
 burdin_tir = { path = "crates/burdin_tir" }
 burdin_sema = { path = "crates/burdin_sema" }
 burdin_check = { path = "crates/burdin_check" }
-burdin_comptime = { path = "crates/burdin_comptime" }
+burdin_interp = { path = "crates/burdin_interp" }
 burdin_lint = { path = "crates/burdin_lint" }
 burdin_query = { path = "crates/burdin_query" }
 burdin_refactor = { path = "crates/burdin_refactor" }

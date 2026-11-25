@@ -76,7 +76,7 @@
         },
         {
           "name": "storage.modifier.burdin",
-          "match": "\\b(any|comptime|mut|own|priv|unsafe|where)\\b"
+          "match": "\\b(any|mut|own|priv|unsafe|where)\\b"
         },
         { "name": "keyword.operator.cast.burdin", "match": "\\b(as)\\b" },
         { "name": "constant.language.boolean.burdin", "match": "\\b(false|true)\\b" },

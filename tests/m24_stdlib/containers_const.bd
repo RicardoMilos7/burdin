@@ -1,0 +1,42 @@
+//@ run
+//> [9, 7, 5]
+//> [3, 4, 1, 2]
+//> 4
+
+// `Set`, `Deque`, and `PriorityHeap` are ordinary library code over `List` and `Map`, so a constant evaluation can
+// build and consume them (spec/stdlib.md, "`Set<T>`", "`Deque<T>`", "`PriorityHeap<T>`").
+
+fn top_three(): String {
+    let mut heap = PriorityHeap<i32>.from([5, 9, 1, 7, 3])
+    let mut out = List<i32>.new()
+    while out.len() < 3 {
+        out.push(heap.pop().unwrap())
+    }
+    format("{out:?}")
+}
+
+fn rotated(): String {
+    let mut d = Deque<i32>.from([1, 2, 3, 4])
+    let mut turns = 0
+    while turns < 2 {
+        let front = d.pop_front().unwrap()
+        d.push_back(front)
+        turns = turns + 1
+    }
+    format("{d:?}")
+}
+
+fn distinct(): usize {
+    let s = Set<i32>.from([1, 2, 2, 3, 3, 3, 4])
+    s.len()
+}
+
+const TOP: String = top_three()
+const ROTATION: String = rotated()
+const COUNT: usize = distinct()
+
+fn main() {
+    println("{TOP}")
+    println("{ROTATION}")
+    println("{COUNT}")
+}

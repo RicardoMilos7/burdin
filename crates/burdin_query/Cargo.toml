@@ -10,7 +10,7 @@ burdin_syntax.workspace = true
 burdin_tir.workspace = true
 burdin_sema.workspace = true
 burdin_check.workspace = true
-burdin_comptime.workspace = true
+burdin_interp.workspace = true
 
 [dev-dependencies]
 burdin_diag.workspace = true

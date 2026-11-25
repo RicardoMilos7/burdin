@@ -44,17 +44,18 @@ fn negatives() {
     view.swap(0, 1)
     let mut m: Map<i32, i32> = Map<i32, i32>.new()
     m.insert(1, 2)
-    // The `mut`s inside a `comptime` block are used when the block runs at compile time.
-    let table = comptime {
-        let mut t = [0 as u64; 3]
-        let mut i: usize = 0
-        while i < 3 {
-            t[i] = (i + 1) as u64
-            i = i + 1
-        }
-        t
+    println("{} {} {} {} {} {} {}", assigned, pushed.len(), counter.peek(), passed.len(), written, m.len(), TABLE[2])
+}
+
+// The `mut`s inside a `const` initializer are used when the initializer runs at compile time.
+const TABLE: [u64; 3] = {
+    let mut t = [0 as u64; 3]
+    let mut i: usize = 0
+    while i < 3 {
+        t[i] = (i + 1) as u64
+        i = i + 1
     }
-    println("{} {} {} {} {} {} {}", assigned, pushed.len(), counter.peek(), passed.len(), written, m.len(), table[2])
+    t
 }
 
 fn main() {

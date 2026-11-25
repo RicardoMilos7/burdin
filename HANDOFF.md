@@ -4,6 +4,30 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Comptime removed (2026-11-25).** The owner did not like the `comptime` implementation, so the language surface was
+removed; a macro system will be designed later (a GitHub issue tracks it, and nothing of it is implemented). Removed:
+`comptime E` and `comptime { ... }` expressions, `comptime name: Type` parameters and per-value specialization (the
+1024-specialization limit), `comptime if`/`comptime if let`/`comptime for` as syntax, `comptime assert`, and `comptime
+generate` (declaration generation, issue #280, with `spec/generate.md`, `tests/generate/`, and the generate pass), the
+test attribute `[differential]`, and the `comptime` keyword (it is an ordinary identifier now, and so is `generate`).
+`spec/comptime.md` and `spec/generate.md` are deleted, and E0223, E0242, and E0243 are retired (their numbers are never
+reused); decision 34 in `tests/README.md` is marked removed. Kept: the interpreter, in the crate renamed
+`burdin_comptime` to `burdin_interp`, for `const` and `static` evaluation (array lengths and const-generic arguments
+included), `burdin repl`, `burdin test --interpret`, and `embed`; materialization, purity (E0224), the step budget
+(E0225, now `--const-steps N`, which was `--comptime-steps`), and panics (E0222); reflection (`Type.name/size/align/
+fields/variants`, `x.{name}`, user `derive`); built-in derives, const generics, build scripts, the `target` and `features`
+modules. E0220 survives for `break`/`continue` leaving an unrolled reflection loop and for a `static` in a `const`
+initializer. What replaces the removed forms: (1) a plain `if` (and `else if` chain; never `if let`) whose condition is
+built only from literals, `const` items, operators, enum variant paths, and the `target`/`features` modules keeps only
+the taken branch in the generated code, while both branches are still checked (`spec/const-eval.md`, CE4); every
+`comptime if` in `std/` and `packages/tls` became a plain `if`; (2) a plain `for item in Type.fields` or `Type.variants`
+(the iterable literally a type path, `Self`, or a type parameter followed by `.fields`/`.variants`) is unrolled by sema as
+`comptime for` was, and a run-time loop over the array needs it bound first (`spec/reflection.md`, RFL4). The rules are
+`spec/const-eval.md` CE1-CE12: CT1 became CE1, CT7 CE2, CT3 CE3, CT5 CE4, CT6 CE5, CT9 CE6, CT10 CE7, CT11 CE8, CT12
+CE9, CT13 CE10, CT14 CE11, CT15 CE12, and CT2, CT4, CT8, and GN1-GN10 are gone. The test folder `tests/m20_comptime` is
+`tests/m20_const`. bindgen and the Rust-interop module check layouts with a `priv const NAME: () = assert(...)` whose
+failure is E0222 (it was a `comptime assert`, E0223). Older sections below keep their historical wording.
+
 **`match` on an `any I` (issue #926 item 4, 2026-11-24).** A `match` arm may be a type pattern `name: T` or `_: T`
 (`spec/existentials.md` AN15, `spec/grammar.md` `TypePat`), on an `any I` or an `AnyError`; a final catch-all (`else`, `_`, or a
 binding that receives the whole box) is required (E0006 without one). Decision: the design said an `Error` is inspected "with
@@ -211,7 +235,7 @@ was.
 **Documentation consistency pass (issues #946-#967, 2026-11-23).** The spec, the tests README, the design, and the
 HANDOFF now agree with the compiler on the points those issues named: `derive`, `blocking`, slice receivers, and closures
 are in the grammar; a const-specific impl (`Grid<3> { ... }`) is implemented and tested (`m21_reflect/const_impl_specific`),
-so CG8 no longer lists it; the comptime file rule is `embed` alone (CT15); there is no MIR (decision 6); decision 34 is
+so CG8 no longer lists it; the comptime file rule is `embed` alone (CE12); there is no MIR (decision 6); decision 34 is
 generation and decision 35 compound assignment; the stage 0 count is 294 (`run_tests.py --list m01_ ... m11_`); and the
 stage 1 "When wanted" list is one table. One code change came with it: `.any(...)` on a receiver bounded by `Iterator`
 now finds the default method (`crates/burdin_sema/src/fncx/generic.rs`, `param_method_call`), as the spec already said
@@ -221,10 +245,10 @@ struct-field case (#919), `collect<T>()` (#922), and a return-position `impl I`,
 (`m15_any/impl_not_parameter` pins the E0201 until then).
 **`embed` as a static byte view (issue #969, 2026-11-23).** `let bytes: [u8] = embed("data.bin")` is a static
 view of the file with no length written, so it can be returned from a function, passed as a parameter, and held in
-a local (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
+a local (`spec/const-eval.md` CE12, `spec/memory-rules.md` RT4). The check (`crates/burdin_sema/src/fncx/embed.rs`)
 keys on the expected type `[u8]`; the typed tree has a new `ExprKind::Bytes` (static, like `Str`), codegen emits it
 as a private constant global, and the comptime interpreter reads it as a `[u8]` slice. A constant may not have type
-`[u8]`: CT3 keeps constants to scalars, `str`, `String`, and aggregates of those, so `const DATA: [u8] = embed(...)` is
+`[u8]`: CE3 keeps constants to scalars, `str`, `String`, and aggregates of those, so `const DATA: [u8] = embed(...)` is
 E0221 (a decision: a view is bound in a function or a `let`). Remaining gap: `[u8; N]` still needs its length written
 where the array is named; an inferred `embed_bytes` form from the issue was not built. Tests:
 `tests/m21_reflect/embed_slice` (run) and `embed_slice_invalid` (E0240, E0241, E0221). Verified: the m21 folder
@@ -287,14 +311,14 @@ Verification (2026-11-22): the full conformance suite in debug (1226 passed, 0 f
 `check_fmt.py` (427 checks).
 **Declaration generation in comptime (issue #280, 2026-11-22).** A module-scope `comptime generate { ... }` block is
 evaluated at compile time to a `String` of Burdin source; the compiler parses it and adds the `struct`, `enum`, and
-`fn` declarations to its module. The decisions (`spec/generate.md`, GN1-GN10; decision 34 in `tests/README.md`): source
+`fn` declarations to its module. The decisions (removed with `comptime`; the pages `spec/generate.md` and decision 34 are gone): source
 text as the mechanism (the parser's own `struct`/`enum`/`fn` items, not typed item values), names that are not
 hygienic (as user derives are, decision 26 in `tests/README.md`), and generation before the whole-program check: step 1 checks each
 generator against the hand-written declarations only (fresh caches), step 2 runs them under the comptime rules, step 3
 parses and adds their text, step 4 checks the whole program. The block's parse-time form is a private
 `fn "comptime generate N"(): String`, like `comptime assert N`, recorded in `ast::File.generators`. The driver is
 `crates/burdin_query/src/db.rs` (`generate`, `sema_packages`, `reached_functions`); the text parser is
-`crates/burdin_syntax/src/generate.rs`; the comptime entry point is `burdin_comptime::run_generator`; the check cache
+`crates/burdin_syntax/src/generate.rs`; the comptime entry point is `burdin_interp::run_generator`; the check cache
 keys a module on its generated text (`Module.generated`, GN8). Tests: `tests/generate/` (17 programs), `tests/fmt/generate.*`,
 `crates/burdin_query/tests/generate.rs`, and parser unit tests in `burdin_syntax`. Verified: `tests/run_tests.py generate`
 passes in debug (the 3 extra `m22` build fixtures match the filter), the full debug suite passes (1228 passed, 0 failed,
@@ -426,7 +450,7 @@ themselves.
 `IntTy::key` (the top bit flipped). Division and remainder use the runtime's own routine (`sdivrem128`/`udivrem128`), so
 no `__divti3` is linked (MSVC has none). Overflow checks are the existing debug-only checks; `MIN / -1` wraps in release.
 Comptime and run-time ranges and range iterators compare in key space (`to_key`/`key_ty` in
-`crates/burdin_comptime/src/interp.rs`), so a `u128` range straddling `2^127` runs in order and stops at the top of the type.
+`crates/burdin_interp/src/interp.rs`), so a `u128` range straddling `2^127` runs in order and stops at the top of the type.
 Decisions: a literal above `u128::MAX` is a lexer E0008, so its file is not type checked (CK4) and the other diagnostics
 of that file are suppressed; I left that behavior as it is. `-1` for an unsigned type stays E0003. Not covered (no test
 claims them): serialization, `[rust.crates]` interop, sanitizers on 128-bit operations, and the high-half hashing
@@ -815,9 +839,9 @@ in the entry block. The tests are `tests/m16_errors/` with 25 tests.
 
 The thirty-fourth session implemented milestone 21, reflection, user derives, const generics, and `embed` (issue
 #166, sub-issues #167-#172). It decided first (`spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9,
-`spec/comptime.md` CT15) that reflection is five compile-time members of every type that sema evaluates while it
+`spec/const-eval.md` CE12) that reflection is five compile-time members of every type that sema evaluates while it
 checks a body, that a `comptime for` over `Type.fields`/`variants` is unrolled in sema rather than in
-`burdin_comptime` (because `x.{field.name}` needs the name to type the access), that a user derive is `derive Name {
+`burdin_interp` (because `x.{field.name}` needs the name to type the access), that a user derive is `derive Name {
 fn ... }` registered as the impl block `Type: Name` for each type that lists it in `derives (...)`, that a const
 argument is a `Ty::Const` value so the instance, substitution, and inference code for types serves values too, and
 that `embed` reads the file in sema and records it as a build input. New in the compiler: the `derive` item and the
@@ -871,7 +895,7 @@ fails that test; `burdin build`/`run` use the plain C heap. In the compiler, `bu
 marker on `List`/`Map`/`Heap` and the owning iterators, `Ty::Shared`, the allocator builtins and methods, and
 `Program::allocator_fns`; sema resolves allocator arguments, the default type parameters, and the `new_in` calls;
 `burdin_codegen/src/emit/alloc.rs` calls the allocator implementation (every argument by address) and the runtime
-gained the checking allocator and the leak check; `burdin_comptime` models `Shared` as its value and rejects
+gained the checking allocator and the leak check; `burdin_interp` models `Shared` as its value and rejects
 explicit allocation as impure (E0224). `std/src/alloc.bd` adds `Allocator`, `Global`, and `Arena`. The new
 diagnostics are E0270, E0271, and E0272. The tests are `tests/m23_allocators/` with 28 conformance tests, the
 `tests/runner/leaks/` fixture, and the leak-detection checks in `tests/check_test_runner.py`; the suite is 577
@@ -882,7 +906,7 @@ two runner fixtures reported it before the fix.
 The thirty-sixth session implemented the differential tests of issue #444, the last sub-issue of #438: a test
 item may carry `[differential]`, and the runner then compares the `Ok`/`Err` outcome of the same body run by the
 comptime interpreter while the package is compiled with the compiled test's outcome.
-`burdin_comptime::evaluate_differential_tests` runs each `[differential]` body after the rewrite of CT13, through
+`burdin_interp::evaluate_differential_tests` runs each `[differential]` body after the rewrite of CE10, through
 the interpreter's function-call entry point, under the ordinary purity, panic, budget, and profile rules; the
 outcome travels in `tir::TestEntry.comptime` to the runner, which treats a different outcome or an aborted compiled
 run as a divergence with a note naming both outcomes.
@@ -904,7 +928,7 @@ inheritable pipes converted to CRT descriptors. `wait_with_output` drains both p
 `PeekNamedPipe` on Windows), so a child writing a lot to one of them cannot block the other; a `ChildStdin` write is
 unbuffered, and every handle and the `Child` close their operating-system resources on drop. The tests are
 `tests/m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, and `process_test_mode`,
-plus `tests/m20_comptime/purity_process`; the suite is 713 tests (711 run in debug).
+plus `tests/m20_const/purity_process`; the suite is 713 tests (711 run in debug).
 
 The thirty-eighth session implemented milestone 2.1, tasks and the scheduler (issue #198, sub-issues #199-#206,
 #301-#304, and #405), the first stage 2 milestone. Tasks are stackful coroutines scheduled cooperatively on a pool of
@@ -1103,8 +1127,8 @@ empty or was written by `burdin doc` (`.burdin-doc` lists what a run wrote, and 
 golden pages in `tests/doc/expect/` in every CI job; the doc tests are in the fifty-first session's paragraph below.
 
 The thirty-third session implemented milestone 20, comptime (issue #157, sub-issues #158-#165 and #305-#308). It
-decided first (issue #158, `spec/comptime.md` CT1) that the engine is an interpreter over the checked typed tree, in
-the new crate `crates/burdin_comptime` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after
+decided first (issue #158, `spec/const-eval.md` CE1) that the engine is an interpreter over the checked typed tree, in
+the new crate `crates/burdin_interp` (depending only on `burdin_tir` and `burdin_diag`), run by the driver after
 the memory checks and before code generation; there is no MIR, and #159 is closed as not chosen. `comptime` is a
 keyword: `comptime E` and `comptime { ... }`, `comptime name: T` parameters, `comptime if`, `comptime for`, and
 `comptime assert(cond, "msg")` (also as a module item). Sema checks the visibility rule (only constants, comptime
@@ -1115,13 +1139,13 @@ the forms that cannot be comptime (E0220); a `const` initializer is now any mate
 where the tree moves, runs user `Drop` implementations where compiled code would, follows the profile's overflow
 rule, and matches the runtime's float text, integer parsing, hashing, and `size()`/`align()` layout; output, files,
 the environment, processes, and C are E0224, panics are E0222, a failed assertion is E0223, and the step budget
-(10,000,000, `--comptime-steps N`), call depth 512, and 1024 specializations per function are E0225. The pass
+(10,000,000, `--const-steps N`), call depth 512, and 1024 specializations per function are E0225. The pass
 (`lib.rs`) evaluates every constant in declaration order (a cycle through calls is E0009), replaces each comptime
 expression by its materialized literal (`reify.rs`), keeps only the selected `comptime if` branch, unrolls
 `comptime for`, and specializes each call of a function with comptime parameters per argument value.
 `std/src/target.bd` adds `target.os()`/`target.arch()` for platform branches. The driver runs the compiler on a
 thread with a 1 GiB stack (reserved, not committed) so deep comptime recursion does not overflow. The tests are
-`tests/m20_comptime/` with 40 tests, including `interp_*` tests that compare a comptime result with the same code
+`tests/m20_const/` with 40 tests, including `interp_*` tests that compare a comptime result with the same code
 run at run time.
 
 The thirty-second session implemented milestone 19, operator overloading and `Index` (issue #150, sub-issues
@@ -1220,19 +1244,19 @@ conformance suite is unchanged at 1052 passed (debug) with 1055 tests.
 | Extension methods | `spec/extensions.md`, `crates/burdin_syntax/src/ast.rs` (`Item::Extension`), `crates/burdin_sema/src/extensions.rs`, `crates/burdin_sema/src/{declare,imports,prelude,resolve}.rs`, `crates/burdin_sema/src/fncx/call.rs` | Milestone 18 (issue #143). `fn Type.name(self, ...)` adds a method to a local, imported, or built-in type; visible in its module and where imported by name; methods win over a same-named extension, which gets the warning E0215 at its declaration. Generic receivers and method parameters are monomorphized. New codes E0215 (warning) and E0216; the tests are `tests/m18_extension/` |
 | Closures | `crates/burdin_tir`, `burdin_syntax`, `burdin_sema`, `burdin_check`, `burdin_codegen`, `spec/memory-rules.md` CL1-CL11 | Milestone 12 (issue #88). `Ty::Fn { sig, kind, borrowed }` is the closure interface type; `Fn`, `FnMut`, and `FnOnce` are contextual type names and generic bounds, monomorphized per closure type. A closure value is `{ code, env, drop }` with a heap capture record; `ExprKind::Closure` builds it, `ExprKind::ClosureCall` calls it, and `Program::closures` holds the bodies. Capture analysis (borrow vs move), the kind, the loans and move checks, function values, and the drop glue are implemented; the tests are `tests/m12_closures/` |
 | Conformance tests | `tests/` | 1055 tests. All pass: m01 to m24 and s2_tasks, s2_channels, s2_shared, and s2_io (debug and release; the release run skips the debug-only and platform-specific tests) |
-| Comptime | `spec/comptime.md`, `crates/burdin_comptime/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CT13). Codes E0220-E0225; `--comptime-steps N`; tests in `tests/m20_comptime/` |
+| Comptime | `spec/const-eval.md`, `crates/burdin_interp/`, `crates/burdin_sema/src/{comptime.rs,fncx/comptime.rs}`, `std/src/target.bd` | Milestone 20 (issue #157). An interpreter over the typed tree evaluates constants, comptime expressions, `comptime if` conditions, `comptime for` iterables, `comptime assert`, and `comptime` arguments, then rewrites the program so code generation sees no comptime construct (CE10). Codes E0220-E0225; `--const-steps N`; tests in `tests/m20_const/` |
 | Diagnostics | `crates/burdin_diag`, `crates/burdin_driver`, `docs/error-codes.md`, `docs/diagnostics.md`, `spec/diagnostics.md` | Four formats (`human`, `short`, a versioned `json` with `docs/diagnostic.schema.json`, and `sarif`), color and width control, hyperlinks to the error reference, notes and suggestions with spans and edits, deterministic ordering, `--error-limit`, and `burdin explain`; `tests/check_diagnostics.py` and `tests/check_error_docs.py` run in every CI job |
 | Test runner | `spec/test-runner.md`, `crates/burdin_driver/src/test_runner.rs` and `test_runner/{select,report,doc_tests}.rs`, `tests/check_test_runner.py` | `[ignore]`, `[timeout(ms)]`, `[should_panic]`, `[should_fail]`, `-j`/`--jobs`, `-p`/`--workspace`/`--filter`, output capture, and per-test isolation. An invalid attribute is E0170. The doc tests of the doc comments run with the blocks (or alone with `--doc`): each Burdin block becomes a one-file package depending on the documented package, wrapped in `fn main` when it has none, with its attributes (`ignore`, `no_run`, `should_panic`, `compile_fail`) and its hidden `# ` setup lines; a failure reports the doc comment's file and line (issues #250, #650-#652). The rules are in `spec/test-runner.md`; four m10 conformance tests and the black-box script (fixtures in `tests/runner/`) prove them, and every CI job runs the script (issues #438-#443) |
 | Linter | `spec/lint.md`, `crates/burdin_lint/`, `crates/burdin_driver/src/lint.rs`, `docs/lints.md`, `tests/check_lint.py` | `burdin lint`: lints `L0000`-`L0016`, levels (`allow`/`warn`/`deny`, the `all` and `warnings` groups), the manifest `[lint]` table, `// lint: allow(...)` comments, and `--fix` with a diff preview and an all-or-nothing write. Fixtures in `tests/lint/`; every CI job runs the script (issues #230-#233, #464-#466, #661) |
 | Inspection commands | `spec/inspect.md`, `crates/burdin_inspect/`, `crates/burdin_driver/src/{expand,asm,bloat,emit}.rs`, `tests/check_inspect.py`, `tests/inspect/` | `burdin expand`, `build --emit`, `burdin asm`, `burdin bloat`, and `check --print-instances` (issue #595; INS1-INS19). Every command reads what the compiler built; the expander patches each file's text from the typed tree. Every CI job runs the script |
-| Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--comptime-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
+| Type-check command | `spec/check.md`, `crates/burdin_driver/src/check.rs`, `tests/check_check.py`, `tests/check/` | `burdin check`: `front_end` without code generation or linking, a build's diagnostics and exit statuses, `--tests` for `test` blocks and library packages, `--release`, `--const-steps`. The script runs fixtures with goldens and every conformance test, and every CI job runs it (issue #237) |
 | Error-code coverage | `tests/check_tests.py`, `tests/README.md` | Every registered code needs a `//~` marker or a row in the documented-exceptions table; CI fails otherwise (issue #445) |
 | E9000 audit | `spec/e9000-audit.md`, `tests/check_e9000.py` | Every remaining `Code::UNSUPPORTED` site has a `// e9000:` marker, an owning milestone, and the issue that removes it. The stage 0 diagnostics that had no future milestone (duplicate names, cyclic declarations, invalid `Drop`/`extern`/`repr` declarations, non-generic type arguments) now have permanent codes and tests; string patterns and inclusive slicing are implemented (issue #84) |
 | Platform support | `docs/platform-support.md`, `tests/check_platform_support.py` | The tested OS/architecture pairs (Linux x86-64, macOS arm64, Windows x86-64), the untested ones (Linux arm64, macOS Intel, Windows arm64), the runtime features each CI job proves, and the known gaps. The script checks the page against `ci.yml`, compiles and runs its example, and proves binary-safe standard output and file I/O byte-for-byte; every CI job runs it (issue #457) |
 | Unit tests | `crates/*/src` | Focused tests for the front end: the lexer token stream (`burdin_syntax/src/lexer.rs`), parser recovery (`burdin_syntax/src/parser/mod.rs`), type unification (`burdin_sema/src/generics.rs`), and exhaustiveness (`burdin_sema/src/exhaust.rs`), plus type and place questions in `burdin_tir`, origin and move state in `burdin_check`, diagnostics in `burdin_diag`, and the driver's argument, selection, verdict, isolation, diagnostics-presentation, build-metadata, and parse-job logic (`burdin_driver`). CI runs `cargo test --workspace` in every job, and `tests/check_unit_tests.py` fails when a front-end crate or one of those four areas loses its tests (issue #45) |
 | Standard library | `std/` | The std, written in Burdin and embedded in the driver: `std.bd` (the `Error` interface and the dynamic `AnyError`, `TraceFrame`, the `IoError`, `ParseIntError`, and `AssertError` error enums, `CStr`, `assert`, `assert_eq`, `__test_assert`/`__test_assert_eq`, `unreachable`), `io.bd`, `env.bd`, `process.bd`, `mem.bd`, `iter.bd`, `fmt.bd` (formatting), `target.bd` (the compilation target, for `comptime if`), `reactor.bd` (the reactor thread, the timers, `__offload`, and the blocking-extern shim support), `net.bd` (TCP, UDP, `SocketAddr`, and `lookup_host`). Every package gets it as an implicit dependency and every module gets its public names as a prelude |
 | Git repository | `main` | Initialized. `.gitattributes` keeps LF line endings |
-| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_comptime`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
+| Cargo workspace | `Cargo.toml`, `crates/` | `burdin_diag`, `burdin_syntax`, `burdin_tir`, `burdin_sema`, `burdin_check`, `burdin_interp`, `burdin_codegen`, `burdin_driver` (`burdin` binary), `burdin_bench`, `burdin_fuzz` (the `burdin-fuzz-syntax` binary); see the layout in `CLAUDE.md` |
 | Dependencies and licenses | `Cargo.lock`, `tests/dependencies.txt`, `tests/check_deps.py`, `docs/dependencies.md` | 18 external crates (`inkwell` plus everything it pulls in through `llvm-sys` 211); all licenses permissive (mostly MIT OR Apache-2.0; `inkwell` is Apache-2.0); exact `=x.y.z` pins with crates.io source and checksum; `tests/check_deps.py` checks all of it offline and re-verifies the licenses through `cargo metadata` after the build. Every CI job runs it (issue #449) |
 | Reachability | `crates/burdin_codegen/src/emit/reach.rs` | Only functions reachable from `main`, the tests, exported functions, `Drop` implementations, and closure bodies get a real body; the rest are emitted as `unreachable` so the standard library does not bloat every program's IR |
 | Runtime | `crates/burdin_codegen/src/runtime.rs` | `main`, buffered output with an explicit flush, panic backtraces, the stack-overflow guard, panics (`burdin_rt_panic`, `burdin_rt_panic_bounds`), `String` allocation/clone/push/push-char, heap allocation (`burdin_rt_alloc`, `burdin_rt_realloc`, `burdin_rt_free`), `CString` allocation (`burdin_rt_cstring_from`), number/char/str to `String`, `str` `starts_with`, `find`, `find_str`, `eq`, `cmp`, integer parsing, file reads/writes (`fopen`/`fread`/`fwrite`/`fclose`), `CStr.to_string` (`strlen` plus the string allocator), `env.args()`, `process.exit`, and `process.run` (`system`). Generated as LLVM IR into every program; calls libc (`write`, `malloc`, `realloc`, `free`, `memcmp`, `strlen`, `abort`, `exit`, `system`, the `fopen` family). `cc` only links. In a `burdin test` build the generated entry point also calls `atoi` to read the test index from `argv[1]` |
@@ -1692,7 +1716,7 @@ The non-feature work of issue #421 is implemented and checked by four scripts th
 The front end is now a library with a memo, `crates/burdin_query` (`spec/query.md`, QL1-QL9), and the command line
 runs on it. `burdin build`, `run`, `test`, and `lint` call `Db::from_workspace` and `Db::analyze` in
 `front_end`; the driver keeps only the build phase (scripts, grants), code generation, and the tool commands, and
-its `burdin_sema`, `burdin_check`, and `burdin_comptime` dependencies are gone. `package.rs` moved from the driver to
+its `burdin_sema`, `burdin_check`, and `burdin_interp` dependencies are gone. `package.rs` moved from the driver to
 `burdin_query::package` so the library can open a package by itself.
 
 The engine is an in-house memo, not salsa (QL1): `burdin_tir::Program` and the checker's registries are `Rc`/`RefCell`
@@ -1926,7 +1950,7 @@ one growing program held in memory: `fn main() {` first, the statements of every
 accepted items below — a layout chosen so the interpreter's closure and vtable indices stay stable as items are
 added, which lets binding values (closures included) be carried from input to input. Every input is classified by
 the parser (module content, statements, incomplete, or bad), checked by the query library in test mode, and
-evaluated by `burdin_comptime`, which gained `session.rs`: a public boundary over the typed tree that evaluates a
+evaluated by `burdin_interp`, which gained `session.rs`: a public boundary over the typed tree that evaluates a
 body's statements from an index with the bindings pre-bound, carries the values out, and (for `:reset`) runs their
 drops. Printing in a session is real: the interpreter's output builtins write the process's streams in `Output::Live`
 mode, so an expression's value prints through the standard library's own `Debug` code and matches the compiled
@@ -2410,14 +2434,14 @@ What is in place:
   code. `reach.rs` keeps it.
 - **Tooling.** `burdin fmt` reads the `static` item. Every other tool matches the new typed-tree variant.
 
-Tests: `tests/m20_comptime/static_values`, `static_mut`, `static_view`, `static_in_block` (E0302), `static_string`
+Tests: `tests/m20_const/static_values`, `static_mut`, `static_view`, `static_in_block` (E0302), `static_string`
 (E0303), `static_drop` (E0303), `static_assign` (E0005), `static_move` (E0101), `static_mut_safe` (E0161),
 `static_mut_borrow` (E0304), `static_comptime` (E0224), `static_const_init` (E0220), `static_array_len` (E0251),
 `const_global`; `tests/s2_tasks/static_in_task`; the parser unit tests in `crates/burdin_syntax/src/parser/mod.rs`.
 
 Open, for the user to decide:
 
-- **Atomics and `Mutex<T>` cannot be a static's type yet.** They are not materializable (CT3), so
+- **Atomics and `Mutex<T>` cannot be a static's type yet.** They are not materializable (CE3), so
   `static COUNT: AtomicI64 = AtomicI64.new(0)` is E0221. A counter that every task updates therefore has no static
   form. Options: a compile-time constructor for the atomic types, or a zero-initialized static form that the runtime
   fills in. GL3 says this, and no test covers it.
@@ -2969,11 +2993,11 @@ and two multi-unit static libraries linked into one program may both define the 
   (issue #445). The list is empty today.
 - **Differential tests are implemented (issue #444).** A `[differential]` body runs at compile time through the
   interpreter and as the compiled test; the runner compares the `Ok`/`Err` outcomes and reports a divergence with
-  both. The compile-time run follows the ordinary CT9-CT11 rules, so an impure or panicking body is a compile error
+  both. The compile-time run follows the ordinary CE6-CE8 rules, so an impure or panicking body is a compile error
   (E0224/E0222), and `differential` cannot combine with `should_panic` or `should_fail` (E0170). The check is
   `tests/check_test_runner.py` with `tests/runner/differential/`, whose divergent case uses the unspecified `Map`
   iteration order, plus the `attributes_differential.bd`, `differential_invalid.bd`, and `differential_impure.bd`
-  conformance tests. The `interp_*` tests in `tests/m20_comptime/` remain the per-construct comparisons.
+  conformance tests. The `interp_*` tests in `tests/m20_const/` remain the per-construct comparisons.
 - **Diagnostics are sorted once, never streamed** (issue #436). The semantic and memory checks already collect the
   whole list before the driver prints it, so the renderer sorts by file (load order), byte offset, code, message,
   and discovery order. That makes equal spans stable and the output byte-for-byte deterministic. The "report every
@@ -3469,8 +3493,8 @@ and two multi-unit static libraries linked into one program may both define the 
    function-pointer types and `union` declarations of its own remain on the stage 1 "Fixes" list.
 2. The remaining stage 1 work is milestone 24 and the open type-system item: writing a built-in interface by
    hand (#402). Known limits to keep in mind: the comptime ones (a closure inside a function with comptime
-   parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CT9;
-   comptime results are not cached, CT14), the m21 ones (problems 24-27 above), the temporary-move and temporary-drop bugs (problems
+   parameters is shared by its specializations; `Map` iteration at compile time is insertion order, CE6;
+   comptime results are not cached, CE11), the m21 ones (problems 24-27 above), the temporary-move and temporary-drop bugs (problems
    26, 28, and 32), and the allocator limits (problems 29-31).
 3. The stage 0 correctness gaps of issue #48 are closed (twenty-third session): the view lifetime (E0123), ranges as
    values, the tracked move forms, the generic gaps, `pub use` and module visibility, and the C bridge. What stage 1
@@ -3569,7 +3593,7 @@ reporting them would need the follow-on rule to know which parsed items refer to
 Decided: the link of `libssl`/`libcrypto` is automatic on Windows and TLS is a feature on `http`, on by default. The
 `tls` package keeps `[features] default = ["openssl"]`; its OpenSSL libraries are named by an optional package
 `packages/tls/openssl_link` (PKG34: an inactive optional dependency adds no libraries), and every OpenSSL call of `tls`
-sits in a `comptime if features.openssl` branch (CT5) whose other branch is `TlsError.Unsupported`. `http` declares
+sits in a `comptime if features.openssl` branch (CE4) whose other branch is `TlsError.Unsupported`. `http` declares
 `tls = { official = true, default-features = false }` with `default = ["tls"]` and `tls = ["tls/openssl"]`, so
 `http = { official = true, default-features = false }` in a program links no OpenSSL. The table form `{ official = true,
 ... }` is new (PKG15, `crates/burdin_query/src/package.rs`). The driver (`crates/burdin_driver/src/openssl.rs`) finds an

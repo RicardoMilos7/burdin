@@ -246,7 +246,7 @@ with harness.temporary_dir("burdin-watch-") as work:
     )
     write(
         work / "featured" / "src" / "main.bd",
-        'use features.extra\n\nfn main() {\n    comptime if extra {\n        println("with extra")\n    } else '
+        'use features.extra\n\nfn main() {\n    if extra {\n        println("with extra")\n    } else '
         '{\n        println("base")\n    }\n}\n',
     )
     featured = Watch(["watch", "run", str(work / "featured"), "--features", "extra", "--no-clear"], work)

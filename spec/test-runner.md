@@ -24,7 +24,6 @@ test "name" [timeout(500)] { ... }
 test "name" [should_panic] { ... }
 test "name" [should_panic("message")] { ... }
 test "name" [should_fail] { ... }
-test "name" [differential] { ... }
 test "name" [ignore, timeout(500), should_panic("message")] { ... }
 ```
 
@@ -39,15 +38,13 @@ stripped from a normal build). The accepted attributes are:
 | `should_panic` | The test must end in a panic abort. |
 | `should_panic("text")` | The same, and `text` must appear in the test's stderr. |
 | `should_fail` | The test must return an error (`Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. The failure is a typed `AssertError` (`spec/errors.md`, ERR9), and the test binary prints its message (the condition text, the values, and the location) to standard error before exiting, so it appears under the captured stderr heading. `should_fail` itself checks only the exit status, not the error value. |
-| `differential` | The body is also executed by the comptime interpreter while the package is compiled, and the compiled test must produce the same `Ok`/`Err` outcome. See [Differential tests](#differential-tests). |
 
 A test with none of these passes exactly when its process exits 0. A panic is any ending other than exit 0 or 1: a
 signal, an abort, or another exit status. `should_panic` and `should_fail` are opposite expectations and cannot be
 combined.
 
 An unknown attribute name, a repeated attribute, a value an attribute does not take (`ignore("x")`,
-`should_panic(1)`), a missing value (`timeout`), `should_panic` together with `should_fail`, or `differential`
-together with `should_panic` or `should_fail` is **E0170**. The attribute is reported at its name; the test is still
+`should_panic(1)`), a missing value (`timeout`), or `should_panic` together with `should_fail` is **E0170**. The attribute is reported at its name; the test is still
 declared, so one bad attribute does not cascade into follow-on diagnostics.
 
 ## Execution
@@ -175,7 +172,7 @@ shows ignored tests (with their `ignore` attribute) unless `--ignored` is given,
 `--include-ignored` has no effect. `--list` cannot be combined with `--junit`.
 
 The human format prints one line per selected test, its full path followed by its attributes in the source syntax
-and in a fixed order (`ignore`, `timeout(ms)`, `should_panic[("text")]`, `should_fail`, `differential`), then a
+and in a fixed order (`ignore`, `timeout(ms)`, `should_panic[("text")]`, `should_fail`), then a
 count line:
 
 ```
@@ -199,7 +196,7 @@ The count is `<n> test` or `<n> tests`, with `, <k> filtered out` when the selec
 | `path` | string | the full path, as a filter or `--exact` takes it |
 | `file` | string | the source file, spelled as diagnostics spell it |
 | `line` | number | the 1-based line of the test's name |
-| `attributes` | object | `ignore`, `timeout_ms` (number or `null`), `should_panic`, `should_panic_message` (string or `null`), `should_fail`, `differential` |
+| `attributes` | object | `ignore`, `timeout_ms` (number or `null`), `should_panic`, `should_panic_message` (string or `null`), `should_fail` |
 
 The language server's test integration (issue #374) and CI sharding scripts read this form.
 
@@ -287,32 +284,6 @@ a driver failure: the message goes to standard error and the exit status is 2, w
   human summary as described above and in the JSON `suite_finished` event. It is only a report. `--timeout` and
   `timeout(ms)` still kill a hung test.
 
-## Differential tests
-
-A test marked `[differential]` runs the same body twice: once through the comptime interpreter while the package is
-compiled (`spec/comptime.md`), and once as the compiled test under the runner. The test passes when the two runs
-produce the same outcome, so an interpreter/compiled divergence is caught automatically (issue #444).
-
-- The outcome is the body's `Ok` or `Err`: the interpreter's return value and the compiled dispatcher's exit status
-  0 or 1. A body that returns `Err` in both runs passes, just as `should_fail` would treat it; agreement is the
-  expectation, not success. This stage compares only `Ok`/`Err`; the dynamic error type carries no comparable value.
-- A compiled run that ends any other way (a panic, an abort, a signal, another exit status) while the interpreter
-  returned `Ok` or `Err` is a divergence, and the report gives the two outcomes.
-- The compile-time run happens after every `comptime` construct in the body has been evaluated and rewritten
-  (`spec/comptime.md`, CT13), under the same purity (CT9), panic (CT10), budget (CT11), and profile rules (a
-  profile with `overflow-checks = false` wraps integer overflow, CT1) as any other compile-time evaluation. A body the interpreter cannot
-  execute fails compilation: an impure operation is E0224, a panic is E0222, a failed `comptime assert` is E0223,
-  and an exhausted budget is E0225, each reported at the test item. Consequently a `[differential]` body cannot
-  print, read files or the environment, run processes, call C, or panic at compile time.
-- A body must be deterministic and may not depend on behavior the language leaves unspecified. In particular,
-  `Map` iteration is insertion order at compile time and hash order in compiled code (`spec/comptime.md`, CT9), so a
-  differential test that observes it can report a divergence; the language does not promise otherwise.
-- `differential` states no expectation of its own, so it cannot be combined with `should_panic` or `should_fail`
-  (E0170). `ignore` and `timeout` still apply. An ignored differential test is compiled and checked like any other,
-  so its body is still executed at compile time; only the compiled run is skipped.
-- One test binary is still built per package and each test still runs in its own process; the differential
-  comparison uses the `Ok`/`Err` exit status the dispatcher already produces.
-
 ## Snapshot tests
 
 A snapshot assertion compares a value's text with a copy the package keeps, so a test of a large or structured
@@ -385,7 +356,7 @@ assert_snapshot(value, @r#"Point { x: 1, y: 2 }"#)  // a raw inline snapshot hol
 
 ## Interpreting a test
 
-`burdin test --interpret` runs the `test` blocks in the compiler's interpreter (`spec/comptime.md`, CT1) instead of
+`burdin test --interpret` runs the `test` blocks in the compiler's interpreter (`spec/const-eval.md`, CE1) instead of
 compiling them, with a model of the C heap and the checks a sanitizer gives a compiled program (issue #622). It needs
 no linker, no sanitizer runtime, and no code generation, and a fault points at the source line that caused it.
 
@@ -397,7 +368,7 @@ no linker, no sanitizer runtime, and no code generation, and a fault points at t
   `--fuzz-replay` (a replay runs a compiled binary), with `--sanitize` (there is no compiled code), or with `--bless`
   and `--review` (a snapshot comparison reads the file system, so those tests are skipped). Interpreted tests run
   one at a time, so `-j` has no effect, and `--timeout` does not apply: the step budget of a compile-time evaluation
-  (`--comptime-steps`, CT11) ends a test that runs away, reported as a failure of that test.
+  (`--const-steps`, CE8) ends a test that runs away, reported as a failure of that test.
 - **IN2. The heap.** `__alloc(size, align)` returns a pointer into a modeled block whose bytes are uninitialized,
   `__realloc` grows or shrinks it, and `__dealloc` frees it. A pointer is an integer, so `p + n` moves by `n`
   elements of `p`'s type, `p - q` is a distance in elements, and casts between `CPtr` and the integer types keep
@@ -531,10 +502,7 @@ example is an ordinary program with no dispatcher to return an error.
 | `[ignore]`, the ignored count, `--ignored`, `--include-ignored` | `tests/m10_test_runner/attributes_ignore.bd`, `tests/check_test_runner.py` |
 | `[should_panic]`, `[should_panic("text")]`, `[should_fail]` | `tests/m10_test_runner/attributes_should_panic.bd`, `tests/check_test_runner.py` |
 | `[timeout(ms)]` | `tests/m10_test_runner/attributes_timeout.bd`, `tests/check_test_runner.py` |
-| `[differential]`: agreement, `Ok` and `Err` | `tests/m10_test_runner/attributes_differential.bd`, `tests/check_test_runner.py` |
-| `[differential]`: a divergent compiled run | `tests/runner/differential/`, `tests/check_test_runner.py` |
-| `[differential]`: a body the interpreter cannot run (E0224) | `tests/m10_test_runner/differential_impure.bd` (`//@ test-compile-fail`) |
-| Invalid attributes (E0170) | `tests/m10_test_runner/attributes_invalid.bd`, `tests/m10_test_runner/differential_invalid.bd` (`//@ test-compile-fail`) |
+| Invalid attributes (E0170) | `tests/m10_test_runner/attributes_invalid.bd` (`//@ test-compile-fail`) |
 | Parallel execution and deterministic failure order | `tests/check_test_runner.py` |
 | Output capture, `--verbose` | `tests/check_test_runner.py` |
 | Fresh working directory, clean environment, cleanup | `tests/check_test_runner.py` |

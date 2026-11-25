@@ -1,12 +1,12 @@
 //@ compile-fail
 
 // The path is a string literal that stays inside the file's directory, and a `[u8; N]` must have the file's
-// length (spec/comptime.md, CT15).
+// length (spec/const-eval.md, CE12).
 
 fn main() {
     let name = "data/greeting.txt"
     let a = embed(name) //~ E0241
-    let b = embed("../m20_comptime/comptime_block.bd") //~ E0241
+    let b = embed("../m20_const/const_table.bd") //~ E0241
     let c: [u8; 4] = embed("data/bytes.bin") //~ E0241
     println(a)
     println(b)

@@ -32,10 +32,8 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         truncated: lexed.truncated,
         test_count: 0,
         bench_count: 0,
-        comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
-        generators: Vec::new(),
     };
     p.file()
 }
@@ -56,10 +54,8 @@ pub fn parse_block(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> O
         truncated: false,
         test_count: 0,
         bench_count: 0,
-        comptime_asserts: 0,
         select_count: 0,
         bodies: Vec::new(),
-        generators: Vec::new(),
     };
     let block = p.block().ok()?;
     let clean = p.at_eof() && p.diags.len() == before;
@@ -79,14 +75,10 @@ pub(super) struct Parser<'a> {
     test_count: usize,
     /// How many `bench` items this file has parsed, for their generated function names.
     bench_count: usize,
-    /// How many module-scope `comptime assert` items this file has parsed, for their constant names.
-    comptime_asserts: usize,
     /// How many `select` expressions this file has parsed, for the names of their generated variables.
     select_count: usize,
     /// The block of every function and test body the file wrote, in source order ([`File::bodies`]).
     bodies: Vec<Span>,
-    /// The module-scope `comptime generate` items this file has parsed ([`File::generators`]).
-    generators: Vec<Generator>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -188,13 +180,11 @@ impl Parser<'_> {
 
     /// The name of a method declared in an `impl` block, an `interface`, or a `derive` body. Besides an identifier, it
     /// may be a word a `.` lets stand as a member name (`spec/grammar.md`, "Keywords"; issue #933): `any`, `impl`,
-    /// `error`, `comptime`, or the reserved `derive`.
+    /// `error`, or the reserved `derive`.
     fn member_name(&mut self, what: &str) -> PResult<Ident> {
         let name = match self.kind().clone() {
             TokenKind::Reserved(word) => word,
-            kind @ (TokenKind::Any | TokenKind::Impl | TokenKind::Error | TokenKind::Comptime) => {
-                kind.text().to_string()
-            }
+            kind @ (TokenKind::Any | TokenKind::Impl | TokenKind::Error) => kind.text().to_string(),
             _ => return self.ident(what),
         };
         let span = self.bump().span;
@@ -241,7 +231,7 @@ impl Parser<'_> {
     /// brackets.
     fn starts_item_only(kind: &TokenKind) -> bool {
         use TokenKind::*;
-        matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv | Comptime)
+        matches!(kind, Fn | Struct | Enum | Error | Interface | Type | Const | Use | Extern | Priv)
     }
 
     /// Recovers from an item that did not parse, which began at token `start`: skips to the next item, and records
@@ -693,51 +683,6 @@ struct Point { x: i32 }
     }
 
     #[test]
-    fn generate_items_are_functions_returning_a_string() {
-        // `comptime generate { ... }` at module scope is a private function with no parameters and the return type
-        // `String`, named so that no written name can refer to it, and recorded in `generators` for the front end
-        // (`spec/generate.md`, GN2). Its block is not one of the file's `bodies`.
-        let src = "comptime generate {\n    String.new()\n}\ncomptime generate { String.new() }\nfn good() {}\n";
-        let (file, out) = render(src);
-        assert_eq!(out, "");
-        assert_eq!(fn_names(&file), ["comptime generate 1", "comptime generate 2", "good"]);
-        assert_eq!(file.generators.len(), 2);
-        let Item::Fn(generator) = &file.items[0] else { panic!("expected a function") };
-        assert!(generator.is_priv && generator.params.is_empty());
-        assert!(
-            matches!(generator.ret.as_ref().map(|t| &t.kind), Some(TypeKind::Path(p)) if p[0].name.name == "String")
-        );
-        assert_eq!(file.generators[0].name, "comptime generate 1");
-        assert_eq!(file.generators[0].span, generator.span);
-        let keyword = &src[file.generators[0].keyword.lo as usize..file.generators[0].keyword.hi as usize];
-        assert_eq!(keyword, "comptime generate");
-        assert_eq!(file.bodies.len(), 1, "only `good`'s body is a function body");
-
-        // `generate` is a keyword only right after `comptime`.
-        let (_, out) = render("fn f(): i32 {\n    let generate = 1\n    generate\n}\n");
-        assert_eq!(out, "");
-    }
-
-    #[test]
-    fn generate_outside_module_scope_is_e0243_and_the_rest_parses() {
-        let (file, out) = render(
-            "fn main() {\n    comptime generate {\n        String.new()\n    }\n    let x = 1\n}\n\
-             Point: Display {\n    comptime generate { String.new() }\n    fn f(self) {}\n}\n\
-             fn good() {}\n",
-        );
-        let codes: Vec<&str> = out.lines().filter(|l| l.contains("error[")).collect();
-        assert_eq!(codes.len(), 2, "{out}");
-        assert!(codes.iter().all(|l| l.contains("E0243")), "{out}");
-        assert!(out.contains("t.bd:2:5:") && out.contains("t.bd:8:5:"), "{out}");
-        assert_eq!(fn_names(&file), ["main", "good"]);
-        assert!(file.generators.is_empty());
-        let Item::Fn(main) = &file.items[0] else { unreachable!() };
-        assert!(binding_names(&main.body).contains(&"x"), "the statements after the block still parse");
-        let Item::Impl(block) = &file.items[1] else { panic!("expected an impl block") };
-        assert_eq!(block.methods.len(), 1, "the method after the block still parses");
-    }
-
-    #[test]
     fn malformed_input_never_panics() {
         let snippets = [
             "",
@@ -1036,14 +981,13 @@ struct Point { x: i32 }
 
     #[test]
     fn a_member_name_may_be_a_keyword_a_dot_accepts() {
-        // A method of an impl block, an interface, or a derive body takes `any`, `impl`, `error`, `comptime`, and
+        // A method of an impl block, an interface, or a derive body takes `any`, `impl`, `error`, and
         // `derive` as its name, the words a `.` lets stand as names (spec/grammar.md, "Keywords"; issue #933).
         let (file, diags) = parse_str(
             "struct S { x: i32 }
              S {
     fn any(self): bool { true }
     fn impl(self): i32 { 1 }
-    fn comptime(self) {}
 }
              interface I {
     fn error(self): bool
@@ -1057,7 +1001,7 @@ struct Point { x: i32 }
         assert!(diags.is_empty(), "{:?}", diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>());
         let Item::Impl(block) = &file.items[1] else { panic!("expected an impl block") };
         let names: Vec<&str> = block.methods.iter().map(|m| m.name.name.as_str()).collect();
-        assert_eq!(names, ["any", "impl", "comptime"]);
+        assert_eq!(names, ["any", "impl"]);
         let Item::Interface(iface) = &file.items[2] else { panic!("expected an interface") };
         let names: Vec<&str> = iface.methods.iter().map(|m| m.decl.name.name.as_str()).collect();
         assert_eq!(names, ["error", "derive"]);

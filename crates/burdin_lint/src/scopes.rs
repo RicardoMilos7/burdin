@@ -140,9 +140,7 @@ impl Resolver {
                 if let Some(d) = &p.default {
                     self.expr(d);
                 }
-                // A `comptime` parameter selects a specialization, so it is used even when the body never reads it.
-                let used = p.comptime.is_some();
-                self.declare(name, Kind::Param, used, false);
+                self.declare(name, Kind::Param, false, false);
             }
         }
         self.block(&f.body);

@@ -201,7 +201,7 @@ mod tests {
             path: local,
             file: "src/main.bd".to_string(),
             line: 1,
-            run: Run::Block { exe: PathBuf::from("bin"), index: 0, comptime: None },
+            run: Run::Block { exe: PathBuf::from("bin"), index: 0 },
             attrs: Attrs { ignore, ..Attrs::default() },
         }
     }

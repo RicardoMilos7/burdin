@@ -28,23 +28,6 @@ pub struct File {
     /// generates (derives, `error` declarations) is not listed. The query library uses these to tell a body edit,
     /// which only its own function can observe, from an edit to a declaration (`spec/query.md`, QL2).
     pub bodies: Vec<Span>,
-    /// The module-scope `comptime generate` blocks, in source order (`spec/generate.md`, GN2). Each one is also a
-    /// function in `items`, so every later stage sees an ordinary declaration; this list is how the front end finds
-    /// the generators.
-    pub generators: Vec<Generator>,
-}
-
-/// A `comptime generate { ... }` item: parsed as a private function with no parameters that returns `String`, whose
-/// body is the block (`spec/generate.md`, GN2).
-#[derive(Debug, Clone)]
-pub struct Generator {
-    /// The name of the function the block is, which no written name can equal (`comptime generate 1`).
-    pub name: String,
-    /// The whole item, from `comptime` to the block's closing brace: where the function is.
-    pub span: Span,
-    /// The two keywords, `comptime generate`: the span every token of the generated text carries, and where an
-    /// error of the generator or of its text is reported (GN6, GN7).
-    pub keyword: Span,
 }
 
 /// `test "name" [attrs] { ... }`: a test block. The checker compiles it as an ordinary function with no parameters
@@ -388,9 +371,6 @@ pub struct Param {
     /// `= expr` after the type: the value a call may omit (`spec/arguments.md`, AG1). The checker validates it;
     /// a `self` parameter cannot have one.
     pub default: Option<Expr>,
-    /// `comptime name: Type`: the argument is a compile-time value and the function is specialized for it
-    /// (`spec/comptime.md`, CT4). The span is the `comptime` keyword.
-    pub comptime: Option<Span>,
     pub span: Span,
 }
 
@@ -648,7 +628,7 @@ pub enum ExprKind {
     OrElse(Box<Expr>, Box<Expr>),
     Try(Box<Expr>),
     Field(Box<Expr>, Ident),
-    /// `recv.{name}`: a field chosen by a compile-time string, for derive bodies and `comptime for` over
+    /// `recv.{name}`: a field chosen by a compile-time string, for derive bodies and a `for` over
     /// `Type.fields` (`spec/reflection.md`, RFL5).
     DynField(Box<Expr>, Box<Expr>),
     /// `recv.name<T>`: type arguments on a member, as in `x.downcast<Circle>()` (spec/existentials.md, AN6).
@@ -680,11 +660,6 @@ pub enum ExprKind {
         then_block: Block,
         else_expr: Option<Box<Expr>>,
     },
-    /// `comptime E`: evaluated while compiling (`spec/comptime.md`, CT2). `comptime if` (CT5) and `comptime for`
-    /// (CT6) are this node around an `If` or a `For`.
-    Comptime(Box<Expr>),
-    /// `comptime assert(condition)` or `comptime assert(condition, "message")` (CT8).
-    ComptimeAssert(Box<Expr>, Option<Box<Expr>>),
     /// `@"text"` or `@r#"text"#`: the inline snapshot of an `assert_snapshot` call, a string literal without
     /// placeholders that `burdin test --bless` rewrites in place (`spec/test-runner.md`, "Snapshot tests").
     InlineSnapshot(String),

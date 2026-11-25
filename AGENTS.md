@@ -185,7 +185,7 @@ CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
 HANDOFF.md                current state, decisions, and what is next
 CHANGELOG.md              shipped milestones
-spec/                     grammar, memory rules, standard-library surface, derives, comptime, the linter, the
+spec/                     grammar, memory rules, standard-library surface, derives, constant evaluation, the linter, the
                           documentation generator, the query library, the language server, stage 0 scope, stage 1 plan
 website/                  the user-facing site (Astro and Starlight): guides, reference, and examples in
                           `src/content/docs/`; checked by `bun run check:examples` and `bun run check:links`
@@ -197,7 +197,7 @@ install.sh, install.ps1   the one-line installers for Unix and Windows, with SHA
 .github/workflows/        ci.yml (pull requests and main; each OS split into fourteen small parallel parts: Rust checks, command checks, and conformance groups) and release.yml (tag, nightly schedule, or manual dry run)
 tests/                    conformance suite, README with the format and error codes, and the release scripts
 crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
-                          burdin_check, burdin_comptime, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
+                          burdin_check, burdin_interp, burdin_codegen, burdin_driver, burdin_fmt (the formatter),
                           burdin_lint (the linter), burdin_doc (the documentation generator),
                           burdin_query (the query-based compiler library),
                           burdin_pkg (the package resolver: git dependencies, `burdin.lock`, `burdin add`),

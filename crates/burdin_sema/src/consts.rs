@@ -9,7 +9,7 @@ use burdin_tir::{self as tir, ConstId, Ty};
 /// A constant is expanded at every use, so it must not refer to itself, directly or through other constants.
 pub(crate) fn check_const_cycles(consts: &[tir::Const], decls: &[&ast::ConstDecl], diags: &mut Diagnostics) {
     // Every constant the initializer names, anywhere in it. A cycle through a function call is found when the
-    // comptime engine evaluates the constant (`spec/comptime.md`, CT7).
+    // interpreter evaluates the constant (`spec/const-eval.md`, CE2).
     fn refs(e: &tir::Expr, out: &mut Vec<ConstId>) {
         struct Refs<'a>(&'a mut Vec<ConstId>);
         impl Visit for Refs<'_> {

@@ -201,7 +201,7 @@ an official package, is not a path or git dependency the manifest already declar
 package's own name, and is not one of the package's own top-level modules (a local `src/json.bd` wins). Each such name
 becomes a dependency of the package with default features. Only the packages a
 source imports join the build: an official package the program never imports is not loaded, checked, linked, or
-pinned. A one-file target is scanned by its own text. A module produced by `comptime generate` or a build script is
+pinned. A one-file target is scanned by its own text. A module produced by a build script is
 not on disk when the package is loaded, so a generated module cannot bring an official package in on its own; a
 hand-written file of the package that imports it loads the package for all its modules (PKG18).
 
@@ -254,7 +254,7 @@ dependencies = []
 package that the importing package does not load, keeps its error (E0002, `unknown module `json``) and gains a help
 line: `` `json` is an official package: `use json` in a hand-written file of this package loads it for the whole
 package (a generated module cannot load it on its own) ``. An ordinary `use` no longer reaches this, because the scan
-of PKG15 loads the package; it happens when the only reference is in a module a `comptime generate` block or a build
+of PKG15 loads the package; it happens when the only reference is in a module a build
 script produced. The dependency edge belongs to the package, not to one module, so once any hand-written file imports
 the package, a generated module may use it too. A one-file target and a script have no other file to add it in, so
 they get no such help. Tests: `tests/check_packages.py`, the checker's unit tests
@@ -410,7 +410,7 @@ const json: bool = true
 
 A module's declarations are importable unless marked `priv`, and `pub` is written only before `use` (`spec/grammar.md`),
 so the constants carry no visibility word. Code reads one as `use features.fast` (or `use features` and then
-`features.fast`), and in `comptime if` (`spec/comptime.md`, CT5). The module is an ordinary module of its package: it is
+`features.fast`), and in a compile-time `if` condition (`spec/const-eval.md`, CE4). The module is an ordinary module of its package: it is
 checked and documented with it. A source module named `features` in such a package is an error, because the name is
 taken: rename the module. A package with neither a `[features]` table nor an optional dependency has no such module,
 and `use features` in it is an unknown module. Tests: the loader's unit tests

@@ -928,7 +928,7 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
                     out.add(label, 14, what, None, 0);
                 }
             }
-            for word in ["mut", "own", "comptime"] {
+            for word in ["mut", "own"] {
                 out.add(word, 14, "keyword", None, 1);
             }
         }

@@ -1,8 +1,8 @@
 //! Reflection (`spec/reflection.md`): the members `Type.name`, `.size`, `.align`, `.fields`, and `.variants`,
-//! `comptime for` over the last two, and the computed field access `x.{name}`.
+//! the unrolled `for` over the last two, and the computed field access `x.{name}`.
 //!
 //! The members are ordinary compile-time values: `Type.fields` is an array of the standard library's `FieldInfo`
-//! structs, built from the declaration. A `comptime for` over `Type.fields` or `Type.variants` is unrolled here,
+//! structs, built from the declaration. A `for` over `Type.fields` or `Type.variants` is unrolled here,
 //! while the body is checked, because `x.{field.name}` has a type only once the name is known: each copy of the
 //! body is checked with the loop variable standing for that item's literal value (RFL4, RFL5).
 
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 /// The names every type reserves for its reflection members (RFL3).
 pub(crate) const RESERVED_MEMBERS: [&str; 5] = ["name", "size", "align", "fields", "variants"];
 
-/// One item of `Type.fields` or `Type.variants`, as the checker holds it while a `comptime for` is unrolled.
+/// One item of `Type.fields` or `Type.variants`, as the checker holds it while a reflection `for` is unrolled.
 #[derive(Clone)]
 pub(super) struct ReflectItem {
     /// `FieldInfo` or `VariantInfo`.
@@ -71,7 +71,7 @@ impl ReflectItem {
     }
 }
 
-/// The loop variables of the `comptime for` bodies being checked: each stands for one item's literal.
+/// The loop variables of the unrolled `for` bodies being checked: each stands for one item's literal.
 pub(super) type ReflectBindings = HashMap<tir::LocalId, ReflectItem>;
 
 impl FnCx<'_> {
@@ -165,11 +165,11 @@ impl FnCx<'_> {
         }
     }
 
-    /// `comptime for item in Type.fields { ... }` and the same over `Type.variants`: the body is checked once per
+    /// `for item in Type.fields { ... }` and the same over `Type.variants`: the body is checked once per
     /// item with the loop variable standing for the item's literal, and the checked copies are the result (RFL4).
     /// Returns `None` when `iter` is not a reflection member of a type or the pattern is not a plain name, and
-    /// the ordinary `comptime for` applies.
-    pub(super) fn comptime_for_reflect(
+    /// the ordinary run-time `for` applies.
+    pub(super) fn for_reflect(
         &mut self,
         pattern: &ast::Pattern,
         iter: &ast::Expr,
@@ -200,15 +200,32 @@ impl FnCx<'_> {
                 self.reflect.insert(local, item);
             }
             // `break` and `continue` cannot leave the unrolled body: it is not a loop in the generated code.
-            let saved_barrier = self.comptime_loop_barrier.replace(self.loops.len());
+            let saved_barrier = self.reflect_loop_barrier.replace(self.loops.len());
             self.loops.push(LoopScope::for_body(None));
             let (block, ty) = self.block(body, None);
             self.loops.pop();
-            self.comptime_loop_barrier = saved_barrier;
+            self.reflect_loop_barrier = saved_barrier;
             self.scopes.pop();
             copies.push(tir::Stmt::Expr(mk(tir::ExprKind::Block(block), ty, span)));
         }
         Some(mk(tir::ExprKind::Block(tir::Block { stmts: copies, tail: None, close: span }), Ty::Unit, span))
+    }
+
+    /// Whether a `break` or `continue` that names the loop scope at `target` would leave the body of an unrolled
+    /// reflection loop (RFL4); reports E0220 when it would. The body's own scope is the barrier; a scope inside it
+    /// is a loop of the generated code, and a scope outside it is not.
+    pub(super) fn leaves_reflect_loop(&mut self, word: &str, span: Span, target: usize) -> bool {
+        if self.reflect_loop_barrier.is_some_and(|barrier| target <= barrier) {
+            self.diags.error(
+                Code::INVALID_CONST_EVAL,
+                span,
+                format!(
+                    "`{word}` cannot leave a `for` over `Type.fields` or `Type.variants`: the body is repeated in                      the generated code, not looped (spec/reflection.md, RFL4)"
+                ),
+            );
+            return true;
+        }
+        false
     }
 
     /// `variable.member` where `variable` is a reflection loop variable: the member's literal.
@@ -244,7 +261,7 @@ impl FnCx<'_> {
             self.diags.error(
                 Code::INVALID_COMPUTED_FIELD,
                 name.span,
-                "the name in `x.{...}` must be a string literal or the `name` of a `comptime for` variable over \
+                "the name in `x.{...}` must be a string literal or the `name` of a `for` variable over \
                  `Type.fields`, so that the field is known while compiling (spec/reflection.md, RFL5)",
             );
             self.expr(base, None);

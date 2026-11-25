@@ -64,8 +64,8 @@ for a place, and at the end of the statement for a temporary, as the parts of a 
 element read from the end of a slice is taken from the end of the view. Tests: `array_patterns/slice_match.bd` (run).
 
 **AP12 Scope.** Slice and array patterns are the only patterns that destructure a sequence. Ranges, strings, and an
-array scrutinee of a comptime value are covered by the existing rules: a comptime array can be matched, and a slice is
-never a comptime value (`spec/comptime.md`). Tests: `array_patterns/array_comptime.bd` (run).
+array scrutinee of a `const` value are covered by the existing rules: a `const` array can be matched, and a slice is
+never a `const` value (`spec/const-eval.md`). Tests: `array_patterns/array_const.bd` (run).
 
 ## Diagnostics
 

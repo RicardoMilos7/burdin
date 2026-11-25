@@ -29,8 +29,8 @@ pub enum Role {
     Closure,
     /// A `{...}` placeholder of an interpolated string.
     Hole,
-    /// A `comptime` expression: evaluated while compiling.
-    Comptime,
+    /// The name of a computed field `x.{name}`: read while compiling.
+    FieldName,
 }
 
 impl Role {
@@ -48,7 +48,7 @@ impl Role {
             Role::Branch => "it is inside a branch or a guard, which runs only sometimes",
             Role::Closure => "it is inside a closure, which runs when it is called",
             Role::Hole => "it is inside an interpolated string",
-            Role::Comptime => "it is inside a `comptime` expression, which runs while compiling",
+            Role::FieldName => "it is the name of a computed field `x.{...}`, which is read while compiling",
             _ => "",
         }
     }
@@ -143,14 +143,13 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         K::Unary(_, x) | K::Try(x) | K::Field(x, _) | K::TupleField(x, ..) | K::Cast(x, _) | K::TypeArgs(x, _) => {
             out.push(Child::Expr(Role::Operand, x))
         }
-        K::Comptime(x) => out.push(Child::Expr(Role::Comptime, x)),
         K::Range { lo, hi, .. } => {
             out.push(Child::Expr(Role::Operand, lo));
             out.push(Child::Expr(Role::Operand, hi));
         }
         K::DynField(a, b) => {
             out.push(Child::Expr(Role::Operand, a));
-            out.push(Child::Expr(Role::Comptime, b));
+            out.push(Child::Expr(Role::FieldName, b));
         }
         K::Call(callee, args) => {
             out.push(Child::Expr(Role::Callee, callee));
@@ -170,12 +169,6 @@ pub fn children(e: &Expr) -> Vec<Child<'_>> {
         K::StructLit(_, _, fields, base) | K::TargetStruct(fields, base) => {
             out.extend(fields.iter().filter_map(|f| f.value.as_ref()).map(|x| Child::Expr(Role::Plain, x)));
             out.extend(base.as_deref().map(|b| Child::Expr(Role::Plain, b)));
-        }
-        K::ComptimeAssert(c, m) => {
-            out.push(Child::Expr(Role::Comptime, c));
-            if let Some(m) = m {
-                out.push(Child::Expr(Role::Comptime, m));
-            }
         }
     }
     out
@@ -626,12 +619,11 @@ pub struct ControlFlow {
     pub breaks: bool,
     pub continues: bool,
     pub self_value: bool,
-    pub comptime: bool,
 }
 
 impl ControlFlow {
     pub fn any(&self) -> bool {
-        self.returns || self.breaks || self.continues || self.self_value || self.comptime
+        self.returns || self.breaks || self.continues || self.self_value
     }
 
     /// The first reason a stretch of code cannot be moved into a function, if there is one.
@@ -644,8 +636,6 @@ impl ControlFlow {
             Some("it holds a `continue`, which would not reach the loop it is in")
         } else if self.self_value {
             Some("it uses `self`, which an extracted free function cannot take")
-        } else if self.comptime {
-            Some("it holds a `comptime` expression, which would be evaluated in another function")
         } else {
             None
         }
@@ -661,7 +651,6 @@ pub fn control_flow(b: &Block) -> ControlFlow {
             ExprKind::Break { .. } => out.breaks = true,
             ExprKind::Continue(_) => out.continues = true,
             ExprKind::SelfValue => out.self_value = true,
-            ExprKind::Comptime(_) | ExprKind::ComptimeAssert(..) => out.comptime = true,
             _ => {}
         }
         true

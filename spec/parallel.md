@@ -131,12 +131,12 @@ captures a value that is not `Sync` is E0280 at the call. Items of `par_into_ite
 Tests: `s3_parallel/not_send` (E0280, E0141); `s2_shared/closure_fn_is_sync`, `closure_fnmut_not_sync`,
 `closure_capture_not_sync`.
 
-## PR10. Comptime (decision)
+## PR10. Compile-time evaluation (decision)
 
-A pipeline is neither pure nor deterministic, so evaluating one in `comptime` is E0224 whatever its size; the standard
-library touches a raw pointer at the top of every pipeline, which comptime reports. `spec/comptime.md` CT9 lists it.
+A pipeline is neither pure nor deterministic, so evaluating one at compile time is E0224 whatever its size; the standard
+library touches a raw pointer at the top of every pipeline, which compile-time evaluation reports. `spec/const-eval.md` CE6 lists it.
 
-Test: `s3_parallel/in_comptime`.
+Test: `s3_parallel/in_const`.
 
 ## PR11. Tests and benchmarks (decision)
 
@@ -183,7 +183,7 @@ Tests: `s3_parallel/sources_adapters`, `ordered_basic` (the calls), and `tests/i
 | PR7 | `s3_parallel/nested`, `stress` |
 | PR8 | `s3_parallel/panic_aborts` |
 | PR9 | `s3_parallel/not_send` (E0280, E0141), `s2_shared/closure_fn_is_sync`, `closure_fnmut_not_sync`, `closure_capture_not_sync` |
-| PR10 | `s3_parallel/in_comptime` (E0224) |
+| PR10 | `s3_parallel/in_const` (E0224) |
 | PR11 | `s3_parallel/bench`, `stress`, `leak_free` |
 | PR12 | none (deferred) |
 

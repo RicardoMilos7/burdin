@@ -1004,9 +1004,8 @@ fn main() {}
 ## E0170: Invalid test attribute
 
 A `test` item's attribute list is checked when the test is compiled. The list may name `ignore`, `timeout`,
-`should_panic`, `should_fail`, or `differential`, each once. The message names the unknown or repeated attribute,
-the value the attribute does not take, or an incompatible combination: `should_panic` with `should_fail`, and
-`differential` with either of them (a differential test takes its expectation from the compile-time run).
+`should_panic`, or `should_fail`, each once. The message names the unknown or repeated attribute,
+the value the attribute does not take, or an incompatible combination: `should_panic` with `should_fail`.
 
 <!-- error-example: E0170 mode=test -->
 ```burdin
@@ -1017,9 +1016,8 @@ test "repeated" [ignore, ignore] { //~ E0170
 <!-- /error-example -->
 
 **How to fix:** write each attribute once, with the value it takes: `ignore`, `timeout(500)`, `should_panic`,
-`should_panic("message")`, `should_fail`, or `differential`. Use `should_fail` on its own rather than together with
-`should_panic`; the first expects a returned error and the second a panic abort. Use `differential` on its own
-rather than with either; its expectation is the compile-time outcome.
+`should_panic("message")`, or `should_fail`. Use `should_fail` on its own rather than together with
+`should_panic`; the first expects a returned error and the second a panic abort.
 
 ## E0171: A second-class closure escapes
 
@@ -1521,39 +1519,38 @@ fn main() {}
 at the end of the receiver (`fn List<T>.bad(self)`, not `fn List<i32>.Inner.bad(self)`), move the `where` predicate
 to an extension type parameter, or import the extension by its declared method name.
 
-## E0220: Invalid comptime construct
+## E0220: Invalid compile-time construct
 
-A compile-time context (a `comptime` expression or block, a `comptime if` condition, a `comptime for` iterable,
-a `comptime assert`, or the argument of a `comptime` parameter) can only use what is known while compiling:
-constants, `comptime` parameters, `comptime for` bindings, and its own locals. Using a run-time local or `self`
-there is this error, and so are the forms that cannot be compile-time: a `comptime` parameter written `mut` or
-`own`, on `self`, an interface method, its implementation, or an `extern` declaration; a function with comptime
-parameters used as a value; `break` or `continue` leaving a `comptime for`; a `mut` `comptime for` binding; and a
-`comptime assert` message that is not a string literal. `spec/comptime.md` CT2, CT4, CT6, CT8.
+A `for` over `Type.fields` or `Type.variants` is unrolled while the program is compiled: its body is repeated once per
+item, so there is no loop for `break` or `continue` to leave. Using either to leave such a loop is this error (a loop
+written inside the body may use them for itself). A `static` named in a `const` initializer is this error too, because
+a static is a run-time global. `spec/const-eval.md` CE5, `spec/reflection.md` RFL4, `spec/globals.md` GL1.
 
 <!-- error-example: E0220 -->
 ```burdin
-fn double(v: i32): i32 {
-    v * 2
+struct Point {
+    x: i32
+    y: i32
 }
 
 fn main() {
-    let x = 4
-    let y = comptime double(x) //~ E0220
+    for field in Point.fields {
+        break //~ E0220
+    }
 }
 ```
 <!-- /error-example -->
 
-**How to fix:** compute the value from constants or literals (`comptime double(4)`), make the input a `comptime`
-parameter of the enclosing function, or drop `comptime` and compute the value at run time.
+**How to fix:** remove the `break` or `continue`, guard the code with an `if` on `field.name` or `field.index`, or bind
+the array first (`let fields = Point.fields`) to get an ordinary run-time loop.
 
 ## E0221: Value that cannot be materialized
 
-A compile-time value is copied into the program, so its type must be one the compiler can write down as a literal:
+The value of a `const` is copied into the program, so its type must be one the compiler can write down as a literal:
 a scalar, `str`, `String`, or a tuple, array, struct, enum, `Option`, `Result`, or range of those. A `List`, `Map`,
-`Heap`, `any` value, closure, reference, slice, C type, or iterator can be created and used inside comptime code,
-but not be the value of a `const`, a comptime expression, a `comptime` parameter, or a `comptime for` item.
-`spec/comptime.md` CT3.
+`Heap`, `any` value, closure, reference, slice, C type, or iterator can be created and used inside a `const` initializer,
+but not be the value of a `const`.
+`spec/const-eval.md` CE3.
 
 <!-- error-example: E0221 -->
 ```burdin
@@ -1568,10 +1565,10 @@ collection at run time.
 
 ## E0222: Compile-time evaluation panicked
 
-Evaluating a constant, a comptime expression, or a specialization's comptime arguments panicked: an explicit
+Evaluating a constant (or a compile-time condition) panicked: an explicit
 `panic`, `unreachable`, a failed `assert`, `unwrap` on an empty value, an index out of bounds, a division by zero,
 or an integer overflow in a debug build. The message is the panic message, with a note at the operation that
-panicked. `spec/comptime.md` CT10.
+panicked. `spec/const-eval.md` CE7.
 
 <!-- error-example: E0222 -->
 ```burdin
@@ -1588,30 +1585,12 @@ fn main() {}
 
 **How to fix:** correct the computation, or check the condition the panic reports before the operation runs.
 
-## E0223: Comptime assertion failed
-
-The condition of a `comptime assert` was false when the program was compiled. The message of the assertion, when it
-has one, is part of the diagnostic. `spec/comptime.md` CT8.
-
-<!-- error-example: E0223 -->
-```burdin
-const BUFFER_SIZE: usize = 100
-
-comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cache lines") //~ E0223
-
-fn main() {}
-```
-<!-- /error-example -->
-
-**How to fix:** change the values the assertion checks so the condition holds, or change the assertion if the
-requirement it states is no longer true.
-
 ## E0224: Impure operation at compile time
 
 Compile-time evaluation is pure: it cannot print, read or write files, read the process arguments, end the process,
 run a command, call a C function, or use C pointers and C strings. The check is dynamic, so a function that could do
 one of these may still run at compile time when the path it takes does not. The same code reports an internal error
-of the comptime interpreter. `spec/comptime.md` CT9.
+of the compile-time interpreter. `spec/const-eval.md` CE6.
 
 <!-- error-example: E0224 -->
 ```burdin
@@ -1631,10 +1610,8 @@ the computation into a function the constant can call.
 
 ## E0225: Compile-time budget exceeded
 
-A compile-time evaluation ran for more steps than its budget (10,000,000 by default), nested more than 512 calls,
-or a function with comptime parameters needed more than 1024 specializations. The usual cause is a loop or a
-recursion that does not end; a recursion through a comptime parameter needs a `comptime if` that stops it.
-`spec/comptime.md` CT4, CT11.
+A compile-time evaluation ran for more steps than its budget (10,000,000 by default), or nested more than 512 calls.
+The usual cause is a loop or a recursion that does not end. `spec/const-eval.md` CE8.
 
 <!-- error-example: E0225 -->
 ```burdin
@@ -1652,7 +1629,7 @@ fn main() {}
 <!-- /error-example -->
 
 **How to fix:** make the computation end. If it is meant to be long, raise the budget with
-`burdin build --comptime-steps <n>`.
+`burdin build --const-steps <n>`.
 
 ## E0230: Invalid reflection
 
@@ -1692,7 +1669,7 @@ fn main() {}
 ## E0232: Invalid computed field access
 
 `x.{name}` reads the field whose name is the compile-time string in the braces: a string literal, or the `name` of
-the loop variable of a `comptime for` over `Type.fields`. A name that is only known while the program runs cannot
+the loop variable of a `for` over `Type.fields`. A name that is only known while the program runs cannot
 choose a field, and the type must have a field of that name. `spec/reflection.md` RFL5.
 
 <!-- error-example: E0232 -->
@@ -1709,7 +1686,7 @@ fn main() {
 ```
 <!-- /error-example -->
 
-**How to fix:** write the name as a string literal, or loop over `Type.fields` in a `comptime for` and use
+**How to fix:** write the name as a string literal, or loop over `Type.fields` with `for` and use
 `field.name`.
 
 ## E0233: Invalid derive
@@ -1753,7 +1730,7 @@ fn main() {}
 ## E0240: `embed` could not read its file
 
 `embed("path")` reads a file while compiling. The file is missing or cannot be read, or, for `str`, it is not valid
-UTF-8 text. The path is relative to the source file that writes the call. `spec/comptime.md` CT15.
+UTF-8 text. The path is relative to the source file that writes the call. `spec/const-eval.md` CE12.
 
 <!-- error-example: E0240 -->
 ```burdin
@@ -1770,7 +1747,7 @@ fn main() {
 
 The path of `embed` must be a string literal, so that the file is known while compiling, and it must be relative and
 stay inside the directory of the source file (no `..`). When the expected type is `[u8; N]`, `N` must be the length
-of the file. An expected type of `[u8]` needs no length. `spec/comptime.md` CT15.
+of the file. An expected type of `[u8]` needs no length. `spec/const-eval.md` CE12.
 
 <!-- error-example: E0241 -->
 ```burdin
@@ -1784,44 +1761,6 @@ fn main() {
 
 **How to fix:** write the path as a string literal inside the source directory, and give `[u8; N]` the file's
 length, or use `[u8]` to take the bytes without writing a length.
-
-## E0242: Invalid generated text
-
-A `comptime generate` block at module scope returns the Burdin source of declarations, and the compiler parses that
-text as module items. The text must parse, and it may declare only `struct`, `enum`, and `fn` items. A constant,
-`use`, impl block, interface, derive, type alias, test, or another `comptime generate` in it is this error, reported
-at the block, with the parser's message for a text that does not parse. `spec/generate.md` GN4.
-
-<!-- error-example: E0242 -->
-```burdin
-comptime generate { //~ E0242
-    String.from("const LIMIT: i32 = 3\n")
-}
-
-fn main() {
-}
-```
-<!-- /error-example -->
-
-**How to fix:** generate only `struct`, `enum`, and `fn` declarations, and check that the text parses (write its
-braces as `{{` and `}}`).
-
-## E0243: `comptime generate` outside module scope
-
-A `comptime generate` block declares items for its module, so it stands at module scope. Inside a function body, an
-impl block, or an expression it is this error, reported at the `comptime` keyword. `spec/generate.md` GN2.
-
-<!-- error-example: E0243 -->
-```burdin
-fn main() {
-    comptime generate { //~ E0243
-        String.new()
-    }
-}
-```
-<!-- /error-example -->
-
-**How to fix:** move the block to module scope.
 
 ## E0250: Invalid const generic parameter or argument
 
@@ -2279,7 +2218,7 @@ fn main() {
 <!-- /error-example -->
 
 **How to fix:** write `const` when the value is known at compile time, which copies it into each use and accepts a
-`String` (`spec/comptime.md`, CT3). A value that a function owns and changes belongs in a `let` or a `mut` parameter.
+`String` (`spec/const-eval.md`, CE3). A value that a function owns and changes belongs in a `let` or a `mut` parameter.
 
 ## E0304: borrow of a `static mut`
 

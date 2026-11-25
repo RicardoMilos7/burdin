@@ -106,7 +106,7 @@ Commands:
   clean     Remove a package's build output, and with --cache its caches [alias: cl]
   ssr       Structural search and replace: match a pattern written as Burdin code across a package [alias: s]
   refactor  Refactor code: extract, inline, change a signature, or move an item [alias: rf]
-  expand    Print the source after comptime, derives, default arguments, and operators [alias: xp]
+  expand    Print the source after constants, derives, default arguments, and operators [alias: xp]
   asm       Print the assembly or LLVM IR of one function, with its source [alias: as]
   bloat     Report the size of each function, module, package, and generic in the executable [alias: bl]
   explain   Print the reference entry for an error code [alias: ex]

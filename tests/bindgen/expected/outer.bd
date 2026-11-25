@@ -4,8 +4,8 @@ struct Inner repr(C) {
     a: i32
     b: i32
 }
-comptime assert(Inner.size() == 8, "`Inner` must have size 8, as in the C header")
-comptime assert(Inner.align() == 4, "`Inner` must have alignment 4, as in the C header")
+priv const INNER_SIZE_CHECK: () = if Inner.size() == 8 { } else { panic("`Inner` must have size 8, as in the C header") }
+priv const INNER_ALIGN_CHECK: () = if Inner.align() == 4 { } else { panic("`Inner` must have alignment 4, as in the C header") }
 // `Hidden` is declared without fields because it is declared in another header and only used through pointers
 struct Hidden repr(C) { }
 struct Outer repr(C) {
@@ -14,8 +14,8 @@ struct Outer repr(C) {
     count: i32
     small: u16
 }
-comptime assert(Outer.size() == 24, "`Outer` must have size 24, as in the C header")
-comptime assert(Outer.align() == 8, "`Outer` must have alignment 8, as in the C header")
+priv const OUTER_SIZE_CHECK: () = if Outer.size() == 24 { } else { panic("`Outer` must have size 24, as in the C header") }
+priv const OUTER_ALIGN_CHECK: () = if Outer.align() == 8 { } else { panic("`Outer` must have alignment 8, as in the C header") }
 // `Opaque` is declared without fields because it is declared in another header and only used through pointers
 struct Opaque repr(C) { }
 extern "C" {

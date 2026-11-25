@@ -144,7 +144,6 @@ impl Parser<'_> {
             TokenKind::Bang => UnOp::Not,
             TokenKind::Star => UnOp::Deref,
             TokenKind::Amp => UnOp::Ref,
-            TokenKind::Comptime => return self.comptime_expr(r),
             TokenKind::AndAnd => {
                 return Err(
                     self.error_here("`&&` is not a prefix operator; write `& &` for a reference to a reference".into())
@@ -157,39 +156,6 @@ impl Parser<'_> {
         let operand = self.unary(r)?;
         let span = start.to(operand.span);
         Ok(Expr { kind: ExprKind::Unary(op, Box::new(operand)), span })
-    }
-
-    /// `comptime E`, `comptime if ...`, `comptime for ...`, and `comptime assert(condition[, message])`
-    /// (spec/comptime.md, CT2, CT5, CT6, CT8). `comptime` binds like a prefix operator: `comptime f(x) + 1` adds one
-    /// to the compile-time value of `f(x)`.
-    pub(super) fn comptime_expr(&mut self, r: Restriction) -> PResult<Expr> {
-        if self.at_generate() {
-            let block = self.misplaced_generate()?;
-            let span = block.span;
-            return Ok(Expr { kind: ExprKind::Block(block), span });
-        }
-        let start = self.expect(&TokenKind::Comptime)?.span;
-        if matches!(self.kind(), TokenKind::Ident(name) if name == "assert") && self.nth_kind(1) == &TokenKind::LParen {
-            self.bump();
-            self.open(&TokenKind::LParen, false)?;
-            let cond = self.expr()?;
-            let message = if self.eat(&TokenKind::Comma) && !self.at(&TokenKind::RParen) {
-                Some(Box::new(self.expr()?))
-            } else {
-                None
-            };
-            self.eat(&TokenKind::Comma);
-            let close = self.close(&TokenKind::RParen)?;
-            return Ok(Expr { kind: ExprKind::ComptimeAssert(Box::new(cond), message), span: start.to(close.span) });
-        }
-        if self.at(&TokenKind::If) && self.nth_kind(1) == &TokenKind::Let {
-            return Err(
-                self.error_here("`comptime if let` is not supported; use `comptime if` with a condition".into())
-            );
-        }
-        let operand = self.unary(r)?;
-        let span = start.to(operand.span);
-        Ok(Expr { kind: ExprKind::Comptime(Box::new(operand)), span })
     }
 
     pub(super) fn postfix(&mut self, r: Restriction) -> PResult<Expr> {

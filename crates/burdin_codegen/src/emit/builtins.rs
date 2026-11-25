@@ -20,9 +20,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         match b {
-            Builtin::ComptimeAssert => {
-                return Err("`comptime assert` reached code generation; the comptime pass must replace it".into());
-            }
             // The program is compiled for the machine the compiler runs on.
             Builtin::TargetOs => return Ok(Some(self.str_literal(burdin_tir::target_os().as_bytes()).into())),
             Builtin::TargetArch => return Ok(Some(self.str_literal(burdin_tir::target_arch().as_bytes()).into())),

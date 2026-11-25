@@ -217,7 +217,6 @@ const SNIPPETS: &[&str] = &[
     "false",
     "orelse",
     "any",
-    "comptime",
     "derive",
     "requires",
     "derives",

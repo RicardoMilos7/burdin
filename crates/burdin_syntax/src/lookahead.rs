@@ -258,7 +258,6 @@ pub fn can_start_expr(kind: &TokenKind) -> bool {
             | While
             | For
             | Unsafe
-            | Comptime
             | Return
             | Break
             | Continue

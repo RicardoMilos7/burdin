@@ -1,5 +1,5 @@
 // What `burdin expand` rewrites in one small program: a constant, a built-in derive, an operator, a default and a
-// named argument, an extension call, `comptime` in an expression and in an `if` (spec/inspect.md, INS1-INS6).
+// named argument, an extension call, a constant used in an expression and an `if` on a constant (spec/inspect.md, INS1-INS6).
 
 const SIZE: usize = 64
 
@@ -28,7 +28,7 @@ fn scaled(n: i32): i32 {
 }
 
 fn main() {
-    let table = (64 as usize) + 1
+    let table = SIZE + 1
     let a = P { x: 1, y: 2 }
     let b = P { x: 3, y: 4 }
     let c = a.add(b)

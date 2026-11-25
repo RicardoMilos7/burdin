@@ -8,7 +8,7 @@
 //! ```
 //!
 //! The crate sits beside the compiler stages, not inside them: it depends on `burdin_syntax`, `burdin_sema`,
-//! `burdin_check`, and `burdin_comptime`, never on code generation, so a tool that wants the checker does not link
+//! `burdin_check`, and `burdin_interp`, never on code generation, so a tool that wants the checker does not link
 //! LLVM.
 
 pub mod api;

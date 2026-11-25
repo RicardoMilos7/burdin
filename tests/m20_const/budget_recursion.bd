@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// Unbounded recursion at compile time reaches the call-depth limit: E0225 (spec/const-eval.md, CE8).
+
+fn down(n: i64): i64 {
+    down(n + 1)
+}
+
+const FOREVER: i64 = down(0) //~ E0225
+
+fn main() {
+    println("{FOREVER}")
+}

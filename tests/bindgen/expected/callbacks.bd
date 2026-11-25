@@ -12,8 +12,8 @@ struct Visitor repr(C) {
     context: CPtr<CVoid>
     calls: i32
 }
-comptime assert(Visitor.size() == 24, "`Visitor` must have size 24, as in the C header")
-comptime assert(Visitor.align() == 8, "`Visitor` must have alignment 8, as in the C header")
+priv const VISITOR_SIZE_CHECK: () = if Visitor.size() == 24 { } else { panic("`Visitor` must have size 24, as in the C header") }
+priv const VISITOR_ALIGN_CHECK: () = if Visitor.align() == 8 { } else { panic("`Visitor` must have alignment 8, as in the C header") }
 extern "C" {
     fn walk(values: CPtr<i32>, count: usize, visit: visit_fn, context: CPtr<CVoid>)
     fn sort(items: CPtr<CVoid>, count: usize, size: usize, compare: compare_fn)

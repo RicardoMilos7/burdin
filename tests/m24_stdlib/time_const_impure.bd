@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// Reading a clock, sleeping, and asking the system for entropy reach the operating system, so a constant evaluation
+// that reaches one is E0224 (spec/const-eval.md, CE6; spec/stdlib.md, "Time" and "Random numbers"). A helper that
+// calls one is impure too, and the error is reported at the constant.
+
+fn stamp(): u64 {
+    SystemTime.now().unix_nanos() as u64
+}
+
+const A: Duration = Instant.now().since_start() //~ E0224
+const B: i64 = SystemTime.now().unix_secs() //~ E0224
+const C: () = sleep(Duration.from_millis(1)) //~ E0224
+const D: u64 = random_seed() //~ E0224
+const E: u64 = Random.from_entropy().next_u64() //~ E0224
+const F: u64 = stamp() //~ E0224
+const G: Duration = SystemClock { }.now().since_start() //~ E0224
+
+fn main() {}

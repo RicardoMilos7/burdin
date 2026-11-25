@@ -11,7 +11,7 @@ what it means, how to fix it, and a checked example. `burdin lint --list` prints
 
 ```
 burdin lint <file.bd | package directory> [-A <lint>]... [-W <lint>]... [-D <lint>]... [--deny-warnings]
-            [--fix [--dry-run]] [--comptime-steps <n>] [diagnostics]
+            [--fix [--dry-run]] [--const-steps <n>] [diagnostics]
 burdin lint --list
 burdin lint --explain <lint>
 ```

@@ -43,7 +43,7 @@ page.
   interfaces are ordinary `std` interfaces (`spec/operators.md`, OP2), so implementing `Add`, `Index`, and the rest
   is an ordinary interface impl. The remaining site is the built-in `Eq`/`Ord`/`Copy`/`Clone`/`Hash`/`Default`
   family, whose rule #402 decides as part of the generic and type-system work under #389.
-- `m20` (comptime) owned arbitrary constant expressions; #163 unified `const` evaluation with comptime, and the
+- `m20` (constant evaluation) owned arbitrary constant expressions; #163 unified `const` evaluation with the interpreter, and the
   `const-expression` site is gone.
 - `m21` (reflection, user derives, const generics, `embed`) shipped const-generic array lengths and the `x.{name}`
   computed access, and then, with the type-system issues that had moved to `Stage 1`, generic type aliases (#392),

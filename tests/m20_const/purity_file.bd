@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// Files, the environment, processes, and C are not available at compile time (spec/const-eval.md, CE6).
+
+extern "C" {
+    fn abs(x: i32): i32
+}
+
+fn args_count(): usize {
+    env.args().len()
+}
+
+fn c_abs(): i32 {
+    unsafe { abs(-3) }
+}
+
+const TEXT: bool = read_to_string("data.txt").is_ok() //~ E0224
+const N: usize = args_count() //~ E0224
+const A: i32 = c_abs() //~ E0224
+
+fn main() {}

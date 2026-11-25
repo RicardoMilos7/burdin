@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// The stream handles are impure operations (`spec/const-eval.md`, CE6): writing, reading, and asking whether a
+// stream is a terminal are all E0224 at the constant.
+
+const WRITE: () = { //~ E0224
+    let written = stdout().write_text("x")
+}
+
+const READ: () = { //~ E0224
+    let mut input = stdin()
+    let line = input.read_line()
+}
+
+fn main() {}

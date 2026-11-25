@@ -322,7 +322,7 @@ pub(crate) fn run(words: &[String]) -> ExitCode {
         link_libs: &[],
         mode: if args.test.is_some() { crate::EntryMode::Test } else { crate::EntryMode::Build },
         diagnostics: &args.diagnostics,
-        comptime_steps: None,
+        const_steps: None,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,

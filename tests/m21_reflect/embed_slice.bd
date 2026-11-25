@@ -9,9 +9,9 @@
 //> 67
 //> 104
 
-// `embed` with the expected type `[u8]` is a static byte view of the file, and no length is written (CT15). The
+// `embed` with the expected type `[u8]` is a static byte view of the file, and no length is written (CE12). The
 // view is static data (RT4), so a function may return it and a local may hold it. A constant may not have type
-// `[u8]` (CT3, E0221), so the view is bound in a function, a parameter, or a `let`.
+// `[u8]` (CE3, E0221), so the view is bound in a function, a parameter, or a `let`.
 
 fn bytes(): [u8] {
     embed("data/bytes.bin")

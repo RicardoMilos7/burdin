@@ -24,8 +24,8 @@ selects the default of a command; the settings are the same. A package customize
 `debug` is the source-level debug information `-g` also turns on. It is off in every built-in profile, so a normal
 build is byte-for-byte what it was before profiles existed; `-g` and a profile's `debug = true` both turn it on.
 `debug-assertions` keeps `debug_assert*` calls and error trace frames (`spec/errors.md`, ERR7). `overflow-checks` makes `+`, `-`, `*`, negation, and `MIN / -1`
-panic on overflow; when it is off they wrap, and `comptime` evaluation follows the same rule
-(`spec/comptime.md`, CT1).
+panic on overflow; when it is off they wrap, and compile-time evaluation follows the same rule
+(`spec/const-eval.md`, CE1).
 
 `panic = "abort"` is the only strategy: a Burdin panic writes its message and ends the process, so `unwind` is
 rejected with an explanation rather than accepted and ignored.
@@ -140,7 +140,7 @@ an error. The override applies to the code of the functions whose source file is
 A package name that is not in the build is ignored. A custom profile inherits its parent's package overrides, and
 its own tables override them key by key.
 
-The `comptime` interpreter evaluates the whole program with the profile's settings, not the per-package overrides;
+The compile-time interpreter evaluates the whole program with the profile's settings, not the per-package overrides;
 those affect generated code only. This is the one place where a per-package setting is not observable in a
 compile-time result.
 

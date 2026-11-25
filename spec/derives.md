@@ -70,7 +70,7 @@ slice `contains`, `dedup`, `sort`, `PriorityHeap`, `cmp.min`, `assert_eq`, and `
   structurally and hand-writing `Hash` is E9000 (#402), so the derive is the promise that values equal by `eq` hash
   alike; a hand-written `eq` coarser than the structure breaks lookups.
 - The compile-time interpreter compares structurally inside a list, tuple, or field, so a hand-written `eq` there
-  is not called in a `comptime` evaluation (a direct `a == b` on the type is).
+  is not called in a compile-time evaluation (a direct `a == b` on the type is).
 
 Hand-writing `Hash` or `Clone` is E9000 (issue #402); the `Eq` and `Ord` blocks are how the equality and order of
 a collection are customized.

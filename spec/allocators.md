@@ -232,12 +232,12 @@ not detected, and an allocator that bypasses the compiler's primitives is outsid
 
 ## AL10. Allocation at compile time
 
-The compile-time interpreter (`spec/comptime.md`) models the containers on its own heap: a `List`, `Map`, or
-`String` created with `new()` inside a `comptime` expression is an ordinary interpreter value. Allocating with
+The compile-time interpreter (`spec/const-eval.md`) models the containers on its own heap: a `List`, `Map`, or
+`String` created with `new()` inside a `const` initializer is an ordinary interpreter value. Allocating with
 an explicit allocator is an impure operation (`E0224`): `new_in`, `__alloc`, `__realloc`, and `__dealloc` reach
-outside the evaluator, so a `comptime` block that calls them is rejected
-(`comptime_allocation_is_impure.bd`). A `Shared<T>` is modeled as the value it holds, so a pure expression may
-create, clone, and read one (`shared_comptime.bd`); the model is transient and a value whose type contains a
+outside the evaluator, so a `const` initializer that calls them is rejected
+(`const_allocation_is_impure.bd`). A `Shared<T>` is modeled as the value it holds, so a pure expression may
+create, clone, and read one (`shared_const.bd`); the model is transient and a value whose type contains a
 `Shared` is not materializable into the program (`E0221`).
 
 ## AL11. Fallible allocation
@@ -277,7 +277,7 @@ set, and the error type is `AllocError`.
   keep their infallible growth for now, and a program that needs them to survive out-of-memory must not use them
   for the allocation that might fail.
 - **AL11.7 (compile time).** The compile-time interpreter (AL10) does not model capacity, so a `try_` operation
-  in a `comptime` expression succeeds, and the overflow and out-of-memory refusals are not reproduced there.
+  in a `const` initializer succeeds, and the overflow and out-of-memory refusals are not reproduced there.
 
 Tests: `m24_stdlib/try_alloc_list`, `try_alloc_out_of_memory`, `try_alloc_reserve`, `try_alloc_map_string`,
 `try_alloc_arena`, `try_alloc_infallible_aborts`, `try_alloc_stored_aborts`, and `try_alloc_test_no_leak`.

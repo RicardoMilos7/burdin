@@ -18,7 +18,7 @@ struct BloatArgs {
     debug_profile: bool,
     top: usize,
     json: bool,
-    comptime_steps: Option<u64>,
+    const_steps: Option<u64>,
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
 }
@@ -29,7 +29,7 @@ fn parse(argv: &[String]) -> Result<BloatArgs, String> {
         debug_profile: false,
         top: 20,
         json: false,
-        comptime_steps: None,
+        const_steps: None,
         jobs: None,
         diagnostics: DiagnosticOptions::default(),
     };
@@ -62,14 +62,14 @@ fn parse(argv: &[String]) -> Result<BloatArgs, String> {
                 };
             }
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
-            "--comptime-steps" => {
+            "--const-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
                     .parse()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
-                args.comptime_steps = Some(steps);
+                    .ok_or_else(|| format!("`--const-steps` needs a positive number of steps, got `{value}`"))?;
+                args.const_steps = Some(steps);
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
@@ -99,7 +99,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         link_libs: &[],
         mode: EntryMode::Build,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,

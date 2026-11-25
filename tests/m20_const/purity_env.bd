@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// The environment and the working directory are not available at compile time (spec/const-eval.md, CE6).
+
+fn read_env(): Option<String> {
+    env.get("BURDIN_TEST_ENV_412")
+}
+
+fn write_env(): bool {
+    env.set("BURDIN_TEST_ENV_412", "x").is_ok()
+}
+
+fn read_dir(): String {
+    env.current_dir().unwrap()
+}
+
+const A: Option<String> = read_env() //~ E0224
+const B: bool = write_env() //~ E0224
+const C: String = read_dir() //~ E0224
+
+fn main() {}

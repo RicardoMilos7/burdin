@@ -89,12 +89,12 @@ type), `tests/m19_operators/compound_assignment.bd` (a struct without `Add`, E01
 A place of a built-in type that has no operator (`String`, `List`, a tuple, an array) is E0003, as `+` on those types is
 (`tests/compound_assign/type_errors.bd`).
 
-## CA6. Comptime
+## CA6. Constant evaluation
 
-A compound assignment inside `comptime` runs in the compile-time interpreter with the same rules as the run-time form:
-the same operators, the same overflow and division panics, and the same order (`spec/comptime.md`, CT1-CT2).
+A compound assignment inside a `const` initializer runs in the compile-time interpreter with the same rules as the run-time form:
+the same operators, the same overflow and division panics, and the same order (`spec/const-eval.md`, CE1).
 
-Witness: `tests/compound_assign/comptime.bd`.
+Witness: `tests/compound_assign/const.bd`.
 
 ## Tests
 
@@ -105,4 +105,4 @@ Witness: `tests/compound_assign/comptime.bd`.
 | CA3 | `type_errors`, `raw_pointer_type` |
 | CA4 | `immutable_place`, `borrow_conflict` |
 | CA5 | `overloaded`, `overloaded_twice`, `overloaded_errors`, `generic_overloaded`, `generic_no_bound`, `../m19_operators/compound_assignment` |
-| CA6 | `comptime` |
+| CA6 | constant evaluation |

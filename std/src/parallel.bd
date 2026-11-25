@@ -24,10 +24,10 @@ const __CHUNK_MIN: usize = 1024
 /// A pipeline starts at most this many tasks.
 const __CHUNK_MAX: usize = 64
 
-/// A pipeline is neither pure nor deterministic, so `comptime` may not run one (spec/comptime.md, CT9). This touches a
-/// raw pointer, which compile-time evaluation reports as E0224 whatever the size of the pipeline; at run time it is
+/// A pipeline is neither pure nor deterministic, so constant evaluation may not run one (spec/const-eval.md, CE6).
+/// This touches a raw pointer, which compile-time evaluation reports as E0224 whatever the size of the pipeline; at run time it is
 /// free.
-priv fn __not_at_comptime() {
+priv fn __not_in_const() {
     unsafe {
         let p: CPtr<u8> = CPtr.null()
         let _ = p.is_null()
@@ -37,7 +37,7 @@ priv fn __not_at_comptime() {
 /// Runs `f` on consecutive ranges of `0..len` and returns the results in range order. `f` runs on several workers at
 /// once when `len` is above the threshold.
 fn __chunks<Out: Send, F: Fn(usize, usize): Out + Sync>(len: usize, f: F): List<Out> {
-    __not_at_comptime()
+    __not_in_const()
     let mut out = List<Out>.new()
     if len <= __CHUNK_MIN {
         out.push(f(0, len))

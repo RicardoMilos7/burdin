@@ -1,0 +1,16 @@
+//@ run
+//> aéb
+//> 4
+
+// The editing operations are pure string-buffer work, so they also run at compile time.
+
+const EDITED: String = {
+    let mut s = String.from("ab")
+    s.insert(1, 'é')
+    s
+}
+
+fn main() {
+    println("{EDITED}")
+    println("{}", EDITED.len())
+}

@@ -11,8 +11,8 @@ use burdin_syntax::ast::*;
 pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
     let first = out.len();
     check_files(cx, out);
-    // A name the source does not spell (`impl0`, the type parameter of an `impl` argument, or the `comptime assert 1`
-    // constants) belongs to generated code. A finding with an empty span (a module name) has no text to compare.
+    // A name the source does not spell (`impl0`, the type parameter of an `impl` argument) belongs to generated code.
+    // A finding with an empty span (a module name) has no text to compare.
     let mut index = 0;
     out.retain(|f| {
         index += 1;

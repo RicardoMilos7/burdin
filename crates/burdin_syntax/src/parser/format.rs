@@ -37,10 +37,8 @@ impl Parser<'_> {
                     truncated: false,
                     test_count: 0,
                     bench_count: 0,
-                    comptime_asserts: 0,
                     select_count: 0,
                     bodies: Vec::new(),
-                    generators: Vec::new(),
                 };
                 let expr = sub.expr().ok()?;
                 if !sub.at_eof() {

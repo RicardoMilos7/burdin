@@ -77,8 +77,6 @@ impl FnCx<'_> {
             K::Loop(body) => self.loop_expr(body, None, expect, span),
             K::Labeled { label, body } => self.labeled_loop(label, body, expect, span),
             K::For { pattern, iter, mutable, body } => self.for_expr(pattern, iter, *mutable, body, None, span),
-            K::Comptime(inner) => self.comptime_expr(inner, expect, span),
-            K::ComptimeAssert(cond, message) => self.comptime_assert(cond, message.as_deref(), span),
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, expect, span),
             K::Break { label, value } => self.jump(label.as_ref(), true, value.as_deref(), span),
             K::Continue(label) => self.jump(label.as_ref(), false, None, span),

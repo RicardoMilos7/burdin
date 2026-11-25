@@ -1,0 +1,15 @@
+//@ run
+//> 4
+
+// The constant interpreter models a `Shared<T>` as the value it holds; a `const` may create,
+// clone, and read one as long as the result itself can be materialized (`spec/allocators.md`, AL10).
+
+const N: i32 = {
+    let s = Shared.new(3)
+    let t = s.clone()
+    *t.get() + 1
+}
+
+fn main() {
+    println(N.to_string())
+}

@@ -71,7 +71,7 @@ same.
 ## CG8. What does not exist yet
 
 Const parameters on interfaces, default values for const parameters, a function call in a const expression (a
-`comptime` call is `spec/comptime.md` CT2, not an array length), predicates on a const parameter (`where N > 0`),
+call of a function is not an array length), predicates on a const parameter (`where N > 0`),
 and unifying two different spellings of the same length (CG5) are not part of this milestone. An `impl` for one
 specific const value is part of it: `Grid<3> { ... }` covers the instances whose argument is 3, as `Stack<i32>`
 does for a type (`impls.md`, IM1-IM2; `tests/m21_reflect/const_impl_specific.bd`).

@@ -314,7 +314,7 @@ address that does not parse, a timeout that passed) has `os_code() == None`, so 
 apart looks at the code instead of guessing from the kind.
 
 The numeric values are the platform's; a program that compares `os_code()` with a number is platform-specific and
-should ask `target.os()` first (`comptime.md`, CT5), while `kind()` is the same on every platform.
+should ask `target.os()` first (`const-eval.md`, CE4), while `kind()` is the same on every platform.
 
 The reader and writer failures of #409 carry no path and no OS code, so they stay unit variants and `os_code()` is
 `None` for them. `kind()` still classifies every one: `UnexpectedEof` and `InvalidData` are their own kinds,

@@ -1,0 +1,17 @@
+//@ run
+//> 44
+//> 255
+
+// Constant integer methods behave like compiled code (spec/const-eval.md, CE1).
+
+fn add(a: u8, b: u8): u8 {
+    a.wrapping_add(b)
+}
+
+const WRAPPED: u8 = add(200, 100)
+const BACK: u8 = (0 as u8).wrapping_sub(1)
+
+fn main() {
+    println("{WRAPPED}")
+    println("{BACK}")
+}

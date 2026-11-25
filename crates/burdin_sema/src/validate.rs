@@ -66,17 +66,6 @@ pub(crate) fn check_impl_signatures(globals: &Globals, diags: &mut Diagnostics) 
                 continue;
             }
             let got = &globals.sigs[func.0];
-            if got.params.iter().any(|p| p.comptime) {
-                diags.error(
-                    Code::INVALID_COMPTIME,
-                    span,
-                    format!(
-                        "`{}` implements an interface method, so it cannot take a `comptime` parameter",
-                        expected.name
-                    ),
-                );
-                continue;
-            }
             let want_params: Vec<burdin_tir::ParamSig> =
                 expected.sig.params.iter().map(|p| globals.subst_param(p, &env)).collect();
             let want_ret = globals.subst_ty(&expected.sig.ret, &env);

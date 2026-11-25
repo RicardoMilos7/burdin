@@ -86,7 +86,7 @@ unsafe Certificate: Sync {}
 
 /// Every certificate in a PEM text, in order. Text with no certificate gives an empty list.
 priv fn read_pem_certificates(pem: str): List<Certificate> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         let mut found = List<Certificate>.new()
         unsafe {
             let contexts = certs_from_pem(pem)
@@ -172,7 +172,7 @@ Certificate {
     /// assert_eq(cert.subject(), "/CN=localhost".to_string())
     /// ```
     fn from_der(data: [u8]): Result<Certificate, TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             if data.len() == 0 {
                 return Err(TlsError.BadCertificate("the DER input is empty".to_string()))
             }
@@ -236,7 +236,7 @@ Certificate {
     /// assert_eq(copy.fingerprint(), cert.fingerprint())
     /// ```
     fn duplicate(self): Certificate {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 Certificate { handle: CertDuplicateCertificateContext(self.handle as CPtr<CertContext>) as CPtr<X509> }
             }
@@ -261,7 +261,7 @@ Certificate {
     /// assert_eq(der[0], 48)
     /// ```
     fn to_der(self): List<u8> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_der(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             let mut out = List<u8>.new()
@@ -292,7 +292,7 @@ Certificate {
     /// assert_eq(cert.subject(), "/CN=localhost".to_string())
     /// ```
     fn subject(self): String {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_subject(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             unsafe { name_text(X509_get_subject_name(self.handle)) }
@@ -311,7 +311,7 @@ Certificate {
     /// assert_eq(cert.issuer(), "/CN=localhost".to_string())
     /// ```
     fn issuer(self): String {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_issuer(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             unsafe { name_text(X509_get_issuer_name(self.handle)) }
@@ -330,7 +330,7 @@ Certificate {
     /// assert(cert.not_before().len() > 0)
     /// ```
     fn not_before(self): String {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_not_before(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             unsafe { time_text(X509_get0_notBefore(self.handle)) }
@@ -349,7 +349,7 @@ Certificate {
     /// assert(cert.not_after().len() > 0)
     /// ```
     fn not_after(self): String {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_not_after(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             unsafe { time_text(X509_get0_notAfter(self.handle)) }
@@ -368,7 +368,7 @@ Certificate {
     /// assert_eq(cert.fingerprint().len(), 64)
     /// ```
     fn fingerprint(self): String {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { cert_fingerprint(self.handle as CPtr<CertContext>) }
         } else if features.openssl {
             let mut digest = List<u8>.new()
@@ -391,7 +391,7 @@ Certificate {
 
 Certificate: Drop {
     fn drop(mut self) {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 if !self.handle.is_null() {
                     let _ = CertFreeCertificateContext(self.handle as CPtr<CertContext>)
@@ -409,7 +409,7 @@ Certificate: Drop {
 
 /// An `X509_NAME` as OpenSSL's one-line text.
 priv unsafe fn name_text(name: CPtr<X509Name>): String {
-    comptime if features.openssl {
+    if features.openssl {
         let mut buffer = List<u8>.new()
         for _ in 0..512 {
             buffer.push(0)
@@ -423,7 +423,7 @@ priv unsafe fn name_text(name: CPtr<X509Name>): String {
 
 /// An `ASN1_TIME` as OpenSSL prints it.
 priv unsafe fn time_text(time: CPtr<Asn1Time>): String {
-    comptime if features.openssl {
+    if features.openssl {
         let bio = BIO_new(BIO_s_mem())
         if bio.is_null() {
             return String.new()
@@ -473,7 +473,7 @@ PrivateKey {
     /// assert(PrivateKey.from_pem("not a key").is_err())
     /// ```
     fn from_pem(pem: str): Result<PrivateKey, TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             if pem.as_bytes().len() == 0 {
                 return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
             }
@@ -532,7 +532,7 @@ PrivateKey {
     /// let _key = PrivateKey.from_der(der.as_slice()).unwrap()
     /// ```
     fn from_der(data: [u8]): Result<PrivateKey, TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             if data.len() == 0 {
                 return Err(TlsError.BadKey("the DER input is empty".to_string()))
             }
@@ -560,7 +560,7 @@ PrivateKey {
 
     /// The key CNG accepts from DER in any common form (Windows). `None` when the bytes are no usable key.
     priv fn __from_der(data: [u8]): Option<PrivateKey> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             let pkcs8 = key_to_pkcs8(data)
             if pkcs8.is_none() {
                 return None
@@ -605,7 +605,7 @@ PrivateKey {
 
 PrivateKey: Drop {
     fn drop(mut self) {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 if !self.handle.is_null() {
                     let block = self.handle as CPtr<KeyBlock>

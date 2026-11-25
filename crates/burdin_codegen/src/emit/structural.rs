@@ -486,7 +486,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<IntValue<'ctx>> {
         let Some(t) = self.llvm_ty(ty) else { return Ok(acc) };
         match ty {
-            // A 128-bit integer mixes its two 64-bit words, low first, as the comptime `hash` does.
+            // A 128-bit integer mixes its two 64-bit words, low first, as the interpreter's `hash` does.
             Ty::Int(IntTy::I128 | IntTy::U128) => {
                 let v = self.builder.build_load(t, ptr, "").map_err(llvm_err)?.into_int_value();
                 let i64_ty = self.cx.i64_type();

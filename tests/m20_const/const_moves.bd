@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// Constant initializers follow the memory rules like any other code: a moved value cannot be used again
+// (spec/const-eval.md, CE1).
+
+const TWICE: String = {
+    let s = String.from("a")
+    let t = s
+    let u = s //~ E0100
+    t
+}
+
+const LEN: usize = {
+    let xs: List<i32> = List<i32>.new()
+    let ys = xs
+    xs.len() //~ E0100
+}
+
+fn main() {}

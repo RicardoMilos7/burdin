@@ -2,7 +2,12 @@
 
 // A labeled `break` or `continue` names an enclosing loop with that label. A label that no enclosing loop has is
 // E0002, and a label may not repeat the label of an enclosing loop (E0007). A closure starts with no loops, so it
-// cannot name one outside (E0002), and a labeled jump cannot leave the body of a `comptime for` (E0220).
+// cannot name one outside (E0002), and a labeled jump cannot leave the body of an unrolled `for` over `Type.fields` (E0220).
+
+struct Point {
+    x: i32
+    y: i32
+}
 
 fn main() {
     'outer: for i in 0..3 {
@@ -24,16 +29,16 @@ fn main() {
         f()
     }
     'unrolled: for i in 0..3 {
-        comptime for j in 0..2 {
+        for f in Point.fields {
             break 'unrolled //~ E0220
         }
-        comptime for j in 0..2 {
+        for f in Point.fields {
             continue 'unrolled //~ E0220
         }
     }
-    // A label of a loop inside the `comptime for` body is its own.
-    comptime for j in 0..2 {
-        'inner: while j < 0 {
+    // A label of a loop inside the unrolled body is its own.
+    for f in Point.fields {
+        'inner: while false {
             break 'inner
         }
     }

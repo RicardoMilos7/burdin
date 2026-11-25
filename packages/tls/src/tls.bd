@@ -26,7 +26,7 @@ use openssl.{OPENSSL_VERSION, OpenSSL_version}
 /// assert(tls.backend().len() > 0)
 /// ```
 fn backend(): String {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         "SChannel".to_string()
     } else if features.openssl {
         unsafe { CStr.to_string(OpenSSL_version(OPENSSL_VERSION)) }

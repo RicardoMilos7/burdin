@@ -1,2 +1,0 @@
-err_comptime.bd:8:1: error[E0223]: comptime assertion failed: the buffer must be a whole number of cache lines
-error: could not check err_comptime.bd (1 error)

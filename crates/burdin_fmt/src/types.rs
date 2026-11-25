@@ -126,12 +126,9 @@ impl Fmt<'_> {
     /// a member name (`spec/grammar.md`, "Keywords"; issue #933).
     pub fn member_name(&mut self) -> R<D> {
         match self.kind() {
-            TokenKind::Ident(_)
-            | TokenKind::Any
-            | TokenKind::Impl
-            | TokenKind::Error
-            | TokenKind::Comptime
-            | TokenKind::Reserved(_) => Ok(self.tok_doc()),
+            TokenKind::Ident(_) | TokenKind::Any | TokenKind::Impl | TokenKind::Error | TokenKind::Reserved(_) => {
+                Ok(self.tok_doc())
+            }
             _ => Err(self.error("expected a name")),
         }
     }

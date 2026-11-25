@@ -207,7 +207,7 @@ Tests: `tests/lint/docs/`, `tests/check_lint.py`.
 
 ```
 burdin doc <file.bd | package directory> [-o <dir | file>] [--output-format html|json] [--private]
-           [--coverage] [--deny-warnings] [--comptime-steps <n>] [diagnostics]
+           [--coverage] [--deny-warnings] [--const-steps <n>] [diagnostics]
 burdin doc <workspace> -p <member>... | --workspace [--exclude <member>]... [the same options]
 burdin doc --std [the same options]
 ```

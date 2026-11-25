@@ -1,0 +1,18 @@
+//@ compile-fail
+
+// The file operations reach the operating system, so a constant evaluation that reaches one is E0224
+// (spec/const-eval.md, CE6; spec/stdlib.md, "Files and file handles"). A helper that calls one is impure too, and the
+// error is reported at the constant.
+
+fn opened(): bool {
+    File.open("x").is_ok()
+}
+
+const A: bool = File.open("x").is_ok() //~ E0224
+const B: bool = File.create("x").is_ok() //~ E0224
+const C: bool = read("x").is_ok() //~ E0224
+const D: bool = copy_file("x", "y").is_ok() //~ E0224
+const E: bool = exists("x") //~ E0224
+const F: bool = opened() //~ E0224
+
+fn main() {}

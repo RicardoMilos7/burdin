@@ -222,7 +222,7 @@ block on a broken DNS server; running it on a worker would stall the pool. The p
 `__dns_lookup(host) -> Result<String, i32>` returns one `a.b.c.d` per line, and `std` builds the `List<SocketAddr>`
 with the caller's port. The first address is the preferred one. A failure carries the resolver's code (`EAI_*` on
 Unix, `WSAHOST_NOT_FOUND` and friends on Windows), and an empty answer is `NotFound`. The primitive is impure: a
-comptime evaluation that reaches it is E0224.
+Compile-time evaluation that reaches it is E0224.
 
 Tests: `s2_io/net_lookup_host`.
 

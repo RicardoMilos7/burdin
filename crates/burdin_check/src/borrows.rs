@@ -543,13 +543,8 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Block(b) => self.block(b),
-            // A comptime expression only touches its own locals (spec/comptime.md, CT2); its value is a new one.
-            K::Comptime(inner) => self.expr(inner, mode),
-            // The items are owned values made at compile time, so the loop borrows nothing (CT6).
-            K::ComptimeFor { iter, body, .. } => {
-                self.expr(iter, Mode::Use);
-                self.block(body);
-            }
+            // A compile-time condition only reads constants; its value is a new one.
+            K::ConstCond(inner) => self.expr(inner, mode),
             K::If(cond, then, other) => {
                 self.expr(cond, Mode::Use);
                 self.block(then);
@@ -874,7 +869,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
         | K::AnyUpcast { value: inner, .. }
-        | K::Comptime(inner) => locals_used(inner, out),
+        | K::ConstCond(inner) => locals_used(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
@@ -920,7 +915,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(range, out);
             locals_used_block(body, out);
         }
-        K::ForArray { array, body, .. } | K::ComptimeFor { iter: array, body, .. } => {
+        K::ForArray { array, body, .. } => {
             locals_used(array, out);
             locals_used_block(body, out);
         }
@@ -1013,7 +1008,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
         | K::AnyUpcast { value: inner, .. }
-        | K::Comptime(inner) => uses_expr(inner, stmt, last),
+        | K::ConstCond(inner) => uses_expr(inner, stmt, last),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
         K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
@@ -1063,7 +1058,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(range, stmt, last);
             uses_block(body, stmt, last);
         }
-        K::ForArray { array, body, .. } | K::ComptimeFor { iter: array, body, .. } => {
+        K::ForArray { array, body, .. } => {
             uses_expr(array, stmt, last);
             uses_block(body, stmt, last);
         }

@@ -1,4 +1,4 @@
-//! `burdin expand`: the program's source after comptime evaluation, derives, default and named arguments, and
+//! `burdin expand`: the program's source after constant evaluation, derives, default and named arguments, and
 //! operators have been expanded (`spec/inspect.md`, INS1-INS6). The expansion itself is `burdin_inspect::expand`; this
 //! file is the command line and the formatting of its result.
 
@@ -16,7 +16,7 @@ struct ExpandArgs {
     item: Option<String>,
     instances: bool,
     no_format: bool,
-    comptime_steps: Option<u64>,
+    const_steps: Option<u64>,
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
 }
@@ -39,14 +39,14 @@ fn parse(argv: &[String]) -> Result<ExpandArgs, String> {
             "--instances" => args.instances = flag_without_value(a, inline)?,
             "--no-format" => args.no_format = flag_without_value(a, inline)?,
             "-j" | "--jobs" => args.jobs = Some(parse_jobs(&mut it, inline, a)?),
-            "--comptime-steps" => {
+            "--const-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
                     .parse()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
-                args.comptime_steps = Some(steps);
+                    .ok_or_else(|| format!("`--const-steps` needs a positive number of steps, got `{value}`"))?;
+                args.const_steps = Some(steps);
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
@@ -77,7 +77,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         link_libs: &[],
         mode: EntryMode::Build,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,

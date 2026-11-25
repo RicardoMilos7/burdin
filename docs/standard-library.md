@@ -61,7 +61,7 @@ test it. A folder under `tests/` named `m` or `s` followed by a number is a mile
 | `slice` | Slice methods, `join`, `concat`, and `chunks` | [stdlib](../spec/stdlib.md) | [m24_stdlib](../tests/m24_stdlib/) |
 | `sort` | Sorting | [stdlib](../spec/stdlib.md) | [m24_stdlib](../tests/m24_stdlib/) |
 | `sync` | `Mutex<T>`, `RwLock<T>`, and `Shared<T>` | [shared](../spec/shared.md) | [s2_shared](../tests/s2_shared/) |
-| `target` | The operating system and architecture the program is compiled for | [comptime](../spec/comptime.md) | [m20_comptime](../tests/m20_comptime/) |
+| `target` | The operating system and architecture the program is compiled for | [constant evaluation](../spec/const-eval.md) | [m20_const](../tests/m20_const/) |
 | `task` | Tasks, scopes, and the scheduler | [tasks](../spec/tasks.md) | [s2_tasks](../tests/s2_tasks/) |
 | `text` | `String`, `str`, and the text methods | [stdlib](../spec/stdlib.md) | [m24_stdlib](../tests/m24_stdlib/) |
 | `thread` | Threads and their join handles | [tasks](../spec/tasks.md) | [s2_tasks](../tests/s2_tasks/) |

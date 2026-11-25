@@ -139,7 +139,6 @@ pub const KEYWORDS: &[&str] = &[
     "any",
     "as",
     "break",
-    "comptime",
     "const",
     "continue",
     "else",
@@ -385,7 +384,7 @@ impl FileIndex {
                     _ => None,
                 };
             }
-            if !matches!(t.kind, Tk::Keyword("mut" | "own" | "comptime")) {
+            if !matches!(t.kind, Tk::Keyword("mut" | "own")) {
                 at_start = false;
             }
         }

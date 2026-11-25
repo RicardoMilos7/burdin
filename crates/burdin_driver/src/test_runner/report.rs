@@ -163,9 +163,6 @@ pub(super) fn attribute_text(attrs: &Attrs) -> String {
         if attrs.should_fail {
             parts.push("should_fail".to_string());
         }
-        if attrs.differential {
-            parts.push("differential".to_string());
-        }
         if parts.is_empty() { String::new() } else { format!("[{}]", parts.join(", ")) }
     }
 }
@@ -226,8 +223,8 @@ fn attributes_json(attrs: &Attrs) -> String {
     let message = attrs.should_panic_message.as_deref().map_or("null".to_string(), quoted);
     format!(
         "{{\"ignore\":{},\"timeout_ms\":{timeout},\"should_panic\":{},\"should_panic_message\":{message},\
-         \"should_fail\":{},\"differential\":{}}}",
-        attrs.ignore, attrs.should_panic, attrs.should_fail, attrs.differential
+         \"should_fail\":{}}}",
+        attrs.ignore, attrs.should_panic, attrs.should_fail
     )
 }
 
@@ -437,7 +434,7 @@ mod tests {
                 path: local,
                 file: "src/main.bd".to_string(),
                 line: 7,
-                run: Run::Block { exe: PathBuf::from("bin"), index: 0, comptime: None },
+                run: Run::Block { exe: PathBuf::from("bin"), index: 0 },
                 attrs,
             },
             ignored,
@@ -487,7 +484,7 @@ mod tests {
         assert_eq!(
             attributes_json(&attrs),
             "{\"ignore\":false,\"timeout_ms\":0,\"should_panic\":false,\"should_panic_message\":null,\
-             \"should_fail\":true,\"differential\":false}"
+             \"should_fail\":true}"
         );
         let attrs = Attrs { doc: true, no_run: true, compile_fail: true, ..Attrs::default() };
         assert_eq!(

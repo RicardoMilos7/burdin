@@ -20,7 +20,7 @@ priv unsafe fn c_text(text: CPtr<CChar>): String {
 
 /// The text of an OpenSSL error code: its short reason ("certificate verify failed"), or `error code N`.
 priv unsafe fn code_text(code: u32): String {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         String.new()
     } else if features.openssl {
         let reason = ERR_reason_error_string(code as u64)
@@ -36,7 +36,7 @@ priv unsafe fn code_text(code: u32): String {
 /// Empties the error queue of this thread and returns the reason of its first entry, or "" when it was empty. A failing
 /// OpenSSL call is followed by this on the same thread with no task switch in between (spec/tls.md, TLS2).
 priv fn error_text(): String {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         String.new()
     } else if features.openssl {
         let mut text = String.new()
@@ -59,7 +59,7 @@ priv fn error_text(): String {
 
 /// Forgets the errors a previous call left behind, so the queue holds only what the next call reports.
 priv fn clear_errors() {
-    comptime if target.os() == target.Os.Windows {} else if features.openssl {
+    if target.os() == target.Os.Windows {} else if features.openssl {
         unsafe { ERR_clear_error() }
     } else {}
 }

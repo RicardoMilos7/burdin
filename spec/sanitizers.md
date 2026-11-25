@@ -45,9 +45,8 @@ suite with `--sanitize=address`.
   a write, or a field of the pointee) first checks that the pointer is not null and that its address is a multiple
   of `T`'s alignment. A failed check is an ordinary panic at the dereference or the operation, with its source
   location: `panic: null pointer dereference`, ``panic: misaligned pointer dereference: `i64` needs 8-byte
-  alignment``, `panic: attempt to add with overflow`. A `[differential]` test compares its compiled run with the
-  interpreter, which wraps in a release build (`comptime.md`, CT1), so release-mode overflow under `undefined`
-  reports a divergence.
+  alignment``, `panic: attempt to add with overflow`. The interpreter of `burdin test --interpret` wraps in a
+  release build (`const-eval.md`, CE1), so release-mode overflow under `undefined` is a difference between the two.
 - **SAN5. Instrumentation.** Every function the compiler defines, the generated runtime and the standard library
   included, carries the sanitizer's attribute (`sanitize_address`, `sanitize_thread`), added before the profile's
   optimization pipeline; the instrumentation passes run after it, as clang orders them. An instrumented program is

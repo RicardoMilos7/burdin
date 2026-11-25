@@ -15,7 +15,7 @@ derive Describe {
     fn describe(self): String {
         let mut out = String.from(Self.name)
         out.push_str("(")
-        comptime for field in Self.fields {
+        for field in Self.fields {
             if field.index > 0 {
                 out.push_str(", ")
             }

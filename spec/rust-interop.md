@@ -165,9 +165,10 @@ must go back to the `<crate>_<type>_*` functions it came from.
 
 A value struct is the one place where Burdin and Rust must agree on bytes, so it is checked twice.
 
-- The **Burdin module** carries `comptime assert(T.size() == N)` and `comptime assert(T.align() == N)` for every
-  value struct, where `N` is what rustc computed. A Burdin compiler whose `repr(C)` layout differs fails the build
-  with E0223 and the message "`T` must have size N, as in the Rust crate".
+- The **Burdin module** carries a `priv const` of type `()` for every value struct, whose initializer is `if T.size() == N { } else { panic(...) }`
+  and another for `T.align() == N`, where `N` is what rustc computed. A `const` is evaluated whether or
+  not it is used (`spec/const-eval.md`, CE2), so a Burdin compiler whose `repr(C)` layout differs fails the build
+  with E0222 (a panic during constant evaluation) and the message "`T` must have size N, as in the Rust crate".
 - The **shim** carries `const _: () = { assert!(size_of::<T>() == N) ... }` for the size, the alignment, and
   `offset_of!` of every field, and for an enumeration's width. A crate whose layout changed since the shim was
   generated stops `cargo` with "evaluation panicked: `T` must have size N" (rustc E0080), reported as E0264.

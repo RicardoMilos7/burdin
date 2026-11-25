@@ -1,6 +1,6 @@
 // Hand-written bindings to SChannel, Crypt32, and CNG, and the helpers over them: the Windows backend of the `tls`
 // package (spec/tls.md, TLS1 and TLS1a). Nothing here is safe: every call is `unsafe`, and the safe layer is the rest
-// of the package, which reaches this file only through `comptime if target.os() == target.Os.Windows`.
+// of the package, which reaches this file only through `if target.os() == target.Os.Windows`.
 //
 // SChannel, like OpenSSL's memory BIOs, never sees a socket: `InitializeSecurityContext`, `AcceptSecurityContext`,
 // `EncryptMessage`, and `DecryptMessage` work on byte buffers the caller owns, so the engine of `engine.bd` moves the

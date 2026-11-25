@@ -6,6 +6,17 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Removed `comptime` from the language; a macro system is planned to replace it. Removed: `comptime` expressions and
+  blocks, `comptime` parameters and per-value specialization, `comptime if`/`for` as syntax, `comptime assert`,
+  `comptime generate` (declaration generation, issue #280), the `[differential]` test attribute, and the reserved
+  word `comptime` (it is an ordinary identifier; so is `generate`). Retired diagnostics: E0223, E0242, E0243 (their
+  numbers are never reused). `spec/comptime.md` and `spec/generate.md` are replaced by `spec/const-eval.md` (rules CE1-CE12).
+  Changed: a plain `if` whose condition is a compile-time condition (literals, `const` items, operators, enum
+  variants, the `target` and `features` modules) keeps only the taken branch, replacing `comptime if`; a plain `for`
+  over `Type.fields` or `Type.variants` is unrolled, replacing `comptime for`; `--comptime-steps` is now
+  `--const-steps`; the crate `burdin_comptime` is `burdin_interp`; the test folder `m20_comptime` is `m20_const`;
+  bindgen and Rust-interop layout checks are `priv const` assertions (E0222). Kept: `const` evaluation, `embed`,
+  reflection, derives, `burdin repl`, and `burdin test --interpret`.
 - Issue #918: `PartialEq` and `PartialOrd` are gone: `Eq` and `Ord` are each one name for the derive and the
   interface (`Type: Eq { fn eq(...) }`, `Type: Ord { fn lt(...) }`). `Ord` now implies `Eq` in the derive as it does in
   the bound, so a type that derives `Ord` has `==` and `!=`. An `Eq`/`Ord` block on a type that
@@ -39,7 +50,7 @@ close-out checklist in `AGENTS.md`).
   and `static mut` a writable one that is used only in `unsafe` code. Each value is computed at compile time and stored
   before `main` runs; its type must be plain data, so it is never dropped. A `static mut` may not be borrowed. A
   `static` in a function body is E0302, a non-plain type is E0303, and a borrow of a `static mut` is E0304. Atomics and
-  `Mutex<T>` cannot be a static's type yet (E0221). Tests: `tests/m20_comptime/static_*` and `const_global`, and
+  `Mutex<T>` cannot be a static's type yet (E0221). Tests: `tests/m20_const/static_*` and `const_global`, and
   `tests/s2_tasks/static_in_task`.
 - Issue #486: array and slice patterns, `let [a, b] = arr` and `match names { [first, ..rest] => ... }`, on a fixed-size
   array `[T; n]` and on a slice view `[T]` (`spec/array-patterns.md`, AP1-AP12). `..` or `..name` stands for the elements
@@ -128,8 +139,8 @@ close-out checklist in `AGENTS.md`).
   `tests/check_packages.py`, `tests/check_lsp.py`, and the loader's and language server's unit tests.
 - Issue #969: `embed("path")` with the expected type `[u8]` is a static byte view of the file, so the length is
   never written. It can be a `let` annotation, a parameter, or a return type, and a function may return it, as it may
-  return a string literal (`spec/comptime.md` CT15, `spec/memory-rules.md` RT4). A constant may not have that type
-  (E0221, CT3). The `[u8; N]` form and E0240/E0241 are unchanged. Tests: `tests/m21_reflect/embed_slice` and
+  return a string literal (`spec/const-eval.md` CE12, `spec/memory-rules.md` RT4). A constant may not have that type
+  (E0221, CE3). The `[u8; N]` form and E0240/E0241 are unchanged. Tests: `tests/m21_reflect/embed_slice` and
   `embed_slice_invalid`.
 - Issue #277: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) on the built-in
   integers, floats, and `bool`. The value is evaluated first, the place's address once, and the operator follows the
@@ -142,7 +153,7 @@ close-out checklist in `AGENTS.md`).
   holds to its module. Generation runs before the whole-program check and sees only hand-written declarations; its
   names are not hygienic, as derives are, and errors in generated code are reported at the block. Other item kinds,
   a generator that fails, and `comptime generate` outside module scope are E0242, E0222/E0224/E0225, and E0243.
-  Rules: `spec/generate.md` GN1-GN10; tests `tests/generate/`; decision 34 in `tests/README.md`.
+  (Removed afterwards with `comptime`; see the Unreleased entry.)
 - Fallible allocation (issue #278; `spec/allocators.md`, AL11). `std` declares `AllocError` with `CapacityOverflow` and
   `OutOfMemory`. The `try_` forms return `Result<_, AllocError>`: `List<T>.try_with_capacity`, `try_with_capacity_in`,
   `try_reserve`, and `try_reserve_exact`; `Map<K, V>.try_with_capacity` and `try_reserve`; and `String.try_with_capacity`
@@ -643,7 +654,7 @@ new crate `burdin_inspect` holds the logic and reads what the compiler built; th
 - **`burdin expand` (#597).** Prints the source after comptime evaluation, `comptime if`/`for` unrolling, user
   derives, default and named arguments, and operators: each file's own text with only the rewritten parts replaced,
   then formatted. `--item <path>` prints one item, `--instances` adds the instances of generic functions. The
-  expansion of every conformance program of `m17_arguments`, `m19_operators`, `m20_comptime`, and `m21_reflect` goes
+  expansion of every conformance program of `m17_arguments`, `m19_operators`, `m20_const`, and `m21_reflect` goes
   back through `burdin check` and prints what the original prints. Extension calls stay method calls (an extension
   is not a value, EX1), and a rewrite with no source form is skipped, never guessed.
 - **`--emit` and `burdin asm` (#598).** `burdin build --emit tir,llvm-ir,llvm-ir-opt,llvm-bc,asm,obj,deps` writes each
@@ -950,7 +961,7 @@ every CI job runs them.
   gates and editor feedback (`spec/check.md`, CK1-CK8).
 - The diagnostics, formats, and exit statuses are those of a build: a clean check prints nothing and exits 0, errors exit
   1 and end with `error: could not check <target> (N errors)`, and a usage error exits 2. `--tests` also checks `test`
-  blocks and accepts a library package without `src/main.bd`; `--release` and `--comptime-steps` are as for a build;
+  blocks and accepts a library package without `src/main.bd`; `--release` and `--const-steps` are as for a build;
   the options that only matter for an output (`-o`, `--emit-ir`, `-g`, `--lto`, `--link-lib`, ...) are rejected.
 - `burdin check` reuses `front_end`, the shared front end that `build`, `run`, `test`, and `lint` also call; that
   front end runs through the query-based compiler library (the entry above).
@@ -1228,7 +1239,7 @@ every CI job runs them.
     temporary lookup keys, under the checking allocator.
 - Differential tests between comptime and compiled code (issue #444).
   - A test item may carry `[differential]`: the compiler runs its body through the comptime interpreter after the
-    CT13 rewrite, and `burdin test` requires the compiled test to produce the same `Ok`/`Err` outcome. A different
+    CE10 rewrite, and `burdin test` requires the compiled test to produce the same `Ok`/`Err` outcome. A different
     outcome, or a compiled run that aborts, fails the test with a note naming both outcomes. Agreement passes even
     when both runs return `Err`; this stage compares only the outcome, because the dynamic error type carries no
     comparable value.
@@ -1550,7 +1561,7 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   to a generic function no longer takes the callee's unbound `T` as its element type (a bug const generics exposed).
 - `embed` (#171): `embed("path")` is the file's contents as `str` or, with the expected type `[u8; N]`, as bytes,
   relative to the source file. The file is a build input: `burdin build --emit-deps <file>` lists them. A missing
-  file is E0240 and a bad path or length is E0241 (`spec/comptime.md` CT15).
+  file is E0240 and a bad path or length is E0241 (`spec/const-eval.md` CE12).
 - Generic type aliases (#392): `type Pair<T> = (T, T)`, with parameters, bounds, and const parameters, expanded in
   every type position; an alias is the aliased type, so an impl block written through one is E0003
   (`spec/type-aliases.md` AL1-AL6). The `declare-generic-alias` E9000 site is gone.
@@ -1565,7 +1576,7 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
   of E0230-E0233, E0240-E0241, E0250-E0252, E0131, and E0143), plus unit tests for the constant evaluator, the
   parser, impl matching, and the front end on source text. The suite is 537 tests.
 - Documentation: `spec/reflection.md`, `spec/const-generics.md`, `spec/type-aliases.md`, and `spec/impls.md` (new),
-  `spec/comptime.md` (CT15), `spec/grammar.md` (the `derive` item, const parameters and arguments, `x.{name}`, the
+  `spec/const-eval.md` (CE12), `spec/grammar.md` (the `derive` item, const parameters and arguments, `x.{name}`, the
   type of an impl block), `spec/stage1-subset.md`, `spec/e9000-audit.md` (five rows removed),
   `tests/README.md` (decisions 26-28, the ten codes), `docs/error-codes.md` (E0143), `README.md` (`--emit-deps`),
   `Burdin Language Design.md`, `HANDOFF.md`, and `CLAUDE.md`.
@@ -1573,8 +1584,8 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
 ### Milestone 20 — comptime (issue #157, sub-issues #158-#165 and #305-#308)
 
 - Decision (#158): the comptime engine interprets the checked typed tree; there is no MIR (#159 closed as not
-  chosen). The new crate `crates/burdin_comptime` depends only on `burdin_tir` and `burdin_diag` and runs after the
-  memory checks and before code generation (`spec/comptime.md`, CT1).
+  chosen). The new crate `crates/burdin_interp` depends only on `burdin_tir` and `burdin_diag` and runs after the
+  memory checks and before code generation (`spec/const-eval.md`, CE1).
 - Syntax and sema: `comptime` is a keyword. `comptime E` and `comptime { ... }`, `comptime name: T` parameters,
   `comptime if`, `comptime for`, and `comptime assert(cond, "msg")` (also as a module item). Comptime code sees only
   constants, comptime parameters, `comptime for` bindings, and its own locals (E0220); a value that crosses into
@@ -1583,15 +1594,15 @@ Planned in `spec/stage1-subset.md`; tracked by milestones m12-m24 and the GitHub
 - Interpreter (#160, #305-#308): every expression form, with owned values, places for `&mut`/`mut`, moves, user
   `Drop`, the profile's overflow rule, and the runtime's float text, integer parsing, hashing, and layout. Panics
   are E0222, a failed `comptime assert` is E0223, output/files/environment/processes/C are E0224, and the step
-  budget (10,000,000, `--comptime-steps N`), call depth 512, and 1024 specializations per function are E0225. A
+  budget (10,000,000, `--const-steps N`), call depth 512, and 1024 specializations per function are E0225. A
   constant cycle through calls is E0009.
 - Rewriting: constants and comptime expressions become literals, `comptime if` keeps its selected branch, `comptime
   for` is unrolled, and each call to a function with comptime parameters goes to a specialization per argument
   value. `std/src/target.bd` adds `target.os()` and `target.arch()`. The driver runs the compiler on a thread with
   a 1 GiB reserved stack.
-- Tests: `tests/m20_comptime/` adds 40 conformance tests, including `interp_*` tests that compare comptime and
-  run-time results; `tests/check_build_flags.py` checks `--comptime-steps`. The suite is 512 tests.
-- Documentation: `spec/comptime.md` (new, CT1-CT14), `spec/grammar.md`, `spec/stdlib.md`, `spec/stage1-subset.md`
+- Tests: `tests/m20_const/` adds 40 conformance tests, including `interp_*` tests that compare comptime and
+  run-time results; `tests/check_build_flags.py` checks `--const-steps`. The suite is 512 tests.
+- Documentation: `spec/const-eval.md` (new, CE1-CE11), `spec/grammar.md`, `spec/stdlib.md`, `spec/stage1-subset.md`
   (decision 6 and the milestone note), `tests/README.md` (layout, E0220-E0225, E0009, and decision 25),
   `docs/error-codes.md`, `spec/e9000-audit.md` (the `const-expression` site is gone), `HANDOFF.md`, `CLAUDE.md`, and
   `AGENTS.md`.

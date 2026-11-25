@@ -1,0 +1,44 @@
+//@ run
+//> 15 15
+//> 6 6
+//> 11 11
+
+// The interpreter runs closures like compiled code: borrow and move captures, `FnMut` state that persists between
+// calls, and closures passed to functions (spec/const-eval.md, CE1).
+
+fn apply<F: Fn(i32): i32>(f: F, v: i32): i32 {
+    f(v)
+}
+
+fn sum_with_closure(): i32 {
+    let base = 5
+    let add = |x: i32| x + base
+    apply(add, 10)
+}
+
+fn counter(): i32 {
+    let mut count = 0
+    let mut bump = || {
+        count = count + 2
+    }
+    bump()
+    bump()
+    bump()
+    count
+}
+
+fn compose(): i32 {
+    let double = |x: i32| x * 2
+    let inc = |x: i32| x + 1
+    inc(double(5))
+}
+
+const A: i32 = sum_with_closure()
+const B: i32 = counter()
+const C: i32 = compose()
+
+fn main() {
+    println("{A} {sum_with_closure()}")
+    println("{B} {counter()}")
+    println("{C} {compose()}")
+}

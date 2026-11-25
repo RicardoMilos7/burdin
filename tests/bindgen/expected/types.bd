@@ -14,8 +14,8 @@ struct Vec2 repr(C) {
     x: f64
     y: f64
 }
-comptime assert(Vec2.size() == 16, "`Vec2` must have size 16, as in the C header")
-comptime assert(Vec2.align() == 8, "`Vec2` must have alignment 8, as in the C header")
+priv const VEC2_SIZE_CHECK: () = if Vec2.size() == 16 { } else { panic("`Vec2` must have size 16, as in the C header") }
+priv const VEC2_ALIGN_CHECK: () = if Vec2.align() == 8 { } else { panic("`Vec2` must have alignment 8, as in the C header") }
 struct Shape repr(C) {
     id: shape_id
     kind: ShapeKind
@@ -25,8 +25,8 @@ struct Shape repr(C) {
     flags: u8
     type_: i32
 }
-comptime assert(Shape.size() == 96, "`Shape` must have size 96, as in the C header")
-comptime assert(Shape.align() == 8, "`Shape` must have alignment 8, as in the C header")
+priv const SHAPE_SIZE_CHECK: () = if Shape.size() == 96 { } else { panic("`Shape` must have size 96, as in the C header") }
+priv const SHAPE_ALIGN_CHECK: () = if Shape.align() == 8 { } else { panic("`Shape` must have alignment 8, as in the C header") }
 type shape_label = CPtr<CChar>
 type Color = i32
 const COLOR_RED: i32 = 0
@@ -37,28 +37,28 @@ struct Tagged repr(C) {
     b: i64
     c: i16
 }
-comptime assert(Tagged.size() == 24, "`Tagged` must have size 24, as in the C header")
-comptime assert(Tagged.align() == 8, "`Tagged` must have alignment 8, as in the C header")
+priv const TAGGED_SIZE_CHECK: () = if Tagged.size() == 24 { } else { panic("`Tagged` must have size 24, as in the C header") }
+priv const TAGGED_ALIGN_CHECK: () = if Tagged.align() == 8 { } else { panic("`Tagged` must have alignment 8, as in the C header") }
 struct Rect_origin repr(C) {
     x: i32
     y: i32
 }
-comptime assert(Rect_origin.size() == 8, "`Rect_origin` must have size 8, as in the C header")
-comptime assert(Rect_origin.align() == 4, "`Rect_origin` must have alignment 4, as in the C header")
+priv const RECT_ORIGIN_SIZE_CHECK: () = if Rect_origin.size() == 8 { } else { panic("`Rect_origin` must have size 8, as in the C header") }
+priv const RECT_ORIGIN_ALIGN_CHECK: () = if Rect_origin.align() == 4 { } else { panic("`Rect_origin` must have alignment 4, as in the C header") }
 struct Rect repr(C) {
     origin: Rect_origin
     width: i32
     height: i32
 }
-comptime assert(Rect.size() == 16, "`Rect` must have size 16, as in the C header")
-comptime assert(Rect.align() == 4, "`Rect` must have alignment 4, as in the C header")
+priv const RECT_SIZE_CHECK: () = if Rect.size() == 16 { } else { panic("`Rect` must have size 16, as in the C header") }
+priv const RECT_ALIGN_CHECK: () = if Rect.align() == 4 { } else { panic("`Rect` must have alignment 4, as in the C header") }
 struct List repr(C) { }
 struct Pair repr(C) {
     first: i32
     second: i32
 }
-comptime assert(Pair.size() == 8, "`Pair` must have size 8, as in the C header")
-comptime assert(Pair.align() == 4, "`Pair` must have alignment 4, as in the C header")
+priv const PAIR_SIZE_CHECK: () = if Pair.size() == 8 { } else { panic("`Pair` must have size 8, as in the C header") }
+priv const PAIR_ALIGN_CHECK: () = if Pair.align() == 4 { } else { panic("`Pair` must have alignment 4, as in the C header") }
 extern "C" {
     fn shape_new(kind: ShapeKind, color: Color): shape_id
     fn shape_free(shape: CPtr<Shape>)

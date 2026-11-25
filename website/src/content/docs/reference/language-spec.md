@@ -35,9 +35,8 @@ When these disagree, the repository's files win over any copy hosted elsewhere, 
 | Default and named arguments | [`spec/arguments.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/arguments.md) |
 | Extension methods and their resolution order | [`spec/extensions.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/extensions.md) |
 | Operator overloading and `Index` and `IndexMut` | [`spec/operators.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/operators.md) |
-| Compile-time evaluation: `comptime` values, parameters, `if`, `for`, and `embed` | [`spec/comptime.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/comptime.md) |
+| Compile-time evaluation: `const` values, `if` with a compile-time condition, and `embed` | [`spec/const-eval.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/const-eval.md) |
 | Global variables: `static` and `static mut` | [`spec/globals.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/globals.md) |
-| Declaration generation with `comptime generate` | [`spec/generate.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/generate.md) |
 | Reflection: `Type.fields`, `variants`, `name`, and user `derive` declarations | [`spec/reflection.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/reflection.md) |
 | Const parameters and array lengths | [`spec/const-generics.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/const-generics.md) |
 | Generic type aliases | [`spec/type-aliases.md`](https://github.com/RicardoMilos7/burdin/blob/main/spec/type-aliases.md) |

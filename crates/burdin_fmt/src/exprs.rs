@@ -170,7 +170,6 @@ impl Fmt<'_> {
 
     fn unary(&mut self, r: Restriction) -> R<Ex> {
         match self.kind() {
-            TokenKind::Comptime => self.comptime_expr(r),
             TokenKind::Minus | TokenKind::Bang | TokenKind::Star | TokenKind::Amp => {
                 let is_amp = self.at(&TokenKind::Amp);
                 let op = self.tok_doc();
@@ -188,19 +187,6 @@ impl Fmt<'_> {
             }
             _ => self.postfix(r),
         }
-    }
-
-    /// `comptime E`, `comptime if ...`, `comptime for ...`, and `comptime assert(condition[, message])`.
-    fn comptime_expr(&mut self, r: Restriction) -> R<Ex> {
-        let kw = self.tok_doc();
-        if self.at_word("assert") && self.nth(1) == &TokenKind::LParen {
-            let name = self.tok_doc();
-            let args = self.delimited(&TokenKind::LParen, &TokenKind::RParen, |f| Ok(f.expr()?.doc))?;
-            let args = self.list_doc(args, false);
-            return Ok(Ex::plain(concat(vec![kw, space(), name, args])));
-        }
-        let operand = self.unary(r)?;
-        Ok(Ex { binary: false, ..Ex::plain(concat(vec![kw, space(), operand.doc])) })
     }
 
     fn postfix(&mut self, r: Restriction) -> R<Ex> {

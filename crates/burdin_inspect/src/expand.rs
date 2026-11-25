@@ -5,8 +5,8 @@
 //! what it holds at the span of a syntax node: the tree records the span of every expression it keeps, so a node
 //! whose typed counterpart looks different has been expanded. The rewrites are:
 //!
-//! - `comptime E` becomes the value it evaluated to, `comptime if` becomes the branch it chose, and `comptime for`
-//!   becomes one block per item, each with the item's own typed tree (INS2);
+//! - an `if` with a compile-time condition becomes the branch it chose, and a `for` over `Type.fields` or
+//!   `Type.variants` becomes one block per item, each with the item's own typed tree (INS2);
 //! - a reflection member (`field.name`, `Self.name`) and `x.{name}` become the literal or the field they resolved
 //!   to (INS2);
 //! - an operator that resolved to an interface method becomes the method call (`a + b` is `a.add(b)`), and a call
@@ -24,7 +24,7 @@ use burdin_diag::{FileId, Span};
 use burdin_syntax::ast;
 use burdin_tir::visit::{Visit, walk_expr};
 use burdin_tir::{ExprKind as T, Program, Ty};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 /// One source file the program was built from, outside the standard library.
@@ -184,7 +184,7 @@ struct Cx<'p> {
 struct Collect<'a, 'p> {
     program: &'p Program,
     map: &'a mut HashMap<Key, &'p burdin_tir::Expr>,
-    /// Whether an existing entry is replaced: the typed tree of one `comptime for` item overrides its siblings'.
+    /// Whether an existing entry is replaced: the typed tree of one unrolled `for` item overrides its siblings'.
     replace: bool,
     seen_closures: HashSet<usize>,
 }
@@ -223,7 +223,7 @@ impl<'p> Cx<'p> {
         cx
     }
 
-    /// This context with the expressions of `e` added over it: what one item of a `comptime for` holds.
+    /// This context with the expressions of `e` added over it: what one item of an unrolled `for` holds.
     fn with(&self, program: &'p Program, e: &'p burdin_tir::Expr) -> Cx<'p> {
         let mut cx = self.clone();
         let mut c = Collect { program, map: &mut cx.map, replace: true, seen_closures: HashSet::new() };
@@ -265,8 +265,6 @@ struct Expander<'a> {
     functions: HashMap<(u32, u32), Vec<usize>>,
     /// The `derive` declarations of the program, by name.
     derives: HashMap<String, (&'a ast::DeriveDecl, FileId)>,
-    /// Arguments that must stay `comptime`: the call's callee takes a `comptime` parameter there.
-    keep_comptime: RefCell<HashSet<Key>>,
     /// Nesting depth of interpolation holes being rendered: a string literal cannot be printed inside one.
     in_hole: Cell<u32>,
 }
@@ -290,7 +288,6 @@ impl<'a> Expander<'a> {
             files: files.iter().map(|f| (f.id.0, f)).collect(),
             functions,
             derives,
-            keep_comptime: RefCell::new(HashSet::new()),
             in_hole: Cell::new(0),
         }
     }
@@ -409,9 +406,6 @@ impl<'a> Expander<'a> {
 
     fn function_item(&self, file: &SourceFile<'a>, f: &ast::FnDecl, name: String, plan: &mut Plan) {
         plan.units.push(unit(&name, f.span));
-        if f.params.iter().any(|p| p.comptime.is_some()) {
-            return;
-        }
         let Some(func) = self.single_function(f.span) else { return };
         let cx = Cx::of_block(self.program, &func.body);
         let text = self.block_text(&f.body, &cx);
@@ -428,17 +422,6 @@ impl<'a> Expander<'a> {
     }
 
     fn const_item(&self, file: &SourceFile<'a>, c: &ast::ConstDecl, plan: &mut Plan) {
-        if let ast::ExprKind::ComptimeAssert(..) = c.value.kind {
-            // A module-level `comptime assert` held while compiling and has nothing left to say.
-            let source = self.slice(c.span).unwrap_or("");
-            let text = source.lines().map(|l| format!("// {l}")).collect::<Vec<_>>().join("\n");
-            plan.patches.push(Patch {
-                lo: c.span.lo as usize,
-                hi: c.span.hi as usize,
-                text: format!("// held at compile time:\n{text}"),
-            });
-            return;
-        }
         plan.units.push(unit(&c.name.name, c.span));
         if matches!(c.value.kind, ast::ExprKind::Int(_) | ast::ExprKind::Str(_) | ast::ExprKind::Bool(_)) {
             return;
@@ -597,8 +580,10 @@ impl<'a> Expander<'a> {
         use ast::ExprKind as K;
         let typed = cx.at(e.span);
         let replaced = match &e.kind {
-            K::Comptime(inner) => self.comptime_text(e, inner, typed, cx),
-            K::ComptimeAssert(..) => Some("{}".to_string()),
+            K::If { then_block, else_expr, .. } => self.const_if_text(then_block, else_expr.as_deref(), typed, cx),
+            K::For { pattern, iter, body, .. } if is_reflection_iterable(iter) => {
+                typed.and_then(|t| self.reflection_for_text(e, pattern, body, t, cx))
+            }
             K::Binary(..) | K::Unary(..) | K::Index(..) => self.operator_text(e, typed, cx),
             K::Call(callee, args) => self.call_text(e, callee, args, typed, cx),
             K::DynField(recv, _) => self.dyn_field_text(e, recv, typed, cx),
@@ -625,43 +610,39 @@ impl<'a> Expander<'a> {
         self.with_children(e.span, kids, cx)
     }
 
-    fn comptime_text(
+    /// An `if` whose condition was a compile-time condition (`spec/const-eval.md`, CE4): the typed tree holds only
+    /// the branch the condition chose, so the text is that branch. An ordinary `if` is still an `if` in the typed
+    /// tree, and is left as written.
+    fn const_if_text(
         &self,
-        e: &ast::Expr,
-        inner: &ast::Expr,
+        then_block: &ast::Block,
+        else_expr: Option<&ast::Expr>,
         typed: Option<&'a burdin_tir::Expr>,
         cx: &Cx<'a>,
     ) -> Option<String> {
-        use ast::ExprKind as K;
-        if self.keep_comptime.borrow().contains(&key(e.span)) {
+        // The chosen branch keeps its own span when it is the `else` branch, so the node of the whole `if` is not
+        // always there; then the branch whose block the tree holds is the chosen one.
+        let Some(typed) = typed else {
+            if cx.at(then_block.span).is_some() {
+                return Some(self.block_text(then_block, cx));
+            }
+            let other = else_expr?;
+            cx.at(other.span)?;
+            return Some(self.expr_text(other, cx));
+        };
+        if !matches!(typed.kind, T::Block(_) | T::Unit) {
             return None;
         }
-        match &inner.kind {
-            K::If { then_block, else_expr, .. } => {
-                // The chosen branch keeps its own span when it is the `else` branch, so the node of the whole
-                // `comptime if` is not always there; then the branch whose block the tree holds is the chosen one.
-                let Some(typed) = typed else {
-                    if cx.at(then_block.span).is_some() {
-                        return Some(self.block_text(then_block, cx));
-                    }
-                    let other = else_expr.as_deref()?;
-                    cx.at(other.span)?;
-                    return Some(self.expr_text(other, cx));
-                };
-                let spans = spans_under(typed);
-                if spans.iter().any(|s| within(*s, then_block.span) && s.hi > s.lo) {
-                    return Some(self.block_text(then_block, cx));
-                }
-                if let Some(other) = else_expr
-                    && spans.iter().any(|s| within(*s, other.span) && s.hi > s.lo)
-                {
-                    return Some(self.expr_text(other, cx));
-                }
-                Some("{}".to_string())
-            }
-            K::For { pattern, body, .. } => self.comptime_for_text(e, pattern, body, typed?, cx),
-            _ => self.hole_safe(self.value_text(typed?)?),
+        let spans = spans_under(typed);
+        if spans.iter().any(|s| within(*s, then_block.span) && s.hi > s.lo) {
+            return Some(self.block_text(then_block, cx));
         }
+        if let Some(other) = else_expr
+            && spans.iter().any(|s| within(*s, other.span) && s.hi > s.lo)
+        {
+            return Some(self.expr_text(other, cx));
+        }
+        Some("{}".to_string())
     }
 
     /// Literal text where it can stand: inside an interpolation hole a number would read as a positional index, so
@@ -677,7 +658,7 @@ impl<'a> Expander<'a> {
     }
 
     /// One block per item of the loop, each with the typed tree of that item.
-    fn comptime_for_text(
+    fn reflection_for_text(
         &self,
         e: &ast::Expr,
         pattern: &ast::Pattern,
@@ -802,12 +783,6 @@ impl<'a> Expander<'a> {
         typed: Option<&'a burdin_tir::Expr>,
         cx: &Cx<'a>,
     ) -> Option<String> {
-        // An argument written `comptime` belongs to a `comptime` parameter and stays as written.
-        for a in args {
-            if matches!(a.expr.kind, ast::ExprKind::Comptime(_)) {
-                self.keep_comptime.borrow_mut().insert(key(a.expr.span));
-            }
-        }
         let call = peel_to_call(typed?)?;
         let T::Call(_, targs) = &call.kind else { return None };
         // A method call's receiver is the first argument of the typed call.
@@ -820,8 +795,8 @@ impl<'a> Expander<'a> {
         if !named && explicit == args.len() {
             return None;
         }
-        // Every written argument must be one of the typed call's, or the call was specialized (a `comptime`
-        // parameter takes no argument at run time) and is left as written.
+        // Every written argument must be one of the typed call's, or the call was rewritten into something else
+        // and is left as written.
         let consumed =
             |a: &ast::Arg| targs[skip..].iter().any(|t| within(t.span, a.expr.span) && t.span.file == a.expr.span.file);
         if !args.iter().all(consumed) {
@@ -937,7 +912,7 @@ impl<'a> Expander<'a> {
             T::Err(x) => format!("Err({})", self.value_in(x, typed)?),
             // A constant's name may not be in scope where the text goes, so its value is written instead.
             T::Const(id) => self.value_in(&p.consts.get(id.0)?.value, typed)?,
-            T::Comptime(inner) => self.value_in(inner, typed)?,
+            T::ConstCond(inner) => self.value_in(inner, typed)?,
             T::Struct(fields) => {
                 let Ty::Struct(adt) = &e.ty else { return None };
                 let def = p.structs.get(adt.id)?;
@@ -1081,7 +1056,7 @@ fn peel_to_call(e: &burdin_tir::Expr) -> Option<&burdin_tir::Expr> {
 fn peel_wrappers(mut e: &burdin_tir::Expr) -> &burdin_tir::Expr {
     loop {
         match &e.kind {
-            T::Cast(inner) | T::StringAsStr(inner) | T::DerefRef(inner) | T::Deref(inner) | T::Comptime(inner)
+            T::Cast(inner) | T::StringAsStr(inner) | T::DerefRef(inner) | T::Deref(inner) | T::ConstCond(inner)
                 if inner.span == e.span =>
             {
                 e = inner
@@ -1214,13 +1189,7 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             block_children(body, out);
         }
         K::Return(x) => out.extend(x.iter().map(|b| &**b)),
-        K::Unary(_, x)
-        | K::Cast(x, _)
-        | K::Try(x)
-        | K::Field(x, _)
-        | K::TypeArgs(x, _)
-        | K::TupleField(x, ..)
-        | K::Comptime(x) => {
+        K::Unary(_, x) | K::Cast(x, _) | K::Try(x) | K::Field(x, _) | K::TypeArgs(x, _) | K::TupleField(x, ..) => {
             out.push(x);
         }
         K::Range { lo, hi, .. } => {
@@ -1243,11 +1212,13 @@ fn children<'e>(e: &'e ast::Expr, out: &mut Vec<&'e ast::Expr>) {
             out.extend(inits.iter().filter_map(|i| i.value.as_ref()));
             out.extend(base.as_deref());
         }
-        K::ComptimeAssert(a, b) => {
-            out.push(a);
-            out.extend(b.iter().map(|b| &**b));
-        }
     }
+}
+
+/// Whether a `for` iterable is `Type.fields` or `Type.variants`: the loop `burdin expand` shows unrolled
+/// (`spec/reflection.md`, RFL4).
+fn is_reflection_iterable(iter: &ast::Expr) -> bool {
+    matches!(&iter.kind, ast::ExprKind::Field(_, member) if member.name == "fields" || member.name == "variants")
 }
 
 #[cfg(test)]

@@ -325,7 +325,6 @@ impl Pattern {
                             }
                     })
             }
-            (ExprKind::Comptime(a), ExprKind::Comptime(b)) => self.matches(cx, a, b, bound),
             (ExprKind::Interp(_), ExprKind::Interp(_)) => false,
             _ => false,
         }

@@ -1,0 +1,90 @@
+//@ run
+//> 30 30
+//> 2 2
+//> 10 10
+//> 3 3
+
+// The iteration protocol at compile time: user iterators, `iter` and `into_iter`, ranges, and characters
+// (spec/const-eval.md, CE1; spec/iterators.md).
+
+struct Countdown {
+    n: i32
+}
+
+Countdown: Iterable<i32> {
+    fn iter(self): Countdown {
+        Countdown { n: self.n }
+    }
+}
+
+Countdown: Iterator<i32> {
+    fn next(mut self): Option<i32> {
+        if self.n == 0 {
+            None
+        } else {
+            self.n = self.n - 1
+            Some(self.n + 1)
+        }
+    }
+}
+
+fn even_sum(): i32 {
+    let mut sum = 0
+    for i in 0..=10 {
+        if i % 2 == 0 {
+            sum = sum + i
+        }
+    }
+    sum
+}
+
+fn count_chars(): i32 {
+    let mut n = 0
+    for c in "héllo".chars() {
+        if c != 'l' {
+            n = n + 1
+        }
+    }
+    n - 1
+}
+
+fn countdown_sum(): i32 {
+    let mut sum = 0
+    for v in (Countdown { n: 4 }).iter() {
+        sum = sum + v
+    }
+    let xs = [1, 2]
+    let mut doubled = xs.iter().map(|x| x * 0)
+    loop {
+        match doubled.next() {
+            Some(v) => sum = sum + v,
+            None => break,
+        }
+    }
+    sum
+}
+
+fn manual(): i32 {
+    let xs = [1, 2, 3]
+    let mut it = xs.iter()
+    let mut n = 0
+    loop {
+        match it.next() {
+            Some(_) => n = n + 1,
+            None => break,
+        }
+    }
+    n
+}
+
+const EVEN: i32 = even_sum()
+const CHARS: i32 = count_chars()
+const DOWN: i32 = countdown_sum()
+const MANUAL: i32 = manual()
+
+fn main() {
+    println("{EVEN} {even_sum()}")
+    println("{CHARS} {count_chars()}")
+    println("{DOWN} {countdown_sum()}")
+    println("{MANUAL} {manual()}")
+}

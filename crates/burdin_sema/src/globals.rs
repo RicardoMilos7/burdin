@@ -244,7 +244,7 @@ pub(crate) struct Globals {
     /// The initializer of each constant and the module it is written in, by constant index: an array length may
     /// name a constant.
     pub(crate) const_inits: Vec<(usize, &'static burdin_syntax::ast::Expr)>,
-    /// The files `embed` read, in the order they were first read: inputs of the build (`spec/comptime.md`, CT15).
+    /// The files `embed` read, in the order they were first read: inputs of the build (`spec/const-eval.md`, CE12).
     pub(crate) embedded: RefCell<Vec<String>>,
     /// The methods of `Type: From<..>` and `Type: TryFrom<..>` blocks: their one parameter is taken by ownership
     /// even though the declaration does not write `own`, because a conversion consumes its input.
@@ -536,6 +536,16 @@ impl Globals {
         self.std_modules.iter().find_map(|&module| match self.value(module, name)? {
             Global::Func(f) => Some(f),
             _ => None,
+        })
+    }
+
+    /// Whether `f` is a function of the standard library's `target` module (`target.os()`, `target.arch()`): the
+    /// compiler knows its result while compiling, so a condition built from it is a compile-time condition
+    /// (`spec/const-eval.md`, CE4).
+    pub(crate) fn is_target_fn(&self, f: FuncId) -> bool {
+        self.std_modules.iter().any(|&module| {
+            self.modules[module].path == ["target"]
+                && self.modules[module].values.values().any(|g| matches!(g, Global::Func(id) if *id == f))
         })
     }
 

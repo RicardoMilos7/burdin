@@ -9,7 +9,7 @@ need `cargo` and `rustc` on `PATH`; every CI job installs them.
   * `--rustdoc-json` reads a file instead of running cargo and generates the same output, and a file that is not
     rustdoc JSON, or is another format version, is refused with exit status 1;
   * the generated shim builds as a static library, and its layout checks are real: a wrong size in the shim stops
-    `cargo`, and a wrong size in the Burdin module is a failed `comptime assert`;
+    `cargo`, and a wrong size in the Burdin module is a failed layout-check constant;
   * a package with `[rust.crates]` builds and runs: the first build generates (and warns), the second reuses the
     generated files, a changed crate source generates again, `--emit-deps` lists the crate's sources, and a release
     build builds the shim in release;
@@ -194,7 +194,7 @@ with harness.temporary_dir("burdin-rust-") as work:
         harness.write_text(wrong / "src" / "main.bd", "use geometry.Segment\n\nfn main() {\n    println(\"{}\", Segment.size())\n}\n")
         result = harness.run([burdin, "build", str(wrong), "-o", str(wrong / "wrong")], cwd=wrong)
         check(result.returncode == 1, f"a wrong size in the module exited {result.returncode}, expected 1")
-        check("E0223" in output(result) and "`Segment` must have size 40" in output(result), "the failed `comptime assert` is not reported")
+        check("E0222" in output(result) and "`Segment` must have size 40" in output(result), "the failed layout-check constant is not reported")
 
     # --- Usage errors and a missing toolchain ---------------------------------------------------------------------------
     result = bindgen("--rust", str(CRATE), "--out", str(work / "a.bd"))

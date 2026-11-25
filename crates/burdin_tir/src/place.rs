@@ -119,7 +119,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::AnyIs { value: inner, .. }
         | K::AnyDowncast { value: inner, .. }
         | K::AnyUpcast { value: inner, .. }
-        | K::Comptime(inner) => {
+        | K::ConstCond(inner) => {
             place_mentions(inner, out);
         }
         K::AnyCall { recv, args, .. } => {
@@ -183,7 +183,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(range, out);
             place_mentions_block(body, out);
         }
-        K::ForArray { array, body, .. } | K::ComptimeFor { iter: array, body, .. } => {
+        K::ForArray { array, body, .. } => {
             place_mentions(array, out);
             place_mentions_block(body, out);
         }

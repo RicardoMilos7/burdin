@@ -161,8 +161,8 @@ back to an earlier source compiles again.
 Tests: `tests/check_target.py` (an edit to one function keeps the objects of other units, and the objects of the
 earlier build are gone).
 
-**TG16. Comptime.** Comptime results are not cached themselves (CT14): the front end always runs and its results are
-in the module, so a comptime result that changes changes the key of the units it reaches.
+**TG16. Constant evaluation.** Evaluation results are not cached themselves (CE11): the front end always runs and its results are
+in the module, so a result that changes changes the key of the units it reaches.
 
 ## Notes
 

@@ -17,7 +17,7 @@ static NAME: Type = expr
 static mut NAME: Type = expr
 ```
 
-The initializer is evaluated at compile time by the rules of a `const` (`comptime.md`, CT7): it may call pure
+The initializer is evaluated at compile time by the rules of a `const` (`const-eval.md`, CE2): it may call pure
 functions and use constants, but not other statics or run-time locals. The program stores its value into the static
 before `main` runs (and before a `burdin test` body runs), in declaration order. Storing a value runs no user code and
 cannot fail, and no initializer can name another static, so the order is not observable. An initializer that names a
@@ -25,7 +25,7 @@ static is E0220. A `static` in a function body is E0302: statics are module item
 
 ## GL2. The type must be plain data
 
-A static's type must be materializable (`comptime.md`, CT3; else E0221) and **plain**: it owns no memory and has no
+A static's type must be materializable (`const-eval.md`, CE3; else E0221) and **plain**: it owns no memory and has no
 destructor. Plain types are the scalars, `bool`, `char`, `str` (a static view), tuples, arrays, and structs and enums
 whose fields are plain, `Option`, `Result`, and ranges of plain types. A `String`, a `List`, `Map`, `Heap`, `Shared`,
 an `Arena`, a closure, an `any`, or any type with a `Drop` implementation is E0303, because the program would have
@@ -41,10 +41,10 @@ to drop it at exit, and GL5 says statics are never dropped.
 * An assignment to it is E0005, as an assignment to an immutable binding.
 * Any task may read it at the same time as another, so its type must be `Sync` (SH4). Every type GL2 admits is `Sync`
   already (the scalars, `str`, and the plain aggregates of them), so the declaration needs no check of its own. A raw
-  pointer, a reference, a closure, or a handle to shared state is not plain or not materializable, so GL2 or CT3
+  pointer, a reference, a closure, or a handle to shared state is not plain or not materializable, so GL2 or CE3
   rejects it first.
 
-A static cannot yet hold interior mutability. The atomics and `Mutex<T>` are not materializable (CT3), so
+A static cannot yet hold interior mutability. The atomics and `Mutex<T>` are not materializable (CE3), so
 `static COUNT: AtomicI64 = AtomicI64.new(0)` is E0221. Sharing a counter between tasks through a static waits for a
 design that lets those types be initialized at compile time; until then a counter is passed to the tasks as a
 `Shared<T>` or an atomic value they receive.
@@ -73,7 +73,7 @@ An immutable static is read by any task (GL3). A `static mut` is read or written
 
 ## GL7. Compile-time evaluation and the interpreter
 
-Reading or writing a static during compile-time evaluation, from a `const`, a `comptime` expression, or a function
+Reading or writing a static during compile-time evaluation, from a `const` initializer, a compile-time condition, or a function
 they call, is E0224: global state is not pure. Naming a static where a constant is needed (an array length, a const
 argument) is E0251, since it is not a constant.
 
@@ -93,18 +93,18 @@ E0161 (GL4), E0220 and E0224 (GL1, GL7), E0221 (GL2), and E0251 (GL7).
 
 ## Tests
 
-- `m20_comptime/static_values`: immutable statics of scalars, `str`, tuples, arrays, structs, and enums, read from
-  functions and initialized from constants and a `comptime` block (GL1, GL3).
-- `m20_comptime/static_mut`: a `static mut` counter written in `unsafe` blocks and read back (GL4).
-- `m20_comptime/static_view`: `&NAME` of an immutable static returned from a function (GL3).
+- `m20_const/static_values`: immutable statics of scalars, `str`, tuples, arrays, structs, and enums, read from
+  functions and initialized from constants and a block initializer (GL1, GL3).
+- `m20_const/static_mut`: a `static mut` counter written in `unsafe` blocks and read back (GL4).
+- `m20_const/static_view`: `&NAME` of an immutable static returned from a function (GL3).
 - `s2_tasks/static_in_task`: two tasks read a static (GL3, GL6).
-- `m20_comptime/static_in_block`: E0302 (GL1).
-- `m20_comptime/static_string`: E0303 for a `String` (GL2).
-- `m20_comptime/static_drop`: E0303 for a struct with a `Drop` implementation (GL2).
-- `m20_comptime/static_assign`: E0005 for an assignment to an immutable static (GL3).
-- `m20_comptime/static_move`: E0101 for moving a non-`Copy` immutable static out (GL3).
-- `m20_comptime/static_mut_safe`: E0161 for a read and a write outside `unsafe` (GL4).
-- `m20_comptime/static_mut_borrow`: E0304 for `&` and `&mut` of a `static mut` (GL4).
-- `m20_comptime/static_comptime`: E0224 for a static read in a `comptime` block (GL7).
-- `m20_comptime/static_const_init`: E0220 for a static in a constant's initializer (GL1).
-- `m20_comptime/static_array_len`: E0251 for a static used as an array length (GL7).
+- `m20_const/static_in_block`: E0302 (GL1).
+- `m20_const/static_string`: E0303 for a `String` (GL2).
+- `m20_const/static_drop`: E0303 for a struct with a `Drop` implementation (GL2).
+- `m20_const/static_assign`: E0005 for an assignment to an immutable static (GL3).
+- `m20_const/static_move`: E0101 for moving a non-`Copy` immutable static out (GL3).
+- `m20_const/static_mut_safe`: E0161 for a read and a write outside `unsafe` (GL4).
+- `m20_const/static_mut_borrow`: E0304 for `&` and `&mut` of a `static mut` (GL4).
+- `m20_const/static_in_const`: E0224 for a static read in a `const` initializer (GL7).
+- `m20_const/static_const_init`: E0220 for a static in a constant's initializer (GL1).
+- `m20_const/static_array_len`: E0251 for a static used as an array length (GL7).

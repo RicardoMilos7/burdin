@@ -1,0 +1,27 @@
+//@ run
+//> supported
+//> 64-bit
+
+// An `if` whose condition is a compile-time condition keeps only the taken branch in the generated code;
+// `target.os()` and `target.arch()` name the system the program is compiled for (spec/const-eval.md, CE4).
+
+fn platform(): str {
+    if target.os() == target.Os.Linux {
+        "supported"
+    } else if target.os() == target.Os.MacOs {
+        "supported"
+    } else if target.os() == target.Os.Windows {
+        "supported"
+    } else {
+        "unknown"
+    }
+}
+
+fn main() {
+    println(platform())
+    if target.arch() == target.Arch.X86_64 || target.arch() == target.Arch.Aarch64 {
+        println("64-bit")
+    } else {
+        println("other")
+    }
+}

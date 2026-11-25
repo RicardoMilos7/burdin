@@ -85,7 +85,6 @@
 
 [
   "any"
-  "comptime"
   "mut"
   "own"
   "priv"

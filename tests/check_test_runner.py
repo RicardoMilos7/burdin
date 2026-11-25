@@ -8,8 +8,6 @@ no `//@` directives, so the conformance runner ignores them.
 What it checks (issues #438, #439, #440, #441, #442, #443, #444, #616, #638, #639, #640, #641):
   * [ignore], [should_panic], [should_panic("text")], [should_fail], and [timeout(ms)] decide pass/fail;
     --ignored and --include-ignored select ignored tests and the summary counts what was skipped;
-  * [differential] compares the comptime interpreter's Ok/Err outcome with the compiled run, and a divergent
-    fixture is reported as a failure with the two outcomes;
   * -j runs independent tests at once (a test that waits for another only finishes with -j 2), and the report
     keeps declaration order;
   * a test's stdout and stderr are captured and printed only when it fails, and --verbose always prints them;
@@ -110,27 +108,6 @@ with harness.temporary_dir("burdin-runner-") as work:
     expect_status("attributes (--include-ignored)", 0)
     expect_contains("attributes (--include-ignored)", "test result: 5 passed, 0 failed", out)
     expect_not_contains("attributes (--include-ignored)", "ignored", out)
-
-    # --- differential tests ---------------------------------------------------------
-
-    # A [differential] body runs at compile time and as the compiled test; agreement passes whether both return
-    # Ok or both return Err (spec/test-runner.md).
-    run_driver(burdin, "test", str(fixtures / "differential"), "--filter", "agreeing", "-j", "1")
-    expect_status("differential (agreement)", 0)
-    expect_contains("differential (agreement)", "test result: 2 passed, 0 failed", out)
-    expect_not_contains("differential (agreement)", "FAIL", out)
-
-    # The fixture's third body depends on the unspecified Map iteration order, so the interpreter (insertion order)
-    # and the compiled hash table disagree. The check must report the mismatch instead of passing.
-    run_driver(burdin, "test", str(fixtures / "differential"), "--filter", "diverges", "-j", "1")
-    expect_status("differential (divergence)", 1)
-    expect_contains(
-        "differential (divergence)",
-        "the compiled test returned `Err`, but the comptime interpreter returned `Ok`",
-        out,
-    )
-    expect_contains("differential (divergence)", "FAIL diverges on map order", out)
-    expect_contains("differential (divergence)", "test result: 0 passed, 1 failed", out)
 
     # --- timeouts -------------------------------------------------------------------
 
@@ -412,7 +389,6 @@ with harness.temporary_dir("burdin-runner-") as work:
             "should_panic": True,
             "should_panic_message": "boom",
             "should_fail": False,
-            "differential": False,
         },
     )
     expect_equal(

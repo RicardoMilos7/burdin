@@ -656,7 +656,7 @@ impl FnCx<'_> {
         let name = self.globals.const_names[c.0].clone();
         if self.const_init {
             self.diags.error(
-                Code::INVALID_COMPTIME,
+                Code::INVALID_CONST_EVAL,
                 span,
                 format!("`{name}` is a static, a run-time place, so a constant or a static initializer cannot name it (spec/globals.md, GL1)"),
             );

@@ -100,8 +100,8 @@ struct Vec2 repr(C) {
     x: f64
     y: f64
 }
-comptime assert(Vec2.size() == 16, "`Vec2` must have size 16, as in the C header")
-comptime assert(Vec2.align() == 8, "`Vec2` must have alignment 8, as in the C header")
+priv const VEC2_SIZE_CHECK: () = if Vec2.size() == 16 { } else { panic("`Vec2` must have size 16, as in the C header") }
+priv const VEC2_ALIGN_CHECK: () = if Vec2.align() == 8 { } else { panic("`Vec2` must have alignment 8, as in the C header") }
 ```
 
 A struct whose layout Burdin cannot spell field by field is declared as bytes of C's size and alignment, with a
@@ -320,7 +320,7 @@ a header can be written.
 | `export_invalid/` | five declarations a C header cannot spell, one E0263 each |
 
 `tests/check_bindgen.py` runs all of it: it generates each golden, compiles the generated module and runs its
-`comptime assert`s, builds the wrappers with the system C compiler and calls them through `--link-lib`, compiles a C
+layout-check constants, builds the wrappers with the system C compiler and calls them through `--link-lib`, compiles a C
 program and a C++ program against the export header, and on Linux builds a C shared library that calls the Burdin
 exports and checks what it prints. It also checks the failure paths: a missing header and an unknown option exit 2,
 a header clang rejects exits 1, and every E0263 is reported.

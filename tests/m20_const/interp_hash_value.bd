@@ -1,0 +1,20 @@
+//@ run
+//> true
+
+// `hash()` at compile time is the same FNV-1a value compiled code computes (spec/const-eval.md, CE1).
+
+struct Key: Copy, Clone, Eq, Hash {
+    a: i32
+    b: bool
+    c: char
+}
+
+fn key_hash(): u64 {
+    Key { a: -3, b: true, c: 'q' }.hash()
+}
+
+const HASH: u64 = key_hash()
+
+fn main() {
+    println("{HASH == key_hash()}")
+}

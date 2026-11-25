@@ -32,7 +32,7 @@ AddressSanitizer reports (`spec/sanitizers.md`). The black-box check is
   record). `burdin fuzz` passes `-artifact_prefix` so libFuzzer writes its crash files there.
 - **FZ5. The command line.** `burdin fuzz <target> <name>` takes `--max-time <seconds>` (libFuzzer stops on its own
   after that long), `--minimize <file>` (shrink a crashing input instead of fuzzing; the result is written to the
-  artifacts directory as `minimized-<file>`), `--release`, `-g`, `--locked`, `-j`, `--comptime-steps`, and, after
+  artifacts directory as `minimized-<file>`), `--release`, `-g`, `--locked`, `-j`, `--const-steps`, and, after
   `--`, libFuzzer options of its own (`-jobs=4`, `-dict=file`, ...). A name no target of the package has is a usage
   error that lists the names it does have. `--sanitize`, `--lto`, PGO, `-o`, `--emit`, and `--tests` do not apply: the
   build is already instrumented, and its binary is libFuzzer's. The exit status is libFuzzer's, and a crash prints a
