@@ -1,0 +1,30 @@
+// An `else` with nothing in it (spec/lint.md LN37).
+
+fn main() {
+    let x = 3
+    if x > 1 {
+        println("big")
+    } else { //~ L0021
+    }
+    if x > 2 {
+        println("bigger")
+    } else {} //~ L0021
+    let o: Option<i32> = Option.Some(x)
+    if let Option.Some(v) = o {
+        println("{}", v)
+    } else {} //~ L0021
+    // Not reported: an `else` that does something, an `else if`, and no `else`.
+    if x > 3 {
+        println("a")
+    } else {
+        println("b")
+    }
+    if x > 4 {
+        println("c")
+    } else if x > 5 {
+        println("d")
+    }
+    if x > 6 {
+        println("e")
+    }
+}

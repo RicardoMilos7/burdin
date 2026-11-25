@@ -1,0 +1,38 @@
+// Parentheses around a whole expression where one is expected (spec/lint.md LN38).
+
+struct Point: Eq {
+    x: i32
+    y: i32
+}
+
+fn twice(x: i32): i32 {
+    x * 2
+}
+
+fn main() {
+    let a = (1 + 2) //~ L0022
+    let b = twice((a)) //~ L0022
+    let mut c = 0
+    c = (a * b) //~ L0022
+    if (c > 1) { //~ L0022
+        println("big")
+    }
+    while (c > 100) { //~ L0022
+        c = c - 1
+    }
+    match (c) { //~ L0022
+        0 => println("zero")
+        else => println("other")
+    }
+    for i in (0..3) { //~ L0022
+        println("{}", i)
+    }
+    // Parentheses that matter, and a tuple, are not reported.
+    let d = (a + b) * c
+    let e = (a, b)
+    let f = -(a + b)
+    let p = Point { x: 1, y: 2 }
+    if (p == Point { x: 1, y: 2 }) {
+        println("{} {} {}", d, e.0, f)
+    }
+}

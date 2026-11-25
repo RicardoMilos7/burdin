@@ -1,0 +1,66 @@
+// `return` in the tail position of a function (spec/lint.md LN34). A `return` that leaves early is not reported.
+
+fn plain(x: i32): i32 {
+    return x + 1 //~ L0018
+}
+
+fn in_branches(x: i32): i32 {
+    if x > 0 {
+        return 1 //~ L0018
+    } else {
+        return 2 //~ L0018
+    }
+}
+
+fn in_match(x: i32): i32 {
+    match x {
+        0 => return 10, //~ L0018
+        1 => 11,
+        else => {
+            return 12 //~ L0018
+        }
+    }
+}
+
+fn unit_result(x: i32) {
+    if x > 0 {
+        println("{}", x)
+    } else {
+        return //~ L0018
+    }
+}
+
+fn early(x: i32): i32 {
+    if x > 0 {
+        return 1
+    }
+    if x < -5 {
+        return 2
+    } else {
+        println("fell through")
+    }
+    3
+}
+
+fn loop_return(xs: List<i32>): i32 {
+    for x in xs.iter() {
+        if x > 3 {
+            return x
+        }
+    }
+    0
+}
+
+fn in_closure() {
+    let f = |x: i32|: i32 {
+        return x
+    }
+    println("{}", f(1))
+}
+
+fn main() {
+    println("{} {} {} {}", plain(1), in_branches(1), in_match(2), early(0))
+    println("{}", loop_return([1, 5].iter().to_list()))
+    unit_result(1)
+    in_closure()
+}

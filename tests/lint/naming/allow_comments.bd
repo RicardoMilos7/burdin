@@ -2,7 +2,7 @@
 
 // lint: allow(non_snake_case)
 fn firstName(x: i32): i32 {
-    let innerValue = x + 1
+    let innerValue = x + 1 //~ L0023
     innerValue
 }
 

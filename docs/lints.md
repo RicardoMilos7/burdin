@@ -456,3 +456,119 @@ fn main() {
 }
 ```
 <!-- /lint-example -->
+
+## L0018: needless_return
+
+A `return` is the last thing a function does, or the last thing a branch of its final `if` or `match` does. The last
+expression of a block is already its value, so the `return` adds nothing. A `return` that leaves early is not reported.
+
+**How to fix:** write the value alone. `--fix` does it when the `return` has a value and holds no comment.
+
+<!-- lint-example: L0018 -->
+```burdin
+fn double(x: i32): i32 {
+    return x * 2 //~ L0018
+}
+
+fn main() {
+    println("{}", double(4))
+}
+```
+<!-- /lint-example -->
+
+## L0019: bool_comparison
+
+A boolean is compared with `true` or `false`, with `==` or `!=`. The boolean is already the answer, or its `!`.
+
+**How to fix:** write `x` for `x == true` and `x != false`, and `!x` for `x == false` and `x != true`. `--fix` does it.
+
+<!-- lint-example: L0019 -->
+```burdin
+fn main() {
+    let ready = 3 > 2
+    if ready == true { //~ L0019
+        println("ready")
+    }
+}
+```
+<!-- /lint-example -->
+
+## L0020: needless_bool
+
+An `if` with an `else` whose two branches are `true` and `false` (or `false` and `true`, or `return true` and `return
+false`). The condition is already the value, or its `!`.
+
+**How to fix:** use the condition itself, negated with `!` when the `if` gave `false` first. `--fix` does it when the `if`
+holds no comment.
+
+<!-- lint-example: L0020 -->
+```burdin
+fn is_big(x: i32): bool {
+    if x > 100 { //~ L0020
+        true
+    } else {
+        false
+    }
+}
+
+fn main() {
+    println("{}", is_big(7))
+}
+```
+<!-- /lint-example -->
+
+## L0021: empty_else
+
+An `else` block with nothing in it. An `if` without an `else` does the same.
+
+**How to fix:** remove the `else`. `--fix` does it when the `else` holds no comment.
+
+<!-- lint-example: L0021 -->
+```burdin
+fn main() {
+    let x = 3
+    if x > 1 {
+        println("big")
+    } else { //~ L0021
+    }
+}
+```
+<!-- /lint-example -->
+
+## L0022: redundant_parens
+
+Parentheses around the whole of an expression in a place that already takes a whole expression: the value of a `let`,
+`return`, `break`, or assignment, an argument of a call, and the head of an `if`, `while`, `match`, or `for`. Parentheses
+that group an operator, make a tuple, or protect a struct literal in a head are never reported.
+
+**How to fix:** remove the parentheses. `--fix` does it when what they hold is on one line.
+
+<!-- lint-example: L0022 -->
+```burdin
+fn main() {
+    let n = (1 + 2) //~ L0022
+    println("{}", n)
+}
+```
+<!-- /lint-example -->
+
+## L0023: let_and_return
+
+A value is bound with `let` as the second-to-last statement of a block, and the last statement is the name alone. The
+binding says nothing the value does not.
+
+**How to fix:** return the value directly. `--fix` does it when the `let` has no written type and nothing, such as a
+comment, sits between the two lines.
+
+<!-- lint-example: L0023 -->
+```burdin
+fn total(a: i32, b: i32): i32 {
+    let sum = a + b //~ L0023
+    sum
+}
+
+fn main() {
+    println("{}", total(1, 2))
+}
+```
+<!-- /lint-example -->

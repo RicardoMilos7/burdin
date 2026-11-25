@@ -189,6 +189,42 @@ lint with one, so it runs when the manifest or the command line turns it on; `-D
 Tests: `docs/missing_docs.bd`, `docs/missing_docs_default_off.bd`, `docs/missing_docs_suppress.bd`,
 `docs/missing_docs_file.bd`.
 
+**LN34. `needless_return` (L0018).** A `return` that is the last statement of a function body, or the last statement of
+a branch of a tail `if`/`else`, `if let`, `match` arm, or block. A `return` of any other kind, a closure's `return`, and
+a `return` inside a loop are not reported. Fix: replace `return value` with `value` (and drop parentheses that surround
+the whole value); `return` without a value has no fix, because removing it would make the statement before it the block's
+value.
+Tests: `style/needless_return.bd`, `fix/style.bd`.
+
+**LN35. `bool_comparison` (L0019).** `==` or `!=` with a `true` or `false` literal on either side. Fix: the other operand,
+negated with `!` when the comparison asks for `false`; an operand that is not an atom is put in parentheses first.
+Tests: `style/bool_comparison.bd`, `fix/style.bd`.
+
+**LN36. `needless_bool` (L0020).** An `if`/`else` whose branches are each one statement, `true` or `false` (or `return`
+of one), and opposite. Fix: the condition, negated when the first branch is `false`, with `return` in front when the
+branches returned. `else if` and `if let` are not reported.
+Tests: `style/needless_bool.bd`, `fix/style.bd`.
+
+**LN37. `empty_else` (L0021).** An `else` whose block has no statements, on an `if` or an `if let`. Reported at the block.
+Fix: delete from the end of the `if` block through the `else` block.
+Tests: `style/empty_else.bd`, `fix/style.bd`.
+
+**LN38. `redundant_parens` (L0022).** A parenthesized expression (not a tuple, not `()`) that is the value of a `let`, a
+`return`, a `break`, or an assignment, an argument of a call, or the head of an `if`, `while`, `match`, or `for`. In a head
+the parentheses stay when what they hold has a `{`, since a struct literal needs them there. Fix: the text inside, when it
+is on one line.
+Tests: `style/redundant_parens.bd`, `fix/style.bd`.
+
+**LN39. `let_and_return` (L0023).** A block whose last two statements are `let name = value` (a plain binding, no `else`)
+and `name`. Reported at the `let`. Fix: `value` in place of both, unless the `let` has a written type (it steers
+inference) or a comment sits inside.
+Tests: `style/let_and_return.bd`, `fix/style.bd`.
+
+**LN40. The style lints and `--fix`.** The six style lints above are syntax-tree lints; they read no types. A fix is
+offered only when applying it cannot change the program, so a comment inside the text or a line break inside parentheses
+makes the finding report-only. `unused_mut` (LN23) is the seventh style lint the issue (#779) asks for, and already exists.
+Tests: `fix/style.bd`, `fix/style.fixed.bd`.
+
 **LN27. Generic functions.** A generic function is checked once per instance, and the instances give the same finding
 the same span. A finding is reported once, at its place in the source; a finding that depends on the type
 (`redundant_clone`, `borrow_could_own`, `unused_mut`) is reported only when every instance agrees.
@@ -237,7 +273,7 @@ tests.
   the conformance programs that compile (665 single-file programs); the findings were reviewed by lint, and each false
   positive that turned up (generated names, `test` bodies, writes inside closures, slices) was fixed
   and now has a fixture.
-- **Lint codes are not error codes.** `L0000`-`L0017` are not in the `E` registry of `tests/README.md`, so
+- **Lint codes are not error codes.** `L0000`-`L0023` are not in the `E` registry of `tests/README.md`, so
   `tests/check_tests.py` and `docs/error-codes.md` do not know them; `docs/lints.md` is their registry.
 - **Not part of this issue.** Editor integration of the suggestions (the LSP) is stage 3 work of its own. `missing_docs`
   (L0017, LN33) came with `burdin doc` (issue #657); it shares the machinery here.

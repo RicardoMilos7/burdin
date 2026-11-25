@@ -31,7 +31,7 @@ fn after_all_branches(x: i32): i32 {
     } else {
         return 2
     }
-    let dead = 3 //~ L0009
+    let dead = 3 //~ L0009 L0023
     dead
 }
 
