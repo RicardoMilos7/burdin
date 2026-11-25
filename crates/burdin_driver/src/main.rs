@@ -2184,6 +2184,8 @@ fn link_cross(
         // `cross_prefix` already holds the `-fuse-ld=` flag.
         args.extend(unix_link_args(objects, output, libs, opts, None));
         if platform::windows() {
+            // The math functions are in the C runtime on Windows; there is no `libm`.
+            args.retain(|arg| arg != "-lm");
             args.extend(["-lkernel32", "-lws2_32"].map(OsString::from));
         }
     }
@@ -2413,7 +2415,7 @@ fn unix_link_args(
     }
     // The float functions (`spec/stdlib.md`, "Float functions") call the C math library. It is a separate
     // library on Linux; macOS folds it into libSystem, where `-lm` still links.
-    if !libs.iter().any(|l| l == "m") && !platform::windows() {
+    if !libs.iter().any(|l| l == "m") {
         args.push("-lm".into());
     }
     args
