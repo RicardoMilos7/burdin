@@ -6,6 +6,8 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #1017 (decision step): which compiler-known types move into `std`. `spec/stdlib.md`, "Compiler-known types", lists every `Ty` variant as stays, moves, or blocked, with the reason and the issue, and records the size of the three `builtins.rs` tables before the work. The moves are #1073 (lang-item registry and intrinsic markers), #1074 (structs that hold views), #1075 (owning and range iterators), #1076 (`Option` and `Result`), and #1077 (`List`, `Map`, `Heap`, `Shared`, `CString`, and deleting the LSP method table). `tests/check_docs.py` fails when a `Ty` variant has no row. No compiler change.
+
 - Issue #1018: the standard library's helpers have plain names. The `__` prefix is gone from the 385 helpers in
   `std/src`, which are package-private (`priv`): `__split` is `split_text`, `__f64_parse` is `f64_parse`,
   `__serialize_i8` is `serialize_value_i8`, and the compiler's name maps follow (`u32.from_le_bytes`, `f64.PI`, the

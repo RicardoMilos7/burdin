@@ -26,6 +26,43 @@ spec/channels.md, CH7) and the parallel protocol methods `__par_len` and `__par_
 member of that kind stays public because a `select` expression or an implementation of a parallel interface in another
 package must reach it.
 
+## Compiler-known types (issue #1017)
+
+The guiding rule: the compiler's built-ins stay as small as possible, and everything the language can express is
+written in `std/*.bd`. A type or method is compiler-known only when the language cannot express it yet, and the
+reason is written down here. `tests/check_docs.py` fails when a `Ty` variant of `crates/burdin_tir/src/ty.rs` has no
+row below. Status: **stays** (a primitive, a layout, or a type-system form: it is not a library type), **moves** (the
+language can express it; the issue named moves it), or **blocked** (it needs the language feature named).
+
+| Type | Status | Reason, blocker, and issue |
+| --- | --- | --- |
+| `Ty::Unit`, `Ty::Bool`, `Ty::Char`, `Ty::Int`, `Ty::Float` | stays | Primitives with literals, `as` casts, and built-in operators. Their methods other than intrinsics are `std` extension methods already (`std/src/int.bd`, `float.bd`). |
+| `Ty::Str`, `Ty::String` | stays | Literals, the pointer-and-length layout, and the implicit `String` to `str` conversion (IC1). `String` is revisited once `List` has moved (#1077). |
+| `Ty::Fn` | stays | Closures are compiler-generated values of the `Fn`/`FnMut`/`FnOnce` interfaces. |
+| `Ty::Ref`, `Ty::Slice`, `Ty::Array` | stays | Views and layouts the borrow checker reasons about; only the intrinsics among their methods stay in the compiler. |
+| `Ty::Tuple`, `Ty::Never`, `Ty::Param`, `Ty::Projection`, `Ty::TryFromError`, `Ty::Const`, `Ty::Error` | stays | Type-system forms, not library types. |
+| `Ty::Struct`, `Ty::Enum` | stays | What `std` declares its own types with. |
+| `Ty::Any` | stays | A boxed value behind a vtable (`existentials.md`, AN1). |
+| `Ty::CPtr` | stays | The raw pointer every `std` collection is written over. |
+| `Ty::Option`, `Ty::Result` | moves | Ordinary enums. Needs the lang-item registry (#1073) for `?`, `orelse`, `context`, and exhaustiveness; the work is #1076. |
+| `Ty::List`, `Ty::Map`, `Ty::MapEntry`, `Ty::Heap`, `Ty::Shared`, `Ty::CString` | moves | Ordinary generic structs with `Drop` over `__alloc` and `mem`. Needs the lang-item registry and intrinsic markers (#1073); the work, and deleting the LSP method table, is #1077. |
+| `Ty::ListIntoIter`, `Ty::ArrayIntoIter`, `Ty::MapIntoIter`, `Ty::RangeIter`, `Ty::Range` | moves | They own what they walk and hold no view, so they are plain structs implementing `Iterator<T>`; a range literal lowers to the lang item. Needs #1073; the work is #1075. |
+| `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | blocked | They hold a view, and a struct field cannot (SC2, E0120). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. Blocked on #1074; then each is a plain struct. |
+
+The compiler's own tables, measured before the work (the "after" column is filled by #1075-#1077, with the reason
+for any row that stays):
+
+| Table | Before |
+| --- | --- |
+| `crates/burdin_sema/src/builtins.rs` (functions, types, and method signatures) | 1331 lines |
+| `crates/burdin_codegen/src/emit/builtins.rs` (code generation of the methods) | 2109 lines |
+| `crates/burdin_lsp/src/builtins.rs` (hand-written hover and completion rows) | 352 lines, 169 rows |
+| `Builtin` and `Method` in `crates/burdin_tir/src/ops.rs` | 98 and 98 variants |
+
+What each plan keeps in the compiler is the intrinsics (raw allocation, overflow-checked arithmetic, bit operations,
+atomics, context switch) and the layouts above, each declared in `std` as a body-less signature with an intrinsic
+marker so that `burdin doc`, `burdin lsp`, and `burdin expand` read one source (#1073).
+
 ## Output
 
 ```

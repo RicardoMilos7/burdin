@@ -99,6 +99,21 @@ check_links()
 burdin = harness.require_burdin()
 
 
+def check_compiler_known_types() -> None:
+    """Every `Ty` variant has a row in the compiler-known types table of spec/stdlib.md (issue #1017)."""
+    source = (harness.ROOT / "crates" / "burdin_tir" / "src" / "ty.rs").read_text(encoding="utf-8")
+    body = re.search(r"^pub enum Ty \{(.*?)^\}", source, re.M | re.S).group(1)
+    variants = re.findall(r"^    ([A-Z][A-Za-z0-9]*)\b", body, re.M)
+    spec = (harness.ROOT / "spec" / "stdlib.md").read_text(encoding="utf-8")
+    section = re.search(r"^## Compiler-known types.*?(?=^## )", spec, re.M | re.S).group(0)
+    for name in variants:
+        if f"`Ty::{name}`" not in section:
+            add_problem(f'spec/stdlib.md: `Ty::{name}` has no row in "Compiler-known types"')
+
+
+check_compiler_known_types()
+
+
 def run_driver(*args, env=None):
     return harness.run([burdin, *args], cwd=work, env=env)
 
