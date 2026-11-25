@@ -65,26 +65,34 @@ pub fn will_rename(server: &mut Server, params: &Json) -> Reply {
 
 /// The package that holds a folder: the one whose modules have files under it.
 fn owner_of_folder(server: &Server, folder: &str) -> Option<usize> {
-    let prefix = format!("{folder}/");
-    (0..server.packages.len()).find(|&i| server.packages[i].user_files().iter().any(|f| f.starts_with(&prefix)))
+    let prefix = format!("{}/", slashed(folder));
+    (0..server.packages.len())
+        .find(|&i| server.packages[i].user_files().iter().any(|f| slashed(f).starts_with(&prefix)))
+}
+
+/// A path with `/` separators, so the comparisons below read the same on Windows, where a path key uses `\`.
+fn slashed(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 /// The modules of package `i` that moving `old` to `new` renames. A folder moves every module under it.
 fn modules_moved(server: &Server, i: usize, old: &str, new: &str) -> Vec<Moved> {
     let package = &server.packages[i];
+    let (old, new) = (slashed(old), slashed(new));
     let folder = format!("{old}/");
     let mut out = Vec::new();
     for m in package.modules.iter().filter(|m| !package.packages[m.package].embedded && !m.module.is_empty()) {
-        let target = if m.path == old {
+        let module_path = slashed(&m.path);
+        let target = if module_path == old {
             new.to_string()
-        } else if let Some(rest) = m.path.strip_prefix(&folder) {
+        } else if let Some(rest) = module_path.strip_prefix(&folder) {
             format!("{new}/{rest}")
         } else {
             continue;
         };
         // The source directory is what the old path has before its module path.
         let suffix = format!("/{}.bd", m.module.join("/"));
-        let Some(src) = m.path.strip_suffix(&suffix) else { continue };
+        let Some(src) = module_path.strip_suffix(&suffix) else { continue };
         let Some(inner) = target.strip_prefix(&format!("{src}/")).and_then(|t| t.strip_suffix(".bd")) else {
             continue;
         };
