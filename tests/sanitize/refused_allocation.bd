@@ -5,8 +5,8 @@
 fn main() {
     let n: usize = 1152921504606846976
     match List<i64>.try_with_capacity(n) {
-        Ok(_) => println("allocated"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("allocated"),
+        Result.Err(e) => println("{}", e),
     }
     println("finished")
 }

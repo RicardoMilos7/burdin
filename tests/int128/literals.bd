@@ -36,7 +36,7 @@ fn main() {
     println((a as u64).to_string())
     println(((b >> 64) as u64).to_string())
     match i128.parse("170141183460469231731687303715884105727") {
-        Ok(v) => println(v.to_string()),
-        Err(_) => println("bad"),
+        Result.Ok(v) => println(v.to_string()),
+        Result.Err(_) => println("bad"),
     }
 }

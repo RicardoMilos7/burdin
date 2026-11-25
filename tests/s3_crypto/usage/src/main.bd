@@ -110,8 +110,8 @@ fn main() {
     let mut tampered = sealed.clone()
     tampered[0] = tampered[0] ^ 1
     match chacha20_poly1305_open(key.as_slice(), nonce.as_slice(), "header".as_bytes(), tampered.as_slice()) {
-        Ok(_) => println("tampered: accepted"),
-        Err(e) => println("tampered: {}", e),
+        Result.Ok(_) => println("tampered: accepted"),
+        Result.Err(e) => println("tampered: {}", e),
     }
     let gcm = aes_gcm_seal(key.as_slice(), nonce.as_slice(), "".as_bytes(), "attack at dawn".as_bytes()).unwrap()
     println(
@@ -157,13 +157,13 @@ fn main() {
 
     // errors are values, not crashes
     match chacha20_poly1305_seal(filled(31, 0).as_slice(), nonce.as_slice(), "".as_bytes(), "".as_bytes()) {
-        Ok(_) => println("short key: accepted"),
-        Err(e) => println("short key: {}", e),
+        Result.Ok(_) => println("short key: accepted"),
+        Result.Err(e) => println("short key: {}", e),
     }
     let zero_point = hex_decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
     match x25519(alice.as_slice(), zero_point.as_slice()) {
-        Ok(_) => println("point: ok"),
-        Err(e) => println("point: {}", e),
+        Result.Ok(_) => println("point: ok"),
+        Result.Err(e) => println("point: {}", e),
     }
 
     // random bytes come from the operating system

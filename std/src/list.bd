@@ -15,8 +15,8 @@ priv fn __reversed<T>(own list: List<T>): List<T> {
     let mut out = List<T>.new()
     loop {
         match list.pop() {
-            Some(x) => out.push(x),
-            None => break,
+            Option.Some(x) => out.push(x),
+            Option.None => break,
         }
     }
     out
@@ -25,8 +25,8 @@ priv fn __reversed<T>(own list: List<T>): List<T> {
 /// Whether the last element of `list` equals `x`.
 priv fn __last_equals<T: Eq>(list: List<T>, x: T): bool {
     match list.last() {
-        Some(previous) => *previous == x,
-        None => false,
+        Option.Some(previous) => *previous == x,
+        Option.None => false,
     }
 }
 
@@ -51,13 +51,13 @@ fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
     let mut items = __reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
-            Some(x) => {
+            Option.Some(x) => {
                 let keep = __test(mut f, x)
                 if keep {
                     self.push(x)
                 }
             },
-            None => break,
+            Option.None => break,
         }
     }
 }
@@ -68,18 +68,18 @@ fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
 /// let mut l = List<i32>.new()
 /// l.push(1)
 /// l.push(2)
-/// assert_eq(l.position(|x| *x == 2), Some(1))
+/// assert_eq(l.position(|x| *x == 2), Option.Some(1))
 /// ```
 fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
     let mut f = f
     let mut i: usize = 0
     while i < self.len() {
         if f(&self[i]) {
-            return Some(i)
+            return Option.Some(i)
         }
         i = i + 1
     }
-    None
+    Option.None
 }
 
 /// The index of the last element `f` accepts.
@@ -89,7 +89,7 @@ fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
 /// l.push(1)
 /// l.push(2)
 /// l.push(1)
-/// assert_eq(l.rposition(|x| *x == 1), Some(2))
+/// assert_eq(l.rposition(|x| *x == 1), Option.Some(2))
 /// ```
 fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
     let mut f = f
@@ -97,10 +97,10 @@ fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
     while i > 0 {
         i = i - 1
         if f(&self[i]) {
-            return Some(i)
+            return Option.Some(i)
         }
     }
-    None
+    Option.None
 }
 
 /// Reverses the order of the elements in place.
@@ -131,13 +131,13 @@ fn List<T>.dedup(mut self) where T: Eq {
     let mut items = __reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
-            Some(x) => {
+            Option.Some(x) => {
                 let same = __last_equals(self, x)
                 if !same {
                     self.push(x)
                 }
             },
-            None => break,
+            Option.None => break,
         }
     }
 }
@@ -146,8 +146,8 @@ fn List<T>.dedup(mut self) where T: Eq {
 /// checker cannot infer it from `key`'s bound alone.
 priv fn __last_key_equals<T, K: Eq, F: FnMut(&T): K>(mut key: F, list: List<T>, x: T): bool {
     match list.last() {
-        Some(previous) => key(previous) == key(&x),
-        None => false,
+        Option.Some(previous) => key(previous) == key(&x),
+        Option.None => false,
     }
 }
 
@@ -167,13 +167,13 @@ fn List<T>.dedup_by_key<K: Eq, F: FnMut(&T): K>(mut self, own key: F) {
     let mut items = __reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
-            Some(x) => {
+            Option.Some(x) => {
                 let same = __last_key_equals<T, K, F>(mut key, self, x)
                 if !same {
                     self.push(x)
                 }
             },
-            None => break,
+            Option.None => break,
         }
     }
 }
@@ -193,8 +193,8 @@ fn List<T>.extend(mut self, own other: List<T>) {
     let mut items = __reversed(other)
     loop {
         match items.pop() {
-            Some(x) => self.push(x),
-            None => break,
+            Option.Some(x) => self.push(x),
+            Option.None => break,
         }
     }
 }
@@ -210,8 +210,8 @@ fn List<T, A>.extend_iter<I: Iterator<T>>(mut self, own iter: I) where A: Alloca
     let mut iter = iter
     loop {
         match iter.next() {
-            Some(x) => self.push(x),
-            None => break,
+            Option.Some(x) => self.push(x),
+            Option.None => break,
         }
     }
 }

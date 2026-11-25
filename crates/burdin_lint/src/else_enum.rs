@@ -86,6 +86,20 @@ impl Finder<'_, '_> {
                 self.variants_of(p, &mut named);
             }
         }
+        // An inferred variant, `.Circle(r)`, names no enum (`spec/target-typing.md`, TT13): it is the enum the other arms
+        // name, or else the one local enum that declares every inferred variant.
+        if named.iter().any(|(e, _)| e.is_empty()) {
+            let enum_name = match named.iter().find(|(e, _)| !e.is_empty()) {
+                Some((e, _)) => e.clone(),
+                None => match self.enum_declaring(&named) {
+                    Some(e) => e,
+                    None => return,
+                },
+            };
+            for (e, _) in named.iter_mut().filter(|(e, _)| e.is_empty()) {
+                *e = enum_name.clone();
+            }
+        }
         let Some((enum_name, _)) = named.first().cloned() else { return };
         if named.iter().any(|(e, _)| *e != enum_name) {
             return;
@@ -117,7 +131,19 @@ impl Finder<'_, '_> {
         );
     }
 
-    /// The `(enum, variant)` pairs a pattern names, through `|` and `name @ ...`.
+    /// The one local enum that declares every variant in `named`, or `None` when there is none or more than one.
+    fn enum_declaring(&self, named: &[(String, String)]) -> Option<String> {
+        let mut found = self.enums.iter().filter(|(_, decls)| {
+            decls
+                .iter()
+                .any(|(_, decl)| named.iter().all(|(_, variant)| decl.variants.iter().any(|v| v.name.name == *variant)))
+        });
+        let (name, _) = found.next()?;
+        found.next().is_none().then(|| name.to_string())
+    }
+
+    /// The `(enum, variant)` pairs a pattern names, through `|` and `name @ ...`. The enum of an inferred variant is
+    /// empty.
     fn variants_of(&self, p: &Pattern, out: &mut Vec<(String, String)>) {
         match &p.kind {
             PatternKind::Or(ps) => ps.iter().for_each(|p| self.variants_of(p, out)),

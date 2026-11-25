@@ -23,14 +23,14 @@ fn on_integers(n: i32): i32 {
 
 fn on_option(o: Option<i32>): i32 {
     match o {
-        Some(v) => v
+        Option.Some(v) => v
         else => 0
     }
 }
 
 fn on_result(r: Result<i32, str>): i32 {
     match r {
-        Ok(v) => v
+        Result.Ok(v) => v
         else => -1
     }
 }
@@ -52,6 +52,6 @@ fn with_if_let(s: Shape): i32 {
 }
 
 fn main() {
-    println("{} {} {}", all_listed(Shape.Circle(1)), on_integers(2), on_option(Some(3)))
-    println("{} {} {}", on_result(Ok(4)), intended(Shape.Square(1)), with_if_let(Shape.Circle(5)))
+    println("{} {} {}", all_listed(Shape.Circle(1)), on_integers(2), on_option(Option.Some(3)))
+    println("{} {} {}", on_result(Result.Ok(4)), intended(Shape.Square(1)), with_if_let(Shape.Circle(5)))
 }

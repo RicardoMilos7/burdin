@@ -508,7 +508,7 @@ fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): JoinHandle<T> {
         // The result slot holds `None` until the task stores its value. It is written byte by byte from a real
         // `None`, because assigning through a raw pointer would first drop whatever the memory held.
         let slot = ((t as CPtr<u8>) + Task.size()) as CPtr<Option<T>>
-        let empty: Option<T> = None
+        let empty: Option<T> = Option.None
         let src = (&empty) as CPtr<u8>
         let dst = slot as CPtr<u8>
         let mut i: usize = 0
@@ -524,7 +524,7 @@ fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): JoinHandle<T> {
                 if (*t).detached == 1 {
                     __mutex_unlock((*s).state_lock)
                 } else {
-                    *slot = Some(value)
+                    *slot = Option.Some(value)
                     (*t).stored = 1
                     __mutex_unlock((*s).state_lock)
                 }
@@ -571,8 +571,8 @@ JoinHandle<T> {
             }
             me.joined = true
             match value {
-                Some(v) => v,
-                None => panic("task: it finished without a result"),
+                Option.Some(v) => v,
+                Option.None => panic("task: it finished without a result"),
             }
         }
     }
@@ -614,7 +614,7 @@ JoinHandle<T>: Drop {
             let slot = (self.task + Task.size()) as CPtr<Option<T>>
             let s = __scheduler()
             __mutex_lock((*s).state_lock)
-            let mut leftover: Option<T> = None
+            let mut leftover: Option<T> = Option.None
             if (*t).stored == 1 {
                 leftover = (*slot).take()
             } else {

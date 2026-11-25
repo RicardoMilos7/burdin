@@ -6,7 +6,7 @@ use support.{Script, Server, body_of, error_text, fetch, header_of, ok, quick_cl
 /// A client that fails fast: one retry at most would be enough for the tests that expect no retry.
 fn client_with_read_timeout(millis: u64, retries: usize): http.Client {
     let mut client = quick_client()
-    client.read_timeout = Some(Duration.from_millis(millis))
+    client.read_timeout = Option.Some(Duration.from_millis(millis))
     client.max_retries = retries
     client
 }
@@ -21,8 +21,8 @@ fn read_timeout() {
         s.spawn(|| {
             let client = client_with_read_timeout(60, 0)
             match client.get(server.url("/").as_str()) {
-                Ok(_) => println("read timeout: a response arrived"),
-                Err(e) => println("read timeout: {} is_timeout={} connection_failure={}", e, e.is_timeout(), e.is_connection_failure()),
+                Result.Ok(_) => println("read timeout: a response arrived"),
+                Result.Err(e) => println("read timeout: {} is_timeout={} connection_failure={}", e, e.is_timeout(), e.is_connection_failure()),
             }
             client.close_idle()
             server.settle()
@@ -40,15 +40,15 @@ fn body_timeout() {
         s.spawn(|| {
             let client = client_with_read_timeout(60, 0)
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let status = response.status
                     match response.text() {
-                        Ok(_) => println("body timeout: the body arrived"),
-                        Err(e) => println("body timeout: {} {} is_timeout={}", status, e, e.is_timeout()),
+                        Result.Ok(_) => println("body timeout: the body arrived"),
+                        Result.Err(e) => println("body timeout: {} {} is_timeout={}", status, e, e.is_timeout()),
                     }
                 }
-                Err(e) => println("body timeout: error {}", e),
+                Result.Err(e) => println("body timeout: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -72,16 +72,16 @@ fn total_timeout() {
         s.spawn(|| server.serve(scripts))
         s.spawn(|| {
             let mut client = client_with_read_timeout(5000, 0)
-            client.total_timeout = Some(Duration.from_millis(200))
+            client.total_timeout = Option.Some(Duration.from_millis(200))
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     match response.text() {
-                        Ok(_) => println("total timeout: the body arrived"),
-                        Err(e) => println("total timeout: {}", e),
+                        Result.Ok(_) => println("total timeout: the body arrived"),
+                        Result.Err(e) => println("total timeout: {}", e),
                     }
                 }
-                Err(e) => println("total timeout: error {}", e),
+                Result.Err(e) => println("total timeout: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -98,8 +98,8 @@ fn connect_refused() {
     let client = client_with_read_timeout(1000, 0)
     let url = format("http://127.0.0.1:{}/", port)
     match client.get(url.as_str()) {
-        Ok(_) => println("connect refused: connected"),
-        Err(e) => println(
+        Result.Ok(_) => println("connect refused: connected"),
+        Result.Err(e) => println(
             "connect refused: {} is_timeout={} connection_failure={}",
             e.to_string().replace(port.to_string().as_str(), "PORT"),
             e.is_timeout(),
@@ -136,8 +136,8 @@ fn post_not_retried() {
         s.spawn(|| {
             let client = quick_client()
             match client.post(server.url("/order").as_str(), "payload") {
-                Ok(_) => println("post not retried: a response arrived"),
-                Err(e) => println("post not retried: {}", e),
+                Result.Ok(_) => println("post not retried: a response arrived"),
+                Result.Err(e) => println("post not retried: {}", e),
             }
             client.close_idle()
             server.settle()
@@ -158,12 +158,12 @@ fn put_retried() {
             let client = quick_client()
             let request = http.Request.put(server.url("/doc").as_str()).unwrap().body_text("payload")
             match client.send(request) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     println("put retried: {:?}", text)
                 }
-                Err(e) => println("put retried: error {}", e),
+                Result.Err(e) => println("put retried: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -188,8 +188,8 @@ fn retries_exhausted() {
                 let mut client = quick_client()
                 client.max_retries = retries
                 match client.get(server.url("/").as_str()) {
-                    Ok(_) => println("exhausted: a response arrived"),
-                    Err(e) => println("exhausted with max_retries={}: {} after {} connections", retries, e, server.accepted()),
+                    Result.Ok(_) => println("exhausted: a response arrived"),
+                    Result.Err(e) => println("exhausted with max_retries={}: {} after {} connections", retries, e, server.accepted()),
                 }
                 client.close_idle()
                 server.settle()
@@ -221,11 +221,11 @@ fn retry_503() {
             // written on it can meet that close and is not repeated (HC15), so the POST gets a new connection here.
             client.close_idle()
             match client.post(server.url("/").as_str(), "x") {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let status = response.status
                     println("503 for a POST: {}", status)
                 }
-                Err(e) => println("503 for a POST: error {}", e),
+                Result.Err(e) => println("503 for a POST: error {}", e),
             }
             client.max_retries = 1
             println("503 exhausted: {}", fetch(client.clone(), server.url("/").as_str()))

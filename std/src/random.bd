@@ -193,15 +193,15 @@ Random {
     ///
     /// ```
     /// let mut r = Random.seeded(3)
-    /// assert_eq(r.index(0), None)
+    /// assert_eq(r.index(0), Option.None)
     /// let i = r.index(4).unwrap()
     /// assert(i < 4)
     /// ```
     fn index(mut self, len: usize): Option<usize> {
         if len == 0 {
-            return None
+            return Option.None
         }
-        Some(self.below(len as u64) as usize)
+        Option.Some(self.below(len as u64) as usize)
     }
 
     /// Puts the elements of `items` in a random order, every order equally likely (Fisher-Yates).

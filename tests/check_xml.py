@@ -97,8 +97,8 @@ fn dump(element: Element, depth: usize) {
 
 fn parses(text: str): bool {
     match xml.parse(text) {
-        Ok(_) => true,
-        Err(_) => false,
+        Result.Ok(_) => true,
+        Result.Err(_) => false,
     }
 }
 
@@ -109,30 +109,30 @@ fn main() {
 
     if mode.as_str() == "dom" {
         match xml.parse(text.as_str()) {
-            Ok(document) => {
+            Result.Ok(document) => {
                 println("{}", document.to_xml().unwrap())
                 print(document.to_xml_pretty().unwrap())
                 match document.declaration {
-                    Some(d) => println(
+                    Option.Some(d) => println(
                         "declaration version={} encoding={:?} standalone={:?}",
                         d.version,
                         d.encoding,
                         d.standalone,
                     ),
-                    None => println("declaration none"),
+                    Option.None => println("declaration none"),
                 }
                 println("before={} after={}", document.before.len(), document.after.len())
                 dump(document.root.copy(), 0)
             }
-            Err(e) => println(e.to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
         return
     }
 
     if mode.as_str() == "dombad" {
         match xml.parse(text.as_str()) {
-            Ok(document) => println("parsed {}", document.to_xml().unwrap()),
-            Err(e) => println(e.to_string()),
+            Result.Ok(document) => println("parsed {}", document.to_xml().unwrap()),
+            Result.Err(e) => println(e.to_string()),
         }
         return
     }
@@ -170,19 +170,19 @@ fn main() {
 
     let read: Result<Config, DeError> = xml.from_str(text.as_str())
     match read {
-        Ok(config) => {
+        Result.Ok(config) => {
             if mode.as_str() == "pretty" {
                 print(xml.to_string_pretty(config).unwrap())
             } else {
                 println(xml.to_string(config).unwrap())
             }
         }
-        Err(e) => println(e.to_string()),
+        Result.Err(e) => println(e.to_string()),
     }
 
     let again: Result<Config, DeError> = xml.from_str(text.as_str())
     match again {
-        Ok(config) => {
+        Result.Ok(config) => {
             println("name={:?} servers={} note={:?}", config.name, config.servers.len(), config.note)
             match config.protocol {
                 Protocol.Http => println("protocol=Http"),
@@ -190,13 +190,13 @@ fn main() {
                 Protocol.Both(first, second) => println("protocol=Both {first} {second}"),
             }
             match config.backup {
-                Some(server) => println("backup={} {}", server.host, server.port),
-                None => println("backup=none"),
+                Option.Some(server) => println("backup={} {}", server.host, server.port),
+                Option.None => println("backup=none"),
             }
             println("weights={}", config.weights.len())
             match config.weights.get("a") {
-                Some(weight) => println("a={weight}"),
-                None => println("a=none"),
+                Option.Some(weight) => println("a={weight}"),
+                Option.None => println("a=none"),
             }
             if config.servers.len() > 0 {
                 println(
@@ -208,7 +208,7 @@ fn main() {
                 )
             }
         }
-        Err(_) => {}
+        Result.Err(_) => {}
     }
 }
 """

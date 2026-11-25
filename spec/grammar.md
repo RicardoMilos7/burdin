@@ -303,8 +303,8 @@ spelling is still an ordinary type name. A closure type with no `: Type` returns
 capability hierarchy for calling: a value of `Fn` may be used where `FnMut` or `FnOnce` is expected, and an `FnMut`
 where `FnOnce` is expected, never the other way (`memory-rules.md` CL5). A closure type written in a signature is
 owned; only a type parameter's `Fn` bound keeps the closure's concrete capture mode and lets a borrowing closure cross
-the call (`memory-rules.md` CL9). A non-generic function name, a built-in function name, or `Some`, `Ok`, or `Err` is an
-expression of a closure type when the context expects one (`memory-rules.md` CL11). So is a method value: `Type.name`
+the call (`memory-rules.md` CL9). A non-generic function name, a built-in function name, or `Option.Some`,
+`Result.Ok`, or `Result.Err` is an expression of a closure type when the context expects one (`memory-rules.md` CL11). So is a method value: `Type.name`
 of a non-generic type, and `local.name` or `self.name` written without a call (`memory-rules.md`, CL11, method values).
 `f(args)` calls any expression of a closure type, including a field, an element, or a call result.
 
@@ -312,7 +312,7 @@ of a non-generic type, and `local.name` or `self.name` written without a call (`
 at the constant table for `(T, I)`. It is stored, moved, and dropped like any other owned value, satisfies `I` and
 every interface `I requires`, and is never `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`
 (`existentials.md` AN1, AN8). A concrete value is boxed implicitly wherever an `any I` is the expected type (an
-annotation, an argument, a return, a field, an element, a `Some`/`Ok`/`Err` payload, or a match arm); the value must
+annotation, an argument, a return, a field, an element, a `.Some`/`.Ok`/`.Err` payload, or a match arm); the value must
 implement `I` (E0141) and be first-class, so a view is E0120 (AN3). `any I` is allowed only for an object-safe
 interface: no generic methods, no method without a `self` receiver, no `own self`, no `Self` outside the receiver, no
 view return, and every `requires` interface object-safe (E0202; AN2). `I` may be an interface path with type
@@ -401,8 +401,9 @@ StructLiteral = PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } [ Sep ]
               | PathExpr { "." IDENT } "{" [ FieldInit { Sep FieldInit } Sep ] ".." Expr "}" ;   (* with a base: last, rule 8.12 *)
                                                          (* `Shape<i32>.Rect { ... }`: the arguments are the head's (`arguments.md`, SL1) *)
 FieldInit     = IDENT [ ":" Expr ] ;                    (* `x` alone is shorthand for `x: x` *)
-TargetExpr    = "." IDENT | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
-                                                       (* `.name`, `.name(args)`, `.{ ... }`: the type is the expected type of the position, spec/target-typing.md TT1 *)
+TargetExpr    = "." IDENT | "." IDENT "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}"
+              | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" ;
+                                                       (* `.name`, `.name(args)`, `.Variant { ... }`, `.{ ... }`: the type is the expected type of the position, spec/target-typing.md TT1, TT13 *)
 
 IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
 (* An `if` whose condition is a compile-time condition keeps only the taken branch: const-eval.md, CE4. No syntax marks it. *)
@@ -466,7 +467,8 @@ PrimaryPat    = "_"
               | "(" [ ElemPat { "," ElemPat } [ "," ] ] ")"    (* tuple; `(p)` is just p *)
               | "[" [ ElemPat { "," ElemPat } [ "," ] ] "]" ;  (* array or slice pattern, rule 7.2 *)
 ElemPat       = Pattern | ".." | ".." IDENT ;                   (* `..` or `..name` is a rest element, rules 7.1, 7.2 *)
-PatPath       = ( IDENT | "Self" ) { "." IDENT } ;               (* Some, Shape.Circle, Token.Num, Self.Variant *)
+PatPath       = ( IDENT | "Self" ) { "." IDENT }
+              | "." IDENT ;                                      (* Shape.Circle, Option.Some, Self.Variant, and the inferred .Circle, .Some (TT13) *)
 FieldPat      = IDENT [ ":" Pattern ] ;                          (* `w` alone is shorthand for `w: w` *)
 ```
 
@@ -482,8 +484,9 @@ on `[T]` matches its length; a pattern on any other type is E0003. `spec/array-p
 Unlike a tuple, a `[...]` pattern is not desugared to wildcards: the slice form keeps its rest through the checks and
 code generation (`Pat::Slice`).
 
-A bare identifier pattern is a binding unless a unit variant or constant with that name is in scope (`None` is, through
-the prelude). The linter requires bindings to be lowercase. A string literal pattern compares a `str` scrutinee byte
+A bare identifier pattern is a binding unless a unit variant or constant with that name is in scope. `Some`, `None`,
+`Ok`, and `Err` are not such names (they are E0305; write `Option.None` or `.None`). A pattern `.Name` names a variant of
+the scrutinee's enum (`target-typing.md`, TT13). The linter requires bindings to be lowercase. A string literal pattern compares a `str` scrutinee byte
 for byte; the domain of `str` is open, so it never makes a `match` exhaustive without an `else` or `_` arm, and a
 `String` scrutinee needs `as_str` first. `tests/m04_data/string_patterns` and `nonexhaustive_string` witness both.
 
@@ -508,7 +511,7 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
    empty parameter list, so `|| 0` is a closure with no parameters.
 6. **An item that starts with an identifier** is an impl block. The parser decides between `Type: Interface {` and
    `Type {` by the token after the type.
-7. **`else` after `let`** (`let Some(v) = e else { ... }`) is only valid when the pattern is refutable, and the block must diverge
+7. **`else` after `let`** (`let .Some(v) = e else { ... }`) is only valid when the pattern is refutable, and the block must diverge
    (`return`, `break`, `continue`, or a call that never returns). These two checks are semantic, not syntactic.
 8. **Named arguments.** Inside an argument list (the `(...)` after a callee), an identifier followed by `:` names
    the parameter the argument fills: no expression of the grammar starts with `IDENT ":"`, so the look-ahead is

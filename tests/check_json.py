@@ -72,19 +72,19 @@ fn main() {
     let text = read_to_string(args[2].as_str()).unwrap()
     let read: Result<Config, DeError> = json.from_str(text.as_str())
     match read {
-        Ok(config) => {
+        Result.Ok(config) => {
             if mode.as_str() == "pretty" {
                 print(json.to_string_pretty(config).unwrap())
             } else {
                 println(json.to_string(config).unwrap())
             }
         }
-        Err(e) => println(e.to_string()),
+        Result.Err(e) => println(e.to_string()),
     }
 
     let again: Result<Config, DeError> = json.from_str(text.as_str())
     match again {
-        Ok(config) => {
+        Result.Ok(config) => {
             println("name={} servers={} note={}", config.name, config.servers.len(), config.note)
             match config.protocol {
                 Protocol.Http => println("protocol=Http"),
@@ -92,13 +92,13 @@ fn main() {
                 Protocol.Both(first, second) => println("protocol=Both {first} {second}"),
             }
             match config.backup {
-                Some(server) => println("backup={} {}", server.host, server.port),
-                None => println("backup=none"),
+                Option.Some(server) => println("backup={} {}", server.host, server.port),
+                Option.None => println("backup=none"),
             }
             println("weights={}", config.weights.len())
             match config.weights.get("a") {
-                Some(weight) => println("a={weight}"),
-                None => println("a=none"),
+                Option.Some(weight) => println("a={weight}"),
+                Option.None => println("a=none"),
             }
             if config.servers.len() > 0 {
                 println(
@@ -110,7 +110,7 @@ fn main() {
                 )
             }
         }
-        Err(_) => {}
+        Result.Err(_) => {}
     }
 }
 """

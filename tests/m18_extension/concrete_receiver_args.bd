@@ -7,14 +7,14 @@
 
 fn Option<i32>.or_zero(self): i32 {
     match self {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
 fn main() {
-    let a: Option<i32> = Some(5)
-    let b: Option<i32> = None
+    let a: Option<i32> = Option.Some(5)
+    let b: Option<i32> = Option.None
     println(a.or_zero().to_string())
     println(b.or_zero().to_string())
 }

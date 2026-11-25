@@ -28,12 +28,12 @@ fn main() {
     while !(a_done && b_done) {
         select {
             x = a.recv() if !a_done => match x {
-                Some(v) => println("a {}", v),
-                None => a_done = true,
+                Option.Some(v) => println("a {}", v),
+                Option.None => a_done = true,
             }
             y = b.recv() if !b_done => match y {
-                Some(v) => println("b {}", v),
-                None => b_done = true,
+                Option.Some(v) => println("b {}", v),
+                Option.None => b_done = true,
             }
         }
     }

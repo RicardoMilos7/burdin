@@ -39,14 +39,26 @@ impl FnCx<'_> {
             }
             Pat::Wild
         };
+        if let Some(path) = inferred_path(&p.kind)
+            && !matches!(ty, Ty::Enum(_) | Ty::Option(_) | Ty::Result(..) | Ty::Error)
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                p.span,
+                format!(
+                    "`.{}` needs a scrutinee that is an enum, but this one is `{ty}`; write the enum's name",
+                    path[1].name
+                ),
+            );
+            self.pattern_children_as_errors(&p.kind, owned);
+            return Pat::Wild;
+        }
         match &p.kind {
             P::Wild => Pat::Wild,
             P::Binding { name, mutable } => {
-                if name.name == "None" && !*mutable && self.is_prelude("None") {
-                    return match ty {
-                        Ty::Option(_) | Ty::Error => Pat::None,
-                        _ => pat_mismatch(self, "`None`"),
-                    };
+                if !*mutable && is_removed_prelude_name(&name.name) && self.is_prelude(&name.name) {
+                    self.removed_prelude_name(name);
+                    return Pat::Wild;
                 }
                 if let Some(Global::Const(_)) = self.globals.value(self.module, &name.name) {
                     self.unsupported(p.span, "constants in patterns"); // e9000: pattern-constant
@@ -87,30 +99,37 @@ impl FnCx<'_> {
                     _ => pat_mismatch(self, "a range pattern"),
                 }
             }
-            P::TupleStruct(path, elems) if path.len() == 1 && path[0].name == "Some" && self.is_prelude("Some") => {
-                match ty {
-                    Ty::Option(inner) => match self.rest_positions(elems, 1) {
-                        Some(positions) => Pat::Some(Box::new(self.sub_pattern(positions[0], inner, owned))),
-                        None => {
-                            self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
-                            Pat::Wild
-                        }
-                    },
-                    Ty::Error => {
-                        elems.iter().for_each(|e| {
-                            self.pattern(e, &Ty::Error, owned);
-                        });
+            P::TupleStruct(path, elems)
+                if path.len() == 1 && is_removed_prelude_name(&path[0].name) && self.is_prelude(&path[0].name) =>
+            {
+                self.removed_prelude_name(&path[0]);
+                elems.iter().for_each(|e| {
+                    self.pattern(e, &Ty::Error, owned);
+                });
+                Pat::Wild
+            }
+            P::Path(path) if self.prelude_variant(path, ty) == Some("None") => match ty {
+                Ty::Option(_) | Ty::Error => Pat::None,
+                _ => pat_mismatch(self, "`Option.None`"),
+            },
+            P::TupleStruct(path, elems) if self.prelude_variant(path, ty) == Some("Some") => match ty {
+                Ty::Option(inner) => match self.rest_positions(elems, 1) {
+                    Some(positions) => Pat::Some(Box::new(self.sub_pattern(positions[0], inner, owned))),
+                    None => {
+                        self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
                         Pat::Wild
                     }
-                    _ => pat_mismatch(self, "`Some(...)`"),
+                },
+                Ty::Error => {
+                    elems.iter().for_each(|e| {
+                        self.pattern(e, &Ty::Error, owned);
+                    });
+                    Pat::Wild
                 }
-            }
-            P::TupleStruct(path, elems)
-                if path.len() == 1
-                    && (path[0].name == "Ok" || path[0].name == "Err")
-                    && self.is_prelude(&path[0].name) =>
-            {
-                let ok = path[0].name == "Ok";
+                _ => pat_mismatch(self, "`Some(...)`"),
+            },
+            P::TupleStruct(path, elems) if matches!(self.prelude_variant(path, ty), Some("Ok" | "Err")) => {
+                let ok = self.prelude_variant(path, ty) == Some("Ok");
                 match ty {
                     Ty::Result(t, e) => match self.rest_positions(elems, 1) {
                         Some(positions) => {
@@ -447,6 +466,53 @@ impl FnCx<'_> {
         Some((index, v.shape, v.fields.iter().map(|f| f.ty.clone()).collect()))
     }
 
+    /// `Some`, `None`, `Ok`, or `Err` when `path` names that variant of `Option` or `Result`: `Option.Some`,
+    /// `Result.Err`, or the inferred `.Some` against a scrutinee of that type (`spec/target-typing.md`, TT13). A
+    /// program that declares its own `Option` or `Result` keeps its own meaning for the qualified spelling.
+    pub(super) fn prelude_variant<'a>(&self, path: &'a [ast::Ident], ty: &Ty) -> Option<&'a str> {
+        let [head, variant] = path else { return None };
+        let owner = if head.is_inferred() {
+            match ty {
+                Ty::Option(_) => "Option",
+                Ty::Result(..) => "Result",
+                _ => return None,
+            }
+        } else if (head.name == "Option" || head.name == "Result") && self.is_prelude_type(&head.name) {
+            head.name.as_str()
+        } else {
+            return None;
+        };
+        match (owner, variant.name.as_str()) {
+            ("Option", "Some" | "None") | ("Result", "Ok" | "Err") => Some(variant.name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Checks the sub-patterns of a pattern that cannot be matched, against the error type, so their own errors
+    /// and bindings are still reported.
+    fn pattern_children_as_errors(&mut self, kind: &ast::PatternKind, owned: bool) {
+        match kind {
+            ast::PatternKind::TupleStruct(_, elems) => {
+                elems.iter().for_each(|e| {
+                    self.pattern(e, &Ty::Error, owned);
+                });
+            }
+            ast::PatternKind::Struct(_, fields, _) => {
+                for f in fields {
+                    match &f.pattern {
+                        Some(sub) => {
+                            self.pattern(sub, &Ty::Error, owned);
+                        }
+                        None => {
+                            self.declare_binding(&f.name, &Ty::Error, false, owned);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn lit_pattern(&mut self, lit: &ast::LitPat, ty: &Ty, span: Span) -> Option<Pat> {
         match (lit, ty) {
             (_, Ty::Error) => None,
@@ -467,5 +533,23 @@ impl FnCx<'_> {
                 None
             }
         }
+    }
+}
+
+/// The four prelude names that `Option` and `Result` no longer provide bare (E0305).
+pub(super) fn is_removed_prelude_name(name: &str) -> bool {
+    matches!(name, "Some" | "None" | "Ok" | "Err")
+}
+
+/// The path of an inferred variant pattern, `.Variant`, `.Variant(..)`, or `.Variant { .. }`.
+fn inferred_path(kind: &ast::PatternKind) -> Option<&[ast::Ident]> {
+    use ast::PatternKind as P;
+    match kind {
+        P::Path(path) | P::TupleStruct(path, _) | P::Struct(path, ..)
+            if path.first().is_some_and(|h| h.is_inferred()) =>
+        {
+            Some(path)
+        }
+        _ => None,
     }
 }

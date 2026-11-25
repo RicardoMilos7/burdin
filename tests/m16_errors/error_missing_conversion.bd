@@ -3,17 +3,17 @@
 // `?` needs a conversion: a `From` block, or an error type for the dynamic `AnyError` (spec/errors.md, ERR4-ERR5).
 
 fn number(): Result<i32, i32> {
-    Ok(1)
+    Result.Ok(1)
 }
 
 fn run(): Result<i32, AnyError> {
     let n = number()? //~ E0212
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn other(): Result<i32, String> {
     let n = number()? //~ E0212
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {}

@@ -70,5 +70,5 @@ test "a try_lock that fails frees nothing it did not take" {
     let m = Shared.new(Mutex.new("x".to_string()))
     let inner = m.clone()
     let outer = m.get().lock(|unused| inner.get().try_lock(|s| s.len()))
-    assert_eq(outer, None)
+    assert_eq(outer, Option.None)
 }

@@ -52,7 +52,7 @@ PACKAGES = harness.ROOT / "packages"
 CERTS = harness.TESTS / "s3_tls" / "conformance" / "src" / "certs"
 HTTP_CERTS = harness.TESTS / "s3_http" / "tls" / "src" / "certs"
 MANIFEST = '[package]\nname = "tlscheck"\nversion = "0.1.0"\n'
-APP = 'use tls\nuse tls.{ClientConfig, TlsError}\n\nfn main() {\n    match ClientConfig.new() {\n        Ok(_) => println("ok"),\n        Err(failure) => println("{}", failure),\n    }\n}\n'
+APP = 'use tls\nuse tls.{ClientConfig, TlsError}\n\nfn main() {\n    match ClientConfig.new() {\n        Result.Ok(_) => println("ok"),\n        Result.Err(failure) => println("{}", failure),\n    }\n}\n'
 
 CERTIFICATES = ["root", "inter", "server", "chain", "rsa", "ed25519", "wrong_host", "self_signed", "expired", "client"]
 KEYS = ["server", "rsa", "ed25519", "wrong_host", "self_signed", "expired", "client"]
@@ -304,8 +304,8 @@ with harness.temporary_dir("burdin-tls-") as work:
         "\n"
         "fn main() {\n"
         "    match ClientConfig.new() {\n"
-        '        Ok(_) => println("configured"),\n'
-        '        Err(failure) => println("{failure}"),\n'
+        '        Result.Ok(_) => println("configured"),\n'
+        '        Result.Err(failure) => println("{failure}"),\n'
         "    }\n"
         "}\n"
     )

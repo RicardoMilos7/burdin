@@ -28,7 +28,7 @@ fn main() {
     println(s3.finish())
 
     let mut s4 = TextSerializer.new()
-    (true, 2.0, Some("x".to_string())).serialize(mut s4).unwrap()
+    (true, 2.0, Option.Some("x".to_string())).serialize(mut s4).unwrap()
     println(s4.finish())
 
     let back: Result<bool, DeError> = from_text("true")

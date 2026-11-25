@@ -25,7 +25,7 @@ Counted: Read {
             self.pos = self.pos + 1
             n = n + 1
         }
-        Ok(n)
+        Result.Ok(n)
     }
 }
 

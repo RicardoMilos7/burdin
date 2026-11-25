@@ -52,7 +52,7 @@ sub(b: 2, a: 5)          // 3
 Named arguments are matched before generic inference, so they work on generic functions and generic methods
 (`max_of(b: 9, a: 3)` infers `T` from both). They also work on interface methods, called statically or through
 `any` (`a.add(x: 7)`). The compiler-known forms take no named arguments (E0214): built-in functions and
-methods (`push(item: 1)`), the constructors `Some`, `Ok`, and `Err`, variant constructors, closure values (a
+methods (`push(item: 1)`), the constructors `Option.Some`, `Result.Ok`, and `Result.Err`, variant constructors, closure values (a
 closure type has only types, not parameter names), and `extern` declarations. A format call's placeholders name
 its arguments by position, never by a call-site name.
 
@@ -108,7 +108,7 @@ on a method or associated function of the program that has type parameters of it
 a type. It is also accepted on the `collect` of an iterator, whose one type parameter is the target the call names
 (`iterators.md`, IT17), on a concrete iterator and on a value of a type parameter bounded by `Iterator`. Every other
 callee refuses it with E0003 and still has its arguments checked: a function with no type parameters, a built-in
-function or method (`println`, `Some`, an iterator adapter), a built-in static function (`env.args`, `process.exit`,
+function or method (`println`, `Option.Some`, an iterator adapter), a built-in static function (`env.args`, `process.exit`,
 `Heap.new`, `Shared.new`, `List.from`, `Map.from`, `CPtr.null`), a closure held in a local, a variant, and a method or
 associated function with no parameters of its own. The `is` and `downcast` methods of an `any` value keep their own
 rule (`existentials.md`, AN6).

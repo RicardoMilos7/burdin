@@ -66,11 +66,11 @@ Scalars: Deserialize {
                 t = deserialize_str(mut d)?
             } else {
                 let failure = unknown_field(name.as_str())
-                return Err(failure.field(name.as_str()))
+                return Result.Err(failure.field(name.as_str()))
             }
         }
         d.end_struct()?
-        Ok(Scalars { b, i, j, u, f, c, t })
+        Result.Ok(Scalars { b, i, j, u, f, c, t })
     }
 }
 

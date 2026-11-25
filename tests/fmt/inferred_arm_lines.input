@@ -1,0 +1,24 @@
+//@ run
+//> 1 2 3 4
+
+// Match arms separated by line breaks alone may each start with `.Variant`: a `.` at the start of a line that has a
+// `=>` before the line ends begins an arm, not a member access on the previous arm's body (spec/target-typing.md, TT13).
+
+enum Shape {
+    Circle(i32)
+    Square(i32)
+    Triangle
+}
+
+fn size(s: Shape): i32 {
+    match s {
+        .Circle(r) => r
+        .Square(n) if n > 1 => n
+        .Square(_) => 4
+        .Triangle => 3
+    }
+}
+
+fn main() {
+    println("{} {} {} {}", size(.Circle(1)), size(.Square(2)), size(.Triangle), size(.Square(0)))
+}

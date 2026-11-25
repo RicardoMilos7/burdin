@@ -20,7 +20,7 @@ function for both precisions doubles the surface without changing an algorithm. 
 having no `f32` and no interface declaration.
 
 Integers are `u64` and `usize` for counts, and `u64` for the number theory of MA3. There is no bignum: a result that
-does not fit `u64` is `None`, never a wrapped value.
+does not fit `u64` is `Option.None`, never a wrapped value.
 
 ## MA2. Modules and exports
 
@@ -43,11 +43,11 @@ A dependency's non-root modules are hidden, so every public name is re-exported 
 | Function | Result |
 | --- | --- |
 | `gcd(a: u64, b: u64): u64` | the greatest common divisor; `gcd(0, 0)` is `0` |
-| `lcm(a: u64, b: u64): Option<u64>` | the least common multiple; `Some(0)` when either is `0`; `None` when it does not fit |
+| `lcm(a: u64, b: u64): Option<u64>` | the least common multiple; `Option.Some(0)` when either is `0`; `Option.None` when it does not fit |
 | `mod_pow(base: u64, exp: u64, modulus: u64): u64` | `base^exp mod modulus`, in `0..modulus`; `mod_pow(x, 0, 1)` is `0` |
 | `is_prime(n: u64): bool` | deterministic Miller-Rabin with the first twelve primes as witnesses, correct for every `u64` |
-| `factorial(n: u64): Option<u64>` | `n!`; `None` from `21!` on, which does not fit |
-| `binomial(n: u64, k: u64): Option<u64>` | `n` choose `k`; `Some(0)` when `k > n`; `None` when it does not fit |
+| `factorial(n: u64): Option<u64>` | `n!`; `Option.None` from `21!` on, which does not fit |
+| `binomial(n: u64, k: u64): Option<u64>` | `n` choose `k`; `Option.Some(0)` when `k > n`; `Option.None` when it does not fit |
 
 `mod_pow` and `gcd` never overflow: the product inside `mod_pow` is taken in `u128`. Panics: `mod_pow` with a modulus of
 `0` panics with `mod_pow: the modulus is zero`.
@@ -75,7 +75,7 @@ summed, so a small argument does not underflow. A negative argument uses the ref
 non-integer. (The package first used the Lanczos approximation; its coefficients as written were accurate only to about
 `1e-8`, so it was replaced.)
 
-`bisect` returns `None` when `f(low)` and `f(high)` are both non-zero with the same sign. It returns the endpoint when
+`bisect` returns `Option.None` when `f(low)` and `f(high)` are both non-zero with the same sign. It returns the endpoint when
 an endpoint is a root. It halves the interval until its width is at most `tolerance`, so the answer is within
 `tolerance` of a root. It panics with `bisect: the tolerance must be positive` when `tolerance` is not greater than
 `0`, and it makes at most 2100 steps, which is enough for every pair of finite doubles.
@@ -86,21 +86,21 @@ when `intervals` is `0`.
 ## MA5. Statistics
 
 All functions take a slice `[f64]`. A caller passes an array as a range, `values[0..values.len()]`, or a `List` as
-`list.as_slice()`. The empty slice is an absent answer, `None`, wherever a mean or a spread would divide by zero.
+`list.as_slice()`. The empty slice is an absent answer, `Option.None`, wherever a mean or a spread would divide by zero.
 
 | Function | Result |
 | --- | --- |
 | `sum(xs: [f64]): f64` | the sum, added left to right; `0.0` for no values |
-| `mean(xs: [f64]): Option<f64>` | the arithmetic mean; `None` for no values |
-| `variance(xs: [f64]): Option<f64>` | the population variance, the mean of the squared deviations; `None` for no values |
-| `sample_variance(xs: [f64]): Option<f64>` | the sample variance, divided by `n - 1`; `None` for fewer than two values |
+| `mean(xs: [f64]): Option<f64>` | the arithmetic mean; `Option.None` for no values |
+| `variance(xs: [f64]): Option<f64>` | the population variance, the mean of the squared deviations; `Option.None` for no values |
+| `sample_variance(xs: [f64]): Option<f64>` | the sample variance, divided by `n - 1`; `Option.None` for fewer than two values |
 | `std_dev(xs: [f64]): Option<f64>` | the square root of `variance` |
 | `sample_std_dev(xs: [f64]): Option<f64>` | the square root of `sample_variance` |
 | `minimum(xs: [f64]): Option<f64>`, `maximum(xs: [f64]): Option<f64>` | the least and greatest value; NaN values are skipped |
 | `quantile(xs: [f64], p: f64): Option<f64>` | the value at fraction `p`, by linear interpolation between the two nearest ranks (the NumPy default) |
 | `median(xs: [f64]): Option<f64>` | `quantile(xs, 0.5)` |
 | `covariance(xs: [f64], ys: [f64]): Option<f64>` | the population covariance |
-| `correlation(xs: [f64], ys: [f64]): Option<f64>` | the Pearson correlation coefficient; `None` when either side has zero variance |
+| `correlation(xs: [f64], ys: [f64]): Option<f64>` | the Pearson correlation coefficient; `Option.None` when either side has zero variance |
 
 `mean` is the sum divided by `n`, and `variance` is computed in two passes: the mean first, then the squared
 deviations, so the result does not lose the precision of a one-pass formula. `minimum` and `maximum` skip NaN, since
@@ -126,8 +126,8 @@ semantics like a number.
 | `distance(self, other: Vector<N>): f64` | the length of the difference |
 | `scale(self, k: f64): Vector<N>` | each component times `k` |
 | `map<F: Fn(f64): f64>(self, f: F): Vector<N>` | `f` applied to each component |
-| `normalized(self): Option<Vector<N>>` | the vector of length one in the same direction; `None` for the zero vector |
-| `angle(self, other: Vector<N>): Option<f64>` | the angle between the vectors in radians; `None` when either is zero |
+| `normalized(self): Option<Vector<N>>` | the vector of length one in the same direction; `Option.None` for the zero vector |
+| `angle(self, other: Vector<N>): Option<f64>` | the angle between the vectors in radians; `Option.None` when either is zero |
 | `approx_eq(self, other: Vector<N>, tolerance: f64): bool` | every component differs by at most `tolerance` |
 | `+`, `-`, unary `-` | componentwise (`Add`, `Sub`, `Neg`) |
 | `v[i]` | `Index<f64>`: read a component; `IndexMut<f64>` writes one |
@@ -187,15 +187,15 @@ MA7 convert to it, so one correct implementation serves both.
 | `times(self, other: DynMatrix): DynMatrix` | the matrix product; panics when `self.cols() != other.rows()` |
 | `+`, `-`, unary `-` | elementwise; panics when the shapes differ |
 | `trace(self)`, `det(self)` | a square matrix; panics when not square |
-| `inverse(self): Option<DynMatrix>` | the inverse; `None` when singular |
-| `solve(self, b: DynMatrix): Option<DynMatrix>` | the `x` with `self * x = b`; `None` when singular; panics when `self` is not square or when `b.rows()` differs from `self.rows()` |
+| `inverse(self): Option<DynMatrix>` | the inverse; `Option.None` when singular |
+| `solve(self, b: DynMatrix): Option<DynMatrix>` | the `x` with `self * x = b`; `Option.None` when singular; panics when `self` is not square or when `b.rows()` differs from `self.rows()` |
 
 **The algorithm (MA8 is the decision).** `det`, `inverse`, and `solve` use Gaussian elimination with partial pivoting: at
 each column the row with the largest absolute value, from the diagonal down, is the pivot (the first one on a tie).
 `det` runs the elimination on the matrix alone and multiplies the pivots, negated once for each row swap. `solve` runs
 the same elimination and applies its row operations to every column of the right-hand side at once, then substitutes
 backward. `inverse` is `solve` with the identity as the right-hand side. A matrix is **singular** when a pivot is exactly
-`0.0`; then `det` is `0.0` and `inverse` and `solve` are `None`. No tolerance is used, the same rule as LAPACK and numpy.
+`0.0`; then `det` is `0.0` and `inverse` and `solve` are `Option.None`. No tolerance is used, the same rule as LAPACK and numpy.
 A nearly singular matrix has a tiny non-zero pivot: it is not reported as singular, and its inverse is large, as with
 any elimination.
 
@@ -203,7 +203,7 @@ The fixed-size `det`, `inverse`, and `solve` of MA7 convert to a `DynMatrix`, ru
 
 ## MA9. Panics
 
-Programmer errors panic, and a value that is only absent returns `None`, as a rule of the package:
+Programmer errors panic, and a value that is only absent returns `Option.None`, as a rule of the package:
 
 - a shape mismatch in `DynMatrix` (`times`, `+`, `-`, `solve`, `from_list`) and a square-only operation on a non-square
   matrix (MA7);
@@ -214,7 +214,7 @@ Programmer errors panic, and a value that is only absent returns `None`, as a ru
 
 Every panic message begins with the function's name, so a panic in a program names the call that failed.
 
-`None` is the answer for a value that does not exist: an empty statistic, a zero vector's direction, a singular matrix,
+`Option.None` is the answer for a value that does not exist: an empty statistic, a zero vector's direction, a singular matrix,
 an overflowing product, a bisection with no sign change. No function here returns a `Result`, and no registry error code
 is involved (`tests/README.md`).
 

@@ -55,13 +55,13 @@ Stdin  { fn is_terminal(self): bool }
   buffer is flushed after a line, as for `println`. `flush` writes the buffered bytes now, including what `print`
   wrote. The other flush points are the ones in "Output" above.
 - `Stderr.write` is unbuffered: the bytes reach the operating system during the call, so they are already out when a
-  later panic message is written. `Stderr.flush` does nothing and returns `Ok(())`.
+  later panic message is written. `Stderr.flush` does nothing and returns `Result.Ok(())`.
 - A write error is ignored, exactly as `print` ignores one, so a stream's `write` always takes all of `data` and
-  returns `Ok(data.len())`.
+  returns `Result.Ok(data.len())`.
 - `Stdin.read` appends up to `max` bytes the runtime has buffered, reading one block from the operating system only
   when the buffer is empty, so it returns as soon as some input is available and never waits for `max` bytes;
-  `Ok(0)` is the end of the input. `read_exact`, `read_to_end`, and `read_until` keep reading. `read_line` returns one
-  line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair. `Ok(None)` is the end of the input,
+  `Result.Ok(0)` is the end of the input. `read_exact`, `read_to_end`, and `read_until` keep reading. `read_line` returns one
+  line without its terminator: it drops the `\n`, and the `\r` of a `\r\n` pair. `Result.Ok(Option.None)` is the end of the input,
   and the last line may have no terminator. `read_to_string` returns everything left, as the empty `String` at the
   end. All of them take bytes from the same buffer, so they can be mixed. Unlike the `Read` and `BufRead` defaults,
   `Stdin.read_line` and `Stdin.read_to_string` do not check the bytes for UTF-8, as with files.
@@ -139,7 +139,7 @@ struct BufWriter<W: Write> {                         // Write, and Seek when W i
 ```
 
 - **Reading appends.** `read` appends at most `max` bytes to the caller's list and returns how many it appended, so
-  no read allocates a buffer of its own. `Ok(0)` is the end of the input (or a `max` of 0). A reader may append fewer
+  no read allocates a buffer of its own. `Result.Ok(0)` is the end of the input (or a `max` of 0). A reader may append fewer
   bytes than asked for. `read_exact` keeps reading until `count` bytes have been appended, and a source that ends
   first is `IoError.UnexpectedEof`; the bytes it did produce stay in the list. `read_to_end` appends everything left
   and returns the count. `read_to_string` collects it as text, and bytes that are not valid UTF-8 are
@@ -147,10 +147,10 @@ struct BufWriter<W: Write> {                         // Write, and Seek when W i
 - **Writing takes a prefix.** `write` takes a prefix of `data` and returns its length. `write_all` calls it until every
   byte is taken, and a sink that takes none of a non-empty `data` is `IoError.WriteZero`. `write_text` writes the
   UTF-8 bytes of a string and `write_line` adds one `\n`. `flush` pushes what the writer holds to what it wraps; a
-  writer that holds nothing returns `Ok(())`.
+  writer that holds nothing returns `Result.Ok(())`.
 - **`BufRead`.** `read_until` appends up to and including the first `delim` byte, or up to the end of the input, and
   returns how many bytes it appended (`0` at the end). `read_line` is the one `Stdin` provides, for any
-  buffered reader: it drops the `\n` and the `\r` of a `\r\n`, returns `Ok(None)` at the end, accepts a last line with
+  buffered reader: it drops the `\n` and the `\r` of a `\r\n`, returns `Result.Ok(Option.None)` at the end, accepts a last line with
   no terminator, and reports bytes that are not valid UTF-8 as `IoError.InvalidData`. `lines` yields each line as a
   `Result`, and stops after the first error.
 - **`Cursor`** holds a `List<u8>` and a position. It reads and `read_until`s from the position, writes over the bytes
@@ -200,7 +200,7 @@ fn parse(s: str): Result<Self, ParseIntError>
 Floats have `to_string(self): String`, through `Display` (`format.md`, FM8), and `f64.parse(s)` and `f32.parse(s)`
 (below). `bool`, `char`, and `str` have `to_string(self): String`. `bool` also works in `if`/`while` conditions. `parse` is
 the associated function `i32.parse(s)`; it accepts an optional leading `-` and digits in the base 10 and returns
-`Err(ParseIntError.Invalid)`, whose message is `invalid integer`, for anything else.
+`Result.Err(ParseIntError.Invalid)`, whose message is `invalid integer`, for anything else.
 
 Arithmetic is the built-in operators only: `+ - * / %`, `<< >>`, `& | ^`, unary `-`. Overflow panics in debug and
 wraps in release for `+ - *` and unary `-`; division by zero and out-of-range shifts always panic. `/` and `%`
@@ -377,10 +377,10 @@ same function for every integer source, written `T.try_from(v)` and returning `R
 - **TF3.** A `Type.try_from(v)` with no block for the type of `v` is E0003 at `v`, and a type with no `TryFrom` block
   has no `try_from` function (E0002). A `String` is borrowed as a `str` where the source is `str` (IC1), as for any
   argument.
-- **TF4.** For an integer type `T` and an integer `v` of any type, `T.try_from(v)` is `Ok(v as T)` when `v` is in the
-  range of `T`, and `Err(TryFromIntError.OutOfRange)` when it is not. A value of another type, such as a float, is
+- **TF4.** For an integer type `T` and an integer `v` of any type, `T.try_from(v)` is `Result.Ok(v as T)` when `v` is in the
+  range of `T`, and `Result.Err(TryFromIntError.OutOfRange)` when it is not. A value of another type, such as a float, is
   E0003, and a call with other than one argument is E0004. `v` is evaluated once. Its source may be any integer, so
-  a literal argument is not given `T`: it stays an `i32`, and `u8.try_from(300)` is `Err(OutOfRange)`, not E0008.
+  a literal argument is not given `T`: it stays an `i32`, and `u8.try_from(300)` is `Result.Err(OutOfRange)`, not E0008.
 - **TF5.** `TryFromIntError` is an error enum in `std` with one variant, `OutOfRange`, whose message is `out of range
   integral type conversion attempted`. It is `Eq` and `Debug`, and it is an ordinary error value (ERR1-ERR2).
 - **TF6.** The `Result` of `try_from` is an ordinary `Result`, so `?` converts its error through `From` like any other
@@ -607,7 +607,7 @@ caller's bytes without copying; the view keeps the bytes borrowed. `String.from_
 sequence and replaces each byte that is not part of one with U+FFFD REPLACEMENT CHARACTER, so it never fails.
 
 `match_indices` reports non-overlapping matches from the left; `find_all` is its other name. `get(from, to)` is the
-checked slice: it returns `None` when the range is reversed, past the end, or either end splits a character, and a
+checked slice: it returns `Option.None` when the range is reversed, past the end, or either end splits a character, and a
 view otherwise.
 
 The unchecked reinterpretation behind `str.from_utf8` is the primitive `__view_as_text(view: [u8]): str`, which
@@ -622,7 +622,7 @@ character functions (`chars`, `trim`, the case conversions) and `__view_as_text`
 `slice: the index is not a character boundary`. A reversed or out-of-range range panics as before. Slicing an
 array or a slice of `[u8]` checks only the range, since its elements are not characters.
 
-`get(from, to)` is the same slice without the panic: it returns `None` when the range is reversed, out of range, or
+`get(from, to)` is the same slice without the panic: it returns `Option.None` when the range is reversed, out of range, or
 an end is not a character boundary. `as_bytes()` is the byte view for byte-level work, and `is_char_boundary` tests a
 single offset.
 
@@ -909,8 +909,8 @@ word. Every method except `new` and `with_capacity` exists for every allocator a
 The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
 to the other. If you need the lazy form of `xs.map(f)`, write `xs.iter().map(f)`: the closure then takes the item
 (`T`, or `&T` for a type that is not `Copy`) rather than a view. If you need the eager form of a lazy chain, call
-`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. A prelude constructor is a closure value too: `Some`
-maps the items to `Option`s, as in `xs.iter().map(Some).collect()`, while `Ok` and `Err` need the other type argument
+`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. A prelude constructor is a closure value too: `Option.Some`
+maps the items to `Option`s, as in `xs.iter().map(Option.Some).collect()`, while `Result.Ok` and `Result.Err` need the other type argument
 written in a closure type (`memory-rules.md` CL11). `filter` and `find` need `T: Clone` only on the eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
 
 The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
@@ -923,7 +923,7 @@ list's allocator, so an arena-backed list never touches the C heap. `new` and `w
 `Global`: `List<T, A>.new()` or `List<T, A>.with_capacity(n)` where `A` is not `Global` is E0272, because the
 constructor has no allocator value to store (`allocators.md`, AL4).
 
-The accessors that answer instead of panicking: `get(i)` and `get_mut(i)` are `Some` only when `i < len`, and
+The accessors that answer instead of panicking: `get(i)` and `get_mut(i)` are `Option.Some` only when `i < len`, and
 `first`, `first_mut`, `last`, `last_mut`, and `is_empty` describe the ends and the emptiness. The `get_mut`,
 `first_mut`, and `last_mut` receivers are `mut self`: they hand out a mutable view of an element and keep the list
 exclusively borrowed until the view's last use (E0111), so nothing that may move the buffer is allowed while it is
@@ -1021,7 +1021,7 @@ corrupt an element.
 `get` takes either an index or a range: `xs.get(3)` is `Option<&T>` and `xs.get(1..4)` / `xs.get(1..=3)` is
 `Option<[T]>`. A stored range works when its endpoints are `usize`; a `Range<i32>` at `get` is E0003, because
 there is no implicit integer conversion. The checked forms never panic: a reversed or out-of-range range is
-`None`. The other panics carry their own messages: `swap: index out of bounds`, `split_at: index out of bounds`,
+`Option.None`. The other panics carry their own messages: `swap: index out of bounds`, `split_at: index out of bounds`,
 `rotate_left`/`rotate_right: index out of bounds`, `chunks: chunk size must be non-zero`,
 `windows: window size must be non-zero`, and `copy_from_slice`/`clone_from_slice: source and destination lengths
 differ`.
@@ -1361,7 +1361,7 @@ resolves symbolic links.
 - `join`: an absolute `other` (on Windows also one with a drive) replaces the path; on Windows a rooted `other` such as
   `\x` keeps the drive; an empty path or empty `other` adds no separator; otherwise `other` follows one separator.
 - `parent` drops the last name (`a/b` is `a`, `/a` is `/`, `a` is the empty path); a path with no names has none.
-  `file_name` is the last name, `None` for `..` or no names; trailing separators and `.` pieces are ignored.
+  `file_name` is the last name, `Option.None` for `..` or no names; trailing separators and `.` pieces are ignored.
 - `extension` is the text after the last dot of the file name, unless the name starts with that dot (`.profile` has
   none); `file_stem` is the rest (`archive.tar.gz` is `archive.tar` and `gz`). `with_extension("")` removes it.
 - `normalize` removes `.` and empty pieces, cancels `name/..`, keeps a leading `..` of a relative path, drops `..` at a
@@ -1560,7 +1560,7 @@ ManualClock {
   Every operation that could leave that range panics in every build profile, not only in debug: `from_micros`,
   `from_millis`, `from_secs`, and `times` when the product does not fit, `+` when the sum does not fit, `-` when
   the right side is longer, `from_secs_f64` for a negative, NaN, or too large value, and `divide(0)`. The `checked_`
-  forms return `None` instead, and `saturating_sub` stops at zero. `from_secs_f64` truncates to a whole nanosecond.
+  forms return `Option.None` instead, and `saturating_sub` stops at zero. `from_secs_f64` truncates to a whole nanosecond.
   The `as_` functions round down, and `subsec_*` give the part after the last whole second.
 - **Writing a duration.** `Display` (and `Debug`, which is the same) writes the largest unit that gives a whole part,
   with the fraction after it and no trailing zeros: `1.5s`, `250ms`, `42µs`, `7ns`, `0ns`. Width, fill, and
@@ -1576,7 +1576,7 @@ ManualClock {
 - **Calendar.** `DateTime` is the proleptic Gregorian calendar in UTC with no leap seconds and no time zones. The
   conversions with Unix seconds are exact, before 1970 too; `from_unix_secs` panics when the year does not fit the
   `i32` field. `DateTime.new` returns
-  `None` for a month outside 1 to 12, a day the month does not have (February 29 only in a leap year: divisible by 4,
+  `Option.None` for a month outside 1 to 12, a day the month does not have (February 29 only in a leap year: divisible by 4,
   except centuries that are not divisible by 400), an hour above 23, a minute or second above 59, or a nanosecond
   above 999,999,999. The fields are public, so a value built by hand can be invalid; the derived ordering is
   chronological because the fields run from the year down to the nanosecond. `to_system_time` panics outside the
@@ -1633,7 +1633,7 @@ Random {
   with no modulo bias (a draw that would favor the low values is discarded and drawn again) and panics when `bound`
   is zero. `range(low, high)` is uniform over `low..high` for any two `i64` values, including the whole `i64` range,
   and panics unless `low < high`. `range_f64` is `low + next_f64() * (high - low)` and panics unless `low < high`
-  and the width is finite. `index(len)` is `Some` of a uniform index below `len`, or `None` for an empty collection.
+  and the width is finite. `index(len)` is `Option.Some` of a uniform index below `len`, or `Option.None` for an empty collection.
 - **Shuffling.** `shuffle` is Fisher-Yates over `0..len` using `below`, so every order is equally likely and the
   result is a function of the generator's state alone. An empty list and a one-element list are unchanged and
   consume no numbers.
@@ -1743,8 +1743,8 @@ struct Reverse<T>: Copy, Clone, Eq, Debug { value: T }   // `<` is `T`'s `>`; `O
 `a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
 `str`, `String`, `()`, tuples, fixed-size arrays, and ranges of ordered parts, a struct or enum that derives `Ord`, a type parameter with
 an `Ord` bound, and `Reverse<T>`. It calls the private `std.cmp.__ord_cmp`, which is `if a < b { Less } else if b < a
-{ Greater } else { Equal }`. `Option<T>` and `Result<T, E>` get `cmp` from extension methods in `std.cmp` (`None`
-before every `Some`; every `Ok` before every `Err`; contents compared when the kinds match): they are not `Ord`, so
+{ Greater } else { Equal }`. `Option<T>` and `Result<T, E>` get `cmp` from extension methods in `std.cmp` (`Option.None`
+before every `Option.Some`; every `Result.Ok` before every `Result.Err`; contents compared when the kinds match): they are not `Ord`, so
 `<` still does not apply to them. Floats have `<` but no total order, so `f64.cmp` is E0002 (`total_cmp` is the float
 order, issue #703). The decisions behind it:
 
@@ -1832,8 +1832,8 @@ Tests: `m24_stdlib/hash_values` (HS1, HS2), `hash_hasher` (HS3), `hash_seeded` (
 
 ## `Option<T>` and `Result<T, E>`
 
-`Option<T>` is built in with the variants `Some(T)` and `None`; `None` takes its type from context. `Result<T, E>`
-is built in with `Ok(T)` and `Err(E)`. `Result<T>` written with one argument means `Result<T, AnyError>`, the dynamic
+`Option<T>` is built in with the variants `Option.Some(T)` and `Option.None`; `Option.None` takes its type from context. `Result<T, E>`
+is built in with `Result.Ok(T)` and `Result.Err(E)`. `Result<T>` written with one argument means `Result<T, AnyError>`, the dynamic
 error type described below (`errors.md`, ERR5).
 
 ```
@@ -1842,11 +1842,11 @@ Result<T, E>: unwrap(), expect(msg: str): T, is_ok(): bool, is_err(): bool
 Result<T, E>: context(message: str): Result<T, AnyError>
 ```
 
-`unwrap` panics on `None`/`Err`; `expect(msg)` panics with `msg`. `expr?` returns early through the enclosing
+`unwrap` panics on `Option.None`/`Result.Err`; `expect(msg)` panics with `msg`. `expr?` returns early through the enclosing
 `Option` or `Result` function (E0160 outside one) and converts the error through a user `Type: From<Source>` block;
 in a function returning `Result<U>` / `Result<U, AnyError>`, any error type is boxed into the dynamic `AnyError`
-(`errors.md`, ERR4). `expr orelse fallback` supplies a value for `None` or `Err`; a closure handler receives the
-`Err` payload (`|e| ...`) and takes no argument for `None` (`|| ...`, issue #488). `match` handles both types; `Option` also supports `==`/`!=` when its
+(`errors.md`, ERR4). `expr orelse fallback` supplies a value for `Option.None` or `Result.Err`; a closure handler receives the
+`Result.Err` payload (`|e| ...`) and takes no argument for `Option.None` (`|| ...`, issue #488). `match` handles both types; `Option` also supports `==`/`!=` when its
 payload does, and `Hash` when its payload does. `.context(message)` prefixes a context message and returns
 `Result<T, AnyError>`; it is E0212 when the error type does not implement `Error` (`errors.md`, ERR6). The combinators of the next section are
 stage 1 (issue #481).
@@ -1893,13 +1893,13 @@ becomes an error), `ok`/`err` (drop one side), and the `?` operator, which keeps
 `Option<Option<T>>.flatten()` are provided (issue #930): an extension receiver may nest a type parameter, and
 `Option<Option<T>>` is one. `Option.as_ref` is **not provided**, and the reason is a compiler bug, not a limit of
 extensions. A binding of a borrowed `match` scrutinee is a read-only place (MV8), but the code generator copies its value
-into the binding's own slot, so `Some(&v)` in `fn Option<T>.as_ref(self): Option<&T>` passes the return-origin check
+into the binding's own slot, so `Option.Some(&v)` in `fn Option<T>.as_ref(self): Option<&T>` passes the return-origin check
 (RT2) and returns a pointer into that slot, which is dead when the function returns. A plain function with the same body,
-`fn f<T>(o: Option<T>): Option<&T> { match o { Some(v) => Some(&v), None => None } }`, returns garbage too. `as_ref`
-stays out until a view of a binding aliases the scrutinee's part; then it is the extension over `Some(v) => Some(&v)`.
+`fn f<T>(o: Option<T>): Option<&T> { match o { Option.Some(v) => Option.Some(&v), Option.None => Option.None } }`, returns garbage too. `as_ref`
+stays out until a view of a binding aliases the scrutinee's part; then it is the extension over `Option.Some(v) => Option.Some(&v)`.
 A closure whose result mentions a type parameter that only the closure fixes
-(`and_then(|x| Some(x))`, `F: FnOnce(T): Option<U>`) is typed from its body; a body that cannot say every part of the
-type by itself (`or_else(|e| Err(e.len()))`, which leaves the `Ok` type open) needs a named function or a typed
+(`and_then(|x| Option.Some(x))`, `F: FnOnce(T): Option<U>`) is typed from its body; a body that cannot say every part of the
+type by itself (`or_else(|e| Result.Err(e.len()))`, which leaves the `Result.Ok` type open) needs a named function or a typed
 binding.
 
 Tests: `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators`, `unwrap_err_on_ok`,
@@ -2000,7 +2000,7 @@ struct TraceFrame {
 A type is an error type when it implements `Error`, which requires `Display`. The dynamic `AnyError` is an owned
 `any Error` box together with the context messages `.context` added (outermost first) and the frames a debug build
 records. An error type is boxed implicitly wherever `AnyError` is expected; `e.is<T>()` reports whether the box holds
-a `T`, `e.downcast<T>()` consumes the box and yields `Some(value)` on a match (both need `T: Error`), `{}`
+a `T`, `e.downcast<T>()` consumes the box and yields `Option.Some(value)` on a match (both need `T: Error`), `{}`
 prints the wrapped error's `Display` (`errors.md`, ERR4), and `e.print_trace()` prints the recorded frames, one
 `at {func} ({file}:{line}:{col})` line each, to standard error (`debug.md`, DBG3; nothing when there are none, which
 is every release build). `TraceFrame` implements `Display` as `at {func} ({file}:{line}:{col})`, and
@@ -2051,7 +2051,7 @@ them (`errors.md`, ERR11).
 
 An `error enum` declaration lowers to an ordinary enum plus generated `Display` (from each variant's message
 template), `Error`, and `From<Source>` impls, so an error value is an ordinary value (`errors.md`, ERR1-ERR3). A
-function written `fn main(): Result<T>` prints an `Err` with `Display` to standard error and exits 1; `Ok` prints
+function written `fn main(): Result<T>` prints an `Result.Err` with `Display` to standard error and exits 1; `Result.Ok` prints
 nothing and exits 0 (`errors.md`, ERR8).
 
 ## Networking (issue #220)
@@ -2151,12 +2151,12 @@ fn env.set_current_dir_bytes(path: [u8]): Result<(), EnvError>
 ```
 
 **Encoding.** A name is valid when it is not empty and contains neither `=` nor a NUL byte; a value may be any bytes
-except NUL. On Unix an environment value and a path are byte strings: `get` and `current_dir` report `None` and
+except NUL. On Unix an environment value and a path are byte strings: `get` and `current_dir` report `Option.None` and
 `WorkingDirectory` when the bytes are not valid UTF-8, and the `_bytes` functions return them exactly. Windows stores
 the environment and the working directory as UTF-16, so the primitives convert to and from UTF-8; a value that is not
 valid Unicode (an unpaired surrogate) is reported as absent and cannot be set, and the byte and text functions agree.
 
-**Behavior.** `get` is `None` when the variable is unset, while an empty value is `Some("")` because the variable is
+**Behavior.** `get` is `Option.None` when the variable is unset, while an empty value is `Option.Some("")` because the variable is
 present. `set` replaces an existing value, and `remove` succeeds when the variable is unset. `set` and `remove` report
 `Name` for an invalid name, `Value` for an invalid value, and `Access` when the system refuses. `current_dir` has no
 trailing separator except at a root, and `set_current_dir` reports `SetWorkingDirectory` when the path is not a
@@ -2220,7 +2220,7 @@ struct Output { status: ExitStatus   stdout: String   stderr: String }
 - **Streams.** Each standard stream is `Stdio.Inherit` (the default), `Stdio.Piped` (the parent gets a
   `ChildStdin`/`ChildStdout`/`ChildStderr`), or `Stdio.Null` (the system's null device). `output` pipes standard
   output and standard error and gives the child a null standard input. `stdin`, `stdout`, and `stderr` on
-  a `Child` hand out the piped handle once and return `None` afterwards.
+  a `Child` hand out the piped handle once and return `Option.None` afterwards.
 - **Environment.** The child inherits the parent's environment unless `env_clear` empties it. `env` sets an entry,
   replacing an earlier value for the name, and `env_remove` removes one. Windows compares names without regard to
   case; Unix compares them exactly. The entry is written `key=value`, and an embedded NUL in the program, an
@@ -2228,12 +2228,12 @@ struct Output { status: ExitStatus   stdout: String   stderr: String }
 - **Working directory.** `cwd` selects it; otherwise the child uses the parent's.
 - **Waits.** `wait` closes the child's standard input first, so a program reading it sees the end of the input
   instead of waiting, and then waits for the child. A child that exited normally has `code()` (an `i32`; Windows
-  reports a code for every child) and `success()` is `code() == Some(0)`; a child ended by a signal has
+  reports a code for every child) and `success()` is `code() == Option.Some(0)`; a child ended by a signal has
   `signal()` (Unix only) and no code. Waiting for the same child twice is an error. `wait_with_output` closes the
   child's standard input, reads the piped output streams together, so a child writing a lot to one of them cannot
   block the other, and then waits; a stream that was not piped is empty in the result.
 - **Pipes.** A write to `ChildStdin` is unbuffered and writes every byte. `read_to_string` reads to the end of the
-  stream; `read_line` returns one line without its terminator (`\n`, or the `\r` of a `\r\n`), `Ok(None)` at the
+  stream; `read_line` returns one line without its terminator (`\n`, or the `\r` of a `\r\n`), `Result.Ok(Option.None)` at the
   end, and the last line may have no terminator. A handle closes when it is dropped; dropping the `ChildStdin`
   without writing is how the parent signals the end of the input. A `Child` closes its process handle when it is
   dropped, but it does not wait for the child.
@@ -2440,7 +2440,7 @@ table covers, plus `Display` and `Iterable`; `Serialize`/`Deserialize` are in th
 | `PriorityHeap<T>` | no | `T: Clone` | `T: Ord` | no | no | empty | `T: Debug` | no | yes |
 | `Heap<T>` | no | yes | no | no | no | no | `T: Debug` | no | no |
 | `Shared<T>` | no | yes | no | no | no | no | no | no | no |
-| `Option<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | `None` | `T: Debug` | no | no |
+| `Option<T>` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | `Option.None` | `T: Debug` | no | no |
 | `Result<T, E>` | `T, E: Copy` | `T, E: Clone` | `T, E: Eq` | `T, E: Ord` | `T, E: Hash` | no | `T, E: Debug` | no | no |
 | tuples | parts | parts | parts | parts | parts | parts | 2 to 4 parts | no | no |
 | arrays `[T; N]` | `T: Copy` | `T: Clone` | `T: Eq` | `T: Ord` | `T: Hash` | no | no | no | yes |

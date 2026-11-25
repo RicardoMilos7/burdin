@@ -7,5 +7,5 @@ type Ping = Pong //~ E0009
 type Pong = Ping
 
 fn main(): Ping { //~ E0003
-    Ok(())
+    Result.Ok(())
 }

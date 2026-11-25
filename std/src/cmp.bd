@@ -229,8 +229,8 @@ fn max_by_key<T, K: Ord, F: FnMut(&T): K>(own a: T, own b: T, own key: F): T {
 /// heap.push(Reverse { value: 5 })
 /// heap.push(Reverse { value: 2 })
 /// match heap.pop() {
-///     Some(r) => assert_eq(r.value, 2),
-///     None => panic("empty"),
+///     Option.Some(r) => assert_eq(r.value, 2),
+///     Option.None => panic("empty"),
 /// }
 /// ```
 struct Reverse<T>: Copy, Clone, Eq, Debug {
@@ -246,19 +246,19 @@ Reverse<T>: Ord where T: Ord {
 /// `Option` is ordered with `None` before every `Some`, and two `Some` values by their contents.
 ///
 /// ```
-/// let a: Option<i32> = None
-/// let b: Option<i32> = Some(1)
+/// let a: Option<i32> = Option.None
+/// let b: Option<i32> = Option.Some(1)
 /// assert_eq(a.cmp(b), Ordering.Less)
 /// ```
 fn Option<T>.cmp(self, other: Option<T>): Ordering where T: Ord {
     match self {
-        None => match other {
-            None => Ordering.Equal,
-            Some(_) => Ordering.Less,
+        Option.None => match other {
+            Option.None => Ordering.Equal,
+            Option.Some(_) => Ordering.Less,
         },
-        Some(a) => match other {
-            None => Ordering.Greater,
-            Some(b) => __ord_cmp(a, b),
+        Option.Some(a) => match other {
+            Option.None => Ordering.Greater,
+            Option.Some(b) => __ord_cmp(a, b),
         },
     }
 }
@@ -266,19 +266,19 @@ fn Option<T>.cmp(self, other: Option<T>): Ordering where T: Ord {
 /// `Result` is ordered with every `Ok` before every `Err`, and two values of one kind by their contents.
 ///
 /// ```
-/// let a: Result<i32, i32> = Ok(1)
-/// let b: Result<i32, i32> = Err(0)
+/// let a: Result<i32, i32> = Result.Ok(1)
+/// let b: Result<i32, i32> = Result.Err(0)
 /// assert_eq(a.cmp(b), Ordering.Less)
 /// ```
 fn Result<T, E>.cmp(self, other: Result<T, E>): Ordering where T: Ord, E: Ord {
     match self {
-        Ok(a) => match other {
-            Ok(b) => __ord_cmp(a, b),
-            Err(_) => Ordering.Less,
+        Result.Ok(a) => match other {
+            Result.Ok(b) => __ord_cmp(a, b),
+            Result.Err(_) => Ordering.Less,
         },
-        Err(a) => match other {
-            Ok(_) => Ordering.Greater,
-            Err(b) => __ord_cmp(a, b),
+        Result.Err(a) => match other {
+            Result.Ok(_) => Ordering.Greater,
+            Result.Err(b) => __ord_cmp(a, b),
         },
     }
 }

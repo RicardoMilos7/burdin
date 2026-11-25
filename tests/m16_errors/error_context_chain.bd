@@ -7,18 +7,18 @@
 // (spec/errors.md, ERR6).
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+    Result.Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })
 }
 
 fn load(): Result<i32> {
     let n = read().context("parsing config").context("loading settings")?
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {
     match load() {
-        Ok(n) => println("ok {n}"),
-        Err(e) => {
+        Result.Ok(n) => println("ok {n}"),
+        Result.Err(e) => {
             println("{e}")
             println("{}", e.is<IoError>())
             println("{}", e.is<ParseIntError>())

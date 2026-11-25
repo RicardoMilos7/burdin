@@ -50,11 +50,11 @@ interface Read {
         while left > 0 {
             let n = self.read(mut buf, left)?
             if n == 0 {
-                return Err(IoError.UnexpectedEof)
+                return Result.Err(IoError.UnexpectedEof)
             }
             left = left - n
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Appends everything left to `buf` and returns how many bytes that was.
@@ -69,7 +69,7 @@ interface Read {
         loop {
             let n = self.read(mut buf, 4096)?
             if n == 0 {
-                return Ok(total)
+                return Result.Ok(total)
             }
             total = total + n
         }
@@ -85,8 +85,8 @@ interface Read {
         let mut bytes = List<u8>.new()
         self.read_to_end(mut bytes)?
         match from_utf8(bytes[0..bytes.len()]) {
-            Ok(text) => Ok(text),
-            Err(_) => Err(IoError.InvalidData),
+            Result.Ok(text) => Result.Ok(text),
+            Result.Err(_) => Result.Err(IoError.InvalidData),
         }
     }
 }
@@ -132,11 +132,11 @@ interface Write {
         while done < data.len() {
             let n = self.write(data[done..data.len()])?
             if n == 0 {
-                return Err(IoError.WriteZero)
+                return Result.Err(IoError.WriteZero)
             }
             done = done + n
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Writes the UTF-8 bytes of `text`.
@@ -221,7 +221,7 @@ interface Seek {
     /// ```
     fn rewind(mut self): Result<(), IoError> {
         self.seek(SeekFrom.Start(0))?
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -229,7 +229,7 @@ interface Seek {
 ///
 /// ```
 /// let mut r = Cursor.from_text("one\ntwo")
-/// assert_eq(r.read_line().unwrap(), Some(String.from("one")))
+/// assert_eq(r.read_line().unwrap(), Option.Some(String.from("one")))
 /// ```
 interface BufRead requires Read {
     /// Appends bytes to `buf` up to and including the first `delim`, or up to the end of the input. The result is
@@ -249,15 +249,15 @@ interface BufRead requires Read {
     ///
     /// ```
     /// let mut r = Cursor.from_text("one\ntwo")
-    /// assert_eq(r.read_line().unwrap(), Some(String.from("one")))
-    /// assert_eq(r.read_line().unwrap(), Some(String.from("two")))
-    /// assert_eq(r.read_line().unwrap(), None)
+    /// assert_eq(r.read_line().unwrap(), Option.Some(String.from("one")))
+    /// assert_eq(r.read_line().unwrap(), Option.Some(String.from("two")))
+    /// assert_eq(r.read_line().unwrap(), Option.None)
     /// ```
     fn read_line(mut self): Result<Option<String>, IoError> {
         let mut bytes = List<u8>.new()
         let n = self.read_until(10, mut bytes)?
         if n == 0 {
-            return Ok(None)
+            return Result.Ok(Option.None)
         }
         let mut end = bytes.len()
         if end > 0 && bytes[end - 1] == 10 {
@@ -267,8 +267,8 @@ interface BufRead requires Read {
             }
         }
         match from_utf8(bytes[0..end]) {
-            Ok(text) => Ok(Some(text)),
-            Err(_) => Err(IoError.InvalidData),
+            Result.Ok(text) => Result.Ok(Option.Some(text)),
+            Result.Err(_) => Result.Err(IoError.InvalidData),
         }
     }
 
@@ -303,17 +303,17 @@ struct Lines<R> {
 Lines<R>: Iterator<Result<String, IoError>> where R: BufRead {
     fn next(mut self): Option<Result<String, IoError>> {
         if self.done {
-            return None
+            return Option.None
         }
         match self.inner.read_line() {
-            Ok(Some(line)) => Some(Ok(line)),
-            Ok(None) => {
+            Result.Ok(Option.Some(line)) => Option.Some(Result.Ok(line)),
+            Result.Ok(Option.None) => {
                 self.done = true
-                None
+                Option.None
             }
-            Err(e) => {
+            Result.Err(e) => {
                 self.done = true
-                Some(Err(e))
+                Option.Some(Result.Err(e))
             }
         }
     }
@@ -334,7 +334,7 @@ fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError> {
         chunk.clear()
         let n = from.read(mut chunk, 4096)?
         if n == 0 {
-            return Ok(total)
+            return Result.Ok(total)
         }
         to.write_all(chunk[0..chunk.len()])?
         total = total + (n as u64)
@@ -417,7 +417,7 @@ Cursor: Read {
             self.pos = self.pos + 1
             n = n + 1
         }
-        Ok(n)
+        Result.Ok(n)
     }
 }
 
@@ -433,7 +433,7 @@ Cursor: BufRead {
                 break
             }
         }
-        Ok(n)
+        Result.Ok(n)
     }
 }
 
@@ -452,11 +452,11 @@ Cursor: Write {
             self.pos = self.pos + 1
             i = i + 1
         }
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -468,10 +468,10 @@ Cursor: Seek {
             SeekFrom.Current(d) => (self.pos as i64) + d,
         }
         if target < 0 {
-            return Err(IoError.Seek)
+            return Result.Err(IoError.Seek)
         }
         self.pos = target as usize
-        Ok(target as u64)
+        Result.Ok(target as u64)
     }
 }
 
@@ -480,11 +480,11 @@ Cursor: Seek {
 BytesMut: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         self.extend(data)
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -494,7 +494,7 @@ BytesMut: Write {
 ///
 /// ```
 /// let mut r = BufReader.new(Cursor.from_text("l1\nl2"))
-/// assert_eq(r.read_line().unwrap(), Some(String.from("l1")))
+/// assert_eq(r.read_line().unwrap(), Option.Some(String.from("l1")))
 /// ```
 struct BufReader<R: Read> {
     priv inner: R
@@ -567,14 +567,14 @@ BufReader<R> where R: Read {
             self.pos = 0
             self.inner.read(mut self.buf, self.cap)?
         }
-        Ok(self.buf.len() - self.pos)
+        Result.Ok(self.buf.len() - self.pos)
     }
 }
 
 BufReader<R>: Read where R: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         if max == 0 {
-            return Ok(0)
+            return Result.Ok(0)
         }
         if self.pos >= self.buf.len() && max >= self.cap {
             return self.inner.read(mut buf, max)
@@ -590,7 +590,7 @@ BufReader<R>: Read where R: Read {
             i = i + 1
         }
         self.pos = self.pos + n
-        Ok(n)
+        Result.Ok(n)
     }
 }
 
@@ -600,7 +600,7 @@ BufReader<R>: BufRead where R: Read {
         loop {
             let have = self.fill()?
             if have == 0 {
-                return Ok(total)
+                return Result.Ok(total)
             }
             let mut found = false
             while self.pos < self.buf.len() && !found {
@@ -611,7 +611,7 @@ BufReader<R>: BufRead where R: Read {
                 found = b == delim
             }
             if found {
-                return Ok(total)
+                return Result.Ok(total)
             }
         }
     }
@@ -627,7 +627,7 @@ BufReader<R>: Seek where R: Read + Seek {
         let at = self.inner.seek(target)?
         self.buf.clear()
         self.pos = 0
-        Ok(at)
+        Result.Ok(at)
     }
 }
 
@@ -711,30 +711,30 @@ BufWriter<W> where W: Write {
         let mut me = self
         me.flush()?
         match me.inner.pop() {
-            Some(w) => Ok(w),
-            None => panic("BufWriter has no writer"),
+            Option.Some(w) => Result.Ok(w),
+            Option.None => panic("BufWriter has no writer"),
         }
     }
 
     /// Writes the buffered bytes to the wrapped writer. On a failure the bytes it did not take stay buffered.
     priv fn flush_buf(mut self): Result<(), IoError> {
         if self.inner.len() == 0 {
-            return Ok(())
+            return Result.Ok(())
         }
         // The pending bytes move out of the buffer while they are written, so the call borrows no other part of `self`.
         let pending = mem.replace(mut self.buf, List<u8>.new())
         let mut done: usize = 0
-        let mut failure: Option<IoError> = None
+        let mut failure: Option<IoError> = Option.None
         while done < pending.len() && failure.is_none() {
             match self.inner[0].write(pending[done..pending.len()]) {
-                Ok(0) => {
-                    failure = Some(IoError.WriteZero)
+                Result.Ok(0) => {
+                    failure = Option.Some(IoError.WriteZero)
                 }
-                Ok(n) => {
+                Result.Ok(n) => {
                     done = done + n
                 }
-                Err(e) => {
-                    failure = Some(e)
+                Result.Err(e) => {
+                    failure = Option.Some(e)
                 }
             }
         }
@@ -744,8 +744,8 @@ BufWriter<W> where W: Write {
             i = i + 1
         }
         match failure {
-            Some(e) => Err(e),
-            None => Ok(()),
+            Option.Some(e) => Result.Err(e),
+            Option.None => Result.Ok(()),
         }
     }
 }
@@ -763,7 +763,7 @@ BufWriter<W>: Write where W: Write {
             self.buf.push(data[i])
             i = i + 1
         }
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     fn flush(mut self): Result<(), IoError> {

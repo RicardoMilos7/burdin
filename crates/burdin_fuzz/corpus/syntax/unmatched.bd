@@ -3,7 +3,7 @@
 fn a() { g(] }
 fn b() { g(1, 2 }
 fn c() { let x = ([{] }
-fn d() { match x { Some(v => {} } }
+fn d() { match x { Option.Some(v => {} } }
 fn e() { if (a { } else { } }
 fn f() { ( } x
 fn g() { [ ( { ) ] } ) ] }

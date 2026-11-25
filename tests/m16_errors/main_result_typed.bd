@@ -8,5 +8,5 @@ error enum Problem {
 }
 
 fn main(): Result<()> {
-    Err(Problem.Syntax { line: 9 })
+    Result.Err(Problem.Syntax { line: 9 })
 }

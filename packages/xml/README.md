@@ -67,7 +67,7 @@ Only elements carry data. Attributes are read and written through the DOM, never
 | variant with no payload | `<Variant/>` inside the value's element |
 | variant with one value | `<Variant>value</Variant>`, the value written as that element's content |
 | variant with several values | `<Variant><item>1</item><item>2</item></Variant>` |
-| `Option` | an ordinary enum: `<None/>` and `<Some>value</Some>` |
+| `Option` | an ordinary enum: `<Option.None/>` and `<Option.Some>value</Option.Some>` |
 
 The root element is named after a struct or an enum (`<Config>`), and `root` for anything else; `to_document_root`
 chooses the name. The element a struct field or a sequence item becomes keeps its field name or `item`, so a struct in

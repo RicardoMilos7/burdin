@@ -299,7 +299,7 @@ fn __offload<T, F: FnMut(): T>(own f: F): T {
         let slot = __alloc(Option<T>.size(), 8) as CPtr<Option<T>>
         // The slot holds `None` before the helper writes; assigning through the raw pointer would otherwise drop
         // whatever the fresh allocation happened to hold.
-        let empty: Option<T> = None
+        let empty: Option<T> = Option.None
         let src = (&empty) as CPtr<u8>
         let dst = slot as CPtr<u8>
         let mut i: usize = 0
@@ -315,7 +315,7 @@ fn __offload<T, F: FnMut(): T>(own f: F): T {
         __pool_submit((*r).io, (&wait) as CPtr<u8>, || {
             unsafe {
                 let value = owned()
-                *slot = Some(value)
+                *slot = Option.Some(value)
             }
         })
         __waiter_block(wait.waiter)
@@ -323,8 +323,8 @@ fn __offload<T, F: FnMut(): T>(own f: F): T {
         let value = (*slot).take()
         __dealloc(slot as CPtr<u8>, Option<T>.size(), 8)
         match value {
-            Some(v) => v,
-            None => panic("offload: the helper finished without a value"),
+            Option.Some(v) => v,
+            Option.None => panic("offload: the helper finished without a value"),
         }
     }
 }

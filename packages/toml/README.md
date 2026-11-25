@@ -54,8 +54,8 @@ A datetime has no shape in the serialization framework, so a struct with a datet
 
 A top-level value must be a table: a struct, a map, or a variant with a payload.
 
-`None` is written by omitting the key. Reading reports it as `missing field`, because an absent key is not a value: the
-framework's derived reader has no way to tell `None` from a field the document never mentioned. Write the field as a
+`Option.None` is written by omitting the key. Reading reports it as `missing field`, because an absent key is not a value: the
+framework's derived reader has no way to tell `Option.None` from a field the document never mentioned. Write the field as a
 variant, or hand-write the impl, when the distinction matters.
 
 ## The subset

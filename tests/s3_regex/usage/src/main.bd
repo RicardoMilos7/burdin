@@ -28,16 +28,16 @@ fn main() {
     let date = Regex.new("(?P<year>\\d{{4}})-(?P<month>\\d{{2}})-(?P<day>\\d{{2}})").unwrap()
     println("is_match: {}", date.is_match("on 2024-05-17"))
     match date.find("on 2024-05-17") {
-        Some(m) => println("find: {} at {}..{}", m.as_str(), m.start(), m.end()),
-        None => println("find: none"),
+        Option.Some(m) => println("find: {} at {}..{}", m.as_str(), m.start(), m.end()),
+        Option.None => println("find: none"),
     }
     let caps = date.captures("2024-05-17").unwrap()
     println("groups: {}", caps.len())
     let year = caps.name("year").unwrap().as_str().to_string()
     let month = date.group_index("month").unwrap()
     let era = match caps.name("era") {
-        Some(m) => m.as_str().to_string(),
-        None => "none".to_string(),
+        Option.Some(m) => m.as_str().to_string(),
+        Option.None => "none".to_string(),
     }
     println("year: {} month index: {} era: {}", year, month, era)
     println("expanded: {}", caps.expand("$day.$month.$year"))
@@ -60,19 +60,19 @@ fn main() {
     println("escaped: {}", Regex.escape("1+1=2?"))
 
     match Regex.new("\\d{{4}}-\\d{{2}}-\\d{{2}}").unwrap().find("no date here") {
-        Some(m) => println("find: {}", m.as_str()),
-        None => println("no match: none"),
+        Option.Some(m) => println("find: {}", m.as_str()),
+        Option.None => println("no match: none"),
     }
     match Regex.new("(a") {
-        Ok(_) => println("unexpected: accepted"),
-        Err(e) => {
+        Result.Ok(_) => println("unexpected: accepted"),
+        Result.Err(e) => {
             println("error: {}", e.to_string())
             println("offset: {} reason: {}", e.offset(), e.reason())
         }
     }
     println("pattern: {}", Regex.new("(?i)^x\\d+$").unwrap().as_str())
     match Regex.new("(?=a)") {
-        Ok(_) => println("unexpected: accepted"),
-        Err(e) => println("lookaround: {}", e.reason()),
+        Result.Ok(_) => println("unexpected: accepted"),
+        Result.Err(e) => println("lookaround: {}", e.reason()),
     }
 }

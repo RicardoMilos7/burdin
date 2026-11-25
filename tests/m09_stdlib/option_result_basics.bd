@@ -26,21 +26,21 @@ fn show_bool(b: bool) {
 
 fn find_index(xs: [i32], target: i32): Option<usize> {
     for i in 0..xs.len() {
-        if xs[i] == target { return Some(i) }
+        if xs[i] == target { return Option.Some(i) }
     }
-    None
+    Option.None
 }
 
 fn safe_div(a: i32, b: i32): Result<i32, MathError> {
-    if b == 0 { Err(MathError.DivideByZero) } else { Ok(a / b) }
+    if b == 0 { Result.Err(MathError.DivideByZero) } else { Result.Ok(a / b) }
 }
 
 fn main() {
     let xs = [5, 8, 13]
     let s = xs[0..3]
     match find_index(s, 13) {
-        Some(i) => show(i as i32),
-        None => println("none"),
+        Option.Some(i) => show(i as i32),
+        Option.None => println("none"),
     }
     let a = find_index(s, 8) orelse 100
     let b = find_index(s, 9) orelse 100
@@ -52,13 +52,13 @@ fn main() {
     show_bool(find_index(s, 6).is_none())
 
     match safe_div(10, 2) {
-        Ok(v) => show(v),
-        Err(_) => println("error"),
+        Result.Ok(v) => show(v),
+        Result.Err(_) => println("error"),
     }
     match safe_div(1, 0) {
-        Ok(v) => show(v),
-        Err(MathError.DivideByZero) => println("div by zero"),
-        Err(_) => println("other"),
+        Result.Ok(v) => show(v),
+        Result.Err(MathError.DivideByZero) => println("div by zero"),
+        Result.Err(_) => println("other"),
     }
     let v = safe_div(7, 0) orelse -1
     show(v)

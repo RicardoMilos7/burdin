@@ -36,16 +36,16 @@ fn main() {
     xs.push(Noisy { id: 3 })
     let mut it = xs.into_iter()
     match it.next() {
-        Some(v) => announce("first ", v.id),
-        None => {}
+        Option.Some(v) => announce("first ", v.id),
+        Option.None => {}
     }
     println("list left")
 
     let ys = [Noisy { id: 4 }, Noisy { id: 5 }]
     let mut ait = ys.into_iter()
     match ait.next() {
-        Some(v) => announce("first ", v.id),
-        None => {}
+        Option.Some(v) => announce("first ", v.id),
+        Option.None => {}
     }
     println("array left")
 

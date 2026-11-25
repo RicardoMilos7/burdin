@@ -23,8 +23,8 @@ priv const __SLEEP_CHUNK_NANOS: u64 = 3_600_000_000_000
 /// release build).
 priv fn __scale(n: u64, factor: u64): u64 {
     match n.checked_mul(factor) {
-        Some(product) => product,
-        None => panic("Duration: the value does not fit"),
+        Option.Some(product) => product,
+        Option.None => panic("Duration: the value does not fit"),
     }
 }
 
@@ -188,25 +188,25 @@ Duration {
     /// `self + other`, or `None` when the sum does not fit.
     ///
     /// ```
-    /// assert_eq(Duration.from_secs(1).checked_add(Duration.from_secs(2)), Some(Duration.from_secs(3)))
+    /// assert_eq(Duration.from_secs(1).checked_add(Duration.from_secs(2)), Option.Some(Duration.from_secs(3)))
     /// ```
     fn checked_add(self, other: Duration): Option<Duration> {
         match self.nanos.checked_add(other.nanos) {
-            Some(n) => Some(Duration { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(Duration { nanos: n }),
+            Option.None => Option.None,
         }
     }
 
     /// `self - other`, or `None` when `other` is longer.
     ///
     /// ```
-    /// assert_eq(Duration.from_secs(3).checked_sub(Duration.from_secs(1)), Some(Duration.from_secs(2)))
-    /// assert_eq(Duration.from_secs(1).checked_sub(Duration.from_secs(3)), None)
+    /// assert_eq(Duration.from_secs(3).checked_sub(Duration.from_secs(1)), Option.Some(Duration.from_secs(2)))
+    /// assert_eq(Duration.from_secs(1).checked_sub(Duration.from_secs(3)), Option.None)
     /// ```
     fn checked_sub(self, other: Duration): Option<Duration> {
         match self.nanos.checked_sub(other.nanos) {
-            Some(n) => Some(Duration { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(Duration { nanos: n }),
+            Option.None => Option.None,
         }
     }
 
@@ -217,8 +217,8 @@ Duration {
     /// ```
     fn saturating_sub(self, other: Duration): Duration {
         match self.checked_sub(other) {
-            Some(d) => d,
-            None => Duration.zero(),
+            Option.Some(d) => d,
+            Option.None => Duration.zero(),
         }
     }
 
@@ -258,8 +258,8 @@ Duration: Add {
     /// The sum. It panics when the sum does not fit.
     fn add(self, other: Duration): Duration {
         match self.checked_add(other) {
-            Some(d) => d,
-            None => panic("Duration: the sum overflows"),
+            Option.Some(d) => d,
+            Option.None => panic("Duration: the sum overflows"),
         }
     }
 }
@@ -268,8 +268,8 @@ Duration: Sub {
     /// The difference. It panics when `other` is longer.
     fn sub(self, other: Duration): Duration {
         match self.checked_sub(other) {
-            Some(d) => d,
-            None => panic("Duration: the difference is negative"),
+            Option.Some(d) => d,
+            Option.None => panic("Duration: the difference is negative"),
         }
     }
 }
@@ -390,12 +390,12 @@ Instant {
     ///
     /// ```
     /// let now = Instant.from_start(Duration.from_secs(10))
-    /// assert_eq(now.checked_add(Duration.from_secs(1)), Some(Instant.from_start(Duration.from_secs(11))))
+    /// assert_eq(now.checked_add(Duration.from_secs(1)), Option.Some(Instant.from_start(Duration.from_secs(11))))
     /// ```
     fn checked_add(self, d: Duration): Option<Instant> {
         match self.nanos.checked_add(d.nanos) {
-            Some(n) => Some(Instant { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(Instant { nanos: n }),
+            Option.None => Option.None,
         }
     }
 
@@ -403,13 +403,13 @@ Instant {
     ///
     /// ```
     /// let now = Instant.from_start(Duration.from_secs(10))
-    /// assert_eq(now.checked_sub(Duration.from_secs(4)), Some(Instant.from_start(Duration.from_secs(6))))
-    /// assert_eq(now.checked_sub(Duration.from_secs(11)), None)
+    /// assert_eq(now.checked_sub(Duration.from_secs(4)), Option.Some(Instant.from_start(Duration.from_secs(6))))
+    /// assert_eq(now.checked_sub(Duration.from_secs(11)), Option.None)
     /// ```
     fn checked_sub(self, d: Duration): Option<Instant> {
         match self.nanos.checked_sub(d.nanos) {
-            Some(n) => Some(Instant { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(Instant { nanos: n }),
+            Option.None => Option.None,
         }
     }
 }
@@ -453,8 +453,8 @@ SystemTime {
     /// ```
     fn from_unix_secs(secs: i64): SystemTime {
         match secs.checked_mul(1_000_000_000) {
-            Some(nanos) => SystemTime { nanos: nanos },
-            None => panic("SystemTime: the time does not fit"),
+            Option.Some(nanos) => SystemTime { nanos: nanos },
+            Option.None => panic("SystemTime: the time does not fit"),
         }
     }
 
@@ -501,29 +501,29 @@ SystemTime {
     /// ```
     /// let early = SystemTime.from_unix_secs(5)
     /// let late = SystemTime.from_unix_secs(9)
-    /// assert_eq(late.duration_since(early), Some(Duration.from_secs(4)))
-    /// assert_eq(early.duration_since(late), None)
+    /// assert_eq(late.duration_since(early), Option.Some(Duration.from_secs(4)))
+    /// assert_eq(early.duration_since(late), Option.None)
     /// ```
     fn duration_since(self, earlier: SystemTime): Option<Duration> {
         if self.nanos < earlier.nanos {
-            return None
+            return Option.None
         }
-        Some(Duration { nanos: self.nanos.abs_diff(earlier.nanos) })
+        Option.Some(Duration { nanos: self.nanos.abs_diff(earlier.nanos) })
     }
 
     /// The time `d` later, or `None` when it does not fit.
     ///
     /// ```
     /// let t = SystemTime.from_unix_secs(10)
-    /// assert_eq(t.checked_add(Duration.from_secs(5)), Some(SystemTime.from_unix_secs(15)))
+    /// assert_eq(t.checked_add(Duration.from_secs(5)), Option.Some(SystemTime.from_unix_secs(15)))
     /// ```
     fn checked_add(self, d: Duration): Option<SystemTime> {
         if d.nanos > 9223372036854775807 {
-            return None
+            return Option.None
         }
         match self.nanos.checked_add(d.nanos as i64) {
-            Some(n) => Some(SystemTime { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(SystemTime { nanos: n }),
+            Option.None => Option.None,
         }
     }
 
@@ -531,15 +531,15 @@ SystemTime {
     ///
     /// ```
     /// let t = SystemTime.from_unix_secs(10)
-    /// assert_eq(t.checked_sub(Duration.from_secs(4)), Some(SystemTime.from_unix_secs(6)))
+    /// assert_eq(t.checked_sub(Duration.from_secs(4)), Option.Some(SystemTime.from_unix_secs(6)))
     /// ```
     fn checked_sub(self, d: Duration): Option<SystemTime> {
         if d.nanos > 9223372036854775807 {
-            return None
+            return Option.None
         }
         match self.nanos.checked_sub(d.nanos as i64) {
-            Some(n) => Some(SystemTime { nanos: n }),
-            None => None,
+            Option.Some(n) => Option.Some(SystemTime { nanos: n }),
+            Option.None => Option.None,
         }
     }
 
@@ -705,15 +705,15 @@ DateTime {
     /// ```
     fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32, nanosecond: u32): Option<DateTime> {
         if month < 1 || month > 12 {
-            return None
+            return Option.None
         }
         if day < 1 || day > __days_in_month(year as i64, month) {
-            return None
+            return Option.None
         }
         if hour > 23 || minute > 59 || second > 59 || nanosecond > 999_999_999 {
-            return None
+            return Option.None
         }
-        Some(DateTime {
+        Option.Some(DateTime {
             year: year,
             month: month,
             day: day,

@@ -80,8 +80,8 @@ fn unescape(text: str): String {
 
 fn opt(value: Option<String>): String {
     match value {
-        Some(text) => format("{:?}", text),
-        None => "none".to_string(),
+        Option.Some(text) => format("{:?}", text),
+        Option.None => "none".to_string(),
     }
 }
 
@@ -108,8 +108,8 @@ fn show_error(e: http.HttpError) {
 
 fn url_case(line: str) {
     match Url.parse(line) {
-        Ok(url) => show_url(url),
-        Err(e) => show_error(e),
+        Result.Ok(url) => show_url(url),
+        Result.Err(e) => show_error(e),
     }
 }
 
@@ -117,11 +117,11 @@ fn url_case(line: str) {
 fn join_case(line: str) {
     let parts = line.split(" | ")
     match Url.parse(parts[0].as_str()) {
-        Ok(base) => match base.join(parts[1].as_str()) {
-            Ok(url) => println("  {}", url.to_text()),
-            Err(e) => show_error(e),
+        Result.Ok(base) => match base.join(parts[1].as_str()) {
+            Result.Ok(url) => println("  {}", url.to_text()),
+            Result.Err(e) => show_error(e),
         },
-        Err(e) => show_error(e),
+        Result.Err(e) => show_error(e),
     }
 }
 
@@ -130,8 +130,8 @@ fn headers_case(mut headers: Headers, line: str) {
     let parts = line.split(" ")
     let op = parts[0].as_str()
     let rest = match line.find(' ') {
-        Some(at) => line[at + 1..line.len()].to_string(),
-        None => String.new(),
+        Option.Some(at) => line[at + 1..line.len()].to_string(),
+        Option.None => String.new(),
     }
     if op == "add" || op == "set" {
         let colon = rest.find(':').unwrap()
@@ -139,8 +139,8 @@ fn headers_case(mut headers: Headers, line: str) {
         let value = unescape(rest.as_str()[colon + 1..rest.len()].trim_start())
         let result = if op == "add" { headers.add(name.as_str(), value.as_str()) } else { headers.set(name.as_str(), value.as_str()) }
         match result {
-            Ok(_) => println("  ok len={}", headers.len()),
-            Err(e) => show_error(e),
+            Result.Ok(_) => println("  ok len={}", headers.len()),
+            Result.Err(e) => show_error(e),
         }
     } else if op == "get" {
         println("  {}", opt(headers.get(rest.as_str())))
@@ -166,15 +166,15 @@ fn request_case(line: str) {
     let parts = line.split(" | ")
     let first = parts[0].split(" ")
     let method = match Method.parse(first[0].as_str()) {
-        Ok(m) => m,
-        Err(e) => {
+        Result.Ok(m) => m,
+        Result.Err(e) => {
             show_error(e)
             return
         }
     }
     let mut request = match Request.new(method, first[1].as_str()) {
-        Ok(r) => r,
-        Err(e) => {
+        Result.Ok(r) => r,
+        Result.Err(e) => {
             show_error(e)
             return
         }
@@ -199,11 +199,11 @@ fn head_case(line: str) {
     let mut buffer = List<u8>.new()
     buffer.extend_from_slice(bytes[0..bytes.len()])
     match http.find_head_end(buffer) {
-        Some(end) => println("  head ends at {} of {}", end, bytes.len()),
-        None => println("  head is not complete"),
+        Option.Some(end) => println("  head ends at {} of {}", end, bytes.len()),
+        Option.None => println("  head is not complete"),
     }
     match http.parse_response_head(bytes[0..bytes.len()]) {
-        Ok(head) => {
+        Result.Ok(head) => {
             println("  HTTP/1.{} {} {:?} fields={}", head.minor, head.status, head.reason, head.headers.len())
             for n in 0..head.headers.len() {
                 println("    {}: {}", head.headers.name_at(n), head.headers.value_at(n))
@@ -212,17 +212,17 @@ fn head_case(line: str) {
             show_framing("GET", http.framing_of(Method.Get, head.status, head.headers.clone()))
             show_framing("HEAD", http.framing_of(Method.Head, head.status, head.headers.clone()))
         }
-        Err(e) => show_error(e),
+        Result.Err(e) => show_error(e),
     }
 }
 
 fn show_framing(method: str, framing: Result<Framing, http.HttpError>) {
     match framing {
-        Ok(Framing.None) => println("  framing for {}: no body", method),
-        Ok(Framing.Length(n)) => println("  framing for {}: {} bytes", method, n),
-        Ok(Framing.Chunked) => println("  framing for {}: chunked", method),
-        Ok(Framing.UntilClose) => println("  framing for {}: until close", method),
-        Err(e) => println("  framing for {}: error {}", method, e),
+        Result.Ok(Framing.None) => println("  framing for {}: no body", method),
+        Result.Ok(Framing.Length(n)) => println("  framing for {}: {} bytes", method, n),
+        Result.Ok(Framing.Chunked) => println("  framing for {}: chunked", method),
+        Result.Ok(Framing.UntilClose) => println("  framing for {}: until close", method),
+        Result.Err(e) => println("  framing for {}: error {}", method, e),
     }
 }
 
@@ -246,7 +246,7 @@ Mem: Read {
             buf.push(self.data[self.at + i])
         }
         self.at = self.at + count
-        Ok(count)
+        Result.Ok(count)
     }
 }
 
@@ -273,9 +273,9 @@ fn body_case(line: str) {
     let mut failure = String.new()
     loop {
         match reader.read_body(mut out, 7) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) => {
+            Result.Ok(0) => break,
+            Result.Ok(_) => {}
+            Result.Err(e) => {
                 failure = e.to_string()
                 break
             }

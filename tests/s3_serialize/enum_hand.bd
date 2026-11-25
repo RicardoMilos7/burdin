@@ -39,32 +39,32 @@ Shape: Deserialize {
             d.begin_variant_payload(1)?
             d.variant_payload_field(0)?
             let radius = match deserialize_f64(mut d) {
-                Ok(value) => value,
-                Err(e) => return Err(e.variant("Circle")),
+                Result.Ok(value) => value,
+                Result.Err(e) => return Result.Err(e.variant("Circle")),
             }
             d.end_variant_payload(1)?
-            Ok(Shape.Circle(radius))
+            Result.Ok(Shape.Circle(radius))
         } else if name.as_str() == "Rect" {
             d.begin_variant_payload(2)?
             d.variant_payload_field(0)?
             let width = match deserialize_f64(mut d) {
-                Ok(value) => value,
-                Err(e) => return Err(e.variant("Rect")),
+                Result.Ok(value) => value,
+                Result.Err(e) => return Result.Err(e.variant("Rect")),
             }
             d.variant_payload_field(1)?
             let height = match deserialize_f64(mut d) {
-                Ok(value) => value,
-                Err(e) => return Err(e.variant("Rect")),
+                Result.Ok(value) => value,
+                Result.Err(e) => return Result.Err(e.variant("Rect")),
             }
             d.end_variant_payload(2)?
-            Ok(Shape.Rect(width, height))
+            Result.Ok(Shape.Rect(width, height))
         } else if name.as_str() == "Empty" {
             d.begin_variant_payload(0)?
             d.end_variant_payload(0)?
-            Ok(Shape.Empty)
+            Result.Ok(Shape.Empty)
         } else {
             let failure = unknown_variant("Shape", name.as_str())
-            Err(failure.variant(name.as_str()))
+            Result.Err(failure.variant(name.as_str()))
         }
     }
 }

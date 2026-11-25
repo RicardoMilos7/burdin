@@ -48,9 +48,9 @@ impl Fmt<'_> {
             let (body, is_let) = self.stmt()?;
             let mut doc = concat(vec![lead, body]);
             if self.at(&TokenKind::Semi) {
-                // A `;` between statements is dropped, except before a statement that starts with `||`: on a new
-                // line that `||` would continue the expression before it.
-                let keep = self.nth(1) == &TokenKind::OrOr;
+                // A `;` between statements is dropped, except before a statement that starts with `||` or `.`: on a
+                // new line that `||` or `.name` would continue the expression before it.
+                let keep = matches!(self.nth(1), TokenKind::OrOr | TokenKind::Dot);
                 let semi = if keep { self.tok_doc() } else { self.dropped() };
                 doc = concat(vec![doc, semi]);
             }

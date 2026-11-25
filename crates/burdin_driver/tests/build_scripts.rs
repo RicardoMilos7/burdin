@@ -68,8 +68,8 @@ fn generating_script(marker: &str, module: &str, source: &str) -> String {
     let out = args[2]
     let source = "{literal_source}"
     match write_file("{{out}}/src/{module}", source) {{
-        Ok(_) => {{}}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {{}}
+        Result.Err(_) => panic("cannot write the generated module"),
     }}
 }}
 "#,
@@ -186,13 +186,13 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file(\"{out}/inputs\", \"declared.txt\\ninclude\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write the input list\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write the input list\"),
     }
     let source = \"const LEN: i32 = {header.len()}\\n\"
     match write_file(\"{out}/src/generated.bd\", source) {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write the generated module\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write the generated module\"),
     }
 }
 ";
@@ -293,30 +293,30 @@ fn main() {
     let args = env.args()
     require(args.len() == 3, \"argv is the program, the package directory, and the output directory\")
     match env.get(\"BURDIN_MANIFEST_DIR\") {
-        Some(dir) => require(args[1] == dir, \"argv[1] is BURDIN_MANIFEST_DIR\"),
-        None => panic(\"BURDIN_MANIFEST_DIR is unset\"),
+        Option.Some(dir) => require(args[1] == dir, \"argv[1] is BURDIN_MANIFEST_DIR\"),
+        Option.None => panic(\"BURDIN_MANIFEST_DIR is unset\"),
     }
     match env.get(\"BURDIN_OUT_DIR\") {
-        Some(dir) => require(args[2] == dir, \"argv[2] is BURDIN_OUT_DIR\"),
-        None => panic(\"BURDIN_OUT_DIR is unset\"),
+        Option.Some(dir) => require(args[2] == dir, \"argv[2] is BURDIN_OUT_DIR\"),
+        Option.None => panic(\"BURDIN_OUT_DIR is unset\"),
     }
     match env.get(\"BURDIN_PROFILE\") {
-        Some(profile) => require(
+        Option.Some(profile) => require(
             profile.as_str() == \"debug\" || profile.as_str() == \"release\",
             \"BURDIN_PROFILE is the profile\",
         ),
-        None => panic(\"BURDIN_PROFILE is unset\"),
+        Option.None => panic(\"BURDIN_PROFILE is unset\"),
     }
     require(env.get(\"BURDIN\").is_some(), \"BURDIN names the driver\")
     // A relative path lands in the package directory, which is the working directory.
     match write_file(\"script-cwd.txt\", \"written by the script\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write in the working directory\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write in the working directory\"),
     }
     let out = args[2]
     match write_file(\"{out}/src/from_env.bd\", \"const FROM_ENV: i32 = 1\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write into the output directory\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write into the output directory\"),
     }
 }
 ";
@@ -418,8 +418,8 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file(\"{out}/inputs\", \"gone.txt\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write the input list\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write the input list\"),
     }
 }
 ";
@@ -460,12 +460,12 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match create_dir_all(\"{out}/src/geometry\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot create the generated directory\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot create the generated directory\"),
     }
     match write_file(\"{out}/src/geometry/shapes.bd\", \"const N: i32 = 5\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write the generated module\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write the generated module\"),
     }
 }
 ";
@@ -490,12 +490,12 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file(\"{out}/src/a.bd\", \"const A: i32 = 1\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write a.bd\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write a.bd\"),
     }
     match write_file(\"{out}/src/b.bd\", \"const B: i32 = 2\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write b.bd\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write b.bd\"),
     }
 }
 ";
@@ -508,8 +508,8 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file(\"{out}/src/b.bd\", \"const B: i32 = 2\\n\") {
-        Ok(_) => {}
-        Err(_) => panic(\"cannot write b.bd\"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic(\"cannot write b.bd\"),
     }
 }
 ";

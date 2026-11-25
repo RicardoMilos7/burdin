@@ -98,17 +98,17 @@ fn main() {
     let some: Option<i32> = .Some(3)
     let none: Option<i32> = .None
     match some {
-        Some(v) => println("some {v}"),
-        None => println("none"),
+        Option.Some(v) => println("some {v}"),
+        Option.None => println("none"),
     }
     match none {
-        Some(v) => println("some {v}"),
-        None => println("none"),
+        Option.Some(v) => println("some {v}"),
+        Option.None => println("none"),
     }
     let bad: Result<i32, String> = .Err(String.from("bad"))
     match bad {
-        Ok(v) => println("ok {v}"),
-        Err(e) => println("err {e}"),
+        Result.Ok(v) => println("ok {v}"),
+        Result.Err(e) => println("err {e}"),
     }
 
     // An `if` gives its arms its type.

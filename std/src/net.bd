@@ -100,19 +100,19 @@ SocketAddr {
     /// ```
     fn parse(text: str): Result<SocketAddr, IoError> {
         let parsed = match __split_addr(text) {
-            Some((host, port)) => match __parse_v4(host) {
-                Some(addr) => Some(SocketAddr { ip: addr.ip, port: port }),
-                None => None,
+            Option.Some((host, port)) => match __parse_v4(host) {
+                Option.Some(addr) => Option.Some(SocketAddr { ip: addr.ip, port: port }),
+                Option.None => Option.None,
             },
-            None => None,
+            Option.None => Option.None,
         }
         match parsed {
-            Some(addr) => Ok(addr),
-            None => Err(IoError.Net {
+            Option.Some(addr) => Result.Ok(addr),
+            Option.None => Result.Err(IoError.Net {
                 op: "parse".to_string(),
                 addr: text.to_string(),
                 kind: IoErrorKind.InvalidInput,
-                os_code: None,
+                os_code: Option.None,
             }),
         }
     }
@@ -128,11 +128,11 @@ SocketAddr: Display {
 /// order and bits 32-63 the port. `-1` (as an `i64`) is a failure.
 priv fn __unpack(packed: u64): Option<SocketAddr> {
     if packed as i64 == -1 {
-        return None
+        return Option.None
     }
     let ip = (packed & 0xffff_ffff) as u32
     let port = (packed >> 32) as u16
-    Some(SocketAddr { ip: ip, port: port })
+    Option.Some(SocketAddr { ip: ip, port: port })
 }
 
 /// `a.b.c.d`, with each part 0 to 255.
@@ -144,7 +144,7 @@ priv fn __parse_v4(text: str): Option<SocketAddr> {
     for c in text.chars() {
         if c == '.' {
             if digits == 0 || index >= 3 || value > 255 {
-                return None
+                return Option.None
             }
             octets[index] = value as u8
             index = index + 1
@@ -154,54 +154,54 @@ priv fn __parse_v4(text: str): Option<SocketAddr> {
         }
         let d = c as u32
         if d < 48 || d > 57 || digits >= 3 {
-            return None
+            return Option.None
         }
         value = value * 10 + (d - 48)
         digits = digits + 1
     }
     if digits == 0 || index != 3 || value > 255 {
-        return None
+        return Option.None
     }
     octets[3] = value as u8
-    Some(SocketAddr { ip: ((octets[0] as u32) << 24) | ((octets[1] as u32) << 16) | ((octets[2] as u32) << 8) | (octets[3] as u32), port: 0 })
+    Option.Some(SocketAddr { ip: ((octets[0] as u32) << 24) | ((octets[1] as u32) << 16) | ((octets[2] as u32) << 8) | (octets[3] as u32), port: 0 })
 }
 
 /// Splits `host:port` at the last colon. An empty host is the wildcard address for `bind`.
 priv fn __split_addr(text: str): Option<(str, u16)> {
     let at = match text.find(':') {
-        Some(i) => i,
-        None => return None,
+        Option.Some(i) => i,
+        Option.None => return Option.None,
     }
     let host = text[0..at]
     let port_text = text[at + 1..text.len()]
     if port_text.len() == 0 {
-        return None
+        return Option.None
     }
     let mut port: u32 = 0
     let mut digits: usize = 0
     for c in port_text.chars() {
         let d = c as u32
         if d < 48 || d > 57 || digits >= 5 {
-            return None
+            return Option.None
         }
         port = port * 10 + (d - 48)
         digits = digits + 1
     }
     if port > 65535 {
-        return None
+        return Option.None
     }
-    Some((host, port as u16))
+    Option.Some((host, port as u16))
 }
 
 /// The error a failed socket call reports. `op` names the call and `addr` the address it used.
 priv fn __net_failure(op: str, addr: str): IoError {
     let code = __net_last_error()
-    IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: __io_kind(code), os_code: Some(code) }
+    IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: __io_kind(code), os_code: Option.Some(code) }
 }
 
 /// The error a check `std` makes itself reports: no system call failed, so there is no code.
 priv fn __net_invalid(op: str, addr: str): IoError {
-    IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: IoErrorKind.InvalidInput, os_code: None }
+    IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: IoErrorKind.InvalidInput, os_code: Option.None }
 }
 
 /// The deadline a timeout starts now, or 0 for "no timeout".
@@ -252,17 +252,17 @@ priv fn __write_backoff(deadline: u64) {
 priv fn __wait_socket(fd: i64, events: i32, deadline: u64, op: str, addr: str): Result<(), IoError> {
     let remaining = __remaining(deadline)
     if deadline != 0 && remaining == 0 {
-        return Err(IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: IoErrorKind.TimedOut, os_code: None })
+        return Result.Err(IoError.Net { op: op.to_string(), addr: addr.to_string(), kind: IoErrorKind.TimedOut, os_code: Option.None })
     }
     match __wait_io(fd, events, remaining) {
-        0 => Ok(()),
-        1 => Err(IoError.Net {
+        0 => Result.Ok(()),
+        1 => Result.Err(IoError.Net {
             op: op.to_string(),
             addr: addr.to_string(),
             kind: IoErrorKind.TimedOut,
-            os_code: None,
+            os_code: Option.None,
         }),
-        _ => Err(__net_failure(op, addr)),
+        _ => Result.Err(__net_failure(op, addr)),
     }
 }
 
@@ -290,24 +290,24 @@ TcpListener {
     /// ```
     fn bind(addr: str): Result<TcpListener, IoError> {
         match __split_addr(addr) {
-            Some((host, port)) => unsafe {
+            Option.Some((host, port)) => unsafe {
                 let fd = __net_socket(1)
                 if fd < 0 {
-                    return Err(__net_failure("bind", addr))
+                    return Result.Err(__net_failure("bind", addr))
                 }
                 if __net_bind(fd, host, port as i32) < 0 {
                     let failure = __net_failure("bind", addr)
                     let _ = __net_close(fd)
-                    return Err(failure)
+                    return Result.Err(failure)
                 }
                 if __net_listen(fd, BACKLOG) < 0 {
                     let failure = __net_failure("listen", addr)
                     let _ = __net_close(fd)
-                    return Err(failure)
+                    return Result.Err(failure)
                 }
-                Ok(TcpListener { fd: fd })
+                Result.Ok(TcpListener { fd: fd })
             },
-            None => Err(__net_invalid("bind", addr)),
+            Option.None => Result.Err(__net_invalid("bind", addr)),
         }
     }
 
@@ -322,21 +322,21 @@ TcpListener {
     /// ```
     fn accept(self): Result<(TcpStream, SocketAddr), IoError> {
         let addr = match self.local_addr() {
-            Ok(a) => a.to_text(),
-            Err(_) => "the listener".to_string(),
+            Result.Ok(a) => a.to_text(),
+            Result.Err(_) => "the listener".to_string(),
         }
         loop {
             unsafe {
                 let fd = __net_accept(self.fd)
                 if fd >= 0 {
                     let peer = match __unpack(__net_peer_addr(fd)) {
-                        Some(a) => a,
-                        None => SocketAddr.new(0, 0, 0, 0, 0),
+                        Option.Some(a) => a,
+                        Option.None => SocketAddr.new(0, 0, 0, 0, 0),
                     }
-                    return Ok((TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 }, peer))
+                    return Result.Ok((TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 }, peer))
                 }
                 if fd != -1 {
-                    return Err(__net_failure("accept", addr.as_str()))
+                    return Result.Err(__net_failure("accept", addr.as_str()))
                 }
             }
             __wait_socket(self.fd, READABLE, 0, "accept", addr.as_str())?
@@ -352,8 +352,8 @@ TcpListener {
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
-                Some(addr) => Ok(addr),
-                None => Err(__net_failure("local address", "the listener")),
+                Option.Some(addr) => Result.Ok(addr),
+                Option.None => Result.Err(__net_failure("local address", "the listener")),
             }
         }
     }
@@ -368,14 +368,14 @@ TcpListener {
         let mut me = self
         unsafe {
             if me.fd < 0 {
-                return Ok(())
+                return Result.Ok(())
             }
             let outcome = __net_close(me.fd)
             me.fd = -1
             if outcome < 0 {
-                Err(__net_failure("close", "the listener"))
+                Result.Err(__net_failure("close", "the listener"))
             } else {
-                Ok(())
+                Result.Ok(())
             }
         }
     }
@@ -446,41 +446,41 @@ TcpStream {
     /// The connection attempt behind `connect` and `connect_timeout`; `timeout_nanos` 0 waits forever.
     priv fn __connect(addr: str, timeout_nanos: u64): Result<TcpStream, IoError> {
         match __split_addr(addr) {
-            Some((host, port)) => unsafe {
+            Option.Some((host, port)) => unsafe {
                 let fd = __net_socket(1)
                 if fd < 0 {
-                    return Err(__net_failure("connect", addr))
+                    return Result.Err(__net_failure("connect", addr))
                 }
                 let connected = __net_connect(fd, host, port as i32)
                 if connected == 0 {
-                    return Ok(TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 })
+                    return Result.Ok(TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 })
                 }
                 if connected != -1 {
                     let failure = __net_failure("connect", addr)
                     let _ = __net_close(fd)
-                    return Err(failure)
+                    return Result.Err(failure)
                 }
                 // In progress: wait until the socket is writable, then read the pending error.
                 match __wait_socket(fd, WRITABLE, __deadline(timeout_nanos), "connect", addr) {
-                    Ok(()) => {}
-                    Err(failure) => {
+                    Result.Ok(()) => {}
+                    Result.Err(failure) => {
                         let _ = __net_close(fd)
-                        return Err(failure)
+                        return Result.Err(failure)
                     }
                 }
                 let code = __net_error(fd)
                 if code != 0 {
                     let _ = __net_close(fd)
-                    return Err(IoError.Net {
+                    return Result.Err(IoError.Net {
                         op: "connect".to_string(),
                         addr: addr.to_string(),
                         kind: __io_kind(code),
-                        os_code: Some(code),
+                        os_code: Option.Some(code),
                     })
                 }
-                Ok(TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 })
+                Result.Ok(TcpStream { fd: fd, read_timeout: 0, write_timeout: 0 })
             },
-            None => Err(__net_invalid("connect", addr)),
+            Option.None => Result.Err(__net_invalid("connect", addr)),
         }
     }
 
@@ -495,8 +495,8 @@ TcpStream {
     fn peer_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_peer_addr(self.fd)) {
-                Some(addr) => Ok(addr),
-                None => Err(__net_failure("peer address", "the socket")),
+                Option.Some(addr) => Result.Ok(addr),
+                Option.None => Result.Err(__net_failure("peer address", "the socket")),
             }
         }
     }
@@ -512,8 +512,8 @@ TcpStream {
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
-                Some(addr) => Ok(addr),
-                None => Err(__net_failure("local address", "the socket")),
+                Option.Some(addr) => Result.Ok(addr),
+                Option.None => Result.Err(__net_failure("local address", "the socket")),
             }
         }
     }
@@ -525,17 +525,17 @@ TcpStream {
     /// let text = listener.local_addr().unwrap().to_text()
     /// let mut client = TcpStream.connect(text.as_str()).unwrap()
     /// let accepted = listener.accept().unwrap()
-    /// client.set_read_timeout(Some(Duration.from_millis(10)))
+    /// client.set_read_timeout(Option.Some(Duration.from_millis(10)))
     /// let mut buf = List<u8>.new()
     /// match client.read(mut buf, 4) {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
     /// }
     /// ```
     fn set_read_timeout(mut self, timeout: Option<Duration>) {
         self.read_timeout = match timeout {
-            Some(d) => d.as_nanos(),
-            None => 0,
+            Option.Some(d) => d.as_nanos(),
+            Option.None => 0,
         }
     }
 
@@ -545,13 +545,13 @@ TcpStream {
     /// let listener = TcpListener.bind("127.0.0.1:0").unwrap()
     /// let text = listener.local_addr().unwrap().to_text()
     /// let mut client = TcpStream.connect(text.as_str()).unwrap()
-    /// client.set_write_timeout(Some(Duration.from_secs(1)))
+    /// client.set_write_timeout(Option.Some(Duration.from_secs(1)))
     /// assert_eq(client.write("x".as_bytes()).unwrap(), 1)
     /// ```
     fn set_write_timeout(mut self, timeout: Option<Duration>) {
         self.write_timeout = match timeout {
-            Some(d) => d.as_nanos(),
-            None => 0,
+            Option.Some(d) => d.as_nanos(),
+            Option.None => 0,
         }
     }
 
@@ -566,9 +566,9 @@ TcpStream {
     fn set_nodelay(self, on: bool): Result<(), IoError> {
         unsafe {
             if __net_set_nodelay(self.fd, if on { 1 } else { 0 }) < 0 {
-                return Err(__net_failure("set nodelay", "the socket"))
+                return Result.Err(__net_failure("set nodelay", "the socket"))
             }
-            Ok(())
+            Result.Ok(())
         }
     }
 
@@ -576,9 +576,9 @@ TcpStream {
     priv fn __shutdown(mut self, how: i32, op: str): Result<(), IoError> {
         unsafe {
             if __net_shutdown(self.fd, how) < 0 {
-                return Err(__net_failure(op, "the socket"))
+                return Result.Err(__net_failure(op, "the socket"))
             }
-            Ok(())
+            Result.Ok(())
         }
     }
 
@@ -622,14 +622,14 @@ TcpStream {
         let mut me = self
         unsafe {
             if me.fd < 0 {
-                return Ok(())
+                return Result.Ok(())
             }
             let outcome = __net_close(me.fd)
             me.fd = -1
             if outcome < 0 {
-                Err(__net_failure("close", "the socket"))
+                Result.Err(__net_failure("close", "the socket"))
             } else {
-                Ok(())
+                Result.Ok(())
             }
         }
     }
@@ -643,10 +643,10 @@ TcpStream: Read {
             unsafe {
                 let n = __net_recv(self.fd, mut buf, max)
                 if n >= 0 {
-                    return Ok(n as usize)
+                    return Result.Ok(n as usize)
                 }
                 if n != -1 {
-                    return Err(__net_failure("read", "the socket"))
+                    return Result.Err(__net_failure("read", "the socket"))
                 }
             }
             __wait_socket(self.fd, READABLE, deadline, "read", "the socket")?
@@ -663,10 +663,10 @@ TcpStream: Write {
             unsafe {
                 let n = __net_send(self.fd, data)
                 if n >= 0 {
-                    return Ok(n as usize)
+                    return Result.Ok(n as usize)
                 }
                 if n != -1 {
-                    return Err(__net_failure("write", "the socket"))
+                    return Result.Err(__net_failure("write", "the socket"))
                 }
             }
             // A wake that made no room is followed by a short pause (issue #867).
@@ -680,7 +680,7 @@ TcpStream: Write {
 
     /// The socket writes through to the system, so there is nothing buffered to push out.
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -721,19 +721,19 @@ UdpSocket {
     /// ```
     fn bind(addr: str): Result<UdpSocket, IoError> {
         match __split_addr(addr) {
-            Some((host, port)) => unsafe {
+            Option.Some((host, port)) => unsafe {
                 let fd = __net_socket(2)
                 if fd < 0 {
-                    return Err(__net_failure("bind", addr))
+                    return Result.Err(__net_failure("bind", addr))
                 }
                 if __net_bind(fd, host, port as i32) < 0 {
                     let failure = __net_failure("bind", addr)
                     let _ = __net_close(fd)
-                    return Err(failure)
+                    return Result.Err(failure)
                 }
-                Ok(UdpSocket { fd: fd, read_timeout: 0 })
+                Result.Ok(UdpSocket { fd: fd, read_timeout: 0 })
             },
-            None => Err(__net_invalid("bind", addr)),
+            Option.None => Result.Err(__net_invalid("bind", addr)),
         }
     }
 
@@ -746,8 +746,8 @@ UdpSocket {
     fn local_addr(self): Result<SocketAddr, IoError> {
         unsafe {
             match __unpack(__net_local_addr(self.fd)) {
-                Some(addr) => Ok(addr),
-                None => Err(__net_failure("local address", "the socket")),
+                Option.Some(addr) => Result.Ok(addr),
+                Option.None => Result.Err(__net_failure("local address", "the socket")),
             }
         }
     }
@@ -756,17 +756,17 @@ UdpSocket {
     ///
     /// ```
     /// let mut s = UdpSocket.bind("127.0.0.1:0").unwrap()
-    /// s.set_read_timeout(Some(Duration.from_millis(10)))
+    /// s.set_read_timeout(Option.Some(Duration.from_millis(10)))
     /// let mut buf = List<u8>.new()
     /// match s.recv_from(mut buf, 8) {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => assert_eq(e.kind(), IoErrorKind.TimedOut),
     /// }
     /// ```
     fn set_read_timeout(mut self, timeout: Option<Duration>) {
         self.read_timeout = match timeout {
-            Some(d) => d.as_nanos(),
-            None => 0,
+            Option.Some(d) => d.as_nanos(),
+            Option.None => 0,
         }
     }
 
@@ -780,22 +780,22 @@ UdpSocket {
     /// ```
     fn send_to(self, data: [u8], addr: str): Result<usize, IoError> {
         match __split_addr(addr) {
-            Some((host, port)) => unsafe {
+            Option.Some((host, port)) => unsafe {
                 let n = __net_send_to(self.fd, data, host, port as i32)
                 if n >= 0 {
-                    return Ok(n as usize)
+                    return Result.Ok(n as usize)
                 }
                 if n == -1 {
-                    return Err(IoError.Net {
+                    return Result.Err(IoError.Net {
                         op: "send".to_string(),
                         addr: addr.to_string(),
                         kind: IoErrorKind.WouldBlock,
-                        os_code: None,
+                        os_code: Option.None,
                     })
                 }
-                Err(__net_failure("send", addr))
+                Result.Err(__net_failure("send", addr))
             },
-            None => Err(__net_invalid("send", addr)),
+            Option.None => Result.Err(__net_invalid("send", addr)),
         }
     }
 
@@ -818,13 +818,13 @@ UdpSocket {
                 let n = __net_recv_from(self.fd, mut buf, max)
                 if n >= 0 {
                     let peer = match __unpack(__net_last_peer()) {
-                        Some(a) => a,
-                        None => SocketAddr.new(0, 0, 0, 0, 0),
+                        Option.Some(a) => a,
+                        Option.None => SocketAddr.new(0, 0, 0, 0, 0),
                     }
-                    return Ok((n as usize, peer))
+                    return Result.Ok((n as usize, peer))
                 }
                 if n != -1 {
-                    return Err(__net_failure("receive", "the socket"))
+                    return Result.Err(__net_failure("receive", "the socket"))
                 }
             }
             __wait_socket(self.fd, READABLE, deadline, "receive", "the socket")?
@@ -841,14 +841,14 @@ UdpSocket {
         let mut me = self
         unsafe {
             if me.fd < 0 {
-                return Ok(())
+                return Result.Ok(())
             }
             let outcome = __net_close(me.fd)
             me.fd = -1
             if outcome < 0 {
-                Err(__net_failure("close", "the socket"))
+                Result.Err(__net_failure("close", "the socket"))
             } else {
-                Ok(())
+                Result.Ok(())
             }
         }
     }
@@ -875,13 +875,13 @@ UdpSocket: Drop {
 /// ```
 fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError> {
     let text = match __offload(|| __dns_lookup(host)) {
-        Ok(text) => text,
-        Err(code) => {
-            return Err(IoError.Net {
+        Result.Ok(text) => text,
+        Result.Err(code) => {
+            return Result.Err(IoError.Net {
                 op: "resolve".to_string(),
                 addr: host.to_string(),
                 kind: __io_kind(code),
-                os_code: Some(code),
+                os_code: Option.Some(code),
             })
         }
     }
@@ -893,8 +893,8 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError> {
             line = String.new()
             if done.len() > 0 {
                 match __parse_v4(done.as_str()) {
-                    Some(addr) => addresses.push(SocketAddr { ip: addr.ip, port: port }),
-                    None => {}
+                    Option.Some(addr) => addresses.push(SocketAddr { ip: addr.ip, port: port }),
+                    Option.None => {}
                 }
             }
             continue
@@ -903,17 +903,17 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError> {
     }
     if line.len() > 0 {
         match __parse_v4(line.as_str()) {
-            Some(addr) => addresses.push(SocketAddr { ip: addr.ip, port: port }),
-            None => {}
+            Option.Some(addr) => addresses.push(SocketAddr { ip: addr.ip, port: port }),
+            Option.None => {}
         }
     }
     if addresses.len() == 0 {
-        return Err(IoError.Net {
+        return Result.Err(IoError.Net {
             op: "resolve".to_string(),
             addr: host.to_string(),
             kind: IoErrorKind.NotFound,
-            os_code: None,
+            os_code: Option.None,
         })
     }
-    Ok(addresses)
+    Result.Ok(addresses)
 }

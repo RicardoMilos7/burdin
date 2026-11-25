@@ -31,11 +31,11 @@ struct Countdown {
 Countdown: Iterator<i32> {
     fn next(mut self): Option<i32> {
         if self.from <= 0 {
-            return None
+            return Option.None
         }
         let v = self.from
         self.from = v - 1
-        Some(v)
+        Option.Some(v)
     }
 }
 

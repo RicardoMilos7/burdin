@@ -15,7 +15,7 @@ fn main() {
     println("{xs.position(|x| *x == 7):?}")
     println("{xs.position(|x| *x == 100):?}")
     println("{xs.rposition(|x| *x == 8):?}")
-    println("{xs.rposition(|x| *x == 5).and_then(|i| if i == 5 { Some(0) } else { None }):?}")
+    println("{xs.rposition(|x| *x == 5).and_then(|i| if i == 5 { Option.Some(0) } else { Option.None }):?}")
     let empty = List<i32>.new()
     println("{empty.rposition(|x| *x == 1):?}")
 }

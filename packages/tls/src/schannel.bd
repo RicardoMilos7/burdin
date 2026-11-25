@@ -581,8 +581,8 @@ priv fn pem_blocks(pem: str, label: str): List<List<u8>> {
             }
         }
         match base64_decode(clean.as_str()) {
-            Ok(bytes) => found.push(bytes),
-            Err(_) => break,
+            Result.Ok(bytes) => found.push(bytes),
+            Result.Err(_) => break,
         }
         at = at + body_from + stop.unwrap() + end.len()
     }
@@ -593,19 +593,19 @@ priv fn pem_blocks(pem: str, label: str): List<List<u8>> {
 /// truncated or its length does not fit.
 priv fn der_element(data: [u8], at: usize): Option<(u8, usize, usize)> {
     if at + 2 > data.len() {
-        return None
+        return Option.None
     }
     let tag = data[at]
     let first = data[at + 1] as usize
     if first < 128 {
         if at + 2 + first > data.len() {
-            return None
+            return Option.None
         }
-        return Some((tag, at + 2, first))
+        return Option.Some((tag, at + 2, first))
     }
     let count = first - 128
     if count == 0 || count > 3 || at + 2 + count > data.len() {
-        return None
+        return Option.None
     }
     let mut length: usize = 0
     for i in 0..count {
@@ -613,9 +613,9 @@ priv fn der_element(data: [u8], at: usize): Option<(u8, usize, usize)> {
     }
     let start = at + 2 + count
     if start + length > data.len() {
-        return None
+        return Option.None
     }
-    Some((tag, start, length))
+    Option.Some((tag, start, length))
 }
 
 /// One DER element: `tag`, the length, and `content`.
@@ -666,18 +666,18 @@ priv fn rsa_to_pkcs8(rsa: [u8]): List<u8> {
 priv fn ec_to_pkcs8(sec1: [u8]): Option<List<u8>> {
     let outer = der_element(sec1, 0)
     if outer.is_none() {
-        return None
+        return Option.None
     }
     let outer = outer.unwrap()
     if outer.0 != 0x30 {
-        return None
+        return Option.None
     }
     let mut at = outer.1
     let end = outer.1 + outer.2
     while at < end {
         let item = der_element(sec1, at)
         if item.is_none() {
-            return None
+            return Option.None
         }
         let item = item.unwrap()
         if item.0 == 0xA0 {
@@ -686,11 +686,11 @@ priv fn ec_to_pkcs8(sec1: [u8]): Option<List<u8>> {
             let mut params = hex_decode("06072a8648ce3d0201").unwrap()
             params.extend_from_slice(curve)
             let algorithm = der_tlv(0x30, params[0..params.len()])
-            return Some(wrap_pkcs8(algorithm[0..algorithm.len()], sec1))
+            return Option.Some(wrap_pkcs8(algorithm[0..algorithm.len()], sec1))
         }
         at = item.1 + item.2
     }
-    None
+    Option.None
 }
 
 // ----- certificates ---------------------------------------------------------------------------------------------------
@@ -851,35 +851,35 @@ priv fn copy_slice(data: [u8]): List<u8> {
 priv fn key_to_pkcs8(der: [u8]): Option<List<u8>> {
     let outer = der_element(der, 0)
     if outer.is_none() {
-        return None
+        return Option.None
     }
     let outer = outer.unwrap()
     if outer.0 != 0x30 || outer.1 + outer.2 != der.len() {
-        return None
+        return Option.None
     }
     let version = der_element(der, outer.1)
     if version.is_none() {
-        return None
+        return Option.None
     }
     let version = version.unwrap()
     if version.0 != 0x02 {
-        return None
+        return Option.None
     }
     let next = der_element(der, version.1 + version.2)
     if next.is_none() {
-        return None
+        return Option.None
     }
     let next = next.unwrap()
     if next.0 == 0x30 {
-        return Some(copy_slice(der))
+        return Option.Some(copy_slice(der))
     }
     if next.0 == 0x02 {
-        return Some(rsa_to_pkcs8(der))
+        return Option.Some(rsa_to_pkcs8(der))
     }
     if next.0 == 0x04 {
         return ec_to_pkcs8(der)
     }
-    None
+    Option.None
 }
 
 /// Whether PKCS#8 `der` is an Ed25519 key (the algorithm identifier holds OID 1.3.101.112). CNG has no Ed25519
@@ -902,7 +902,7 @@ priv unsafe fn import_key(der: CPtr<u8>, len: usize, name: CPtr<u16>, name_units
     let mut provider: usize = 0
     let provider_name = wide("Microsoft Software Key Storage Provider")
     if NCryptOpenStorageProvider(&mut provider as CPtr<usize>, (&provider_name[0]) as CPtr<u16>, 0) != 0 {
-        return None
+        return Option.None
     }
     let mut key: usize = 0
     let blob_type = wide("PKCS8_PRIVATEKEY")
@@ -925,9 +925,9 @@ priv unsafe fn import_key(der: CPtr<u8>, len: usize, name: CPtr<u16>, name_units
     )
     if status != 0 {
         let _ = NCryptFreeObject(provider)
-        return None
+        return Option.None
     }
-    Some((provider, key))
+    Option.Some((provider, key))
 }
 
 /// Whether `key` signs what `cert`'s public key verifies: a fixed digest is signed with the key (RSA PKCS#1 v1.5 with
@@ -1186,34 +1186,34 @@ priv unsafe fn config_set_identity(
     block: CPtr<KeyBlock>,
 ): Result<(), TlsError> {
     if chain.is_empty() {
-        return Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
+        return Result.Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
     }
     let mut random = List<u8>.new()
     for _ in 0..16 {
         random.push(0)
     }
     if BCryptGenRandom(0, (&mut random[0]) as CPtr<u8>, 16, 2) != 0 {
-        return Err(TlsError.BadKey("cannot make a name for the key".to_string()))
+        return Result.Err(TlsError.BadKey("cannot make a name for the key".to_string()))
     }
     let name = wide(format("burdin-tls-{}", random.to_hex()).as_str())
     let imported = import_key((*block).der, (*block).len, (&name[0]) as CPtr<u16>, name.len())
     if imported.is_none() {
         if is_ed25519(copy_bytes((*block).der, (*block).len)[0..(*block).len]) {
-            return Err(TlsError.Unsupported("Ed25519 private keys cannot be used by SChannel on Windows".to_string()))
+            return Result.Err(TlsError.Unsupported("Ed25519 private keys cannot be used by SChannel on Windows".to_string()))
         }
-        return Err(TlsError.BadKey("the key cannot be used by the system".to_string()))
+        return Result.Err(TlsError.BadKey("the key cannot be used by the system".to_string()))
     }
     let (provider, key) = imported.unwrap()
     if !key_matches(chain[0], key) {
         let _ = NCryptDeleteKey(key, 0)
         let _ = NCryptFreeObject(provider)
-        return Err(TlsError.KeyMismatch)
+        return Result.Err(TlsError.KeyMismatch)
     }
     let store = CertOpenStore(2 as CPtr<u8>, 0, 0, 0, CPtr.null())
     if store.is_null() {
         let _ = NCryptDeleteKey(key, 0)
         let _ = NCryptFreeObject(provider)
-        return Err(TlsError.BadCertificate("cannot make a certificate store".to_string()))
+        return Result.Err(TlsError.BadCertificate("cannot make a certificate store".to_string()))
     }
     let mut leaf: CPtr<CertContext> = CPtr.null()
     let mut at: usize = chain.len()
@@ -1230,7 +1230,7 @@ priv unsafe fn config_set_identity(
             let _ = CertCloseStore(store, 0)
             let _ = NCryptDeleteKey(key, 0)
             let _ = NCryptFreeObject(provider)
-            return Err(TlsError.BadCertificate("cannot use a certificate of the chain".to_string()))
+            return Result.Err(TlsError.BadCertificate("cannot use a certificate of the chain".to_string()))
         }
         if at == 0 {
             leaf = added
@@ -1254,14 +1254,14 @@ priv unsafe fn config_set_identity(
         let _ = CertCloseStore(store, 0)
         let _ = NCryptDeleteKey(key, 0)
         let _ = NCryptFreeObject(provider)
-        return Err(TlsError.BadKey("the key cannot be attached to the certificate".to_string()))
+        return Result.Err(TlsError.BadKey("the key cannot be attached to the certificate".to_string()))
     }
     config_free_identity(cfg)
     (*cfg).chain_store = store
     (*cfg).identity = leaf
     (*cfg).provider = provider
     (*cfg).key = key
-    Ok(())
+    Result.Ok(())
 }
 
 // ----- verifying a peer's certificate ---------------------------------------------------------------------------------
@@ -1292,7 +1292,7 @@ priv unsafe fn check_chain(engine: CPtr<u8>, cert: CPtr<CertContext>, host: str,
         &mut chain as CPtr<CPtr<ChainContext>>,
     )
     if built == 0 {
-        return Err(TlsError.CertificateInvalid("unable to build the certificate chain".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("unable to build the certificate chain".to_string()))
     }
     let name = wide(host)
     let mut extra = SslPolicyPara {
@@ -1323,45 +1323,45 @@ priv unsafe fn check_chain(engine: CPtr<u8>, cert: CPtr<CertContext>, host: str,
     let chain_status = (*chain).error_status
     CertFreeCertificateChain(chain)
     if verified == 0 {
-        return Err(TlsError.CertificateInvalid("unable to verify the certificate chain".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("unable to verify the certificate chain".to_string()))
     }
     let code = status.code
     if code == 0 {
-        return Ok(())
+        return Result.Ok(())
     }
     if code == CERT_E_UNTRUSTEDROOT && (chain_status & CERT_TRUST_IS_PARTIAL_CHAIN) != 0 {
         // The chain stops below a root nobody supplied: OpenSSL's "unable to get local issuer certificate".
-        return Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
     }
     if code == CERT_E_CN_NO_MATCH {
-        return Err(TlsError.HostnameMismatch(host.to_string()))
+        return Result.Err(TlsError.HostnameMismatch(host.to_string()))
     }
     if code == CERT_E_EXPIRED {
         // Before the first day of validity or after the last.
         if CertVerifyTimeValidity(CPtr.null(), (*cert).info) < 0 {
-            return Err(TlsError.CertificateInvalid("certificate is not yet valid".to_string()))
+            return Result.Err(TlsError.CertificateInvalid("certificate is not yet valid".to_string()))
         }
-        return Err(TlsError.CertificateInvalid("certificate has expired".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("certificate has expired".to_string()))
     }
     if code == CERT_E_UNTRUSTEDROOT {
         if elements <= 1 {
-            return Err(TlsError.CertificateInvalid("self-signed certificate".to_string()))
+            return Result.Err(TlsError.CertificateInvalid("self-signed certificate".to_string()))
         }
-        return Err(TlsError.CertificateInvalid("self-signed certificate in certificate chain".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("self-signed certificate in certificate chain".to_string()))
     }
     if code == CERT_E_CHAINING {
-        return Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("unable to get local issuer certificate".to_string()))
     }
     if code == TRUST_E_CERT_SIGNATURE {
-        return Err(TlsError.CertificateInvalid("certificate signature failure".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("certificate signature failure".to_string()))
     }
     if code == CERT_E_WRONG_USAGE {
-        return Err(TlsError.CertificateInvalid("unsuitable certificate purpose".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("unsuitable certificate purpose".to_string()))
     }
     if code == CERT_E_REVOKED {
-        return Err(TlsError.CertificateInvalid("certificate revoked".to_string()))
+        return Result.Err(TlsError.CertificateInvalid("certificate revoked".to_string()))
     }
-    Err(TlsError.CertificateInvalid(format("unable to verify the certificate (status 0x{:08x})", code)))
+    Result.Err(TlsError.CertificateInvalid(format("unable to verify the certificate (status 0x{:08x})", code)))
 }
 
 /// Checks the certificate a peer presented. A client (`auth` is `AUTHTYPE_SERVER`) follows its configuration's trust: the
@@ -1378,8 +1378,8 @@ priv unsafe fn verify_peer(cfg: CPtr<WinConfig>, cert: CPtr<CertContext>, host: 
     }
     // MODE_BOTH
     match check_chain((*cfg).engine, cert, host, auth) {
-        Ok(()) => Ok(()),
-        Err(_) => check_chain(CPtr.null(), cert, host, auth),
+        Result.Ok(()) => Result.Ok(()),
+        Result.Err(_) => check_chain(CPtr.null(), cert, host, auth),
     }
 }
 
@@ -1492,7 +1492,7 @@ priv fn status_text(status: u32): String {
 priv unsafe fn win_new(cfg: CPtr<WinConfig>, server: bool): Result<CPtr<WinConn>, TlsError> {
     let c = calloc(1, WinConn.size()) as CPtr<WinConn>
     if c.is_null() {
-        return Err(TlsError.Config("out of memory".to_string()))
+        return Result.Err(TlsError.Config("out of memory".to_string()))
     }
     (*c).cfg = cfg
     (*c).server = if server { 1 } else { 0 }
@@ -1504,7 +1504,7 @@ priv unsafe fn win_new(cfg: CPtr<WinConfig>, server: bool): Result<CPtr<WinConn>
     (*c).descs = calloc(2, SecBufferDesc.size()) as CPtr<SecBufferDesc>
     if (*c).bufs.is_null() || (*c).handles.is_null() || (*c).buffers.is_null() || (*c).descs.is_null() {
         conn_free(c)
-        return Err(TlsError.Config("out of memory".to_string()))
+        return Result.Err(TlsError.Config("out of memory".to_string()))
     }
     let lowest = (*cfg).min_version
     let highest = (*cfg).max_version
@@ -1560,10 +1560,10 @@ priv unsafe fn win_new(cfg: CPtr<WinConfig>, server: bool): Result<CPtr<WinConn>
     )
     if status != SEC_E_OK {
         conn_free(c)
-        return Err(TlsError.Config(format("cannot acquire the TLS credentials: {}", status_text(status))))
+        return Result.Err(TlsError.Config(format("cannot acquire the TLS credentials: {}", status_text(status))))
     }
     (*c).have_cred = 1
-    Ok(c)
+    Result.Ok(c)
 }
 
 priv unsafe fn win_free(c: CPtr<WinConn>) {
@@ -1605,19 +1605,19 @@ priv unsafe fn win_drain(c: CPtr<WinConn>, mut out: List<u8>, mut scratch: List<
 /// later call does nothing.
 priv unsafe fn win_sni(c: CPtr<WinConn>): Option<String> {
     if (*c).sni_done != 0 {
-        return None
+        return Option.None
     }
     let inbuf = (*c).bufs
     if (*inbuf).len < 5 {
-        return None
+        return Option.None
     }
     if *((*inbuf).data) != 22 {
         (*c).sni_done = 1
-        return None
+        return Option.None
     }
     let record = ((*((*inbuf).data + 3) as usize) << 8) | (*((*inbuf).data + 4) as usize)
     if (*inbuf).len < 5 + record {
-        return None
+        return Option.None
     }
     (*c).sni_done = 1
     let hello = copy_bytes((*inbuf).data + 5, record)
@@ -1629,24 +1629,24 @@ priv unsafe fn win_sni(c: CPtr<WinConn>): Option<String> {
 priv fn sni_from_hello(data: [u8]): Option<String> {
     // Handshake header (type 1, length 3), client version (2), random (32).
     if data.len() < 4 + 2 + 32 + 1 || data[0] != 1 {
-        return None
+        return Option.None
     }
     let mut at: usize = 4 + 2 + 32
     // Session id, cipher suites, compression methods.
     let session = data[at] as usize
     at = at + 1 + session
     if at + 2 > data.len() {
-        return None
+        return Option.None
     }
     let suites = ((data[at] as usize) << 8) | (data[at + 1] as usize)
     at = at + 2 + suites
     if at + 1 > data.len() {
-        return None
+        return Option.None
     }
     let compression = data[at] as usize
     at = at + 1 + compression
     if at + 2 > data.len() {
-        return None
+        return Option.None
     }
     let extensions = ((data[at] as usize) << 8) | (data[at + 1] as usize)
     at = at + 2
@@ -1656,22 +1656,22 @@ priv fn sni_from_hello(data: [u8]): Option<String> {
         let length = ((data[at + 2] as usize) << 8) | (data[at + 3] as usize)
         at = at + 4
         if at + length > end {
-            return None
+            return Option.None
         }
         if kind == 0 {
             // server_name_list: length (2), then { name type (1), length (2), name }.
             if length < 5 || data[at + 2] != 0 {
-                return None
+                return Option.None
             }
             let name_length = ((data[at + 3] as usize) << 8) | (data[at + 4] as usize)
             if 5 + name_length > length {
-                return None
+                return Option.None
             }
-            return Some(String.from_utf8_lossy(data[(at + 5)..(at + 5 + name_length)]))
+            return Option.Some(String.from_utf8_lossy(data[(at + 5)..(at + 5 + name_length)]))
         }
         at = at + length
     }
-    None
+    Option.None
 }
 
 /// Queries the stream sizes after the handshake and allocates the record buffer.
@@ -1683,7 +1683,7 @@ priv unsafe fn win_finish(c: CPtr<WinConn>): Result<(), TlsError> {
         (&mut sizes) as CPtr<u8>,
     )
     if status != SEC_E_OK {
-        return Err(TlsError.Handshake(format("cannot read the record sizes: {}", status_text(status))))
+        return Result.Err(TlsError.Handshake(format("cannot read the record sizes: {}", status_text(status))))
     }
     (*c).header = sizes.header
     (*c).trailer = sizes.trailer
@@ -1691,13 +1691,13 @@ priv unsafe fn win_finish(c: CPtr<WinConn>): Result<(), TlsError> {
     let cap = (sizes.header + sizes.max_message + sizes.trailer) as usize
     (*c).record = calloc(1, cap)
     if (*c).record.is_null() {
-        return Err(TlsError.Handshake("out of memory".to_string()))
+        return Result.Err(TlsError.Handshake("out of memory".to_string()))
     }
     (*c).record_cap = cap
     (*c).done = 1
     // The configuration is only needed while the handshake runs; a connection may outlive it.
     (*c).cfg = CPtr.null()
-    Ok(())
+    Result.Ok(())
 }
 
 /// The peer's leaf certificate: a context the caller owns (free it with `CertFreeCertificateContext`), or null.
@@ -1756,14 +1756,14 @@ priv unsafe fn set_desc(c: CPtr<WinConn>, index: usize, first: usize, count: u32
 /// to do next, or the failure that ended the handshake.
 priv unsafe fn win_handshake(c: CPtr<WinConn>, host: str): Result<u32, TlsError> {
     if (*c).done != 0 && (*c).renegotiating == 0 {
-        return Ok(NEXT_DONE)
+        return Result.Ok(NEXT_DONE)
     }
     let cfg = (*c).cfg
     let server = (*c).server != 0
     let inbuf = (*c).bufs
     let first = (*c).have_ctx == 0
     if (*inbuf).len == 0 && (server || !first) {
-        return Ok(NEXT_NEED_INPUT)
+        return Result.Ok(NEXT_NEED_INPUT)
     }
     let skip = (*c).skip != 0
     let target = CString.from(host)
@@ -1857,24 +1857,24 @@ priv unsafe fn win_handshake(c: CPtr<WinConn>, host: str): Result<u32, TlsError>
 
     if status == SEC_E_INCOMPLETE_MESSAGE {
         let _ = take_output(c, 4, 3, false)
-        return Ok(NEXT_NEED_INPUT)
+        return Result.Ok(NEXT_NEED_INPUT)
     }
     if status == SEC_I_INCOMPLETE_CREDENTIALS {
         let _ = take_output(c, 4, 3, false)
         if (*c).use_supplied != 0 {
-            return Err(TlsError.Handshake("the server requires a client certificate".to_string()))
+            return Result.Err(TlsError.Handshake("the server requires a client certificate".to_string()))
         }
         // The server asked for a client certificate. The credentials hold the one configured (or none): present them.
         (*c).use_supplied = 1
-        return Ok(NEXT_RETRY)
+        return Result.Ok(NEXT_RETRY)
     }
     if status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED {
         // An alert for the peer may be in the output; send it, then fail.
         let sent = take_output(c, 4, 3, true)
         if !sent {
-            return Err(TlsError.Handshake("out of memory".to_string()))
+            return Result.Err(TlsError.Handshake("out of memory".to_string()))
         }
-        return Err(TlsError.Handshake(status_text(status)))
+        return Result.Err(TlsError.Handshake(status_text(status)))
     }
 
     // The input the call consumed: the rest is in an EXTRA buffer.
@@ -1896,38 +1896,38 @@ priv unsafe fn win_handshake(c: CPtr<WinConn>, host: str): Result<u32, TlsError>
             let _ = CertFreeCertificateContext(cert)
             (*c).validated = 1
             match outcome {
-                Ok(()) => {}
-                Err(failure) => {
+                Result.Ok(()) => {}
+                Result.Err(failure) => {
                     let _ = take_output(c, 4, 3, false)
-                    return Err(failure)
+                    return Result.Err(failure)
                 }
             }
         } else if status == SEC_E_OK && (!server || (*c).require_client != 0) {
             let _ = take_output(c, 4, 3, false)
             if server {
-                return Err(TlsError.Handshake("the client sent no certificate".to_string()))
+                return Result.Err(TlsError.Handshake("the client sent no certificate".to_string()))
             }
-            return Err(TlsError.Handshake("the server sent no certificate".to_string()))
+            return Result.Err(TlsError.Handshake("the server sent no certificate".to_string()))
         }
     }
     let sent = take_output(c, 4, 3, true)
     if !sent {
-        return Err(TlsError.Handshake("out of memory".to_string()))
+        return Result.Err(TlsError.Handshake("out of memory".to_string()))
     }
     buf_consume(inbuf, consumed)
 
     if status == SEC_E_OK {
         if (*c).renegotiating != 0 {
             (*c).renegotiating = 0
-            return Ok(NEXT_RETRY)
+            return Result.Ok(NEXT_RETRY)
         }
         win_finish(c)?
-        return Ok(NEXT_DONE)
+        return Result.Ok(NEXT_DONE)
     }
     if (*inbuf).len > 0 {
-        return Ok(NEXT_RETRY)
+        return Result.Ok(NEXT_RETRY)
     }
-    Ok(NEXT_NEED_INPUT)
+    Result.Ok(NEXT_NEED_INPUT)
 }
 
 /// Decrypts one record. Plaintext goes to the third buffer and is handed out by `win_take`.
@@ -1941,18 +1941,18 @@ priv unsafe fn win_read(
     let plain = (*c).bufs + 2
     if (*c).renegotiating != 0 {
         match win_handshake(c, "") {
-            Ok(next) => {
+            Result.Ok(next) => {
                 if next == NEXT_NEED_INPUT {
-                    return Ok((NEXT_NEED_INPUT, 0))
+                    return Result.Ok((NEXT_NEED_INPUT, 0))
                 }
-                return Ok((NEXT_RETRY, 0))
+                return Result.Ok((NEXT_RETRY, 0))
             }
-            Err(failure) => return Err(failure),
+            Result.Err(failure) => return Result.Err(failure),
         }
     }
     if (*plain).len == 0 {
         if (*inbuf).len == 0 {
-            return Ok((NEXT_NEED_INPUT, 0))
+            return Result.Ok((NEXT_NEED_INPUT, 0))
         }
         set_buffer(c, 0, SECBUFFER_DATA, (*inbuf).data, (*inbuf).len as u32)
         set_buffer(c, 1, SECBUFFER_EMPTY, CPtr.null(), 0)
@@ -1961,14 +1961,14 @@ priv unsafe fn win_read(
         set_desc(c, 0, 0, 4)
         let status = DecryptMessage((*c).handles + 1, (*c).descs, 0, CPtr.null())
         if status == SEC_E_INCOMPLETE_MESSAGE {
-            return Ok((NEXT_NEED_INPUT, 0))
+            return Result.Ok((NEXT_NEED_INPUT, 0))
         }
         if status == SEC_I_CONTEXT_EXPIRED {
             buf_consume(inbuf, (*inbuf).len)
-            return Ok((NEXT_EOF, 0))
+            return Result.Ok((NEXT_EOF, 0))
         }
         if status != SEC_E_OK && status != SEC_I_RENEGOTIATE {
-            return Err(TlsError.Protocol(status_text(status)))
+            return Result.Err(TlsError.Protocol(status_text(status)))
         }
         // Where the record ends and what follows it.
         let mut extra: usize = 0
@@ -1986,7 +1986,7 @@ priv unsafe fn win_read(
         }
         if data_size > 0 {
             if !buf_append(plain, data, data_size) {
-                return Err(TlsError.Protocol("out of memory".to_string()))
+                return Result.Err(TlsError.Protocol("out of memory".to_string()))
             }
         }
         buf_consume(inbuf, (*inbuf).len - extra)
@@ -1994,35 +1994,35 @@ priv unsafe fn win_read(
             // A post-handshake message (a TLS 1.3 session ticket, say) that the security context wants to process as
             // handshake input. A client does that; a server does not renegotiate.
             if (*c).server != 0 {
-                return Err(TlsError.Protocol("the peer asked to renegotiate".to_string()))
+                return Result.Err(TlsError.Protocol("the peer asked to renegotiate".to_string()))
             }
             (*c).renegotiating = 1
-            return Ok((NEXT_RETRY, 0))
+            return Result.Ok((NEXT_RETRY, 0))
         }
     }
     if (*plain).len == 0 {
         if (*inbuf).len > 0 {
-            return Ok((NEXT_RETRY, 0))
+            return Result.Ok((NEXT_RETRY, 0))
         }
-        return Ok((NEXT_NEED_INPUT, 0))
+        return Result.Ok((NEXT_NEED_INPUT, 0))
     }
     let want = if max < scratch.len() { max } else { scratch.len() }
     let n = if (*plain).len < want { (*plain).len } else { want }
     let _ = memcpy((&mut scratch[0]) as CPtr<u8>, (*plain).data, n)
     out.extend_from_slice(scratch[0..n])
     buf_consume(plain, n)
-    Ok((NEXT_DATA, n))
+    Result.Ok((NEXT_DATA, n))
 }
 
 /// Encrypts a prefix of `data` (one record at most) into the output buffer.
 priv unsafe fn win_write(c: CPtr<WinConn>, data: [u8]): Result<(u32, usize), TlsError> {
     if (*c).done == 0 || (*c).record.is_null() {
-        return Err(TlsError.Closed)
+        return Result.Err(TlsError.Closed)
     }
     let limit = (*c).max_message as usize
     let n = if data.len() < limit { data.len() } else { limit }
     if n == 0 {
-        return Ok((NEXT_DATA, 0))
+        return Result.Ok((NEXT_DATA, 0))
     }
     let record = (*c).record
     let header = (*c).header as usize
@@ -2035,13 +2035,13 @@ priv unsafe fn win_write(c: CPtr<WinConn>, data: [u8]): Result<(u32, usize), Tls
     set_desc(c, 0, 0, 4)
     let status = EncryptMessage((*c).handles + 1, 0, (*c).descs, 0)
     if status != SEC_E_OK {
-        return Err(TlsError.Protocol(status_text(status)))
+        return Result.Err(TlsError.Protocol(status_text(status)))
     }
     let total = ((*((*c).buffers)).size + (*((*c).buffers + 1)).size + (*((*c).buffers + 2)).size) as usize
     if !buf_append((*c).bufs + 1, record, total) {
-        return Err(TlsError.Protocol("out of memory".to_string()))
+        return Result.Err(TlsError.Protocol("out of memory".to_string()))
     }
-    Ok((NEXT_DATA, n))
+    Result.Ok((NEXT_DATA, n))
 }
 
 /// Queues a `close_notify` (once).
@@ -2108,7 +2108,7 @@ priv unsafe fn win_shutdown(c: CPtr<WinConn>) {
 /// The protocol the peer chose by ALPN, if any.
 priv unsafe fn win_alpn(c: CPtr<WinConn>): Option<String> {
     if (*c).have_ctx == 0 {
-        return None
+        return Option.None
     }
     let mut info = List<u8>.new()
     for _ in 0..512 {
@@ -2120,15 +2120,15 @@ priv unsafe fn win_alpn(c: CPtr<WinConn>): Option<String> {
         (&mut info[0]) as CPtr<u8>,
     )
     if status != SEC_E_OK {
-        return None
+        return Option.None
     }
     // { ProtoNegoStatus (4), ProtoNegoExt (4), ProtocolIdSize (1), ProtocolId }: status 1 is success.
     let negotiated = (info[0] as u32) | ((info[1] as u32) << 8)
     let size = info[8] as usize
     if negotiated != 1 || size == 0 {
-        return None
+        return Option.None
     }
-    Some(String.from_utf8_lossy(info[9..(9 + size)]))
+    Option.Some(String.from_utf8_lossy(info[9..(9 + size)]))
 }
 
 /// `TLSv1.2` or `TLSv1.3`.

@@ -16,10 +16,10 @@ fn main() {
     let mut it = a.iter_mut()
     loop {
         match it.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 *x = *x * 2
             }
-            None => break,
+            Option.None => break,
         }
     }
     println("{a[0]} {a[1]} {a[2]}")

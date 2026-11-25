@@ -95,7 +95,7 @@ Every public item and public method, in source order. Names are shown as `burdin
 | `http.Request.body_text` | `fn body_text(own self, text: str): Request` | Sets the body to the UTF-8 bytes of `text`. |
 | `http.Request.to_wire_head` | `fn to_wire_head(self, user_agent: str, close: bool): String` | The request head as it goes on the wire (HC6): the request line, `Host` (unless the caller set one), the caller's fields in order, `User-Agent` (unless the caller set one), `Content-Length` when ... |
 | `http.ResponseHead` | `struct ResponseHead: Clone, Debug` | A parsed status line and header block. |
-| `http.find_head_end` | `fn find_head_end(buffer: List<u8>): Option<usize>` | The offset just after the first blank line (`CRLF CRLF`) of `buffer`, which is where the body starts, or `None` when the head is not complete yet. |
+| `http.find_head_end` | `fn find_head_end(buffer: List<u8>): Option<usize>` | The offset just after the first blank line (`CRLF CRLF`) of `buffer`, which is where the body starts, or `Option.None` when the head is not complete yet. |
 | `http.parse_response_head` | `fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError>` | Reads a response head (HC7): `HTTP/1.0` or `HTTP/1.1`, a three-digit status, an optional reason, and header fields that each end in CRLF. |
 | `http.Framing` | `enum Framing: Copy, Clone, Eq, Debug` | How the end of a response body is known (HC8). |
 | `http.framing_of` | `fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError>` | The framing of the response to a request with `method`, from its status and headers (RFC 9112, 6.3): no body for `HEAD`, `1xx`, `204`, and `304`; `chunked` when `Transfer-Encoding` ends in it; ... |
@@ -113,7 +113,7 @@ Every public item and public method, in source order. Names are shown as `burdin
 | `http.Body` | `struct Body` | A response body: a `Read` over the connection that decodes the framing. |
 | `http.Body.is_finished` | `fn is_finished(self): bool` | Whether the whole body has been read. |
 | `http.Body.trailers` | `fn trailers(self): Headers` | The trailer fields of a chunked body (HC9); empty until the body has been read to its end. |
-| `http.Body.read_http` | `fn read_http(mut self, mut buf: List<u8>, max: usize): Result<usize, HttpError>` | Appends up to `max` bytes of the decoded body to `buf`; `Ok(0)` is the end. |
+| `http.Body.read_http` | `fn read_http(mut self, mut buf: List<u8>, max: usize): Result<usize, HttpError>` | Appends up to `max` bytes of the decoded body to `buf`; `Result.Ok(0)` is the end. |
 | `http.Body.bytes` | `fn bytes(mut self): Result<List<u8>, HttpError>` | Reads the rest of the body into a list; more than the limit is `BodyTooLarge` and closes the connection. |
 | `http.Body.discard` | `fn discard(mut self, limit: usize): Result<bool, HttpError>` | Reads and discards up to `limit` bytes, so a connection whose body is small can be reused. |
 | `http.Response` | `struct Response` | A response: the status line and headers, and a `Body` to read the rest from. |

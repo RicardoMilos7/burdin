@@ -128,12 +128,12 @@ are the limits behind `repetition count above 1000`, `nesting is too deep`, and 
 ## RX8. Captures
 
 Group 0 is the whole match. Group `i` is the `i`-th capturing group. A group that did not take part in the match is
-`None`. A group inside a repetition holds the text of its last iteration. Named groups are the same groups with a name
+`Option.None`. A group inside a repetition holds the text of its last iteration. Named groups are the same groups with a name
 (`Captures.name`, `Regex.group_index`).
 
 One difference from the other engines is allowed. An iteration of a repetition that matches the empty text does not
 repeat, and a capture set inside such an iteration is kept or dropped by the thread's priority, so `(a*)*` on `b` can
-report group 1 as `None` where another engine reports `""`. A pattern that does not nest an empty iteration is not
+report group 1 as `Option.None` where another engine reports `""`. A pattern that does not nest an empty iteration is not
 affected. The differential check generates no such pattern.
 
 ## RX9. The API

@@ -99,8 +99,8 @@ string, and the tags that name the others are rejected above), and input that is
 | variant with one value | `Circle: 1.5` |
 | variant with several values | `Rect:` and a sequence of the values |
 
-Reading accepts the other spellings of the same thing: `Option` takes any null (below) for `None` and any other value
-for `Some`.
+Reading accepts the other spellings of the same thing: `Option` takes any null (below) for `Option.None` and any other value
+for `Option.Some`.
 
 ### How a scalar is read
 
@@ -108,7 +108,7 @@ A scalar is converted when the type asks for a number or a boolean, so the same 
 as a number in another. Only an **unquoted** scalar converts: a quoted scalar, a block scalar, and a `!!str` scalar are
 always strings, and a `"80"` where a number is expected is an error.
 
-- **null**: `~`, `null`, `Null`, `NULL`, or no value at all (`key:`). It reads as `None` and as `()`.
+- **null**: `~`, `null`, `Null`, `NULL`, or no value at all (`key:`). It reads as `Option.None` and as `()`.
 - **bool**: `true`, `True`, `TRUE`, `false`, `False`, `FALSE`. YAML 1.1's `yes`, `no`, `on`, and `off` are *not*
   booleans, so a `bool` field given `yes` is an error. (The writer quotes those words in a string, so a file that
   other YAML 1.1 tools read gets a string back.)

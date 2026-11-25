@@ -16,10 +16,10 @@ fn decode(field: str): String {
     while i < chars.len() {
         if chars[i] == '%' && i + 2 < chars.len() {
             match (chars[i + 1].to_digit(16), chars[i + 2].to_digit(16)) {
-                (Some(high), Some(low)) => {
+                (Option.Some(high), Option.Some(low)) => {
                     match (high * 16 + low).to_char() {
-                        Some(c) => out.push(c),
-                        None => {}
+                        Option.Some(c) => out.push(c),
+                        Option.None => {}
                     }
                     i = i + 3
                 }
@@ -64,8 +64,8 @@ fn span(m: Match): String {
 /// A group as its span, or `-` when it did not take part.
 fn group(caps: Captures, index: usize): String {
     match caps.get(index) {
-        Some(m) => span(m),
-        None => "-".to_string(),
+        Option.Some(m) => span(m),
+        Option.None => "-".to_string(),
     }
 }
 
@@ -85,8 +85,8 @@ fn number(text: str): usize {
     let mut value: usize = 0
     for c in text.chars() {
         match c.to_digit(10) {
-            Some(d) => value = value * 10 + (d as usize),
-            None => break,
+            Option.Some(d) => value = value * 10 + (d as usize),
+            Option.None => break,
         }
     }
     value
@@ -98,20 +98,20 @@ fn row(op: str, pattern: str, text: str, arg: str): String {
         return enc(Regex.escape(text).as_str())
     }
     let re = match Regex.new(pattern) {
-        Ok(re) => re,
-        Err(e) => return format("error: {}", e.to_string()),
+        Result.Ok(re) => re,
+        Result.Err(e) => return format("error: {}", e.to_string()),
     }
     match op {
         "as_str" => enc(re.as_str()),
         "groups" => format("{}", re.group_count()),
         "index" => match re.group_index(arg.as_str()) {
-            Some(i) => format("{}", i),
-            None => "none".to_string(),
+            Option.Some(i) => format("{}", i),
+            Option.None => "none".to_string(),
         },
         "match" => format("{}", re.is_match(text)),
         "find" => match re.find(text) {
-            Some(m) => span(m),
-            None => "none".to_string(),
+            Option.Some(m) => span(m),
+            Option.None => "none".to_string(),
         },
         "find_all" => {
             let mut parts = List<String>.new()
@@ -121,8 +121,8 @@ fn row(op: str, pattern: str, text: str, arg: str): String {
             format("[{}]", parts.join(" "))
         }
         "captures" => match re.captures(text) {
-            Some(caps) => groups(caps),
-            None => "none".to_string(),
+            Option.Some(caps) => groups(caps),
+            Option.None => "none".to_string(),
         },
         "captures_all" => {
             let mut parts = List<String>.new()
@@ -132,15 +132,15 @@ fn row(op: str, pattern: str, text: str, arg: str): String {
             format("[{}]", parts.join(" "))
         }
         "name" => match re.captures(text) {
-            Some(caps) => match caps.name(arg.as_str()) {
-                Some(m) => span(m),
-                None => "none".to_string(),
+            Option.Some(caps) => match caps.name(arg.as_str()) {
+                Option.Some(m) => span(m),
+                Option.None => "none".to_string(),
             },
-            None => "none".to_string(),
+            Option.None => "none".to_string(),
         },
         "expand" => match re.captures(text) {
-            Some(caps) => enc(caps.expand(arg.as_str()).as_str()),
-            None => "none".to_string(),
+            Option.Some(caps) => enc(caps.expand(arg.as_str()).as_str()),
+            Option.None => "none".to_string(),
         },
         "replace" => enc(re.replace(text, arg.as_str()).as_str()),
         "replace_all" => enc(re.replace_all(text, arg.as_str()).as_str()),

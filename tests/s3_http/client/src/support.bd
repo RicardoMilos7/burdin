@@ -129,8 +129,8 @@ Server {
             for _ in 0..count {
                 s.spawn(|| {
                     match work.recv() {
-                        Some((index, conn)) => self.play(conn, scripts[index].steps.clone(), index),
-                        None => {}
+                        Option.Some((index, conn)) => self.play(conn, scripts[index].steps.clone(), index),
+                        Option.None => {}
                     }
                 })
             }
@@ -149,10 +149,10 @@ Server {
         while self.finished.load() < self.total && spins < 3000 {
             if self.accepts.load() < self.total {
                 match net.TcpStream.connect(format("127.0.0.1:{}", self.port).as_str()) {
-                    Ok(stream) => {
+                    Result.Ok(stream) => {
                         let _ = stream.close()
                     }
-                    Err(_) => {}
+                    Result.Err(_) => {}
                 }
             }
             time.sleep(Duration.from_millis(2))
@@ -202,7 +202,7 @@ Server {
     priv fn play(self, own conn: net.TcpStream, steps: List<Step>, index: usize) {
         let mut conn = conn
         // A client that gave up and closed its end leaves a write with nowhere to go; do not wait for it for long.
-        conn.set_write_timeout(Some(Duration.from_millis(300)))
+        conn.set_write_timeout(Option.Some(Duration.from_millis(300)))
         let mut pending = List<u8>.new()
         let mut open = true
         let mut by_script = false
@@ -213,8 +213,8 @@ Server {
             match step {
                 Step.Read => {
                     match read_request(mut conn, mut pending) {
-                        Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
-                        None => self.record(format("#{}\n(no request)", index + 1)),
+                        Option.Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
+                        Option.None => self.record(format("#{}\n(no request)", index + 1)),
                     }
                 }
                 Step.Write(text) => {
@@ -230,9 +230,9 @@ Server {
                     let mut scratch = List<u8>.new()
                     loop {
                         match conn.read(mut scratch, 1024) {
-                            Ok(0) => break,
-                            Ok(_) => {}
-                            Err(_) => break,
+                            Result.Ok(0) => break,
+                            Result.Ok(_) => {}
+                            Result.Err(_) => break,
                         }
                     }
                     self.record(format("#{}\n(client closed)", index + 1))
@@ -265,34 +265,34 @@ fn read_request(mut conn: net.TcpStream, mut pending: List<u8>): Option<String> 
     let mut end: usize = 0
     loop {
         match http.find_head_end(pending) {
-            Some(at) => {
+            Option.Some(at) => {
                 end = at
                 break
             }
-            None => {}
+            Option.None => {}
         }
         match conn.read(mut pending, 4096) {
-            Ok(0) => return None,
-            Ok(_) => {}
-            Err(_) => return None,
+            Result.Ok(0) => return Option.None,
+            Result.Ok(_) => {}
+            Result.Err(_) => return Option.None,
         }
     }
     let head = text_of(pending, end)
     let length = match u64.parse(header_of(head.as_str(), "content-length").as_str()) {
-        Ok(n) => n as usize,
-        Err(_) => 0,
+        Result.Ok(n) => n as usize,
+        Result.Err(_) => 0,
     }
     while pending.len() < end + length {
         match conn.read(mut pending, 4096) {
-            Ok(0) => return None,
-            Ok(_) => {}
-            Err(_) => return None,
+            Result.Ok(0) => return Option.None,
+            Result.Ok(_) => {}
+            Result.Err(_) => return Option.None,
         }
     }
     let raw = text_of(pending, end + length)
     let rest = tail_of(pending, end + length)
     pending = rest
-    Some(raw)
+    Option.Some(raw)
 }
 
 // ----- looking into a recorded request --------------------------------------------------------------------------
@@ -302,8 +302,8 @@ fn request_line(recorded: str): String {
     let lines = recorded.split("\r\n")
     let first = lines[0].as_str()
     match first.find('\n') {
-        Some(at) => first[at + 1..first.len()].to_string(),
-        None => first.to_string(),
+        Option.Some(at) => first[at + 1..first.len()].to_string(),
+        Option.None => first.to_string(),
     }
 }
 
@@ -314,12 +314,12 @@ fn header_of(recorded: str, name: str): String {
     while i < lines.len() {
         let line = lines[i].as_str()
         match line.find(':') {
-            Some(colon) => {
+            Option.Some(colon) => {
                 if line[0..colon].eq_ignore_ascii_case(name) {
                     return line[colon + 1..line.len()].trim().to_string()
                 }
             }
-            None => {}
+            Option.None => {}
         }
         i = i + 1
     }
@@ -329,8 +329,8 @@ fn header_of(recorded: str, name: str): String {
 /// The body of a recorded request.
 fn body_of(recorded: str): String {
     match recorded.find_str("\r\n\r\n") {
-        Some(at) => recorded[at + 4..recorded.len()].to_string(),
-        None => String.new(),
+        Option.Some(at) => recorded[at + 4..recorded.len()].to_string(),
+        Option.None => String.new(),
     }
 }
 
@@ -339,8 +339,8 @@ fn body_of(recorded: str): String {
 /// The status and text of a response, or the failure, on one line.
 fn fetch(client: http.Client, url: str): String {
     match client.get(url) {
-        Ok(response) => finish(response),
-        Err(e) => format("error: {}", e),
+        Result.Ok(response) => finish(response),
+        Result.Err(e) => format("error: {}", e),
     }
 }
 
@@ -348,8 +348,8 @@ fn finish(own response: http.Response): String {
     let mut response = response
     let status = response.status
     match response.text() {
-        Ok(text) => format("{} body={:?}", status, text),
-        Err(e) => e.to_string(),
+        Result.Ok(text) => format("{} body={:?}", status, text),
+        Result.Err(e) => e.to_string(),
     }
 }
 
@@ -363,7 +363,7 @@ fn quick_client(): http.Client {
 
 fn error_text(result: Result<http.Response, http.HttpError>): String {
     match result {
-        Ok(_) => "no error".to_string(),
-        Err(e) => e.to_string(),
+        Result.Ok(_) => "no error".to_string(),
+        Result.Err(e) => e.to_string(),
     }
 }

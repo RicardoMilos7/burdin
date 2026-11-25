@@ -22,11 +22,11 @@ fn main() {
     println(n.to_string())
 
     match "hello world".find_str("world") {
-        Some(i) => println(i.to_string()),
-        None => println("none"),
+        Option.Some(i) => println(i.to_string()),
+        Option.None => println("none"),
     }
     match "hello".find_str("zzz") {
-        Some(_) => println("unexpected"),
-        None => println("missing"),
+        Option.Some(_) => println("unexpected"),
+        Option.None => println("missing"),
     }
 }

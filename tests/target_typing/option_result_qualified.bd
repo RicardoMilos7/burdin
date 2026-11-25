@@ -1,0 +1,56 @@
+//@ run
+//> 3 none 4
+//> ok 1
+//> err x
+//> [1, 2, 3]
+//> typed 6
+//> 10
+
+// `Option` and `Result` are enums (spec/target-typing.md, TT14): `Option.Some(x)`, `Option.None`, `Result.Ok(v)`,
+// and `Result.Err(e)` build their variants and match them, with the arguments from the payload or the expected type;
+// the constructors are function values where a closure type is expected (CL11), and `Option<i32>.Some(3)` writes the
+// arguments.
+
+fn lookup(n: i32): Option<i32> {
+    if n > 0 { Option.Some(n) } else { Option.None }
+}
+
+fn check(n: i32): Result<i32, String> {
+    if n > 0 { Result.Ok(n) } else { Result.Err("x".to_string()) }
+}
+
+fn main() {
+    let a = lookup(3)
+    let b = lookup(0)
+    let inferred = Option.Some(4)
+    println("{a.unwrap()} {if b.is_none() { "none" } else { "some" }} {inferred.unwrap()}")
+
+    match check(1) {
+        Result.Ok(v) => println("ok {v}"),
+        Result.Err(e) => println("err {e}"),
+    }
+    match check(0) {
+        Result.Ok(v) => println("ok {v}"),
+        Result.Err(e) => println("err {e}"),
+    }
+
+    let wrapped: List<Option<i32>> = [1, 2, 3].iter().map(Option.Some).collect()
+    let mut out: List<i32> = .new()
+    for item in wrapped.iter() {
+        match item {
+            Option.Some(v) => out.push(v),
+            Option.None => {}
+        }
+    }
+    println("{out:?}")
+
+    let typed = Option<i32>.Some(6)
+    if let Option.Some(v) = typed {
+        println("typed {v}")
+    }
+
+    let r = Result<i32, String>.Ok(10)
+    if let Result.Ok(v) = r {
+        println("{v}")
+    }
+}

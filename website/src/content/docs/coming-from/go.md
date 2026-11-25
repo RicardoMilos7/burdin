@@ -70,8 +70,8 @@ fn main() {
     s.push(1)
     s.push(2)
     match s.pop() {
-        Some(v) => println("popped {v}"),
-        None => println("empty"),
+        Option.Some(v) => println("popped {v}"),
+        Option.None => println("empty"),
     }
 }
 ```
@@ -95,7 +95,7 @@ value is still a value; Burdin does not need a `&` or a pointer to mutate it.
 | `func (p *Point) M()` | `Point { fn m(mut self) }` | A pointer receiver becomes `mut self`. |
 | `type I interface { ... }` | `interface I { ... }` | |
 | implicit interface satisfaction | `Point: I { ... }` | The type states it implements the interface. |
-| `nil` | `None` (`Option<T>`) | There is no nil in ordinary code. |
+| `nil` | `Option.None` (`Option<T>`) | There is no nil in ordinary code. |
 | `(T, error)` | `Result<T, E>` | `?` passes the error up. |
 | `errors.New("x")` | an `error enum` variant with a message | |
 | `if err != nil { return err }` | `value = expr?` | |
@@ -128,15 +128,15 @@ error enum ConfigError {
 fn port(text: str): Result<i32, ConfigError> {
     let n = i32.parse(text)?
     if n <= 0 {
-        return Err(ConfigError.Missing(String.from("port")))
+        return Result.Err(ConfigError.Missing(String.from("port")))
     }
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {
     match port("80") {
-        Ok(p) => println("port {p}"),
-        Err(e) => println("error: {e}"),
+        Result.Ok(p) => println("port {p}"),
+        Result.Err(e) => println("error: {e}"),
     }
 }
 ```

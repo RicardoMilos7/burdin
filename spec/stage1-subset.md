@@ -241,7 +241,7 @@ code; do not invent them inside the implementation.
    the closure's last use. The body's use of the captures decides the kind: `FnOnce` if it moves one out, `FnMut` if
    it writes one, else `Fn`; a value may be used at a lower capability. The rules are `spec/memory-rules.md`
    CL1-CL11, the syntax is `spec/grammar.md` section 4, and the tests are `tests/m12_closures/`.
-   A non-generic function name, a built-in function name, or `Some`, `Ok`, or `Err` may also be used where a closure
+   A non-generic function name, a built-in function name, or `Option.Some`, `Result.Ok`, or `Result.Err` may also be used where a closure
    type is expected: it becomes a captureless `Fn` value that forwards to the function, and the expected closure type
    fixes its type arguments (CL11). A generic or `extern` function as a value is still E9000 and belongs to the
    Stage 1 work.
@@ -271,7 +271,7 @@ code; do not invent them inside the implementation.
    is `{ value: any Error, frames: List<TraceFrame>, context: String }`; an error type is boxed implicitly where
    `AnyError` is expected, `.context(message)` prefixes the chain and keeps the boxed source, and a debug build records
    creation and propagation frames while a release build records none. A written `fn main(): Result<T>` prints an
-   `Err` with `Display` to stderr and exits 1, and typed `assert` failures carry the condition text, the values, and
+   `Result.Err` with `Display` to stderr and exits 1, and typed `assert` failures carry the condition text, the values, and
    the location. The rules are `spec/errors.md` ERR1-ERR10 and the tests are `tests/m16_errors/`; stage 0 keeps
    `fn main()` returning unit (issue #32; `stage0-subset.md`).
 
@@ -428,6 +428,7 @@ written down.
 | A MIR | not planned: the compile-time engine and the checks read the typed tree (decision 6) | `const-eval.md`, CE1 | #158, #159 (closed as not chosen) |
 | A package registry | not landed; a `version` with no `path` or `git` is an error | `packages.md`, PKG2 and PKG11 | not recorded |
 | Target-typed initializers: `.name`, `.name(args)`, and `.{ ... }` take their type from the expected type | landed outside the milestones (`tests/target_typing`); not a stage 1 milestone | `target-typing.md`, TT1-TT12 | #998 |
+| Inferred variants (`.Variant` in patterns and `.Variant { ... }`), and `Option`/`Result` variants only as `Option.Some` or `.Some` (the bare names are E0305) | landed outside the milestones (`tests/target_typing`); not a stage 1 milestone | `target-typing.md`, TT13-TT19 | #1069 |
 
 ## Working on stage 1
 

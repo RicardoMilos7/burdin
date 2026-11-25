@@ -1,0 +1,37 @@
+//@ compile-fail
+
+// An inferred variant needs a type that its position gives (spec/target-typing.md, TT13, TT16): a scrutinee that is
+// not an enum, a type parameter, no expected type, and the other operand of `==` are each E0003. A later use never
+// gives the type.
+
+enum Shape: Eq {
+    Dot,
+    Circle(i32),
+}
+
+fn generic<T>(x: T): i32 {
+    match x {
+        .Dot => 0, //~ E0003
+        _ => 1,
+    }
+}
+
+fn number(n: i32): i32 {
+    match n {
+        .Dot => 0, //~ E0003
+        .Circle(r) => r, //~ E0003
+        _ => 1,
+    }
+}
+
+fn takes(s: Shape) {}
+
+fn main() {
+    let a = .Circle(2) //~ E0003
+    let b = .Dot //~ E0003
+    let s = Shape.Dot
+    let same = s == .Dot //~ E0003
+    let c = .Rect { w: 1, h: 2 } //~ E0003
+    takes(a)
+    println("{generic(1)} {number(2)} {same}")
+}

@@ -121,12 +121,12 @@ fn main() {
 }
 ```
 
-`collect` builds the collection its target names, and a prelude constructor such as `Some` can be passed as the function:
+`collect` builds the collection its target names, and a prelude constructor such as `Option.Some` can be passed as the function:
 
 ```burdin
 fn main() {
     let squares = [1, 2, 3].iter().map(|x: i32|: i32 { x * x }).collect<List<i32>>()
-    let wrapped: List<Option<i32>> = [1, 2].iter().map(Some).collect()
+    let wrapped: List<Option<i32>> = [1, 2].iter().map(Option.Some).collect()
     println("{squares:?} {wrapped:?}")
 }
 ```

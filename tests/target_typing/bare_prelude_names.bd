@@ -1,0 +1,42 @@
+//@ compile-fail
+//@ suggest: E0305 machine-applicable: write `Option.None`
+//@ suggest: E0305 machine-applicable: write `Option.None`
+//@ suggest: E0305 machine-applicable: write `Option.Some`
+//@ suggest: E0305 machine-applicable: write `Option.Some`
+//@ suggest: E0305 machine-applicable: write `Option.Some`
+//@ suggest: E0305 machine-applicable: write `Result.Err`
+//@ suggest: E0305 machine-applicable: write `Result.Err`
+//@ suggest: E0305 machine-applicable: write `Result.Ok`
+//@ suggest: E0305 machine-applicable: write `Result.Ok`
+
+// The bare names `Some`, `None`, `Ok`, and `Err` do not exist (spec/target-typing.md, TT15): each one, as an
+// expression, a call, a function value, a pattern, or a binding, is E0305 and suggests the qualified spelling.
+
+fn find(xs: [i32; 2], x: i32): Option<i32> {
+    for v in xs.iter() {
+        if v == x {
+            return Some(v) //~ E0305
+        }
+    }
+    None //~ E0305
+}
+
+fn parse(n: i32): Result<i32, String> {
+    if n > 0 {
+        return Ok(n) //~ E0305
+    }
+    Err("negative".to_string()) //~ E0305
+}
+
+fn main() {
+    match find([1, 2], 2) {
+        Some(v) => println("{v}"), //~ E0305
+        None => println("none"), //~ E0305
+    }
+    match parse(1) {
+        Ok(v) => println("{v}"), //~ E0305
+        Err(e) => println(e), //~ E0305
+    }
+    let wrap: Fn(i32): Option<i32> = Some //~ E0305
+    println("{wrap(1):?}")
+}

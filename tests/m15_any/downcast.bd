@@ -32,18 +32,18 @@ Square: Named {
 fn main() {
     let a: any Named = Rect { w: 1, h: 2 }
     match a.downcast<Rect>() {
-        Some(rect) => println(rect.label()),
-        None => println("none"),
+        Option.Some(rect) => println(rect.label()),
+        Option.None => println("none"),
     }
     let b: any Named = Square { side: 3 }
     match b.downcast<Rect>() {
-        Some(rect) => println(rect.label()),
-        None => println("none"),
+        Option.Some(rect) => println(rect.label()),
+        Option.None => println("none"),
     }
     let c: any Named = Rect { w: 3, h: 4 }
     println(c.is<Rect>().to_string())
     match c.downcast<Rect>() {
-        Some(rect) => println("moved {rect.w + rect.h}"),
-        None => println("none"),
+        Option.Some(rect) => println("moved {rect.w + rect.h}"),
+        Option.None => println("none"),
     }
 }

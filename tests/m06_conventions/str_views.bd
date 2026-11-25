@@ -7,8 +7,8 @@
 // Views returned from a function derive from exactly one parameter.
 fn first_word(s: str): str {
     match s.find(' ') {
-        Some(i) => s[0..i],
-        None => s,
+        Option.Some(i) => s[0..i],
+        Option.None => s,
     }
 }
 

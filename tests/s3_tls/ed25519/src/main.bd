@@ -19,12 +19,12 @@ const ED25519_KEY: str = embed("certs/ed25519.key")
 fn main() {
     task.set_workers(2)
     match PrivateKey.from_pem(ED25519_KEY) {
-        Ok(_) => println("ed25519 key: loaded"),
-        Err(failure) => println("ed25519 key: {}", failure),
+        Result.Ok(_) => println("ed25519 key: loaded"),
+        Result.Err(failure) => println("ed25519 key: {}", failure),
     }
     match ServerConfig.from_pem(ED25519, ED25519_KEY) {
-        Ok(_) => println("server ed25519: ok"),
-        Err(failure) => println("server ed25519: {}", failure),
+        Result.Ok(_) => println("server ed25519: ok"),
+        Result.Err(failure) => println("server ed25519: {}", failure),
     }
 
     let server = ServerConfig.from_pem(ED25519, ED25519_KEY).unwrap()
@@ -38,37 +38,37 @@ fn main() {
         s.spawn(|| {
             let (tcp, _) = listener.accept().unwrap()
             match TlsStream.accept(tcp, server) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     let name = match stream.server_name() {
-                        Some(text) => text,
-                        None => "-".to_string(),
+                        Option.Some(text) => text,
+                        Option.None => "-".to_string(),
                     }
                     let subject = match stream.peer_certificate() {
-                        Some(cert) => cert.subject(),
-                        None => "-".to_string(),
+                        Option.Some(cert) => cert.subject(),
+                        Option.None => "-".to_string(),
                     }
                     let version = stream.tls_version()
                     log.lock(|list| list.push(format("server: handshake ok version={} sni={} peer={}", version, name, subject)))
                     let mut chunk = List<u8>.new()
                     let _ = stream.recv(mut chunk, 16)
                 }
-                Err(_) => log.lock(|list| list.push("server: handshake failed".to_string())),
+                Result.Err(_) => log.lock(|list| list.push("server: handshake failed".to_string())),
             }
         })
         s.spawn(|| {
             let tcp = net.TcpStream.connect(format("127.0.0.1:{}", port).as_str()).unwrap()
             match TlsStream.connect(tcp, "localhost", client) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     let subject = match stream.peer_certificate() {
-                        Some(cert) => cert.subject(),
-                        None => "-".to_string(),
+                        Option.Some(cert) => cert.subject(),
+                        Option.None => "-".to_string(),
                     }
                     println("ed25519 leaf: connected {} peer={}", stream.tls_version(), subject)
                     let _ = stream.close()
                 }
-                Err(failure) => println("ed25519 leaf: {}", failure),
+                Result.Err(failure) => println("ed25519 leaf: {}", failure),
             }
         })
     })

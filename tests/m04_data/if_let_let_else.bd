@@ -9,21 +9,21 @@ fn show(n: i32) {
 }
 
 fn first_even(a: i32, b: i32): Option<i32> {
-    if a % 2 == 0 { Some(a) } else if b % 2 == 0 { Some(b) } else { None }
+    if a % 2 == 0 { Option.Some(a) } else if b % 2 == 0 { Option.Some(b) } else { Option.None }
 }
 
 fn double_even(a: i32, b: i32): i32 {
-    let Some(v) = first_even(a, b) else { return -1 }
+    let Option.Some(v) = first_even(a, b) else { return -1 }
     v * 2
 }
 
 fn main() {
-    if let Some(v) = first_even(3, 8) {
+    if let Option.Some(v) = first_even(3, 8) {
         show(v)
     } else {
         println("none")
     }
-    if let Some(v) = first_even(3, 5) {
+    if let Option.Some(v) = first_even(3, 5) {
         show(v)
     } else {
         println("none")

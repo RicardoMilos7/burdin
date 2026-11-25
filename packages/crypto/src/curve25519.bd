@@ -358,10 +358,10 @@ priv fn scalarmult_montgomery(n: [u8], p: [u8]): List<u8> {
 /// ```
 fn x25519(scalar: [u8], point: [u8]): Result<List<u8>, CryptoError> {
     if scalar.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: scalar.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: scalar.len() })
     }
     if point.len() != 32 {
-        return Err(CryptoError.InvalidLength { what: "an X25519 point is 32 bytes".to_string() })
+        return Result.Err(CryptoError.InvalidLength { what: "an X25519 point is 32 bytes".to_string() })
     }
     let out = scalarmult_montgomery(scalar, point)
     let mut acc: u8 = 0
@@ -371,9 +371,9 @@ fn x25519(scalar: [u8], point: [u8]): Result<List<u8>, CryptoError> {
         i = i + 1
     }
     if acc == 0 {
-        return Err(CryptoError.InvalidPoint)
+        return Result.Err(CryptoError.InvalidPoint)
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// The X25519 public key for a 32-byte secret: the scalar times the base point (u = 9).
@@ -386,11 +386,11 @@ fn x25519(scalar: [u8], point: [u8]): Result<List<u8>, CryptoError> {
 /// ```
 fn x25519_public_key(scalar: [u8]): Result<List<u8>, CryptoError> {
     if scalar.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: scalar.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: scalar.len() })
     }
     let mut base: [u8; 32] = [0; 32]
     base[0] = 9
-    Ok(scalarmult_montgomery(scalar, base[0..32]))
+    Result.Ok(scalarmult_montgomery(scalar, base[0..32]))
 }
 
 /// A new random X25519 secret key (32 bytes from the OS entropy source).
@@ -491,12 +491,12 @@ priv fn point_unpack_negated(pk: [u8]): Option<Point> {
     }
     chk = gf_mul(gf_sq(x), den)
     if gf_neq(chk, num) {
-        return None
+        return Option.None
     }
     if gf_parity(x) == (pk[31] >> 7) {
         x = gf_sub(gf_zero(), x)
     }
-    Some(Point { x: x, y: y, z: z, t: gf_mul(x, y) })
+    Option.Some(Point { x: x, y: y, z: z, t: gf_mul(x, y) })
 }
 
 /// Reduces a 64-byte little-endian number modulo the group order L, giving 32 bytes.
@@ -565,10 +565,10 @@ priv fn expand_seed(seed: [u8]): List<u8> {
 /// ```
 fn ed25519_public_key(seed: [u8]): Result<List<u8>, CryptoError> {
     if seed.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: seed.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: seed.len() })
     }
     let d = expand_seed(seed)
-    Ok(point_pack(point_base(d.as_slice()[0..32])))
+    Result.Ok(point_pack(point_base(d.as_slice()[0..32])))
 }
 
 /// A new random Ed25519 key pair: the 32-byte secret seed and the 32-byte public key.
@@ -598,7 +598,7 @@ fn ed25519_generate(): (List<u8>, List<u8>) {
 /// ```
 fn ed25519_sign(seed: [u8], message: [u8]): Result<List<u8>, CryptoError> {
     if seed.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: seed.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: seed.len() })
     }
     let d = expand_seed(seed)
     let public = point_pack(point_base(d.as_slice()[0..32]))
@@ -630,7 +630,7 @@ fn ed25519_sign(seed: [u8], message: [u8]): Result<List<u8>, CryptoError> {
     let s = mod_l(mut x)
     let mut sig = big_r
     sig.extend_from_slice(s.as_slice())
-    Ok(sig)
+    Result.Ok(sig)
 }
 
 /// Whether the little-endian number `s` is smaller than the group order L (a canonical signature scalar).
@@ -670,8 +670,8 @@ fn ed25519_verify(public_key: [u8], message: [u8], signature: [u8]): bool {
         return false
     }
     let negated = match point_unpack_negated(public_key) {
-        Some(q) => q,
-        None => return false,
+        Option.Some(q) => q,
+        Option.None => return false,
     }
     let mut hk_input = List<u8>.new()
     hk_input.extend_from_slice(signature[0..32])

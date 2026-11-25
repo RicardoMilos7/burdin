@@ -65,17 +65,17 @@ Regex {
     fn new(pattern: str): Result<Regex, RegexError> {
         let parsed = parse(pattern)?
         let mut names = List<Option<String>>.new()
-        names.push(None)
+        names.push(Option.None)
         let mut i: usize = 0
         while i < parsed.names.len() {
             match parsed.names[i].clone() {
-                Some(label) => names.push(Some(label)),
-                None => names.push(None),
+                Option.Some(label) => names.push(Option.Some(label)),
+                Option.None => names.push(Option.None),
             }
             i = i + 1
         }
         let prog = compile(parsed)?
-        Ok(Regex { pattern: pattern.to_string(), prog: prog, names: names })
+        Result.Ok(Regex { pattern: pattern.to_string(), prog: prog, names: names })
     }
 
     /// `text` with each metacharacter escaped, so that `Regex.new` of the result matches `text` exactly (RX13).
@@ -151,8 +151,8 @@ Regex {
     /// ```
     fn find(self, text: str): Option<Match> {
         match run(&self.prog, text.as_bytes(), 0, false) {
-            Some(slots) => Some(whole_match(text, slots.as_slice())),
-            None => None,
+            Option.Some(slots) => Option.Some(whole_match(text, slots.as_slice())),
+            Option.None => Option.None,
         }
     }
 
@@ -165,7 +165,7 @@ Regex {
     /// assert_eq(words[1].as_str(), "words")
     /// ```
     fn find_all(self, text: str): List<Match> {
-        let found = self.all_slots(text, None)
+        let found = self.all_slots(text, Option.None)
         let mut out = List<Match>.new()
         let mut i: usize = 0
         while i < found.len() {
@@ -184,8 +184,8 @@ Regex {
     /// ```
     fn captures(self, text: str): Option<Captures> {
         match run(&self.prog, text.as_bytes(), 0, false) {
-            Some(slots) => Some(self.captures_of(text, slots.as_slice())),
-            None => None,
+            Option.Some(slots) => Option.Some(self.captures_of(text, slots.as_slice())),
+            Option.None => Option.None,
         }
     }
 
@@ -198,7 +198,7 @@ Regex {
     /// assert_eq(all[1].get(1).unwrap().as_str(), "b")
     /// ```
     fn captures_all(self, text: str): List<Captures> {
-        let found = self.all_slots(text, None)
+        let found = self.all_slots(text, Option.None)
         let mut out = List<Captures>.new()
         let mut i: usize = 0
         while i < found.len() {
@@ -215,7 +215,7 @@ Regex {
     /// assert_eq(Regex.new("o").unwrap().replace("foo", "0").as_str(), "f0o")
     /// ```
     fn replace(self, text: str, replacement: str): String {
-        self.replace_with(text, Some(1), replacement)
+        self.replace_with(text, Option.Some(1), replacement)
     }
 
     /// `text` with its first `limit` matches replaced by `replacement` (RX11).
@@ -225,7 +225,7 @@ Regex {
     /// assert_eq(Regex.new("a").unwrap().replacen("aaa", 2, "b").as_str(), "bba")
     /// ```
     fn replacen(self, text: str, limit: usize, replacement: str): String {
-        self.replace_with(text, Some(limit), replacement)
+        self.replace_with(text, Option.Some(limit), replacement)
     }
 
     /// `text` with every match replaced by `replacement` (RX11).
@@ -235,7 +235,7 @@ Regex {
     /// assert_eq(Regex.new("\\s+").unwrap().replace_all("a   b", " ").as_str(), "a b")
     /// ```
     fn replace_all(self, text: str, replacement: str): String {
-        self.replace_with(text, None, replacement)
+        self.replace_with(text, Option.None, replacement)
     }
 
     /// The pieces of `text` between the matches (RX12).
@@ -247,7 +247,7 @@ Regex {
     /// assert_eq(pieces[1].as_str(), "b")
     /// ```
     fn split(self, text: str): List<String> {
-        self.split_with(text, None)
+        self.split_with(text, Option.None)
     }
 
     /// At most `limit` pieces of `text`: the last one is the rest of the text (RX12).
@@ -258,7 +258,7 @@ Regex {
     /// assert_eq(pieces[1].as_str(), "b,c")
     /// ```
     fn splitn(self, text: str, limit: usize): List<String> {
-        self.split_with(text, Some(limit))
+        self.split_with(text, Option.Some(limit))
     }
 
     /// The capture slots of every match, from left to right (RX10). At most `limit` of them when one is given.
@@ -272,14 +272,14 @@ Regex {
             if pos > len {
                 break
             }
-            if let Some(max) = limit {
+            if let Option.Some(max) = limit {
                 if out.len() >= max {
                     break
                 }
             }
             match run(&self.prog, bytes, pos, after_empty) {
-                None => break,
-                Some(slots) => {
+                Option.None => break,
+                Option.Some(slots) => {
                     let start = slots[0].unwrap()
                     let end = slots[1].unwrap()
                     // After an empty match the next one may not be empty at the same place (Python's `finditer`).
@@ -304,8 +304,8 @@ Regex {
         let mut i: usize = 0
         while i < groups {
             match self.names[i].clone() {
-                Some(label) => names.push(Some(label)),
-                None => names.push(None),
+                Option.Some(label) => names.push(Option.Some(label)),
+                Option.None => names.push(Option.None),
             }
             i = i + 1
         }
@@ -333,15 +333,15 @@ Regex {
 
     priv fn split_with(self, text: str, limit: Option<usize>): List<String> {
         let mut pieces = List<String>.new()
-        if let Some(n) = limit {
+        if let Option.Some(n) = limit {
             if n == 0 {
                 return pieces
             }
         }
         // `n` pieces take `n - 1` matches.
         let max_matches = match limit {
-            Some(n) => Some(n - 1),
-            None => None,
+            Option.Some(n) => Option.Some(n - 1),
+            Option.None => Option.None,
         }
         let found = self.all_slots(text, max_matches)
         let mut last: usize = 0
@@ -440,7 +440,7 @@ Captures {
         if index < self.spans.len() {
             self.spans[index].clone()
         } else {
-            None
+            Option.None
         }
     }
 
@@ -454,8 +454,8 @@ Captures {
     /// ```
     fn name(self, key: str): Option<Match> {
         match name_index(self.names.as_slice(), key) {
-            Some(index) => self.get(index),
-            None => None,
+            Option.Some(index) => self.get(index),
+            Option.None => Option.None,
         }
     }
 
@@ -524,11 +524,11 @@ Captures {
             name_index(self.names.as_slice(), key)
         }
         match index {
-            Some(i) => match self.get(i) {
-                Some(m) => m.as_str().to_string(),
-                None => String.new(),
+            Option.Some(i) => match self.get(i) {
+                Option.Some(m) => m.as_str().to_string(),
+                Option.None => String.new(),
             },
-            None => String.new(),
+            Option.None => String.new(),
         }
     }
 }
@@ -536,11 +536,11 @@ Captures {
 /// The span `start..end` of `text` as a match, or None when the group did not take part.
 priv fn span_of(text: str, start: Option<usize>, end: Option<usize>): Option<Match> {
     match start {
-        Some(s) => match end {
-            Some(e) => Some(Match { span_start: s, span_end: e, text: text[s..e].to_string() }),
-            None => None,
+        Option.Some(s) => match end {
+            Option.Some(e) => Option.Some(Match { span_start: s, span_end: e, text: text[s..e].to_string() }),
+            Option.None => Option.None,
         },
-        None => None,
+        Option.None => Option.None,
     }
 }
 
@@ -553,15 +553,15 @@ priv fn whole_match(text: str, slots: [Option<usize>]): Match {
 
 /// The number of the group named `name` in `names` (where `names[i]` is group `i`).
 priv fn name_index(names: [Option<String>], name: str): Option<usize> {
-    let wanted = Some(name.to_string())
+    let wanted = Option.Some(name.to_string())
     let mut i: usize = 0
     while i < names.len() {
         if names[i] == wanted {
-            return Some(i)
+            return Option.Some(i)
         }
         i = i + 1
     }
-    None
+    Option.None
 }
 
 /// The characters `Regex.escape` puts a backslash before (RX13).
@@ -589,16 +589,16 @@ priv fn parse_index(key: str): Option<usize> {
     let mut value: usize = 0
     for c in key.chars() {
         match c.to_digit(10) {
-            Some(d) => {
+            Option.Some(d) => {
                 if value > 100000 {
-                    return None
+                    return Option.None
                 }
                 value = value * 10 + (d as usize)
             }
-            None => return None,
+            Option.None => return Option.None,
         }
     }
-    Some(value)
+    Option.Some(value)
 }
 
 /// The text of the characters `from..to` of `chars`.

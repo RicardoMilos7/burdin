@@ -18,12 +18,12 @@ fn main() {
     let p: Fn(str): () = println
     p("builtin")
 
-    let s: Fn(i32): Option<i32> = Some
+    let s: Fn(i32): Option<i32> = Option.Some
     println(s(7).unwrap().to_string())
 
-    let ok: Fn(i32): Result<i32, String> = Ok
+    let ok: Fn(i32): Result<i32, String> = Result.Ok
     println(ok(8).unwrap().to_string())
 
-    let err: Fn(String): Result<i32, String> = Err
+    let err: Fn(String): Result<i32, String> = Result.Err
     println(err("bad".to_string()).unwrap_err())
 }

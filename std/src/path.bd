@@ -14,7 +14,7 @@ use text.to_char_list
 ///
 /// ```
 /// let p = Path.unix("/home/user/notes.txt")
-/// assert_eq(p.file_name(), Some(String.from("notes.txt")))
+/// assert_eq(p.file_name(), Option.Some(String.from("notes.txt")))
 /// let parent = p.parent().unwrap()
 /// assert_eq(parent.as_str(), "/home/user")
 /// ```
@@ -96,25 +96,25 @@ priv fn __dot(chars: List<char>): Option<usize> {
     while i > 1 {
         i = i - 1
         if chars[i] == '.' {
-            return Some(i)
+            return Option.Some(i)
         }
     }
-    None
+    Option.None
 }
 
 priv fn __stem(name: str): String {
     let chars = name.to_char_list()
     match __dot(chars) {
-        Some(d) => __slice(chars, 0, d),
-        None => String.from(name),
+        Option.Some(d) => __slice(chars, 0, d),
+        Option.None => String.from(name),
     }
 }
 
 priv fn __extension(name: str): Option<String> {
     let chars = name.to_char_list()
     match __dot(chars) {
-        Some(d) => Some(__slice(chars, d + 1, chars.len())),
-        None => None,
+        Option.Some(d) => Option.Some(__slice(chars, d + 1, chars.len())),
+        Option.None => Option.None,
     }
 }
 
@@ -204,16 +204,16 @@ Path {
     /// The drive of a Windows path, such as `C:`.
     ///
     /// ```
-    /// assert_eq(Path.windows("C:\\dir\\f.txt").drive(), Some(String.from("C:")))
-    /// assert_eq(Path.unix("/a").drive(), None)
+    /// assert_eq(Path.windows("C:\\dir\\f.txt").drive(), Option.Some(String.from("C:")))
+    /// assert_eq(Path.unix("/a").drive(), Option.None)
     /// ```
     fn drive(self): Option<String> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
         if prefix == 0 {
-            return None
+            return Option.None
         }
-        Some(__slice(chars, 0, prefix))
+        Option.Some(__slice(chars, 0, prefix))
     }
 
     /// The names in the path, in order, without separators, empty pieces, or `.`. `..` is kept.
@@ -288,7 +288,7 @@ Path {
         let prefix = __prefix_len(chars, self.is_windows)
         let spans = __spans(chars, prefix, self.is_windows)
         if spans.len() == 0 {
-            return None
+            return Option.None
         }
         let mut end = prefix
         if spans.len() > 1 {
@@ -296,38 +296,38 @@ Path {
         } else if __is_rooted(chars, prefix, self.is_windows) {
             end = prefix + 1
         }
-        Some(Path { text: __slice(chars, 0, end), is_windows: self.is_windows })
+        Option.Some(Path { text: __slice(chars, 0, end), is_windows: self.is_windows })
     }
 
     /// The last name, unless the path ends in `..` or has no names.
     ///
     /// ```
-    /// assert_eq(Path.unix("a/b.txt").file_name(), Some(String.from("b.txt")))
-    /// assert_eq(Path.unix("a/..").file_name(), None)
+    /// assert_eq(Path.unix("a/b.txt").file_name(), Option.Some(String.from("b.txt")))
+    /// assert_eq(Path.unix("a/..").file_name(), Option.None)
     /// ```
     fn file_name(self): Option<String> {
         let chars = self.text.to_char_list()
         let prefix = __prefix_len(chars, self.is_windows)
         let spans = __spans(chars, prefix, self.is_windows)
         if spans.len() == 0 {
-            return None
+            return Option.None
         }
         let name = __slice(chars, spans[spans.len() - 1].0, spans[spans.len() - 1].1)
         if name.as_str() == ".." {
-            return None
+            return Option.None
         }
-        Some(name)
+        Option.Some(name)
     }
 
     /// The last name without its extension: `archive.tar.gz` is `archive.tar`, `.profile` is `.profile`.
     ///
     /// ```
-    /// assert_eq(Path.unix("archive.tar.gz").file_stem(), Some(String.from("archive.tar")))
+    /// assert_eq(Path.unix("archive.tar.gz").file_stem(), Option.Some(String.from("archive.tar")))
     /// ```
     fn file_stem(self): Option<String> {
         match self.file_name() {
-            Some(name) => Some(__stem(name.as_str())),
-            None => None,
+            Option.Some(name) => Option.Some(__stem(name.as_str())),
+            Option.None => Option.None,
         }
     }
 
@@ -335,13 +335,13 @@ Path {
     /// none, and `file.` has the empty one.
     ///
     /// ```
-    /// assert_eq(Path.unix("archive.tar.gz").extension(), Some(String.from("gz")))
-    /// assert_eq(Path.unix("Makefile").extension(), None)
+    /// assert_eq(Path.unix("archive.tar.gz").extension(), Option.Some(String.from("gz")))
+    /// assert_eq(Path.unix("Makefile").extension(), Option.None)
     /// ```
     fn extension(self): Option<String> {
         match self.file_name() {
-            Some(name) => __extension(name.as_str()),
-            None => None,
+            Option.Some(name) => __extension(name.as_str()),
+            Option.None => Option.None,
         }
     }
 
@@ -372,8 +372,8 @@ Path {
     /// ```
     fn with_extension(self, extension: str): Path {
         match self.file_name() {
-            None => self.clone(),
-            Some(name) => {
+            Option.None => self.clone(),
+            Option.Some(name) => {
                 let mut renamed = __stem(name.as_str())
                 if extension.len() > 0 {
                     renamed.push('.')

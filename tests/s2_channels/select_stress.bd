@@ -32,16 +32,16 @@ fn main() {
     while a_open || b_open || c_open {
         select {
             x = a.recv() if a_open => match x {
-                Some(v) => { count = count + 1; sum = sum + v }
-                None => a_open = false,
+                Option.Some(v) => { count = count + 1; sum = sum + v }
+                Option.None => a_open = false,
             }
             y = b.recv() if b_open => match y {
-                Some(v) => { count = count + 1; sum = sum + v }
-                None => b_open = false,
+                Option.Some(v) => { count = count + 1; sum = sum + v }
+                Option.None => b_open = false,
             }
             z = c.recv() if c_open => match z {
-                Some(v) => { count = count + 1; sum = sum + v }
-                None => c_open = false,
+                Option.Some(v) => { count = count + 1; sum = sum + v }
+                Option.None => c_open = false,
             }
         }
     }

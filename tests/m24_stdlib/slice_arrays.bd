@@ -52,8 +52,8 @@ fn main() {
     let copy = arr.to_list()
     println("{}", copy.len())
     match arr.get(1..3) {
-        Some(part) => println("{:?}", part.first()),
-        None => println("none"),
+        Option.Some(part) => println("{:?}", part.first()),
+        Option.None => println("none"),
     }
     // A temporary array is materialized for the view.
     println("{:?}", [7, 8, 9].first())

@@ -19,10 +19,10 @@ interface Iterable<T> { }
 ```
 
 `Iterator<T>` is the stateful object a chain is made of (IT14 adds the second interface, `DoubleEndedIterator<T>`): `next` borrows the iterator exclusively, advances it, and
-returns the next item, or `None` once it is exhausted. `Iterable<T>` is a marker: a type implements it to say that
+returns the next item, or `Option.None` once it is exhausted. `Iterable<T>` is a marker: a type implements it to say that
 `for` accepts it, and the compiler checks that the type provides `iter(self): I` where `I: Iterator<T>`. A type may
-implement one or both. Any later call to `next` after it returned `None` is unspecified but must not misbehave: the
-built-in iterators keep returning `None`.
+implement one or both. Any later call to `next` after it returned `Option.None` is unspecified but must not misbehave: the
+built-in iterators keep returning `Option.None`.
 
 **IT5 Built-in implementations.** The compiler knows the protocol for its own types; they need no impl block and no
 method of their own:
@@ -77,8 +77,8 @@ to exactly:
 let mut __iter = e
 loop {
     match __iter.next() {
-        Some(pattern) => { body },
-        None => break,
+        Option.Some(pattern) => { body },
+        Option.None => break,
     }
 }
 ```
@@ -113,7 +113,7 @@ asks for it.
 | `flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F)` | `FlatMapIter<Self, T, J, U, F>` | the items of the iterator `f` returns for each item, one iterator at a time |
 | `take_while<F: FnMut(&T): bool>(own self, own f: F)` | `TakeWhileIter<Self, T, F>` | items up to, not including, the first one `f` rejects |
 | `skip_while<F: FnMut(&T): bool>(own self, own f: F)` | `SkipWhileIter<Self, T, F>` | drops items while `f` accepts them, then yields the rest |
-| `map_while<U, F: FnMut(T): Option<U>>(own self, own f: F)` | `MapWhileIter<Self, T, U, F>` | applies `f`, stops at the first `None` |
+| `map_while<U, F: FnMut(T): Option<U>>(own self, own f: F)` | `MapWhileIter<Self, T, U, F>` | applies `f`, stops at the first `Option.None` |
 | `step_by(own self, step: usize)` | `StepByIter<Self, T>` | every `step`th item, starting with the first; `step` 0 panics |
 | `inspect<F: FnMut(&T)>(own self, own f: F)` | `InspectIter<Self, T, F>` | calls `f` on a view of each item and passes it on |
 | `peekable(own self)` | `PeekIter<Self, T>` | adds `peek(mut self): Option<&T>`, a view of the next item that is not taken |
@@ -121,12 +121,12 @@ asks for it.
 | `nth(mut self, n: usize)` | `Option<T>` | the item `n` places on, counting from 0; consumes the ones before |
 | `position<F: FnMut(T): bool>(mut self, own f: F)` | `Option<usize>` | index of the first accepted item |
 | `for_each<F: FnMut(T)>(mut self, own f: F)` | `()` | calls `f` on every item |
-| `reduce<F: FnMut(T, T): T>(mut self, own f: F)` | `Option<T>` | folds with the first item as the start; `None` when empty |
+| `reduce<F: FnMut(T, T): T>(mut self, own f: F)` | `Option<T>` | folds with the first item as the start; `Option.None` when empty |
 | `partition<F: FnMut(&T): bool>(mut self, own f: F)` | `(List<T>, List<T>)` | accepted items, then rejected items, in order |
 | `min_by` / `max_by` `<F: FnMut(&T, &T): Ordering>(mut self, own f: F)` | `Option<T>` | least (first of equals) / greatest (last of equals) under the comparator |
 | `min_by_key` / `max_by_key` `<K: Ord, F: FnMut(&T): K>(mut self, own f: F)` | `Option<T>` | the same, ordered by a key |
-| `try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F)` | `Result<A, E>` | folds until `f` returns an `Err`, which ends the fold and is returned; the rest of the items are not visited |
-| `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Err` |
+| `try_fold<A, E, F: FnMut(A, T): Result<A, E>>(mut self, own init: A, own f: F)` | `Result<A, E>` | folds until `f` returns an `Result.Err`, which ends the fold and is returned; the rest of the items are not visited |
+| `try_for_each<E, F: FnMut(T): Result<(), E>>(mut self, own f: F)` | `Result<(), E>` | calls `f` on every item until it returns an `Result.Err` |
 | `to_list(mut self)` | `List<T>` | collects the remaining items; a chain over borrowed items gives a second-class list of views, which cannot be stored |
 | `collect<C: FromIterator<T>>(own self)` | `C` | builds any collection that implements `FromIterator<T>`; the expected type names `C` (IT17) |
 
@@ -167,8 +167,8 @@ interface DoubleEndedIterator<T> {
 }
 ```
 
-`next_back` takes the last remaining item, or `None`; `next` and `next_back` take from the two ends and meet in the
-middle, and an exhausted iterator keeps returning `None` from both. The compiler implements the interface, with the
+`next_back` takes the last remaining item, or `Option.None`; `next` and `next_back` take from the two ends and meet in the
+middle, and an exhausted iterator keeps returning `Option.None` from both. The compiler implements the interface, with the
 same item type as `next`, for the slice iterator (the `iter()` of an array or a `List`), the range iterator (an
 inclusive range yields its upper endpoint first and never computes a bound outside its type), and `Chars` (walking back
 by scalar value, so `"añ😀".chars().rev()` yields `😀`, `ñ`, `a`). The owning iterators (`ArrayIntoIter`,
@@ -202,8 +202,8 @@ item type as `T`; they are not interface methods, so a user type cannot override
 
 | Method | Result | Notes |
 | --- | --- | --- |
-| `min()` | `Option<T>` | the least item (the first of equals); `T: Ord`; `None` when empty |
-| `max()` | `Option<T>` | the greatest item (the last of equals); `T: Ord`; `None` when empty |
+| `min()` | `Option<T>` | the least item (the first of equals); `T: Ord`; `Option.None` when empty |
+| `max()` | `Option<T>` | the greatest item (the last of equals); `T: Ord`; `Option.None` when empty |
 | `eq(other)` | `bool` | both iterators yield equal items and end together; `T: Eq` |
 | `cmp(other)` | `Ordering` | lexicographic; a prefix is less than the longer iterator; `T: Ord` |
 
@@ -218,7 +218,7 @@ operator: an integer `sum` or `product` that overflows panics in the checked (de
 build, exactly as `a + b` does; a float never traps. An empty iterator gives 0 for `sum` and 1 for `product`.
 
 **`try_fold` and `try_for_each`** short-circuit on a `Result`. The error type `E` is inferred from the closure's
-return type; a closure with an early `return Err(..)` needs its return type written (`|x|: Result<(), i32> { ... }`). An
+return type; a closure with an early `return Result.Err(..)` needs its return type written (`|x|: Result<(), i32> { ... }`). An
 `Option` version is not provided: `fold` with an `Option` accumulator, or a `for` loop with `?`, covers it. They are
 interface default methods, and they are callable on a type parameter bounded by `Iterator<T>` like every other default
 method (IT23).
@@ -278,7 +278,7 @@ and `lazy_map_closure_item` (E0003: the closure's parameter is a view on one sid
 **IT11 Ranges.** `Range<T>` and `RangeInclusive<T>` are `Iterable<T>`: `r.iter()` and `r.into_iter()` both give a
 `RangeIter<T>`, which yields the endpoints in order. An inclusive iterator yields the upper endpoint and then
 stops, without computing `upper + 1`, so `(255 as u8)..=(255 as u8)` yields one item and never overflows. An
-exhausted range iterator keeps returning `None`. `for x in r` over a stored range keeps the stage 0 lowering, which
+exhausted range iterator keeps returning `Option.None`. `for x in r` over a stored range keeps the stage 0 lowering, which
 evaluates `r` once and has the same no-overflow behavior.
 
 **IT12 Second-class chains.** A chain borrows its source: its adapter types are generic instances parameterized by
@@ -389,8 +389,8 @@ Only `collect` takes an explicit target. The other `Iterator<T>` defaults and th
 Anything else is E0141: a `String` from integers, a `Map` from items that are not pairs, a `List<i64>` from `i32` items.
 
 **IT19 `Option` and `Result`.** `Option<C>` implements `FromIterator<Option<T>>` and `Result<C, E>` implements
-`FromIterator<Result<T, E>>` whenever `C: FromIterator<T>`. The iterator is read until its first `None` or `Err`, which
-is the result, and it is not asked for another item. When every item is `Some`/`Ok`, the payloads are gathered in a list
+`FromIterator<Result<T, E>>` whenever `C: FromIterator<T>`. The iterator is read until its first `Option.None` or `Result.Err`, which
+is the result, and it is not asked for another item. When every item is `Option.Some`/`Result.Ok`, the payloads are gathered in a list
 and then handed to `C.from_iter`, so the target is built only on success and the gathered items of a failed collection
 are dropped at once. The rule nests: `Result<Option<List<i32>>, E>` is a target for items of type
 `Result<Option<i32>, E>`, because `Option<List<i32>>` implements `FromIterator<Option<i32>>`. The payload type `T` of

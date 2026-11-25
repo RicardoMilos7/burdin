@@ -34,11 +34,11 @@ fn exit(code: i32): ! {
 /// ```
 fn run(command: str): Result<i32, IoError> {
     match __run(command) {
-        Ok(status) => Ok(status),
-        Err(code) => Err(IoError.Run {
+        Result.Ok(status) => Result.Ok(status),
+        Result.Err(code) => Result.Err(IoError.Run {
             command: command.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -76,7 +76,7 @@ enum Stdio: Copy, Clone, Eq {
 ///         c
 ///     }
 /// }
-/// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Some(5))
+/// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Option.Some(5))
 /// ```
 struct Command {
     priv program: String
@@ -108,7 +108,7 @@ Command {
     ///         c
     ///     }
     /// }
-    /// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Some(5))
+    /// assert_eq(shell("exit 5", "exit 5").status().unwrap().code(), Option.Some(5))
     /// ```
     fn new(program: str): Command {
         Command {
@@ -117,7 +117,7 @@ Command {
             environment: List<String>.new(),
             removals: List<String>.new(),
             clear_environment: false,
-            directory: None,
+            directory: Option.None,
             stdin_mode: Stdio.Inherit,
             stdout_mode: Stdio.Inherit,
             stderr_mode: Stdio.Inherit,
@@ -294,7 +294,7 @@ Command {
     /// assert(c.status().unwrap().success())
     /// ```
     fn cwd(mut self, directory: str) {
-        self.directory = Some(directory.to_string())
+        self.directory = Option.Some(directory.to_string())
     }
 
     /// Sets how the child's standard input is connected. The default is `Stdio.Inherit`.
@@ -419,8 +419,8 @@ Command {
         let stdout_mode = self.stdout_mode
         let stderr_mode = self.stderr_mode
         let mut child: Child = match __spawn(self, stdin_mode, stdout_mode, stderr_mode) {
-            Ok(child) => child,
-            Err(failure) => return Err(failure),
+            Result.Ok(child) => child,
+            Result.Err(failure) => return Result.Err(failure),
         }
         child.wait()
     }
@@ -447,8 +447,8 @@ Command {
     /// ```
     fn output(own self): Result<Output, IoError> {
         let mut child: Child = match __spawn(self, Stdio.Null, Stdio.Piped, Stdio.Piped) {
-            Ok(child) => child,
-            Err(failure) => return Err(failure),
+            Result.Ok(child) => child,
+            Result.Err(failure) => return Result.Err(failure),
         }
         child.wait_with_output()
     }
@@ -610,23 +610,23 @@ Child {
     ///     }
     /// }
     /// let mut child = shell("exit 3", "exit 3").spawn().unwrap()
-    /// assert_eq(child.wait().unwrap().code(), Some(3))
+    /// assert_eq(child.wait().unwrap().code(), Option.Some(3))
     /// ```
     fn wait(mut self): Result<ExitStatus, IoError> {
         if self.waited {
-            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
+            return Result.Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: Option.None })
         }
         self.waited = true
         // The handle's `Drop` closes the pipe at the end of this statement.
         match self.input.take() {
-            Some(_) => {}
-            None => {}
+            Option.Some(_) => {}
+            Option.None => {}
         }
         let raw = __process_wait(self.pid, self.process)
         if raw == -1 {
-            return Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: None })
+            return Result.Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: Option.None })
         }
-        Ok(__exit_status(raw))
+        Result.Ok(__exit_status(raw))
     }
 
     /// Closes the child's standard input, reads the piped standard output and standard error to the end, and waits,
@@ -656,22 +656,22 @@ Child {
     fn wait_with_output(mut self): Result<Output, IoError> {
         // Close the child's input before reading, so a program that reads it first sees the end of the input.
         match self.input.take() {
-            Some(_) => {}
-            None => {}
+            Option.Some(_) => {}
+            Option.None => {}
         }
         let mut stdout_handle: usize = 0
         let mut stderr_handle: usize = 0
         match self.output.take() {
-            Some(mut handle) => {
+            Option.Some(mut handle) => {
                 stdout_handle = handle.into_raw()
             }
-            None => {}
+            Option.None => {}
         }
         match self.errors.take() {
-            Some(mut handle) => {
+            Option.Some(mut handle) => {
                 stderr_handle = handle.into_raw()
             }
-            None => {}
+            Option.None => {}
         }
         let mut stdout_text = String.new()
         let mut stderr_text = String.new()
@@ -680,12 +680,12 @@ Child {
             __pipe_close(stdout_handle)
             __pipe_close(stderr_handle)
             match captured {
-                Ok(pair) => {
+                Result.Ok(pair) => {
                     stdout_text = pair.0
                     stderr_text = pair.1
                 }
-                Err(code) => {
-                    return Err(IoError.Read {
+                Result.Err(code) => {
+                    return Result.Err(IoError.Read {
                         path: String.from("<child>"),
                         kind: __failure_kind(code),
                         os_code: __failure_code(code),
@@ -694,12 +694,12 @@ Child {
             }
         } else if stdout_handle != 0 {
             match __pipe_read_to_string(stdout_handle) {
-                Ok(text) => {
+                Result.Ok(text) => {
                     stdout_text = text
                 }
-                Err(code) => {
+                Result.Err(code) => {
                     __pipe_close(stdout_handle)
-                    return Err(IoError.Read {
+                    return Result.Err(IoError.Read {
                         path: String.from("<stdout>"),
                         kind: __failure_kind(code),
                         os_code: __failure_code(code),
@@ -709,12 +709,12 @@ Child {
             __pipe_close(stdout_handle)
         } else if stderr_handle != 0 {
             match __pipe_read_to_string(stderr_handle) {
-                Ok(text) => {
+                Result.Ok(text) => {
                     stderr_text = text
                 }
-                Err(code) => {
+                Result.Err(code) => {
                     __pipe_close(stderr_handle)
-                    return Err(IoError.Read {
+                    return Result.Err(IoError.Read {
                         path: String.from("<stderr>"),
                         kind: __failure_kind(code),
                         os_code: __failure_code(code),
@@ -724,10 +724,10 @@ Child {
             __pipe_close(stderr_handle)
         }
         let status: ExitStatus = match self.wait() {
-            Ok(status) => status,
-            Err(failure) => return Err(failure),
+            Result.Ok(status) => status,
+            Result.Err(failure) => return Result.Err(failure),
         }
-        Ok(Output { status, stdout: stdout_text, stderr: stderr_text })
+        Result.Ok(Output { status, stdout: stdout_text, stderr: stderr_text })
     }
 }
 
@@ -799,9 +799,9 @@ ChildStdin {
     /// ```
     fn write(self, text: str): Result<(), IoError> {
         if __pipe_write(self.handle, text) == 0 {
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(IoError.Write { path: String.from("<stdin>"), kind: IoErrorKind.Other, os_code: None })
+            Result.Err(IoError.Write { path: String.from("<stdin>"), kind: IoErrorKind.Other, os_code: Option.None })
         }
     }
 
@@ -872,8 +872,8 @@ ChildStdout {
     /// ```
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
-            Ok(text) => Ok(text),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(text) => Result.Ok(text),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdout>"),
                 kind: __failure_kind(code),
                 os_code: __failure_code(code),
@@ -907,8 +907,8 @@ ChildStdout {
     /// ```
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
-            Ok(line) => Ok(line),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(line) => Result.Ok(line),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdout>"),
                 kind: __failure_kind(code),
                 os_code: __failure_code(code),
@@ -983,8 +983,8 @@ ChildStderr {
     /// ```
     fn read_to_string(self): Result<String, IoError> {
         match __pipe_read_to_string(self.handle) {
-            Ok(text) => Ok(text),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(text) => Result.Ok(text),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stderr>"),
                 kind: __failure_kind(code),
                 os_code: __failure_code(code),
@@ -1017,8 +1017,8 @@ ChildStderr {
     /// ```
     fn read_line(self): Result<Option<String>, IoError> {
         match __pipe_read_line(self.handle) {
-            Ok(line) => Ok(line),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(line) => Result.Ok(line),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stderr>"),
                 kind: __failure_kind(code),
                 os_code: __failure_code(code),
@@ -1082,7 +1082,7 @@ ExitStatus {
     ///     }
     /// }
     /// let st = shell("exit 3", "exit 3").status().unwrap()
-    /// assert_eq(st.code(), Some(3))
+    /// assert_eq(st.code(), Option.Some(3))
     /// ```
     fn code(self): Option<i32> {
         self.exit_code
@@ -1105,7 +1105,7 @@ ExitStatus {
     ///     }
     /// }
     /// let st = shell("exit 0", "exit 0").status().unwrap()
-    /// assert_eq(st.signal(), None)
+    /// assert_eq(st.signal(), Option.None)
     /// ```
     fn signal(self): Option<i32> {
         self.term_signal
@@ -1131,8 +1131,8 @@ ExitStatus {
     /// ```
     fn success(self): bool {
         match self.exit_code {
-            Some(code) => code == 0,
-            None => false,
+            Option.Some(code) => code == 0,
+            Option.None => false,
         }
     }
 }
@@ -1174,8 +1174,8 @@ priv fn __spawn(
 ): Result<Child, IoError> {
     let environment = __child_environment(command.clear_environment, command.environment, command.removals)
     let directory = match command.directory {
-        Some(path) => path.clone(),
-        None => String.new(),
+        Option.Some(path) => path.clone(),
+        Option.None => String.new(),
     }
     let command_line = if os() == Os.Windows {
         __windows_command_line(command.program.as_str(), command.arguments)
@@ -1192,9 +1192,9 @@ priv fn __spawn(
         __mode(stdout_mode),
         __mode(stderr_mode),
     ) {
-        Ok(parts) => {
+        Result.Ok(parts) => {
             let (pid, process, input, output, errors) = parts
-            Ok(Child {
+            Result.Ok(Child {
                 command: command.program.clone(),
                 pid,
                 process,
@@ -1204,7 +1204,7 @@ priv fn __spawn(
                 errors: __child_stderr(errors),
             })
         }
-        Err(code) => Err(IoError.Run {
+        Result.Err(code) => Result.Err(IoError.Run {
             command: command.program.clone(),
             kind: __failure_kind(code),
             os_code: __failure_code(code),
@@ -1220,7 +1220,7 @@ priv fn __failure_kind(code: i32): IoErrorKind {
 
 /// The OS code of a process or pipe failure, when the primitive reported one.
 priv fn __failure_code(code: i32): Option<i32> {
-    if code > 0 { Some(code) } else { None }
+    if code > 0 { Option.Some(code) } else { Option.None }
 }
 
 /// The primitive's stream mode: 0 inherited, 1 piped, 2 null.
@@ -1234,25 +1234,25 @@ priv fn __mode(mode: Stdio): i32 {
 
 priv fn __child_stdin(handle: usize): Option<ChildStdin> {
     if handle == 0 {
-        None
+        Option.None
     } else {
-        Some(ChildStdin { handle })
+        Option.Some(ChildStdin { handle })
     }
 }
 
 priv fn __child_stdout(handle: usize): Option<ChildStdout> {
     if handle == 0 {
-        None
+        Option.None
     } else {
-        Some(ChildStdout { handle })
+        Option.Some(ChildStdout { handle })
     }
 }
 
 priv fn __child_stderr(handle: usize): Option<ChildStderr> {
     if handle == 0 {
-        None
+        Option.None
     } else {
-        Some(ChildStderr { handle })
+        Option.Some(ChildStderr { handle })
     }
 }
 
@@ -1294,8 +1294,8 @@ priv fn __listed(name: str, entries: List<String>): bool {
 /// The name part of a `NAME=VALUE` environment entry.
 priv fn __entry_name(entry: str): str {
     match entry.find('=') {
-        Some(at) => entry[0..at],
-        None => entry,
+        Option.Some(at) => entry[0..at],
+        Option.None => entry,
     }
 }
 
@@ -1312,11 +1312,11 @@ priv fn __same_env_name(a: str, b: str): bool {
 /// failure the caller reports as an error.
 priv fn __exit_status(raw: i64): ExitStatus {
     if raw >= 0 {
-        ExitStatus { exit_code: Some(raw as i32), term_signal: None }
+        ExitStatus { exit_code: Option.Some(raw as i32), term_signal: Option.None }
     } else if raw == -1 {
-        ExitStatus { exit_code: None, term_signal: None }
+        ExitStatus { exit_code: Option.None, term_signal: Option.None }
     } else {
-        ExitStatus { exit_code: None, term_signal: Some((-(raw + 1)) as i32) }
+        ExitStatus { exit_code: Option.None, term_signal: Option.Some((-(raw + 1)) as i32) }
     }
 }
 

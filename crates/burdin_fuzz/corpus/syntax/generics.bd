@@ -1,7 +1,7 @@
 // Generic parameters, bounds, where clauses, and arguments in every position.
 struct Pair<A, B> { first: A, second: B }
 struct Bounded<T: Ord + Eq> { item: T }
-enum Maybe<T> { Some(T), None }
+enum Maybe<T> { Option.Some(T), Option.None }
 interface Show<T> { fn show(self): String }
 type Alias<T> = Pair<T, T>
 type Bad<> = i32

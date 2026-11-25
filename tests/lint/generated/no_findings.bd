@@ -29,7 +29,7 @@ fn total(shape: impl Shape): i32 {
 }
 
 fn lookup(ok: bool): Result<i32> {
-    if ok { Ok(1) } else { Err(ConfigError.Missing("port".to_string())) }
+    if ok { Result.Ok(1) } else { Result.Err(ConfigError.Missing("port".to_string())) }
 }
 
 test "panics at the end" [should_panic] {

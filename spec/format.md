@@ -124,8 +124,8 @@ The exact output of `Debug` for a value of each built-in type:
 | `true`, `()` | `true`, `()` |
 | `[1, 2]` | `[1, 2]` |
 | `(1, "a")` | `(1, "a")` |
-| `Some(1)`, `None` | `Some(1)`, `None` |
-| `Ok(1)`, `Err(1)` | `Ok(1)`, `Err(1)` |
+| `Option.Some(1)`, `Option.None` | `Option.Some(1)`, `Option.None` |
+| `Result.Ok(1)`, `Result.Err(1)` | `Result.Ok(1)`, `Result.Err(1)` |
 | `Heap.new(1)` | `1` (the pointee) |
 
 `Display` output is the type's own: the digits of a number, the bytes of text, `true`/`false`, the character.

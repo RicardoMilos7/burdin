@@ -10,45 +10,45 @@
 
 fn count(ok: bool): Result<usize, IoError> {
     if ok {
-        Ok(7)
+        Result.Ok(7)
     } else {
-        Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+        Result.Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None })
     }
 }
 
 fn report(ok: bool): Result<(), IoError> {
     let n = count(ok)?
     println("{} 1", n)
-    Ok(())
+    Result.Ok(())
 }
 
 fn describe(text: str): Option<String> {
     let n = text.find_str("=")?
-    Some(String.from("found"))
+    Option.Some(String.from("found"))
 }
 
 fn lookup(opt: Option<i32>): Option<String> {
     let v = opt?
-    Some(v.to_string())
+    Option.Some(v.to_string())
 }
 
 fn number(ok: bool): Result<String> {
     let n = count(ok).context("no number")?
-    Ok(n.to_string())
+    Result.Ok(n.to_string())
 }
 
 fn main() {
     let _ = report(true)
-    match lookup(None) {
-        Some(_) => println("unexpected"),
-        None => println("missing"),
+    match lookup(Option.None) {
+        Option.Some(_) => println("unexpected"),
+        Option.None => println("missing"),
     }
     match describe("abc") {
-        Some(_) => println("unexpected"),
-        None => println("no value"),
+        Option.Some(_) => println("unexpected"),
+        Option.None => println("no value"),
     }
     match number(false) {
-        Ok(_) => println("unexpected"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(e) => println("{}", e),
     }
 }

@@ -12,8 +12,8 @@ fn main() {
     h.push(Reverse { value: 1 })
     loop {
         match h.pop() {
-            Some(r) => println("{r.value}"),
-            None => break,
+            Option.Some(r) => println("{r.value}"),
+            Option.None => break,
         }
     }
 }

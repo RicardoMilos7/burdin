@@ -23,30 +23,30 @@ struct Color {
 
 fn hex_digit(c: char): Option<u8> {
     match c {
-        '0' => Some(0),
-        '1' => Some(1),
-        '2' => Some(2),
-        '3' => Some(3),
-        '4' => Some(4),
-        '5' => Some(5),
-        '6' => Some(6),
-        '7' => Some(7),
-        '8' => Some(8),
-        '9' => Some(9),
-        'a' => Some(10),
-        'b' => Some(11),
-        'c' => Some(12),
-        'd' => Some(13),
-        'e' => Some(14),
-        'f' => Some(15),
-        _ => None,
+        '0' => Option.Some(0),
+        '1' => Option.Some(1),
+        '2' => Option.Some(2),
+        '3' => Option.Some(3),
+        '4' => Option.Some(4),
+        '5' => Option.Some(5),
+        '6' => Option.Some(6),
+        '7' => Option.Some(7),
+        '8' => Option.Some(8),
+        '9' => Option.Some(9),
+        'a' => Option.Some(10),
+        'b' => Option.Some(11),
+        'c' => Option.Some(12),
+        'd' => Option.Some(13),
+        'e' => Option.Some(14),
+        'f' => Option.Some(15),
+        _ => Option.None,
     }
 }
 
 fn hex_byte(digits: List<char>, at: usize): Option<u8> {
     let high = hex_digit(digits[at])?
     let low = hex_digit(digits[at + 1])?
-    Some(high * 16 + low)
+    Option.Some(high * 16 + low)
 }
 
 Color {
@@ -57,9 +57,9 @@ Color {
     fn from_hex(text: str): Option<Color> {
         let digits: List<char> = text.chars().collect()
         if digits.len() != 7 || digits[0] != '#' {
-            return None
+            return Option.None
         }
-        Some(Color { red: hex_byte(digits, 1)?, green: hex_byte(digits, 3)?, blue: hex_byte(digits, 5)? })
+        Option.Some(Color { red: hex_byte(digits, 1)?, green: hex_byte(digits, 3)?, blue: hex_byte(digits, 5)? })
     }
 }
 
@@ -67,8 +67,8 @@ Color: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError> {
         let s = String.deserialize(mut d)?
         match Color.from_hex(s.as_str()) {
-            Some(color) => Ok(color),
-            None => Err(DeError.new(format("Invalid hex color: {s}"))),
+            Option.Some(color) => Result.Ok(color),
+            Option.None => Result.Err(DeError.new(format("Invalid hex color: {s}"))),
         }
     }
 }
@@ -92,7 +92,7 @@ struct Batch {
 Batch: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Batch, DeError> {
         let values = List<i32>.deserialize(mut d)?
-        Ok(Batch { values })
+        Result.Ok(Batch { values })
     }
 }
 
@@ -110,7 +110,7 @@ fn main() {
     xs.push(1)
     xs.push(2)
     println(to_text(xs).unwrap())
-    println(to_text(Some(3)).unwrap())
+    println(to_text(Option.Some(3)).unwrap())
     println(to_text((1, "a".to_string())).unwrap())
 
     let n: Result<i32, DeError> = from_text("12")

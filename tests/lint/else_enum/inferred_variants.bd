@@ -1,0 +1,54 @@
+// The inferred spelling `.Variant` names the same variants as `Enum.Variant`, so `else_on_local_enum` reports the same
+// matches (spec/lint.md LN17, spec/target-typing.md TT13). `Option` and `Result` are not enums of this package.
+
+enum Shape {
+    Circle(i32)
+    Square(i32)
+    Triangle
+}
+
+enum Level {
+    Low
+    High
+}
+
+fn radius(s: Shape): i32 {
+    match s {
+        .Circle(r) => r
+        else => 0 //~ L0004
+    }
+}
+
+fn is_high(l: Level): bool {
+    match l {
+        .High => true
+        else => false //~ L0004
+    }
+}
+
+fn mixed(s: Shape): i32 {
+    match s {
+        .Square(n) => n
+        Shape.Triangle => 3
+        else => 0 //~ L0004
+    }
+}
+
+fn listed(s: Shape): i32 {
+    match s {
+        .Circle(r) => r
+        .Square(n) => n
+        .Triangle => 3
+    }
+}
+
+fn first(o: Option<i32>): i32 {
+    match o {
+        .Some(v) => v
+        else => 0
+    }
+}
+
+fn main() {
+    println("{} {} {} {} {}", radius(.Circle(1)), is_high(.Low), mixed(.Triangle), listed(.Triangle), first(.None))
+}

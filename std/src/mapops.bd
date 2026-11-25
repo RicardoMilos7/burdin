@@ -78,8 +78,8 @@ MapKeys<I, K, V>: Iterator<&K> where I: Iterator<(&K, &V)> {
     /// The next key, or `None` when the map is exhausted.
     fn next(mut self): Option<&K> {
         match self.inner.next() {
-            Some((key, _)) => Some(key),
-            None => None,
+            Option.Some((key, _)) => Option.Some(key),
+            Option.None => Option.None,
         }
     }
 }
@@ -88,8 +88,8 @@ MapValues<I, K, V>: Iterator<&V> where I: Iterator<(&K, &V)> {
     /// The next value, or `None` when the map is exhausted.
     fn next(mut self): Option<&V> {
         match self.inner.next() {
-            Some((_, value)) => Some(value),
-            None => None,
+            Option.Some((_, value)) => Option.Some(value),
+            Option.None => Option.None,
         }
     }
 }
@@ -98,8 +98,8 @@ MapIntoKeys<I, K, V>: Iterator<K> where I: Iterator<(K, V)> {
     /// The next key, or `None` when the map is exhausted. The value is dropped.
     fn next(mut self): Option<K> {
         match self.inner.next() {
-            Some((key, _)) => Some(key),
-            None => None,
+            Option.Some((key, _)) => Option.Some(key),
+            Option.None => Option.None,
         }
     }
 }
@@ -108,8 +108,8 @@ MapIntoValues<I, K, V>: Iterator<V> where I: Iterator<(K, V)> {
     /// The next value, or `None` when the map is exhausted. The key is dropped.
     fn next(mut self): Option<V> {
         match self.inner.next() {
-            Some((_, value)) => Some(value),
-            None => None,
+            Option.Some((_, value)) => Option.Some(value),
+            Option.None => Option.None,
         }
     }
 }
@@ -222,8 +222,8 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
 /// let v = m.get_or_insert_with(1, || 7)
 /// *v = *v + 1
 /// match m.get(1) {
-///     Some(x) => assert_eq(*x, 8),
-///     None => panic("missing"),
+///     Option.Some(x) => assert_eq(*x, 8),
+///     Option.None => panic("missing"),
 /// }
 /// ```
 fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: F): &mut V where K: Eq {
@@ -241,11 +241,11 @@ fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: 
 /// ```
 fn Map<K, V>.update<F: FnOnce(&mut V)>(mut self, key: K, own change: F): bool where K: Eq {
     match self.get_mut(key) {
-        Some(value) => {
+        Option.Some(value) => {
             change(value)
             true
         }
-        None => false,
+        Option.None => false,
     }
 }
 
@@ -261,10 +261,10 @@ fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K:
     let mut iter = iter
     loop {
         match iter.next() {
-            Some((key, value)) => {
+            Option.Some((key, value)) => {
                 self.insert(key, value)
             }
-            None => break,
+            Option.None => break,
         }
     }
 }
@@ -277,17 +277,17 @@ fn Map<K, V, A>.extend_iter<I: Iterator<(K, V)>>(mut self, own iter: I) where K:
 /// m.upsert(1, 10, |v| *v = *v + 1)
 /// m.upsert(1, 10, |v| *v = *v + 1)
 /// match m.get(1) {
-///     Some(v) => assert_eq(*v, 11),
-///     None => panic("missing"),
+///     Option.Some(v) => assert_eq(*v, 11),
+///     Option.None => panic("missing"),
 /// }
 /// ```
 fn Map<K, V>.upsert<F: FnOnce(&mut V)>(mut self, own key: K, own value: V, own change: F) where K: Eq {
     if self.contains_key(key) {
         match self.get_mut(key) {
-            Some(existing) => {
+            Option.Some(existing) => {
                 change(existing)
             }
-            None => {}
+            Option.None => {}
         }
         return
     }

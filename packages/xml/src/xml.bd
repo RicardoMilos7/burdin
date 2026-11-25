@@ -131,7 +131,7 @@ Declaration {
     /// assert_eq(decl.encoding.unwrap().as_str(), "UTF-8")
     /// ```
     fn new(): Declaration {
-        Declaration { version: "1.0".to_string(), encoding: Some("UTF-8".to_string()), standalone: None }
+        Declaration { version: "1.0".to_string(), encoding: Option.Some("UTF-8".to_string()), standalone: Option.None }
     }
 }
 
@@ -232,30 +232,30 @@ Node {
             Node.CData(t) => {
                 __check_chars(t.as_str())?
                 if t.find_str("]]>").is_some() {
-                    return Err(DeError.new("a CDATA section cannot contain ']]>'"))
+                    return Result.Err(DeError.new("a CDATA section cannot contain ']]>'"))
                 }
                 out.push_str("<![CDATA[")
                 out.push_str(t.as_str())
                 out.push_str("]]>")
-                Ok(())
+                Result.Ok(())
             }
             Node.Comment(t) => {
                 __check_chars(t.as_str())?
                 if t.find_str("--").is_some() || t.ends_with("-") {
-                    return Err(DeError.new("a comment cannot contain '--' or end with '-'"))
+                    return Result.Err(DeError.new("a comment cannot contain '--' or end with '-'"))
                 }
                 out.push_str("<!--")
                 out.push_str(t.as_str())
                 out.push_str("-->")
-                Ok(())
+                Result.Ok(())
             }
             Node.Pi(p) => {
                 if !__is_name(p.target.as_str()) || p.target.as_str().eq_ignore_ascii_case("xml") {
-                    return Err(DeError.new(format("invalid processing instruction target '{}'", p.target)))
+                    return Result.Err(DeError.new(format("invalid processing instruction target '{}'", p.target)))
                 }
                 __check_chars(p.data.as_str())?
                 if p.data.find_str("?>").is_some() {
-                    return Err(DeError.new("processing instruction data cannot contain '?>'"))
+                    return Result.Err(DeError.new("processing instruction data cannot contain '?>'"))
                 }
                 out.push_str("<?")
                 out.push_str(p.target.as_str())
@@ -264,7 +264,7 @@ Node {
                     out.push_str(p.data.as_str())
                 }
                 out.push_str("?>")
-                Ok(())
+                Result.Ok(())
             }
         }
     }
@@ -336,11 +336,11 @@ Element {
         let mut i: usize = 0
         while i < self.attributes.len() {
             if self.attributes[i].name.as_str() == name {
-                return Some(i)
+                return Option.Some(i)
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// Adds or replaces the attribute `name`.
@@ -354,8 +354,8 @@ Element {
     /// ```
     fn set_attr(mut self, name: str, value: str) {
         match self.attr_index(name) {
-            Some(i) => self.attributes[i].value = value.to_string(),
-            None => self.attributes.push(Attribute.new(name, value)),
+            Option.Some(i) => self.attributes[i].value = value.to_string(),
+            Option.None => self.attributes.push(Attribute.new(name, value)),
         }
     }
 
@@ -371,8 +371,8 @@ Element {
     fn set_attr_ns(mut self, name: str, namespace: str, value: str) {
         self.set_attr(name, value)
         match self.attr_index(name) {
-            Some(i) => self.attributes[i].namespace = namespace.to_string(),
-            None => {}
+            Option.Some(i) => self.attributes[i].namespace = namespace.to_string(),
+            Option.None => {}
         }
         let prefix = __prefix_of(name)
         if prefix.len() > 0 && prefix.as_str() != "xml" && self.lookup_namespace(prefix.as_str()).is_none() {
@@ -391,11 +391,11 @@ Element {
     /// ```
     fn remove_attr(mut self, name: str): bool {
         match self.attr_index(name) {
-            Some(i) => {
+            Option.Some(i) => {
                 self.attributes.remove(i)
                 true
             }
-            None => false,
+            Option.None => false,
         }
     }
 
@@ -553,8 +553,8 @@ Element {
     /// ```
     fn attr(self, name: str): Option<String> {
         match self.attr_index(name) {
-            Some(i) => Some(self.attributes[i].value.clone()),
-            None => None,
+            Option.Some(i) => Option.Some(self.attributes[i].value.clone()),
+            Option.None => Option.None,
         }
     }
 
@@ -586,11 +586,11 @@ Element {
                 && self.attributes[i].namespace.as_str() == namespace
                 && self.attributes[i].local_name().as_str() == local
             if found {
-                return Some(self.attributes[i].value.clone())
+                return Option.Some(self.attributes[i].value.clone())
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// The URI this element's own declarations bind `prefix` to (an empty prefix is the default namespace); `xml` is
@@ -605,7 +605,7 @@ Element {
     /// ```
     fn lookup_namespace(self, prefix: str): Option<String> {
         if prefix == "xml" {
-            return Some(XML_NAMESPACE.to_string())
+            return Option.Some(XML_NAMESPACE.to_string())
         }
         if prefix.len() == 0 {
             return self.attr("xmlns")
@@ -674,14 +674,14 @@ Element {
             match self.children[i] {
                 Node.Element(e) => {
                     if (*e).name.as_str() == name {
-                        return Some((*e).copy())
+                        return Option.Some((*e).copy())
                     }
                 }
                 else => {}
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// The child elements whose qualified name is `name`: copies, in order.
@@ -741,14 +741,14 @@ Element {
             match self.children[i] {
                 Node.Element(e) => {
                     if (*e).is_named(namespace, local) {
-                        return Some((*e).copy())
+                        return Option.Some((*e).copy())
                     }
                 }
                 else => {}
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// The child elements in the namespace `namespace` with the local name `local`: copies, in order.
@@ -785,22 +785,22 @@ Element {
     /// ```
     fn find_ns(self, namespace: str, local: str): Option<Element> {
         if self.is_named(namespace, local) {
-            return Some(self.copy())
+            return Option.Some(self.copy())
         }
         let mut i: usize = 0
         while i < self.children.len() {
             match self.children[i] {
                 Node.Element(e) => {
                     match (*e).find_ns(namespace, local) {
-                        Some(found) => return Some(found),
-                        None => {}
+                        Option.Some(found) => return Option.Some(found),
+                        Option.None => {}
                     }
                 }
                 else => {}
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// Whether this element is in the namespace `namespace` and has the local name `local`.
@@ -853,7 +853,7 @@ Element {
     fn to_xml(self): Result<String, DeError> {
         let mut out = String.new()
         self.write_to(mut out, false, 0)?
-        Ok(out)
+        Result.Ok(out)
     }
 
     /// This element as XML with two-space indentation: an element that has only element, comment, and instruction
@@ -867,22 +867,22 @@ Element {
     fn to_xml_pretty(self): Result<String, DeError> {
         let mut out = String.new()
         self.write_to(mut out, true, 0)?
-        Ok(out)
+        Result.Ok(out)
     }
 
     priv fn write_to(self, mut out: String, pretty: bool, level: usize): Result<(), DeError> {
         if level >= MAX_DEPTH {
-            return Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
+            return Result.Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
         }
         if !__is_name(self.name.as_str()) {
-            return Err(DeError.new(format("invalid element name '{}'", self.name)))
+            return Result.Err(DeError.new(format("invalid element name '{}'", self.name)))
         }
         out.push('<')
         out.push_str(self.name.as_str())
         let mut i: usize = 0
         while i < self.attributes.len() {
             if !__is_name(self.attributes[i].name.as_str()) {
-                return Err(DeError.new(format("invalid attribute name '{}'", self.attributes[i].name)))
+                return Result.Err(DeError.new(format("invalid attribute name '{}'", self.attributes[i].name)))
             }
             out.push(' ')
             out.push_str(self.attributes[i].name.as_str())
@@ -893,7 +893,7 @@ Element {
         }
         if self.children.is_empty() {
             out.push_str("/>")
-            return Ok(())
+            return Result.Ok(())
         }
         out.push('>')
         // An element is laid out one child per line only when no child is text; mixed content is kept as written.
@@ -936,12 +936,12 @@ Element {
         out.push_str("</")
         out.push_str(self.name.as_str())
         out.push('>')
-        Ok(())
+        Result.Ok(())
     }
 
     priv fn flatten_into(self, mut slots: List<Slot>, depth: usize): Result<usize, DeError> {
         if depth >= MAX_DEPTH {
-            return Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
+            return Result.Err(DeError.new(format("elements are nested more than {MAX_DEPTH} deep")))
         }
         let index = slots.len()
         slots.push(Slot {
@@ -962,7 +962,7 @@ Element {
             }
             i = i + 1
         }
-        Ok(index)
+        Result.Ok(index)
     }
 }
 
@@ -977,7 +977,7 @@ Document {
     /// ```
     fn new(own root: Element): Document {
         Document {
-            declaration: None,
+            declaration: Option.None,
             before: List<Node>.new(),
             root,
             after: List<Node>.new(),
@@ -993,7 +993,7 @@ Document {
     /// ```
     fn with_declaration(own self): Document {
         let mut document = self
-        document.declaration = Some(Declaration.new())
+        document.declaration = Option.Some(Declaration.new())
         document
     }
 
@@ -1023,13 +1023,13 @@ Document {
     priv fn write_all(self, pretty: bool): Result<String, DeError> {
         let mut out = String.new()
         match self.declaration {
-            Some(d) => {
+            Option.Some(d) => {
                 __write_declaration(mut out, d)?
                 if pretty {
                     out.push('\n')
                 }
             }
-            None => {}
+            Option.None => {}
         }
         let mut i: usize = 0
         while i < self.before.len() {
@@ -1051,7 +1051,7 @@ Document {
             }
             j = j + 1
         }
-        Ok(out)
+        Result.Ok(out)
     }
 }
 
@@ -1128,15 +1128,15 @@ Parser {
     /// assert(parser.parse_document().is_err())
     /// ```
     fn parse_document(mut self): Result<Document, DeError> {
-        let mut declaration: Option<Declaration> = None
+        let mut declaration: Option<Declaration> = Option.None
         if self.starts_with_at("<?xml") && self.xml_declaration_follows() {
-            declaration = Some(self.parse_declaration()?)
+            declaration = Option.Some(self.parse_declaration()?)
         }
         let mut before = List<Node>.new()
         loop {
             self.skip_ws()
             if self.at_end() {
-                return Err(self.fail("the document has no root element"))
+                return Result.Err(self.fail("the document has no root element"))
             }
             if self.starts_with_at("<!--") {
                 let comment = self.parse_comment()?
@@ -1145,11 +1145,11 @@ Parser {
                 let instruction = self.parse_instruction()?
                 before.push(Node.Pi(instruction))
             } else if self.starts_with_at("<!") {
-                return Err(self.unsupported_declaration())
+                return Result.Err(self.unsupported_declaration())
             } else if self.peek() == 60 {
                 break
             } else {
-                return Err(self.fail("text is not allowed before the root element"))
+                return Result.Err(self.fail("text is not allowed before the root element"))
             }
         }
         let root = self.parse_element()?
@@ -1166,12 +1166,12 @@ Parser {
                 let instruction = self.parse_instruction()?
                 after.push(Node.Pi(instruction))
             } else if self.peek() == 60 {
-                return Err(self.fail("a document has only one root element"))
+                return Result.Err(self.fail("a document has only one root element"))
             } else {
-                return Err(self.fail("text is not allowed after the root element"))
+                return Result.Err(self.fail("text is not allowed after the root element"))
             }
         }
-        Ok(Document { declaration, before, root, after })
+        Result.Ok(Document { declaration, before, root, after })
     }
 
     // ----- scanning
@@ -1309,13 +1309,13 @@ Parser {
     priv fn read_name(mut self): Result<String, DeError> {
         let start = self.pos
         if self.at_end() || !__is_name_start(self.peek()) {
-            return Err(self.fail("expected a name"))
+            return Result.Err(self.fail("expected a name"))
         }
         self.pos = self.pos + 1
         while self.pos < self.text.len() && __is_name_byte(self.peek()) {
             self.pos = self.pos + 1
         }
-        Ok(self.text[start..self.pos].to_string())
+        Result.Ok(self.text[start..self.pos].to_string())
     }
 
     /// Whether the text after `<?xml` makes it the declaration (white space or `?`), not another target.
@@ -1335,12 +1335,12 @@ Parser {
         self.pos = self.pos + name.len()
         self.skip_ws()
         if self.at_end() || self.peek() != 61 {
-            return Err(self.fail(format("expected '=' after '{name}' in the XML declaration")))
+            return Result.Err(self.fail(format("expected '=' after '{name}' in the XML declaration")))
         }
         self.pos = self.pos + 1
         self.skip_ws()
         if self.at_end() || (self.peek() != 34 && self.peek() != 39) {
-            return Err(self.fail("expected a quoted value in the XML declaration"))
+            return Result.Err(self.fail("expected a quoted value in the XML declaration"))
         }
         let quote = self.peek()
         self.pos = self.pos + 1
@@ -1349,58 +1349,58 @@ Parser {
             self.pos = self.pos + 1
         }
         if self.at_end() {
-            return Err(self.fail("unterminated value in the XML declaration"))
+            return Result.Err(self.fail("unterminated value in the XML declaration"))
         }
         let value = self.text[start..self.pos].to_string()
         self.pos = self.pos + 1
-        Ok(value)
+        Result.Ok(value)
     }
 
     priv fn parse_declaration(mut self): Result<Declaration, DeError> {
         self.pos = self.pos + 5
         self.skip_ws()
         if !self.starts_with_at("version") {
-            return Err(self.fail("the XML declaration needs a version"))
+            return Result.Err(self.fail("the XML declaration needs a version"))
         }
         let version_at = self.pos
         let version = self.read_pseudo_attribute("version")?
         if version.as_str() != "1.0" {
-            return Err(self.fail_at(format("unsupported XML version '{version}': only 1.0 is supported"), version_at))
+            return Result.Err(self.fail_at(format("unsupported XML version '{version}': only 1.0 is supported"), version_at))
         }
-        let mut encoding: Option<String> = None
-        let mut standalone: Option<bool> = None
+        let mut encoding: Option<String> = Option.None
+        let mut standalone: Option<bool> = Option.None
         let mut spaced = self.skip_ws()
         if self.starts_with_at("encoding") {
             if !spaced {
-                return Err(self.fail("expected white space before 'encoding'"))
+                return Result.Err(self.fail("expected white space before 'encoding'"))
             }
             let at = self.pos
             let value = self.read_pseudo_attribute("encoding")?
             if !__encoding_ok(value) {
                 let shown = value.clone()
                 let message = format("unsupported encoding '{shown}': only UTF-8 is supported")
-                return Err(self.fail_at(message.as_str(), at))
+                return Result.Err(self.fail_at(message.as_str(), at))
             }
-            encoding = Some(value)
+            encoding = Option.Some(value)
             spaced = self.skip_ws()
         }
         if self.starts_with_at("standalone") {
             if !spaced {
-                return Err(self.fail("expected white space before 'standalone'"))
+                return Result.Err(self.fail("expected white space before 'standalone'"))
             }
             let at = self.pos
             let value = self.read_pseudo_attribute("standalone")?
             match __yes_no(value) {
-                Some(answer) => standalone = Some(answer),
-                None => return Err(self.fail_at("standalone must be 'yes' or 'no'", at)),
+                Option.Some(answer) => standalone = Option.Some(answer),
+                Option.None => return Result.Err(self.fail_at("standalone must be 'yes' or 'no'", at)),
             }
             self.skip_ws()
         }
         if !self.starts_with_at("?>") {
-            return Err(self.fail("expected '?>' at the end of the XML declaration"))
+            return Result.Err(self.fail("expected '?>' at the end of the XML declaration"))
         }
         self.pos = self.pos + 2
-        Ok(Declaration { version, encoding, standalone })
+        Result.Ok(Declaration { version, encoding, standalone })
     }
 
     /// Reads `<!-- text -->`.
@@ -1409,19 +1409,19 @@ Parser {
         let start = self.pos
         loop {
             if self.at_end() {
-                return Err(self.fail("unterminated comment"))
+                return Result.Err(self.fail("unterminated comment"))
             }
             if self.invalid_char_here() {
-                return Err(self.fail("a character that XML cannot contain"))
+                return Result.Err(self.fail("a character that XML cannot contain"))
             }
             if self.starts_with_at("--") {
                 if self.starts_with_at("-->") {
                     let raw = self.slice_text(start, self.pos)
                     let body = __normalize_newlines(raw.as_str())
                     self.pos = self.pos + 3
-                    return Ok(body)
+                    return Result.Ok(body)
                 }
-                return Err(self.fail("'--' is not allowed inside a comment"))
+                return Result.Err(self.fail("'--' is not allowed inside a comment"))
             }
             self.pos = self.pos + 1
         }
@@ -1432,32 +1432,32 @@ Parser {
         self.pos = self.pos + 2
         let target_at = self.pos
         let target = match self.read_name() {
-            Ok(name) => name,
-            Err(_) => return Err(self.fail("expected a processing instruction target")),
+            Result.Ok(name) => name,
+            Result.Err(_) => return Result.Err(self.fail("expected a processing instruction target")),
         }
         if target.as_str().eq_ignore_ascii_case("xml") {
-            return Err(self.fail_at("the XML declaration is only allowed at the very start of the document", target_at))
+            return Result.Err(self.fail_at("the XML declaration is only allowed at the very start of the document", target_at))
         }
         if self.starts_with_at("?>") {
             self.pos = self.pos + 2
-            return Ok(Instruction { target, data: String.new() })
+            return Result.Ok(Instruction { target, data: String.new() })
         }
         if !self.skip_ws() {
-            return Err(self.fail("expected white space or '?>' after the instruction target"))
+            return Result.Err(self.fail("expected white space or '?>' after the instruction target"))
         }
         let start = self.pos
         loop {
             if self.at_end() {
-                return Err(self.fail("unterminated processing instruction"))
+                return Result.Err(self.fail("unterminated processing instruction"))
             }
             if self.starts_with_at("?>") {
                 let raw = self.slice_text(start, self.pos)
                 let data = __normalize_newlines(raw.as_str())
                 self.pos = self.pos + 2
-                return Ok(Instruction { target, data })
+                return Result.Ok(Instruction { target, data })
             }
             if self.invalid_char_here() {
-                return Err(self.fail("a character that XML cannot contain"))
+                return Result.Err(self.fail("a character that XML cannot contain"))
             }
             self.pos = self.pos + 1
         }
@@ -1469,16 +1469,16 @@ Parser {
         let start = self.pos
         loop {
             if self.at_end() {
-                return Err(self.fail("unterminated CDATA section"))
+                return Result.Err(self.fail("unterminated CDATA section"))
             }
             if self.starts_with_at("]]>") {
                 let raw = self.slice_text(start, self.pos)
                 let body = __normalize_newlines(raw.as_str())
                 self.pos = self.pos + 3
-                return Ok(body)
+                return Result.Ok(body)
             }
             if self.invalid_char_here() {
-                return Err(self.fail("a character that XML cannot contain"))
+                return Result.Err(self.fail("a character that XML cannot contain"))
             }
             self.pos = self.pos + 1
         }
@@ -1499,7 +1499,7 @@ Parser {
         let start = self.pos
         self.pos = self.pos + 1
         if self.at_end() {
-            return Err(self.fail("unexpected end of input in a reference"))
+            return Result.Err(self.fail("unexpected end of input in a reference"))
         }
         if self.peek() == 35 {
             self.pos = self.pos + 1
@@ -1531,27 +1531,27 @@ Parser {
                 self.pos = self.pos + 1
             }
             if count == 0 {
-                return Err(self.fail_at("invalid character reference", start))
+                return Result.Err(self.fail_at("invalid character reference", start))
             }
             if self.at_end() || self.peek() != 59 {
-                return Err(self.fail("expected ';' after a character reference"))
+                return Result.Err(self.fail("expected ';' after a character reference"))
             }
             self.pos = self.pos + 1
             if !__is_xml_char(value) {
-                return Err(self.fail_at("a character reference to a character that XML cannot contain", start))
+                return Result.Err(self.fail_at("a character reference to a character that XML cannot contain", start))
             }
             match value.to_char() {
-                Some(c) => out.push(c),
-                None => return Err(self.fail_at("invalid character reference", start)),
+                Option.Some(c) => out.push(c),
+                Option.None => return Result.Err(self.fail_at("invalid character reference", start)),
             }
-            return Ok(())
+            return Result.Ok(())
         }
         let name = match self.read_name() {
-            Ok(name) => name,
-            Err(_) => return Err(self.fail_at("expected an entity name after '&'", start)),
+            Result.Ok(name) => name,
+            Result.Err(_) => return Result.Err(self.fail_at("expected an entity name after '&'", start)),
         }
         if self.at_end() || self.peek() != 59 {
-            return Err(self.fail("expected ';' after an entity name"))
+            return Result.Err(self.fail("expected ';' after an entity name"))
         }
         self.pos = self.pos + 1
         if name.as_str() == "amp" {
@@ -1565,9 +1565,9 @@ Parser {
         } else if name.as_str() == "apos" {
             out.push('\'')
         } else {
-            return Err(self.fail_at(format("undefined entity '&{name};': only the five predefined entities exist"), start))
+            return Result.Err(self.fail_at(format("undefined entity '&{name};': only the five predefined entities exist"), start))
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Reads character data up to the next `<`, resolving references and normalizing line ends to line feeds.
@@ -1592,22 +1592,22 @@ Parser {
                 }
                 chunk = self.pos
             } else if b == 93 && self.starts_with_at("]]>") {
-                return Err(self.fail("']]>' is not allowed in text"))
+                return Result.Err(self.fail("']]>' is not allowed in text"))
             } else if self.invalid_char_here() {
-                return Err(self.fail("a character that XML cannot contain"))
+                return Result.Err(self.fail("a character that XML cannot contain"))
             } else {
                 self.pos = self.pos + 1
             }
         }
         self.copy_chunk(mut out, chunk, self.pos)
-        Ok(out)
+        Result.Ok(out)
     }
 
     /// Reads a quoted attribute value: references are resolved and each tab, line feed, and carriage return becomes a
     /// space (a character reference to one is kept).
     priv fn read_attribute_value(mut self): Result<String, DeError> {
         if self.at_end() || (self.peek() != 34 && self.peek() != 39) {
-            return Err(self.fail("expected a quoted attribute value"))
+            return Result.Err(self.fail("expected a quoted attribute value"))
         }
         let quote = self.peek()
         self.pos = self.pos + 1
@@ -1618,10 +1618,10 @@ Parser {
             if b == quote {
                 self.copy_chunk(mut out, chunk, self.pos)
                 self.pos = self.pos + 1
-                return Ok(out)
+                return Result.Ok(out)
             }
             if b == 60 {
-                return Err(self.fail("'<' is not allowed in an attribute value"))
+                return Result.Err(self.fail("'<' is not allowed in an attribute value"))
             }
             if b == 38 {
                 self.copy_chunk(mut out, chunk, self.pos)
@@ -1641,12 +1641,12 @@ Parser {
                 }
                 chunk = self.pos
             } else if self.invalid_char_here() {
-                return Err(self.fail("a character that XML cannot contain"))
+                return Result.Err(self.fail("a character that XML cannot contain"))
             } else {
                 self.pos = self.pos + 1
             }
         }
-        Err(self.fail("unterminated attribute value"))
+        Result.Err(self.fail("unterminated attribute value"))
     }
 
     // ----- namespaces
@@ -1654,19 +1654,19 @@ Parser {
     /// The URI bound to `prefix` in the scopes that are open (an empty prefix is the default namespace).
     priv fn lookup(self, prefix: str): Option<String> {
         if prefix == "xml" {
-            return Some(XML_NAMESPACE.to_string())
+            return Option.Some(XML_NAMESPACE.to_string())
         }
         let mut i = self.scopes.len()
         while i > 0 {
             i = i - 1
             if self.scopes[i].prefix.as_str() == prefix {
-                return Some(self.scopes[i].uri.clone())
+                return Option.Some(self.scopes[i].uri.clone())
             }
         }
         if prefix.len() == 0 {
-            return Some(String.new())
+            return Option.Some(String.new())
         }
-        None
+        Option.None
     }
 
     // ----- elements
@@ -1679,14 +1679,14 @@ Parser {
         let name = self.read_name()?
         let problem = __qname_problem(name)
         if problem.len() > 0 {
-            return Err(self.fail_at(problem.as_str(), start + 1))
+            return Result.Err(self.fail_at(problem.as_str(), start + 1))
         }
         let mut raw = List<RawAttribute>.new()
         let mut empty = false
         loop {
             let spaced = self.skip_ws()
             if self.at_end() {
-                return Err(self.fail("unexpected end of input in a start tag"))
+                return Result.Err(self.fail("unexpected end of input in a start tag"))
             }
             let b = self.peek()
             if b == 62 {
@@ -1699,32 +1699,32 @@ Parser {
                     empty = true
                     break
                 }
-                return Err(self.fail("expected '>' after '/'"))
+                return Result.Err(self.fail("expected '>' after '/'"))
             }
             if !spaced {
-                return Err(self.fail("expected white space before an attribute"))
+                return Result.Err(self.fail("expected white space before an attribute"))
             }
             let attribute_at = self.pos
             let attribute_name = self.read_name()?
             let attribute_problem = __qname_problem(attribute_name)
             if attribute_problem.len() > 0 {
-                return Err(self.fail_at(attribute_problem.as_str(), attribute_at))
+                return Result.Err(self.fail_at(attribute_problem.as_str(), attribute_at))
             }
             self.skip_ws()
             if self.at_end() || self.peek() != 61 {
                 let shown = attribute_name.clone()
-                return Err(self.fail(format("expected '=' after the attribute name '{shown}'").as_str()))
+                return Result.Err(self.fail(format("expected '=' after the attribute name '{shown}'").as_str()))
             }
             self.pos = self.pos + 1
             self.skip_ws()
             let value = self.read_attribute_value()?
             if raw.len() >= MAX_ATTRIBUTES {
-                return Err(self.fail_at(format("more than {MAX_ATTRIBUTES} attributes in one element"), attribute_at))
+                return Result.Err(self.fail_at(format("more than {MAX_ATTRIBUTES} attributes in one element"), attribute_at))
             }
             if __has_raw(raw, attribute_name) {
                 let shown = attribute_name.clone()
                 let message = format("duplicate attribute '{shown}'")
-                return Err(self.fail_at(message.as_str(), attribute_at))
+                return Result.Err(self.fail_at(message.as_str(), attribute_at))
             }
             raw.push(RawAttribute { name: attribute_name, value, position: attribute_at })
         }
@@ -1735,7 +1735,7 @@ Parser {
             if raw[i].name.as_str() == "xmlns" {
                 if raw[i].value.as_str() == XML_NAMESPACE {
                     self.scopes.truncate(base)
-                    return Err(self.fail_at("the XML namespace cannot be the default namespace", raw[i].position))
+                    return Result.Err(self.fail_at("the XML namespace cannot be the default namespace", raw[i].position))
                 }
                 self.scopes.push(Binding { prefix: String.new(), uri: raw[i].value.clone() })
             } else if raw[i].name.starts_with("xmlns:") {
@@ -1744,7 +1744,7 @@ Parser {
                 let problem_text = __declaration_problem(prefix, uri)
                 if problem_text.len() > 0 {
                     self.scopes.truncate(base)
-                    return Err(self.fail_at(problem_text.as_str(), raw[i].position))
+                    return Result.Err(self.fail_at(problem_text.as_str(), raw[i].position))
                 }
                 self.scopes.push(Binding { prefix, uri })
             }
@@ -1757,13 +1757,13 @@ Parser {
         let prefix = element.prefix()
         if prefix.as_str() == "xmlns" {
             self.scopes.truncate(base)
-            return Err(self.fail_at("the prefix 'xmlns' cannot be used on an element", start + 1))
+            return Result.Err(self.fail_at("the prefix 'xmlns' cannot be used on an element", start + 1))
         }
         match self.lookup(prefix.as_str()) {
-            Some(uri) => element.namespace = uri,
-            None => {
+            Option.Some(uri) => element.namespace = uri,
+            Option.None => {
                 self.scopes.truncate(base)
-                return Err(self.fail_at(format("the namespace prefix '{prefix}' is not declared"), start + 1))
+                return Result.Err(self.fail_at(format("the namespace prefix '{prefix}' is not declared"), start + 1))
             }
         }
         let mut j: usize = 0
@@ -1777,10 +1777,10 @@ Parser {
                 let attribute_prefix = attribute.prefix()
                 if attribute_prefix.len() > 0 {
                     match self.lookup(attribute_prefix.as_str()) {
-                        Some(uri) => attribute.namespace = uri,
-                        None => {
+                        Option.Some(uri) => attribute.namespace = uri,
+                        Option.None => {
                             self.scopes.truncate(base)
-                            return Err(self.fail_at(
+                            return Result.Err(self.fail_at(
                                 format("the namespace prefix '{attribute_prefix}' is not declared"),
                                 raw[j].position,
                             ))
@@ -1791,7 +1791,7 @@ Parser {
                 if element.has_same_expanded_name(attribute) {
                     self.scopes.truncate(base)
                     let message = format("duplicate attribute '{}' after resolving its namespace", attribute.name.clone())
-                    return Err(self.fail_at(message.as_str(), raw[j].position))
+                    return Result.Err(self.fail_at(message.as_str(), raw[j].position))
                 }
             }
             element.attributes.push(attribute)
@@ -1801,7 +1801,7 @@ Parser {
         if empty {
             self.scopes.truncate(base)
         }
-        Ok(StartTag { element, empty, declared })
+        Result.Ok(StartTag { element, empty, declared })
     }
 
     /// The line and column of `position`.
@@ -1817,7 +1817,7 @@ Parser {
         let mut declared = List<usize>.new()
         let first = self.parse_start_tag()?
         if first.empty {
-            return Ok(first.element)
+            return Result.Ok(first.element)
         }
         declared.push(first.declared)
         stack.push(first.element)
@@ -1825,36 +1825,36 @@ Parser {
             let top = stack.len() - 1
             if self.at_end() {
                 let open = stack[top].name.clone()
-                return Err(self.fail(format("unexpected end of input: <{open}> is never closed")))
+                return Result.Err(self.fail(format("unexpected end of input: <{open}> is never closed")))
             }
             if self.starts_with_at("</") {
                 let close_at = self.pos
                 self.pos = self.pos + 2
                 let name = match self.read_name() {
-                    Ok(name) => name,
-                    Err(_) => return Err(self.fail("expected an element name after '</'")),
+                    Result.Ok(name) => name,
+                    Result.Err(_) => return Result.Err(self.fail("expected an element name after '</'")),
                 }
                 self.skip_ws()
                 if self.at_end() || self.peek() != 62 {
-                    return Err(self.fail("expected '>' at the end of a closing tag"))
+                    return Result.Err(self.fail("expected '>' at the end of a closing tag"))
                 }
                 self.pos = self.pos + 1
                 if name != stack[top].name {
                     let open = stack[top].name.clone()
-                    return Err(self.fail_at(format("the closing tag </{name}> does not match <{open}>"), close_at))
+                    return Result.Err(self.fail_at(format("the closing tag </{name}> does not match <{open}>"), close_at))
                 }
                 let finished = match stack.pop() {
-                    Some(element) => element,
-                    None => return Err(self.fail("unbalanced elements")),
+                    Option.Some(element) => element,
+                    Option.None => return Result.Err(self.fail("unbalanced elements")),
                 }
                 let count = match declared.pop() {
-                    Some(count) => count,
-                    None => 0,
+                    Option.Some(count) => count,
+                    Option.None => 0,
                 }
                 let keep = self.scopes.len() - count
                 self.scopes.truncate(keep)
                 if stack.is_empty() {
-                    return Ok(finished)
+                    return Result.Ok(finished)
                 }
                 let parent = stack.len() - 1
                 stack[parent].children.push(Node.Element(Heap.new(finished)))
@@ -1868,11 +1868,11 @@ Parser {
                 let instruction = self.parse_instruction()?
                 stack[top].children.push(Node.Pi(instruction))
             } else if self.starts_with_at("<!") {
-                return Err(self.unsupported_declaration())
+                return Result.Err(self.unsupported_declaration())
             } else if self.peek() == 60 {
                 let tag_at = self.pos
                 if stack.len() >= MAX_DEPTH {
-                    return Err(self.fail(format("elements are nested more than {MAX_DEPTH} deep")))
+                    return Result.Err(self.fail(format("elements are nested more than {MAX_DEPTH} deep")))
                 }
                 let tag = self.parse_start_tag()?
                 if tag.empty {
@@ -1935,7 +1935,7 @@ Writer {
     /// assert_eq(root.name.as_str(), "Item")
     /// ```
     fn new(): Writer {
-        Writer { frames: List<WriterFrame>.new(), root: None, root_name: String.new() }
+        Writer { frames: List<WriterFrame>.new(), root: Option.None, root_name: String.new() }
     }
 
     /// A writer whose root element is called `name`.
@@ -1948,7 +1948,7 @@ Writer {
     /// assert_eq(root.text().as_str(), "5")
     /// ```
     fn with_root(name: str): Writer {
-        Writer { frames: List<WriterFrame>.new(), root: None, root_name: name.to_string() }
+        Writer { frames: List<WriterFrame>.new(), root: Option.None, root_name: name.to_string() }
     }
 
     /// The root element that was written, ending the writer.
@@ -1962,11 +1962,11 @@ Writer {
     /// ```
     fn finish(own self): Result<Element, DeError> {
         if !self.frames.is_empty() {
-            return Err(DeError.new("a container was not closed"))
+            return Result.Err(DeError.new("a container was not closed"))
         }
         match self.root {
-            Some(element) => Ok(element),
-            None => Err(DeError.new("no value was written")),
+            Option.Some(element) => Result.Ok(element),
+            Option.None => Result.Err(DeError.new("no value was written")),
         }
     }
 
@@ -1974,34 +1974,34 @@ Writer {
     priv fn element_name(mut self, type_name: str): Result<String, DeError> {
         if self.frames.is_empty() {
             if self.root_name.len() > 0 {
-                return Ok(self.root_name.clone())
+                return Result.Ok(self.root_name.clone())
             }
             if type_name.len() > 0 {
-                return Ok(type_name.to_string())
+                return Result.Ok(type_name.to_string())
             }
-            return Ok("root".to_string())
+            return Result.Ok("root".to_string())
         }
         let i = self.frames.len() - 1
         let kind = self.frames[i].kind
         if kind == 0 {
-            return Ok("item".to_string())
+            return Result.Ok("item".to_string())
         }
         if kind == 1 {
             return match self.frames[i].pending.take() {
-                Some(name) => Ok(name),
-                None => Err(DeError.new("a struct value without a field name")),
+                Option.Some(name) => Result.Ok(name),
+                Option.None => Result.Err(DeError.new("a struct value without a field name")),
             }
         }
         if kind == 2 {
             if self.frames[i].pending.is_none() {
-                return Err(DeError.new("a map value without a key"))
+                return Result.Err(DeError.new("a map value without a key"))
             }
-            return Ok("value".to_string())
+            return Result.Ok("value".to_string())
         }
         if self.frames[i].arity == 1 {
-            Ok(self.frames[i].variant.clone())
+            Result.Ok(self.frames[i].variant.clone())
         } else {
-            Ok("item".to_string())
+            Result.Ok("item".to_string())
         }
     }
 
@@ -2009,16 +2009,16 @@ Writer {
     priv fn attach(mut self, own element: Element): Result<(), DeError> {
         if self.frames.is_empty() {
             if self.root.is_some() {
-                return Err(DeError.new("an XML document has one root element"))
+                return Result.Err(DeError.new("an XML document has one root element"))
             }
-            self.root = Some(element)
-            return Ok(())
+            self.root = Option.Some(element)
+            return Result.Ok(())
         }
         let i = self.frames.len() - 1
         if self.frames[i].kind == 2 {
             let key = match self.frames[i].pending.take() {
-                Some(key) => key,
-                None => return Err(DeError.new("a map value without a key")),
+                Option.Some(key) => key,
+                Option.None => return Result.Err(DeError.new("a map value without a key")),
             }
             let mut entry = Element.new("entry")
             entry.push_child(Element.new("key").with_text(key.as_str()))
@@ -2027,7 +2027,7 @@ Writer {
         } else {
             self.frames[i].element.push_child(element)
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Writes a scalar: an element holding `text` (none for an empty text).
@@ -2045,39 +2045,39 @@ Writer {
         self.frames.push(WriterFrame {
             element: Element.new(name.as_str()),
             kind,
-            pending: None,
+            pending: Option.None,
             variant: variant.to_string(),
             arity,
         })
-        Ok(())
+        Result.Ok(())
     }
 
     priv fn close(mut self, kind: i32): Result<WriterFrame, DeError> {
         match self.frames.pop() {
-            Some(frame) => {
+            Option.Some(frame) => {
                 if frame.kind == kind {
-                    Ok(frame)
+                    Result.Ok(frame)
                 } else {
-                    Err(DeError.new("unbalanced XML container"))
+                    Result.Err(DeError.new("unbalanced XML container"))
                 }
             }
-            None => Err(DeError.new("unbalanced XML container")),
+            Option.None => Result.Err(DeError.new("unbalanced XML container")),
         }
     }
 
     priv fn set_pending(mut self, kind: i32, name: str): Result<(), DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a name outside a struct or a map"))
+            return Result.Err(DeError.new("a name outside a struct or a map"))
         }
         let i = self.frames.len() - 1
         if self.frames[i].kind != kind {
-            return Err(DeError.new("a name outside a struct or a map"))
+            return Result.Err(DeError.new("a name outside a struct or a map"))
         }
         if self.frames[i].pending.is_some() {
-            return Err(DeError.new("two names in a row"))
+            return Result.Err(DeError.new("two names in a row"))
         }
-        self.frames[i].pending = Some(name.to_string())
-        Ok(())
+        self.frames[i].pending = Option.Some(name.to_string())
+        Result.Ok(())
     }
 }
 
@@ -2305,7 +2305,7 @@ Reader {
     fn from_document(document: Document): Result<Reader, DeError> {
         let mut slots = List<Slot>.new()
         document.root.flatten_into(mut slots, 0)?
-        Ok(Reader {
+        Result.Ok(Reader {
             slots,
             value: 0,
             reads: 0,
@@ -2325,9 +2325,9 @@ Reader {
         let slot = self.value
         if !self.slots[slot].kids.is_empty() {
             let name = self.slots[slot].name.clone()
-            return Err(self.fail_at(slot, format("expected text in <{name}>, found a child element")))
+            return Result.Err(self.fail_at(slot, format("expected text in <{name}>, found a child element")))
         }
-        Ok(self.slots[slot].text.clone())
+        Result.Ok(self.slots[slot].text.clone())
     }
 
     /// Whether `slot` has child elements or text that is not white space.
@@ -2338,10 +2338,10 @@ Reader {
     /// Checks that `slot` holds no text of its own: a container's content is its child elements.
     priv fn require_no_text(self, slot: usize): Result<(), DeError> {
         if __is_blank(self.slots[slot].text.as_str()) {
-            Ok(())
+            Result.Ok(())
         } else {
             let name = self.slots[slot].name.clone()
-            Err(self.fail_at(slot, format("unexpected text in <{name}>")))
+            Result.Err(self.fail_at(slot, format("unexpected text in <{name}>")))
         }
     }
 
@@ -2351,58 +2351,58 @@ Reader {
         let slot = self.value
         self.require_no_text(slot)?
         self.cursors.push(Cursor { slot, next: 0, started: false, reads: self.reads })
-        Ok(())
+        Result.Ok(())
     }
 
     priv fn close(mut self): Result<(), DeError> {
         match self.cursors.pop() {
-            Some(_) => Ok(()),
-            None => Err(DeError.new("unbalanced XML container")),
+            Option.Some(_) => Result.Ok(()),
+            Option.None => Result.Err(DeError.new("unbalanced XML container")),
         }
     }
 
     /// Whether the open container has another child element.
     priv fn more(self): Result<bool, DeError> {
         if self.cursors.is_empty() {
-            return Err(DeError.new("a value outside a container"))
+            return Result.Err(DeError.new("a value outside a container"))
         }
         let top = self.cursors.len() - 1
         let slot = self.cursors[top].slot
-        Ok(self.cursors[top].next < self.slots[slot].kids.len())
+        Result.Ok(self.cursors[top].next < self.slots[slot].kids.len())
     }
 
     /// Takes the next child element of the open container.
     priv fn take_child(mut self): Result<usize, DeError> {
         if self.cursors.is_empty() {
-            return Err(DeError.new("a value outside a container"))
+            return Result.Err(DeError.new("a value outside a container"))
         }
         let top = self.cursors.len() - 1
         let slot = self.cursors[top].slot
         let next = self.cursors[top].next
         if next >= self.slots[slot].kids.len() {
-            return Err(self.fail_at(slot, "expected another element"))
+            return Result.Err(self.fail_at(slot, "expected another element"))
         }
         self.cursors[top].next = next + 1
-        Ok(self.slots[slot].kids[next])
+        Result.Ok(self.slots[slot].kids[next])
     }
 
     /// The child of `slot` called `name`, which must be there exactly once.
     priv fn only_child(self, slot: usize, name: str): Result<usize, DeError> {
-        let mut found: Option<usize> = None
+        let mut found: Option<usize> = Option.None
         let mut i: usize = 0
         while i < self.slots[slot].kids.len() {
             let kid = self.slots[slot].kids[i]
             if self.slots[kid].name.as_str() == name {
                 if found.is_some() {
-                    return Err(self.fail_at(kid, format("duplicate <{name}>")))
+                    return Result.Err(self.fail_at(kid, format("duplicate <{name}>")))
                 }
-                found = Some(kid)
+                found = Option.Some(kid)
             }
             i = i + 1
         }
         match found {
-            Some(kid) => Ok(kid),
-            None => Err(self.fail_at(slot, format("missing <{name}>"))),
+            Option.Some(kid) => Result.Ok(kid),
+            Option.None => Result.Err(self.fail_at(slot, format("missing <{name}>"))),
         }
     }
 
@@ -2411,17 +2411,17 @@ Reader {
         let text = self.leaf_text()?
         let trimmed = text.trim()
         if !__is_integer_text(trimmed) {
-            return Err(self.fail_at(slot, "expected an integer"))
+            return Result.Err(self.fail_at(slot, "expected an integer"))
         }
         match i64.parse(trimmed) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value < low || value > high {
-                    Err(self.fail_at(slot, format("a number that does not fit in {width}")))
+                    Result.Err(self.fail_at(slot, format("a number that does not fit in {width}")))
                 } else {
-                    Ok(value)
+                    Result.Ok(value)
                 }
             }
-            Err(_) => Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
+            Result.Err(_) => Result.Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
         }
     }
 
@@ -2430,17 +2430,17 @@ Reader {
         let text = self.leaf_text()?
         let trimmed = text.trim()
         if !__is_integer_text(trimmed) {
-            return Err(self.fail_at(slot, "expected an integer"))
+            return Result.Err(self.fail_at(slot, "expected an integer"))
         }
         match u64.parse(trimmed) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value > high {
-                    Err(self.fail_at(slot, format("a number that does not fit in {width}")))
+                    Result.Err(self.fail_at(slot, format("a number that does not fit in {width}")))
                 } else {
-                    Ok(value)
+                    Result.Ok(value)
                 }
             }
-            Err(_) => Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
+            Result.Err(_) => Result.Err(self.fail_at(slot, format("a number that does not fit in {width}"))),
         }
     }
 }
@@ -2450,9 +2450,9 @@ Reader: Deserializer {
         self.reads = self.reads + 1
         let slot = self.value
         if !self.has_content(slot) {
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(self.fail_at(slot, "expected an empty element"))
+            Result.Err(self.fail_at(slot, "expected an empty element"))
         }
     }
 
@@ -2461,27 +2461,27 @@ Reader: Deserializer {
         let text = self.leaf_text()?
         let trimmed = text.trim()
         if trimmed == "true" {
-            Ok(true)
+            Result.Ok(true)
         } else if trimmed == "false" {
-            Ok(false)
+            Result.Ok(false)
         } else {
-            Err(self.fail_at(slot, "expected 'true' or 'false'"))
+            Result.Err(self.fail_at(slot, "expected 'true' or 'false'"))
         }
     }
 
     fn deserialize_i8(mut self): Result<i8, DeError> {
         let value = self.read_signed(-128, 127, "i8")?
-        Ok(value as i8)
+        Result.Ok(value as i8)
     }
 
     fn deserialize_i16(mut self): Result<i16, DeError> {
         let value = self.read_signed(-32768, 32767, "i16")?
-        Ok(value as i16)
+        Result.Ok(value as i16)
     }
 
     fn deserialize_i32(mut self): Result<i32, DeError> {
         let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
-        Ok(value as i32)
+        Result.Ok(value as i32)
     }
 
     fn deserialize_i64(mut self): Result<i64, DeError> {
@@ -2490,22 +2490,22 @@ Reader: Deserializer {
 
     fn deserialize_isize(mut self): Result<isize, DeError> {
         let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
-        Ok(value as isize)
+        Result.Ok(value as isize)
     }
 
     fn deserialize_u8(mut self): Result<u8, DeError> {
         let value = self.read_unsigned(255, "u8")?
-        Ok(value as u8)
+        Result.Ok(value as u8)
     }
 
     fn deserialize_u16(mut self): Result<u16, DeError> {
         let value = self.read_unsigned(65535, "u16")?
-        Ok(value as u16)
+        Result.Ok(value as u16)
     }
 
     fn deserialize_u32(mut self): Result<u32, DeError> {
         let value = self.read_unsigned(4294967295, "u32")?
-        Ok(value as u32)
+        Result.Ok(value as u32)
     }
 
     fn deserialize_u64(mut self): Result<u64, DeError> {
@@ -2514,7 +2514,7 @@ Reader: Deserializer {
 
     fn deserialize_usize(mut self): Result<usize, DeError> {
         let value = self.read_unsigned(usize.MAX as u64, "usize")?
-        Ok(value as usize)
+        Result.Ok(value as usize)
     }
 
     fn deserialize_f32(mut self): Result<f32, DeError> {
@@ -2522,14 +2522,14 @@ Reader: Deserializer {
         let text = self.leaf_text()?
         let trimmed = text.trim()
         match f32.parse(trimmed) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() || __names_non_finite(trimmed) {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_at(slot, "a number that does not fit in f32"))
+                    Result.Err(self.fail_at(slot, "a number that does not fit in f32"))
                 }
             }
-            Err(_) => Err(self.fail_at(slot, "expected a number")),
+            Result.Err(_) => Result.Err(self.fail_at(slot, "expected a number")),
         }
     }
 
@@ -2538,14 +2538,14 @@ Reader: Deserializer {
         let text = self.leaf_text()?
         let trimmed = text.trim()
         match f64.parse(trimmed) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() || __names_non_finite(trimmed) {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_at(slot, "a number that does not fit in f64"))
+                    Result.Err(self.fail_at(slot, "a number that does not fit in f64"))
                 }
             }
-            Err(_) => Err(self.fail_at(slot, "expected a number")),
+            Result.Err(_) => Result.Err(self.fail_at(slot, "expected a number")),
         }
     }
 
@@ -2559,9 +2559,9 @@ Reader: Deserializer {
             first = c
         }
         if count != 1 {
-            return Err(self.fail_at(slot, "expected one character"))
+            return Result.Err(self.fail_at(slot, "expected one character"))
         }
-        Ok(first)
+        Result.Ok(first)
     }
 
     fn deserialize_str(mut self): Result<String, DeError> {
@@ -2574,7 +2574,7 @@ Reader: Deserializer {
         let trimmed = text.trim()
         let bytes = trimmed.as_bytes()
         if bytes.len() % 2 != 0 {
-            return Err(self.fail_at(slot, "expected an even number of hexadecimal digits"))
+            return Result.Err(self.fail_at(slot, "expected an even number of hexadecimal digits"))
         }
         let mut out = List<u8>.new()
         let mut i: usize = 0
@@ -2582,12 +2582,12 @@ Reader: Deserializer {
             let high = __hex_value(bytes[i])
             let low = __hex_value(bytes[i + 1])
             if high < 0 || low < 0 {
-                return Err(self.fail_at(slot, "expected hexadecimal digits"))
+                return Result.Err(self.fail_at(slot, "expected hexadecimal digits"))
             }
             out.push((high * 16 + low) as u8)
             i = i + 2
         }
-        Ok(out)
+        Result.Ok(out)
     }
 
     fn begin_seq(mut self): Result<(), DeError> {
@@ -2598,12 +2598,12 @@ Reader: Deserializer {
         if !self.slots[slot].kids.is_empty() {
             self.value = self.slots[slot].kids[0]
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn has_next_seq_element(mut self): Result<bool, DeError> {
         if self.cursors.is_empty() {
-            return Err(DeError.new("a value outside a container"))
+            return Result.Err(DeError.new("a value outside a container"))
         }
         let top = self.cursors.len() - 1
         if !self.cursors[top].started {
@@ -2615,15 +2615,15 @@ Reader: Deserializer {
             }
         }
         if !self.more()? {
-            return Ok(false)
+            return Result.Ok(false)
         }
         let child = self.take_child()?
         if self.slots[child].name.as_str() != "item" {
             let name = self.slots[child].name.clone()
-            return Err(self.fail_at(child, format("expected <item>, found <{name}>")))
+            return Result.Err(self.fail_at(child, format("expected <item>, found <{name}>")))
         }
         self.value = child
-        Ok(true)
+        Result.Ok(true)
     }
 
     fn end_seq(mut self): Result<(), DeError> {
@@ -2642,19 +2642,19 @@ Reader: Deserializer {
         let entry = self.take_child()?
         if self.slots[entry].name.as_str() != "entry" {
             let name = self.slots[entry].name.clone()
-            return Err(self.fail_at(entry, format("expected <entry>, found <{name}>")))
+            return Result.Err(self.fail_at(entry, format("expected <entry>, found <{name}>")))
         }
         self.require_no_text(entry)?
         if self.slots[entry].kids.len() != 2 {
-            return Err(self.fail_at(entry, "an <entry> holds one <key> and one <value>"))
+            return Result.Err(self.fail_at(entry, "an <entry> holds one <key> and one <value>"))
         }
         let key = self.only_child(entry, "key")?
         let value = self.only_child(entry, "value")?
         if !self.slots[key].kids.is_empty() {
-            return Err(self.fail_at(key, "a <key> holds text"))
+            return Result.Err(self.fail_at(key, "a <key> holds text"))
         }
         self.value = value
-        Ok(self.slots[key].text.clone())
+        Result.Ok(self.slots[key].text.clone())
     }
 
     fn end_map(mut self): Result<(), DeError> {
@@ -2672,7 +2672,7 @@ Reader: Deserializer {
     fn field_name(mut self): Result<String, DeError> {
         let child = self.take_child()?
         self.value = child
-        Ok(self.slots[child].name.clone())
+        Result.Ok(self.slots[child].name.clone())
     }
 
     fn end_struct(mut self): Result<(), DeError> {
@@ -2683,28 +2683,28 @@ Reader: Deserializer {
         self.reads = self.reads + 1
         let slot = self.value
         self.variants.push(VariantFrame { slot, variant: slot, arity: 0, next: 0 })
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_name(mut self): Result<String, DeError> {
         if self.variants.is_empty() {
-            return Err(DeError.new("a variant outside an enum"))
+            return Result.Err(DeError.new("a variant outside an enum"))
         }
         let top = self.variants.len() - 1
         let slot = self.variants[top].slot
         self.require_no_text(slot)?
         if self.slots[slot].kids.len() != 1 {
             let name = self.slots[slot].name.clone()
-            return Err(self.fail_at(slot, format("expected one variant element in <{name}>")))
+            return Result.Err(self.fail_at(slot, format("expected one variant element in <{name}>")))
         }
         let variant = self.slots[slot].kids[0]
         self.variants[top].variant = variant
-        Ok(self.slots[variant].name.clone())
+        Result.Ok(self.slots[variant].name.clone())
     }
 
     fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
         if self.variants.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         let top = self.variants.len() - 1
         let variant = self.variants[top].variant
@@ -2713,51 +2713,51 @@ Reader: Deserializer {
         if arity == 0 {
             if self.has_content(variant) {
                 let name = self.slots[variant].name.clone()
-                return Err(self.fail_at(variant, format("the variant <{name}> has no payload")))
+                return Result.Err(self.fail_at(variant, format("the variant <{name}> has no payload")))
             }
         } else if arity == 1 {
             self.value = variant
         } else {
             self.require_no_text(variant)?
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
         if self.variants.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         let top = self.variants.len() - 1
         let arity = self.variants[top].arity
         if arity <= 1 {
-            return Ok(())
+            return Result.Ok(())
         }
         let variant = self.variants[top].variant
         let next = self.variants[top].next
         if next >= self.slots[variant].kids.len() {
             let name = self.slots[variant].name.clone()
-            return Err(self.fail_at(variant, format("the variant <{name}> has {arity} payload values")))
+            return Result.Err(self.fail_at(variant, format("the variant <{name}> has {arity} payload values")))
         }
         let child = self.slots[variant].kids[next]
         if self.slots[child].name.as_str() != "item" {
             let name = self.slots[child].name.clone()
-            return Err(self.fail_at(child, format("expected <item>, found <{name}>")))
+            return Result.Err(self.fail_at(child, format("expected <item>, found <{name}>")))
         }
         self.variants[top].next = next + 1
         self.value = child
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
         let frame = match self.variants.pop() {
-            Some(frame) => frame,
-            None => return Err(DeError.new("a variant payload outside an enum")),
+            Option.Some(frame) => frame,
+            Option.None => return Result.Err(DeError.new("a variant payload outside an enum")),
         }
         if arity > 1 && frame.next < self.slots[frame.variant].kids.len() {
             let extra = self.slots[frame.variant].kids[frame.next]
-            return Err(self.fail_at(extra, "too many payload values"))
+            return Result.Err(self.fail_at(extra, "too many payload values"))
         }
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -2791,7 +2791,7 @@ fn to_document<T: Serialize>(value: T): Result<Document, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
     let root = writer.finish()?
-    Ok(Document.new(root))
+    Result.Ok(Document.new(root))
 }
 
 /// Like `to_document`, with the root element called `root`.
@@ -2808,7 +2808,7 @@ fn to_document_root<T: Serialize>(value: T, root: str): Result<Document, DeError
     let mut writer = Writer.with_root(root)
     value.serialize(mut writer)?
     let element = writer.finish()?
-    Ok(Document.new(element))
+    Result.Ok(Document.new(element))
 }
 
 /// Writes `value` as compact XML, with no declaration.
@@ -2928,27 +2928,27 @@ priv fn __encoding_ok(name: String): bool {
 /// `Some(true)` for `yes`, `Some(false)` for `no`.
 priv fn __yes_no(text: String): Option<bool> {
     if text.as_str() == "yes" {
-        Some(true)
+        Option.Some(true)
     } else if text.as_str() == "no" {
-        Some(false)
+        Option.Some(false)
     } else {
-        None
+        Option.None
     }
 }
 
 /// The part of a qualified name before the colon, or an empty string.
 priv fn __prefix_of(name: str): String {
     match name.find(':') {
-        Some(i) => name[0..i].to_string(),
-        None => String.new(),
+        Option.Some(i) => name[0..i].to_string(),
+        Option.None => String.new(),
     }
 }
 
 /// The part of a qualified name after the colon, or the whole name.
 priv fn __local_of(name: str): String {
     match name.find(':') {
-        Some(i) => name[i + 1..name.len()].to_string(),
-        None => name.to_string(),
+        Option.Some(i) => name[i + 1..name.len()].to_string(),
+        Option.None => name.to_string(),
     }
 }
 
@@ -3041,10 +3041,10 @@ priv fn __check_chars(text: str): Result<(), DeError> {
     for c in text.chars() {
         let code = c as u32
         if !__is_xml_char(code) {
-            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+            return Result.Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
         }
     }
-    Ok(())
+    Result.Ok(())
 }
 
 /// A code point as hexadecimal digits, four at least.
@@ -3081,12 +3081,12 @@ priv fn __escape_text(mut out: String, text: str): Result<(), DeError> {
         } else if code == 13 {
             out.push_str("&#13;")
         } else if !__is_xml_char(code) {
-            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+            return Result.Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
         } else {
             out.push(c)
         }
     }
-    Ok(())
+    Result.Ok(())
 }
 
 /// Writes `text` as the inside of a double-quoted attribute value: also `"`, and tab and line ends as references so
@@ -3109,44 +3109,44 @@ priv fn __escape_attribute(mut out: String, text: str): Result<(), DeError> {
         } else if code == 13 {
             out.push_str("&#13;")
         } else if !__is_xml_char(code) {
-            return Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
+            return Result.Err(DeError.new(format("the character U+{} cannot be written in XML", __code_text(code))))
         } else {
             out.push(c)
         }
     }
-    Ok(())
+    Result.Ok(())
 }
 
 /// Writes the declaration `<?xml version="..." encoding="..." standalone="..."?>`.
 priv fn __write_declaration(mut out: String, declaration: Declaration): Result<(), DeError> {
     if declaration.version.as_str() != "1.0" {
-        return Err(DeError.new(format("unsupported XML version '{}'", declaration.version)))
+        return Result.Err(DeError.new(format("unsupported XML version '{}'", declaration.version)))
     }
     out.push_str("<?xml version=\"1.0\"")
     match declaration.encoding {
-        Some(encoding) => {
+        Option.Some(encoding) => {
             let lower = encoding.to_ascii_lowercase()
             if lower.as_str() != "utf-8" && lower.as_str() != "us-ascii" {
-                return Err(DeError.new(format("unsupported encoding '{encoding}': only UTF-8 is supported")))
+                return Result.Err(DeError.new(format("unsupported encoding '{encoding}': only UTF-8 is supported")))
             }
             out.push_str(" encoding=\"")
             out.push_str(encoding.as_str())
             out.push('"')
         }
-        None => {}
+        Option.None => {}
     }
     match declaration.standalone {
-        Some(yes) => {
+        Option.Some(yes) => {
             if yes {
                 out.push_str(" standalone=\"yes\"")
             } else {
                 out.push_str(" standalone=\"no\"")
             }
         }
-        None => {}
+        Option.None => {}
     }
     out.push_str("?>")
-    Ok(())
+    Result.Ok(())
 }
 
 /// Writes two spaces for each level.

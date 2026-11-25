@@ -183,7 +183,7 @@ priv fn __has_list_token(text: str, token: str): bool {
 /// # use http
 /// assert_eq(http.Method.parse("POST").unwrap().to_text().as_str(), "POST")
 /// match http.Method.parse("PURGE") {
-///     Ok(http.Method.Custom(name)) => assert_eq(name.as_str(), "PURGE"),
+///     Result.Ok(http.Method.Custom(name)) => assert_eq(name.as_str(), "PURGE"),
 ///     _ => assert(false),
 /// }
 /// ```
@@ -210,19 +210,19 @@ Method {
     /// ```
     fn parse(text: str): Result<Method, HttpError> {
         match text {
-            "GET" => Ok(Method.Get),
-            "HEAD" => Ok(Method.Head),
-            "POST" => Ok(Method.Post),
-            "PUT" => Ok(Method.Put),
-            "DELETE" => Ok(Method.Delete),
-            "OPTIONS" => Ok(Method.Options),
-            "PATCH" => Ok(Method.Patch),
-            "TRACE" => Ok(Method.Trace),
+            "GET" => Result.Ok(Method.Get),
+            "HEAD" => Result.Ok(Method.Head),
+            "POST" => Result.Ok(Method.Post),
+            "PUT" => Result.Ok(Method.Put),
+            "DELETE" => Result.Ok(Method.Delete),
+            "OPTIONS" => Result.Ok(Method.Options),
+            "PATCH" => Result.Ok(Method.Patch),
+            "TRACE" => Result.Ok(Method.Trace),
             else => {
                 if __is_token(text) {
-                    Ok(Method.Custom(text.to_string()))
+                    Result.Ok(Method.Custom(text.to_string()))
                 } else {
-                    Err(HttpError.InvalidMethod(text.to_string()))
+                    Result.Err(HttpError.InvalidMethod(text.to_string()))
                 }
             }
         }
@@ -386,14 +386,14 @@ Headers {
     /// A value is stored without its leading and trailing spaces and tabs.
     priv fn check(name: str, value: str): Result<String, HttpError> {
         if !__is_token(name) {
-            return Err(HttpError.InvalidHeader(format("the name {:?} is not a valid field name", name)))
+            return Result.Err(HttpError.InvalidHeader(format("the name {:?} is not a valid field name", name)))
         }
         for b in value.bytes() {
             if (b < 32 && b != 9) || b == 127 {
-                return Err(HttpError.InvalidHeader(format("the value of {} has a control character", name)))
+                return Result.Err(HttpError.InvalidHeader(format("the value of {} has a control character", name)))
             }
         }
-        Ok(value.trim().to_string())
+        Result.Ok(value.trim().to_string())
     }
 
     /// Appends a field, after any with the same name.
@@ -410,7 +410,7 @@ Headers {
     fn add(mut self, name: str, value: str): Result<(), HttpError> {
         let clean = Headers.check(name, value)?
         self.items.push(Header { name: name.to_string(), value: clean })
-        Ok(())
+        Result.Ok(())
     }
 
     /// Makes `name` have exactly one field: the first one with that name takes the new value (and the spelling of the
@@ -445,7 +445,7 @@ Headers {
         if first {
             self.items.push(Header { name: name.to_string(), value: clean })
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// The value of the first field called `name`.
@@ -460,10 +460,10 @@ Headers {
     fn get(self, name: str): Option<String> {
         for item in self.items.iter() {
             if item.name.eq_ignore_ascii_case(name) {
-                return Some(item.value.clone())
+                return Option.Some(item.value.clone())
             }
         }
-        None
+        Option.None
     }
 
     /// The values of every field called `name`, in order.
@@ -614,28 +614,28 @@ priv fn __is_scheme(text: str): bool {
 priv fn __check_url_bytes(text: str): Result<(), HttpError> {
     for b in text.bytes() {
         if b <= 32 || b == 127 {
-            return Err(__bad_url("a space or control character must be percent-encoded", text))
+            return Result.Err(__bad_url("a space or control character must be percent-encoded", text))
         }
         if b >= 128 {
-            return Err(__bad_url("a non-ASCII character must be percent-encoded", text))
+            return Result.Err(__bad_url("a non-ASCII character must be percent-encoded", text))
         }
     }
-    Ok(())
+    Result.Ok(())
 }
 
 /// The path and query of the part of a URL that follows the authority (or of a reference), as `(path, query)`.
 priv fn __split_query(text: str): (String, Option<String>) {
     match text.find('?') {
-        Some(at) => (text[0..at].to_string(), Some(text[at + 1..text.len()].to_string())),
-        None => (text.to_string(), None),
+        Option.Some(at) => (text[0..at].to_string(), Option.Some(text[at + 1..text.len()].to_string())),
+        Option.None => (text.to_string(), Option.None),
     }
 }
 
 /// The URL text without its fragment.
 priv fn __without_fragment(text: str): str {
     match text.find('#') {
-        Some(at) => text[0..at],
-        None => text,
+        Option.Some(at) => text[0..at],
+        Option.None => text,
     }
 }
 
@@ -679,15 +679,15 @@ Url {
         __check_url_bytes(text)?
         let whole = __without_fragment(text)
         let sep = match whole.find_str("://") {
-            Some(at) => at,
-            None => return Err(__bad_url("the scheme is missing", text)),
+            Option.Some(at) => at,
+            Option.None => return Result.Err(__bad_url("the scheme is missing", text)),
         }
         let scheme = whole[0..sep].to_ascii_lowercase()
         if !__is_scheme(scheme.as_str()) {
-            return Err(__bad_url("the scheme is not valid", text))
+            return Result.Err(__bad_url("the scheme is not valid", text))
         }
         if scheme.as_str() != "http" && scheme.as_str() != "https" {
-            return Err(HttpError.UnsupportedScheme(scheme.clone()))
+            return Result.Err(HttpError.UnsupportedScheme(scheme.clone()))
         }
         let rest = whole[sep + 3..whole.len()]
         let mut authority_end = rest.len()
@@ -703,50 +703,50 @@ Url {
         let authority = rest[0..authority_end]
         let tail = rest[authority_end..rest.len()]
         if authority.find('@').is_some() {
-            return Err(__bad_url("a user name and password in the URL are not supported", text))
+            return Result.Err(__bad_url("a user name and password in the URL are not supported", text))
         }
         if authority.starts_with("[") {
-            return Err(__bad_url("IPv6 addresses are not supported", text))
+            return Result.Err(__bad_url("IPv6 addresses are not supported", text))
         }
         let default_port: u16 = if scheme.as_str() == "https" { 443 } else { 80 }
         let mut host_text = authority
         let mut port = default_port
         match authority.rfind(':') {
-            Some(colon) => {
+            Option.Some(colon) => {
                 host_text = authority[0..colon]
                 let digits = authority[colon + 1..authority.len()]
                 if digits.len() > 0 {
                     port = Url.parse_port(digits, text)?
                 }
             }
-            None => {}
+            Option.None => {}
         }
         if host_text.len() == 0 {
-            return Err(__bad_url("the host is missing", text))
+            return Result.Err(__bad_url("the host is missing", text))
         }
         for b in host_text.bytes() {
             let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 45 || b == 46 || b == 95
             if !ok {
-                return Err(__bad_url("the host has a character a host name cannot have", text))
+                return Result.Err(__bad_url("the host has a character a host name cannot have", text))
             }
         }
         let (raw_path, query) = __split_query(tail)
         let path = if raw_path.len() == 0 { "/".to_string() } else { raw_path }
-        Ok(Url { scheme: scheme, host: host_text.to_ascii_lowercase(), port: port, path: path, query: query })
+        Result.Ok(Url { scheme: scheme, host: host_text.to_ascii_lowercase(), port: port, path: path, query: query })
     }
 
     priv fn parse_port(digits: str, text: str): Result<u16, HttpError> {
         let mut value: u32 = 0
         for b in digits.bytes() {
             if b < 48 || b > 57 || value > 65535 {
-                return Err(__bad_url("the port is not a number from 1 to 65535", text))
+                return Result.Err(__bad_url("the port is not a number from 1 to 65535", text))
             }
             value = value * 10 + ((b - 48) as u32)
         }
         if value == 0 || value > 65535 {
-            return Err(__bad_url("the port is not a number from 1 to 65535", text))
+            return Result.Err(__bad_url("the port is not a number from 1 to 65535", text))
         }
-        Ok(value as u16)
+        Result.Ok(value as u16)
     }
 
     /// Whether the scheme is `https`.
@@ -805,8 +805,8 @@ Url {
     /// ```
     fn target(self): String {
         match self.query {
-            Some(q) => format("{}?{}", self.path, q),
-            None => self.path.clone(),
+            Option.Some(q) => format("{}?{}", self.path, q),
+            Option.None => self.path.clone(),
         }
     }
 
@@ -858,31 +858,31 @@ Url {
         __check_url_bytes(reference)?
         let text = __without_fragment(reference)
         if text.len() == 0 {
-            return Ok(self.clone())
+            return Result.Ok(self.clone())
         }
         match text.find(':') {
-            Some(colon) => {
+            Option.Some(colon) => {
                 let before_slash = match text.find('/') {
-                    Some(slash) => colon < slash,
-                    None => true,
+                    Option.Some(slash) => colon < slash,
+                    Option.None => true,
                 }
                 let before_query = match text.find('?') {
-                    Some(q) => colon < q,
-                    None => true,
+                    Option.Some(q) => colon < q,
+                    Option.None => true,
                 }
                 if before_slash && before_query && __is_scheme(text[0..colon]) {
                     return Url.parse(text)
                 }
             }
-            None => {}
+            Option.None => {}
         }
         if text.starts_with("//") {
             return Url.parse(format("{}:{}", self.scheme, text).as_str())
         }
         let mut next = self.clone()
         if text.starts_with("?") {
-            next.query = Some(text[1..text.len()].to_string())
-            return Ok(next)
+            next.query = Option.Some(text[1..text.len()].to_string())
+            return Result.Ok(next)
         }
         let (raw_path, query) = __split_query(text)
         next.query = query
@@ -890,12 +890,12 @@ Url {
             next.path = __remove_dot_segments(raw_path.as_str())
         } else {
             let directory = match self.path.rfind('/') {
-                Some(slash) => self.path[0..slash + 1].to_string(),
-                None => "/".to_string(),
+                Option.Some(slash) => self.path[0..slash + 1].to_string(),
+                Option.None => "/".to_string(),
             }
             next.path = __remove_dot_segments(format("{}{}", directory, raw_path).as_str())
         }
-        Ok(next)
+        Result.Ok(next)
     }
 }
 
@@ -937,7 +937,7 @@ Request {
     /// ```
     fn new(own method: Method, url: str): Result<Request, HttpError> {
         let parsed = Url.parse(url)?
-        Ok(Request { method: method, url: parsed, headers: Headers.new(), body: List<u8>.new(), problem: None })
+        Result.Ok(Request { method: method, url: parsed, headers: Headers.new(), body: List<u8>.new(), problem: Option.None })
     }
 
     /// A `GET` request for `url`. The URL must be an absolute `http` or `https` URL.
@@ -1001,10 +1001,10 @@ Request {
     fn header(own self, name: str, value: str): Request {
         let mut request = self
         match request.headers.add(name, value) {
-            Ok(_) => {}
-            Err(e) => {
+            Result.Ok(_) => {}
+            Result.Err(e) => {
                 if request.problem.is_none() {
-                    request.problem = Some(e)
+                    request.problem = Option.Some(e)
                 }
             }
         }
@@ -1109,16 +1109,16 @@ priv fn __bad_response(reason: str): HttpError {
 /// ```
 fn find_head_end(buffer: List<u8>): Option<usize> {
     if buffer.len() < 4 {
-        return None
+        return Option.None
     }
     let mut i: usize = 3
     while i < buffer.len() {
         if buffer[i] == 10 && buffer[i - 1] == 13 && buffer[i - 2] == 10 && buffer[i - 3] == 13 {
-            return Some(i + 1)
+            return Option.Some(i + 1)
         }
         i = i + 1
     }
-    None
+    Option.None
 }
 
 /// `parse_response_head` of the first `end` bytes of `buffer`.
@@ -1147,47 +1147,47 @@ priv fn __tail_of(buffer: List<u8>, from: usize): List<u8> {
 /// ```
 fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
     if head.len() > MAX_HEAD_BYTES {
-        return Err(__bad_response("the head is too large"))
+        return Result.Err(__bad_response("the head is too large"))
     }
     let text = match str.from_utf8(head) {
-        Ok(t) => t,
-        Err(_) => return Err(__bad_response("the head is not valid UTF-8")),
+        Result.Ok(t) => t,
+        Result.Err(_) => return Result.Err(__bad_response("the head is not valid UTF-8")),
     }
     let lines = text.split("\r\n")
     // The text ends in CRLF CRLF, so the last two pieces are empty.
     if lines.len() < 3 {
-        return Err(__bad_response("the head is incomplete"))
+        return Result.Err(__bad_response("the head is incomplete"))
     }
     let status_line = lines[0].as_str()
     if status_line.len() < 12 || !status_line.starts_with("HTTP/1.") {
-        return Err(__bad_response(format("the status line is not HTTP/1.x: {:?}", status_line).as_str()))
+        return Result.Err(__bad_response(format("the status line is not HTTP/1.x: {:?}", status_line).as_str()))
     }
     if status_line.find('\n').is_some() || status_line.find('\r').is_some() {
-        return Err(__bad_response("a line ends in a bare line feed or carriage return"))
+        return Result.Err(__bad_response("a line ends in a bare line feed or carriage return"))
     }
     let sb = status_line.as_bytes()
     if sb[7] != 48 && sb[7] != 49 {
-        return Err(__bad_response("the HTTP version is not 1.0 or 1.1"))
+        return Result.Err(__bad_response("the HTTP version is not 1.0 or 1.1"))
     }
     if sb[8] != 32 {
-        return Err(__bad_response("the status line has no space after the version"))
+        return Result.Err(__bad_response("the status line has no space after the version"))
     }
     let mut status: u16 = 0
     let mut d: usize = 9
     while d < 12 {
         if sb[d] < 48 || sb[d] > 57 {
-            return Err(__bad_response("the status code is not three digits"))
+            return Result.Err(__bad_response("the status code is not three digits"))
         }
         status = status * 10 + ((sb[d] - 48) as u16)
         d = d + 1
     }
     if status < 100 {
-        return Err(__bad_response("the status code is below 100"))
+        return Result.Err(__bad_response("the status code is below 100"))
     }
     let mut reason = String.new()
     if status_line.len() > 12 {
         if sb[12] != 32 {
-            return Err(__bad_response("the status code is not three digits"))
+            return Result.Err(__bad_response("the status code is not three digits"))
         }
         reason = status_line[13..status_line.len()].to_string()
     }
@@ -1196,28 +1196,28 @@ fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
     while i < lines.len() - 2 {
         let line = lines[i].as_str()
         if line.find('\n').is_some() || line.find('\r').is_some() {
-            return Err(__bad_response("a line ends in a bare line feed or carriage return"))
+            return Result.Err(__bad_response("a line ends in a bare line feed or carriage return"))
         }
         if line.len() == 0 {
-            return Err(__bad_response("the head has an empty line before its end"))
+            return Result.Err(__bad_response("the head has an empty line before its end"))
         }
         if line.starts_with(" ") || line.starts_with("\t") {
-            return Err(__bad_response("a folded header line is not accepted"))
+            return Result.Err(__bad_response("a folded header line is not accepted"))
         }
         let colon = match line.find(':') {
-            Some(c) => c,
-            None => return Err(__bad_response(format("a header line has no colon: {:?}", line).as_str())),
+            Option.Some(c) => c,
+            Option.None => return Result.Err(__bad_response(format("a header line has no colon: {:?}", line).as_str())),
         }
         if headers.len() >= MAX_HEADERS {
-            return Err(__bad_response("the response has too many header fields"))
+            return Result.Err(__bad_response("the response has too many header fields"))
         }
         match headers.add(line[0..colon], line[colon + 1..line.len()]) {
-            Ok(_) => {}
-            Err(e) => return Err(__bad_response(e.to_string().as_str())),
+            Result.Ok(_) => {}
+            Result.Err(e) => return Result.Err(__bad_response(e.to_string().as_str())),
         }
         i = i + 1
     }
-    Ok(ResponseHead { minor: sb[7] - 48, status: status, reason: reason, headers: headers })
+    Result.Ok(ResponseHead { minor: sb[7] - 48, status: status, reason: reason, headers: headers })
 }
 
 // ----- how a body is framed ------------------------------------------------------------------------------------
@@ -1245,20 +1245,20 @@ enum Framing: Copy, Clone, Eq, Debug {
 /// not fit in 64 bits are errors.
 priv fn __parse_length(text: str): Result<u64, HttpError> {
     if text.len() == 0 {
-        return Err(__bad_response("the Content-Length is empty"))
+        return Result.Err(__bad_response("the Content-Length is empty"))
     }
     let mut value: u64 = 0
     for b in text.bytes() {
         if b < 48 || b > 57 {
-            return Err(__bad_response(format("the Content-Length is not a number: {:?}", text).as_str()))
+            return Result.Err(__bad_response(format("the Content-Length is not a number: {:?}", text).as_str()))
         }
         let digit = (b - 48) as u64
         if value > (18446744073709551615 - digit) / 10 {
-            return Err(__bad_response("the Content-Length does not fit in 64 bits"))
+            return Result.Err(__bad_response("the Content-Length does not fit in 64 bits"))
         }
         value = value * 10 + digit
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The framing of the response to a request with `method`, from its status and headers (RFC 9112, 6.3): no body for
@@ -1276,40 +1276,40 @@ priv fn __parse_length(text: str): Result<u64, HttpError> {
 /// ```
 fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, HttpError> {
     if method.is_head() || status < 200 || status == 204 || status == 304 {
-        return Ok(Framing.None)
+        return Result.Ok(Framing.None)
     }
     let codings = headers.get_all("Transfer-Encoding")
     if codings.len() > 0 {
         if headers.contains("Content-Length") {
-            return Err(__bad_response("the response has both Content-Length and Transfer-Encoding"))
+            return Result.Err(__bad_response("the response has both Content-Length and Transfer-Encoding"))
         }
         let all = codings.join(",")
         let pieces = all.as_str().split_char(',')
         let last = pieces[pieces.len() - 1].as_str().trim()
         if !last.eq_ignore_ascii_case("chunked") {
-            return Err(__bad_response("the Transfer-Encoding does not end in chunked"))
+            return Result.Err(__bad_response("the Transfer-Encoding does not end in chunked"))
         }
-        return Ok(Framing.Chunked)
+        return Result.Ok(Framing.Chunked)
     }
     let lengths = headers.get_all("Content-Length")
     if lengths.len() == 0 {
-        return Ok(Framing.UntilClose)
+        return Result.Ok(Framing.UntilClose)
     }
-    let mut agreed: Option<u64> = None
+    let mut agreed: Option<u64> = Option.None
     for field in lengths.iter() {
         for piece in field.as_str().split_char(',') {
             let n = __parse_length(piece.as_str().trim())?
             match agreed {
-                Some(first) => {
+                Option.Some(first) => {
                     if first != n {
-                        return Err(__bad_response("the response has different Content-Length values"))
+                        return Result.Err(__bad_response("the response has different Content-Length values"))
                     }
                 }
-                None => agreed = Some(n),
+                Option.None => agreed = Option.Some(n),
             }
         }
     }
-    Ok(Framing.Length(agreed.unwrap()))
+    Result.Ok(Framing.Length(agreed.unwrap()))
 }
 
 /// Whether the connection may carry another request after this response (HC16): the response has no
@@ -1476,11 +1476,11 @@ BodyReader<R> where R: Read {
             self.start = 0
         }
         match self.source.read(mut self.buffer, READ_CHUNK) {
-            Ok(n) => Ok(n),
-            Err(failure) => match failure.kind() {
+            Result.Ok(n) => Result.Ok(n),
+            Result.Err(failure) => match failure.kind() {
                 // A TLS connection that ends without a `close_notify` (HC17): the body was cut, not finished.
-                IoErrorKind.UnexpectedEof => Err(HttpError.BodyTruncated),
-                else => Err(__io_failure("reading the response body", failure)),
+                IoErrorKind.UnexpectedEof => Result.Err(HttpError.BodyTruncated),
+                else => Result.Err(__io_failure("reading the response body", failure)),
             },
         }
     }
@@ -1500,35 +1500,35 @@ BodyReader<R> where R: Read {
         let mut i = self.start
         while i < self.buffer.len() {
             if self.buffer[i] == 10 {
-                return Some(i)
+                return Option.Some(i)
             }
             i = i + 1
         }
-        None
+        Option.None
     }
 
     /// The unused bytes before the line feed at `newline`, as text, without the CRLF; they are used up.
     priv fn take_line(mut self, newline: usize): Result<String, HttpError> {
         if newline == self.start || self.buffer[newline - 1] != 13 {
-            return Err(HttpError.BadBody("a line in the chunked body does not end in CRLF".to_string()))
+            return Result.Err(HttpError.BadBody("a line in the chunked body does not end in CRLF".to_string()))
         }
         let line = __text_of(self.buffer[self.start..newline - 1])
         self.start = newline + 1
-        Ok(line)
+        Result.Ok(line)
     }
 
     /// Reads one line that ends in CRLF, without the CRLF. A bare line feed and a line longer than 1024 bytes are errors.
     priv fn read_line(mut self): Result<String, HttpError> {
         loop {
             match self.find_newline() {
-                Some(newline) => return self.take_line(newline),
-                None => {}
+                Option.Some(newline) => return self.take_line(newline),
+                Option.None => {}
             }
             if self.buffer.len() - self.start > MAX_LINE {
-                return Err(HttpError.BadBody("a line in the chunked body is too long".to_string()))
+                return Result.Err(HttpError.BadBody("a line in the chunked body is too long".to_string()))
             }
             if self.fill()? == 0 {
-                return Err(HttpError.BodyTruncated)
+                return Result.Err(HttpError.BodyTruncated)
             }
         }
     }
@@ -1546,12 +1546,12 @@ BodyReader<R> where R: Read {
     /// ```
     fn read_body(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
         if max == 0 {
-            return Ok(0)
+            return Result.Ok(0)
         }
         match self.framing {
             Framing.None => {
                 self.complete = true
-                Ok(0)
+                Result.Ok(0)
             }
             Framing.Length(_) => self.read_length(mut out, max),
             Framing.Chunked => self.read_chunked(mut out, max),
@@ -1562,26 +1562,26 @@ BodyReader<R> where R: Read {
     priv fn read_length(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
         if self.remaining == 0 {
             self.complete = true
-            return Ok(0)
+            return Result.Ok(0)
         }
         let want = if (max as u64) < self.remaining { max } else { self.remaining as usize }
         if self.start >= self.buffer.len() && self.fill()? == 0 {
-            return Err(HttpError.BodyTruncated)
+            return Result.Err(HttpError.BodyTruncated)
         }
         let n = self.take(mut out, want)
         self.remaining = self.remaining - (n as u64)
         if self.remaining == 0 {
             self.complete = true
         }
-        Ok(n)
+        Result.Ok(n)
     }
 
     priv fn read_until_close(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
         if self.start >= self.buffer.len() && self.fill()? == 0 {
             self.complete = true
-            return Ok(0)
+            return Result.Ok(0)
         }
-        Ok(self.take(mut out, max))
+        Result.Ok(self.take(mut out, max))
     }
 
     priv fn read_chunked(mut self, mut out: List<u8>, max: usize): Result<usize, HttpError> {
@@ -1598,18 +1598,18 @@ BodyReader<R> where R: Read {
             } else if self.state == CHUNK_DATA {
                 let want = if (max as u64) < self.remaining { max } else { self.remaining as usize }
                 if self.start >= self.buffer.len() && self.fill()? == 0 {
-                    return Err(HttpError.BodyTruncated)
+                    return Result.Err(HttpError.BodyTruncated)
                 }
                 let n = self.take(mut out, want)
                 self.remaining = self.remaining - (n as u64)
                 if self.remaining == 0 {
                     self.state = CHUNK_END
                 }
-                return Ok(n)
+                return Result.Ok(n)
             } else if self.state == CHUNK_END {
                 let line = self.read_line()?
                 if line.len() != 0 {
-                    return Err(HttpError.BadBody("chunk data is not followed by CRLF".to_string()))
+                    return Result.Err(HttpError.BadBody("chunk data is not followed by CRLF".to_string()))
                 }
                 self.state = CHUNK_SIZE
             } else if self.state == CHUNK_TRAILERS {
@@ -1619,23 +1619,23 @@ BodyReader<R> where R: Read {
                         break
                     }
                     if self.trailers.len() >= MAX_HEADERS {
-                        return Err(HttpError.BadBody("the trailer has too many fields".to_string()))
+                        return Result.Err(HttpError.BadBody("the trailer has too many fields".to_string()))
                     }
                     let colon = match line.find(':') {
-                        Some(c) => c,
-                        None => return Err(HttpError.BadBody("a trailer field has no colon".to_string())),
+                        Option.Some(c) => c,
+                        Option.None => return Result.Err(HttpError.BadBody("a trailer field has no colon".to_string())),
                     }
                     match self.trailers.add(line.as_str()[0..colon], line.as_str()[colon + 1..line.len()]) {
-                        Ok(_) => {}
-                        Err(e) => return Err(HttpError.BadBody(e.to_string())),
+                        Result.Ok(_) => {}
+                        Result.Err(e) => return Result.Err(HttpError.BadBody(e.to_string())),
                     }
                 }
                 self.state = CHUNK_DONE
                 self.complete = true
-                return Ok(0)
+                return Result.Ok(0)
             } else {
                 self.complete = true
-                return Ok(0)
+                return Result.Ok(0)
             }
         }
     }
@@ -1645,24 +1645,24 @@ BodyReader<R> where R: Read {
 /// size, a non-hex digit, and more than 16 digits (a value that could not fit in 64 bits) are errors.
 priv fn __parse_chunk_size(line: str): Result<u64, HttpError> {
     let size_text = match line.find(';') {
-        Some(at) => line[0..at],
-        None => line,
+        Option.Some(at) => line[0..at],
+        Option.None => line,
     }
     let digits = size_text.trim()
     if digits.len() == 0 {
-        return Err(HttpError.BadBody("a chunk size is missing".to_string()))
+        return Result.Err(HttpError.BadBody("a chunk size is missing".to_string()))
     }
     if digits.len() > 16 {
-        return Err(HttpError.BadBody("a chunk size is too large".to_string()))
+        return Result.Err(HttpError.BadBody("a chunk size is too large".to_string()))
     }
     let mut value: u64 = 0
     for c in digits.chars() {
         match c.to_digit(16) {
-            Some(d) => value = value * 16 + (d as u64),
-            None => return Err(HttpError.BadBody(format("a chunk size is not hexadecimal: {:?}", digits))),
+            Option.Some(d) => value = value * 16 + (d as u64),
+            Option.None => return Result.Err(HttpError.BadBody(format("a chunk size is not hexadecimal: {:?}", digits))),
         }
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// Bytes as text; a byte that is not UTF-8 becomes U+FFFD.
@@ -1677,7 +1677,7 @@ priv fn __to_io(failure: HttpError): IoError {
             op: "read".to_string(),
             addr: "the response body".to_string(),
             kind: IoErrorKind.TimedOut,
-            os_code: None,
+            os_code: Option.None,
         },
         HttpError.BodyTruncated => IoError.UnexpectedEof,
         else => IoError.InvalidData,
@@ -1689,8 +1689,8 @@ BodyReader<R>: Read where R: Read {
     /// timeout, and `InvalidData` for malformed framing.
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         match self.read_body(mut buf, max) {
-            Ok(n) => Ok(n),
-            Err(failure) => Err(__to_io(failure)),
+            Result.Ok(n) => Result.Ok(n),
+            Result.Err(failure) => Result.Err(__to_io(failure)),
         }
     }
 }
@@ -1712,16 +1712,16 @@ Budget {
     /// Whether the total limit has passed.
     priv fn expired(self): bool {
         match self.total {
-            Some(limit) => self.started.elapsed() >= limit,
-            None => false,
+            Option.Some(limit) => self.started.elapsed() >= limit,
+            Option.None => false,
         }
     }
 
     /// The time left under the total limit, or `None` when there is no limit.
     priv fn remaining(self): Option<Duration> {
         match self.total {
-            Some(limit) => Some(limit.saturating_sub(self.started.elapsed())),
-            None => None,
+            Option.Some(limit) => Option.Some(limit.saturating_sub(self.started.elapsed())),
+            Option.None => Option.None,
         }
     }
 
@@ -1729,15 +1729,15 @@ Budget {
     /// forever": a spent budget gives one nanosecond, which times the next wait out at once.
     priv fn limit(self, limit: Option<Duration>): Option<Duration> {
         let capped = match self.remaining() {
-            Some(left) => match limit {
-                Some(l) => if l < left { Some(l) } else { Some(left) },
-                None => Some(left),
+            Option.Some(left) => match limit {
+                Option.Some(l) => if l < left { Option.Some(l) } else { Option.Some(left) },
+                Option.None => Option.Some(left),
             },
-            None => limit,
+            Option.None => limit,
         }
         match capped {
-            Some(d) => if d.is_zero() { Some(Duration.from_nanos(1)) } else { Some(d) },
-            None => None,
+            Option.Some(d) => if d.is_zero() { Option.Some(Duration.from_nanos(1)) } else { Option.Some(d) },
+            Option.None => Option.None,
         }
     }
 }
@@ -1755,24 +1755,24 @@ priv struct Transport {
 
 Transport {
     priv fn plain(own stream: TcpStream): Transport {
-        Transport { plain: Some(stream), secure: None }
+        Transport { plain: Option.Some(stream), secure: Option.None }
     }
 
     priv fn secure(own stream: TlsStream): Transport {
-        Transport { plain: None, secure: Some(stream) }
+        Transport { plain: Option.None, secure: Option.Some(stream) }
     }
 
     priv fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 let result = stream.read(mut buf, max)
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
                 result
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 let result = stream.read(mut buf, max)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
                 result
             }
         }
@@ -1780,18 +1780,18 @@ Transport {
 
     priv fn write_all(mut self, data: [u8]): Result<(), IoError> {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 let result: Result<(), IoError> = match stream.send_all(data) {
-                    Ok(_) => Ok(()),
-                    Err(failure) => Err(failure.to_io()),
+                    Result.Ok(_) => Result.Ok(()),
+                    Result.Err(failure) => Result.Err(failure.to_io()),
                 }
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
                 result
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 let result = stream.write_all(data)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
                 result
             }
         }
@@ -1799,28 +1799,28 @@ Transport {
 
     priv fn set_read_timeout(mut self, timeout: Option<Duration>) {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 stream.set_read_timeout(timeout)
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 stream.set_read_timeout(timeout)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
             }
         }
     }
 
     priv fn set_write_timeout(mut self, timeout: Option<Duration>) {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 stream.set_write_timeout(timeout)
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 stream.set_write_timeout(timeout)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
             }
         }
     }
@@ -1832,26 +1832,26 @@ Transport {
     priv fn is_alive(mut self): bool {
         let mut scratch = List<u8>.new()
         match self.secure.take() {
-            Some(mut stream) => {
-                stream.set_read_timeout(Some(Duration.from_nanos(1)))
+            Option.Some(mut stream) => {
+                stream.set_read_timeout(Option.Some(Duration.from_nanos(1)))
                 let alive = match stream.recv(mut scratch, 1) {
-                    Ok(_) => false,
-                    Err(failure) => failure.is_timeout(),
+                    Result.Ok(_) => false,
+                    Result.Err(failure) => failure.is_timeout(),
                 }
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
                 alive
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
-                stream.set_read_timeout(Some(Duration.from_nanos(1)))
+                stream.set_read_timeout(Option.Some(Duration.from_nanos(1)))
                 let alive = match stream.read(mut scratch, 1) {
-                    Ok(_) => false,
-                    Err(failure) => match failure.kind() {
+                    Result.Ok(_) => false,
+                    Result.Err(failure) => match failure.kind() {
                         IoErrorKind.TimedOut => true,
                         else => false,
                     },
                 }
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
                 alive
             }
         }
@@ -1954,11 +1954,11 @@ struct Body {
 
 Body {
     priv fn new(own reader: BodyReader<Conn>, limit: usize): Body {
-        let mut body = Body { reader: None, trailers: Headers.new(), failure: None, limit: limit }
+        let mut body = Body { reader: Option.None, trailers: Headers.new(), failure: Option.None, limit: limit }
         if reader.is_complete() {
             body.finish(reader)
         } else {
-            body.reader = Some(reader)
+            body.reader = Option.Some(reader)
         }
         body
     }
@@ -2009,25 +2009,25 @@ Body {
     /// ```
     fn read_http(mut self, mut buf: List<u8>, max: usize): Result<usize, HttpError> {
         match self.failure.clone() {
-            Some(failure) => return Err(failure),
-            None => {}
+            Option.Some(failure) => return Result.Err(failure),
+            Option.None => {}
         }
         let mut reader = match self.reader.take() {
-            Some(r) => r,
-            None => return Ok(0),
+            Option.Some(r) => r,
+            Option.None => return Result.Ok(0),
         }
         match reader.read_body(mut buf, max) {
-            Ok(n) => {
+            Result.Ok(n) => {
                 if reader.is_complete() {
                     self.finish(reader)
                 } else {
-                    self.reader = Some(reader)
+                    self.reader = Option.Some(reader)
                 }
-                Ok(n)
+                Result.Ok(n)
             }
-            Err(failure) => {
-                self.failure = Some(failure.clone())
-                Err(failure)
+            Result.Err(failure) => {
+                self.failure = Option.Some(failure.clone())
+                Result.Err(failure)
             }
         }
     }
@@ -2047,13 +2047,13 @@ Body {
             let ask = if room < READ_CHUNK { room } else { READ_CHUNK }
             let n = self.read_http(mut out, ask)?
             if n == 0 {
-                return Ok(out)
+                return Result.Ok(out)
             }
             if out.len() > self.limit {
                 let failure = HttpError.BodyTooLarge { limit: self.limit }
-                self.reader = None
-                self.failure = Some(failure.clone())
-                return Err(failure)
+                self.reader = Option.None
+                self.failure = Option.Some(failure.clone())
+                return Result.Err(failure)
             }
         }
     }
@@ -2074,12 +2074,12 @@ Body {
             scratch.clear()
             let n = self.read_http(mut scratch, READ_CHUNK)?
             if n == 0 {
-                return Ok(true)
+                return Result.Ok(true)
             }
             total = total + n
             if total > limit {
-                self.reader = None
-                return Ok(false)
+                self.reader = Option.None
+                return Result.Ok(false)
             }
         }
     }
@@ -2090,8 +2090,8 @@ Body: Read {
     /// timeout, and `InvalidData` for malformed framing.
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         match self.read_http(mut buf, max) {
-            Ok(n) => Ok(n),
-            Err(failure) => Err(__to_io(failure)),
+            Result.Ok(n) => Result.Ok(n),
+            Result.Err(failure) => Result.Err(__to_io(failure)),
         }
     }
 }
@@ -2187,8 +2187,8 @@ Response {
     fn text(mut self): Result<String, HttpError> {
         let bytes = self.body.bytes()?
         match String.from_utf8(bytes) {
-            Ok(text) => Ok(text),
-            Err(_) => Err(HttpError.BadBody("the body is not valid UTF-8".to_string())),
+            Result.Ok(text) => Result.Ok(text),
+            Result.Err(_) => Result.Err(HttpError.BadBody("the body is not valid UTF-8".to_string())),
         }
     }
 
@@ -2277,16 +2277,16 @@ priv fn __with_alpn(own config: ClientConfig): Result<ClientConfig, HttpError> {
     let mut names = List<String>.new()
     names.push("http/1.1".to_string())
     match config.alpn(names) {
-        Ok(_) => Ok(config),
-        Err(failure) => Err(HttpError.Tls(failure)),
+        Result.Ok(_) => Result.Ok(config),
+        Result.Err(failure) => Result.Err(HttpError.Tls(failure)),
     }
 }
 
 /// The default `https` configuration: the system's trust store, verification on, ALPN `http/1.1`.
 priv fn __default_tls(): Result<ClientConfig, HttpError> {
     match ClientConfig.new() {
-        Ok(config) => __with_alpn(config),
-        Err(failure) => Err(HttpError.Tls(failure)),
+        Result.Ok(config) => __with_alpn(config),
+        Result.Err(failure) => Result.Err(HttpError.Tls(failure)),
     }
 }
 
@@ -2310,9 +2310,9 @@ Client {
     /// ```
     fn new(): Client {
         Client {
-            connect_timeout: Some(Duration.from_secs(10)),
-            read_timeout: Some(Duration.from_secs(30)),
-            total_timeout: None,
+            connect_timeout: Option.Some(Duration.from_secs(10)),
+            read_timeout: Option.Some(Duration.from_secs(30)),
+            total_timeout: Option.None,
             follow_redirects: true,
             max_redirects: 10,
             max_retries: 2,
@@ -2324,7 +2324,7 @@ Client {
             idle_timeout: Duration.from_secs(30),
             max_body: 16777216,
             pool: Shared.new(Mutex.new(List<Idle>.new())),
-            tls: None,
+            tls: Option.None,
             tls_default: Shared.new(Mutex.new(List<Shared<ClientConfig>>.new())),
         }
     }
@@ -2339,7 +2339,7 @@ Client {
     /// client.tls_config(ClientConfig.new().unwrap())
     /// ```
     fn tls_config(mut self, own config: ClientConfig) {
-        self.tls = Some(Shared.new(config))
+        self.tls = Option.Some(Shared.new(config))
     }
 
     /// Verifies `https` servers against exactly the authorities of `store` and offers `http/1.1` by ALPN (HC17).
@@ -2352,11 +2352,11 @@ Client {
     /// ```
     fn trust(mut self, store: TrustStore): Result<(), HttpError> {
         let config = match ClientConfig.with_trust(store) {
-            Ok(config) => __with_alpn(config)?,
-            Err(failure) => return Err(HttpError.Tls(failure)),
+            Result.Ok(config) => __with_alpn(config)?,
+            Result.Err(failure) => return Result.Err(HttpError.Tls(failure)),
         }
-        self.tls = Some(Shared.new(config))
-        Ok(())
+        self.tls = Option.Some(Shared.new(config))
+        Result.Ok(())
     }
 
     /// Turns certificate and host name verification off for `https` (HC17). WARNING: a connection made this way is
@@ -2370,8 +2370,8 @@ Client {
     fn insecure_skip_verify(mut self): Result<(), HttpError> {
         let mut config = __default_tls()?
         config.insecure_skip_verify()
-        self.tls = Some(Shared.new(config))
-        Ok(())
+        self.tls = Option.Some(Shared.new(config))
+        Result.Ok(())
     }
 
     /// How many idle connections the pool holds, over all hosts.
@@ -2475,8 +2475,8 @@ Client {
     /// ```
     fn send(self, request: Request): Result<Response, HttpError> {
         match request.problem.clone() {
-            Some(problem) => return Err(problem),
-            None => {}
+            Option.Some(problem) => return Result.Err(problem),
+            Option.None => {}
         }
         let budget = Budget.new(self.total_timeout)
         let limit = if self.max_redirects < MAX_REDIRECT_LIMIT { self.max_redirects } else { MAX_REDIRECT_LIMIT }
@@ -2488,22 +2488,22 @@ Client {
             let mut response = self.exchange(hop, budget)?
             response.redirects = redirects
             if !self.follow_redirects || !__is_redirect_status(response.status) {
-                return Ok(response)
+                return Result.Ok(response)
             }
             let location = match response.headers.get("Location") {
-                Some(value) => value,
-                None => return Ok(response),
+                Option.Some(value) => value,
+                Option.None => return Result.Ok(response),
             }
             let next_url = match response.url.join(location.as_str()) {
-                Ok(u) => u,
-                Err(e) => return Err(HttpError.BadRedirect(format("{}: {}", location, e))),
+                Result.Ok(u) => u,
+                Result.Err(e) => return Result.Err(HttpError.BadRedirect(format("{}: {}", location, e))),
             }
             if redirects >= limit {
-                return Err(HttpError.TooManyRedirects { limit: self.max_redirects })
+                return Result.Err(HttpError.TooManyRedirects { limit: self.max_redirects })
             }
             let next_text = next_url.to_text()
             if visited.contains(next_text.clone()) {
-                return Err(HttpError.RedirectLoop(next_text))
+                return Result.Err(HttpError.RedirectLoop(next_text))
             }
             visited.push(next_text)
             let _ = response.discard(DISCARD_LIMIT)
@@ -2555,19 +2555,19 @@ Client {
     /// and never more than `max_backoff`.
     priv fn delay_after(self, attempt: usize, retry_after: Option<String>): Duration {
         match retry_after {
-            Some(text) => {
+            Option.Some(text) => {
                 match u64.parse(text.as_str().trim()) {
-                    Ok(seconds) => {
+                    Result.Ok(seconds) => {
                         if seconds > self.max_backoff.as_secs() {
                             self.max_backoff
                         } else {
                             Duration.from_secs(seconds)
                         }
                     }
-                    Err(_) => self.backoff(attempt),
+                    Result.Err(_) => self.backoff(attempt),
                 }
             }
-            None => self.backoff(attempt),
+            Option.None => self.backoff(attempt),
         }
     }
 
@@ -2578,10 +2578,10 @@ Client {
         let mut use_pool = self.max_idle_per_host > 0
         loop {
             if budget.expired() {
-                return Err(HttpError.Timeout { phase: "waiting for the response".to_string() })
+                return Result.Err(HttpError.Timeout { phase: "waiting for the response".to_string() })
             }
             match self.attempt(request.clone(), budget, use_pool) {
-                Ok(mut response) => {
+                Result.Ok(mut response) => {
                     if self.retry_on_503 && safe && response.status == 503 && retries < self.max_retries {
                         let delay = self.delay_after(retries, response.headers.get("Retry-After"))
                         if self.fits(budget, delay) {
@@ -2591,11 +2591,11 @@ Client {
                             continue
                         }
                     }
-                    return Ok(response)
+                    return Result.Ok(response)
                 }
-                Err(failure) => {
+                Result.Err(failure) => {
                     if !safe || failure.received || !failure.cause.is_connection_failure() {
-                        return Err(failure.cause)
+                        return Result.Err(failure.cause)
                     }
                     // A pooled connection that fails at once was probably closed by the server while idle: repeat on
                     // a new connection without using up a retry.
@@ -2604,11 +2604,11 @@ Client {
                         continue
                     }
                     if retries >= self.max_retries {
-                        return Err(failure.cause)
+                        return Result.Err(failure.cause)
                     }
                     let delay = self.backoff(retries)
                     if !self.fits(budget, delay) {
-                        return Err(failure.cause)
+                        return Result.Err(failure.cause)
                     }
                     time.sleep(delay)
                     retries = retries + 1
@@ -2620,16 +2620,16 @@ Client {
     /// Whether waiting `delay` still leaves time under the total limit.
     priv fn fits(self, budget: Budget, delay: Duration): bool {
         match budget.remaining() {
-            Some(left) => delay < left,
-            None => true,
+            Option.Some(left) => delay < left,
+            Option.None => true,
         }
     }
 
     /// Opens a connection, sends the request, and reads the response head.
     priv fn attempt(self, request: Request, budget: Budget, use_pool: bool): Result<Response, Failure> {
         let conn = match self.open(request.url.clone(), budget, use_pool) {
-            Ok(c) => c,
-            Err(e) => return Err(Failure { cause: e, reused: false, received: false }),
+            Result.Ok(c) => c,
+            Result.Err(e) => return Result.Err(Failure { cause: e, reused: false, received: false }),
         }
         self.roundtrip(conn, request, budget)
     }
@@ -2642,8 +2642,8 @@ Client {
         if use_pool {
             let idle = self.checkout(key.as_str())
             match idle {
-                Some(stream) => {
-                    return Ok(Conn {
+                Option.Some(stream) => {
+                    return Result.Ok(Conn {
                         stream: stream,
                         key: key.clone(),
                         pool: self.pool.clone(),
@@ -2654,22 +2654,22 @@ Client {
                         keep_alive: true,
                     })
                 }
-                None => {}
+                Option.None => {}
             }
         }
         let opened = match budget.limit(self.connect_timeout) {
-            Some(limit) => TcpStream.connect_timeout(address.as_str(), limit),
-            None => TcpStream.connect(address.as_str()),
+            Option.Some(limit) => TcpStream.connect_timeout(address.as_str(), limit),
+            Option.None => TcpStream.connect(address.as_str()),
         }
         match opened {
-            Ok(stream) => {
+            Result.Ok(stream) => {
                 let _ = stream.set_nodelay(true)
                 let transport = if url.is_https() {
                     self.handshake(stream, url, budget)?
                 } else {
                     Transport.plain(stream)
                 }
-                Ok(Conn {
+                Result.Ok(Conn {
                     stream: transport,
                     key: key,
                     pool: self.pool.clone(),
@@ -2680,9 +2680,9 @@ Client {
                     keep_alive: true,
                 })
             }
-            Err(failure) => match failure.kind() {
-                IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: format("connecting to {}", address.clone()) }),
-                other => Err(HttpError.Connect { addr: address, reason: other.to_string() }),
+            Result.Err(failure) => match failure.kind() {
+                IoErrorKind.TimedOut => Result.Err(HttpError.Timeout { phase: format("connecting to {}", address.clone()) }),
+                other => Result.Err(HttpError.Connect { addr: address, reason: other.to_string() }),
             },
         }
     }
@@ -2690,15 +2690,15 @@ Client {
     /// The configuration for an `https` connection: the one set on this client, or the default, built once.
     priv fn tls_settings(self): Result<Shared<ClientConfig>, HttpError> {
         match self.tls.clone() {
-            Some(config) => return Ok(config),
-            None => {}
+            Option.Some(config) => return Result.Ok(config),
+            Option.None => {}
         }
         let existing: Option<Shared<ClientConfig>> = self.tls_default.get().lock(|slot| {
-            if slot.len() > 0 { Some(slot[0].clone()) } else { None }
+            if slot.len() > 0 { Option.Some(slot[0].clone()) } else { Option.None }
         })
         match existing {
-            Some(config) => return Ok(config),
-            None => {}
+            Option.Some(config) => return Result.Ok(config),
+            Option.None => {}
         }
         // Two tasks may build one at the same moment; both work, and the first to store its own is the one later
         // connections share.
@@ -2709,7 +2709,7 @@ Client {
                 slot.push(stored.clone())
             }
         })
-        Ok(built)
+        Result.Ok(built)
     }
 
     /// Runs the TLS handshake over a new connection (HC17), verifying the server against the URL's host. Each wait is
@@ -2722,13 +2722,13 @@ Client {
         stream.set_write_timeout(wait)
         let phase = format("TLS handshake with {}", url.address())
         match TlsStream.connect(stream, url.host.as_str(), *config.get()) {
-            Ok(secure) => Ok(Transport.secure(secure)),
-            Err(failure) => match failure {
+            Result.Ok(secure) => Result.Ok(Transport.secure(secure)),
+            Result.Err(failure) => match failure {
                 TlsError.Io(cause) => match cause.kind() {
-                    IoErrorKind.TimedOut => Err(HttpError.Timeout { phase: phase }),
-                    other => Err(HttpError.Io { op: phase, reason: other.to_string() }),
+                    IoErrorKind.TimedOut => Result.Err(HttpError.Timeout { phase: phase }),
+                    other => Result.Err(HttpError.Io { op: phase, reason: other.to_string() }),
                 },
-                other => Err(HttpError.Tls(other)),
+                other => Result.Err(HttpError.Tls(other)),
             },
         }
     }
@@ -2741,22 +2741,22 @@ Client {
             let wanted = key.to_string()
             let found: Option<Idle> = self.pool.get().lock(|list| {
                 list.retain(|entry| entry.since.elapsed() < max_age)
-                let mut taken: Option<Idle> = None
+                let mut taken: Option<Idle> = Option.None
                 let mut i = list.len()
                 while i > 0 && taken.is_none() {
                     i = i - 1
                     if list[i].key == wanted {
-                        taken = Some(list.remove(i))
+                        taken = Option.Some(list.remove(i))
                     }
                 }
                 taken
             })
             match found {
-                None => return None,
-                Some(idle) => {
+                Option.None => return Option.None,
+                Option.Some(idle) => {
                     let mut stream = idle.stream
                     if stream.is_alive() {
-                        return Some(stream)
+                        return Option.Some(stream)
                     }
                 }
             }
@@ -2772,23 +2772,23 @@ Client {
         wire.extend_from_slice(request.body[0..request.body.len()])
         conn.stream.set_write_timeout(budget.limit(self.read_timeout))
         match conn.stream.write_all(wire[0..wire.len()]) {
-            Ok(_) => {}
-            Err(failure) => {
-                return Err(Failure { cause: __io_failure("sending the request", failure), reused: reused, received: false })
+            Result.Ok(_) => {}
+            Result.Err(failure) => {
+                return Result.Err(Failure { cause: __io_failure("sending the request", failure), reused: reused, received: false })
             }
         }
         let mut buffer = List<u8>.new()
         loop {
             let head_end = find_head_end(buffer)
             match head_end {
-                Some(end) => {
+                Option.Some(end) => {
                     let head = match __head_of(buffer, end) {
-                        Ok(h) => h,
-                        Err(e) => return Err(Failure { cause: e, reused: reused, received: true }),
+                        Result.Ok(h) => h,
+                        Result.Err(e) => return Result.Err(Failure { cause: e, reused: reused, received: true }),
                     }
                     let rest = __tail_of(buffer, end)
                     if head.status == 101 {
-                        return Err(Failure {
+                        return Result.Err(Failure {
                             cause: HttpError.BadResponse("the server switched protocols".to_string()),
                             reused: reused,
                             received: true,
@@ -2801,10 +2801,10 @@ Client {
                     }
                     return self.finish_head(conn, head, rest, request, budget, reused)
                 }
-                None => {}
+                Option.None => {}
             }
             if buffer.len() > MAX_HEAD_BYTES {
-                return Err(Failure {
+                return Result.Err(Failure {
                     cause: HttpError.BadResponse("the head is too large".to_string()),
                     reused: reused,
                     received: true,
@@ -2813,16 +2813,16 @@ Client {
             conn.stream.set_read_timeout(budget.limit(self.read_timeout))
             let received = buffer.len() > 0
             match conn.stream.read(mut buffer, READ_CHUNK) {
-                Ok(0) => {
+                Result.Ok(0) => {
                     let cause = if received {
                         HttpError.BadResponse("the connection closed in the middle of the response head".to_string())
                     } else {
                         HttpError.ConnectionClosed
                     }
-                    return Err(Failure { cause: cause, reused: reused, received: received })
+                    return Result.Err(Failure { cause: cause, reused: reused, received: received })
                 }
-                Ok(_) => {}
-                Err(failure) => {
+                Result.Ok(_) => {}
+                Result.Err(failure) => {
                     // A TLS connection cut without a `close_notify` is a closed connection (HC17).
                     let cause = match failure.kind() {
                         IoErrorKind.UnexpectedEof => if received {
@@ -2832,7 +2832,7 @@ Client {
                         },
                         else => __io_failure("waiting for the response", failure),
                     }
-                    return Err(Failure { cause: cause, reused: reused, received: received })
+                    return Result.Err(Failure { cause: cause, reused: reused, received: received })
                 }
             }
         }
@@ -2849,13 +2849,13 @@ Client {
         reused: bool,
     ): Result<Response, Failure> {
         let framing = match framing_of(request.method.clone(), head.status, head.headers.clone()) {
-            Ok(f) => f,
-            Err(e) => return Err(Failure { cause: e, reused: reused, received: true }),
+            Result.Ok(f) => f,
+            Result.Err(e) => return Result.Err(Failure { cause: e, reused: reused, received: true }),
         }
         let mut conn = conn
         conn.keep_alive = keeps_alive(head.minor, head.headers.clone()) && !request.headers.has_token("Connection", "close")
         let reader = BodyReader.new(conn, framing, rest)
-        Ok(Response {
+        Result.Ok(Response {
             status: head.status,
             reason: head.reason,
             minor: head.minor,

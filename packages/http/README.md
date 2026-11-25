@@ -11,7 +11,7 @@ fn main(): Result<()> {
     let mut response = client.get("http://example.test/greet?name=burdin")?
     println("{} {}", response.status, response.reason)
     println("{}", response.text()?)
-    Ok(())
+    Result.Ok(())
 }
 ```
 
@@ -37,8 +37,8 @@ fn main(): Result<()> {
     // The default client trusts the system's authorities.
     let client = http.Client.new()
     match client.get("https://example.test/") {
-        Ok(response) => println("{}", response.status),
-        Err(e) => {
+        Result.Ok(response) => println("{}", response.status),
+        Result.Err(e) => {
             if e.is_verification() {
                 println("the certificate is not acceptable: {}", e)
             } else {
@@ -54,7 +54,7 @@ fn main(): Result<()> {
     pinned.trust(trust)?
     let mut response = pinned.get("https://internal.example/")?
     println("{}", response.text()?)
-    Ok(())
+    Result.Ok(())
 }
 ```
 

@@ -32,8 +32,8 @@ fn main() {
 
     let big: usize = 1152921504606846976
     match List<i64, Arena>.try_with_capacity_in(big, Arena.new()) {
-        Ok(_) => println("allocated"),
-        Err(e) => {
+        Result.Ok(_) => println("allocated"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
             println((e == AllocError.OutOfMemory).to_string())

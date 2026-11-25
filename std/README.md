@@ -53,7 +53,7 @@ modules above call, and `print`/`println`/`eprint`/`eprintln`/`panic`. The I/O p
 `IoError` with its portable kind (`spec/errors.md`, ERR10-ERR11). The primitives whose result is a descriptor or a
 byte count report the code separately through `__stdin_error` and `__file_error`. A process or pipe primitive
 reports 0 when its runtime path has no code to give, and the `std` wrapper then uses the `Other` kind and
-`os_code() == None`. The integer-parse primitives are typed with `ParseIntError` and produce a placeholder error
+`os_code() == Option.None`. The integer-parse primitives are typed with `ParseIntError` and produce a placeholder error
 value; the `std` wrappers replace it with `Invalid`.
 
 Because the sources are embedded at compile time, changing a file here requires rebuilding `burdin`

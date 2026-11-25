@@ -89,7 +89,7 @@ fn main() {
     println(first_double().to_string())
 
     // `None` takes its type from the loop's expected type.
-    let n: Option<i32> = loop { break None }
+    let n: Option<i32> = loop { break Option.None }
     println(n.is_none().to_string())
 
     // `continue` leaves the break value untouched.

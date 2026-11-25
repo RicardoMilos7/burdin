@@ -23,11 +23,11 @@ Counted: Write {
             self.out.push(data[i])
             i = i + 1
         }
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 

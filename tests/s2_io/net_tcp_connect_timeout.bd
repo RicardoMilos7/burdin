@@ -29,11 +29,11 @@ fn main() {
         })
     })
     match net.TcpStream.connect_timeout("127.0.0.1:1", Duration.from_secs(5)) {
-        Ok(stream) => {
+        Result.Ok(stream) => {
             let _ = stream.close()
             println("refused: connected")
         }
-        Err(failure) => match failure.kind() {
+        Result.Err(failure) => match failure.kind() {
             IoErrorKind.ConnectionRefused => println("refused: connection refused"),
             other => println("refused: {}", other),
         },

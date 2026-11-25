@@ -347,9 +347,14 @@ impl Fmt<'_> {
                 let name = self.ident()?;
                 Ok(concat(vec![kw, space(), name]))
             }
-            TokenKind::Ident(_) | TokenKind::SelfType => {
+            TokenKind::Ident(_) | TokenKind::SelfType | TokenKind::Dot => {
+                // `.Variant` is a leading dot, attached to the name, and no more segments (TT13).
+                let inferred = self.at(&TokenKind::Dot);
                 let mut parts = vec![self.tok_doc()];
-                while self.at(&TokenKind::Dot) {
+                if inferred {
+                    parts.push(self.ident()?);
+                }
+                while !inferred && self.at(&TokenKind::Dot) {
                     parts.push(self.tok_doc());
                     parts.push(self.ident()?);
                 }

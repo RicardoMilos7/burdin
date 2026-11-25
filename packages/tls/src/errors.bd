@@ -79,7 +79,7 @@ TlsError {
                 op: "TLS".to_string(),
                 addr: other.to_string(),
                 kind: IoErrorKind.InvalidData,
-                os_code: None,
+                os_code: Option.None,
             },
         }
     }

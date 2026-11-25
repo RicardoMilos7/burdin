@@ -289,12 +289,12 @@ with harness.temporary_dir("burdin-platform-") as work:
         work / "binary_io.bd",
         "fn main() {\n"
         '    match write_file("raw_bytes.bin", "a\\nb") {\n'
-        "        Ok(_) => {},\n"
-        '        Err(_) => println("write failed"),\n'
+        "        Result.Ok(_) => {},\n"
+        '        Result.Err(_) => println("write failed"),\n'
         "    }\n"
         '    match read_to_string("raw_bytes.bin") {\n'
-        "        Ok(text) => println(text.len().to_string()),\n"
-        '        Err(_) => println("read failed"),\n'
+        "        Result.Ok(text) => println(text.len().to_string()),\n"
+        '        Result.Err(_) => println("read failed"),\n'
         "    }\n"
         '    println("a")\n'
         '    println("b")\n'

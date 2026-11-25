@@ -15,7 +15,7 @@ use ops.Index
 /// ```
 /// let mut h: PriorityHeap<i32> = PriorityHeap<i32>.default()
 /// h.push(2)
-/// assert_eq(h.pop(), Some(2))
+/// assert_eq(h.pop(), Option.Some(2))
 /// ```
 struct PriorityHeap<T: Ord>: Default, Eq {
     items: List<T>
@@ -170,8 +170,8 @@ PriorityHeap<T> where T: Ord {
         let mut iter = iter
         loop {
             match iter.next() {
-                Some(x) => self.push(x),
-                None => break,
+                Option.Some(x) => self.push(x),
+                Option.None => break,
             }
         }
     }
@@ -180,8 +180,8 @@ PriorityHeap<T> where T: Ord {
     ///
     /// ```
     /// let mut h = PriorityHeap<i32>.from([3, 9, 2])
-    /// assert_eq(h.pop(), Some(9))
-    /// assert_eq(h.pop(), Some(3))
+    /// assert_eq(h.pop(), Option.Some(9))
+    /// assert_eq(h.pop(), Option.Some(3))
     /// ```
     fn pop(mut self): Option<T> {
         self.items.pop()
@@ -221,8 +221,8 @@ PriorityHeap<T> where T: Ord {
         let mut out = List<T>.new()
         loop {
             match heap.items.pop() {
-                Some(x) => out.push(x),
-                None => break,
+                Option.Some(x) => out.push(x),
+                Option.None => break,
             }
         }
         out
@@ -257,11 +257,11 @@ PriorityHeap<T>: Iterable<&T> where T: Ord {
 PriorityHeapIter<D, T>: Iterator<&T> where D: Index<T> + HeapLen {
     fn next(mut self): Option<&T> {
         if self.next_index >= self.source.heap_len() {
-            return None
+            return Option.None
         }
         let k = self.next_index
         self.next_index = self.next_index + 1
-        Some(&self.source[k])
+        Option.Some(&self.source[k])
     }
 }
 

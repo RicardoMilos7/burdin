@@ -17,13 +17,13 @@ fn send_until_failure(mut client: net.TcpStream, chunk: [u8]): String {
     let mut going = true
     while going {
         match client.write_all(chunk[0..chunk.len()]) {
-            Ok(_) => {
+            Result.Ok(_) => {
                 sent = sent + chunk.len()
                 if sent >= 268435456 {
                     going = false
                 }
             }
-            Err(failure) => {
+            Result.Err(failure) => {
                 result = match failure.kind() {
                     IoErrorKind.TimedOut => "timed out".to_string(),
                     _ => "failed".to_string(),
@@ -74,7 +74,7 @@ fn main() {
         })
         s.spawn(|| {
             let mut client = net.TcpStream.connect(target.clone()).unwrap()
-            client.set_write_timeout(Some(Duration.from_millis(5000)))
+            client.set_write_timeout(Option.Some(Duration.from_millis(5000)))
             println("closed while waiting: {}", send_until_failure(mut client, chunk[0..chunk.len()]))
         })
     })
@@ -93,7 +93,7 @@ fn main() {
         })
         s.spawn(|| {
             let mut client = net.TcpStream.connect(target.clone()).unwrap()
-            client.set_write_timeout(Some(Duration.from_millis(300)))
+            client.set_write_timeout(Option.Some(Duration.from_millis(300)))
             println("silent peer: {}", send_until_failure(mut client, chunk[0..chunk.len()]))
         })
     })

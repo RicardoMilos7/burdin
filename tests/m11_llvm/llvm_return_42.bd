@@ -55,8 +55,8 @@ fn main() {
         let ir = LLVMPrintModuleToString(module)
         let text = CStr.to_string(ir)
         match text.find_str("ret i32 42") {
-            Some(_) => println("found ret"),
-            None => println("ret missing"),
+            Option.Some(_) => println("found ret"),
+            Option.None => println("ret missing"),
         }
 
         LLVMDisposeMessage(ir)

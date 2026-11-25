@@ -20,9 +20,9 @@ enum PercentError: Debug {
 
 Percent: TryFrom<i32> {
     fn try_from(v: i32): Result<Percent, PercentError> {
-        if v < 0 { return Err(PercentError.Negative) }
-        if v > 100 { return Err(PercentError.TooLarge) }
-        Ok(Percent { value: v as u8 })
+        if v < 0 { return Result.Err(PercentError.Negative) }
+        if v > 100 { return Result.Err(PercentError.TooLarge) }
+        Result.Ok(Percent { value: v as u8 })
     }
 }
 
@@ -32,8 +32,8 @@ fn convert<T: TryFrom<i32>>(v: i32): Result<T, <T as TryFrom<i32>>.Error> {
 
 fn fits<T: TryFrom<i32>>(v: i32): bool {
     match T.try_from(v) {
-        Ok(_) => true,
-        Err(_) => false,
+        Result.Ok(_) => true,
+        Result.Err(_) => false,
     }
 }
 
@@ -43,8 +43,8 @@ fn main() {
     let b: Result<Percent, PercentError> = convert<Percent>(50)
     println("{}", b.is_ok())
     match convert<Percent>(150) {
-        Ok(_) => println("ok"),
-        Err(e) => println("{:?}", e),
+        Result.Ok(_) => println("ok"),
+        Result.Err(e) => println("{:?}", e),
     }
     println("{:?}", convert<u8>(300))
     println("{} {} {} {}", fits<u8>(200), fits<u8>(300), fits<Percent>(100), fits<Percent>(-1))

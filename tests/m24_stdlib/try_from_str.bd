@@ -11,15 +11,15 @@ struct Name {
 
 Name: TryFrom<str> {
     fn try_from(s: str): Result<Name, str> {
-        if s.len() == 0 { return Err("empty") }
-        Ok(Name { text: String.from(s) })
+        if s.len() == 0 { return Result.Err("empty") }
+        Result.Ok(Name { text: String.from(s) })
     }
 }
 
 fn show(text: str) {
     match Name.try_from(text) {
-        Ok(n) => println("{}", n.text),
-        Err(e) => println("{}", e),
+        Result.Ok(n) => println("{}", n.text),
+        Result.Err(e) => println("{}", e),
     }
 }
 

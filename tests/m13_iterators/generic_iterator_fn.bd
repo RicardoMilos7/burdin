@@ -19,11 +19,11 @@ Countdown: Iterable<i32> {
 Countdown: Iterator<i32> {
     fn next(mut self): Option<i32> {
         if self.from <= 0 {
-            return None
+            return Option.None
         }
         let v = self.from
         self.from = v - 1
-        Some(v)
+        Option.Some(v)
     }
 }
 
@@ -31,8 +31,8 @@ fn total<I: Iterator<i32>>(mut it: I): i32 {
     let mut sum = 0
     loop {
         match it.next() {
-            Some(x) => sum = sum + x,
-            None => return sum,
+            Option.Some(x) => sum = sum + x,
+            Option.None => return sum,
         }
     }
 }

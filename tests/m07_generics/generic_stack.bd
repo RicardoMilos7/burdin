@@ -34,8 +34,8 @@ Stack<T> {
 
     fn pop(own self): Option<(T, Stack<T>)> {
         match self {
-            Stack.Empty => None,
-            Stack.Node(v, rest) => Some((v, *rest)),
+            Stack.Empty => Option.None,
+            Stack.Node(v, rest) => Option.Some((v, *rest)),
         }
     }
 }
@@ -55,11 +55,11 @@ fn main() {
     let s = s.push(3)
     show(s.len())
     match s.pop() {
-        Some((v, rest)) => {
+        Option.Some((v, rest)) => {
             show(v)
             show(rest.len())
         },
-        None => println("empty"),
+        Option.None => println("empty"),
     }
 
     let t = Stack<bool>.new().push(true)

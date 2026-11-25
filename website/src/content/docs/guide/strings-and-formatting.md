@@ -80,7 +80,7 @@ fn main() {
 `str + str` and `String + String` are errors. For two `String` values, write `s + t.as_str()`. `+=` is not available for
 text; use `push_str`.
 
-Slicing a string with `s[a..b]` panics when an end falls inside a multi-byte character. `s.get(a, b)` returns `None` in
+Slicing a string with `s[a..b]` panics when an end falls inside a multi-byte character. `s.get(a, b)` returns `Option.None` in
 that case instead.
 
 ## Interpolation

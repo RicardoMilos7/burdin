@@ -44,8 +44,8 @@ The types `Writer` and `Parser` are public so that a hand-written impl can drive
 | variant with one value | `{"Circle": 1.5}` |
 | variant with several values | `{"Rect": [1.5, 2.5]}` |
 
-`Option` is the one enum with a special form, which is what makes `null` mean `None`. Reading `Option` accepts
-`null` for `None` and any other value for `Some`. A JSON number that is not finite cannot be represented, so a
+`Option` is the one enum with a special form, which is what makes `null` mean `Option.None`. Reading `Option` accepts
+`null` for `Option.None` and any other value for `Option.Some`. A JSON number that is not finite cannot be represented, so a
 `1e999` is an error rather than an infinity.
 
 ## Errors

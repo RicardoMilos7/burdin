@@ -204,6 +204,7 @@ impl Fmt<'_> {
                     hug = false;
                     block_like = false;
                 }
+                TokenKind::Dot if self.nl() && self.dot_starts_arm() => break,
                 TokenKind::Dot => {
                     let after_int = self.pos > 0 && matches!(self.toks[self.pos - 1].kind, TokenKind::Int(_));
                     // After `break 'a` a dot on the same line would start a target-typed value, so the field stays on its own line.
@@ -474,6 +475,11 @@ impl Fmt<'_> {
                     return Err(self.error("expected a name or `{` after `.`"));
                 }
                 let name = self.tok_doc();
+                // `.Variant { fields }`: the literal of an inferred struct-like variant (TT13).
+                if self.at_struct_literal(r) {
+                    let lit = self.struct_literal_body()?;
+                    return Ok(Ex { hug: true, ..Ex::plain(concat(vec![dot, name, space(), lit])) });
+                }
                 Ok(Ex::plain(concat(vec![dot, name])))
             }
             TokenKind::LBrace => {

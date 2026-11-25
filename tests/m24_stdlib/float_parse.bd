@@ -34,10 +34,10 @@
 
 fn show(r: Result<f64, ParseFloatError>) {
     match r {
-        Ok(v) => {
+        Result.Ok(v) => {
             println("ok {v}")
         }
-        Err(e) => {
+        Result.Err(e) => {
             println("err {e}")
         }
     }

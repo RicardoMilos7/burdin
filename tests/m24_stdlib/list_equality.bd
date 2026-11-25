@@ -56,14 +56,14 @@ fn main() {
     println("{names == other} {longer}")
 
     let mut opts = List<Option<i32>>.new()
-    opts.push(Some(1))
-    opts.push(None)
+    opts.push(Option.Some(1))
+    opts.push(Option.None)
     let mut opts_same = List<Option<i32>>.new()
-    opts_same.push(Some(1))
-    opts_same.push(None)
+    opts_same.push(Option.Some(1))
+    opts_same.push(Option.None)
     let mut opts_other = List<Option<i32>>.new()
-    opts_other.push(None)
-    opts_other.push(Some(1))
+    opts_other.push(Option.None)
+    opts_other.push(Option.Some(1))
     println("{opts == opts_same} {opts == opts_other}")
 
     let x = Tagged { id: 1, tags: List<String>.from([String.from("x")]) }

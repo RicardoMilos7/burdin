@@ -5,11 +5,11 @@
 // An `Err` from `main` prints its chain to standard error and exits non-zero (spec/errors.md, ERR8).
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+    Result.Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })
 }
 
 fn main(): Result<i32> {
     println("before")
     let n = read().context("loading settings")?
-    Ok(n)
+    Result.Ok(n)
 }

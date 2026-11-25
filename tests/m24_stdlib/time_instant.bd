@@ -12,8 +12,8 @@
 
 fn show(i: Option<Instant>): String {
     match i {
-        Some(v) => v.since_start().to_string(),
-        None => String.from("None"),
+        Option.Some(v) => v.since_start().to_string(),
+        Option.None => String.from("None"),
     }
 }
 

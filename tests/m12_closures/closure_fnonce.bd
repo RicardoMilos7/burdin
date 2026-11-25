@@ -14,7 +14,7 @@ fn main() {
     println(call_once(|| s))
 
     let t = String.from("in option")
-    let o: Option<FnOnce(): String> = Some(|| t)
+    let o: Option<FnOnce(): String> = Option.Some(|| t)
     println(o.unwrap()())
 
     let n: FnOnce(): i32 = || 42

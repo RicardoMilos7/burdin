@@ -354,12 +354,12 @@ fn write_value(t: &Type, value: &str, indent: &str) -> String {
         Some(Container::Option) => {
             let inner = &path_args(t)[0];
             let mut out = format!("{indent}match {value} {{\n");
-            out.push_str(&format!("{indent}    Some(__inner) => {{\n"));
+            out.push_str(&format!("{indent}    Option.Some(__inner) => {{\n"));
             out.push_str(&format!("{indent}        s.begin_variant(\"Option\", \"Some\", 0, 1)?\n"));
             out.push_str(&write_value(inner, "__inner", &format!("{indent}        ")));
             out.push_str(&format!("{indent}        s.end_variant(1)?\n"));
             out.push_str(&format!("{indent}    }}\n"));
-            out.push_str(&format!("{indent}    None => {{\n"));
+            out.push_str(&format!("{indent}    Option.None => {{\n"));
             out.push_str(&format!("{indent}        s.begin_variant(\"Option\", \"None\", 1, 0)?\n"));
             out.push_str(&format!("{indent}        s.end_variant(0)?\n"));
             out.push_str(&format!("{indent}    }}\n"));
@@ -369,12 +369,12 @@ fn write_value(t: &Type, value: &str, indent: &str) -> String {
         Some(Container::Result) => {
             let args = path_args(t);
             let mut out = format!("{indent}match {value} {{\n");
-            out.push_str(&format!("{indent}    Ok(__inner) => {{\n"));
+            out.push_str(&format!("{indent}    Result.Ok(__inner) => {{\n"));
             out.push_str(&format!("{indent}        s.begin_variant(\"Result\", \"Ok\", 0, 1)?\n"));
             out.push_str(&write_value(&args[0], "__inner", &format!("{indent}        ")));
             out.push_str(&format!("{indent}        s.end_variant(1)?\n"));
             out.push_str(&format!("{indent}    }}\n"));
-            out.push_str(&format!("{indent}    Err(__inner) => {{\n"));
+            out.push_str(&format!("{indent}    Result.Err(__inner) => {{\n"));
             out.push_str(&format!("{indent}        s.begin_variant(\"Result\", \"Err\", 1, 1)?\n"));
             out.push_str(&write_value(&args[1], "__inner", &format!("{indent}        ")));
             out.push_str(&format!("{indent}        s.end_variant(1)?\n"));
@@ -399,8 +399,8 @@ fn write_value(t: &Type, value: &str, indent: &str) -> String {
 fn try_unit(call: &str, wrap: &str, indent: &str) -> String {
     format!(
         "{indent}match {call} {{\n\
-         {indent}    Ok(_) => {{}}\n\
-         {indent}    Err(e) => return Err(e{wrap}),\n\
+         {indent}    Result.Ok(_) => {{}}\n\
+         {indent}    Result.Err(e) => return Result.Err(e{wrap}),\n\
          {indent}}}\n"
     )
 }
@@ -409,8 +409,8 @@ fn try_unit(call: &str, wrap: &str, indent: &str) -> String {
 fn try_value(call: &str, target: &str, wrap: &str, indent: &str) -> String {
     format!(
         "{indent}let {target} = match {call} {{\n\
-         {indent}    Ok(value) => value,\n\
-         {indent}    Err(e) => return Err(e{wrap}),\n\
+         {indent}    Result.Ok(value) => value,\n\
+         {indent}    Result.Err(e) => return Result.Err(e{wrap}),\n\
          {indent}}}\n"
     )
 }
@@ -472,14 +472,14 @@ fn read_value(t: &Type, target: &str, wrap: &str, indent: &str) -> String {
             out.push_str(&try_unit("d.variant_payload_field(0)", wrap, &arm));
             out.push_str(&read_value(inner, "__inner", &format!(".variant(\"Some\"){wrap}"), &arm));
             out.push_str(&try_unit("d.end_variant_payload(1)", wrap, &arm));
-            out.push_str(&format!("{arm}Some(__inner)\n"));
+            out.push_str(&format!("{arm}Option.Some(__inner)\n"));
             out.push_str(&format!("{indent}}} else if __variant.as_str() == \"None\" {{\n"));
             out.push_str(&try_unit("d.begin_variant_payload(0)", wrap, &arm));
             out.push_str(&try_unit("d.end_variant_payload(0)", wrap, &arm));
-            out.push_str(&format!("{arm}None\n"));
+            out.push_str(&format!("{arm}Option.None\n"));
             out.push_str(&format!("{indent}}} else {{\n"));
             out.push_str(&format!("{arm}let failure = unknown_variant(\"Option\", __variant.as_str())\n"));
-            out.push_str(&format!("{arm}return Err(failure.variant(__variant.as_str()){wrap})\n"));
+            out.push_str(&format!("{arm}return Result.Err(failure.variant(__variant.as_str()){wrap})\n"));
             out.push_str(&format!("{indent}}}\n"));
             out
         }
@@ -494,16 +494,16 @@ fn read_value(t: &Type, target: &str, wrap: &str, indent: &str) -> String {
             out.push_str(&try_unit("d.variant_payload_field(0)", wrap, &arm));
             out.push_str(&read_value(&args[0], "__inner", &format!(".variant(\"Ok\"){wrap}"), &arm));
             out.push_str(&try_unit("d.end_variant_payload(1)", wrap, &arm));
-            out.push_str(&format!("{arm}Ok(__inner)\n"));
+            out.push_str(&format!("{arm}Result.Ok(__inner)\n"));
             out.push_str(&format!("{indent}}} else if __variant.as_str() == \"Err\" {{\n"));
             out.push_str(&try_unit("d.begin_variant_payload(1)", wrap, &arm));
             out.push_str(&try_unit("d.variant_payload_field(0)", wrap, &arm));
             out.push_str(&read_value(&args[1], "__inner", &format!(".variant(\"Err\"){wrap}"), &arm));
             out.push_str(&try_unit("d.end_variant_payload(1)", wrap, &arm));
-            out.push_str(&format!("{arm}Err(__inner)\n"));
+            out.push_str(&format!("{arm}Result.Err(__inner)\n"));
             out.push_str(&format!("{indent}}} else {{\n"));
             out.push_str(&format!("{arm}let failure = unknown_variant(\"Result\", __variant.as_str())\n"));
-            out.push_str(&format!("{arm}return Err(failure.variant(__variant.as_str()){wrap})\n"));
+            out.push_str(&format!("{arm}return Result.Err(failure.variant(__variant.as_str()){wrap})\n"));
             out.push_str(&format!("{indent}}}\n"));
             out
         }
@@ -517,8 +517,8 @@ fn read_value(t: &Type, target: &str, wrap: &str, indent: &str) -> String {
                 if i > 0 {
                     out.push_str(&format!(
                         "{indent}let _ = match d.has_next_seq_element() {{\n\
-                         {indent}    Ok(value) => value,\n\
-                         {indent}    Err(e) => return Err(e{wrap}),\n\
+                         {indent}    Result.Ok(value) => value,\n\
+                         {indent}    Result.Err(e) => return Result.Err(e{wrap}),\n\
                          {indent}}}\n"
                     ));
                 }
@@ -534,8 +534,8 @@ fn read_value(t: &Type, target: &str, wrap: &str, indent: &str) -> String {
             let call = read_call(t);
             format!(
                 "{indent}let {target}: {ty} = match {call} {{\n\
-                 {indent}    Ok(value) => value,\n\
-                 {indent}    Err(e) => return Err(e{wrap}),\n\
+                 {indent}    Result.Ok(value) => value,\n\
+                 {indent}    Result.Err(e) => return Result.Err(e{wrap}),\n\
                  {indent}}}\n"
             )
         }
@@ -587,7 +587,7 @@ fn serialize_enum_impl(e: &EnumDecl) -> String {
     }
     let body = if e.variants.is_empty() {
         // An empty enum has no value to write; the `else` arm keeps the match well-formed.
-        "        match self {\n            else => {}\n        }\n        Ok(())\n".to_string()
+        "        match self {\n            else => {}\n        }\n        Result.Ok(())\n".to_string()
     } else {
         format!("        match self {{\n{arms}        }}\n")
     };
@@ -605,7 +605,7 @@ fn deserialize_struct_impl(s: &StructDecl) -> String {
     // A field is held as an `Option` of its type: there is no default value for every type, and the `None` state
     // is also what reports a field that never appeared.
     for (i, f) in s.fields.iter().enumerate() {
-        body.push_str(&format!("        let mut __f{i}: Option<{}> = None\n", type_text(&f.ty)));
+        body.push_str(&format!("        let mut __f{i}: Option<{}> = Option.None\n", type_text(&f.ty)));
     }
     body.push_str("        loop {\n");
     body.push_str("            let __more = d.has_next_field()?\n");
@@ -615,7 +615,7 @@ fn deserialize_struct_impl(s: &StructDecl) -> String {
     body.push_str("            let __name = d.field_name()?\n");
     if s.fields.is_empty() {
         body.push_str("            let failure = unknown_field(__name.as_str())\n");
-        body.push_str("            return Err(failure.field(__name.as_str()))\n");
+        body.push_str("            return Result.Err(failure.field(__name.as_str()))\n");
     } else {
         for (i, f) in s.fields.iter().enumerate() {
             let field = &f.name.name;
@@ -626,15 +626,15 @@ fn deserialize_struct_impl(s: &StructDecl) -> String {
             }
             body.push_str(&format!("                if __f{i}.is_some() {{\n"));
             body.push_str(&format!("                    let failure = duplicate_field(\"{field}\")\n"));
-            body.push_str(&format!("                    return Err(failure.field(\"{field}\"))\n"));
+            body.push_str(&format!("                    return Result.Err(failure.field(\"{field}\"))\n"));
             body.push_str("                }\n");
             body.push_str(&read_value(&f.ty, "__value", &format!(".field(\"{field}\")"), "                "));
-            body.push_str(&format!("                __f{i} = Some(__value)\n"));
+            body.push_str(&format!("                __f{i} = Option.Some(__value)\n"));
             body.push_str("            }");
         }
         body.push_str(" else {\n");
         body.push_str("                let failure = unknown_field(__name.as_str())\n");
-        body.push_str("                return Err(failure.field(__name.as_str()))\n");
+        body.push_str("                return Result.Err(failure.field(__name.as_str()))\n");
         body.push_str("            }\n");
     }
     body.push_str("        }\n");
@@ -642,15 +642,15 @@ fn deserialize_struct_impl(s: &StructDecl) -> String {
     for (i, f) in s.fields.iter().enumerate() {
         let field = &f.name.name;
         body.push_str(&format!("        let __v{i} = match __f{i} {{\n"));
-        body.push_str("            Some(value) => value,\n");
-        body.push_str("            None => {\n");
+        body.push_str("            Option.Some(value) => value,\n");
+        body.push_str("            Option.None => {\n");
         body.push_str(&format!("                let failure = missing_field(\"{field}\")\n"));
-        body.push_str("                return Err(failure)\n");
+        body.push_str("                return Result.Err(failure)\n");
         body.push_str("            }\n");
         body.push_str("        }\n");
     }
     let init: Vec<String> = s.fields.iter().enumerate().map(|(i, f)| format!("{}: __v{i}", f.name.name)).collect();
-    body.push_str(&format!("        Ok({name} {{ {} }})\n", init.join(", ")));
+    body.push_str(&format!("        Result.Ok({name} {{ {} }})\n", init.join(", ")));
     format!(
         "{} {{\n    fn deserialize<__D: Deserializer>(mut d: __D): Result<Self, DeError> {{\n{body}    }}\n}}\n",
         head(name, &s.generics, "Deserialize")
@@ -663,7 +663,7 @@ fn deserialize_enum_impl(e: &EnumDecl) -> String {
     body.push_str("        let __variant = d.variant_name()?\n");
     if e.variants.is_empty() {
         body.push_str(&format!("        let failure = unknown_variant(\"{name}\", __variant.as_str())\n"));
-        body.push_str("        Err(failure)\n");
+        body.push_str("        Result.Err(failure)\n");
     } else {
         for (vi, v) in e.variants.iter().enumerate() {
             let variant = &v.name.name;
@@ -693,12 +693,12 @@ fn deserialize_enum_impl(e: &EnumDecl) -> String {
                 body.push_str(&read_value(ty, &format!("__value{i}"), &wrap, "            "));
             }
             body.push_str(&format!("            d.end_variant_payload({arity})?\n"));
-            body.push_str(&format!("            Ok({ctor})\n"));
+            body.push_str(&format!("            Result.Ok({ctor})\n"));
             body.push_str("        }");
         }
         body.push_str(" else {\n");
         body.push_str(&format!("            let failure = unknown_variant(\"{name}\", __variant.as_str())\n"));
-        body.push_str("            Err(failure)\n");
+        body.push_str("            Result.Err(failure)\n");
         body.push_str("        }\n");
     }
     format!(
@@ -775,8 +775,8 @@ mod tests {
             "Point: Deserialize {\n\
              \x20   fn deserialize<__D: Deserializer>(mut d: __D): Result<Self, DeError> {\n\
              \x20       d.begin_struct(\"Point\")?\n\
-             \x20       let mut __f0: Option<i32> = None\n\
-             \x20       let mut __f1: Option<i32> = None\n\
+             \x20       let mut __f0: Option<i32> = Option.None\n\
+             \x20       let mut __f1: Option<i32> = Option.None\n\
              \x20       loop {\n\
              \x20           let __more = d.has_next_field()?\n\
              \x20           if !__more {\n\
@@ -786,44 +786,44 @@ mod tests {
              \x20           if __name.as_str() == \"x\" {\n\
              \x20               if __f0.is_some() {\n\
              \x20                   let failure = duplicate_field(\"x\")\n\
-             \x20                   return Err(failure.field(\"x\"))\n\
+             \x20                   return Result.Err(failure.field(\"x\"))\n\
              \x20               }\n\
              \x20               let __value: i32 = match deserialize_i32(mut d) {\n\
-             \x20                   Ok(value) => value,\n\
-             \x20                   Err(e) => return Err(e.field(\"x\")),\n\
+             \x20                   Result.Ok(value) => value,\n\
+             \x20                   Result.Err(e) => return Result.Err(e.field(\"x\")),\n\
              \x20               }\n\
-             \x20               __f0 = Some(__value)\n\
+             \x20               __f0 = Option.Some(__value)\n\
              \x20           } else if __name.as_str() == \"y\" {\n\
              \x20               if __f1.is_some() {\n\
              \x20                   let failure = duplicate_field(\"y\")\n\
-             \x20                   return Err(failure.field(\"y\"))\n\
+             \x20                   return Result.Err(failure.field(\"y\"))\n\
              \x20               }\n\
              \x20               let __value: i32 = match deserialize_i32(mut d) {\n\
-             \x20                   Ok(value) => value,\n\
-             \x20                   Err(e) => return Err(e.field(\"y\")),\n\
+             \x20                   Result.Ok(value) => value,\n\
+             \x20                   Result.Err(e) => return Result.Err(e.field(\"y\")),\n\
              \x20               }\n\
-             \x20               __f1 = Some(__value)\n\
+             \x20               __f1 = Option.Some(__value)\n\
              \x20           } else {\n\
              \x20               let failure = unknown_field(__name.as_str())\n\
-             \x20               return Err(failure.field(__name.as_str()))\n\
+             \x20               return Result.Err(failure.field(__name.as_str()))\n\
              \x20           }\n\
              \x20       }\n\
              \x20       d.end_struct()?\n\
              \x20       let __v0 = match __f0 {\n\
-             \x20           Some(value) => value,\n\
-             \x20           None => {\n\
+             \x20           Option.Some(value) => value,\n\
+             \x20           Option.None => {\n\
              \x20               let failure = missing_field(\"x\")\n\
-             \x20               return Err(failure)\n\
+             \x20               return Result.Err(failure)\n\
              \x20           }\n\
              \x20       }\n\
              \x20       let __v1 = match __f1 {\n\
-             \x20           Some(value) => value,\n\
-             \x20           None => {\n\
+             \x20           Option.Some(value) => value,\n\
+             \x20           Option.None => {\n\
              \x20               let failure = missing_field(\"y\")\n\
-             \x20               return Err(failure)\n\
+             \x20               return Result.Err(failure)\n\
              \x20           }\n\
              \x20       }\n\
-             \x20       Ok(Point { x: __v0, y: __v1 })\n\
+             \x20       Result.Ok(Point { x: __v0, y: __v1 })\n\
              \x20   }\n\
              }\n"
         );
@@ -850,8 +850,8 @@ mod tests {
             "Pair<T>: Deserialize where T: Deserialize {\n\
              \x20   fn deserialize<__D: Deserializer>(mut d: __D): Result<Self, DeError> {\n\
              \x20       d.begin_struct(\"Pair\")?\n\
-             \x20       let mut __f0: Option<T> = None\n\
-             \x20       let mut __f1: Option<T> = None\n\
+             \x20       let mut __f0: Option<T> = Option.None\n\
+             \x20       let mut __f1: Option<T> = Option.None\n\
              \x20       loop {\n\
              \x20           let __more = d.has_next_field()?\n\
              \x20           if !__more {\n\
@@ -861,44 +861,44 @@ mod tests {
              \x20           if __name.as_str() == \"a\" {\n\
              \x20               if __f0.is_some() {\n\
              \x20                   let failure = duplicate_field(\"a\")\n\
-             \x20                   return Err(failure.field(\"a\"))\n\
+             \x20                   return Result.Err(failure.field(\"a\"))\n\
              \x20               }\n\
              \x20               let __value: T = match T.deserialize(mut d) {\n\
-             \x20                   Ok(value) => value,\n\
-             \x20                   Err(e) => return Err(e.field(\"a\")),\n\
+             \x20                   Result.Ok(value) => value,\n\
+             \x20                   Result.Err(e) => return Result.Err(e.field(\"a\")),\n\
              \x20               }\n\
-             \x20               __f0 = Some(__value)\n\
+             \x20               __f0 = Option.Some(__value)\n\
              \x20           } else if __name.as_str() == \"b\" {\n\
              \x20               if __f1.is_some() {\n\
              \x20                   let failure = duplicate_field(\"b\")\n\
-             \x20                   return Err(failure.field(\"b\"))\n\
+             \x20                   return Result.Err(failure.field(\"b\"))\n\
              \x20               }\n\
              \x20               let __value: T = match T.deserialize(mut d) {\n\
-             \x20                   Ok(value) => value,\n\
-             \x20                   Err(e) => return Err(e.field(\"b\")),\n\
+             \x20                   Result.Ok(value) => value,\n\
+             \x20                   Result.Err(e) => return Result.Err(e.field(\"b\")),\n\
              \x20               }\n\
-             \x20               __f1 = Some(__value)\n\
+             \x20               __f1 = Option.Some(__value)\n\
              \x20           } else {\n\
              \x20               let failure = unknown_field(__name.as_str())\n\
-             \x20               return Err(failure.field(__name.as_str()))\n\
+             \x20               return Result.Err(failure.field(__name.as_str()))\n\
              \x20           }\n\
              \x20       }\n\
              \x20       d.end_struct()?\n\
              \x20       let __v0 = match __f0 {\n\
-             \x20           Some(value) => value,\n\
-             \x20           None => {\n\
+             \x20           Option.Some(value) => value,\n\
+             \x20           Option.None => {\n\
              \x20               let failure = missing_field(\"a\")\n\
-             \x20               return Err(failure)\n\
+             \x20               return Result.Err(failure)\n\
              \x20           }\n\
              \x20       }\n\
              \x20       let __v1 = match __f1 {\n\
-             \x20           Some(value) => value,\n\
-             \x20           None => {\n\
+             \x20           Option.Some(value) => value,\n\
+             \x20           Option.None => {\n\
              \x20               let failure = missing_field(\"b\")\n\
-             \x20               return Err(failure)\n\
+             \x20               return Result.Err(failure)\n\
              \x20           }\n\
              \x20       }\n\
-             \x20       Ok(Pair { a: __v0, b: __v1 })\n\
+             \x20       Result.Ok(Pair { a: __v0, b: __v1 })\n\
              \x20   }\n\
              }\n"
         );
@@ -941,38 +941,38 @@ mod tests {
              \x20       if __variant.as_str() == \"A\" {\n\
              \x20           d.begin_variant_payload(0)?\n\
              \x20           d.end_variant_payload(0)?\n\
-             \x20           Ok(E.A)\n\
+             \x20           Result.Ok(E.A)\n\
              \x20       } else if __variant.as_str() == \"B\" {\n\
              \x20           d.begin_variant_payload(2)?\n\
              \x20           d.variant_payload_field(0)?\n\
              \x20           let __value0: i32 = match deserialize_i32(mut d) {\n\
-             \x20               Ok(value) => value,\n\
-             \x20               Err(e) => return Err(e.index(0).variant(\"B\")),\n\
+             \x20               Result.Ok(value) => value,\n\
+             \x20               Result.Err(e) => return Result.Err(e.index(0).variant(\"B\")),\n\
              \x20           }\n\
              \x20           d.variant_payload_field(1)?\n\
              \x20           let __value1: String = match deserialize_str(mut d) {\n\
-             \x20               Ok(value) => value,\n\
-             \x20               Err(e) => return Err(e.index(1).variant(\"B\")),\n\
+             \x20               Result.Ok(value) => value,\n\
+             \x20               Result.Err(e) => return Result.Err(e.index(1).variant(\"B\")),\n\
              \x20           }\n\
              \x20           d.end_variant_payload(2)?\n\
-             \x20           Ok(E.B(__value0, __value1))\n\
+             \x20           Result.Ok(E.B(__value0, __value1))\n\
              \x20       } else if __variant.as_str() == \"C\" {\n\
              \x20           d.begin_variant_payload(2)?\n\
              \x20           d.variant_payload_field(0)?\n\
              \x20           let __value0: bool = match deserialize_bool(mut d) {\n\
-             \x20               Ok(value) => value,\n\
-             \x20               Err(e) => return Err(e.index(0).variant(\"C\")),\n\
+             \x20               Result.Ok(value) => value,\n\
+             \x20               Result.Err(e) => return Result.Err(e.index(0).variant(\"C\")),\n\
              \x20           }\n\
              \x20           d.variant_payload_field(1)?\n\
              \x20           let __value1: f64 = match deserialize_f64(mut d) {\n\
-             \x20               Ok(value) => value,\n\
-             \x20               Err(e) => return Err(e.index(1).variant(\"C\")),\n\
+             \x20               Result.Ok(value) => value,\n\
+             \x20               Result.Err(e) => return Result.Err(e.index(1).variant(\"C\")),\n\
              \x20           }\n\
              \x20           d.end_variant_payload(2)?\n\
-             \x20           Ok(E.C { x: __value0, y: __value1 })\n\
+             \x20           Result.Ok(E.C { x: __value0, y: __value1 })\n\
              \x20       } else {\n\
              \x20           let failure = unknown_variant(\"E\", __variant.as_str())\n\
-             \x20           Err(failure)\n\
+             \x20           Result.Err(failure)\n\
              \x20       }\n\
              \x20   }\n\
              }\n"

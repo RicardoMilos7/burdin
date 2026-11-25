@@ -50,10 +50,10 @@ fn main() {
     }
     println("let else ok")
 
-    let o: Option<str> = Some("abc")
+    let o: Option<str> = Option.Some("abc")
     match o {
-        Some("abc") => println("some abc"),
-        Some(_) => println("some other"),
-        None => println("none"),
+        Option.Some("abc") => println("some abc"),
+        Option.Some(_) => println("some other"),
+        Option.None => println("none"),
     }
 }

@@ -1,0 +1,30 @@
+enum Shape { Dot, Circle(i32), Rect { w: i32, h: i32 } }
+
+fn area(s: Shape): i32 {
+    match s {
+        . Dot | .Circle( 0 ) => 0,
+        .Circle(r) => r*r,
+        .Rect{w,h} => w*h,
+    }
+}
+
+fn pick(o: Option<i32>, r: Result<i32, String>): i32 {
+    let a: Shape = .Rect{ w: 1, h: 2 }
+    let b: Shape = . Circle(3)
+    if let .Some(v) = o { return v }
+    if let Option.Some(v) = o { return v }
+    let x: Option<i32> = Option.None
+    let y: Option<i32> = .None
+    match r {
+        .Ok(v) => v,
+        Result.Err(_) => 0,
+    }
+}
+
+fn nested(p: (Option<Shape>, Shape)): i32 {
+    match p {
+        (.Some(.Circle(n)), .Dot) | (.Some(.Rect { w: n, .. }), _) => n,
+        (.None, .Rect { .. }) => 1,
+        _ => 0,
+    }
+}

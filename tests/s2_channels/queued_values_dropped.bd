@@ -32,8 +32,8 @@ fn main() {
     extra.send(Guard { id: 3 })
     println("sent Guard(3)")
     match ch.recv() {
-        Some(g) => println("received Guard({})", g.id),
-        None => println("nothing"),
+        Option.Some(g) => println("received Guard({})", g.id),
+        Option.None => println("nothing"),
     }
     println("end of main")
 }

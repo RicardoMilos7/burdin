@@ -96,14 +96,14 @@ fn print_spans(value: toml.Value, path: String) {
 fn reread(text: str) {
     let read: Result<Config, DeError> = toml.from_str(text)
     match read {
-        Ok(config) => {
+        Result.Ok(config) => {
             let backup = match config.backup {
-                Some(server) => server.host,
-                None => "none".to_string(),
+                Option.Some(server) => server.host,
+                Option.None => "none".to_string(),
             }
             println("reread: name={} servers={} backup={}", config.name, config.servers.len(), backup)
         }
-        Err(e) => println("reread: {}", e.to_string()),
+        Result.Err(e) => println("reread: {}", e.to_string()),
     }
 }
 
@@ -114,9 +114,9 @@ fn sample(with_backup: bool): Config {
     let mut weights = Map<String, i32>.new()
     weights.insert("a".to_string(), 1)
     let backup: Option<Server> = if with_backup {
-        Some(Server { host: "c.example".to_string(), port: 8080, tls: true, ratio: 2.5 })
+        Option.Some(Server { host: "c.example".to_string(), port: 8080, tls: true, ratio: 2.5 })
     } else {
-        None
+        Option.None
     }
     Config {
         name: "edge".to_string(),
@@ -134,39 +134,39 @@ fn main() {
     if mode == "write" {
         let with_backup = sample(true)
         match toml.to_string(with_backup) {
-            Ok(text) => {
+            Result.Ok(text) => {
                 print(text.as_str())
                 reread(text.as_str())
             }
-            Err(e) => println(e.to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
         match toml.to_string(sample(false)) {
-            Ok(text) => {
+            Result.Ok(text) => {
                 print(text.as_str())
                 reread(text.as_str())
             }
-            Err(e) => println(e.to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
         return
     }
     let text = read_to_string(args[2].as_str()).unwrap()
     if mode == "roundtrip" {
         match toml.parse(text.as_str()) {
-            Ok(document) => match toml.render(document) {
-                Ok(out) => print(out.as_str()),
-                Err(e) => println(e.to_string()),
+            Result.Ok(document) => match toml.render(document) {
+                Result.Ok(out) => print(out.as_str()),
+                Result.Err(e) => println(e.to_string()),
             },
-            Err(e) => println(e.to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
     } else if mode == "spans" {
         match toml.parse(text.as_str()) {
-            Ok(document) => print_spans(document, "".to_string()),
-            Err(e) => println(e.to_string()),
+            Result.Ok(document) => print_spans(document, "".to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
     } else {
         let read: Result<Config, DeError> = toml.from_str(text.as_str())
         match read {
-            Ok(config) => {
+            Result.Ok(config) => {
                 println("name={} servers={} note={}", config.name, config.servers.len(), config.note)
                 match config.protocol {
                     Protocol.Http => println("protocol=Http"),
@@ -174,13 +174,13 @@ fn main() {
                     Protocol.Both(first, second) => println("protocol=Both {first} {second}"),
                 }
                 match config.backup {
-                    Some(server) => println("backup={} {}", server.host, server.port),
-                    None => println("backup=none"),
+                    Option.Some(server) => println("backup={} {}", server.host, server.port),
+                    Option.None => println("backup=none"),
                 }
                 println("weights={}", config.weights.len())
                 match config.weights.get("a") {
-                    Some(weight) => println("a={weight}"),
-                    None => println("a=none"),
+                    Option.Some(weight) => println("a={weight}"),
+                    Option.None => println("a=none"),
                 }
                 if config.servers.len() > 0 {
                     println(
@@ -192,7 +192,7 @@ fn main() {
                     )
                 }
             }
-            Err(e) => println(e.to_string()),
+            Result.Err(e) => println(e.to_string()),
         }
     }
 }

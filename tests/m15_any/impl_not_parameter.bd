@@ -28,7 +28,7 @@ fn bound<T: impl Shape>(x: T) { //~ E0201
 
 fn main() {
     let local: impl Shape = Rect { w: 1, h: 1 } //~ E0201
-    let element: Option<impl Shape> = None //~ E0201
+    let element: Option<impl Shape> = Option.None //~ E0201
     let _ = local
     let _ = element
 }

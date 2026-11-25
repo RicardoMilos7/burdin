@@ -28,32 +28,32 @@ fn main() {
     let mut it = xs.iter().map(|x| x * 2)
     loop {
         match it.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
 
     let mut filtered = xs.iter().filter(|x| *x > 2)
     loop {
         match filtered.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
 
     let mut first_two = xs.iter().take(2)
     loop {
         match first_two.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
 
     let mut after_two = xs.iter().skip(2)
     loop {
         match after_two.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
 
@@ -62,8 +62,8 @@ fn main() {
     println(xs.iter().any(|x| x > 3).to_string())
     println(xs.iter().all(|x| x > 0).to_string())
     match xs.iter().find(|x| *x > 2) {
-        Some(x) => println(x.to_string()),
-        None => println("none"),
+        Option.Some(x) => println(x.to_string()),
+        Option.None => println("none"),
     }
     println(xs.iter().to_list().len().to_string())
     println(xs.iter().sum().to_string())

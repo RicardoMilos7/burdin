@@ -14,15 +14,15 @@ fn round(n: i32): bool {
         let rx = empty.clone()
         handles.push(task.spawn(|| {
             match rx.recv() {
-                Some(_) => false,
-                None => true,
+                Option.Some(_) => false,
+                Option.None => true,
             }
         }))
         let tx = full.clone()
         handles.push(task.spawn(|| {
             match tx.send(n) {
-                Err(_) => true,
-                Ok(()) => false,
+                Result.Err(_) => true,
+                Result.Ok(()) => false,
             }
         }))
         k = k + 1

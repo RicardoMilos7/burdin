@@ -149,7 +149,7 @@ Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_m
 **IC1 Implicit conversion.** A `String` value at a position whose type is `str` is borrowed as a `str`; the `String`
 is not moved, and the view follows the lifetime rules of an explicit `.as_str()` (a view of a temporary or a local
 that is returned is E0122, one that outlives its storage is E0123). The positions are: a call argument whose parameter
-type is `str`, the payload of `Some`, `Ok`, and `Err`, the value of `mem.replace`, `assert_eq`'s second operand when the
+type is `str`, the payload of `Option.Some`, `Result.Ok`, and `Result.Err`, the value of `mem.replace`, `assert_eq`'s second operand when the
 first is a `str`, a `let` with a `str` annotation, the right side of `=`, a `return` value and a function body's tail
 whose return type is `str`, an element of an array or tuple whose element type is `str`, and a struct-literal field
 of a generic struct instantiated with `str` (a concrete `str` field is E0120). The conversion applies to the `String`
@@ -478,7 +478,7 @@ E0002 and putting one in a derived comparison is E0130. A closure may be stored 
 `Option`, or `Result` only when it owns its captures (CL3).
 
 **CL11 Function values.** A non-generic function name, a built-in function name (`println`, `panic`, the runtime
-helpers), or one of the prelude constructors `Some`, `Ok`, or `Err` may be used where a closure type is expected. It
+helpers), or one of the prelude constructors `Option.Some`, `Result.Ok`, or `Result.Err` may be used where a closure type is expected. It
 becomes a captureless closure of kind `Fn` whose body forwards its arguments to the function, so CL6's rule applies:
 every closure parameter is owned and each argument is moved into the call. Forwarding uses the function's own
 conventions (a read-only or `mut` parameter is passed by address, an `own` parameter by value). The value is
@@ -489,11 +489,11 @@ returns (E0171). An `unsafe fn` cannot be used as a value either, because a clos
 E9000 for now.
 
 A constructor has no signature, so the expected closure type fixes its type arguments. The closure has exactly one
-parameter, the payload: `Some`, `Ok`, and `Err` each take one argument, so a closure with another number of parameters
-is E0003. `Some` builds `Option<P>` from the payload alone, so its result may be open in the call that takes it (a
-`map` whose result is still `U` binds `U` to `Option<P>`). `Ok` and `Err` also need the argument the payload does not
-fix: `Ok` takes its error type from the expected result, and `Err` its value type. A result of the wrong shape is
-E0003. An argument the expected type leaves open is E0003 as well, so `xs.map(Ok)` whose result is only `U` is
+parameter, the payload: `Option.Some`, `Result.Ok`, and `Result.Err` each take one argument, so a closure with another number of parameters
+is E0003. `Option.Some` builds `Option<P>` from the payload alone, so its result may be open in the call that takes it (a
+`map` whose result is still `U` binds `U` to `Option<P>`). `Result.Ok` and `Result.Err` also need the argument the payload does not
+fix: `Result.Ok` takes its error type from the expected result, and `Result.Err` its value type. A result of the wrong shape is
+E0003. An argument the expected type leaves open is E0003 as well, so `xs.map(Result.Ok)` whose result is only `U` is
 E0003: nothing in the call says what the error type is. A constructor with no expected closure type is E0003.
 
 **Method values.** `Type.name`, where `Type` is a non-generic struct or enum and `name` is one of its associated functions

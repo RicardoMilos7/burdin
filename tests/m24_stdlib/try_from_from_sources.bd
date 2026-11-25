@@ -35,7 +35,7 @@ Total: From<i32> {
 Total: TryFrom<i32> {
     fn try_from(n: i32): Result<Total, TryFromIntError> {
         let small = u8.try_from(n)?
-        Ok(Total { v: small as i64 })
+        Result.Ok(Total { v: small as i64 })
     }
 }
 
@@ -45,11 +45,11 @@ fn main() {
     println("{} {}", a.v, b.v)
     println("{}", Total.from(7).v)
     match Total.try_from(5) {
-        Ok(t) => println("{}", t.v),
-        Err(e) => println("{:?}", e),
+        Result.Ok(t) => println("{}", t.v),
+        Result.Err(e) => println("{:?}", e),
     }
     match Total.try_from(9000) {
-        Ok(t) => println("{}", t.v),
-        Err(e) => println("{:?}", e),
+        Result.Ok(t) => println("{}", t.v),
+        Result.Err(e) => println("{:?}", e),
     }
 }

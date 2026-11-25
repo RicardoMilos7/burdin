@@ -50,12 +50,12 @@ fn main() {
     }
     let b: any Thing = Noisy { id: 2 }
     match b.downcast<Noisy>() {
-        Some(noisy) => println("moved out {noisy.id}"),
-        None => println("none"),
+        Option.Some(noisy) => println("moved out {noisy.id}"),
+        Option.None => println("none"),
     }
     let c: any Thing = Other { id: 3 }
     match c.downcast<Noisy>() {
-        Some(noisy) => println("moved out {noisy.id}"),
-        None => println("none"),
+        Option.Some(noisy) => println("moved out {noisy.id}"),
+        Option.None => println("none"),
     }
 }

@@ -22,14 +22,14 @@ fn announce(id: i32) {
 }
 
 fn main() {
-    match Some(Noisy { id: 1 }) {
-        Some(n) if n.id > 5 => {
+    match Option.Some(Noisy { id: 1 }) {
+        Option.Some(n) if n.id > 5 => {
             println(n.id.to_string())
         }
-        Some(n) => {
+        Option.Some(n) => {
             println(n.id.to_string())
         }
-        None => {}
+        Option.None => {}
     }
     println("end of main")
 }

@@ -39,7 +39,7 @@ fn tokenize(src: str): Result<List<Token>, i32> {
                 '(' => tokens.push(Token.LParen),
                 ')' => tokens.push(Token.RParen),
                 ' ' => {},
-                else => return Err(pos),
+                else => return Result.Err(pos),
             }
         }
         pos = pos + 1
@@ -47,7 +47,7 @@ fn tokenize(src: str): Result<List<Token>, i32> {
     if in_number {
         tokens.push(Token.Num(number))
     }
-    Ok(tokens)
+    Result.Ok(tokens)
 }
 
 fn token_text(t: Token): String {
@@ -63,7 +63,7 @@ fn token_text(t: Token): String {
 
 fn main() {
     match tokenize("12 + (3*45) - 6") {
-        Ok(tokens) => {
+        Result.Ok(tokens) => {
             show(tokens.len() as i32)
             let mut out = String.new()
             for t in tokens {
@@ -72,11 +72,11 @@ fn main() {
             }
             println(out)
         },
-        Err(_) => println("unexpected error"),
+        Result.Err(_) => println("unexpected error"),
     }
     match tokenize("1 + x") {
-        Ok(_) => println("unexpected success"),
-        Err(pos) => {
+        Result.Ok(_) => println("unexpected success"),
+        Result.Err(pos) => {
             let mut msg = String.from("bad char at ")
             msg.push_str(pos.to_string())
             println(msg)

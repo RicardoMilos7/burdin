@@ -61,9 +61,6 @@ impl FnCx<'_> {
         let form = format!(".{}", name.name);
         let Some(ty) = self.target_ty(expect, &form, span) else { return self.args_then_error(args, span) };
         match (&ty, name.name.as_str()) {
-            (Ty::Option(_), "Some") => return self.some(args, expect, span),
-            (Ty::Result(..), "Ok") => return self.result_ctor(true, args, expect, span),
-            (Ty::Result(..), "Err") => return self.result_ctor(false, args, expect, span),
             (Ty::Heap(..), "new") => return self.heap_new(args, expect, span),
             (Ty::Heap(..), "new_in") => return self.heap_new_in(args, span),
             (Ty::Shared(_), "new") => return self.shared_new(args, span),
@@ -93,6 +90,35 @@ impl FnCx<'_> {
                 if matches!(value.ty, Ty::Error) { mk(tir::ExprKind::Unit, ty.clone(), span) } else { value }
             }
         }
+    }
+
+    /// `.Variant { field: value, ... }`: the struct-like variant of the expected enum, checked like
+    /// `Enum.Variant { ... }` (TT13). `path` is the inferred path, `.` and the variant's name.
+    pub(super) fn inferred_variant_literal(
+        &mut self,
+        path: &[ast::Ident],
+        text: &str,
+        fields: &[ast::FieldInit],
+        base: Option<&ast::Expr>,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        let variant = path.get(1).cloned();
+        let target = match self.target_ty(expect, text, span) {
+            Some(Ty::Enum(a)) => self.literal_target(Ty::Enum(a), variant, span, text),
+            Some(other) => {
+                self.diags.error(
+                    Code::TYPE_MISMATCH,
+                    span,
+                    format!(
+                        "`{text} {{ ... }}` builds an enum variant, but the expected type `{other}` is not an enum"
+                    ),
+                );
+                None
+            }
+            None => None,
+        };
+        self.struct_fields(target, text, fields, base, span)
     }
 
     /// `.{ field: value, ... }`: a struct literal of the expected type, checked like `Type { ... }` (TT7).

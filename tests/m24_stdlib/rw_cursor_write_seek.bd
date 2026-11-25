@@ -43,8 +43,8 @@ fn main() {
     c.seek(SeekFrom.Start(2)).unwrap()
     println("{}", c.position().unwrap())
     match c.seek(SeekFrom.Current(-5)) {
-        Ok(_) => println("unexpected"),
-        Err(e) => println("seek error: {}", e),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(e) => println("seek error: {}", e),
     }
     println("{}", c.position().unwrap())
 

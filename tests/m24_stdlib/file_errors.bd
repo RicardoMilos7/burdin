@@ -17,7 +17,7 @@
 fn main() {
     // A read-only open of a missing path names the path and is `IoError.Read`, with the system's kind and code.
     match File.open("absent.txt") {
-        Err(IoError.Read { path, kind, os_code }) => println(
+        Result.Err(IoError.Read { path, kind, os_code }) => println(
             "missing read {} {} {}",
             path.as_str() == "absent.txt",
             kind == IoErrorKind.NotFound,
@@ -40,14 +40,14 @@ fn main() {
     // An option set the systems disagree on is rejected before the system call.
     let none = OpenOptions.new()
     match none.open("never.txt") {
-        Err(IoError.InvalidInput) => println("invalid none true"),
+        Result.Err(IoError.InvalidInput) => println("invalid none true"),
         _ => println("invalid none false"),
     }
     let mut truncating = OpenOptions.new()
     truncating.read(true)
     truncating.truncate(true)
     match truncating.open("exists.txt") {
-        Err(IoError.InvalidInput) => println("invalid truncate true"),
+        Result.Err(IoError.InvalidInput) => println("invalid truncate true"),
         _ => println("invalid truncate false"),
     }
     let mut conflicting = OpenOptions.new()
@@ -55,7 +55,7 @@ fn main() {
     conflicting.append(true)
     conflicting.truncate(true)
     match conflicting.open("exists.txt") {
-        Err(IoError.InvalidInput) => println("invalid append truncate true"),
+        Result.Err(IoError.InvalidInput) => println("invalid append truncate true"),
         _ => println("invalid append truncate false"),
     }
 

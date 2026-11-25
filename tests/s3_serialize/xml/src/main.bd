@@ -82,8 +82,8 @@ enum Outer: Serialize, Deserialize, Debug {
 
 fn show(text: str) {
     match xml.parse(text) {
-        Ok(doc) => println("ok {}", doc.to_xml().unwrap()),
-        Err(e) => println("err {}", e.to_string()),
+        Result.Ok(doc) => println("ok {}", doc.to_xml().unwrap()),
+        Result.Err(e) => println("err {}", e.to_string()),
     }
 }
 
@@ -97,7 +97,7 @@ fn main() {
         name: "edge & co".to_string(),
         servers,
         protocol: Protocol.Both(80, 443),
-        backup: None,
+        backup: Option.None,
         weights,
         note: 'é',
     }
@@ -113,8 +113,8 @@ fn main() {
         Protocol.Https(_port) => println("https"),
     }
     match back.backup {
-        Some(server) => println("backup {}", server.port),
-        None => println("no backup"),
+        Option.Some(server) => println("backup {}", server.port),
+        Option.None => println("no backup"),
     }
 
     let small = Server { host: "a".to_string(), port: 1, tls: true }
@@ -129,21 +129,21 @@ fn main() {
     let closing: Result<Server, DeError> = xml.from_str("<Server>\n  <host>a</hos>\n</Server>")
     println(closing.unwrap_err().to_string())
 
-    let nested = xml.to_string(Outer.Value(None)).unwrap()
+    let nested = xml.to_string(Outer.Value(Option.None)).unwrap()
     println(nested)
-    let both = xml.to_string(Outer.Pair(Some(1), Inner.One(2))).unwrap()
+    let both = xml.to_string(Outer.Pair(Option.Some(1), Inner.One(2))).unwrap()
     println(both)
     let again: Result<Outer, DeError> = xml.from_str(both.as_str())
     match again {
-        Ok(Outer.Pair(value, inner)) => match value {
-            Some(n) => match inner {
+        Result.Ok(Outer.Pair(value, inner)) => match value {
+            Option.Some(n) => match inner {
                 Inner.One(m) => println("pair {} {}", n, m),
                 Inner.Unit => println("pair unit"),
             }
-            None => println("pair none"),
+            Option.None => println("pair none"),
         }
-        Ok(_) => println("unexpected variant"),
-        Err(e) => println(e.to_string()),
+        Result.Ok(_) => println("unexpected variant"),
+        Result.Err(e) => println(e.to_string()),
     }
 
     // Line ends are normalized to a line feed, and a byte order mark is skipped.
@@ -200,7 +200,7 @@ fn main() {
         i = i + 1
     }
     match xml.parse(deep.as_str()) {
-        Ok(_) => println("deep parsed"),
-        Err(e) => println("deep {}", e.to_string()),
+        Result.Ok(_) => println("deep parsed"),
+        Result.Err(e) => println("deep {}", e.to_string()),
     }
 }

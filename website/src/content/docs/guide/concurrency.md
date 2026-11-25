@@ -99,9 +99,9 @@ fn main() {
 ```
 
 `Channel<T>.unbounded()` never blocks a sender. `Channel<T>.bounded(n)` holds at most `n` values, and `try_send` reports when it
-is full, so the sender can decide what to do. A channel that is closed returns `None` from `recv` once it is empty.
+is full, so the sender can decide what to do. A channel that is closed returns `Option.None` from `recv` once it is empty.
 
-`send` returns a `Result<(), T>`. `Ok(())` means the value is queued. On a closed channel `send` returns `Err(value)` and
+`send` returns a `Result<(), T>`. `Result.Ok(())` means the value is queued. On a closed channel `send` returns `Result.Err(value)` and
 gives the value back, so nothing is lost. The example above ignores the result with `let _queued`; check it when a value
 must not be dropped:
 
@@ -111,8 +111,8 @@ fn main() {
     let tx = ch.clone()
     ch.close()
     match tx.send(7) {
-        Ok(()) => println("queued"),
-        Err(v) => println("closed, got back {v}"),
+        Result.Ok(()) => println("queued"),
+        Result.Err(v) => println("closed, got back {v}"),
     }
 }
 ```

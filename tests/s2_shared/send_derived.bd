@@ -29,13 +29,13 @@ fn bounce<T: Send>(own value: T): T {
 
 fn count(node: Node): i32 {
     match node.next {
-        Some(rest) => 1 + count(*rest),
-        None => 1,
+        Option.Some(rest) => 1 + count(*rest),
+        Option.None => 1,
     }
 }
 
 fn main() {
-    let record = Record { id: 6, name: "r".to_string(), tags: List<String>.new(), parent: Some((1, 2)) }
+    let record = Record { id: 6, name: "r".to_string(), tags: List<String>.new(), parent: Option.Some((1, 2)) }
     let back = bounce(record)
     let shape = bounce(Shape.Named("n".to_string(), List<i32>.new()))
     let kind = match shape {
@@ -43,7 +43,7 @@ fn main() {
         Shape.Circle(_) => 1,
         Shape.Named(_, _) => 2,
     }
-    let list = Node { value: 1, next: Some(Heap.new(Node { value: 2, next: Some(Heap.new(Node { value: 3, next: None })) })) }
+    let list = Node { value: 1, next: Option.Some(Heap.new(Node { value: 2, next: Option.Some(Heap.new(Node { value: 3, next: Option.None })) })) }
     let n = bounce(list)
     let local = 40
     let sum = task.spawn(|| local + 2).join()
