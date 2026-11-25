@@ -183,8 +183,8 @@ with harness.temporary_dir("burdin-watch-") as work:
     write(
         scripted / "build.bd",
         'fn main() {\n    println("the script ran")\n    let args = env.args()\n    let out = args[2]\n'
-        '    match write_file("{out}/inputs", "../shared-include\\n") {\n        Ok(_) => {}\n'
-        '        Err(_) => panic("cannot write the input list"),\n    }\n}\n',
+        '    match write_file("{out}/inputs", "../shared-include\\n") {\n        Result.Ok(_) => {}\n'
+        '        Result.Err(_) => panic("cannot write the input list"),\n    }\n}\n',
     )
     script_watcher = Watch(["build", ".", "--watch", "--no-clear"], scripted)
     try:
