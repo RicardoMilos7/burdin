@@ -49,6 +49,13 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::ListIntoIter`, `Ty::ArrayIntoIter`, `Ty::MapIntoIter`, `Ty::RangeIter`, `Ty::Range` | moves | They own what they walk and hold no view, so they are plain structs implementing `Iterator<T>`; a range literal lowers to the lang item. Needs #1073; the work is #1075. |
 | `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | blocked | They hold a view, and a struct field cannot (SC2, E0120). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. Blocked on #1074; then each is a plain struct. |
 
+Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
+(`fn List<T>.push(mut self, own x: T)`, `enum Option<T> { Some(T) None }`), each with its `///` documentation. The
+compiler never loads that file, and a function or an extension method without a body in a program is E0001. The
+language server parses it like a standard-library module, so hover, completion, signature help, and go to definition
+read one source, and `crates/burdin_lsp/src/builtins.rs` has no table (issue #1017). Moving a type's representation out of
+the compiler (the rows marked "moves") replaces its declaration there with a real one.
+
 The compiler's own tables, measured before the work (the "after" column is filled by #1075-#1077, with the reason
 for any row that stays):
 
@@ -56,7 +63,7 @@ for any row that stays):
 | --- | --- |
 | `crates/burdin_sema/src/builtins.rs` (functions, types, and method signatures) | 1331 lines |
 | `crates/burdin_codegen/src/emit/builtins.rs` (code generation of the methods) | 2109 lines |
-| `crates/burdin_lsp/src/builtins.rs` (hand-written hover and completion rows) | 352 lines, 169 rows |
+| `crates/burdin_lsp/src/builtins.rs` (hand-written hover and completion rows) | 352 lines, 169 rows; now 80 lines and no rows (the declarations are `std/src/builtins.bd`, #1017) |
 | `Builtin` and `Method` in `crates/burdin_tir/src/ops.rs` | 98 and 98 variants |
 
 What each plan keeps in the compiler is the intrinsics (raw allocation, overflow-checked arithmetic, bit operations,

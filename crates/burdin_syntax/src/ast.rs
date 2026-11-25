@@ -347,6 +347,11 @@ pub struct FnDecl {
     pub ret: Option<Type>,
     pub where_clause: Vec<WherePred>,
     pub body: Block,
+    /// `false` for a declaration without a body: an `extern` function, an interface method that is only declared,
+    /// or a free function or extension method written for the tools, such as `fn List<T>.push(mut self, own x: T)`
+    /// in `std/src/builtins.bd`, the signature of a compiler-provided method (`spec/stdlib.md`). In a program, the
+    /// last two are an error.
+    pub has_body: bool,
     pub span: Span,
 }
 

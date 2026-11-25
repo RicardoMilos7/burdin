@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// A function and an extension method need a body. `std/src/builtins.bd` writes the compiler-provided methods as
+// declarations without bodies for the tools, and the compiler never loads that file, so in a program the missing
+// body is an error (`spec/stdlib.md`, "Compiler-known types").
+
+fn twice(x: i32): i32 //~ E0001
+fn List<T>.second(self): Option<T> //~ E0001
+
+fn main() {
+    println("{}", twice(2))
+}

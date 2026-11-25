@@ -361,6 +361,9 @@ impl<'t> Sema<'t> {
                 match item {
                     ast::Item::Fn(f) => {
                         let name = &f.name.name;
+                        if !f.has_body {
+                            diags.error(Code::SYNTAX, f.name.span, format!("the function `{name}` has no body"));
+                        }
                         if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
                             diags.error(
                                 Code::DUPLICATE_NAME,
@@ -625,6 +628,9 @@ impl<'t> Sema<'t> {
     /// resolved by [`Sema::register_extensions`] once imports are known.
     fn declare_extension_name(&mut self, module: usize, e: &'t ast::ExtensionDecl, diags: &mut Diagnostics) {
         let name = e.func.name.name.clone();
+        if !e.func.has_body {
+            diags.error(Code::SYNTAX, e.func.name.span, format!("the extension method `{name}` has no body"));
+        }
         let is_priv = e.func.is_priv;
         if let Some(&previous) = self.globals.modules[module].extension_priv.get(&name)
             && previous != is_priv

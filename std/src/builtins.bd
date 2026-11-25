@@ -1,0 +1,909 @@
+//! The compiler's built-in functions, types, and methods, written as declarations without bodies
+//! (`spec/stdlib.md`). The compiler provides them; this file is not compiled. The tools read it, so hover,
+//! completion, signature help, and go to definition find the signature and the documentation of a built-in here.
+
+/// Writes the text to standard output; `{...}` placeholders take the arguments.
+fn print(fmt: str, ...)
+
+/// Writes the text and a line feed to standard output.
+fn println(fmt: str, ...)
+
+/// Writes the text to standard error.
+fn eprint(fmt: str, ...)
+
+/// Writes the text and a line feed to standard error.
+fn eprintln(fmt: str, ...)
+
+/// The text, with the placeholders filled in, as a new `String`.
+fn format(fmt: str, ...): String
+
+/// Stops the program with a message.
+fn panic(message: str): !
+
+/// The owning, growable UTF-8 text.
+struct String {}
+
+/// An empty string.
+fn String.new(): String
+
+/// A copy of the text.
+fn String.from(s: str): String
+
+/// An empty string with room for `capacity` bytes.
+fn String.with_capacity(capacity: usize): String
+
+/// Appends the text.
+fn String.push_str(mut self, s: str)
+
+/// Appends one character.
+fn String.push(mut self, c: char)
+
+/// The length in bytes, not characters.
+fn String.len(self): usize
+
+/// Whether the text starts with `prefix`.
+fn String.starts_with(self, prefix: str): bool
+
+/// The byte offset of the first `c`.
+fn String.find(self, c: char): Option<usize>
+
+/// The byte offset of the first `needle`.
+fn String.find_str(self, needle: str): Option<usize>
+
+/// A `str` view of the text.
+fn String.as_str(self): str
+
+/// The Unicode scalar values, in order.
+fn String.chars(self): Chars
+
+/// A view of the UTF-8 bytes; copies nothing.
+fn String.as_bytes(self): [u8]
+
+/// The buffer's capacity in bytes.
+fn String.capacity(self): usize
+
+/// Room for `additional` more bytes.
+fn String.reserve(mut self, additional: usize)
+
+/// Shrinks the buffer to the length.
+fn String.shrink_to_fit(mut self)
+
+/// Inserts the text at a character boundary.
+fn String.insert_str(mut self, byte_idx: usize, s: str)
+
+/// Replaces the bytes `from..to` with the text.
+fn String.replace_range(mut self, from: usize, to: usize, s: str)
+
+/// A deep copy of the buffer.
+fn String.clone(self): String
+
+/// A read-only view of UTF-8 text; a string literal has this type.
+struct str {}
+
+/// The length in bytes, not characters.
+fn str.len(self): usize
+
+/// Whether the text starts with `prefix`.
+fn str.starts_with(self, prefix: str): bool
+
+/// The byte offset of the first `c`.
+fn str.find(self, c: char): Option<usize>
+
+/// The byte offset of the first `needle`.
+fn str.find_str(self, needle: str): Option<usize>
+
+/// A `str` view of the text.
+fn str.as_str(self): str
+
+/// The Unicode scalar values, in order.
+fn str.chars(self): Chars
+
+/// A view of the UTF-8 bytes; copies nothing.
+fn str.as_bytes(self): [u8]
+
+/// A `String` copy of the text.
+fn str.to_string(self): String
+
+/// A signed 8-bit integer.
+struct i8 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn i8.parse(s: str): Result<i8, ParseIntError>
+
+/// The number in base 10.
+fn i8.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn i8.wrapping_add(self, other: i8): i8
+
+/// The difference, wrapping around on overflow.
+fn i8.wrapping_sub(self, other: i8): i8
+
+/// The product, wrapping around on overflow.
+fn i8.wrapping_mul(self, other: i8): i8
+
+/// The sum, or `None` on overflow.
+fn i8.checked_add(self, other: i8): Option<i8>
+
+/// The difference, or `None` on overflow.
+fn i8.checked_sub(self, other: i8): Option<i8>
+
+/// The product, or `None` on overflow.
+fn i8.checked_mul(self, other: i8): Option<i8>
+
+/// The smaller of the two.
+fn i8.min(self, other: i8): i8
+
+/// The larger of the two.
+fn i8.max(self, other: i8): i8
+
+/// The absolute value.
+fn i8.abs(self): i8
+
+/// A signed 16-bit integer.
+struct i16 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn i16.parse(s: str): Result<i16, ParseIntError>
+
+/// The number in base 10.
+fn i16.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn i16.wrapping_add(self, other: i16): i16
+
+/// The difference, wrapping around on overflow.
+fn i16.wrapping_sub(self, other: i16): i16
+
+/// The product, wrapping around on overflow.
+fn i16.wrapping_mul(self, other: i16): i16
+
+/// The sum, or `None` on overflow.
+fn i16.checked_add(self, other: i16): Option<i16>
+
+/// The difference, or `None` on overflow.
+fn i16.checked_sub(self, other: i16): Option<i16>
+
+/// The product, or `None` on overflow.
+fn i16.checked_mul(self, other: i16): Option<i16>
+
+/// The smaller of the two.
+fn i16.min(self, other: i16): i16
+
+/// The larger of the two.
+fn i16.max(self, other: i16): i16
+
+/// The absolute value.
+fn i16.abs(self): i16
+
+/// A signed 32-bit integer; an integer literal's type unless the context says otherwise.
+struct i32 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn i32.parse(s: str): Result<i32, ParseIntError>
+
+/// The number in base 10.
+fn i32.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn i32.wrapping_add(self, other: i32): i32
+
+/// The difference, wrapping around on overflow.
+fn i32.wrapping_sub(self, other: i32): i32
+
+/// The product, wrapping around on overflow.
+fn i32.wrapping_mul(self, other: i32): i32
+
+/// The sum, or `None` on overflow.
+fn i32.checked_add(self, other: i32): Option<i32>
+
+/// The difference, or `None` on overflow.
+fn i32.checked_sub(self, other: i32): Option<i32>
+
+/// The product, or `None` on overflow.
+fn i32.checked_mul(self, other: i32): Option<i32>
+
+/// The smaller of the two.
+fn i32.min(self, other: i32): i32
+
+/// The larger of the two.
+fn i32.max(self, other: i32): i32
+
+/// The absolute value.
+fn i32.abs(self): i32
+
+/// A signed 64-bit integer.
+struct i64 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn i64.parse(s: str): Result<i64, ParseIntError>
+
+/// The number in base 10.
+fn i64.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn i64.wrapping_add(self, other: i64): i64
+
+/// The difference, wrapping around on overflow.
+fn i64.wrapping_sub(self, other: i64): i64
+
+/// The product, wrapping around on overflow.
+fn i64.wrapping_mul(self, other: i64): i64
+
+/// The sum, or `None` on overflow.
+fn i64.checked_add(self, other: i64): Option<i64>
+
+/// The difference, or `None` on overflow.
+fn i64.checked_sub(self, other: i64): Option<i64>
+
+/// The product, or `None` on overflow.
+fn i64.checked_mul(self, other: i64): Option<i64>
+
+/// The smaller of the two.
+fn i64.min(self, other: i64): i64
+
+/// The larger of the two.
+fn i64.max(self, other: i64): i64
+
+/// The absolute value.
+fn i64.abs(self): i64
+
+/// A signed integer the size of a pointer (64 bits).
+struct isize {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn isize.parse(s: str): Result<isize, ParseIntError>
+
+/// The number in base 10.
+fn isize.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn isize.wrapping_add(self, other: isize): isize
+
+/// The difference, wrapping around on overflow.
+fn isize.wrapping_sub(self, other: isize): isize
+
+/// The product, wrapping around on overflow.
+fn isize.wrapping_mul(self, other: isize): isize
+
+/// The sum, or `None` on overflow.
+fn isize.checked_add(self, other: isize): Option<isize>
+
+/// The difference, or `None` on overflow.
+fn isize.checked_sub(self, other: isize): Option<isize>
+
+/// The product, or `None` on overflow.
+fn isize.checked_mul(self, other: isize): Option<isize>
+
+/// The smaller of the two.
+fn isize.min(self, other: isize): isize
+
+/// The larger of the two.
+fn isize.max(self, other: isize): isize
+
+/// The absolute value.
+fn isize.abs(self): isize
+
+/// An unsigned 8-bit integer.
+struct u8 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn u8.parse(s: str): Result<u8, ParseIntError>
+
+/// The number in base 10.
+fn u8.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn u8.wrapping_add(self, other: u8): u8
+
+/// The difference, wrapping around on overflow.
+fn u8.wrapping_sub(self, other: u8): u8
+
+/// The product, wrapping around on overflow.
+fn u8.wrapping_mul(self, other: u8): u8
+
+/// The sum, or `None` on overflow.
+fn u8.checked_add(self, other: u8): Option<u8>
+
+/// The difference, or `None` on overflow.
+fn u8.checked_sub(self, other: u8): Option<u8>
+
+/// The product, or `None` on overflow.
+fn u8.checked_mul(self, other: u8): Option<u8>
+
+/// The smaller of the two.
+fn u8.min(self, other: u8): u8
+
+/// The larger of the two.
+fn u8.max(self, other: u8): u8
+
+/// An unsigned 16-bit integer.
+struct u16 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn u16.parse(s: str): Result<u16, ParseIntError>
+
+/// The number in base 10.
+fn u16.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn u16.wrapping_add(self, other: u16): u16
+
+/// The difference, wrapping around on overflow.
+fn u16.wrapping_sub(self, other: u16): u16
+
+/// The product, wrapping around on overflow.
+fn u16.wrapping_mul(self, other: u16): u16
+
+/// The sum, or `None` on overflow.
+fn u16.checked_add(self, other: u16): Option<u16>
+
+/// The difference, or `None` on overflow.
+fn u16.checked_sub(self, other: u16): Option<u16>
+
+/// The product, or `None` on overflow.
+fn u16.checked_mul(self, other: u16): Option<u16>
+
+/// The smaller of the two.
+fn u16.min(self, other: u16): u16
+
+/// The larger of the two.
+fn u16.max(self, other: u16): u16
+
+/// An unsigned 32-bit integer.
+struct u32 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn u32.parse(s: str): Result<u32, ParseIntError>
+
+/// The number in base 10.
+fn u32.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn u32.wrapping_add(self, other: u32): u32
+
+/// The difference, wrapping around on overflow.
+fn u32.wrapping_sub(self, other: u32): u32
+
+/// The product, wrapping around on overflow.
+fn u32.wrapping_mul(self, other: u32): u32
+
+/// The sum, or `None` on overflow.
+fn u32.checked_add(self, other: u32): Option<u32>
+
+/// The difference, or `None` on overflow.
+fn u32.checked_sub(self, other: u32): Option<u32>
+
+/// The product, or `None` on overflow.
+fn u32.checked_mul(self, other: u32): Option<u32>
+
+/// The smaller of the two.
+fn u32.min(self, other: u32): u32
+
+/// The larger of the two.
+fn u32.max(self, other: u32): u32
+
+/// An unsigned 64-bit integer.
+struct u64 {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn u64.parse(s: str): Result<u64, ParseIntError>
+
+/// The number in base 10.
+fn u64.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn u64.wrapping_add(self, other: u64): u64
+
+/// The difference, wrapping around on overflow.
+fn u64.wrapping_sub(self, other: u64): u64
+
+/// The product, wrapping around on overflow.
+fn u64.wrapping_mul(self, other: u64): u64
+
+/// The sum, or `None` on overflow.
+fn u64.checked_add(self, other: u64): Option<u64>
+
+/// The difference, or `None` on overflow.
+fn u64.checked_sub(self, other: u64): Option<u64>
+
+/// The product, or `None` on overflow.
+fn u64.checked_mul(self, other: u64): Option<u64>
+
+/// The smaller of the two.
+fn u64.min(self, other: u64): u64
+
+/// The larger of the two.
+fn u64.max(self, other: u64): u64
+
+/// An unsigned integer the size of a pointer (64 bits).
+struct usize {}
+
+/// The base-10 number in the text (`Self.parse(s)`).
+fn usize.parse(s: str): Result<usize, ParseIntError>
+
+/// The number in base 10.
+fn usize.to_string(self): String
+
+/// The sum, wrapping around on overflow.
+fn usize.wrapping_add(self, other: usize): usize
+
+/// The difference, wrapping around on overflow.
+fn usize.wrapping_sub(self, other: usize): usize
+
+/// The product, wrapping around on overflow.
+fn usize.wrapping_mul(self, other: usize): usize
+
+/// The sum, or `None` on overflow.
+fn usize.checked_add(self, other: usize): Option<usize>
+
+/// The difference, or `None` on overflow.
+fn usize.checked_sub(self, other: usize): Option<usize>
+
+/// The product, or `None` on overflow.
+fn usize.checked_mul(self, other: usize): Option<usize>
+
+/// The smaller of the two.
+fn usize.min(self, other: usize): usize
+
+/// The larger of the two.
+fn usize.max(self, other: usize): usize
+
+/// A 32-bit IEEE 754 float.
+struct f32 {}
+
+/// The float with these bits (`u32` for `f32`).
+fn f32.from_bits(bits: u32): f32
+
+/// The shortest text that reads back as the same number.
+fn f32.to_string(self): String
+
+/// The float's bits (`u32` for `f32`).
+fn f32.to_bits(self): u32
+
+/// The absolute value.
+fn f32.abs(self): f32
+
+/// The square root.
+fn f32.sqrt(self): f32
+
+/// The cube root.
+fn f32.cbrt(self): f32
+
+/// The number to an integer power.
+fn f32.powi(self, exp: i32): f32
+
+/// The number to a float power.
+fn f32.powf(self, exp: f32): f32
+
+/// `e` to the power of the number.
+fn f32.exp(self): f32
+
+/// 2 to the power of the number.
+fn f32.exp2(self): f32
+
+/// The natural logarithm.
+fn f32.ln(self): f32
+
+/// The base-2 logarithm.
+fn f32.log2(self): f32
+
+/// The base-10 logarithm.
+fn f32.log10(self): f32
+
+/// The largest integer not above the number.
+fn f32.floor(self): f32
+
+/// The smallest integer not below the number.
+fn f32.ceil(self): f32
+
+/// The nearest integer, halves away from zero.
+fn f32.round(self): f32
+
+/// The nearest integer, halves to even.
+fn f32.round_ties_even(self): f32
+
+/// The integer part.
+fn f32.trunc(self): f32
+
+/// The sine (radians).
+fn f32.sin(self): f32
+
+/// The cosine (radians).
+fn f32.cos(self): f32
+
+/// The tangent (radians).
+fn f32.tan(self): f32
+
+/// The arcsine, in radians.
+fn f32.asin(self): f32
+
+/// The arccosine, in radians.
+fn f32.acos(self): f32
+
+/// The arctangent, in radians.
+fn f32.atan(self): f32
+
+/// The angle of the point `(other, self)`, in radians.
+fn f32.atan2(self, other: f32): f32
+
+/// The hyperbolic sine.
+fn f32.sinh(self): f32
+
+/// The hyperbolic cosine.
+fn f32.cosh(self): f32
+
+/// The hyperbolic tangent.
+fn f32.tanh(self): f32
+
+/// The length of the hypotenuse.
+fn f32.hypot(self, other: f32): f32
+
+/// `self * a + b` with one rounding.
+fn f32.mul_add(self, a: f32, b: f32): f32
+
+/// The number with the sign of `sign`.
+fn f32.copysign(self, sign: f32): f32
+
+/// A 64-bit IEEE 754 float; a float literal's type unless the context says otherwise.
+struct f64 {}
+
+/// The float with these bits (`u32` for `f32`).
+fn f64.from_bits(bits: u64): f64
+
+/// The shortest text that reads back as the same number.
+fn f64.to_string(self): String
+
+/// The float's bits (`u32` for `f32`).
+fn f64.to_bits(self): u64
+
+/// The absolute value.
+fn f64.abs(self): f64
+
+/// The square root.
+fn f64.sqrt(self): f64
+
+/// The cube root.
+fn f64.cbrt(self): f64
+
+/// The number to an integer power.
+fn f64.powi(self, exp: i32): f64
+
+/// The number to a float power.
+fn f64.powf(self, exp: f64): f64
+
+/// `e` to the power of the number.
+fn f64.exp(self): f64
+
+/// 2 to the power of the number.
+fn f64.exp2(self): f64
+
+/// The natural logarithm.
+fn f64.ln(self): f64
+
+/// The base-2 logarithm.
+fn f64.log2(self): f64
+
+/// The base-10 logarithm.
+fn f64.log10(self): f64
+
+/// The largest integer not above the number.
+fn f64.floor(self): f64
+
+/// The smallest integer not below the number.
+fn f64.ceil(self): f64
+
+/// The nearest integer, halves away from zero.
+fn f64.round(self): f64
+
+/// The nearest integer, halves to even.
+fn f64.round_ties_even(self): f64
+
+/// The integer part.
+fn f64.trunc(self): f64
+
+/// The sine (radians).
+fn f64.sin(self): f64
+
+/// The cosine (radians).
+fn f64.cos(self): f64
+
+/// The tangent (radians).
+fn f64.tan(self): f64
+
+/// The arcsine, in radians.
+fn f64.asin(self): f64
+
+/// The arccosine, in radians.
+fn f64.acos(self): f64
+
+/// The arctangent, in radians.
+fn f64.atan(self): f64
+
+/// The angle of the point `(other, self)`, in radians.
+fn f64.atan2(self, other: f64): f64
+
+/// The hyperbolic sine.
+fn f64.sinh(self): f64
+
+/// The hyperbolic cosine.
+fn f64.cosh(self): f64
+
+/// The hyperbolic tangent.
+fn f64.tanh(self): f64
+
+/// The length of the hypotenuse.
+fn f64.hypot(self, other: f64): f64
+
+/// `self * a + b` with one rounding.
+fn f64.mul_add(self, a: f64, b: f64): f64
+
+/// The number with the sign of `sign`.
+fn f64.copysign(self, sign: f64): f64
+
+/// `true` or `false`.
+struct bool {}
+
+/// `true` or `false`.
+fn bool.to_string(self): String
+
+/// A Unicode scalar value.
+struct char {}
+
+/// The character as a one-character `String`.
+fn char.to_string(self): String
+
+/// A growable list of values, stored contiguously.
+struct List<T> {}
+
+/// An empty list.
+fn List<T>.new(): List<T>
+
+/// An empty list with room for `n` values.
+fn List<T>.with_capacity(n: usize): List<T>
+
+/// An empty list that stores the allocator.
+fn List<T>.new_in(alloc: A): List<T, A>
+
+/// `with_capacity` with an allocator.
+fn List<T>.with_capacity_in(n: usize, alloc: A): List<T, A>
+
+/// Appends the value; takes ownership of it.
+fn List<T>.push(mut self, value: T)
+
+/// Removes and returns the last value.
+fn List<T>.pop(mut self): Option<T>
+
+/// The number of values.
+fn List<T>.len(self): usize
+
+/// How many values fit without growing.
+fn List<T>.capacity(self): usize
+
+/// Whether the list has no values.
+fn List<T>.is_empty(self): bool
+
+/// The first value.
+fn List<T>.first(self): Option<&T>
+
+/// The last value.
+fn List<T>.last(self): Option<&T>
+
+/// The first value, to change.
+fn List<T>.first_mut(mut self): Option<&mut T>
+
+/// The last value, to change.
+fn List<T>.last_mut(mut self): Option<&mut T>
+
+/// The value at `index`, or `None` past the end.
+fn List<T>.get(self, index: usize): Option<&T>
+
+/// The value at `index`, to change.
+fn List<T>.get_mut(mut self, index: usize): Option<&mut T>
+
+/// Room for `additional` more values.
+fn List<T>.reserve(mut self, additional: usize)
+
+/// Room for exactly `additional` more values.
+fn List<T>.reserve_exact(mut self, additional: usize)
+
+/// Shrinks the buffer to the length.
+fn List<T>.shrink_to_fit(mut self)
+
+/// Inserts the value at `index`.
+fn List<T>.insert(mut self, index: usize, value: T)
+
+/// Removes and returns the value at `index`.
+fn List<T>.remove(mut self, index: usize): T
+
+/// Swaps two values.
+fn List<T>.swap(mut self, a: usize, b: usize)
+
+/// Removes the value, moving the last one into its place.
+fn List<T>.swap_remove(mut self, index: usize): T
+
+/// Keeps the first `len` values.
+fn List<T>.truncate(mut self, len: usize)
+
+/// The values from `at` on, as a new list.
+fn List<T>.split_off(mut self, at: usize): List<T>
+
+/// Moves every value of `other` to the end.
+fn List<T>.append(mut self, other: List<T>)
+
+/// Removes the values in the range.
+fn List<T>.drain(mut self, range: Range<usize>): ListIntoIter<T>
+
+/// Appends copies of the values.
+fn List<T>.extend_from_slice(mut self, values: [T])
+
+/// Whether a value equals `value`.
+fn List<T>.contains(self, value: T): bool
+
+/// Sorts the values ascending.
+fn List<T>.sort(mut self)
+
+/// Removes every value.
+fn List<T>.clear(mut self)
+
+/// A view of the values.
+fn List<T>.as_slice(self): [T]
+
+/// Iterates over the values.
+fn List<T>.iter(self): [T]
+
+/// Iterates over the values, to change them.
+fn List<T>.iter_mut(mut self): IterMut<T>
+
+/// Consumes the list, yielding its values.
+fn List<T>.into_iter(own self): ListIntoIter<T>
+
+/// A hash map from keys to values.
+struct Map<K, V> {}
+
+/// An empty map.
+fn Map<K, V>.new(): Map<K, V>
+
+/// An empty map with room for `n` entries.
+fn Map<K, V>.with_capacity(n: usize): Map<K, V>
+
+/// An empty map that stores the allocator.
+fn Map<K, V>.new_in(alloc: A): Map<K, V, A>
+
+/// Inserts the entry, replacing an existing key's value.
+fn Map<K, V>.insert(mut self, key: K, value: V)
+
+/// The value of the key.
+fn Map<K, V>.get(self, key: K): Option<&V>
+
+/// The value of the key, to change.
+fn Map<K, V>.get_mut(mut self, key: K): Option<&mut V>
+
+/// The value of the key, or `fallback`.
+fn Map<K, V>.get_or(self, key: K, fallback: V): &V
+
+/// The value of the key, inserted when missing.
+fn Map<K, V>.get_or_insert(mut self, key: K, value: V): &mut V
+
+/// Removes the key and returns its value.
+fn Map<K, V>.remove(mut self, key: K): Option<V>
+
+/// Removes the key and returns the entry.
+fn Map<K, V>.remove_entry(mut self, key: K): Option<(K, V)>
+
+/// Whether the key is in the map.
+fn Map<K, V>.contains_key(self, key: K): bool
+
+/// The key's entry, to insert or update in one probe.
+fn Map<K, V>.entry(mut self, key: K): MapEntry<K, V>
+
+/// Keeps the entries `keep` accepts.
+fn Map<K, V>.retain(mut self, keep: FnMut(&K, &V): bool)
+
+/// Room for `additional` more entries.
+fn Map<K, V>.reserve(mut self, additional: usize)
+
+/// Shrinks the table to the entries.
+fn Map<K, V>.shrink_to_fit(mut self)
+
+/// Removes every entry.
+fn Map<K, V>.clear(mut self)
+
+/// The number of entries.
+fn Map<K, V>.len(self): usize
+
+/// Iterates over the entries as `(&K, &V)`.
+fn Map<K, V>.iter(self): MapIter<K, V>
+
+/// Iterates over the entries, to change the values.
+fn Map<K, V>.iter_mut(mut self): MapIterMut<K, V>
+
+/// Consumes the map, yielding `(K, V)`.
+fn Map<K, V>.into_iter(own self): MapIntoIter<K, V>
+
+/// `Some(T)` or `None`.
+enum Option<T> {
+    Some(T)
+    None
+}
+
+/// The value; panics on `None`.
+fn Option<T>.unwrap(own self): T
+
+/// The value; panics with `msg` on `None`.
+fn Option<T>.expect(own self, msg: str): T
+
+/// Whether there is a value.
+fn Option<T>.is_some(self): bool
+
+/// Whether there is no value.
+fn Option<T>.is_none(self): bool
+
+/// `Ok(T)` or `Err(E)`; `Result<T>` means `Result<T, AnyError>`.
+enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}
+
+/// The value; panics on `Err`.
+fn Result<T, E>.unwrap(own self): T
+
+/// The value; panics with `msg` on `Err`.
+fn Result<T, E>.expect(own self, msg: str): T
+
+/// Whether it is `Ok`.
+fn Result<T, E>.is_ok(self): bool
+
+/// Whether it is `Err`.
+fn Result<T, E>.is_err(self): bool
+
+/// Prefixes a context message to the error.
+fn Result<T, E>.context(own self, message: str): Result<T, AnyError>
+
+/// One value in its own allocation.
+struct Heap<T> {}
+
+/// Moves the value into a new allocation.
+fn Heap<T>.new(value: T): Heap<T>
+
+/// `new`, with an allocator.
+fn Heap<T>.new_in(alloc: A, value: T): Heap<T, A>
+
+/// The number of values.
+fn [T].len(self): usize
+
+/// Iterates over the values: `T` if it is `Copy`, else `&T`.
+fn [T].iter(self): [T]
+
+/// The value at `i`, or `None` past the end; a range gives a view.
+fn [T].get(self, i: usize): Option<&T>
+
+/// The last value.
+fn [T].last(self): Option<&T>
+
+/// A `List` of clones of the values.
+fn [T].to_list(self): List<T>
+
+/// Swaps two values; panics when an index is out of bounds.
+fn [T].swap(mut self, a: usize, b: usize)
+
+/// Sets every value to a clone of `value`.
+fn [T].fill(mut self, value: T)
+
+/// Copies `other` in; panics on a length mismatch.
+fn [T].copy_from_slice(mut self, other: [T])
+
+/// Clones `other` in; panics on a length mismatch.
+fn [T].clone_from_slice(mut self, other: [T])
+
+/// Views of `n` values at a time; the last may be shorter.
+fn [T].chunks(self, n: usize): Chunks<T>
+
+/// Views of exactly `n` values; the rest is left out.
+fn [T].chunks_exact(self, n: usize): ChunksExact<T>
+
+/// Every run of `n` consecutive values, as views.
+fn [T].windows(self, n: usize): Windows<T>
+
+/// Iterates over the values, to change them.
+fn [T; N].iter_mut(mut self): IterMut<T>

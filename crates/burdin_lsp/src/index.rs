@@ -573,6 +573,8 @@ impl Builder<'_> {
                 // `[u8]` (`nav::Owners` says which slices it fits).
                 let owner = match &e.recv.kind {
                     ast::TypeKind::Slice(_) => Some(self.slice(e.recv.span.lo, e.recv.span.hi).replace(' ', "")),
+                    // An array receiver (`fn [T; N].iter_mut`), in `std/src/builtins.bd`, keeps its spaces.
+                    ast::TypeKind::Array(..) => Some(self.slice(e.recv.span.lo, e.recv.span.hi).to_string()),
                     _ => docs::type_name(&e.recv).map(str::to_string),
                 };
                 self.function(&e.func, Kind::Method, None, owner, None);
