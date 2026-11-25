@@ -576,7 +576,7 @@ test "add works" {
 
 fn check_valid(user: User): Result<()> {
     assert(user.name.len() > 0)?
-    Ok(())
+    Result.Ok(())
 }
 
 test "user is valid" {

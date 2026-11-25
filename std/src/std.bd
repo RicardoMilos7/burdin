@@ -26,11 +26,11 @@ interface Error requires Display { }
 ///
 /// ```
 /// fn read_cfg(): Result<i32, IoError> {
-///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+///     Result.Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None })
 /// }
 /// match read_cfg().context("loading") {
-///     Ok(_) => assert(false),
-///     Err(e) => assert_eq(format("{}", e), String.from("loading: cannot read cfg.toml: not found")),
+///     Result.Ok(_) => assert(false),
+///     Result.Err(e) => assert_eq(format("{}", e), String.from("loading: cannot read cfg.toml: not found")),
 /// }
 /// ```
 struct AnyError {
@@ -111,11 +111,11 @@ AnyError {
     ///
     /// ```
     /// fn read_cfg(): Result<i32, IoError> {
-    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    ///     Result.Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None })
     /// }
     /// match read_cfg().context("loading") {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => assert(e.is<IoError>()),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => assert(e.is<IoError>()),
     /// }
     /// ```
     fn is<T: Error>(self): bool {
@@ -126,11 +126,11 @@ AnyError {
     ///
     /// ```
     /// fn read_cfg(): Result<i32, IoError> {
-    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    ///     Result.Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None })
     /// }
     /// match read_cfg().context("loading") {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => {
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => {
     ///         let inner = e.downcast<IoError>().unwrap()
     ///         assert_eq(inner.kind(), IoErrorKind.NotFound)
     ///     }
@@ -146,11 +146,11 @@ AnyError {
     ///
     /// ```
     /// fn read_cfg(): Result<i32, IoError> {
-    ///     Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None })
+    ///     Result.Err(IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None })
     /// }
     /// match read_cfg().context("loading") {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => e.print_trace(),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => e.print_trace(),
     /// }
     /// ```
     fn print_trace(self) {
@@ -269,7 +269,7 @@ IoErrorKind: Display {
 /// carry no path and no code, and `kind()` classifies them too.
 ///
 /// ```
-/// let err = IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: None }
+/// let err = IoError.Read { path: String.from("cfg.toml"), kind: IoErrorKind.NotFound, os_code: Option.None }
 /// assert_eq(err.kind(), IoErrorKind.NotFound)
 /// ```
 error enum IoError: Clone, Eq, Debug {
@@ -289,8 +289,8 @@ IoError {
     ///
     /// ```
     /// match read_to_string("burdin-doc-no-such-file.txt") {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => assert_eq(e.kind(), IoErrorKind.NotFound),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => assert_eq(e.kind(), IoErrorKind.NotFound),
     /// }
     /// ```
     fn kind(self): IoErrorKind {
@@ -312,8 +312,8 @@ IoError {
     ///
     /// ```
     /// match read_to_string("burdin-doc-no-such-file.txt") {
-    ///     Ok(_) => assert(false),
-    ///     Err(e) => assert(e.os_code().is_some()),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(e) => assert(e.os_code().is_some()),
     /// }
     /// ```
     fn os_code(self): Option<i32> {
@@ -326,7 +326,7 @@ IoError {
             | IoError.WriteZero
             | IoError.InvalidData
             | IoError.Seek
-            | IoError.InvalidInput => None,
+            | IoError.InvalidInput => Option.None,
         }
     }
 }
@@ -335,8 +335,8 @@ IoError {
 ///
 /// ```
 /// match i32.parse("x") {
-///     Ok(_) => assert(false),
-///     Err(e) => assert_eq(e, ParseIntError.Invalid),
+///     Result.Ok(_) => assert(false),
+///     Result.Err(e) => assert_eq(e, ParseIntError.Invalid),
 /// }
 /// ```
 error enum ParseIntError: Eq, Debug {
@@ -348,8 +348,8 @@ error enum ParseIntError: Eq, Debug {
 /// ```
 /// let big: i32 = 300
 /// match u8.try_from(big) {
-///     Ok(_) => assert(false),
-///     Err(e) => assert_eq(e, TryFromIntError.OutOfRange),
+///     Result.Ok(_) => assert(false),
+///     Result.Err(e) => assert_eq(e, TryFromIntError.OutOfRange),
 /// }
 /// ```
 error enum TryFromIntError: Eq, Debug {
@@ -443,15 +443,15 @@ priv fn __snapshot_display<T: Display>(value: T, location: str, inline: bool) {
 /// after the test process ends, so a test sees no difference between a matching and a differing snapshot.
 priv fn __snapshot_record(text: String, location: str, inline: bool) {
     match get("BURDIN_SNAPSHOTS") {
-        Some(path) => {
+        Option.Some(path) => {
             let kind = if inline { 1 } else { 0 }
             let record = format("snapshot {kind} {text.len()} {location}\n{text}\n")
             match append(path, record.as_bytes()) {
-                Ok(()) => {}
-                Err(e) => panic("cannot record a snapshot in {path}: {e}"),
+                Result.Ok(()) => {}
+                Result.Err(e) => panic("cannot record a snapshot in {path}: {e}"),
             }
         }
-        None => {}
+        Option.None => {}
     }
 }
 
@@ -495,11 +495,11 @@ fn debug_assert_ne<T: Eq>(a: T, b: T) {
 /// the call's location at the call site (`spec/errors.md`, ERR9).
 priv fn __test_assert(cond: bool, message: str, condition: str, location: str): Result<(), AssertError> {
     if cond {
-        Ok(())
+        Result.Ok(())
     } else if message.len() == 0 {
-        Err(AssertError.Failed { condition: condition.to_string(), location: location.to_string() })
+        Result.Err(AssertError.Failed { condition: condition.to_string(), location: location.to_string() })
     } else {
-        Err(AssertError.FailedMsg {
+        Result.Err(AssertError.FailedMsg {
             condition: condition.to_string(),
             message: message.to_string(),
             location: location.to_string(),
@@ -517,19 +517,19 @@ priv fn __test_assert_eq<T: Eq + Debug>(
     location: str,
 ): Result<(), AssertError> {
     if a == b {
-        Ok(())
+        Result.Ok(())
     } else {
         let left = format("{a:?}")
         let right = format("{b:?}")
         if message.len() == 0 {
-            Err(AssertError.FailedEq {
+            Result.Err(AssertError.FailedEq {
                 condition: condition.to_string(),
                 left,
                 right,
                 location: location.to_string(),
             })
         } else {
-            Err(AssertError.FailedEqMsg {
+            Result.Err(AssertError.FailedEqMsg {
                 condition: condition.to_string(),
                 left,
                 right,
@@ -550,19 +550,19 @@ priv fn __test_assert_ne<T: Eq + Debug>(
     location: str,
 ): Result<(), AssertError> {
     if a != b {
-        Ok(())
+        Result.Ok(())
     } else {
         let left = format("{a:?}")
         let right = format("{b:?}")
         if message.len() == 0 {
-            Err(AssertError.FailedNe {
+            Result.Err(AssertError.FailedNe {
                 condition: condition.to_string(),
                 left,
                 right,
                 location: location.to_string(),
             })
         } else {
-            Err(AssertError.FailedNeMsg {
+            Result.Err(AssertError.FailedNeMsg {
                 condition: condition.to_string(),
                 left,
                 right,

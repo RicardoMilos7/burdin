@@ -33,8 +33,8 @@ Burdin, with a `Map` and a `bump` helper that takes the key by value:
 ```burdin
 fn bump(mut counts: Map<String, i32>, own word: String) {
     let current = match counts.get(word.as_str()) {
-        Some(n) => *n,
-        None => 0,
+        Option.Some(n) => *n,
+        Option.None => 0,
     }
     counts.insert(word, current + 1)
 }
@@ -45,8 +45,8 @@ fn main() {
         bump(mut counts, String.from(w))
     }
     match counts.get("a") {
-        Some(n) => println("a = {n}"),
-        None => println("a is missing"),
+        Option.Some(n) => println("a = {n}"),
+        Option.None => println("a is missing"),
     }
 }
 ```

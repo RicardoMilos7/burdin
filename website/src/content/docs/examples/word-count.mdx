@@ -28,7 +28,7 @@ The input file is:
 
 ## What to notice
 
-- `read_line()` returns `Ok(Some(line))` for each line, `Ok(None)` at the end, and an error if reading fails. The loop handles all three.
+- `read_line()` returns `Result.Ok(Option.Some(line))` for each line, `Result.Ok(Option.None)` at the end, and an error if reading fails. The loop handles all three.
 - `bump(mut counts, word)` takes the word with `own`, so the map can keep it. A borrowed word could not be stored.
 - A map has no order, so the program copies the keys into a `List`, sorts it, and then looks each count up.
 

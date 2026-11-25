@@ -6,7 +6,7 @@ fn main() {
     let out = args[2]
     let source = "const ANSWER: i32 = 42\n\nfn triple(n: i32): i32 {{\n    n * 3\n}}\n\nstruct Point {{\n    x: i32\n    y: i32\n}}\n"
     match write_file("{out}/src/generated.bd", source) {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }

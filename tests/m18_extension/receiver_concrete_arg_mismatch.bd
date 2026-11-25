@@ -5,12 +5,12 @@
 
 fn Result<T, i32>.code(self): i32 {
     match self {
-        Ok(_) => 0,
-        Err(c) => c,
+        Result.Ok(_) => 0,
+        Result.Err(c) => c,
     }
 }
 
 fn main() {
-    let r: Result<String, String> = Err("boom".to_string())
+    let r: Result<String, String> = Result.Err("boom".to_string())
     println(r.code().to_string()) //~ E0002
 }

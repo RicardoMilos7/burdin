@@ -13,7 +13,7 @@ The runner builds the selected packages in test mode, into a cached binary under
 and `assert_eq` return a typed error in test mode, and a helper can propagate it with `?`. A failing assertion's
 message (the condition text, the values, and the location) is printed to standard
 error before the exit status, so it appears in the captured stderr section of the failure report. A test that
-returns `Err` is reported as failed; the generated dispatcher exits 1 for `Err` and 0 for `Ok`.
+returns `Result.Err` is reported as failed; the generated dispatcher exits 1 for `Result.Err` and 0 for `Result.Ok`.
 
 ## Test items and attributes
 
@@ -37,7 +37,7 @@ stripped from a normal build). The accepted attributes are:
 | `timeout(ms)` | The test process must finish within `ms` milliseconds. `0` means no limit. The attribute overrides the runner's `--timeout` default for this test. A test past its deadline is killed and reported as failed. |
 | `should_panic` | The test must end in a panic abort. |
 | `should_panic("text")` | The same, and `text` must appear in the test's stderr. |
-| `should_fail` | The test must return an error (`Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. The failure is a typed `AssertError` (`spec/errors.md`, ERR9), and the test binary prints its message (the condition text, the values, and the location) to standard error before exiting, so it appears under the captured stderr heading. `should_fail` itself checks only the exit status, not the error value. |
+| `should_fail` | The test must return an error (`Result.Err`), which the dispatcher reports with exit status 1. A panic does not satisfy it. The failure is a typed `AssertError` (`spec/errors.md`, ERR9), and the test binary prints its message (the condition text, the values, and the location) to standard error before exiting, so it appears under the captured stderr heading. `should_fail` itself checks only the exit status, not the error value. |
 
 A test with none of these passes exactly when its process exits 0. A panic is any ending other than exit 0 or 1: a
 signal, an abort, or another exit status. `should_panic` and `should_fail` are opposite expectations and cannot be
@@ -306,7 +306,7 @@ assert_snapshot(value, @r#"Point { x: 1, y: 2 }"#)  // a raw inline snapshot hol
 - **SN2. Recording.** Each call appends a record of its location, its kind, and the formatted text to the file
   named by the variable `BURDIN_SNAPSHOTS`, which the runner sets for each `test` block process (in addition to the
   variables of [Isolation](#isolation)). The runner compares the records of each test, in the order the calls ran,
-  after every test has finished. A test that ends before a call (a panic, an `Err`) records nothing for it.
+  after every test has finished. A test that ends before a call (a panic, an `Result.Err`) records nothing for it.
 - **SN3. Files.** A snapshot without an inline literal lives in `snapshots/<module>__<test>.snap` in the directory
   of the test's source file. `<module>` is the test's dotted module path, or the file's stem for a package's entry
   file and a one-file target (`main`, `lib`); in `<test>` every character other than an ASCII letter, a digit, `_`,

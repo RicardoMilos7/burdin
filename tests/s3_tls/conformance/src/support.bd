@@ -84,7 +84,7 @@ fn read_exact_tls(mut stream: TlsStream, count: usize): Result<List<u8>, TlsErro
             break
         }
     }
-    Ok(data)
+    Result.Ok(data)
 }
 
 /// Sends `text` and reads the same number of bytes back, as text.
@@ -92,7 +92,7 @@ fn round_trip(mut stream: TlsStream, text: str): Result<String, TlsError> {
     let bytes = text.to_utf8()
     stream.send_all(bytes[0..bytes.len()])?
     let back = read_exact_tls(mut stream, bytes.len())?
-    Ok(String.from_utf8_lossy(back[0..back.len()]))
+    Result.Ok(String.from_utf8_lossy(back[0..back.len()]))
 }
 
 /// What the server does after the handshake.
@@ -164,14 +164,14 @@ Peer {
         task.scope(|s| {
             s.spawn(|| {
                 match work.recv() {
-                    Some(conn) => self.run_tls(conn, first, Behavior.Echo),
-                    None => {}
+                    Option.Some(conn) => self.run_tls(conn, first, Behavior.Echo),
+                    Option.None => {}
                 }
             })
             s.spawn(|| {
                 match work.recv() {
-                    Some(conn) => self.run_tls(conn, second, Behavior.Echo),
-                    None => {}
+                    Option.Some(conn) => self.run_tls(conn, second, Behavior.Echo),
+                    Option.None => {}
                 }
             })
             for _ in 0..2 {
@@ -183,20 +183,20 @@ Peer {
 
     priv fn run_tls(self, own tcp: net.TcpStream, config: ServerConfig, behavior: Behavior) {
         match TlsStream.accept(tcp, config) {
-            Ok(stream) => {
+            Result.Ok(stream) => {
                 let mut stream = stream
                 let name = match stream.server_name() {
-                    Some(text) => text,
-                    None => "-".to_string(),
+                    Option.Some(text) => text,
+                    Option.None => "-".to_string(),
                 }
                 let subject = match stream.peer_certificate() {
-                    Some(cert) => cert.subject(),
-                    None => "-".to_string(),
+                    Option.Some(cert) => cert.subject(),
+                    Option.None => "-".to_string(),
                 }
                 self.note(format("server: handshake ok version={} sni={} peer={}", stream.tls_version(), name, subject))
                 self.play(mut stream, behavior)
             }
-            Err(_) => self.note("server: handshake failed".to_string()),
+            Result.Err(_) => self.note("server: handshake failed".to_string()),
         }
     }
 
@@ -205,7 +205,7 @@ Peer {
     fn serve_plain(self, reply: [u8], silent_ms: u64) {
         let (tcp, _) = self.listener.accept().unwrap()
         let mut tcp = tcp
-        tcp.set_read_timeout(Some(Duration.from_millis(2000)))
+        tcp.set_read_timeout(Option.Some(Duration.from_millis(2000)))
         let mut hello = List<u8>.new()
         if silent_ms == 0 {
             let _ = tcp.read(mut hello, 4096)
@@ -225,14 +225,14 @@ Peer {
                 loop {
                     let mut chunk = List<u8>.new()
                     match stream.recv(mut chunk, 16384) {
-                        Ok(0) => break,
-                        Ok(n) => {
+                        Result.Ok(0) => break,
+                        Result.Ok(n) => {
                             if stream.send_all(chunk[0..n]).is_err() {
                                 ended = "with a write error".to_string()
                                 break
                             }
                         }
-                        Err(failure) => {
+                        Result.Err(failure) => {
                             ended = format("with {}", kind_of(failure))
                             break
                         }
@@ -267,9 +267,9 @@ Peer {
                 loop {
                     chunk.clear()
                     match stream.recv(mut chunk, 4096) {
-                        Ok(0) => break,
-                        Ok(_) => {}
-                        Err(_) => break,
+                        Result.Ok(0) => break,
+                        Result.Ok(_) => {}
+                        Result.Err(_) => break,
                     }
                 }
             }

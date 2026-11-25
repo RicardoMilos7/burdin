@@ -13,7 +13,7 @@ struct C {}
 
 C: Iterator<u8> {
     fn next(mut self): Option<u8> {
-        None
+        Option.None
     }
 }
 

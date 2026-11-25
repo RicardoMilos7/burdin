@@ -22,8 +22,8 @@ fn main() {
     })
     select {
         v = work.recv() => match v {
-            Some(n) => println("value {}", n),
-            None => println("closed"),
+            Option.Some(n) => println("value {}", n),
+            Option.None => println("closed"),
         }
         _ = timer.recv() => println("timed out"),
     }
@@ -31,8 +31,8 @@ fn main() {
     let idle = Channel<i32>.bounded(1)
     select {
         v = idle.recv() => match v {
-            Some(n) => println("value {}", n),
-            None => println("closed"),
+            Option.Some(n) => println("value {}", n),
+            Option.None => println("closed"),
         }
         _ = timer.recv() => println("timed out"),
     }

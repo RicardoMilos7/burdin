@@ -17,10 +17,10 @@ fn main() {
     println(s)
     println(s.as_str().len().to_string())
 
-    let o: Option<str> = Some(s)
+    let o: Option<str> = Option.Some(s)
     match o {
-        Some(v) => println(v),
-        None => println("none"),
+        Option.Some(v) => println(v),
+        Option.None => println("none"),
     }
 
     assert_eq("abc", String.from("abc"))

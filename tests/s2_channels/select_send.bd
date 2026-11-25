@@ -26,8 +26,8 @@ fn main() {
     out.close()
     select {
         r = out.send(9) => match r {
-            Err(v) => println("closed: the value {} came back", v),
-            Ok(()) => println("queued"),
+            Result.Err(v) => println("closed: the value {} came back", v),
+            Result.Ok(()) => println("queued"),
         }
         spare.send(8) => println("sent to spare")
     }

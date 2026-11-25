@@ -10,9 +10,9 @@ struct Foo {
 
 Foo: Iterator<i32> {
     fn next(mut self): Option<i32> {
-        if self.n == 0 { return None }
+        if self.n == 0 { return Option.None }
         self.n = self.n - 1
-        Some(self.n)
+        Option.Some(self.n)
     }
 }
 

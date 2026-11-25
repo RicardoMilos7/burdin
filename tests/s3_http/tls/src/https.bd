@@ -41,17 +41,17 @@ fn short(server: Server, n: usize): String {
 /// The status, body, redirect count, and URL of a response, or the failure, on one line.
 fn landed(client: http.Client, request: http.Request): String {
     match client.send(request) {
-        Ok(response) => {
+        Result.Ok(response) => {
             let mut response = response
             let status = response.status
             let count = response.redirects
             let url = response.url.to_text()
             match response.text() {
-                Ok(text) => format("{} {:?} redirects={} url={}", status, text, count, url),
-                Err(e) => format("body error: {}", e),
+                Result.Ok(text) => format("{} {:?} redirects={} url={}", status, text, count, url),
+                Result.Err(e) => format("body error: {}", e),
             }
         }
-        Err(e) => format("error: {}", e),
+        Result.Err(e) => format("error: {}", e),
     }
 }
 
@@ -71,7 +71,7 @@ fn get() {
         s.spawn(|| {
             let client = trusting_client()
             match client.get(server.url("/greet?name=burdin").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let content_type = response.header("content-type").unwrap()
                     let ones = response.headers.get_all("X-ONE")
@@ -91,7 +91,7 @@ fn get() {
                         server.mask(url.as_str()),
                     )
                 }
-                Err(e) => println("get: error {}", e),
+                Result.Err(e) => println("get: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -124,14 +124,14 @@ fn post() {
                 .header("X-Token", "abc")
                 .body_text("name=burdin")
             match client.send(request) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let reason = response.reason.clone()
                     let status = response.status
                     let text = response.text().unwrap()
                     println("post: {} {} body={:?}", status, reason, text)
                 }
-                Err(e) => println("post: error {}", e),
+                Result.Err(e) => println("post: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -194,20 +194,20 @@ fn bodies() {
         s.spawn(|| {
             let client = trusting_client()
             match client.get(server.url("/big").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     println("length: {} bytes, as sent: {}", text.len(), text.as_str() == big.as_str())
                 }
-                Err(e) => println("length: error {}", e),
+                Result.Err(e) => println("length: error {}", e),
             }
             match client.get(server.url("/chunked").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     println("chunked: body={:?} trailer={}", text, response.trailers().get("X-Sum").unwrap())
                 }
-                Err(e) => println("chunked: error {}", e),
+                Result.Err(e) => println("chunked: error {}", e),
             }
             println("close-delimited: {}", fetch(client.clone(), server.url("/rest").as_str()))
             println("close-delimited: idle {}", client.idle_connections())
@@ -262,12 +262,12 @@ fn unread_body() {
         s.spawn(|| {
             let client = trusting_client()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let status = response.status
                     response.close()
                     println("unread: {} closed without reading the body", status)
                 }
-                Err(e) => println("unread: error {}", e),
+                Result.Err(e) => println("unread: error {}", e),
             }
             server.settle()
         })
@@ -447,14 +447,14 @@ fn redirect_downgrade() {
             let mut client = trusting_client()
             client.follow_redirects = false
             match client.get(refusing.url("/start").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let status = response.status
                     let location = response.header("Location").unwrap()
                     let _ = response.text()
                     println("https -> http, not followed: {} location={}", status, location)
                 }
-                Err(e) => println("https -> http, not followed: error {}", e),
+                Result.Err(e) => println("https -> http, not followed: error {}", e),
             }
             client.close_idle()
             refusing.settle()
@@ -473,8 +473,8 @@ fn rejected(label: str, chain: str, key: str, client: http.Client) {
         s.spawn(|| server.serve(scripts))
         s.spawn(|| {
             match client.get(server.url("/secret").as_str()) {
-                Ok(_) => println("{}: a response arrived", label),
-                Err(e) => println("{}: {}", label, describe(e, true)),
+                Result.Ok(_) => println("{}: a response arrived", label),
+                Result.Err(e) => println("{}: {}", label, describe(e, true)),
             }
             server.settle()
         })
@@ -551,8 +551,8 @@ fn configuration() {
             let mut other = http.Client.new()
             other.trust(root_store()).unwrap()
             match other.get(server.url("/").as_str()) {
-                Ok(_) => println("other store: a response arrived"),
-                Err(e) => println("other store: {}", describe(e, false)),
+                Result.Ok(_) => println("other store: a response arrived"),
+                Result.Err(e) => println("other store: {}", describe(e, false)),
             }
 
             let mut inherited = client.clone()
@@ -562,8 +562,8 @@ fn configuration() {
             let mut changed = client.clone()
             changed.trust(root_store()).unwrap()
             match changed.get(server.url("/").as_str()) {
-                Ok(_) => println("clone with its own store: a response arrived"),
-                Err(e) => println("clone with its own store: {}", describe(e, false)),
+                Result.Ok(_) => println("clone with its own store: a response arrived"),
+                Result.Err(e) => println("clone with its own store: {}", describe(e, false)),
             }
             println("original after the clone changed: {}", fetch(client.clone(), server.url("/").as_str()))
             client.close_idle()
@@ -645,8 +645,8 @@ fn retries() {
 
 fn error_of(result: Result<http.Response, http.HttpError>): String {
     match result {
-        Ok(_) => "no error".to_string(),
-        Err(e) => e.to_string(),
+        Result.Ok(_) => "no error".to_string(),
+        Result.Err(e) => e.to_string(),
     }
 }
 
@@ -685,13 +685,13 @@ fn handshake_timeout() {
         s.spawn(|| server.serve(scripts))
         s.spawn(|| {
             let mut client = trusting_client()
-            client.connect_timeout = Some(Duration.from_millis(150))
-            client.read_timeout = Some(Duration.from_millis(5000))
+            client.connect_timeout = Option.Some(Duration.from_millis(150))
+            client.read_timeout = Option.Some(Duration.from_millis(5000))
             client.max_retries = 0
             let started = Instant.now()
             match client.get(server.secure_url("/").as_str()) {
-                Ok(_) => println("handshake timeout: connected"),
-                Err(e) => println(
+                Result.Ok(_) => println("handshake timeout: connected"),
+                Result.Err(e) => println(
                     "handshake timeout: {} is_timeout={} connection_failure={} tls={}",
                     server.mask(e.to_string().as_str()),
                     e.is_timeout(),
@@ -720,12 +720,12 @@ fn plain_port() {
         s.spawn(|| {
             let client = trusting_client()
             match client.get(server.secure_url("/").as_str()) {
-                Ok(_) => println("plain port: a response arrived"),
-                Err(e) => println("plain port: {}", describe(e, false)),
+                Result.Ok(_) => println("plain port: a response arrived"),
+                Result.Err(e) => println("plain port: {}", describe(e, false)),
             }
             match client.get(server.secure_url("/").as_str()) {
-                Ok(_) => println("silent close: a response arrived"),
-                Err(e) => println("silent close: {}", describe(e, false)),
+                Result.Ok(_) => println("silent close: a response arrived"),
+                Result.Err(e) => println("silent close: {}", describe(e, false)),
             }
             server.settle()
         })

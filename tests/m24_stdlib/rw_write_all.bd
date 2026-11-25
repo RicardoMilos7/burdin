@@ -29,12 +29,12 @@ Slow: Write {
             i = i + 1
         }
         self.sizes.push(n)
-        Ok(n)
+        Result.Ok(n)
     }
 
     fn flush(mut self): Result<(), IoError> {
         self.flushes = self.flushes + 1
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -57,12 +57,12 @@ fn main() {
     let mut z = slow(0)
     let none = List<u8>.new()
     match z.write_all(none[0..0]) {
-        Ok(_) => println("empty write is fine"),
-        Err(e) => println("empty: {}", e),
+        Result.Ok(_) => println("empty write is fine"),
+        Result.Err(e) => println("empty: {}", e),
     }
     match z.write_text("x") {
-        Ok(_) => println("unexpected"),
-        Err(e) => println("zero: {}", e),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(e) => println("zero: {}", e),
     }
 
     let mut l = slow(100)

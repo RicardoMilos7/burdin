@@ -32,12 +32,12 @@ fn main() {
     let g: i8 = 127
     show(g.wrapping_add(1) as i32)
     match g.checked_add(1) {
-        Some(_) => println("some"),
-        None => println("none"),
+        Option.Some(_) => println("some"),
+        Option.None => println("none"),
     }
     match g.checked_add(0) {
-        Some(v) => show(v as i32),
-        None => println("none"),
+        Option.Some(v) => show(v as i32),
+        Option.None => println("none"),
     }
 
     let big: i64 = 3000000000

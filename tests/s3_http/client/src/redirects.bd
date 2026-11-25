@@ -8,8 +8,8 @@ fn short_line(server: Server, n: usize): String {
     let raw = server.request(n)
     let line = request_line(raw.as_str())
     match line.find_str(" HTTP/") {
-        Some(at) => line.as_str()[0..at].to_string(),
-        None => line,
+        Option.Some(at) => line.as_str()[0..at].to_string(),
+        Option.None => line,
     }
 }
 
@@ -29,7 +29,7 @@ fn statuses_for_get() {
             let client = http.Client.new()
             for name in names {
                 match client.get(server.url("/start").as_str()) {
-                    Ok(response) => {
+                    Result.Ok(response) => {
                         let mut response = response
                         let status = response.status
                         let hops = response.redirects
@@ -37,7 +37,7 @@ fn statuses_for_get() {
                         let text = response.text().unwrap()
                         println("redirect {}: {} {:?} redirects={} url={}", name, status, text, hops, url)
                     }
-                    Err(e) => println("redirect {}: error {}", name, e),
+                    Result.Err(e) => println("redirect {}: error {}", name, e),
                 }
             }
             client.close_idle()
@@ -80,11 +80,11 @@ fn method_matrix() {
                     .header("Content-Type", "text/plain")
                     .body_text("payload")
                 match client.send(request) {
-                    Ok(response) => {
+                    Result.Ok(response) => {
                         let mut response = response
                         let _ = response.text()
                     }
-                    Err(e) => println("redirect {} {}: error {}", method, status, e),
+                    Result.Err(e) => println("redirect {} {}: error {}", method, status, e),
                 }
             }
             client.close_idle()
@@ -125,13 +125,13 @@ fn locations() {
             let client = http.Client.new()
             for value in values {
                 match client.get(server.url("/dir/page?old=1").as_str()) {
-                    Ok(response) => {
+                    Result.Ok(response) => {
                         let mut response = response
                         let url = server.mask(response.url.to_text().as_str())
                         let _ = response.text()
                         println("location {} -> {}", value, url)
                     }
-                    Err(e) => println("location {}: error {}", value, e),
+                    Result.Err(e) => println("location {}: error {}", value, e),
                 }
             }
             client.close_idle()
@@ -203,12 +203,12 @@ fn cross_origin() {
                 .header("Proxy-Authorization", "Basic abc")
                 .header("X-Custom", "kept")
             match client.send(away) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     println("cross-origin: {:?}", text)
                 }
-                Err(e) => println("cross-origin: error {}", e),
+                Result.Err(e) => println("cross-origin: error {}", e),
             }
             let near = http.Request.get(home.url("/start").as_str())
                 .unwrap()
@@ -216,12 +216,12 @@ fn cross_origin() {
                 .header("Cookie", "session=1")
                 .header("X-Custom", "kept")
             match client.send(near) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     println("same-origin: {:?}", text)
                 }
-                Err(e) => println("same-origin: error {}", e),
+                Result.Err(e) => println("same-origin: error {}", e),
             }
             client.close_idle()
             other.settle()
@@ -259,7 +259,7 @@ fn not_followed() {
             let mut client = http.Client.new()
             client.follow_redirects = false
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let status = response.status
                     let location = response.header("location").unwrap()
@@ -267,7 +267,7 @@ fn not_followed() {
                     let text = response.text().unwrap()
                     println("not followed: {} location={} is_redirect={} body={:?}", status, location, is_redirect, text)
                 }
-                Err(e) => println("not followed: error {}", e),
+                Result.Err(e) => println("not followed: error {}", e),
             }
             client.close_idle()
             let following = http.Client.new()

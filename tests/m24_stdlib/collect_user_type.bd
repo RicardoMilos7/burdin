@@ -18,10 +18,10 @@ Total: FromIterator<i32> {
         let mut sum = 0
         loop {
             match it.next() {
-                Some(n) => {
+                Option.Some(n) => {
                     sum = sum + n
                 }
-                None => {
+                Option.None => {
                     return Total { sum: sum }
                 }
             }

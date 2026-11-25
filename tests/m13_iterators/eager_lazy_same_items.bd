@@ -44,11 +44,11 @@ fn main() {
     println(xs.iter().any(|x| x == 2).to_string())
 
     match xs.find(|x| *x == 3) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
     match xs.iter().find(|x| *x == 3) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
 }

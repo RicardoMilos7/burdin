@@ -8,14 +8,14 @@
 
 fn describe(pair: [Option<i32>; 2]) {
     match pair {
-        [Some(a), Some(b)] => println("both {a} {b}")
-        [Some(a), None] => println("one {a}")
-        [None, _] => println("none")
+        [Option.Some(a), Option.Some(b)] => println("both {a} {b}")
+        [Option.Some(a), Option.None] => println("one {a}")
+        [Option.None, _] => println("none")
     }
 }
 
 fn main() {
-    describe([Some(1), Some(2)])
-    describe([Some(3), None])
-    describe([None, Some(9)])
+    describe([Option.Some(1), Option.Some(2)])
+    describe([Option.Some(3), Option.None])
+    describe([Option.None, Option.Some(9)])
 }

@@ -36,8 +36,8 @@ fn main() {
     points.insert(Point { x: 1, y: 2 }, 13)
     println(points.len().to_string())
     match points.get(Point { x: 1, y: 2 }) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
     println(points.contains_key(Point { x: 3, y: 3 }).to_string())
 
@@ -47,41 +47,41 @@ fn main() {
     labels.insert(Label.Text(String.from("a")), 21)
     println(labels.len().to_string())
     match labels.remove(Label.Num(1)) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
     println(labels.len().to_string())
 
     let mut opts = Map<Option<i32>, i32>.new()
-    opts.insert(None, 1)
-    opts.insert(Some(5), 2)
-    opts.insert(None, 3)
+    opts.insert(Option.None, 1)
+    opts.insert(Option.Some(5), 2)
+    opts.insert(Option.None, 3)
     println(opts.len().to_string())
-    println(opts.contains_key(Some(5)).to_string())
-    println(opts.contains_key(Some(6)).to_string())
-    match opts.get(None) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+    println(opts.contains_key(Option.Some(5)).to_string())
+    println(opts.contains_key(Option.Some(6)).to_string())
+    match opts.get(Option.None) {
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
 
     let mut floats = Map<f64, i32>.new()
     floats.insert(0.0, 7)
     floats.insert(1.5, 8)
     match floats.get(-0.0) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
     println(floats.contains_key(-1.5).to_string())
     println(floats.len().to_string())
 
     let mut results = Map<Result<i32, i32>, i32>.new()
-    results.insert(Ok(1), 10)
-    results.insert(Err(2), 20)
-    results.insert(Ok(1), 11)
+    results.insert(Result.Ok(1), 10)
+    results.insert(Result.Err(2), 20)
+    results.insert(Result.Ok(1), 11)
     println(results.len().to_string())
-    match results.get(Ok(1)) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+    match results.get(Result.Ok(1)) {
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
-    println(results.contains_key(Err(3)).to_string())
+    println(results.contains_key(Result.Err(3)).to_string())
 }

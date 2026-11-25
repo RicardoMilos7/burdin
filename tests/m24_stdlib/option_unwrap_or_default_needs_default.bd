@@ -7,6 +7,6 @@ struct Plain {
 }
 
 fn main() {
-    let a: Option<Plain> = None
+    let a: Option<Plain> = Option.None
     let _ = a.unwrap_or_default() //~ E0141
 }

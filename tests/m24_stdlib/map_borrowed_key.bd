@@ -20,10 +20,10 @@ fn main() {
     println("{:?}", m.get("a"))
     println("{}", m.contains_key("bb"))
     match m.get_mut("a") {
-        Some(value) => {
+        Option.Some(value) => {
             *value = *value + 1
         }
-        None => {}
+        Option.None => {}
     }
     println("{:?}", m.get("a"))
     println("{}", m.contains_key("zzz"))

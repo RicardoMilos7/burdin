@@ -29,8 +29,8 @@ fn main() {
     // Duplicates: any matching index is `Ok`, and a missing value reports its insertion point.
     let duplicates = [0, 0, 2, 2, 2, 3]
     match duplicates[0..6].binary_search(2) {
-        Ok(at) => println("{}", duplicates[at]),
-        Err(_) => println("missing"),
+        Result.Ok(at) => println("{}", duplicates[at]),
+        Result.Err(_) => println("missing"),
     }
     println("{:?}", duplicates[0..6].binary_search(1))
 

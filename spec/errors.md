@@ -87,25 +87,25 @@ struct TraceFrame {
 `Error` (the interface) is the marker: a type is an *error type* when it implements it, which requires `Display`.
 `AnyError` is the dynamic error value, a struct of its own name, so the interface and the value never share one.
 `any Error` is the boxed error, and an error type is boxed implicitly wherever the expected type is `AnyError`, like any other `any Interface` conversion
-(`spec/existentials.md`, AN3): an annotation, an argument, a return, a field, an element, a `Some`/`Ok`/`Err`
+(`spec/existentials.md`, AN3): an annotation, an argument, a return, a field, an element, a `Option.Some`/`Result.Ok`/`Result.Err`
 payload, or a match arm.
 
 The dynamic value supports the ordinary inspection surface:
 
 - `e.is<T>()` is true when the box holds a `T`;
-- `e.downcast<T>()` yields `Some(value)` when it holds a `T` and consumes the box;
+- `e.downcast<T>()` yields `Option.Some(value)` when it holds a `T` and consumes the box;
 - `match e { v: T => ..., other => ... }` takes the value out in the arm whose type the box holds and needs a
   catch-all (`spec/existentials.md`, AN15);
 - `{}` prints the wrapped error's `Display`;
 - moving, dropping, and passing an `AnyError` are ordinary moves.
 
-A `?`, an `Err(...)`, an annotation, or a `.context(...)` that converts an error type into `AnyError` boxes the
+A `?`, an `Result.Err(...)`, an annotation, or a `.context(...)` that converts an error type into `AnyError` boxes the
 value and keeps it as `value`; the original error survives, so a downcast recovers it.
 
 ## ERR5. The default `Result<T>`
 
 `Result<T>` is written with one argument and means `Result<T, AnyError>`; `Result<T, E>` keeps its two-argument
-form. `Ok`, `Err`, the patterns, `is_ok`, `is_err`, `unwrap`, and `expect` work unchanged, and `?` in a function
+form. `Result.Ok`, `Result.Err`, the patterns, `is_ok`, `is_err`, `unwrap`, and `expect` work unchanged, and `?` in a function
 returning `Result<U>` converts any error type into the dynamic error of ERR4.
 
 ## ERR6. `context`
@@ -113,8 +113,8 @@ returning `Result<U>` converts any error type into the dynamic error of ERR4.
 `res.context(message)` is a compiler-known method on `Result<T, E>`. Its argument is a `str`; it returns
 `Result<T, AnyError>`.
 
-- `Ok(value)` passes through unchanged, and the message expression is evaluated only when there is an error.
-- `Err(e)` becomes an `Err` whose dynamic `AnyError` keeps the original box in `value` and records `message` in
+- `Result.Ok(value)` passes through unchanged, and the message expression is evaluated only when there is an error.
+- `Result.Err(e)` becomes an `Result.Err` whose dynamic `AnyError` keeps the original box in `value` and records `message` in
   front of any context messages it already had. Printing it prints the contexts outermost first, each followed by
   `: `, then the source error, so a chain prints in order:
   `loading settings: cannot read config: file not found`. Because the original error stays boxed, `downcast`
@@ -146,8 +146,8 @@ call it after printing the message.
 A `main` whose return type is `Result<...>` is accepted, written directly or through a type alias declared in the same
 file that expands to one (`spec/type-aliases.md`, AL7):
 
-- `Ok(_)` prints nothing and the process exits with status 0;
-- `Err(e)` prints `e` with `Display` to standard error, then the recorded trace frames, one per line
+- `Result.Ok(_)` prints nothing and the process exits with status 0;
+- `Result.Err(e)` prints `e` with `Display` to standard error, then the recorded trace frames, one per line
   (`spec/debug.md`, DBG3), and exits with status 1. A release build recorded no frames, so its output is the
   message alone.
 
@@ -187,7 +187,7 @@ message of the message form (the variant without `Msg` is used when the call wro
 `assert_ne` store both values formatted with `Debug` (a type without `Debug` is E0141 at the call, because the
 test-mode function's signature requires it). A `test` block is compiled as a function returning `Result<()>`, so
 `assert(...)?` converts the `AssertError` into the dynamic error, and any other error type
-(`read_to_string(...)?` and so on) converts there too. A test that returns `Err` prints the error's message to
+(`read_to_string(...)?` and so on) converts there too. A test that returns `Result.Err` prints the error's message to
 standard error before it reports the failure, so `burdin test` shows it with the captured output. A normal build
 keeps the panicking `assert`/`assert_eq`/`assert_ne` unchanged. The `debug_assert*` assertions keep their
 debug-or-release behavior in a test build: they are not replaced, a release build drops them, and a debug-build
@@ -243,8 +243,8 @@ standard input reports `<stdin>` (`stdlib.md`, "Child processes").
 The message ends with the kind's text, so a missing file prints `cannot read missing.txt: not found`. `kind()` is
 the portable classification of ERR11, and `os_code()` is the operating system's own code when a system call reported
 the failure. The unit variants (`UnexpectedEof`, `WriteZero`, `InvalidData`, `Seek`, and `InvalidInput`) are failures
-`std` observed itself: they carry no path and no code, so `os_code()` is `None` and `kind()` maps them onto the
-portable kinds (ERR11). The other failures `std` detects have `os_code() == None` too; the ones that exist today are
+`std` observed itself: they carry no path and no code, so `os_code()` is `Option.None` and `kind()` maps them onto the
+portable kinds (ERR11). The other failures `std` detects have `os_code() == Option.None` too; the ones that exist today are
 `remove_dir_all` on a path that is not a directory (`IoErrorKind.NotADirectory`), a symbolic link `remove_dir_all`
 cannot remove (`IoErrorKind.Other`), and a process or pipe failure whose runtime path has no OS code to report.
 
@@ -255,7 +255,7 @@ file-handle primitives, `__run`, `__read_dir`, `__create_dir`, `__remove_dir`, `
 operating system's code, which the `std` wrapper turns into the `IoError` with `__io_kind(code)` (ERR11).
 `__stdin_avail` and `__file_*` report the code separately through `__stdin_error` and `__file_error`, because their
 results are the byte counts or a descriptor. The process and pipe primitives report 0 when their runtime path has no
-code, and `std` maps 0 to `IoErrorKind.Other` with `os_code() == None`. The integer parsers stay typed with
+code, and `std` maps 0 to `IoErrorKind.Other` with `os_code() == Option.None`. The integer parsers stay typed with
 `ParseIntError` and produce a placeholder error value, which the `std` wrapper replaces with `Invalid`.
 
 ## ERR11. I/O error kinds and OS codes
@@ -278,7 +278,7 @@ enum IoErrorKind: Copy, Clone, Eq, Debug {
 `address not available`, `network unreachable`, `host unreachable`, and `other`. The message is stable, so a test
 can compare it.
 
-`IoError.kind()` returns the kind and `IoError.os_code()` returns `Some(code)` when a system call reported the
+`IoError.kind()` returns the kind and `IoError.os_code()` returns `Option.Some(code)` when a system call reported the
 failure. The compiler maps a code with the target's table (`burdin_tir::ioerror`): `errno` on Linux and macOS, and
 the Win32 error code (`GetLastError`, which the CRT also leaves in `_doserrno` for its file functions) on Windows.
 The codes that matter are:
@@ -310,14 +310,14 @@ The codes that matter are:
 
 The socket primitives also report the resolver's own codes (`EAI_NONAME`, `WSAHOST_NOT_FOUND`) and the Win32 codes
 that a socket call can leave; a code no table lists is `Other`. A network failure that `std` detects itself (an
-address that does not parse, a timeout that passed) has `os_code() == None`, so a program that wants to tell the two
+address that does not parse, a timeout that passed) has `os_code() == Option.None`, so a program that wants to tell the two
 apart looks at the code instead of guessing from the kind.
 
 The numeric values are the platform's; a program that compares `os_code()` with a number is platform-specific and
 should ask `target.os()` first (`const-eval.md`, CE4), while `kind()` is the same on every platform.
 
 The reader and writer failures of #409 carry no path and no OS code, so they stay unit variants and `os_code()` is
-`None` for them. `kind()` still classifies every one: `UnexpectedEof` and `InvalidData` are their own kinds,
+`Option.None` for them. `kind()` still classifies every one: `UnexpectedEof` and `InvalidData` are their own kinds,
 `Seek` (a position before the start) is `InvalidInput`, and `WriteZero` (a sink that takes no bytes) is `Other`,
 because neither is an operating-system condition with a portable kind of its own.
 
@@ -331,7 +331,7 @@ Two decisions are recorded here (issue #701):
 - **`UnexpectedEof` and `InvalidData` are I/O kinds, and #409's reader variants map to them.** The reader/writer
   layer returns `IoError` too, so a short read or malformed bytes need no second error type and every caller keeps
   one `Result<..., IoError>`. An OS code that means malformed data maps to `InvalidData`, and Windows' EOF code maps
-  to `UnexpectedEof`; the reader layer produces either without an OS code, which `os_code()` reports as `None` and
+  to `UnexpectedEof`; the reader layer produces either without an OS code, which `os_code()` reports as `Option.None` and
   `kind()` still classifies.
 
 ## Diagnostics

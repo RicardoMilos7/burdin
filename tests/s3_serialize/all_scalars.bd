@@ -126,11 +126,11 @@ EveryScalar: Deserialize {
                 bytes = deserialize_bytes(mut d)?
             } else {
                 let failure = unknown_field(name.as_str())
-                return Err(failure.field(name.as_str()))
+                return Result.Err(failure.field(name.as_str()))
             }
         }
         d.end_struct()?
-        Ok(EveryScalar {
+        Result.Ok(EveryScalar {
             unit,
             b,
             i8v,

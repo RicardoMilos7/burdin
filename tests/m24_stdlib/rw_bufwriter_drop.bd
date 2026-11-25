@@ -18,11 +18,11 @@ Sink: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         self.writes = self.writes + 1
         println("sink got {} bytes", data.len())
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -31,11 +31,11 @@ struct Broken {
 
 Broken: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
-        Err(IoError.Write { path: String.from("broken"), kind: IoErrorKind.Other, os_code: None })
+        Result.Err(IoError.Write { path: String.from("broken"), kind: IoErrorKind.Other, os_code: Option.None })
     }
 
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -55,8 +55,8 @@ fn main() {
     let mut b = BufWriter.new(Broken { })
     b.write_text("abc").unwrap()
     match b.flush() {
-        Ok(_) => println("unexpected"),
-        Err(_) => println("flush error kept: {}", b.buffered() / 3),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(_) => println("flush error kept: {}", b.buffered() / 3),
     }
     println("dropped with a failing sink")
 }

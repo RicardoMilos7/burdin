@@ -14,7 +14,7 @@ error enum ConfigError {
 }
 
 fn main() {
-    println("{ConfigError.Io(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })}")
+    println("{ConfigError.Io(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })}")
     println("{ConfigError.Syntax { line: 7 }}")
     println("{ConfigError.Missing("port".to_string())}")
     println("{ConfigError.Unknown}")

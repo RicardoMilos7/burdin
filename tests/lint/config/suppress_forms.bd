@@ -21,8 +21,8 @@ fn all_lints() {
 fn match_arm(o: Option<i32>) {
     match o {
         // lint: allow(unused_variables)
-        Some(v) => println("some")
-        None => println("none")
+        Option.Some(v) => println("some")
+        Option.None => println("none")
     }
 }
 
@@ -35,6 +35,6 @@ fn main() {
     next_statement()
     whole_function(1)
     all_lints()
-    match_arm(Some(1))
+    match_arm(Option.Some(1))
     other_lints_stay(1)
 }

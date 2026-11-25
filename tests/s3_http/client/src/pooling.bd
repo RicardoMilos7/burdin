@@ -36,12 +36,12 @@ fn unread_body() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let status = response.status
                     response.close()
                     println("unread: {} closed without reading the body", status)
                 }
-                Err(e) => println("unread: error {}", e),
+                Result.Err(e) => println("unread: error {}", e),
             }
             println("unread: next {}", fetch(client.clone(), server.url("/").as_str()))
             client.close_idle()
@@ -67,14 +67,14 @@ fn partial_then_discard() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let mut part = List<u8>.new()
                     let n = response.body.read(mut part, 3).unwrap()
                     let reached = response.discard(100).unwrap()
                     println("partial: read {} bytes, discarded the rest: {}", n, reached)
                 }
-                Err(e) => println("partial: error {}", e),
+                Result.Err(e) => println("partial: error {}", e),
             }
             println("partial: next {}", fetch(client.clone(), server.url("/").as_str()))
             client.close_idle()
@@ -113,11 +113,11 @@ fn connection_close() {
             for _ in 0..2 {
                 let request = http.Request.get(other.url("/").as_str()).unwrap().header("Connection", "close")
                 match client.send(request) {
-                    Ok(response) => {
+                    Result.Ok(response) => {
                         let mut response = response
                         let _ = response.text()
                     }
-                    Err(e) => println("request close: error {}", e),
+                    Result.Err(e) => println("request close: error {}", e),
                 }
             }
             println("request close: idle {}", client.idle_connections())
@@ -279,15 +279,15 @@ fn stale_race() {
             println("race get: {}", fetch(client.clone(), server.url("/").as_str()))
             client.close_idle()
             match client.post(server.url("/").as_str(), "first") {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     println("race post: first {:?}", response.text().unwrap())
                 }
-                Err(e) => println("race post: first {}", e),
+                Result.Err(e) => println("race post: first {}", e),
             }
             match client.post(server.url("/").as_str(), "second") {
-                Ok(_) => println("race post: second got a response"),
-                Err(e) => println("race post: second {}", e),
+                Result.Ok(_) => println("race post: second got a response"),
+                Result.Err(e) => println("race post: second {}", e),
             }
             client.close_idle()
             server.settle()

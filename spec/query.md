@@ -162,7 +162,7 @@ the same fixture.
 
 **QL8. Stopping, and staying small.** `Db::cancel_handle()` returns a `CancelHandle` (an `Arc<AtomicBool>`) that
 another thread can set. The database polls it between files, between bodies, and between stages; the analysis then
-returns `Err(Cancelled)` and clears the flag, so the next analysis is a fresh request and the database stays usable.
+returns `Result.Err(Cancelled)` and clears the flag, so the next analysis is a fresh request and the database stays usable.
 
 `Db::set_budget(Budget { bodies })` caps how many checked bodies the memo keeps (40,000 by default, enough for the
 standard library and a large program). At the end of every analysis the least recently used bodies beyond the budget

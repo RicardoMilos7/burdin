@@ -24,7 +24,7 @@ Leaf: Serialize {
 Leaf: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Leaf, DeError> {
         let v = deserialize_i32(mut d)?
-        Ok(Leaf { v })
+        Result.Ok(Leaf { v })
     }
 }
 
@@ -42,10 +42,10 @@ Two: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Two, DeError> {
         let read: Result<(Leaf, Leaf), DeError> = deserialize_tuple2(mut d)
         let pair = match read {
-            Ok(value) => value,
-            Err(e) => return Err(e),
+            Result.Ok(value) => value,
+            Result.Err(e) => return Result.Err(e),
         }
-        Ok(Two { pair })
+        Result.Ok(Two { pair })
     }
 }
 

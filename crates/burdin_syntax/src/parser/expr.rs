@@ -166,6 +166,8 @@ impl Parser<'_> {
                     let span = e.span.to(self.bump().span);
                     e = Expr { kind: ExprKind::Try(Box::new(e)), span };
                 }
+                // A `.Variant ... =>` on a new line is the next match arm, not a member access (TT13).
+                TokenKind::Dot if self.nl() && self.dot_starts_arm() => break,
                 TokenKind::Dot => {
                     self.bump();
                     match self.kind().clone() {
@@ -520,7 +522,7 @@ impl Parser<'_> {
             TokenKind::Match => self.match_expr(),
             TokenKind::Pipe | TokenKind::OrOr => self.closure_expr(),
             // `.name` and `.{ fields }`: a value whose type is the expected type (spec/target-typing.md).
-            TokenKind::Dot => self.target_expr(),
+            TokenKind::Dot => self.target_expr(r),
             TokenKind::Reserved(_) => {
                 self.ident("an expression")?;
                 unreachable!()
@@ -599,9 +601,33 @@ impl Parser<'_> {
         Ok((fields, base, close.span))
     }
 
+    /// Whether the `.` at the current position, which starts a line, begins a match arm's pattern: a `=>` follows
+    /// on the same line outside any bracket. A member access never contains one.
+    fn dot_starts_arm(&self) -> bool {
+        let mut depth = 0usize;
+        for (i, t) in self.toks[self.pos..].iter().enumerate() {
+            if i > 0 && t.nl_before && depth == 0 {
+                return false;
+            }
+            match t.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                TokenKind::FatArrow if depth == 0 => return true,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// `.name` or `.{ fields }` at the start of an expression (spec/target-typing.md, TT1). A `.` anywhere else is
     /// member access, which the postfix loop reads; here nothing before the dot is an expression.
-    fn target_expr(&mut self) -> PResult<Expr> {
+    fn target_expr(&mut self, r: Restriction) -> PResult<Expr> {
         let start = self.expect(&TokenKind::Dot)?.span;
         if self.at(&TokenKind::LBrace) {
             let (fields, base, close) = self.struct_body()?;
@@ -611,6 +637,11 @@ impl Parser<'_> {
             TokenKind::Ident(name) => {
                 let t = self.bump();
                 let name = Ident { name, span: t.span };
+                // `.Variant { fields }`: the struct literal of an inferred variant, a path with an empty first
+                // segment (spec/target-typing.md, TT13).
+                if self.at_struct_literal(r) {
+                    return self.struct_literal(vec![Ident::inferred(start), name], None, start);
+                }
                 Ok(Expr { kind: ExprKind::Target(name), span: start.to(t.span) })
             }
             _ => Err(self.unexpected("a name or `{` after `.`")),

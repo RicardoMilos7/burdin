@@ -28,8 +28,8 @@ fn main() {
 
     println("{}", env.set_current_dir("no-such-dir-412").is_err())
     match env.set_current_dir("no-such-dir-412") {
-        Ok(_) => println("ok"),
-        Err(e) => println("{e}"),
+        Result.Ok(_) => println("ok"),
+        Result.Err(e) => println("{e}"),
     }
     println("{}", env.current_dir().unwrap() == here)
     let dot = BytesMut.from_text(".")

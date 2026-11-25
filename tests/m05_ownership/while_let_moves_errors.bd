@@ -9,14 +9,14 @@ fn consume(text: String) {
 }
 
 fn main() {
-    let name: Option<String> = Some("ann".to_string())
-    while let Some(s) = name { //~ E0104
+    let name: Option<String> = Option.Some("ann".to_string())
+    while let Option.Some(s) = name { //~ E0104
         consume(s)
     }
 
-    let mut again = Some("bo".to_string())
-    while let Some(s) = again {
+    let mut again = Option.Some("bo".to_string())
+    while let Option.Some(s) = again {
         consume(s)
-        again = None
+        again = Option.None
     }
 }

@@ -13,11 +13,11 @@
 // source to, so the assertions match around it.
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+    Result.Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })
 }
 
 fn main(): Result<i32> {
     println("before")
     let n = read().context("loading settings")?
-    Ok(n)
+    Result.Ok(n)
 }

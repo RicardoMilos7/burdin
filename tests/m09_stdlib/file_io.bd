@@ -11,21 +11,21 @@ fn show(n: i32) {
 fn main() {
     let path = "burdin_test_file_io.txt"
     match write_file(path, "alpha\nbeta\n") {
-        Ok(_) => println("written"),
-        Err(_) => println("write failed"),
+        Result.Ok(_) => println("written"),
+        Result.Err(_) => println("write failed"),
     }
     match read_to_string(path) {
-        Ok(text) => {
+        Result.Ok(text) => {
             show(text.len() as i32)       // 11 bytes: no newline translation on Windows
             match text.find('\n') {
-                Some(i) => println(text[0..i]),
-                None => println("no newline"),
+                Option.Some(i) => println(text[0..i]),
+                Option.None => println("no newline"),
             }
         },
-        Err(_) => println("read failed"),
+        Result.Err(_) => println("read failed"),
     }
     match read_to_string("definitely_missing_file.bd") {
-        Ok(_) => println("unexpected"),
-        Err(_) => println("missing file is an error"),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(_) => println("missing file is an error"),
     }
 }

@@ -24,17 +24,17 @@ enum PercentError: Debug {
 
 Percent: TryFrom<i32> {
     fn try_from(v: i32): Result<Percent, PercentError> {
-        if v < 0 { return Err(PercentError.Negative) }
-        if v > 100 { return Err(PercentError.TooLarge) }
-        Ok(Percent { value: v as u8 })
+        if v < 0 { return Result.Err(PercentError.Negative) }
+        if v > 100 { return Result.Err(PercentError.TooLarge) }
+        Result.Ok(Percent { value: v as u8 })
     }
 }
 
 Percent: TryFrom<str> {
     fn try_from(s: str): Result<Percent, PercentError> {
         match i32.parse(s) {
-            Ok(n) => Percent.try_from(n),
-            Err(_) => Err(PercentError.NotANumber),
+            Result.Ok(n) => Percent.try_from(n),
+            Result.Err(_) => Result.Err(PercentError.NotANumber),
         }
     }
 }
@@ -47,30 +47,30 @@ error enum AppError {
 
 fn percent_of_text(s: str): Result<Percent, AppError> {
     let p = Percent.try_from(s)?
-    Ok(p)
+    Result.Ok(p)
 }
 
 fn byte_of(v: i64): Result<u8, AppError> {
     let b = u8.try_from(v)?
-    Ok(b)
+    Result.Ok(b)
 }
 
 fn parsed(s: str): Result<i32, AppError> {
     let n = i32.parse(s)?
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn report_percent(s: str) {
     match percent_of_text(s) {
-        Ok(p) => println("ok {}", p.value),
-        Err(e) => println("err {}", e),
+        Result.Ok(p) => println("ok {}", p.value),
+        Result.Err(e) => println("err {}", e),
     }
 }
 
 fn report_byte(v: i64) {
     match byte_of(v) {
-        Ok(b) => println("ok {}", b),
-        Err(e) => println("err {}", e),
+        Result.Ok(b) => println("ok {}", b),
+        Result.Err(e) => println("err {}", e),
     }
 }
 
@@ -83,14 +83,14 @@ fn main() {
     report_byte(300)
 
     match parsed("zz") {
-        Ok(n) => println("ok {}", n),
-        Err(e) => println("err {}", e),
+        Result.Ok(n) => println("ok {}", n),
+        Result.Err(e) => println("err {}", e),
     }
 
     // The same name dispatches to the block for the argument's type, and the literal takes the `i32` block.
     let direct = Percent.try_from(7)
     match direct {
-        Ok(p) => println("ok {}", p.value),
-        Err(_) => println("unexpected"),
+        Result.Ok(p) => println("ok {}", p.value),
+        Result.Err(_) => println("unexpected"),
     }
 }

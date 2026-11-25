@@ -32,10 +32,10 @@ fn main() {
     println("{plain:?}") //~ E0193
     println("{shown}")
     println("{shown:?}") //~ E0193
-    println("{Some(1)}") //~ E0193
+    println("{Option.Some(1)}") //~ E0193
     println("{items}") //~ E0193
     println("{(1, 2)}") //~ E0193
     println("{plain} {shown} {plain:?}") //~ E0193
-    println("{():?} {items:?} {Some(1):?}")
+    println("{():?} {items:?} {Option.Some(1):?}")
     let text = plain.to_string() //~ E0002
 }

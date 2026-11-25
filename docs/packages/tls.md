@@ -51,14 +51,14 @@ fn main() {
     task.scope(|s| {
         s.spawn(|| {
             match work.recv() {
-                Some(conn) => {
+                Option.Some(conn) => {
                     let mut server = TlsStream.accept(conn, server_config).unwrap()
                     let mut buf: List<u8> = List<u8>.new()
                     server.recv(mut buf, 1024).unwrap()
                     server.send_all(buf.as_slice()).unwrap()
                     server.close().unwrap()
                 }
-                None => {}
+                Option.None => {}
             }
         })
         let tcp = net.TcpStream.connect(format("127.0.0.1:{}", port).as_str()).unwrap()
@@ -131,7 +131,7 @@ Every public item and public method, in source order. Names are shown as `burdin
 | `stream.TlsStream` | `struct TlsStream` | A TLS connection. |
 | `stream.TlsStream.connect` | `fn connect(own tcp: TcpStream, server_name: str, config: ClientConfig): Result<TlsStream, TlsError>` | Runs the client handshake over `tcp`, verifying the server's certificate against the configuration's trust store and `server_name` against its names (an IP address is matched against its IP entries). |
 | `stream.TlsStream.accept` | `fn accept(own tcp: TcpStream, config: ServerConfig): Result<TlsStream, TlsError>` | Runs the server handshake over `tcp`. |
-| `stream.TlsStream.set_read_timeout` | `fn set_read_timeout(mut self, timeout: Option<Duration>)` | How long one socket read may wait; `None` waits forever. |
+| `stream.TlsStream.set_read_timeout` | `fn set_read_timeout(mut self, timeout: Option<Duration>)` | How long one socket read may wait; `Option.None` waits forever. |
 | `stream.TlsStream.set_write_timeout` | `fn set_write_timeout(mut self, timeout: Option<Duration>)` | How long one socket write may wait for room. |
 | `stream.TlsStream.alpn_protocol` | `fn alpn_protocol(self): Option<String>` | The application protocol the server chose by ALPN. |
 | `stream.TlsStream.tls_version` | `fn tls_version(self): String` | The negotiated protocol version, as `TLSv1.2` or `TLSv1.3`. |

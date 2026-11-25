@@ -11,279 +11,279 @@ use mem
 /// Applies `f` to the value of a `Some`; a `None` stays `None`.
 ///
 /// ```
-/// let a: Option<i32> = Some(2)
-/// assert_eq(a.map(|v| v * 10), Some(20))
+/// let a: Option<i32> = Option.Some(2)
+/// assert_eq(a.map(|v| v * 10), Option.Some(20))
 /// ```
 fn Option<T>.map<U, F: FnOnce(T): U>(own self, own f: F): Option<U> {
     match self {
-        Some(x) => Some(f(x)),
-        None => None,
+        Option.Some(x) => Option.Some(f(x)),
+        Option.None => Option.None,
     }
 }
 
 /// Applies `f` to the value of a `Some` and returns what it returns; a `None` stays `None`.
 ///
 /// ```
-/// let a: Option<i32> = Some(4)
-/// let half = a.and_then(|v| if v % 2 == 0 { Some(v / 2) } else { None })
-/// assert_eq(half, Some(2))
+/// let a: Option<i32> = Option.Some(4)
+/// let half = a.and_then(|v| if v % 2 == 0 { Option.Some(v / 2) } else { Option.None })
+/// assert_eq(half, Option.Some(2))
 /// ```
 fn Option<T>.and_then<U, F: FnOnce(T): Option<U>>(own self, own f: F): Option<U> {
     match self {
-        Some(x) => f(x),
-        None => None,
+        Option.Some(x) => f(x),
+        Option.None => Option.None,
     }
 }
 
 /// `self` when it is a `Some`, otherwise what `f` returns.
 ///
 /// ```
-/// let a: Option<i32> = None
-/// assert_eq(a.or_else(|| Some(7)), Some(7))
+/// let a: Option<i32> = Option.None
+/// assert_eq(a.or_else(|| Option.Some(7)), Option.Some(7))
 /// ```
 fn Option<T>.or_else<F: FnOnce(): Option<T>>(own self, own f: F): Option<T> {
     match self {
-        Some(x) => Some(x),
-        None => f(),
+        Option.Some(x) => Option.Some(x),
+        Option.None => f(),
     }
 }
 
 /// `self` when it is a `Some`, otherwise `other`.
 ///
 /// ```
-/// let a: Option<i32> = None
-/// assert_eq(a.or(Some(3)), Some(3))
+/// let a: Option<i32> = Option.None
+/// assert_eq(a.or(Option.Some(3)), Option.Some(3))
 /// ```
 fn Option<T>.or(own self, own other: Option<T>): Option<T> {
     match self {
-        Some(x) => Some(x),
-        None => other,
+        Option.Some(x) => Option.Some(x),
+        Option.None => other,
     }
 }
 
 /// `None` when `self` is `None`, otherwise `other`.
 ///
 /// ```
-/// let a: Option<i32> = Some(1)
-/// assert_eq(a.and(Some(2)), Some(2))
+/// let a: Option<i32> = Option.Some(1)
+/// assert_eq(a.and(Option.Some(2)), Option.Some(2))
 /// ```
 fn Option<T>.and<U>(own self, own other: Option<U>): Option<U> {
     match self {
-        Some(_) => other,
-        None => None,
+        Option.Some(_) => other,
+        Option.None => Option.None,
     }
 }
 
 /// Whichever of the two is a `Some`, when exactly one is.
 ///
 /// ```
-/// let a: Option<i32> = Some(1)
-/// let b: Option<i32> = None
-/// assert_eq(a.xor(b), Some(1))
+/// let a: Option<i32> = Option.Some(1)
+/// let b: Option<i32> = Option.None
+/// assert_eq(a.xor(b), Option.Some(1))
 /// ```
 fn Option<T>.xor(own self, own other: Option<T>): Option<T> {
     match self {
-        Some(x) => match other {
-            Some(_) => None,
-            None => Some(x),
+        Option.Some(x) => match other {
+            Option.Some(_) => Option.None,
+            Option.None => Option.Some(x),
         },
-        None => other,
+        Option.None => other,
     }
 }
 
 /// The two values as a pair when both are `Some`.
 ///
 /// ```
-/// let a: Option<i32> = Some(1)
-/// let b: Option<char> = Some('x')
-/// assert_eq(a.zip(b), Some((1, 'x')))
+/// let a: Option<i32> = Option.Some(1)
+/// let b: Option<char> = Option.Some('x')
+/// assert_eq(a.zip(b), Option.Some((1, 'x')))
 /// ```
 fn Option<T>.zip<U>(own self, own other: Option<U>): Option<(T, U)> {
     match self {
-        Some(a) => match other {
-            Some(b) => Some((a, b)),
-            None => None,
+        Option.Some(a) => match other {
+            Option.Some(b) => Option.Some((a, b)),
+            Option.None => Option.None,
         },
-        None => None,
+        Option.None => Option.None,
     }
 }
 
 /// The value of a `Some`, or `default`.
 ///
 /// ```
-/// let a: Option<i32> = None
+/// let a: Option<i32> = Option.None
 /// assert_eq(a.unwrap_or(9), 9)
 /// ```
 fn Option<T>.unwrap_or(own self, own default: T): T {
     match self {
-        Some(x) => x,
-        None => default,
+        Option.Some(x) => x,
+        Option.None => default,
     }
 }
 
 /// The value of a `Some`, or what `f` returns.
 ///
 /// ```
-/// let a: Option<i32> = None
+/// let a: Option<i32> = Option.None
 /// assert_eq(a.unwrap_or_else(|| 4 * 2), 8)
 /// ```
 fn Option<T>.unwrap_or_else<F: FnOnce(): T>(own self, own f: F): T {
     match self {
-        Some(x) => x,
-        None => f(),
+        Option.Some(x) => x,
+        Option.None => f(),
     }
 }
 
 /// The value of a `Some`, or the default value of `T` for a `None`.
 ///
 /// ```
-/// let a: Option<i32> = None
-/// let b: Option<String> = Some(String.from("kept"))
+/// let a: Option<i32> = Option.None
+/// let b: Option<String> = Option.Some(String.from("kept"))
 /// assert_eq(a.unwrap_or_default(), 0)
 /// assert_eq(b.unwrap_or_default(), String.from("kept"))
 /// ```
 fn Option<T>.unwrap_or_default(own self): T where T: Default {
     match self {
-        Some(x) => x,
-        None => T.default(),
+        Option.Some(x) => x,
+        Option.None => T.default(),
     }
 }
 
 /// `f` applied to the value of a `Some`, or `default` for a `None`.
 ///
 /// ```
-/// let a: Option<i32> = Some(3)
+/// let a: Option<i32> = Option.Some(3)
 /// assert_eq(a.map_or(0, |v| v + 1), 4)
 /// ```
 fn Option<T>.map_or<U, F: FnOnce(T): U>(own self, own default: U, own f: F): U {
     match self {
-        Some(x) => f(x),
-        None => default,
+        Option.Some(x) => f(x),
+        Option.None => default,
     }
 }
 
 /// `f` applied to the value of a `Some`, or what `default` returns for a `None`.
 ///
 /// ```
-/// let a: Option<i32> = None
+/// let a: Option<i32> = Option.None
 /// assert_eq(a.map_or_else(|| -1, |v| v + 1), -1)
 /// ```
 fn Option<T>.map_or_else<U, D: FnOnce(): U, F: FnOnce(T): U>(own self, own default: D, own f: F): U {
     match self {
-        Some(x) => f(x),
-        None => default(),
+        Option.Some(x) => f(x),
+        Option.None => default(),
     }
 }
 
 /// `Ok(value)` for a `Some`, `Err(err)` for a `None`.
 ///
 /// ```
-/// let a: Option<i32> = None
+/// let a: Option<i32> = Option.None
 /// assert(a.ok_or(String.from("missing")).is_err())
 /// ```
 fn Option<T>.ok_or<E>(own self, own err: E): Result<T, E> {
     match self {
-        Some(x) => Ok(x),
-        None => Err(err),
+        Option.Some(x) => Result.Ok(x),
+        Option.None => Result.Err(err),
     }
 }
 
 /// `Ok(value)` for a `Some`, or the error `f` returns for a `None`.
 ///
 /// ```
-/// let a: Option<i32> = Some(5)
+/// let a: Option<i32> = Option.Some(5)
 /// assert_eq(a.ok_or_else(|| String.from("missing")).unwrap(), 5)
 /// ```
 fn Option<T>.ok_or_else<E, F: FnOnce(): E>(own self, own f: F): Result<T, E> {
     match self {
-        Some(x) => Ok(x),
-        None => Err(f()),
+        Option.Some(x) => Result.Ok(x),
+        Option.None => Result.Err(f()),
     }
 }
 
 /// The value of a `Some` when `f` accepts it; `None` otherwise.
 ///
 /// ```
-/// let a: Option<i32> = Some(4)
-/// assert_eq(a.filter(|v| *v > 3), Some(4))
+/// let a: Option<i32> = Option.Some(4)
+/// assert_eq(a.filter(|v| *v > 3), Option.Some(4))
 /// assert(a.filter(|v| *v > 10).is_none())
 /// ```
 fn Option<T>.filter<F: FnOnce(&T): bool>(own self, own f: F): Option<T> {
     match self {
-        Some(x) => {
+        Option.Some(x) => {
             if f(&x) {
-                Some(x)
+                Option.Some(x)
             } else {
-                None
+                Option.None
             }
         },
-        None => None,
+        Option.None => Option.None,
     }
 }
 
 /// Whether `self` is a `Some` whose value `f` accepts.
 ///
 /// ```
-/// let a: Option<i32> = Some(3)
+/// let a: Option<i32> = Option.Some(3)
 /// assert(a.is_some_and(|v| *v == 3))
 /// ```
 fn Option<T>.is_some_and<F: FnOnce(&T): bool>(self, own f: F): bool {
     match self {
-        Some(x) => f(&x),
-        None => false,
+        Option.Some(x) => f(&x),
+        Option.None => false,
     }
 }
 
 /// Whether `self` is a `None` or a `Some` whose value `f` accepts.
 ///
 /// ```
-/// let a: Option<i32> = None
+/// let a: Option<i32> = Option.None
 /// assert(a.is_none_or(|v| *v > 0))
-/// assert(Some(-1).is_none_or(|v| *v > 0) == false)
+/// assert(Option.Some(-1).is_none_or(|v| *v > 0) == false)
 /// ```
 fn Option<T>.is_none_or<F: FnOnce(&T): bool>(self, own f: F): bool {
     match self {
-        Some(x) => f(&x),
-        None => true,
+        Option.Some(x) => f(&x),
+        Option.None => true,
     }
 }
 
 /// Moves the value out and leaves a `None` in its place.
 ///
 /// ```
-/// let mut a: Option<i32> = Some(2)
+/// let mut a: Option<i32> = Option.Some(2)
 /// let taken = a.take()
-/// assert_eq(taken, Some(2))
+/// assert_eq(taken, Option.Some(2))
 /// assert(a.is_none())
 /// ```
 fn Option<T>.take(mut self): Option<T> {
-    mem.replace(mut self, None)
+    mem.replace(mut self, Option.None)
 }
 
 /// Stores `value` and returns the value that was there.
 ///
 /// ```
-/// let mut a: Option<i32> = Some(2)
+/// let mut a: Option<i32> = Option.Some(2)
 /// let old = a.replace(5)
-/// assert_eq(old, Some(2))
-/// assert_eq(a, Some(5))
+/// assert_eq(old, Option.Some(2))
+/// assert_eq(a, Option.Some(5))
 /// ```
 fn Option<T>.replace(mut self, own value: T): Option<T> {
-    mem.replace(mut self, Some(value))
+    mem.replace(mut self, Option.Some(value))
 }
 
 /// The value of the inner `Some`; a `None` at either level gives `None`.
 ///
 /// ```
-/// let a: Option<Option<i32>> = Some(Some(4))
-/// let b: Option<Option<i32>> = Some(None)
-/// assert_eq(a.flatten(), Some(4))
+/// let a: Option<Option<i32>> = Option.Some(Option.Some(4))
+/// let b: Option<Option<i32>> = Option.Some(Option.None)
+/// assert_eq(a.flatten(), Option.Some(4))
 /// assert(b.flatten().is_none())
 /// ```
 fn Option<Option<T>>.flatten(own self): Option<T> {
     match self {
-        Some(inner) => inner,
-        None => None,
+        Option.Some(inner) => inner,
+        Option.None => Option.None,
     }
 }
 
@@ -292,13 +292,13 @@ fn Option<Option<T>>.flatten(own self): Option<T> {
 /// Applies `f` to the value of an `Ok`; an `Err` is kept.
 ///
 /// ```
-/// let r: Result<i32, String> = Ok(2)
+/// let r: Result<i32, String> = Result.Ok(2)
 /// assert_eq(r.map(|v| v * 3).unwrap(), 6)
 /// ```
 fn Result<T, E>.map<U, F: FnOnce(T): U>(own self, own f: F): Result<U, E> {
     match self {
-        Ok(x) => Ok(f(x)),
-        Err(e) => Err(e),
+        Result.Ok(x) => Result.Ok(f(x)),
+        Result.Err(e) => Result.Err(e),
     }
 }
 
@@ -306,14 +306,14 @@ fn Result<T, E>.map<U, F: FnOnce(T): U>(own self, own f: F): Result<U, E> {
 /// `res.map_err(|e| Other.from(e))`.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("bad"))
+/// let r: Result<i32, String> = Result.Err(String.from("bad"))
 /// let m: Result<i32, usize> = r.map_err(|e| e.len())
 /// assert_eq(m.unwrap_err(), 3)
 /// ```
 fn Result<T, E>.map_err<G, F: FnOnce(E): G>(own self, own f: F): Result<T, G> {
     match self {
-        Ok(x) => Ok(x),
-        Err(e) => Err(f(e)),
+        Result.Ok(x) => Result.Ok(x),
+        Result.Err(e) => Result.Err(f(e)),
     }
 }
 
@@ -321,16 +321,16 @@ fn Result<T, E>.map_err<G, F: FnOnce(E): G>(own self, own f: F): Result<T, G> {
 ///
 /// ```
 /// fn half(v: i32): Result<i32, String> {
-///     Ok(v / 2)
+///     Result.Ok(v / 2)
 /// }
-/// let r: Result<i32, String> = Ok(8)
+/// let r: Result<i32, String> = Result.Ok(8)
 /// let quartered: Result<i32, String> = r.and_then(half)
 /// assert_eq(quartered.unwrap(), 4)
 /// ```
 fn Result<T, E>.and_then<U, F: FnOnce(T): Result<U, E>>(own self, own f: F): Result<U, E> {
     match self {
-        Ok(x) => f(x),
-        Err(e) => Err(e),
+        Result.Ok(x) => f(x),
+        Result.Err(e) => Result.Err(e),
     }
 }
 
@@ -338,119 +338,119 @@ fn Result<T, E>.and_then<U, F: FnOnce(T): Result<U, E>>(own self, own f: F): Res
 ///
 /// ```
 /// fn recover(e: String): Result<i32, String> {
-///     Ok(e.len() as i32)
+///     Result.Ok(e.len() as i32)
 /// }
-/// let r: Result<i32, String> = Err(String.from("four"))
+/// let r: Result<i32, String> = Result.Err(String.from("four"))
 /// let recovered: Result<i32, String> = r.or_else(recover)
 /// assert_eq(recovered.unwrap(), 4)
 /// ```
 fn Result<T, E>.or_else<G, F: FnOnce(E): Result<T, G>>(own self, own f: F): Result<T, G> {
     match self {
-        Ok(x) => Ok(x),
-        Err(e) => f(e),
+        Result.Ok(x) => Result.Ok(x),
+        Result.Err(e) => f(e),
     }
 }
 
 /// The value of an `Ok`, or `default`.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("bad"))
+/// let r: Result<i32, String> = Result.Err(String.from("bad"))
 /// assert_eq(r.unwrap_or(7), 7)
 /// ```
 fn Result<T, E>.unwrap_or(own self, own default: T): T {
     match self {
-        Ok(x) => x,
-        Err(_) => default,
+        Result.Ok(x) => x,
+        Result.Err(_) => default,
     }
 }
 
 /// The value of an `Ok`, or what `f` returns for the error.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("four"))
+/// let r: Result<i32, String> = Result.Err(String.from("four"))
 /// assert_eq(r.unwrap_or_else(|e| e.len() as i32), 4)
 /// ```
 fn Result<T, E>.unwrap_or_else<F: FnOnce(E): T>(own self, own f: F): T {
     match self {
-        Ok(x) => x,
-        Err(e) => f(e),
+        Result.Ok(x) => x,
+        Result.Err(e) => f(e),
     }
 }
 
 /// `f` applied to the value of an `Ok`, or `default` for an `Err`.
 ///
 /// ```
-/// let r: Result<i32, String> = Ok(3)
+/// let r: Result<i32, String> = Result.Ok(3)
 /// assert_eq(r.map_or(0, |v| v * 2), 6)
 /// ```
 fn Result<T, E>.map_or<U, F: FnOnce(T): U>(own self, own default: U, own f: F): U {
     match self {
-        Ok(x) => f(x),
-        Err(_) => default,
+        Result.Ok(x) => f(x),
+        Result.Err(_) => default,
     }
 }
 
 /// The value of an `Ok` as a `Some`; an `Err` becomes `None`.
 ///
 /// ```
-/// let r: Result<i32, String> = Ok(3)
-/// assert_eq(r.ok(), Some(3))
+/// let r: Result<i32, String> = Result.Ok(3)
+/// assert_eq(r.ok(), Option.Some(3))
 /// ```
 fn Result<T, E>.ok(own self): Option<T> {
     match self {
-        Ok(x) => Some(x),
-        Err(_) => None,
+        Result.Ok(x) => Option.Some(x),
+        Result.Err(_) => Option.None,
     }
 }
 
 /// The error of an `Err` as a `Some`; an `Ok` becomes `None`.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("bad"))
-/// assert_eq(r.err(), Some(String.from("bad")))
+/// let r: Result<i32, String> = Result.Err(String.from("bad"))
+/// assert_eq(r.err(), Option.Some(String.from("bad")))
 /// ```
 fn Result<T, E>.err(own self): Option<E> {
     match self {
-        Ok(_) => None,
-        Err(e) => Some(e),
+        Result.Ok(_) => Option.None,
+        Result.Err(e) => Option.Some(e),
     }
 }
 
 /// The error of an `Err`. Panics on an `Ok`.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("bad"))
+/// let r: Result<i32, String> = Result.Err(String.from("bad"))
 /// assert_eq(r.unwrap_err(), String.from("bad"))
 /// ```
 fn Result<T, E>.unwrap_err(own self): E {
     match self {
-        Ok(_) => panic("called unwrap_err on an Ok value"),
-        Err(e) => e,
+        Result.Ok(_) => panic("called unwrap_err on an Ok value"),
+        Result.Err(e) => e,
     }
 }
 
 /// Whether `self` is an `Ok` whose value `f` accepts.
 ///
 /// ```
-/// let r: Result<i32, String> = Ok(3)
+/// let r: Result<i32, String> = Result.Ok(3)
 /// assert(r.is_ok_and(|v| *v > 2))
 /// ```
 fn Result<T, E>.is_ok_and<F: FnOnce(&T): bool>(self, own f: F): bool {
     match self {
-        Ok(x) => f(&x),
-        Err(_) => false,
+        Result.Ok(x) => f(&x),
+        Result.Err(_) => false,
     }
 }
 
 /// Whether `self` is an `Err` whose error `f` accepts.
 ///
 /// ```
-/// let r: Result<i32, String> = Err(String.from("bad"))
+/// let r: Result<i32, String> = Result.Err(String.from("bad"))
 /// assert(r.is_err_and(|e| e.len() == 3))
 /// ```
 fn Result<T, E>.is_err_and<F: FnOnce(&E): bool>(self, own f: F): bool {
     match self {
-        Ok(_) => false,
-        Err(e) => f(&e),
+        Result.Ok(_) => false,
+        Result.Err(e) => f(&e),
     }
 }

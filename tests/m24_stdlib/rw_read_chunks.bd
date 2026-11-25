@@ -18,11 +18,11 @@ Trickle: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         self.reads = self.reads + 1
         if max == 0 || self.pos >= self.data.len() {
-            return Ok(0)
+            return Result.Ok(0)
         }
         buf.push(self.data[self.pos])
         self.pos = self.pos + 1
-        Ok(1)
+        Result.Ok(1)
     }
 }
 
@@ -49,8 +49,8 @@ fn main() {
     bad.push(255)
     let mut d = trickle(bad)
     match d.read_to_string() {
-        Ok(_) => println("unexpected"),
-        Err(e) => println("invalid: {}", e),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(e) => println("invalid: {}", e),
     }
 
     let mut worse = List<u8>.new()
@@ -58,7 +58,7 @@ fn main() {
     worse.push(10)
     let mut e = BufReader.new(trickle(worse))
     match e.read_line() {
-        Ok(_) => println("unexpected"),
-        Err(err) => println("line invalid: {}", err),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(err) => println("line invalid: {}", err),
     }
 }

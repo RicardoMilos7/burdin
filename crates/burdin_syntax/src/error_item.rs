@@ -416,8 +416,8 @@ pub fn wrap_result_main(file: &mut File, id: FileId, diags: &mut Diagnostics) {
     let text = "\
 fn main() {
     match __burdin_main_result() {
-        Ok(_) => (),
-        Err(__err) => {
+        Result.Ok(_) => (),
+        Result.Err(__err) => {
             eprintln(\"{__err}\")
             __err.print_trace()
             process.exit(1)
@@ -480,11 +480,11 @@ pub fn wrap_test_failures(file: &mut File, id: FileId, diags: &mut Diagnostics) 
             "\
 priv fn __burdin_test_{index}(): Result<()> {{
     match __burdin_test_{index}_body() {{
-        Ok(_) => Ok(()),
-        Err(__e) => {{
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(__e) => {{
             eprintln(\"{{__e}}\")
             __e.print_trace()
-            Err(__e)
+            Result.Err(__e)
         }}
     }}
 }}

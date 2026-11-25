@@ -14,8 +14,8 @@
 
 fn show(own name: Option<String>): String {
     match name {
-        Some(s) => s,
-        None => "none".to_string(),
+        Option.Some(s) => s,
+        Option.None => "none".to_string(),
     }
 }
 
@@ -63,5 +63,5 @@ fn main() {
         show(Path.unix("no.ext/Makefile").extension()),
         show(Path.unix("trailing.").file_name()),
     )
-    println("{}", Path.unix("x/file.").extension() == Some("".to_string()))
+    println("{}", Path.unix("x/file.").extension() == Option.Some("".to_string()))
 }

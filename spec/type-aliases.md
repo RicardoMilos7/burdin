@@ -62,7 +62,7 @@ alias is looked through by name is `main`'s return type (AL7).
 `fn main(): Name` is accepted when `Name` is an alias declared in the file that declares `main` and it expands, through
 any other aliases of that file, generic or not, to `Result<...>` (`spec/errors.md`, ERR8). The arguments of the alias
 are not looked at: `Outcome<()>` for `type Outcome<T> = Result<T>` is the same return type as `Result<()>`. The rule is
-applied when the file is parsed, because the generated wrapper for an `Err` is written then, before imports resolve. So
+applied when the file is parsed, because the generated wrapper for an `Result.Err` is written then, before imports resolve. So
 an alias of a `Result` that is imported from another module is E0003, the same error as any other alias that does not
 expand to `Result`. An alias cycle reached from `main`'s return type is E0009 at the declaration (AL4).
 

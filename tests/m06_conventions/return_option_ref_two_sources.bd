@@ -7,7 +7,7 @@ struct Counter {
 }
 
 fn pick(a: Counter, b: Counter, first: bool): Option<&i32> { //~ E0121
-    if first { Some(&a.n) } else { Some(&b.n) }
+    if first { Option.Some(&a.n) } else { Option.Some(&b.n) }
 }
 
 fn main() {}

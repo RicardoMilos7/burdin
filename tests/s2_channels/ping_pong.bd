@@ -12,8 +12,8 @@ fn main() {
     let echo = task.spawn(|| {
         loop {
             match ping_rx.recv() {
-                Some(n) => { pong_tx.send(n); }
-                None => break,
+                Option.Some(n) => { pong_tx.send(n); }
+                Option.None => break,
             }
         }
     })

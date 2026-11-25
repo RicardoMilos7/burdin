@@ -27,8 +27,8 @@ Server: Serialize {
 Server: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Server, DeError> {
         d.begin_struct("Server")?
-        let mut host: Option<String> = None
-        let mut port: Option<u16> = None
+        let mut host: Option<String> = Option.None
+        let mut port: Option<u16> = Option.None
         loop {
             let more = d.has_next_field()?
             if !more {
@@ -37,37 +37,37 @@ Server: Deserialize {
             let name = d.field_name()?
             if name.as_str() == "host" {
                 if host.is_some() {
-                    return Err(duplicate_field("host").field("host"))
+                    return Result.Err(duplicate_field("host").field("host"))
                 }
                 let value = match deserialize_str(mut d) {
-                    Ok(value) => value,
-                    Err(e) => return Err(e.field("host")),
+                    Result.Ok(value) => value,
+                    Result.Err(e) => return Result.Err(e.field("host")),
                 }
-                host = Some(value)
+                host = Option.Some(value)
             } else if name.as_str() == "port" {
                 if port.is_some() {
-                    return Err(duplicate_field("port").field("port"))
+                    return Result.Err(duplicate_field("port").field("port"))
                 }
                 let value = match deserialize_u16(mut d) {
-                    Ok(value) => value,
-                    Err(e) => return Err(e.field("port")),
+                    Result.Ok(value) => value,
+                    Result.Err(e) => return Result.Err(e.field("port")),
                 }
-                port = Some(value)
+                port = Option.Some(value)
             } else {
                 let failure = unknown_field(name.as_str())
-                return Err(failure.field(name.as_str()))
+                return Result.Err(failure.field(name.as_str()))
             }
         }
         d.end_struct()?
         let host = match host {
-            Some(value) => value,
-            None => return Err(missing_field("host")),
+            Option.Some(value) => value,
+            Option.None => return Result.Err(missing_field("host")),
         }
         let port = match port {
-            Some(value) => value,
-            None => return Err(missing_field("port")),
+            Option.Some(value) => value,
+            Option.None => return Result.Err(missing_field("port")),
         }
-        Ok(Server { host, port })
+        Result.Ok(Server { host, port })
     }
 }
 
@@ -91,25 +91,25 @@ Config: Deserialize {
         d.begin_struct("Config")?
 
         if !d.has_next_field()? {
-            return Err(missing_field("name"))
+            return Result.Err(missing_field("name"))
         }
         let first = d.field_name()?
         if first.as_str() != "name" {
             let failure = unknown_field(first.as_str())
-            return Err(failure.field(first.as_str()))
+            return Result.Err(failure.field(first.as_str()))
         }
         let name = match deserialize_str(mut d) {
-            Ok(value) => value,
-            Err(e) => return Err(e.field("name")),
+            Result.Ok(value) => value,
+            Result.Err(e) => return Result.Err(e.field("name")),
         }
 
         if !d.has_next_field()? {
-            return Err(missing_field("servers"))
+            return Result.Err(missing_field("servers"))
         }
         let second = d.field_name()?
         if second.as_str() != "servers" {
             let failure = unknown_field(second.as_str())
-            return Err(failure.field(second.as_str()))
+            return Result.Err(failure.field(second.as_str()))
         }
         d.begin_seq()?
         let mut servers = List<Server>.new()
@@ -120,15 +120,15 @@ Config: Deserialize {
                 break
             }
             match Server.deserialize(mut d) {
-                Ok(server) => servers.push(server),
-                Err(e) => return Err(e.index(index).field("servers")),
+                Result.Ok(server) => servers.push(server),
+                Result.Err(e) => return Result.Err(e.index(index).field("servers")),
             }
             index = index + 1
         }
         d.end_seq()?
 
         d.end_struct()?
-        Ok(Config { name, servers })
+        Result.Ok(Config { name, servers })
     }
 }
 
@@ -148,8 +148,8 @@ fn main() {
     let bad = "Config {{ name: \"cfg\", servers: [Server {{ host: \"a\", port: 1 }}, Server {{ host: \"b\", port: 2 }}, Server {{ host: \"c\", port: x }}] }}"
     let failed: Result<Config, DeError> = from_text(bad)
     match failed {
-        Ok(_) => println("unexpected ok"),
-        Err(e) => {
+        Result.Ok(_) => println("unexpected ok"),
+        Result.Err(e) => {
             let message = e.to_string()
             println(message)
         }
@@ -157,20 +157,20 @@ fn main() {
 
     let missing: Result<Server, DeError> = from_text("Server {{ host: \"a\" }}")
     match missing {
-        Ok(_) => println("unexpected ok"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("unexpected ok"),
+        Result.Err(e) => println("{}", e),
     }
 
     let extra: Result<Server, DeError> = from_text("Server {{ host: \"a\", port: 1, extra: 2 }}")
     match extra {
-        Ok(_) => println("unexpected ok"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("unexpected ok"),
+        Result.Err(e) => println("{}", e),
     }
 
     let twice: Result<Server, DeError> = from_text("Server {{ host: \"a\", host: \"b\", port: 1 }}")
     match twice {
-        Ok(_) => println("unexpected ok"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("unexpected ok"),
+        Result.Err(e) => println("{}", e),
     }
 
     let keyed = DeError.new("boom").key("host").field("table")

@@ -76,24 +76,24 @@ priv unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
         // On Windows the "context" is the configuration of schannel.bd.
         let cfg = config_new(server)
         if cfg.is_null() {
-            return Err(TlsError.Config("out of memory".to_string()))
+            return Result.Err(TlsError.Config("out of memory".to_string()))
         }
-        Ok(cfg as CPtr<SslCtx>)
+        Result.Ok(cfg as CPtr<SslCtx>)
     } else if features.openssl {
         if (OpenSSL_version_num() >> 28) < 3 {
-            return Err(TlsError.Unsupported("the linked OpenSSL is older than 3.0".to_string()))
+            return Result.Err(TlsError.Unsupported("the linked OpenSSL is older than 3.0".to_string()))
         }
         let ctx = if server { SSL_CTX_new(TLS_server_method()) } else { SSL_CTX_new(TLS_client_method()) }
         if ctx.is_null() {
-            return Err(TlsError.Config(or_else(error_text(), "cannot create an SSL context")))
+            return Result.Err(TlsError.Config(or_else(error_text(), "cannot create an SSL context")))
         }
         if SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, CPtr.null()) != 1 {
             SSL_CTX_free(ctx)
-            return Err(TlsError.Config("cannot set the minimum protocol version".to_string()))
+            return Result.Err(TlsError.Config("cannot set the minimum protocol version".to_string()))
         }
-        Ok(ctx)
+        Result.Ok(ctx)
     } else {
-        Err(no_openssl())
+        Result.Err(no_openssl())
     }
 }
 
@@ -105,14 +105,14 @@ priv unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), Tls
             roots.push(cert.handle as CPtr<CertContext>)
         }
         if !config_set_trust(ctx as CPtr<WinConfig>, trust.use_system, roots) {
-            return Err(TlsError.Config("cannot load the trust store".to_string()))
+            return Result.Err(TlsError.Config("cannot load the trust store".to_string()))
         }
-        Ok(())
+        Result.Ok(())
     } else if features.openssl {
         if trust.use_system {
             if SSL_CTX_set_default_verify_paths(ctx) != 1 {
                 clear_errors()
-                return Err(TlsError.Config("cannot load the system trust store".to_string()))
+                return Result.Err(TlsError.Config("cannot load the system trust store".to_string()))
             }
         }
         let store = SSL_CTX_get_cert_store(ctx)
@@ -121,9 +121,9 @@ priv unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), Tls
         }
         // Adding a certificate the store already has is not an error, but may leave a note in the queue.
         clear_errors()
-        Ok(())
+        Result.Ok(())
     } else {
-        Err(no_openssl())
+        Result.Err(no_openssl())
     }
 }
 
@@ -131,17 +131,17 @@ priv unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion)
     if target.os() == target.Os.Windows {
         let code: u32 = if version.code() == TLS1_2_VERSION { 0 } else { 1 }
         if !config_set_version(ctx as CPtr<WinConfig>, command == SSL_CTRL_SET_MIN_PROTO_VERSION, code) {
-            return Err(TlsError.Config("the protocol version range is empty".to_string()))
+            return Result.Err(TlsError.Config("the protocol version range is empty".to_string()))
         }
-        Ok(())
+        Result.Ok(())
     } else if features.openssl {
         if SSL_CTX_ctrl(ctx, command, version.code(), CPtr.null()) != 1 {
             clear_errors()
-            return Err(TlsError.Config("the protocol version range is empty".to_string()))
+            return Result.Err(TlsError.Config("the protocol version range is empty".to_string()))
         }
-        Ok(())
+        Result.Ok(())
     } else {
-        Err(no_openssl())
+        Result.Err(no_openssl())
     }
 }
 
@@ -151,34 +151,34 @@ priv fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
     for name in protocols.iter() {
         let bytes = name.as_bytes()
         if bytes.len() == 0 || bytes.len() > 255 {
-            return Err(TlsError.Config("an ALPN protocol name must be 1 to 255 bytes".to_string()))
+            return Result.Err(TlsError.Config("an ALPN protocol name must be 1 to 255 bytes".to_string()))
         }
         wire.push(bytes.len() as u8)
         wire.extend_from_slice(bytes)
     }
-    Ok(wire)
+    Result.Ok(wire)
 }
 
 priv unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsError> {
     if target.os() == target.Os.Windows {
         let wire = alpn_wire(protocols)?
         if !config_set_alpn(ctx as CPtr<WinConfig>, wire[0..wire.len()]) {
-            return Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
+            return Result.Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
         }
-        Ok(())
+        Result.Ok(())
     } else if features.openssl {
         let wire = alpn_wire(protocols)?
         if wire.len() == 0 {
-            return Ok(())
+            return Result.Ok(())
         }
         // `SSL_CTX_set_alpn_protos` returns 0 on success.
         if SSL_CTX_set_alpn_protos(ctx, bytes_ptr(wire[0..wire.len()]), wire.len() as u32) != 0 {
             clear_errors()
-            return Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
+            return Result.Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
         }
-        Ok(())
+        Result.Ok(())
     } else {
-        Err(no_openssl())
+        Result.Err(no_openssl())
     }
 }
 
@@ -192,36 +192,36 @@ priv unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: Pr
         config_set_identity(ctx as CPtr<WinConfig>, contexts, key.handle as CPtr<KeyBlock>)
     } else if features.openssl {
         if chain.is_empty() {
-            return Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
+            return Result.Err(TlsError.BadCertificate("the certificate chain is empty".to_string()))
         }
         if SSL_CTX_use_certificate(ctx, chain[0].handle) != 1 {
-            return Err(TlsError.BadCertificate(or_else(error_text(), "cannot use the certificate")))
+            return Result.Err(TlsError.BadCertificate(or_else(error_text(), "cannot use the certificate")))
         }
         let mut at: usize = 1
         while at < chain.len() {
             // `SSL_CTRL_EXTRA_CHAIN_CERT` takes ownership of one reference, so give it one.
             if X509_up_ref(chain[at].handle) != 1 {
-                return Err(TlsError.BadCertificate("cannot use an intermediate certificate".to_string()))
+                return Result.Err(TlsError.BadCertificate("cannot use an intermediate certificate".to_string()))
             }
             if SSL_CTX_ctrl(ctx, SSL_CTRL_EXTRA_CHAIN_CERT, 0, chain[at].handle as CPtr<u8>) != 1 {
-                return Err(TlsError.BadCertificate(or_else(error_text(), "cannot use an intermediate certificate")))
+                return Result.Err(TlsError.BadCertificate(or_else(error_text(), "cannot use an intermediate certificate")))
             }
             at = at + 1
         }
         if SSL_CTX_use_PrivateKey(ctx, key.handle) != 1 {
             let reason = error_text()
             if reason.contains("match") {
-                return Err(TlsError.KeyMismatch)
+                return Result.Err(TlsError.KeyMismatch)
             }
-            return Err(TlsError.BadKey(or_else(reason, "cannot use the private key")))
+            return Result.Err(TlsError.BadKey(or_else(reason, "cannot use the private key")))
         }
         if SSL_CTX_check_private_key(ctx) != 1 {
             clear_errors()
-            return Err(TlsError.KeyMismatch)
+            return Result.Err(TlsError.KeyMismatch)
         }
-        Ok(())
+        Result.Ok(())
     } else {
-        Err(no_openssl())
+        Result.Err(no_openssl())
     }
 }
 
@@ -277,29 +277,29 @@ ClientConfig {
             unsafe {
                 let ctx = new_ctx(false)?
                 match apply_trust(ctx, trust) {
-                    Ok(()) => {}
-                    Err(failure) => {
+                    Result.Ok(()) => {}
+                    Result.Err(failure) => {
                         config_free(ctx as CPtr<WinConfig>)
-                        return Err(failure)
+                        return Result.Err(failure)
                     }
                 }
-                Ok(ClientConfig { ctx: ctx, skip_verify: false })
+                Result.Ok(ClientConfig { ctx: ctx, skip_verify: false })
             }
         } else if features.openssl {
             unsafe {
                 let ctx = new_ctx(false)?
                 SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, CPtr.null())
                 match apply_trust(ctx, trust) {
-                    Ok(()) => {}
-                    Err(failure) => {
+                    Result.Ok(()) => {}
+                    Result.Err(failure) => {
                         SSL_CTX_free(ctx)
-                        return Err(failure)
+                        return Result.Err(failure)
                     }
                 }
-                Ok(ClientConfig { ctx: ctx, skip_verify: false })
+                Result.Ok(ClientConfig { ctx: ctx, skip_verify: false })
             }
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 
@@ -444,28 +444,28 @@ ServerConfig {
             unsafe {
                 let ctx = new_ctx(true)?
                 match use_identity(ctx, chain, key) {
-                    Ok(()) => {}
-                    Err(failure) => {
+                    Result.Ok(()) => {}
+                    Result.Err(failure) => {
                         config_free(ctx as CPtr<WinConfig>)
-                        return Err(failure)
+                        return Result.Err(failure)
                     }
                 }
-                Ok(ServerConfig { ctx: ctx })
+                Result.Ok(ServerConfig { ctx: ctx })
             }
         } else if features.openssl {
             unsafe {
                 let ctx = new_ctx(true)?
                 match use_identity(ctx, chain, key) {
-                    Ok(()) => {}
-                    Err(failure) => {
+                    Result.Ok(()) => {}
+                    Result.Err(failure) => {
                         SSL_CTX_free(ctx)
-                        return Err(failure)
+                        return Result.Err(failure)
                     }
                 }
-                Ok(ServerConfig { ctx: ctx })
+                Result.Ok(ServerConfig { ctx: ctx })
             }
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 
@@ -530,15 +530,15 @@ ServerConfig {
                 apply_trust(self.ctx, roots)?
                 (*(self.ctx as CPtr<WinConfig>)).require_client = 1
             }
-            Ok(())
+            Result.Ok(())
         } else if features.openssl {
             unsafe {
                 apply_trust(self.ctx, roots)?
                 SSL_CTX_set_verify(self.ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, CPtr.null())
             }
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 }

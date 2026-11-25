@@ -122,7 +122,7 @@ Leaf: Serialize {
 Leaf: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Leaf, DeError> {
         let v = deserialize_i32(mut d)?
-        Ok(Leaf { v })
+        Result.Ok(Leaf { v })
     }
 }
 
@@ -140,10 +140,10 @@ Two: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Two, DeError> {
         let read: Result<(Leaf, Leaf), DeError> = deserialize_tuple2(mut d)
         let pair = match read {
-            Ok(value) => value,
-            Err(e) => return Err(e),
+            Result.Ok(value) => value,
+            Result.Err(e) => return Result.Err(e),
         }
-        Ok(Two { pair })
+        Result.Ok(Two { pair })
     }
 }
 
@@ -153,17 +153,17 @@ fn item(id: u32, title: str, own note: Option<String>, price: f64): Item {
 
 fn show(label: str, result: Result<(), DeError>) {
     match result {
-        Ok(_) => println("{}: ok", label),
-        Err(e) => println("{}: {}", label, e.to_string()),
+        Result.Ok(_) => println("{}: ok", label),
+        Result.Err(e) => println("{}: {}", label, e.to_string()),
     }
 }
 
 fn main() {
     // A header row from the field names, quoting, and the two empty fields.
     let mut items = List<Item>.new()
-    items.push(item(1, "Pen, blue", None, 1.5))
-    items.push(item(2, "Say \"hi\"", Some("".to_string()), 0.0))
-    items.push(item(3, "two\nlines", Some("x".to_string()), -0.0))
+    items.push(item(1, "Pen, blue", Option.None, 1.5))
+    items.push(item(2, "Say \"hi\"", Option.Some("".to_string()), 0.0))
+    items.push(item(3, "two\nlines", Option.Some("x".to_string()), -0.0))
     let text = csv.to_string(items).unwrap()
     print(text)
 
@@ -172,8 +172,8 @@ fn main() {
     println("{} records", back.len())
     for entry in back {
         let note = match entry.note {
-            Some(n) => format("some({})", n),
-            None => "none".to_string(),
+            Option.Some(n) => format("some({})", n),
+            Option.None => "none".to_string(),
         }
         println("{} {} {} {}", entry.id, entry.title.replace("\n", "\\n"), note, entry.price.abs())
     }
@@ -181,21 +181,21 @@ fn main() {
 
     // Streaming: the writer hands over what it holds after each record.
     let mut writer = Writer.new()
-    writer.write(item(7, "a", None, 1.0)).unwrap()
+    writer.write(item(7, "a", Option.None, 1.0)).unwrap()
     println("chunk: {}", writer.take().replace("\n", "|"))
-    writer.write(item(8, "b", None, 2.0)).unwrap()
+    writer.write(item(8, "b", Option.None, 2.0)).unwrap()
     println("chunk: {}", writer.take().replace("\n", "|"))
     println("empty: {}", writer.take().len())
 
     // Line endings.
     let mut crlf = Writer.new()
     crlf.use_crlf()
-    crlf.write(item(1, "a", None, 1.0)).unwrap()
+    crlf.write(item(1, "a", Option.None, 1.0)).unwrap()
     println("{}", crlf.finish().replace("\r", "\\r").replace("\n", "\\n"))
 
     // Values CSV cannot hold are errors, and a failed record leaves the output as it was.
     let mut bad = Writer.new()
-    bad.write(item(1, "ok", None, 1.0)).unwrap()
+    bad.write(item(1, "ok", Option.None, 1.0)).unwrap()
     show(
         "nested struct",
         bad.write(Outer { name: "n".to_string(), address: Address { city: "c".to_string(), zip: 1 } }),
@@ -208,7 +208,7 @@ fn main() {
     show("bytes", bad.write(Blob { name: "n".to_string(), data }))
     show("variant with a value", bad.write(Drawing { name: "n".to_string(), shape: Shape.Circle(1.0) }))
     show("other header", bad.write(Address { city: "c".to_string(), zip: 1 }))
-    show("still works", bad.write(item(2, "fine", None, 2.0)))
+    show("still works", bad.write(item(2, "fine", Option.None, 2.0)))
     print(bad.finish())
 
     let mut unit_variant = List<Drawing>.new()
@@ -221,17 +221,17 @@ fn main() {
 
     // A record whose only field is empty must not become a blank line.
     let mut solos = List<Solo>.new()
-    solos.push(Solo { v: Some(1) })
-    solos.push(Solo { v: None })
-    solos.push(Solo { v: Some(3) })
+    solos.push(Solo { v: Option.Some(1) })
+    solos.push(Solo { v: Option.None })
+    solos.push(Solo { v: Option.Some(3) })
     let solo_text = csv.to_string(solos).unwrap()
     print(solo_text)
     let solo_read: Result<List<Solo>, DeError> = csv.from_str(solo_text.as_str())
     let solo_back = solo_read.unwrap()
     println("{} solos", solo_back.len())
     match solo_back[1].v {
-        Some(_) => println("solo 1 is some"),
-        None => println("solo 1 is none"),
+        Option.Some(_) => println("solo 1 is some"),
+        Option.None => println("solo 1 is none"),
     }
 
     // The extremes of the integer widths, a char, and a bool.
@@ -265,8 +265,8 @@ fn main() {
     print(raw_text)
     let mut reader = Reader.with_options(raw_text.as_str(), ',', false).unwrap()
     match reader.read_row().unwrap() {
-        Some(row) => println("{} fields: {}", row.len(), row.join("|")),
-        None => println("no row"),
+        Option.Some(row) => println("{} fields: {}", row.len(), row.join("|")),
+        Option.None => println("no row"),
     }
     println("{}", reader.read_row().unwrap().is_none())
 
@@ -299,12 +299,12 @@ fn main() {
 
     // Delimiters that would break the format are refused.
     match Writer.with_options('"', true) {
-        Ok(_) => println("quote accepted"),
-        Err(e) => println("{}", e.to_string()),
+        Result.Ok(_) => println("quote accepted"),
+        Result.Err(e) => println("{}", e.to_string()),
     }
     match Reader.with_options("a", 'é', true) {
-        Ok(_) => println("é accepted"),
-        Err(e) => println("{}", e.to_string()),
+        Result.Ok(_) => println("é accepted"),
+        Result.Err(e) => println("{}", e.to_string()),
     }
     let tab = csv.to_string_with(back, '\t', true).unwrap()
     println("{}", tab.replace("\t", "<TAB>").replace("\n", "|"))

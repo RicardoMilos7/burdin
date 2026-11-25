@@ -36,12 +36,12 @@ Nested: Deserialize {
         d.begin_struct("Nested")?
 
         if !d.has_next_field()? {
-            return Err(missing_field("rows"))
+            return Result.Err(missing_field("rows"))
         }
         let first = d.field_name()?
         if first.as_str() != "rows" {
             let failure = unknown_field(first.as_str())
-            return Err(failure.field(first.as_str()))
+            return Result.Err(failure.field(first.as_str()))
         }
         d.begin_seq()?
         let mut rows = List<List<i32>>.new()
@@ -65,12 +65,12 @@ Nested: Deserialize {
         d.end_seq()?
 
         if !d.has_next_field()? {
-            return Err(missing_field("counts"))
+            return Result.Err(missing_field("counts"))
         }
         let second = d.field_name()?
         if second.as_str() != "counts" {
             let failure = unknown_field(second.as_str())
-            return Err(failure.field(second.as_str()))
+            return Result.Err(failure.field(second.as_str()))
         }
         d.begin_map()?
         let mut counts = Map<String, i32>.new()
@@ -86,7 +86,7 @@ Nested: Deserialize {
         d.end_map()?
 
         d.end_struct()?
-        Ok(Nested { rows, counts })
+        Result.Ok(Nested { rows, counts })
     }
 }
 

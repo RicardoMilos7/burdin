@@ -37,11 +37,11 @@ fn items(a: i32, b: i32, c: i32): List<Item> {
 
 fn main() {
     match items(1, 2, 3).into_iter().min() {
-        Some(m) => println("kept {m.value}"),
-        None => println("none"),
+        Option.Some(m) => println("kept {m.value}"),
+        Option.None => println("none"),
     }
     match items(9, 4, 1).into_iter().max() {
-        Some(m) => println("kept {m.value}"),
-        None => println("none"),
+        Option.Some(m) => println("kept {m.value}"),
+        Option.None => println("none"),
     }
 }

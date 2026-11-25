@@ -8,6 +8,19 @@ pub struct Ident {
     pub span: Span,
 }
 
+impl Ident {
+    /// The empty first segment of an inferred variant path, `.Variant`: it stands for the leading dot, and its span
+    /// is the dot's (`spec/target-typing.md`, TT13).
+    pub fn inferred(span: Span) -> Ident {
+        Ident { name: String::new(), span }
+    }
+
+    /// Whether this is the leading dot of an inferred variant path.
+    pub fn is_inferred(&self) -> bool {
+        self.name.is_empty()
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct File {
     pub items: Vec<Item>,
@@ -465,7 +478,8 @@ pub enum PatternKind {
     Lit(LitPat),
     /// An inclusive range `lo..=hi`.
     Range(LitPat, LitPat),
-    /// A path with more than one segment, such as `Shape.Circle`.
+    /// A path with more than one segment, such as `Shape.Circle`. An inferred variant `.Circle` is the path whose first
+    /// segment is `Ident::inferred` (the same for `TupleStruct` and `Struct`).
     Path(Vec<Ident>),
     /// `Path(p, ...)`, such as `Some(v)`.
     TupleStruct(Vec<Ident>, Vec<Pattern>),

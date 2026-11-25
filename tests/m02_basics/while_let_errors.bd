@@ -5,21 +5,21 @@
 // a labeled one too. A pattern that does not fit the value is E0003, and so is one that always matches.
 
 fn maybe(n: i32): Option<i32> {
-    if n > 0 { Some(n) } else { None }
+    if n > 0 { Option.Some(n) } else { Option.None }
 }
 
 fn main() {
     let mut n = 3
-    while let Some(v) = maybe(n) {
+    while let Option.Some(v) = maybe(n) {
         n = n - 1
         break v //~ E0003
     }
 
-    'w: while let Some(v) = maybe(n) {
+    'w: while let Option.Some(v) = maybe(n) {
         break 'w v //~ E0003
     }
 
-    while let Ok(x) = maybe(n) { //~ E0003
+    while let Result.Ok(x) = maybe(n) { //~ E0003
         n = n - 1
     }
 
@@ -32,7 +32,7 @@ fn main() {
         n = n - 1
     }
 
-    while let Some(w) = maybe(n) {
+    while let Option.Some(w) = maybe(n) {
         n = n - 1
     }
     let after = w //~ E0002

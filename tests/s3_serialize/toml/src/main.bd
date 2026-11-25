@@ -84,7 +84,7 @@ fn main() {
     servers.push(Server { host: "b.example".to_string(), port: 443, tls: true })
     let mut weights = Map<String, i32>.new()
     weights.insert("a".to_string(), 1)
-    let backup = Some(Server { host: "c.example".to_string(), port: 8080, tls: true })
+    let backup = Option.Some(Server { host: "c.example".to_string(), port: 8080, tls: true })
     let value = Config {
         name: "edge".to_string(),
         servers,
@@ -104,8 +104,8 @@ fn main() {
         Protocol.Https(_port) => println("https"),
     }
     match back.backup {
-        Some(server) => println("backup {}", server.port),
-        None => println("no backup"),
+        Option.Some(server) => println("backup {}", server.port),
+        Option.None => println("no backup"),
     }
 
     let mut no_servers = List<Server>.new()
@@ -115,7 +115,7 @@ fn main() {
         name: "none".to_string(),
         servers: no_servers,
         protocol: Protocol.Http,
-        backup: None,
+        backup: Option.None,
         weights: no_weights,
         note: 'x',
     }
@@ -143,11 +143,11 @@ fn main() {
 
     let document = "when = 1979-05-27T07:32:00.5Z\nlist = [ {{ x = 1 }}, {{ x = 2 }} ]\n"
     match toml.parse(document) {
-        Ok(value) => print(toml.render(value).unwrap()),
-        Err(e) => println(e.to_string()),
+        Result.Ok(value) => print(toml.render(value).unwrap()),
+        Result.Err(e) => println(e.to_string()),
     }
     match toml.parse("a = 1\na = 2\n") {
-        Ok(_value) => println("unexpected"),
-        Err(e) => println(e.to_string()),
+        Result.Ok(_value) => println("unexpected"),
+        Result.Err(e) => println(e.to_string()),
     }
 }

@@ -149,8 +149,8 @@ Set<T, A> where T: Eq, A: Allocator {
     /// ```
     fn remove(mut self, value: T): bool {
         match self.map.remove(value) {
-            Some(_) => true,
-            None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -179,10 +179,10 @@ Set<T, A> where T: Eq, A: Allocator {
         let mut items = items
         loop {
             match items.pop() {
-                Some(x) => {
+                Option.Some(x) => {
                     let _ = self.insert(x)
                 },
-                None => break,
+                Option.None => break,
             }
         }
     }
@@ -199,10 +199,10 @@ Set<T, A> where T: Eq, A: Allocator {
         let mut iter = iter
         loop {
             match iter.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     let _ = self.insert(x)
                 }
-                None => break,
+                Option.None => break,
             }
         }
     }
@@ -218,8 +218,8 @@ Set<T, A> where T: Eq, A: Allocator {
         let mut entries = self.map.into_iter()
         loop {
             match entries.next() {
-                Some((key, _)) => out.push(key),
-                None => break,
+                Option.Some((key, _)) => out.push(key),
+                Option.None => break,
             }
         }
         out
@@ -236,8 +236,8 @@ Set<T, A>: Iterable<&T> where T: Eq, A: Allocator {
 SetIter<I, T>: Iterator<&T> where I: Iterator<(&T, &bool)> {
     fn next(mut self): Option<&T> {
         match self.inner.next() {
-            Some((key, _)) => Some(key),
-            None => None,
+            Option.Some((key, _)) => Option.Some(key),
+            Option.None => Option.None,
         }
     }
 }

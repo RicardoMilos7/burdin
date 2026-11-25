@@ -5,7 +5,7 @@ struct Body {
 Body {
     /// Reads the whole body.
     fn read_to_string(self): Option<String> {
-        Some(self.text.clone())
+        Option.Some(self.text.clone())
     }
 
     /// The length of the body in bytes.

@@ -34,8 +34,8 @@ fn main() {
                     loop {
                         let current = total.load()
                         match total.compare_exchange(current, current + 1) {
-                            Ok(_) => break,
-                            Err(_) => {}
+                            Result.Ok(_) => break,
+                            Result.Err(_) => {}
                         }
                     }
                     i = i + 1

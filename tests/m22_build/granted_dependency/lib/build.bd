@@ -5,7 +5,7 @@ fn main() {
     let out = args[2]
     let source = "const FROM_LIB: i32 = 7\nconst LABEL: str = \"hand\"\n"
     match write_file("{out}/src/extra.bd", source) {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }

@@ -56,8 +56,8 @@ fn main() {
     println(count_distinct(dup).to_string())
 
     println(((a, 1) == (b, 1)).to_string())
-    let some: Option<Mod10> = Some(a)
-    println((some == Some(b)).to_string())
+    let some: Option<Mod10> = Option.Some(a)
+    println((some == Option.Some(b)).to_string())
     assert_eq(xs, ys)
     println((a != b).to_string())
     println((a.ne(Mod10 { n: 4 })).to_string())

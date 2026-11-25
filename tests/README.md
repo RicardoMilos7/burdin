@@ -318,6 +318,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0302 | A `static` or `static mut` declaration in a function body; a static is a module item (`spec/globals.md`, GL1) |
 | E0303 | A `static` whose type is not plain data: it owns memory, or has a destructor, so it would have to be dropped (`spec/globals.md`, GL2) |
 | E0304 | A borrow of a `static mut`, shared, mutable, or a method's `self`: no reference may alias it (`spec/globals.md`, GL4) |
+| E0305 | A bare `Some`, `None`, `Ok`, or `Err`, as an expression, a call, a function value, or a pattern: `Option` and `Result` are enums whose variants are written `Option.Some(x)` or `.Some(x)` (`spec/target-typing.md`, TT15) |
 
 Target-typed initializers (`spec/target-typing.md`, TT12) add no code: their errors are E0001, E0002, and E0003, which
 are registered above.
@@ -351,6 +352,7 @@ checks both. A machine-applicable suggestion is one `burdin fix` applies on its 
 | E0114 | the missing `mut` marker at the call | machine-applicable | `m06_conventions/suggest_mut_marker.bd` |
 | E0115 | removing a `mut` marker the parameter does not take | machine-applicable | `m06_conventions/suggest_remove_mut_marker.bd` |
 | E0301 | the replacement of a deprecated form | machine-applicable | `m24_stdlib/unimplemented_deprecated.bd` |
+| E0305 | `Option.` or `Result.` before a bare `Some`, `None`, `Ok`, or `Err` | machine-applicable | `target_typing/bare_prelude_names.bd` |
 
 ## Decisions the tests encode
 
@@ -364,7 +366,7 @@ executable form. The design document leaves them open; where a rule says "deviat
    marker there is a syntax error, E0001). `spec/grammar.md` 8.4, `spec/memory-rules.md` CV2-CV4.
 2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str` and stays usable.
    This is the only implicit conversion, and it applies at every position that has a `str` type (call arguments,
-   `Some`/`Ok`/`Err` payloads, `assert_eq`, `mem.replace`, a `let` annotation, assignment, `return` and a function's
+   `Option.Some`/`Result.Ok`/`Result.Err` payloads, `assert_eq`, `mem.replace`, a `let` annotation, assignment, `return` and a function's
    tail, an array or tuple element, and a struct-literal field of a generic struct instantiated with `str`); it does
    not look inside another type (`Option<String>` is not `Option<str>`). A comparison borrows the `String` operand
    as before. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
@@ -431,8 +433,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     last use. Its kind follows the body: `FnOnce` if it moves a captured value out, `FnMut` if it mutates one, else
     `Fn`; a value may be used at a lower capability (`Fn` as `FnMut` as `FnOnce`). Calling borrows `Fn` shared,
     `FnMut` exclusively, and moves `FnOnce`. The representation is a boxed capture record behind a code pointer, so
-    closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Some`, `Ok`,
-    or `Err` is a value of a closure type when the context expects one: it becomes a captureless `Fn` closure, and the
+    closure values are never `Copy`, `Clone`, or derived. A non-generic function, a built-in function, or `Option.Some`,
+    `Result.Ok`, or `Result.Err` is a value of a closure type when the context expects one: it becomes a captureless `Fn` closure, and the
     expected closure type fixes its type arguments (CL11). `Type.name` of a non-generic struct or enum is a function
     value too, its receiver the first parameter, and `local.name` read without a call is the closure
     `|args| local.name(args)` (CL11, method values).
@@ -444,7 +446,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `into_iter()` consumes and yields owned items (a map yields `(K, V)`). `for` over a user type uses `iter()` when
     the type is `Iterable<T>` and the iterator value directly when it is an `Iterator<T>`; a type that is both is
     iterated through `iter()`, because `for` borrows its source. The loop lowers to `let mut __iter = e; loop { match
-    __iter.next() { Some(pattern) => body, None => break } }`, keeps the stage 0 binding/drop/`break` semantics, and
+    __iter.next() { .Some(pattern) => body, .None => break } }`, keeps the stage 0 binding/drop/`break` semantics, and
     requires the pattern to match every item. The lazy adapters (`map`, `filter`, `take`, `skip`, `fold`, `count`,
     `any`, `all`, `find`, `to_list`) are default methods that allocate nothing, and the eager `List` methods borrow
     the list and return owned results. A chain is second-class and may not be stored (E0120) or kept past a
@@ -462,7 +464,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     format string, so stage 0 calls are unchanged. `spec/format.md` FM1-FM10, `tests/m14_format/`.
 20. **Existential types.** `any Interface` is an owned two-word heap box `{data, vtable}`; a concrete value is boxed
     implicitly wherever an expected type is known (an annotation, an argument, a return, a field, an element, a
-    `Some`/`Ok`/`Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires` and converts to `any J` for each such `J`, is never
+    `Option.Some`/`Result.Ok`/`Result.Err` payload, a match arm). `any I` satisfies `I` and every interface `I requires` and converts to `any J` for each such `J`, is never
     `Copy`, `Clone`, `Eq`, `Ord`, `Hash`, or `Default`, and calls `I`'s methods through the vtable (so `any Display`
     prints through it). It is allowed only for an object-safe `I`: no generic method, no method without a `self`
     receiver, no `own self`, no `Self` outside the receiver, no view return, and object-safe `requires` interfaces
@@ -480,7 +482,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     is `Result<T, AnyError>`, where `std.AnyError` is an owned box (`any Error`) plus the recorded trace frames. An
     error type is boxed implicitly wherever `AnyError` is expected; `?` converts through `from` or into the dynamic
     error; `.context("...")` wraps the source and keeps the chain; `is`/`downcast` inspect the box. Debug builds
-    record creation and propagation frames; release builds record none. `fn main(): Result<T>` prints an `Err`
+    record creation and propagation frames; release builds record none. `fn main(): Result<T>` prints an `Result.Err`
     with `Display` to stderr and exits 1. In a `burdin test` build, `assert`/`assert_eq` return a typed
     `AssertError` carrying the call text, the values, and the location, and the test binary prints it when the
     test fails.
@@ -862,7 +864,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   Unknown names are E0002 and wrong arities E0004.
 - **`String` length is byte-based, and slicing keeps the text valid UTF-8.** `s.len()` is bytes and `chars()` iterates
   Unicode scalar values. `s[a..b]` on `str` or `String` panics unless both ends are character boundaries (issue #916),
-  so a `str` is always valid UTF-8; `get(a, b)` is the `None` form. The design says UTF-8 but does not define `len`.
+  so a `str` is always valid UTF-8; `get(a, b)` is the `Option.None` form. The design says UTF-8 but does not define `len`.
   `m09_stdlib/string_ops.bd`, `m09_stdlib/file_io.bd`, `file_io_binary.bd`, `m24_stdlib/string_slice_boundary`,
   `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_const_aborts`; decision 7.
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same

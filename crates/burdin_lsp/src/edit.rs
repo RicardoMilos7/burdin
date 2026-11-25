@@ -1258,18 +1258,19 @@ fn repaired_for_completion(text: &str, ix: &FileIndex, dot: u32) -> String {
 }
 
 /// After a leading dot: the members of the type its position expects, as `T.` offers them: its variants and its
-/// associated functions (`.Red`, `.new(3)`, TT6), and the prelude's `Some` and `None`, or `Ok` and `Err`.
+/// associated functions (`.Red`, `.new(3)`, TT6), and the variants of `Option` (`Some`, `None`) or of `Result` (`Ok`,
+/// `Err`, TT14).
 fn leading_completions(r: &mut Resolver, expected: Option<&str>, out: &mut Completions) {
     let Some(ty) = expected else { return };
     let base = base_type(ty);
     match base.as_str() {
         "Option" => {
-            out.add("Some", 20, "Some(value): Option", None, 0);
-            out.add("None", 20, "None", None, 0);
+            out.add("Some", 20, ".Some(value): Option", None, 0);
+            out.add("None", 20, ".None: Option", None, 0);
         }
         "Result" => {
-            out.add("Ok", 20, "Ok(value): Result", None, 0);
-            out.add("Err", 20, "Err(error): Result", None, 0);
+            out.add("Ok", 20, ".Ok(value): Result", None, 0);
+            out.add("Err", 20, ".Err(error): Result", None, 0);
         }
         _ => {}
     }

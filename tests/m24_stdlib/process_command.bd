@@ -105,8 +105,8 @@ fn main() {
     cmd.arg("kill -TERM $$")
     let status = cmd.output().unwrap().status
     println("signal={} code={}", status.signal().unwrap(), match status.code() {
-        Some(code) => code.to_string(),
-        None => "none".to_string(),
+        Option.Some(code) => code.to_string(),
+        Option.None => "none".to_string(),
     })
 
     // A program that does not exist, and a working directory that does not, are spawn errors.

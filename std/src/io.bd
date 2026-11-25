@@ -13,11 +13,11 @@ use rw.{BufRead, Read, Write}
 /// ```
 fn read_to_string(path: str): Result<String, IoError> {
     match __offload(|| __read_to_string(path)) {
-        Ok(text) => Ok(text),
-        Err(code) => Err(IoError.Read {
+        Result.Ok(text) => Result.Ok(text),
+        Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -31,11 +31,11 @@ fn read_to_string(path: str): Result<String, IoError> {
 /// ```
 fn write_file(path: str, text: str): Result<(), IoError> {
     match __offload(|| __write_file(path, text)) {
-        Ok(_) => Ok(()),
-        Err(code) => Err(IoError.Write {
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -118,13 +118,13 @@ Stdout: Write {
     /// ignored, as `print` ignores one.
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         __stdout_write_bytes(data)
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     /// Writes everything the buffer holds now, including what `print` and `println` wrote.
     fn flush(mut self): Result<(), IoError> {
         __stdout_flush()
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -144,12 +144,12 @@ Stderr: Write {
     /// panic message. All of `data` is taken, and a write error is ignored.
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         __stderr_write_bytes(data)
-        Ok(data.len())
+        Result.Ok(data.len())
     }
 
     /// Does nothing, because standard error is not buffered.
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -170,15 +170,15 @@ Stdin: Read {
     /// `max` bytes. `Ok(0)` is the end of the input (or a `max` of 0).
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         if max == 0 {
-            return Ok(0)
+            return Result.Ok(0)
         }
         let avail = __stdin_avail()
         if avail < 0 {
             let code = __stdin_error()
-            return Err(IoError.Read {
+            return Result.Err(IoError.Read {
                 path: String.from("<stdin>"),
                 kind: __io_kind(code),
-                os_code: Some(code),
+                os_code: Option.Some(code),
             })
         }
         let mut n = avail as usize
@@ -190,17 +190,17 @@ Stdin: Read {
             buf.push(__stdin_next_byte())
             i = i + 1
         }
-        Ok(n)
+        Result.Ok(n)
     }
 
     /// Reads everything left, up to the end of the input. The bytes are not checked for UTF-8, like a file's.
     fn read_to_string(mut self): Result<String, IoError> {
         match __stdin_read_to_string() {
-            Ok(text) => Ok(text),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(text) => Result.Ok(text),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdin>"),
                 kind: __io_kind(code),
-                os_code: Some(code),
+                os_code: Option.Some(code),
             }),
         }
     }
@@ -214,14 +214,14 @@ Stdin: BufRead {
             let avail = __stdin_avail()
             if avail < 0 {
                 let code = __stdin_error()
-                return Err(IoError.Read {
+                return Result.Err(IoError.Read {
                     path: String.from("<stdin>"),
                     kind: __io_kind(code),
-                    os_code: Some(code),
+                    os_code: Option.Some(code),
                 })
             }
             if avail == 0 {
-                return Ok(total)
+                return Result.Ok(total)
             }
             let mut left = avail as usize
             while left > 0 {
@@ -230,7 +230,7 @@ Stdin: BufRead {
                 total = total + 1
                 left = left - 1
                 if b == delim {
-                    return Ok(total)
+                    return Result.Ok(total)
                 }
             }
         }
@@ -240,11 +240,11 @@ Stdin: BufRead {
     /// input; the last line may have no terminator. The bytes are not checked for UTF-8, like a file's.
     fn read_line(mut self): Result<Option<String>, IoError> {
         match __stdin_read_line() {
-            Ok(line) => Ok(line),
-            Err(code) => Err(IoError.Read {
+            Result.Ok(line) => Result.Ok(line),
+            Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdin>"),
                 kind: __io_kind(code),
-                os_code: Some(code),
+                os_code: Option.Some(code),
             }),
         }
     }

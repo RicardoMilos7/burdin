@@ -1,5 +1,5 @@
 fn main() {
-    let a: Option<i32> = None
+    let a: Option<i32> = Option.None
     let b = 7
     let c = 7
     println("{b} {c}")

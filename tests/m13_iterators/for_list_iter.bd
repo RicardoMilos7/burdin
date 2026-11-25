@@ -18,8 +18,8 @@ fn main() {
     let mut it = xs.iter()
     loop {
         match it.next() {
-            Some(x) => println((x + 2).to_string()),
-            None => break,
+            Option.Some(x) => println((x + 2).to_string()),
+            Option.None => break,
         }
     }
 }

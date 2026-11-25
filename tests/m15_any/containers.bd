@@ -45,8 +45,8 @@ fn main() {
     map.insert(String.from("r"), Rect { w: 2, h: 3 })
     map.insert(String.from("c"), Circle { r: 3 })
     match map.get(String.from("r")) {
-        Some(shape) => show(*shape),
-        None => println("none"),
+        Option.Some(shape) => show(*shape),
+        Option.None => println("none"),
     }
     for (key, shape) in map {
         if key.as_str() == "c" {

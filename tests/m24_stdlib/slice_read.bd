@@ -48,24 +48,24 @@ fn main() {
     println("{:?} {:?}", xs.last(), arr[2..2].last())
     println("{:?} {:?} {:?}", xs.get(0), xs.get(7), xs.get(8))
     match xs.get(2..5) {
-        Some(part) => show(part),
-        None => println("none"),
+        Option.Some(part) => show(part),
+        Option.None => println("none"),
     }
     match xs.get(5..=7) {
-        Some(part) => show(part),
-        None => println("none"),
+        Option.Some(part) => show(part),
+        Option.None => println("none"),
     }
     match xs.get(5..2) {
-        Some(_) => println("bad"),
-        None => println("None"),
+        Option.Some(_) => println("bad"),
+        Option.None => println("None"),
     }
     match xs.get(3..=9) {
-        Some(_) => println("bad"),
-        None => println("None"),
+        Option.Some(_) => println("bad"),
+        Option.None => println("None"),
     }
     match xs.get(8..8) {
-        Some(part) => println("{}", part.len()),
-        None => println("bad"),
+        Option.Some(part) => println("{}", part.len()),
+        Option.None => println("bad"),
     }
     println("{} {}", xs.contains(4), xs.contains(7))
     println("{} {}", xs.starts_with(arr[0..3]), xs.starts_with(arr[1..3]))
@@ -74,16 +74,16 @@ fn main() {
     show(head)
     show(tail)
     match xs.split_first() {
-        Some((first, rest)) => println("{} {}", *first, rest.len()),
-        None => println("none"),
+        Option.Some((first, rest)) => println("{} {}", *first, rest.len()),
+        Option.None => println("none"),
     }
     match xs.split_last() {
-        Some((last, rest)) => println("{} {}", *last, rest.len()),
-        None => println("none"),
+        Option.Some((last, rest)) => println("{} {}", *last, rest.len()),
+        Option.None => println("none"),
     }
     match arr[2..2].split_first() {
-        Some(_) => println("bad"),
-        None => println("none"),
+        Option.Some(_) => println("bad"),
+        Option.None => println("none"),
     }
     let copy = xs.to_list()
     println("{} {}", copy.len(), copy[0])

@@ -12,8 +12,8 @@ fn main() {
     let mut n = 0
     loop {
         match it.next() {
-            Some(_) => n = n + 1,
-            None => break,
+            Option.Some(_) => n = n + 1,
+            Option.None => break,
         }
     }
     println(n.to_string())
@@ -21,8 +21,8 @@ fn main() {
     let mut chars = "héllo".chars()
     loop {
         match chars.next() {
-            Some(c) => println(c.to_string()),
-            None => break,
+            Option.Some(c) => println(c.to_string()),
+            Option.None => break,
         }
     }
 }

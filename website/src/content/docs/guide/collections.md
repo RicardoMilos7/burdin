@@ -45,8 +45,8 @@ fn main() {
     xs[1] = 25                    // [15, 25, 30]
     println("second is {xs[1]}")
     match xs.pop() {              // [15, 25]
-        Some(v) => println("popped {v}"),
-        None => println("empty"),
+        Option.Some(v) => println("popped {v}"),
+        Option.None => println("empty"),
     }
     println("contains 25: {xs.contains(25)}")
     xs.sort()
@@ -56,7 +56,7 @@ fn main() {
 ```
 
 Changing an element with `xs[i] = value` needs the list to be `let mut`. Reading `xs[i]` copies a `Copy` element. For a
-non-`Copy` element, read it through a reference: `&xs[i]`, or with `match xs.last() { Some(v) => ..., None => ... }`,
+non-`Copy` element, read it through a reference: `&xs[i]`, or with `match xs.last() { Option.Some(v) => ..., Option.None => ... }`,
 which gives a reference.
 
 A list is equal to another list when both have the same elements in the same order, and the elements can be compared with
@@ -74,8 +74,8 @@ fn main() {
     ages.insert(String.from("ana"), 31)
     ages.insert(String.from("ben"), 27)
     match ages.get("ana") {
-        Some(age) => println("ana is {*age}"),
-        None => println("no ana"),
+        Option.Some(age) => println("ana is {*age}"),
+        Option.None => println("no ana"),
     }
     println("has ben: {ages.contains_key("ben")}")
     ages.remove("ben")

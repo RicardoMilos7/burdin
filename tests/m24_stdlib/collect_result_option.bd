@@ -15,40 +15,40 @@
 
 fn check(n: i32): Result<i32, String> {
     if n > 2 {
-        return Err("{n} is too big")
+        return Result.Err("{n} is too big")
     }
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn even(n: i32): Option<i32> {
     if n % 2 == 0 {
-        return Some(n)
+        return Option.Some(n)
     }
-    None
+    Option.None
 }
 
 fn main() {
     let failed: Result<List<i32>, String> = [1, 2, 3, 4].into_iter().inspect(|n| println("pulled {n}")).map(|n| check(n)).collect()
     match failed {
-        Ok(items) => println("ok {items:?}"),
-        Err(message) => println("err: {message}"),
+        Result.Ok(items) => println("ok {items:?}"),
+        Result.Err(message) => println("err: {message}"),
     }
 
     let fine: Result<List<i32>, String> = [1, 2].into_iter().map(|n| check(n)).collect()
     match fine {
-        Ok(items) => println("ok {items:?}"),
-        Err(message) => println("err: {message}"),
+        Result.Ok(items) => println("ok {items:?}"),
+        Result.Err(message) => println("err: {message}"),
     }
 
     let evens: Option<Set<i32>> = [2, 4, 2].into_iter().map(|n| even(n)).collect()
     match evens {
-        Some(items) => println("some {items.len()}"),
-        None => println("none"),
+        Option.Some(items) => println("some {items.len()}"),
+        Option.None => println("none"),
     }
 
     let odd: Option<List<i32>> = [2, 5, 6].into_iter().inspect(|n| println("pulled {n}")).map(|n| even(n)).collect()
     match odd {
-        Some(items) => println("some {items:?}"),
-        None => println("none"),
+        Option.Some(items) => println("some {items:?}"),
+        Option.None => println("none"),
     }
 }

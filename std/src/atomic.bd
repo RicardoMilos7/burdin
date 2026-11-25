@@ -82,8 +82,8 @@ AtomicBool {
     ///
     /// ```
     /// let flag = AtomicBool.new(false)
-    /// assert_eq(flag.compare_exchange(false, true), Ok(false))
-    /// assert_eq(flag.compare_exchange(false, true), Err(true))
+    /// assert_eq(flag.compare_exchange(false, true), Result.Ok(false))
+    /// assert_eq(flag.compare_exchange(false, true), Result.Err(true))
     /// ```
     fn compare_exchange(self, current: bool, new: bool): Result<bool, bool> {
         unsafe {
@@ -91,9 +91,9 @@ AtomicBool {
             let n: u32 = if new { 1 } else { 0 }
             let old = __atomic_cas_u32(self.cell, c, n)
             if old == c {
-                Ok(old != 0)
+                Result.Ok(old != 0)
             } else {
-                Err(old != 0)
+                Result.Err(old != 0)
             }
         }
     }
@@ -219,16 +219,16 @@ AtomicI32 {
     ///
     /// ```
     /// let x = AtomicI32.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: i32, new: i32): Result<i32, i32> {
         unsafe {
             let old = __atomic_cas_u32(self.cell, current as u32, new as u32) as i32
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -313,8 +313,8 @@ AtomicI32 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -333,8 +333,8 @@ AtomicI32 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -421,16 +421,16 @@ AtomicU32 {
     ///
     /// ```
     /// let x = AtomicU32.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: u32, new: u32): Result<u32, u32> {
         unsafe {
             let old = __atomic_cas_u32(self.cell, current as u32, new as u32) as u32
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -515,8 +515,8 @@ AtomicU32 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -535,8 +535,8 @@ AtomicU32 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -623,16 +623,16 @@ AtomicI64 {
     ///
     /// ```
     /// let x = AtomicI64.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: i64, new: i64): Result<i64, i64> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as i64
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -717,8 +717,8 @@ AtomicI64 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -737,8 +737,8 @@ AtomicI64 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -825,16 +825,16 @@ AtomicU64 {
     ///
     /// ```
     /// let x = AtomicU64.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: u64, new: u64): Result<u64, u64> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as u64
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -919,8 +919,8 @@ AtomicU64 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -939,8 +939,8 @@ AtomicU64 {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -1027,16 +1027,16 @@ AtomicIsize {
     ///
     /// ```
     /// let x = AtomicIsize.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: isize, new: isize): Result<isize, isize> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as isize
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -1121,8 +1121,8 @@ AtomicIsize {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -1141,8 +1141,8 @@ AtomicIsize {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -1229,16 +1229,16 @@ AtomicUsize {
     ///
     /// ```
     /// let x = AtomicUsize.new(1)
-    /// assert_eq(x.compare_exchange(1, 2), Ok(1))
-    /// assert_eq(x.compare_exchange(1, 3), Err(2))
+    /// assert_eq(x.compare_exchange(1, 2), Result.Ok(1))
+    /// assert_eq(x.compare_exchange(1, 3), Result.Err(2))
     /// ```
     fn compare_exchange(self, current: usize, new: usize): Result<usize, usize> {
         unsafe {
             let old = __atomic_cas_u64(self.cell, current as u64, new as u64) as usize
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -1323,8 +1323,8 @@ AtomicUsize {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -1343,8 +1343,8 @@ AtomicUsize {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }

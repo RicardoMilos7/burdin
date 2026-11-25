@@ -44,12 +44,12 @@ fn main() {
     heap.push(Down { n: 3 })
     heap.push(Down { n: 9 })
     match heap.pop() {
-        Some(d) => println(d.n.to_string()),
-        None => println("empty"),
+        Option.Some(d) => println(d.n.to_string()),
+        Option.None => println("empty"),
     }
     // A tuple and an `Option` of the type order by its `lt`, too.
     println(((Down { n: 1 }, 1) < (Down { n: 2 }, 1)).to_string())
-    let a: Option<Down> = Some(Down { n: 9 })
-    let b: Option<Down> = Some(Down { n: 1 })
+    let a: Option<Down> = Option.Some(Down { n: 9 })
+    let b: Option<Down> = Option.Some(Down { n: 1 })
     println((a < b).to_string())
 }

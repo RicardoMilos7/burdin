@@ -35,8 +35,8 @@ fn main() {
     show_bool(s.starts_with("hello"))
     show_bool(s.starts_with("world"))
     match s.find(',') {
-        Some(i) => show(i as i32),
-        None => println("none"),
+        Option.Some(i) => show(i as i32),
+        Option.None => println("none"),
     }
     println(s[7..12])
 

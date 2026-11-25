@@ -3,6 +3,7 @@
 /// The one-line pointer every exclusivity diagnostic carries to its step-by-step explanation
 /// (`spec/check.md`, CK11; issue #593).
 const EXCLUSIVITY_HELP: &str = "run `burdin check --explain` to trace the path to this error";
+use super::pattern::is_removed_prelude_name;
 use super::{FnCx, PathTy, error_expr, mk};
 use crate::builtins::{builtin, builtin_sig, method};
 use crate::globals::{Callee, Global, adt_key};
@@ -158,9 +159,10 @@ impl FnCx<'_> {
                             let sig = builtin_sig(b, self.globals);
                             (sig.params, sig.ret, Callee::Builtin(b))
                         }
-                        None if id.name == "Some" => return self.some(args, expect, span),
-                        None if id.name == "Ok" => return self.result_ctor(true, args, expect, span),
-                        None if id.name == "Err" => return self.result_ctor(false, args, expect, span),
+                        None if is_removed_prelude_name(&id.name) => {
+                            self.removed_prelude_name(id);
+                            return self.args_then_error(args, span);
+                        }
                         None => {
                             let fix = self.unknown_name_fix(&id.name, true);
                             let d = self.diags.error(
@@ -1199,6 +1201,25 @@ impl FnCx<'_> {
         {
             return self.cptr_null(args, expect, span);
         }
+        // `Option.Some(x)`, `Result.Ok(v)`, and `Result.Err(e)`: the arguments come from the value and the expected type.
+        if let Some(owner) = self.prelude_head(recv) {
+            if !explicit.is_empty() {
+                return self.reject_type_args(&name.name, explicit, args, span);
+            }
+            return match (owner, name.name.as_str()) {
+                ("Option", "Some") => self.some(args, expect, span),
+                ("Result", "Ok") => self.result_ctor(true, args, expect, span),
+                ("Result", "Err") => self.result_ctor(false, args, expect, span),
+                _ => {
+                    self.diags.error(
+                        Code::UNKNOWN_NAME,
+                        name.span,
+                        format!("`{owner}` has no function or variant `{}`", name.name),
+                    );
+                    self.args_then_error(args, span)
+                }
+            };
+        }
         if let Some(path) = self.type_path(recv) {
             return match path {
                 PathTy::Ty(ty) => self.assoc_call(&ty, name, explicit, args, span, expect),
@@ -2213,6 +2234,13 @@ impl FnCx<'_> {
                 self.expr(&a.expr, None);
             }
             return error_expr(span);
+        }
+        // `Option<T>.Some(x)`, `Result<T, E>.Ok(v)`, and `Result<T, E>.Err(e)`: the type is written, so it is the expected type.
+        match (ty, name.name.as_str()) {
+            (Ty::Option(_), "Some") => return self.some(args, Some(ty), span),
+            (Ty::Result(..), "Ok") => return self.result_ctor(true, args, Some(ty), span),
+            (Ty::Result(..), "Err") => return self.result_ctor(false, args, Some(ty), span),
+            _ => {}
         }
         // Only an associated function of the program with type parameters of its own takes type arguments (TA5).
         if !explicit.is_empty() && !self.user_generic_method(ty, &name.name) {

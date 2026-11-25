@@ -144,7 +144,7 @@ type: `Pair<i32>` and `Pair<i64>` are different types, and each generic instance
 `is` borrows the box and reads its type identity. `downcast` consumes the box (`own self`): on a match it moves the
 value out of the allocation and frees the allocation without running the drop, so the value is dropped exactly once
 by its new owner; on a mismatch it drops the boxed value through the vtable and frees the allocation, and returns
-`None`. There is no borrow-returning downcast: a value moved out of the box is owned, so `List<any I>` can be
+`Option.None`. There is no borrow-returning downcast: a value moved out of the box is owned, so `List<any I>` can be
 drained.
 
 Method-level type arguments are written after the member name (`x.downcast<Circle>()`), following the type-argument
@@ -255,7 +255,7 @@ let mut items: List<any Display> = List<any Display>.new()
 items.push(4.5)
 items.push(String.from("hi"))
 println("{one} {items[0]}")             // 3 4.5
-let d: any Debug = Some(5)              // `{d:?}` prints Some(5)
+let d: any Debug = Option.Some(5)              // `{d:?}` prints Some(5)
 ```
 
 The vtable entry of such a type is a compiler-generated thunk: the instance, for the boxed type `T`, of a standard

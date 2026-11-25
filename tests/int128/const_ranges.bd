@@ -52,8 +52,8 @@ const ITER_COUNT: u128 = {
     let mut it = (lo..hi).iter();
     loop {
         match it.next() {
-            Some(x) => n = n + 1,
-            None => break,
+            Option.Some(x) => n = n + 1,
+            Option.None => break,
         }
     };
     n

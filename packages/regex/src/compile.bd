@@ -96,7 +96,7 @@ Compiler {
     /// compiler reports that after the whole program is built.
     priv fn repeat(mut self, child: usize, min: u32, max: Option<u32>, greedy: bool) {
         match max {
-            None => {
+            Option.None => {
                 if min == 0 {
                     // The star: the split prefers the body, which jumps back to the split.
                     let split = self.code.len()
@@ -128,7 +128,7 @@ Compiler {
                     }
                 }
             }
-            Some(most) => {
+            Option.Some(most) => {
                 let mut i: u32 = 0
                 while i < min && self.code.len() <= MAX_INSTRUCTIONS {
                     self.node(child)
@@ -170,7 +170,7 @@ priv fn compile(own parsed: Parsed): Result<Program, RegexError> {
     compiler.code.push(Inst.Save(1))
     compiler.code.push(Inst.Match)
     if compiler.code.len() > MAX_INSTRUCTIONS {
-        return Err(RegexError.Syntax { at: total, message: "the compiled regex is too large".to_string() })
+        return Result.Err(RegexError.Syntax { at: total, message: "the compiled regex is too large".to_string() })
     }
-    Ok(Program { code: compiler.code, classes: classes, slots: slots })
+    Result.Ok(Program { code: compiler.code, classes: classes, slots: slots })
 }

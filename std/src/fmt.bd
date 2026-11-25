@@ -243,13 +243,13 @@ Formatter {
     /// let mut f = Formatter.new()
     /// assert(f.width().is_none())
     /// f.set_spec('*', 3, false, false, false, true, 5, false, 0, 10)
-    /// assert_eq(f.width(), Some(5))
+    /// assert_eq(f.width(), Option.Some(5))
     /// ```
     fn width(self): Option<usize> {
         if self.has_width {
-            Some(self.width)
+            Option.Some(self.width)
         } else {
-            None
+            Option.None
         }
     }
 
@@ -261,9 +261,9 @@ Formatter {
     /// ```
     fn precision(self): Option<usize> {
         if self.has_precision {
-            Some(self.precision)
+            Option.Some(self.precision)
         } else {
-            None
+            Option.None
         }
     }
 
@@ -742,12 +742,12 @@ priv fn __debug_unit(mut f: Formatter) {
 
 priv fn __debug_option<T: Debug>(o: Option<T>, mut f: Formatter) {
     match o {
-        Some(x) => {
+        Option.Some(x) => {
             f.write_str("Some(")
             x.debug(mut f)
             f.write_str(")")
         }
-        None => {
+        Option.None => {
             f.write_str("None")
         }
     }
@@ -755,12 +755,12 @@ priv fn __debug_option<T: Debug>(o: Option<T>, mut f: Formatter) {
 
 priv fn __debug_result<T: Debug, E: Debug>(r: Result<T, E>, mut f: Formatter) {
     match r {
-        Ok(x) => {
+        Result.Ok(x) => {
             f.write_str("Ok(")
             x.debug(mut f)
             f.write_str(")")
         }
-        Err(e) => {
+        Result.Err(e) => {
             f.write_str("Err(")
             e.debug(mut f)
             f.write_str(")")

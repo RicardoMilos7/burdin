@@ -101,8 +101,8 @@ Comparison is lexicographic:
 `Ord` implies `Eq`, in the derive and in the bound alike (issue #918): a type that derives `Ord` also has `==` and
 `!=`, and the body of `fn f<T: Ord>(a: T, b: T)` may use `a == b` (`bound_closure`). Deriving both is allowed and
 means the same as deriving `Ord`. A float field has no derived ordering, so a struct with
-an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option` orders `None`
-before `Some` and then by payload; `Result` orders `Ok` before `Err` (its declared variant order) and then by the
+an `f64` field cannot derive `Ord` (E0130), even though `<` compares two floats directly. `Option` orders `Option.None`
+before `Option.Some` and then by payload; `Result` orders `Result.Ok` before `Result.Err` (its declared variant order) and then by the
 payload of the same variant. References and `List` do not support `<`.
 
 ## `Hash`
@@ -125,8 +125,8 @@ The parts are: a struct's or tuple's fields in declaration order; an array's ele
 and then its elements in order; a map's entry count and then each entry, where each entry folds its key and value from
 the offset basis and the entries are combined with XOR (so insertion order does not matter); an enum's variant
 declaration index (as an `i32` word) followed by the active variant's payload fields in declaration order; an
-`Option`'s tag (`false` = `None`, `true` = `Some`) followed by the payload when `Some`; a `Result`'s tag (`true` =
-`Ok`) followed by the payload of the active variant. `str` and `String` fold their bytes in order. The derive requires
+`Option`'s tag (`false` = `Option.None`, `true` = `Option.Some`) followed by the payload when `Option.Some`; a `Result`'s tag (`true` =
+`Result.Ok`) followed by the payload of the active variant. `str` and `String` fold their bytes in order. The derive requires
 every field to be `Hash`. Equal values hash equally; the values themselves are pinned by
 `m07_generics/derive_values`. `x.hash_from(state)` runs the same fold from `state` instead of the offset basis, and
 `std.hash` builds `Hasher` on it (`stdlib.md`, "Hashing").
@@ -151,7 +151,7 @@ on an enum it is not implemented in stage 0 (`E9000`, stage 1). The derive requi
 - integers and floats: `0` / `0.0`; `bool`: `false`; `char`: `'\0'`; `()`: `()`;
 - a nested struct that derives `Default`: its `default()`;
 - a tuple whose parts all have a default: elementwise;
-- `String`: an empty string; `Option`: `None`;
+- `String`: an empty string; `Option`: `Option.None`;
 - `List` and `Map`: the empty container, when they use the default allocator `Global` (a stored allocator has no value
   to build a default from); `Deque` and `PriorityHeap` derive `Default` from their empty list;
 - arrays, `Heap`, and references do not have a default (E0130).

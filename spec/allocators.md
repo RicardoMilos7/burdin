@@ -267,7 +267,7 @@ set, and the error type is `AllocError`.
   - `Map<K, V>.try_with_capacity(n)` and `m.try_reserve(n)`, with the same shapes.
   - `String.try_with_capacity(n)` and `s.try_reserve(n)`.
 
-  A `try_` operation changes the container only when it returns `Ok`. A failed reserve leaves the length, the
+  A `try_` operation changes the container only when it returns `Result.Ok`. A failed reserve leaves the length, the
   elements, and the capacity as they were.
 - **AL11.5 (capacity overflow).** For a list, the request overflows when `n` elements of `T` take more bytes than a
   `usize` holds. For a map, it overflows when `len + n` wraps, when the slot count passes the map limit of 2^62, or

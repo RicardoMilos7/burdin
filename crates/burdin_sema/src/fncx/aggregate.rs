@@ -14,6 +14,10 @@ impl FnCx<'_> {
         if let Some(literal) = self.reflect_member_of_loop_variable(base, name, span) {
             return literal;
         }
+        // `Option.None` and the constructors as values, `Option.Some` and `Result.Ok`.
+        if let Some(owner) = self.prelude_head(base) {
+            return self.prelude_member(owner, name, expect, span);
+        }
         if let Some(path) = self.type_path(base) {
             let ty = match path {
                 PathTy::Ty(ty) => ty,
@@ -108,6 +112,9 @@ impl FnCx<'_> {
 
     /// `Color.Red`: a unit variant of an enum type.
     pub(super) fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
+        if matches!(ty, Ty::Option(_)) && name.name == "None" {
+            return mk(tir::ExprKind::None, ty, span);
+        }
         // `u32.MAX`: an integer type's constants are `std` constants named `__<type>_<name>`.
         if let Ty::Int(i) = &ty
             && let Some(Global::Const(c)) = self.globals.std_value(&format!("__{}_{}", i.name(), name.name))
@@ -153,6 +160,10 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         let text: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
         let text = text.join(".");
+        // `.Variant { ... }`: the variant of the expected type, which must be an enum (TT13).
+        if path.first().is_some_and(|first| first.is_inferred()) {
+            return self.inferred_variant_literal(path, &text, fields, base, expect, span);
+        }
         // A generic type written with its arguments names the instance: `Wrapper<i32> { ... }`,
         // `Shape<i32>.Rect { ... }`, and `sh.Shape<i32>.Rect { ... }` check the literal against that instance.
         let written = type_args.map(|(index, args)| self.written_instance(&path[..=*index], *index, args, span));
@@ -443,7 +454,7 @@ impl FnCx<'_> {
 
     /// The struct or the struct-like variant that a literal of `ty` (and `variant`) builds, with the package that
     /// declares it. `None` after reporting that the path names neither.
-    fn literal_target(
+    pub(super) fn literal_target(
         &mut self,
         ty: Ty,
         variant: Option<ast::Ident>,

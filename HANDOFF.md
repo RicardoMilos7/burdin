@@ -10,6 +10,17 @@ the text fallbacks there; a call cut off by `}` is dropped by the parser; the ed
 writes the placeholder `extra: i32 = 0` (the VS Code command `burdin.changeSignature` prompts instead); refactoring
 edits are one span per file.
 
+**Inferred variants, and `Option`/`Result` without bare names (2026-11-25, issue #1069).** `.Variant`, `.Variant(p)`, and
+`.Variant { f }` now work in patterns (match, `let`, `if let`, or-patterns, nested) and in expressions with an expected
+type (`spec/target-typing.md`, TT13-TT19). The names `Some`, `None`, `Ok`, and `Err` no longer exist: each is E0305
+(machine-applicable suggestion `Option.Some` and so on; the issue's `.Some` is not suggested because it needs an expected
+type) and is not in the prelude any more; write `Option.Some(x)`, `Option.None`, `Result.Ok(x)`, `Result.Err(e)`, or the
+inferred spelling. `std/`, `packages/`, `tests/`, the website, the docs, and the Rust code that generates Burdin text
+(`derive.rs`, `error_item.rs`, the test wrapper) were migrated mechanically; the generators `tests/gen_int_std.py` and
+`tests/gen_atomic_std.py` emit the new names. A line that starts with `.` and has a `=>` before it ends is a match arm, not
+a member access on the previous arm (parser and formatter); the formatter keeps the `;` before a statement that starts
+with `.`. Not verified here: `s3_http` and `s3_tls` tests and the `http`/`tls` doc tests (no OpenSSL in the WSL image).
+
 **Comptime removed (2026-11-25).** The owner did not like the `comptime` implementation, so the language surface was
 removed; a macro system will be designed later (a GitHub issue tracks it, and nothing of it is implemented). Removed:
 `comptime E` and `comptime { ... }` expressions, `comptime name: Type` parameters and per-value specialization (the

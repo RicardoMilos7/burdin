@@ -15,6 +15,6 @@ fn main() {
     }
     println("{xs.iter().take_while(|x| *x < 30).to_list():?}")
     println("{xs.iter().skip_while(|x| *x < 30).to_list():?}")
-    println("{xs.iter().map_while(|x| if x < 40 { Some(x * 2) } else { None }).to_list():?}")
+    println("{xs.iter().map_while(|x| if x < 40 { Option.Some(x * 2) } else { Option.None }).to_list():?}")
     println("{xs.iter().take_while(|x| *x > 100).to_list():?}")
 }

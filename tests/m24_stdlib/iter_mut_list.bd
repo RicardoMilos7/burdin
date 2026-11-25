@@ -32,10 +32,10 @@ fn main() {
     let mut it = xs.iter_mut()
     loop {
         match it.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 *x = *x + 1
             }
-            None => break,
+            Option.None => break,
         }
     }
     show(xs)

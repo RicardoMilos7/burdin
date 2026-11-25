@@ -27,23 +27,23 @@ Ledger {
     fn index_of(self, name: str): Result<usize, BankError> {
         for i in 0..self.names.len() {
             if self.names[i].as_str() == name {
-                return Ok(i)
+                return Result.Ok(i)
             }
         }
-        Err(BankError.UnknownAccount(String.from(name)))
+        Result.Err(BankError.UnknownAccount(String.from(name)))
     }
 
     fn withdraw(mut self, name: str, amount: i32): Result<i32, BankError> {
         if amount <= 0 {
-            return Err(BankError.BadAmount(amount))
+            return Result.Err(BankError.BadAmount(amount))
         }
         let i = self.index_of(name)?
         let available = self.balances[i]
         if available < amount {
-            return Err(BankError.Insufficient { needed: amount, available })
+            return Result.Err(BankError.Insufficient { needed: amount, available })
         }
         self.balances[i] = available - amount
-        Ok(self.balances[i])
+        Result.Ok(self.balances[i])
     }
 
     fn transfer(mut self, from: str, to: str, text: str): Result<(), BankError> {
@@ -51,7 +51,7 @@ Ledger {
         self.withdraw(from, amount)?
         let j = self.index_of(to)?
         self.balances[j] = self.balances[j] + amount
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -64,20 +64,20 @@ fn main(): Result<()> {
     println("after transfer: ana={ledger.balances[0]} ben={ledger.balances[1]}")
 
     match ledger.transfer("ben", "ana", "500") {
-        Ok(_) => println("transfer ok"),
-        Err(e) => println("refused: {e}"),
+        Result.Ok(_) => println("transfer ok"),
+        Result.Err(e) => println("refused: {e}"),
     }
     match ledger.transfer("ana", "cy", "5") {
-        Ok(_) => println("transfer ok"),
-        Err(e) => println("refused: {e}"),
+        Result.Ok(_) => println("transfer ok"),
+        Result.Err(e) => println("refused: {e}"),
     }
     match ledger.transfer("ana", "ben", "ten") {
-        Ok(_) => println("transfer ok"),
-        Err(e) => println("refused: {e}"),
+        Result.Ok(_) => println("transfer ok"),
+        Result.Err(e) => println("refused: {e}"),
     }
 
     // The last step fails, and main returns that error.
     ledger.withdraw("ben", 0)?
     println("not reached")
-    Ok(())
+    Result.Ok(())
 }

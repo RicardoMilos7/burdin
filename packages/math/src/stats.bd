@@ -24,9 +24,9 @@ fn sum(xs: [f64]): f64 {
 /// ```
 fn mean(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
-        return None
+        return Option.None
     }
-    Some(sum(xs) / (xs.len() as f64))
+    Option.Some(sum(xs) / (xs.len() as f64))
 }
 
 /// The population variance: the mean of the squared deviations from the mean. Two passes, so it stays accurate.
@@ -37,15 +37,15 @@ fn mean(xs: [f64]): Option<f64> {
 /// ```
 fn variance(xs: [f64]): Option<f64> {
     match mean(xs) {
-        Some(m) => {
+        Option.Some(m) => {
             let mut total = 0.0
             for x in xs {
                 let d = x - m
                 total = total + d * d
             }
-            Some(total / (xs.len() as f64))
+            Option.Some(total / (xs.len() as f64))
         }
-        None => None,
+        Option.None => Option.None,
     }
 }
 
@@ -58,11 +58,11 @@ fn variance(xs: [f64]): Option<f64> {
 /// ```
 fn sample_variance(xs: [f64]): Option<f64> {
     if xs.len() < 2 {
-        return None
+        return Option.None
     }
     match variance(xs) {
-        Some(v) => Some(v * (xs.len() as f64) / ((xs.len() - 1) as f64)),
-        None => None,
+        Option.Some(v) => Option.Some(v * (xs.len() as f64) / ((xs.len() - 1) as f64)),
+        Option.None => Option.None,
     }
 }
 
@@ -74,8 +74,8 @@ fn sample_variance(xs: [f64]): Option<f64> {
 /// ```
 fn std_dev(xs: [f64]): Option<f64> {
     match variance(xs) {
-        Some(v) => Some(v.sqrt()),
-        None => None,
+        Option.Some(v) => Option.Some(v.sqrt()),
+        Option.None => Option.None,
     }
 }
 
@@ -88,8 +88,8 @@ fn std_dev(xs: [f64]): Option<f64> {
 /// ```
 fn sample_std_dev(xs: [f64]): Option<f64> {
     match sample_variance(xs) {
-        Some(v) => Some(v.sqrt()),
-        None => None,
+        Option.Some(v) => Option.Some(v.sqrt()),
+        Option.None => Option.None,
     }
 }
 
@@ -102,13 +102,13 @@ fn sample_std_dev(xs: [f64]): Option<f64> {
 /// ```
 fn minimum(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
-        return None
+        return Option.None
     }
     let mut best = xs[0]
     for x in xs {
         best = best.min(x)
     }
-    Some(best)
+    Option.Some(best)
 }
 
 /// The greatest value. NaN values are skipped, so the result is NaN only when every value is NaN.
@@ -119,13 +119,13 @@ fn minimum(xs: [f64]): Option<f64> {
 /// ```
 fn maximum(xs: [f64]): Option<f64> {
     if xs.len() == 0 {
-        return None
+        return Option.None
     }
     let mut best = xs[0]
     for x in xs {
         best = best.max(x)
     }
-    Some(best)
+    Option.Some(best)
 }
 
 /// The value at fraction `p` of the sorted values, interpolated linearly between the two nearest ranks (the NumPy
@@ -142,7 +142,7 @@ fn quantile(xs: [f64], p: f64): Option<f64> {
         panic("quantile: p must be between 0 and 1")
     }
     if xs.len() == 0 {
-        return None
+        return Option.None
     }
     let mut sorted = List<f64>.new()
     for x in xs {
@@ -154,10 +154,10 @@ fn quantile(xs: [f64], p: f64): Option<f64> {
     let frac = h - lo
     let low = sorted[lo as usize]
     if frac == 0.0 {
-        return Some(low)
+        return Option.Some(low)
     }
     let high = sorted[(lo as usize) + 1]
-    Some(low + frac * (high - low))
+    Option.Some(low + frac * (high - low))
 }
 
 /// The median: `quantile` at one half.
@@ -184,7 +184,7 @@ fn covariance(xs: [f64], ys: [f64]): Option<f64> {
         panic("covariance: the slices differ in length")
     }
     if xs.len() == 0 {
-        return None
+        return Option.None
     }
     let mx = sum(xs) / (xs.len() as f64)
     let my = sum(ys) / (ys.len() as f64)
@@ -194,7 +194,7 @@ fn covariance(xs: [f64], ys: [f64]): Option<f64> {
         total = total + (xs[i] - mx) * (ys[i] - my)
         i = i + 1
     }
-    Some(total / (xs.len() as f64))
+    Option.Some(total / (xs.len() as f64))
 }
 
 /// The Pearson correlation coefficient. `None` when either side has zero variance, or when there are no values.
@@ -213,13 +213,13 @@ fn correlation(xs: [f64], ys: [f64]): Option<f64> {
     let vx = variance(xs)
     let vy = variance(ys)
     match (cov, vx, vy) {
-        (Some(c), Some(a), Some(b)) => {
+        (Option.Some(c), Option.Some(a), Option.Some(b)) => {
             if a == 0.0 || b == 0.0 {
-                None
+                Option.None
             } else {
-                Some(c / (a.sqrt() * b.sqrt()))
+                Option.Some(c / (a.sqrt() * b.sqrt()))
             }
         }
-        _ => None,
+        _ => Option.None,
     }
 }

@@ -43,12 +43,12 @@ fn main() {
     show(removed)
     show(xs[0])
     match xs.pop() {              // [15, 25]
-        Some(v) => show(v),
-        None => println("empty"),
+        Option.Some(v) => show(v),
+        Option.None => println("empty"),
     }
     match xs.last() {
-        Some(v) => show(*v),
-        None => println("empty"),
+        Option.Some(v) => show(*v),
+        Option.None => println("empty"),
     }
     show_bool(xs.contains(25))
     show_bool(xs.contains(99))

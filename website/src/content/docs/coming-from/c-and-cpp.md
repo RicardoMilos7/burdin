@@ -100,8 +100,8 @@ Burdin returns the result instead, and a parameter that must change is marked `m
 | `auto x = ...` | `let x = ...` | Inference. |
 | `#include "x.h"` | `use x` | Files are modules. |
 | `namespace n { }` | a module, one file per module | |
-| `throw E()` / `try` / `catch` | `Err(E.Variant)` and `?` | Errors are returned. |
-| `T* p = nullptr;` | `Option<T>` with `None` | No null in ordinary code. |
+| `throw E()` / `try` / `catch` | `Result.Err(E.Variant)` and `?` | Errors are returned. |
+| `T* p = nullptr;` | `Option<T>` with `Option.None` | No null in ordinary code. |
 | `std::thread` | `task.spawn`, or `thread.spawn` for blocking calls | |
 | `std::mutex` | `Mutex<T>` with `lock(\|v\| ...)` | The lock is held while the closure runs. |
 | `CMake`, `make` | `burdin build`, `burdin run`, `burdin test` | |

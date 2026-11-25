@@ -26,18 +26,18 @@ fn main() {
     show(m.len() as i32)
 
     match m.get(1) {
-        Some(v) => show(*v),
-        None => println("none"),
+        Option.Some(v) => show(*v),
+        Option.None => println("none"),
     }
     match m.get(5) {
-        Some(v) => show(*v),
-        None => println("none"),
+        Option.Some(v) => show(*v),
+        Option.None => println("none"),
     }
     show_bool(m.contains_key(2))
     show_bool(m.contains_key(3))
     match m.remove(2) {
-        Some(v) => show(v),
-        None => println("none"),
+        Option.Some(v) => show(v),
+        Option.None => println("none"),
     }
     show(m.len() as i32)
 

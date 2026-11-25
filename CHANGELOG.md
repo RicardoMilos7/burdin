@@ -14,6 +14,20 @@ close-out checklist in `AGENTS.md`).
   method, implement an interface; change signature, move item, and `burdin.searchReplace` in the editor (with VS Code
   commands); `textDocument/typeDefinition`, `workspace/willRenameFiles`, completion and code-action resolve, and
   on-type formatting. `spec/lsp.md` LS12, LS18, LS21-LS25 describe each and name its tests.
+- Issue #1069: inferred variants, and `Option` and `Result` without bare names (`spec/target-typing.md`, TT13-TT19).
+  A leading dot names a variant of the enum the position gives: `.Circle(r)`, `.Rect { w, h }`, and `.Dot` in
+  patterns (`match`, or-patterns, `if let`, `while let`, `let ... else`, nested), and `.Variant { fields }` joins
+  `.name` and `.name(args)` in expressions. `Option` and `Result` are enums like any other: `Option.Some(x)`,
+  `Option.None`, `Result.Ok(v)`, `Result.Err(e)`, or `.Some(x)` and the rest where the type is known, in patterns and
+  in expressions. **Breaking:** the bare names `Some`, `None`, `Ok`, and `Err` are removed with no deprecation; using
+  one is the new error E0305, whose machine-applicable fix writes `Option.Some` (and so on). Every `.bd` file, the
+  standard library, the packages, the tests, the website examples, and the code the compiler generates as text (the
+  serialization derives, the test and `main` wrappers, `burdin expand`) were migrated with a scripted rewrite to the
+  qualified spelling. The formatter keeps the author's choice of spelling; `else_on_local_enum` reads `.Variant` arms;
+  the language server resolves a pattern's `.Variant` by name; `burdin expand` prints the qualified spellings. Not
+  added: `s == .Dot` (the other operand never gives a type, TT3, TT16). Tests: `tests/target_typing/` (`inferred_patterns`,
+  `inferred_variants`, `option_result_qualified`, `inferred_unknown_type`, `inferred_names`, `bare_prelude_names`),
+  `tests/fmt/inferred_variants`, and `crates/burdin_lsp/tests/leading_dot.rs`.
 - Removed `comptime` from the language; a macro system is planned to replace it. Removed: `comptime` expressions and
   blocks, `comptime` parameters and per-value specialization, `comptime if`/`for` as syntax, `comptime assert`,
   `comptime generate` (declaration generation, issue #280), the `[differential]` test attribute, and the reserved

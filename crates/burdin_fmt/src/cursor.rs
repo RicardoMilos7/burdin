@@ -139,6 +139,30 @@ impl<'a> Fmt<'a> {
         self.tok().nl_before && self.nl_stack.last().copied().unwrap_or(true)
     }
 
+    /// Whether the `.` at the current position, which starts a line, begins a match arm's pattern: a `=>` follows
+    /// on the same line outside any bracket. A member access never contains one (spec/target-typing.md, TT13).
+    pub fn dot_starts_arm(&self) -> bool {
+        let mut depth = 0usize;
+        for (i, t) in self.toks[self.pos..].iter().enumerate() {
+            if i > 0 && t.nl_before && depth == 0 {
+                return false;
+            }
+            match t.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                TokenKind::FatArrow if depth == 0 => return true,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     pub fn nl_top(&self) -> bool {
         self.nl_stack.last().copied().unwrap_or(true)
     }

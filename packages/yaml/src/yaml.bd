@@ -149,7 +149,7 @@ Loader {
         self.check_characters()?
         self.skip_to_content(true)?
         if !self.at_end() && self.peek() == 37 && self.column(self.pos) == 0 {
-            return Err(self.fail("directives are not supported"))
+            return Result.Err(self.fail("directives are not supported"))
         }
         let root = if self.marker_here(45) {
             self.pos = self.pos + 3
@@ -162,19 +162,19 @@ Loader {
             self.pos = self.pos + 3
             self.skip_inline_ws()
             if !self.at_end() && self.peek() != 10 && !self.at_comment() {
-                return Err(self.fail("unexpected characters after the document end marker"))
+                return Result.Err(self.fail("unexpected characters after the document end marker"))
             }
             self.skip_to_content(true)?
             if !self.at_end() {
-                return Err(self.fail("only one document is supported"))
+                return Result.Err(self.fail("only one document is supported"))
             }
         } else if self.marker_here(45) {
-            return Err(self.fail("only one document is supported"))
+            return Result.Err(self.fail("only one document is supported"))
         }
         if !self.at_end() {
-            return Err(self.fail("unexpected content after the value"))
+            return Result.Err(self.fail("unexpected content after the value"))
         }
-        Ok(root)
+        Result.Ok(root)
     }
 
     /// Ends the loader, handing its tree and its text to a reader.
@@ -295,11 +295,11 @@ Loader {
         while i < bytes.len() {
             let b = bytes[i]
             if (b < 32 && b != 9 && b != 10) || b == 127 {
-                return Err(self.fail_at("a control character is not allowed in a YAML document", i))
+                return Result.Err(self.fail_at("a control character is not allowed in a YAML document", i))
             }
             i = i + 1
         }
-        Ok(())
+        Result.Ok(())
     }
 
     // ----- white space
@@ -334,12 +334,12 @@ Loader {
                 }
             } else {
                 if block && fresh && tab_in_indent {
-                    return Err(self.fail("a tab cannot be used for indentation"))
+                    return Result.Err(self.fail("a tab cannot be used for indentation"))
                 }
-                return Ok(())
+                return Result.Ok(())
             }
         }
-        Ok(())
+        Result.Ok(())
     }
 
     // ----- nodes
@@ -367,12 +367,12 @@ Loader {
             let b = self.peek()
             if b == 38 {
                 if props.has_anchor {
-                    return Err(self.fail("a node has at most one anchor"))
+                    return Result.Err(self.fail("a node has at most one anchor"))
                 }
                 self.pos = self.pos + 1
                 let name = self.read_name()
                 if name.len() == 0 {
-                    return Err(self.fail("an anchor needs a name"))
+                    return Result.Err(self.fail("an anchor needs a name"))
                 }
                 props.has_anchor = true
                 props.anchor = name
@@ -387,7 +387,7 @@ Loader {
                     props.str_tag = true
                     props.present = true
                 } else {
-                    return Err(self.fail_at(format("the tag '{tag}' is not supported (only !!str is)"), start))
+                    return Result.Err(self.fail_at(format("the tag '{tag}' is not supported (only !!str is)"), start))
                 }
             } else {
                 break
@@ -398,7 +398,7 @@ Loader {
                 break
             }
         }
-        Ok(props)
+        Result.Ok(props)
     }
 
     priv fn duplicate_key(self, own name: String, position: usize): DeError {
@@ -424,14 +424,14 @@ Loader {
     priv fn apply_props(mut self, idx: usize, props: Props): Result<usize, DeError> {
         if props.str_tag {
             if self.nodes[idx].kind != 0 {
-                return Err(self.fail_at("the tag !!str applies to a scalar", self.nodes[idx].pos))
+                return Result.Err(self.fail_at("the tag !!str applies to a scalar", self.nodes[idx].pos))
             }
             self.nodes[idx].quoted = true
         }
         if props.has_anchor {
             self.anchors.insert(props.anchor.clone(), idx)
         }
-        Ok(idx)
+        Result.Ok(idx)
     }
 
     /// Reads `*name` and returns a copy of the anchored node (an alias is resolved by copying; the copying is
@@ -441,11 +441,11 @@ Loader {
         self.pos = self.pos + 1
         let name = self.read_name()
         if name.len() == 0 {
-            return Err(self.fail_at("an alias needs a name", start))
+            return Result.Err(self.fail_at("an alias needs a name", start))
         }
         let target = match self.anchors.get(name.clone()) {
-            Some(found) => *found,
-            None => return Err(self.fail_at(format("unknown anchor '{name}'"), start)),
+            Option.Some(found) => *found,
+            Option.None => return Result.Err(self.fail_at(format("unknown anchor '{name}'"), start)),
         }
         self.copy_node(target, start)
     }
@@ -454,7 +454,7 @@ Loader {
     priv fn copy_node(mut self, src: usize, at: usize): Result<usize, DeError> {
         self.copied_nodes = self.copied_nodes + 1
         if self.copied_nodes > MAX_ALIAS_NODES {
-            return Err(
+            return Result.Err(
                 self.fail_at(
                     "aliases expand to too many nodes (the limit is 100000 copied nodes)",
                     at,
@@ -467,10 +467,10 @@ Loader {
             let text = self.nodes[src].text.clone()
             self.copied_bytes = self.copied_bytes + text.len()
             if self.copied_bytes > MAX_ALIAS_BYTES {
-                return Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
+                return Result.Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
             }
             let quoted = self.nodes[src].quoted
-            return Ok(self.push_node(__scalar_node(text, quoted, pos)))
+            return Result.Ok(self.push_node(__scalar_node(text, quoted, pos)))
         }
         let mut keys = List<String>.new()
         let mut k: usize = 0
@@ -481,7 +481,7 @@ Loader {
             k = k + 1
         }
         if self.copied_bytes > MAX_ALIAS_BYTES {
-            return Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
+            return Result.Err(self.fail_at("aliases expand to too much text (the limit is 4 MiB)", at))
         }
         let me = self.push_node(__collection_node(kind, pos))
         self.nodes[me].keys = keys
@@ -493,7 +493,7 @@ Loader {
             self.nodes[me].items.push(child)
             i = i + 1
         }
-        Ok(me)
+        Result.Ok(me)
     }
 
     // ----- block nodes
@@ -504,7 +504,7 @@ Loader {
     /// a block sequence at the parent's own indentation, as the value of a mapping key.
     priv fn parse_node(mut self, parent: i64, same_line: i32, seq_ok: bool): Result<usize, DeError> {
         if self.depth >= MAX_DEPTH {
-            return Err(self.fail("the document is nested too deeply (more than 100 levels)"))
+            return Result.Err(self.fail("the document is nested too deeply (more than 100 levels)"))
         }
         self.depth = self.depth + 1
         let result = self.parse_node_inner(parent, same_line, seq_ok)
@@ -525,10 +525,10 @@ Loader {
             self.skip_to_content(true)?
         }
         if self.at_end() || self.marker_here(45) || self.marker_here(46) {
-            return Ok(self.empty_scalar_at(origin))
+            return Result.Ok(self.empty_scalar_at(origin))
         }
         if !on_line && !self.starts_node(parent, seq_ok) {
-            return Ok(self.empty_scalar_at(origin))
+            return Result.Ok(self.empty_scalar_at(origin))
         }
         let props = self.read_props()?
         let mut props_on_line = props.present
@@ -551,48 +551,48 @@ Loader {
         let mut idx: usize = 0
         if b == 45 && __is_blank_or_end(next) {
             if on_line && (same_line == 2 || props_on_line) {
-                return Err(self.fail("a block sequence cannot start here"))
+                return Result.Err(self.fail("a block sequence cannot start here"))
             }
             idx = self.parse_block_seq(col)?
         } else if b == 63 && __is_blank_or_end(next) {
-            return Err(self.fail("complex mapping keys ('? ') are not supported"))
+            return Result.Err(self.fail("complex mapping keys ('? ') are not supported"))
         } else if b == 58 && __is_blank_or_end(next) {
-            return Err(self.fail("a mapping key is missing before ':'"))
+            return Result.Err(self.fail("a mapping key is missing before ':'"))
         } else if b == 91 || b == 123 {
             idx = self.parse_flow()?
             self.skip_inline_ws()
             if self.peek() == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
-                return Err(self.fail_at("a flow collection cannot be a mapping key", start))
+                return Result.Err(self.fail_at("a flow collection cannot be a mapping key", start))
             }
             self.expect_line_end()?
         } else if b == 124 || b == 62 {
             idx = self.parse_block_scalar(parent)?
         } else if b == 42 {
             if props.present {
-                return Err(self.fail_at("an alias cannot have properties", start))
+                return Result.Err(self.fail_at("an alias cannot have properties", start))
             }
             idx = self.parse_alias()?
             self.skip_inline_ws()
             if self.peek() == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
-                return Err(self.fail_at("an alias cannot be a mapping key", start))
+                return Result.Err(self.fail_at("an alias cannot be a mapping key", start))
             }
             self.expect_line_end()?
         } else if b == 37 && col == 0 {
-            return Err(self.fail("directives are not supported"))
+            return Result.Err(self.fail("directives are not supported"))
         } else if b == 64 || b == 96 {
-            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+            return Result.Err(self.fail("this character is reserved and cannot start a YAML node"))
         } else if b == 93 || b == 125 || b == 44 {
-            return Err(self.fail("unexpected character"))
+            return Result.Err(self.fail("unexpected character"))
         } else if b == 38 || b == 33 {
-            return Err(self.fail("unexpected node property"))
+            return Result.Err(self.fail("unexpected node property"))
         } else {
             match self.try_key()? {
-                Some(key) => {
+                Option.Some(key) => {
                     if on_line && same_line == 2 {
-                        return Err(self.fail_at("a mapping is not allowed here", key.pos))
+                        return Result.Err(self.fail_at("a mapping is not allowed here", key.pos))
                     }
                     if props_on_line {
-                        return Err(
+                        return Result.Err(
                             self.fail_at(
                                 "properties before a mapping key are not supported; put them on their own line",
                                 start,
@@ -601,7 +601,7 @@ Loader {
                     }
                     idx = self.parse_block_map(col, key)?
                 }
-                None => {
+                Option.None => {
                     if b == 34 || b == 39 {
                         let text = self.read_quoted()?
                         idx = self.push_node(__scalar_node(text, true, start))
@@ -620,9 +620,9 @@ Loader {
     priv fn expect_line_end(mut self): Result<(), DeError> {
         self.skip_inline_ws()
         if self.at_end() || self.peek() == 10 || self.at_comment() {
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(self.fail("unexpected characters after the value"))
+            Result.Err(self.fail("unexpected characters after the value"))
         }
     }
 
@@ -646,23 +646,23 @@ Loader {
             self.skip_inline_ws()
             if self.peek() == 58 {
                 self.pos = self.pos + 1
-                return Ok(Some(Key { text, pos: save }))
+                return Result.Ok(Option.Some(Key { text, pos: save }))
             }
             self.pos = save
-            return Ok(None)
+            return Result.Ok(Option.None)
         }
         let end = self.scan_plain_line(false)
         if self.peek() == 58 && end > save {
             let merge = self.text[save..end] == "<<"
             if merge {
-                return Err(self.fail_at("merge keys (<<) are not supported", save))
+                return Result.Err(self.fail_at("merge keys (<<) are not supported", save))
             }
             let text = self.slice_text(save, end)
             self.pos = self.pos + 1
-            return Ok(Some(Key { text, pos: save }))
+            return Result.Ok(Option.Some(Key { text, pos: save }))
         }
         self.pos = save
-        Ok(None)
+        Result.Ok(Option.None)
     }
 
     /// Reads the mapping that starts at the column `indent`, whose first key is `first`. The position is just after
@@ -675,7 +675,7 @@ Loader {
             let key_text = key.text.clone()
             let key_pos = key.pos
             if seen.contains_key(key_text.clone()) {
-                return Err(self.duplicate_key(key_text.clone(), key_pos))
+                return Result.Err(self.duplicate_key(key_text.clone(), key_pos))
             }
             seen.insert(key_text.clone(), true)
             let value = self.parse_node(indent as i64, 2, true)?
@@ -690,21 +690,21 @@ Loader {
                 break
             }
             if col > indent {
-                return Err(self.fail("the indentation of this mapping entry is wrong"))
+                return Result.Err(self.fail("the indentation of this mapping entry is wrong"))
             }
             let b = self.peek()
             if b == 38 || b == 33 || b == 42 || b == 91 || b == 123 || b == 124 || b == 62 {
-                return Err(self.fail("a mapping key must be a plain or quoted scalar"))
+                return Result.Err(self.fail("a mapping key must be a plain or quoted scalar"))
             }
             if b == 63 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
-                return Err(self.fail("complex mapping keys ('? ') are not supported"))
+                return Result.Err(self.fail("complex mapping keys ('? ') are not supported"))
             }
             match self.try_key()? {
-                Some(next) => { key = next }
-                None => return Err(self.fail("expected a mapping key followed by ':'")),
+                Option.Some(next) => { key = next }
+                Option.None => return Result.Err(self.fail("expected a mapping key followed by ':'")),
             }
         }
-        Ok(map)
+        Result.Ok(map)
     }
 
     /// Reads the sequence whose `-` entries start at the column `indent`.
@@ -724,13 +724,13 @@ Loader {
                 break
             }
             if col > indent {
-                return Err(self.fail("the indentation of this sequence entry is wrong"))
+                return Result.Err(self.fail("the indentation of this sequence entry is wrong"))
             }
             if !self.dash_here() {
                 break
             }
         }
-        Ok(seq)
+        Result.Ok(seq)
     }
 
     // ----- scalars
@@ -802,7 +802,7 @@ Loader {
             self.pos = j
             let cont_end = self.scan_plain_line(false)
             if self.peek() == 58 {
-                return Err(self.fail_at("a mapping is not allowed here", j))
+                return Result.Err(self.fail_at("a mapping is not allowed here", j))
             }
             if cont_end == j {
                 break
@@ -819,7 +819,7 @@ Loader {
             let piece = self.slice_text(j, cont_end)
             text.push_str(piece.as_str())
         }
-        Ok(self.push_node(__scalar_node(text, false, start)))
+        Result.Ok(self.push_node(__scalar_node(text, false, start)))
     }
 
     /// Whether the marker `---` (`marker` 45) or `...` (`marker` 46) starts at `at`, which is a line start.
@@ -854,7 +854,7 @@ Loader {
                     let piece = self.slice_text(chunk, self.pos)
                     out.push_str(piece.as_str())
                     self.pos = self.pos + 1
-                    return Ok(out)
+                    return Result.Ok(out)
                 }
             } else if b == 10 {
                 let piece = self.slice_text(chunk, self.pos)
@@ -894,18 +894,18 @@ Loader {
                     let code = __simple_escape(e)
                     if code >= 0 {
                         match (code as u32).to_char() {
-                            Some(c) => out.push(c),
-                            None => return Err(self.fail_at("invalid escape", escape_at)),
+                            Option.Some(c) => out.push(c),
+                            Option.None => return Result.Err(self.fail_at("invalid escape", escape_at)),
                         }
                     } else if e == 120 || e == 117 || e == 85 {
                         let digits: usize = if e == 120 { 2 } else if e == 117 { 4 } else { 8 }
                         let value = self.read_hex(digits)?
                         match value.to_char() {
-                            Some(c) => out.push(c),
-                            None => return Err(self.fail_at("invalid unicode escape", escape_at)),
+                            Option.Some(c) => out.push(c),
+                            Option.None => return Result.Err(self.fail_at("invalid unicode escape", escape_at)),
                         }
                     } else {
-                        return Err(self.fail_at("invalid escape", escape_at))
+                        return Result.Err(self.fail_at("invalid escape", escape_at))
                     }
                 }
                 chunk = self.pos
@@ -914,7 +914,7 @@ Loader {
                 self.pos = self.pos + 1
             }
         }
-        Err(self.fail_at("unterminated quoted string", start))
+        Result.Err(self.fail_at("unterminated quoted string", start))
     }
 
     /// Reads `digits` hexadecimal digits of an escape.
@@ -924,13 +924,13 @@ Loader {
         while i < digits {
             let d = __hex_value(self.byte_at(self.pos))
             if d < 0 || self.at_end() {
-                return Err(self.fail("invalid unicode escape"))
+                return Result.Err(self.fail("invalid unicode escape"))
             }
             value = value * 16 + (d as u32)
             self.pos = self.pos + 1
             i = i + 1
         }
-        Ok(value)
+        Result.Ok(value)
     }
 
     /// Reads a block scalar (`|` or `>`) whose header starts here. `parent` is the indentation of the enclosing
@@ -948,14 +948,14 @@ Loader {
             let b = self.peek()
             if b == 45 || b == 43 {
                 if seen_chomp {
-                    return Err(self.fail("a block scalar header has one chomping indicator"))
+                    return Result.Err(self.fail("a block scalar header has one chomping indicator"))
                 }
                 seen_chomp = true
                 chomp = if b == 45 { 1 } else { 2 }
                 self.pos = self.pos + 1
             } else if b >= 49 && b <= 57 {
                 if explicit != 0 {
-                    return Err(self.fail("a block scalar header has one indentation indicator"))
+                    return Result.Err(self.fail("a block scalar header has one indentation indicator"))
                 }
                 explicit = (b - 48) as i64
                 self.pos = self.pos + 1
@@ -971,7 +971,7 @@ Loader {
             }
         }
         if !self.at_end() && self.peek() != 10 {
-            return Err(self.fail("unexpected characters after the block scalar header"))
+            return Result.Err(self.fail("unexpected characters after the block scalar header"))
         }
         let len = self.text.len()
         // The indentation of the content: given, or the indentation of the first line that has text. When there is
@@ -1043,7 +1043,7 @@ Loader {
         }
         self.pos = cursor
         let text = __block_text(lines, literal, chomp)
-        Ok(self.push_node(__scalar_node(text, true, start)))
+        Result.Ok(self.push_node(__scalar_node(text, true, start)))
     }
 
     // ----- flow collections
@@ -1067,7 +1067,7 @@ Loader {
     /// Reads a flow sequence or mapping that starts here.
     priv fn parse_flow(mut self): Result<usize, DeError> {
         if self.depth >= MAX_DEPTH {
-            return Err(self.fail("the document is nested too deeply (more than 100 levels)"))
+            return Result.Err(self.fail("the document is nested too deeply (more than 100 levels)"))
         }
         self.depth = self.depth + 1
         let result = if self.peek() == 91 { self.parse_flow_seq() } else { self.parse_flow_map() }
@@ -1082,7 +1082,7 @@ Loader {
         loop {
             self.skip_flow_ws()
             if self.at_end() {
-                return Err(self.fail_at("unterminated flow sequence", start))
+                return Result.Err(self.fail_at("unterminated flow sequence", start))
             }
             if self.peek() == 93 {
                 self.pos = self.pos + 1
@@ -1091,19 +1091,19 @@ Loader {
             let item = self.parse_flow_value()?
             self.skip_flow_ws()
             if self.peek() == 58 {
-                return Err(self.fail("a mapping entry inside a flow sequence is not supported"))
+                return Result.Err(self.fail("a mapping entry inside a flow sequence is not supported"))
             }
             self.nodes[seq].items.push(item)
             if self.peek() == 44 {
                 self.pos = self.pos + 1
             } else if self.peek() != 93 {
                 if self.at_end() {
-                    return Err(self.fail_at("unterminated flow sequence", start))
+                    return Result.Err(self.fail_at("unterminated flow sequence", start))
                 }
-                return Err(self.fail("expected ',' or ']'"))
+                return Result.Err(self.fail("expected ',' or ']'"))
             }
         }
-        Ok(seq)
+        Result.Ok(seq)
     }
 
     priv fn parse_flow_map(mut self): Result<usize, DeError> {
@@ -1114,7 +1114,7 @@ Loader {
         loop {
             self.skip_flow_ws()
             if self.at_end() {
-                return Err(self.fail_at("unterminated flow mapping", start))
+                return Result.Err(self.fail_at("unterminated flow mapping", start))
             }
             if self.peek() == 125 {
                 self.pos = self.pos + 1
@@ -1122,7 +1122,7 @@ Loader {
             }
             let key = self.read_flow_key()?
             if seen.contains_key(key.text.clone()) {
-                return Err(self.duplicate_key(key.text.clone(), key.pos))
+                return Result.Err(self.duplicate_key(key.text.clone(), key.pos))
             }
             seen.insert(key.text.clone(), true)
             self.skip_flow_ws()
@@ -1145,12 +1145,12 @@ Loader {
                 self.pos = self.pos + 1
             } else if self.peek() != 125 {
                 if self.at_end() {
-                    return Err(self.fail_at("unterminated flow mapping", start))
+                    return Result.Err(self.fail_at("unterminated flow mapping", start))
                 }
-                return Err(self.fail("expected ',' or '}}'"))
+                return Result.Err(self.fail("expected ',' or '}}'"))
             }
         }
-        Ok(map)
+        Result.Ok(map)
     }
 
     /// Reads the key of a flow mapping entry: a plain or quoted scalar.
@@ -1161,28 +1161,28 @@ Loader {
         let text = if quoted {
             self.read_quoted()?
         } else if b == 91 || b == 123 || b == 42 || b == 38 || b == 33 || b == 124 || b == 62 || b == 44 || b == 93 {
-            return Err(self.fail("a mapping key must be a plain or quoted scalar"))
+            return Result.Err(self.fail("a mapping key must be a plain or quoted scalar"))
         } else if b == 63 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
-            return Err(self.fail("complex mapping keys ('? ') are not supported"))
+            return Result.Err(self.fail("complex mapping keys ('? ') are not supported"))
         } else if b == 58 && __is_blank_or_end(self.byte_at(self.pos + 1)) {
-            return Err(self.fail("a mapping key is missing before ':'"))
+            return Result.Err(self.fail("a mapping key is missing before ':'"))
         } else if b == 37 || b == 64 || b == 96 {
-            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+            return Result.Err(self.fail("this character is reserved and cannot start a YAML node"))
         } else {
             self.read_flow_plain()
         }
         let merge = !quoted && self.text[start..self.pos] == "<<"
         if merge {
-            return Err(self.fail_at("merge keys (<<) are not supported", start))
+            return Result.Err(self.fail_at("merge keys (<<) are not supported", start))
         }
-        Ok(Key { text, pos: start })
+        Result.Ok(Key { text, pos: start })
     }
 
     /// Reads a value inside a flow collection.
     priv fn parse_flow_value(mut self): Result<usize, DeError> {
         self.skip_flow_ws()
         if self.at_end() {
-            return Err(self.fail("unexpected end of input"))
+            return Result.Err(self.fail("unexpected end of input"))
         }
         let props = self.read_props()?
         if props.present {
@@ -1196,24 +1196,24 @@ Loader {
             if props.present {
                 idx = self.empty_scalar()
             } else {
-                return Err(self.fail("unexpected character"))
+                return Result.Err(self.fail("unexpected character"))
             }
         } else if b == 91 || b == 123 {
             idx = self.parse_flow()?
         } else if b == 42 {
             if props.present {
-                return Err(self.fail_at("an alias cannot have properties", start))
+                return Result.Err(self.fail_at("an alias cannot have properties", start))
             }
             idx = self.parse_alias()?
         } else if b == 34 || b == 39 {
             let text = self.read_quoted()?
             idx = self.push_node(__scalar_node(text, true, start))
         } else if b == 124 || b == 62 {
-            return Err(self.fail("a block scalar is not allowed inside a flow collection"))
+            return Result.Err(self.fail("a block scalar is not allowed inside a flow collection"))
         } else if (b == 45 || b == 63 || b == 58) && __is_blank_or_end(next) {
-            return Err(self.fail("unexpected character"))
+            return Result.Err(self.fail("unexpected character"))
         } else if b == 37 || b == 64 || b == 96 || b == 38 || b == 33 {
-            return Err(self.fail("this character is reserved and cannot start a YAML node"))
+            return Result.Err(self.fail("this character is reserved and cannot start a YAML node"))
         } else {
             let text = self.read_flow_plain()
             idx = self.push_node(__scalar_node(text, false, start))
@@ -1333,9 +1333,9 @@ Reader {
         let node = self.cur
         if self.nodes[node].kind != 0 {
             let message = format("expected {what}")
-            return Err(self.fail_node(message.as_str(), node))
+            return Result.Err(self.fail_node(message.as_str(), node))
         }
-        Ok(node)
+        Result.Ok(node)
     }
 
     /// Whether the scalar `node` is a null: an absent value, `~`, or `null` in its three spellings, unquoted.
@@ -1351,29 +1351,29 @@ Reader {
         let node = self.scalar_node("an integer")?
         let text = self.nodes[node].text.clone()
         if self.nodes[node].quoted {
-            return Err(self.fail_node("expected an integer", node))
+            return Result.Err(self.fail_node("expected an integer", node))
         }
         let parsed = __parse_int(text.as_str())
         if !parsed.ok {
-            return Err(self.fail_node("expected an integer", node))
+            return Result.Err(self.fail_node("expected an integer", node))
         }
         let too_big = format("a number that does not fit in {width}")
         if parsed.overflow {
-            return Err(self.fail_node(too_big.as_str(), node))
+            return Result.Err(self.fail_node(too_big.as_str(), node))
         }
         if parsed.neg {
             let limit: u64 = ((0 - (low + 1)) as u64) + 1
             if parsed.mag > limit {
-                Err(self.fail_node(too_big.as_str(), node))
+                Result.Err(self.fail_node(too_big.as_str(), node))
             } else if parsed.mag == limit {
-                Ok(low)
+                Result.Ok(low)
             } else {
-                Ok(0 - (parsed.mag as i64))
+                Result.Ok(0 - (parsed.mag as i64))
             }
         } else if parsed.mag > (high as u64) {
-            Err(self.fail_node(too_big.as_str(), node))
+            Result.Err(self.fail_node(too_big.as_str(), node))
         } else {
-            Ok(parsed.mag as i64)
+            Result.Ok(parsed.mag as i64)
         }
     }
 
@@ -1382,17 +1382,17 @@ Reader {
         let node = self.scalar_node("an integer")?
         let text = self.nodes[node].text.clone()
         if self.nodes[node].quoted {
-            return Err(self.fail_node("expected an integer", node))
+            return Result.Err(self.fail_node("expected an integer", node))
         }
         let parsed = __parse_int(text.as_str())
         if !parsed.ok {
-            return Err(self.fail_node("expected an integer", node))
+            return Result.Err(self.fail_node("expected an integer", node))
         }
         let too_big = format("a number that does not fit in {width}")
         if parsed.overflow || (parsed.neg && parsed.mag != 0) || parsed.mag > high {
-            return Err(self.fail_node(too_big.as_str(), node))
+            return Result.Err(self.fail_node(too_big.as_str(), node))
         }
-        Ok(parsed.mag)
+        Result.Ok(parsed.mag)
     }
 
     /// The text of the current float scalar, rewritten for `f64.parse`; `special` is 0 for an ordinary number, 1
@@ -1401,11 +1401,11 @@ Reader {
         let node = self.scalar_node("a number")?
         let text = self.nodes[node].text.clone()
         if self.nodes[node].quoted {
-            return Err(self.fail_node("expected a number", node))
+            return Result.Err(self.fail_node("expected a number", node))
         }
         let special = __float_special(text.as_str())
         if special != 0 {
-            return Ok(FloatText { special, canon: String.new(), node })
+            return Result.Ok(FloatText { special, canon: String.new(), node })
         }
         let parsed = __parse_int(text.as_str())
         if parsed.ok && !parsed.overflow {
@@ -1414,13 +1414,13 @@ Reader {
                 canon.push('-')
             }
             canon.push_str(parsed.mag.to_string())
-            return Ok(FloatText { special: 0, canon, node })
+            return Result.Ok(FloatText { special: 0, canon, node })
         }
         let canon = __float_canon(text.as_str())
         if canon.len() == 0 {
-            return Err(self.fail_node("expected a number", node))
+            return Result.Err(self.fail_node("expected a number", node))
         }
-        Ok(FloatText { special: 0, canon, node })
+        Result.Ok(FloatText { special: 0, canon, node })
     }
 }
 
@@ -1429,9 +1429,9 @@ Reader: Deserializer {
         self.reads = self.reads + 1
         let node = self.cur
         if self.is_null(node) {
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(self.fail_node("expected null", node))
+            Result.Err(self.fail_node("expected null", node))
         }
     }
 
@@ -1440,28 +1440,28 @@ Reader: Deserializer {
         if !self.nodes[node].quoted {
             let text = self.nodes[node].text.as_str()
             if text == "true" || text == "True" || text == "TRUE" {
-                return Ok(true)
+                return Result.Ok(true)
             }
             if text == "false" || text == "False" || text == "FALSE" {
-                return Ok(false)
+                return Result.Ok(false)
             }
         }
-        Err(self.fail_node("expected a boolean", node))
+        Result.Err(self.fail_node("expected a boolean", node))
     }
 
     fn deserialize_i8(mut self): Result<i8, DeError> {
         let value = self.read_signed(-128, 127, "i8")?
-        Ok(value as i8)
+        Result.Ok(value as i8)
     }
 
     fn deserialize_i16(mut self): Result<i16, DeError> {
         let value = self.read_signed(-32768, 32767, "i16")?
-        Ok(value as i16)
+        Result.Ok(value as i16)
     }
 
     fn deserialize_i32(mut self): Result<i32, DeError> {
         let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
-        Ok(value as i32)
+        Result.Ok(value as i32)
     }
 
     fn deserialize_i64(mut self): Result<i64, DeError> {
@@ -1470,22 +1470,22 @@ Reader: Deserializer {
 
     fn deserialize_isize(mut self): Result<isize, DeError> {
         let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
-        Ok(value as isize)
+        Result.Ok(value as isize)
     }
 
     fn deserialize_u8(mut self): Result<u8, DeError> {
         let value = self.read_unsigned(255, "u8")?
-        Ok(value as u8)
+        Result.Ok(value as u8)
     }
 
     fn deserialize_u16(mut self): Result<u16, DeError> {
         let value = self.read_unsigned(65535, "u16")?
-        Ok(value as u16)
+        Result.Ok(value as u16)
     }
 
     fn deserialize_u32(mut self): Result<u32, DeError> {
         let value = self.read_unsigned(4294967295, "u32")?
-        Ok(value as u32)
+        Result.Ok(value as u32)
     }
 
     fn deserialize_u64(mut self): Result<u64, DeError> {
@@ -1494,52 +1494,52 @@ Reader: Deserializer {
 
     fn deserialize_usize(mut self): Result<usize, DeError> {
         let value = self.read_unsigned(usize.MAX as u64, "usize")?
-        Ok(value as usize)
+        Result.Ok(value as usize)
     }
 
     fn deserialize_f32(mut self): Result<f32, DeError> {
         let read = self.read_float_text()?
         if read.special == 1 {
-            return Ok(f32.INFINITY)
+            return Result.Ok(f32.INFINITY)
         }
         if read.special == 2 {
-            return Ok(f32.NEG_INFINITY)
+            return Result.Ok(f32.NEG_INFINITY)
         }
         if read.special == 3 {
-            return Ok(f32.NAN)
+            return Result.Ok(f32.NAN)
         }
         match f32.parse(read.canon.as_str()) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_node("a number that does not fit in f32", read.node))
+                    Result.Err(self.fail_node("a number that does not fit in f32", read.node))
                 }
             }
-            Err(_) => Err(self.fail_node("expected a number", read.node)),
+            Result.Err(_) => Result.Err(self.fail_node("expected a number", read.node)),
         }
     }
 
     fn deserialize_f64(mut self): Result<f64, DeError> {
         let read = self.read_float_text()?
         if read.special == 1 {
-            return Ok(f64.INFINITY)
+            return Result.Ok(f64.INFINITY)
         }
         if read.special == 2 {
-            return Ok(f64.NEG_INFINITY)
+            return Result.Ok(f64.NEG_INFINITY)
         }
         if read.special == 3 {
-            return Ok(f64.NAN)
+            return Result.Ok(f64.NAN)
         }
         match f64.parse(read.canon.as_str()) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_node("a number that does not fit in f64", read.node))
+                    Result.Err(self.fail_node("a number that does not fit in f64", read.node))
                 }
             }
-            Err(_) => Err(self.fail_node("expected a number", read.node)),
+            Result.Err(_) => Result.Err(self.fail_node("expected a number", read.node)),
         }
     }
 
@@ -1552,14 +1552,14 @@ Reader: Deserializer {
             first = c
         }
         if count != 1 {
-            return Err(self.fail_node("expected one character", node))
+            return Result.Err(self.fail_node("expected one character", node))
         }
-        Ok(first)
+        Result.Ok(first)
     }
 
     fn deserialize_str(mut self): Result<String, DeError> {
         let node = self.scalar_node("a string")?
-        Ok(self.nodes[node].text.clone())
+        Result.Ok(self.nodes[node].text.clone())
     }
 
     fn deserialize_bytes(mut self): Result<List<u8>, DeError> {
@@ -1574,21 +1574,21 @@ Reader: Deserializer {
             out.push(value as u8)
         }
         self.end_seq()?
-        Ok(out)
+        Result.Ok(out)
     }
 
     fn begin_seq(mut self): Result<(), DeError> {
         self.reads = self.reads + 1
         let node = self.cur
         if self.nodes[node].kind != 1 {
-            return Err(self.fail_node("expected a sequence", node))
+            return Result.Err(self.fail_node("expected a sequence", node))
         }
         self.frames.push(RFrame { node, cursor: 0, start: self.reads })
         // The first element is ready for a reader that does not ask whether it exists.
         if !self.nodes[node].items.is_empty() {
             self.cur = self.nodes[node].items[0]
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn has_next_seq_element(mut self): Result<bool, DeError> {
@@ -1597,16 +1597,16 @@ Reader: Deserializer {
 
     fn end_seq(mut self): Result<(), DeError> {
         match self.frames.pop() {
-            Some(frame) => {
+            Option.Some(frame) => {
                 let count = self.nodes[frame.node].items.len()
                 if frame.cursor < count {
                     let extra = self.nodes[frame.node].items[frame.cursor]
-                    return Err(self.fail_node("the sequence has too many elements", extra))
+                    return Result.Err(self.fail_node("the sequence has too many elements", extra))
                 }
             }
-            None => return Err(DeError.new("a sequence end outside a sequence")),
+            Option.None => return Result.Err(DeError.new("a sequence end outside a sequence")),
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_map(mut self): Result<(), DeError> {
@@ -1623,7 +1623,7 @@ Reader: Deserializer {
 
     fn end_map(mut self): Result<(), DeError> {
         self.frames.pop()
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_struct(mut self, name: str): Result<(), DeError> {
@@ -1640,7 +1640,7 @@ Reader: Deserializer {
 
     fn end_struct(mut self): Result<(), DeError> {
         self.frames.pop()
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_enum(mut self, name: str): Result<(), DeError> {
@@ -1649,75 +1649,75 @@ Reader: Deserializer {
         if name == "Option" {
             let none = self.is_null(node)
             self.enums.push(REnum { node, option: true, none, mapped: false, arity: 0 })
-            return Ok(())
+            return Result.Ok(())
         }
         let mapped = self.nodes[node].kind == 2
         if self.nodes[node].kind == 1 || (mapped && self.nodes[node].items.len() != 1) {
-            return Err(self.fail_node("expected a variant name or a mapping with one entry", node))
+            return Result.Err(self.fail_node("expected a variant name or a mapping with one entry", node))
         }
         self.enums.push(REnum { node, option: false, none: false, mapped, arity: 0 })
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_name(mut self): Result<String, DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant outside an enum"))
+            return Result.Err(DeError.new("a variant outside an enum"))
         }
         let i = self.enums.len() - 1
         if self.enums[i].option {
             if self.enums[i].none {
-                return Ok("None".to_string())
+                return Result.Ok("None".to_string())
             }
-            return Ok("Some".to_string())
+            return Result.Ok("Some".to_string())
         }
         let node = self.enums[i].node
         if self.enums[i].mapped {
-            return Ok(self.nodes[node].keys[0].clone())
+            return Result.Ok(self.nodes[node].keys[0].clone())
         }
-        Ok(self.nodes[node].text.clone())
+        Result.Ok(self.nodes[node].text.clone())
     }
 
     fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         let i = self.enums.len() - 1
         self.enums[i].arity = arity
         let node = self.enums[i].node
         if self.enums[i].option {
-            return Ok(())
+            return Result.Ok(())
         }
         if !self.enums[i].mapped {
             if arity != 0 {
-                return Err(self.fail_node("expected a mapping with the variant's payload", node))
+                return Result.Err(self.fail_node("expected a mapping with the variant's payload", node))
             }
-            return Ok(())
+            return Result.Ok(())
         }
         if arity == 0 {
-            return Err(self.fail_node("a unit variant has no payload", node))
+            return Result.Err(self.fail_node("a unit variant has no payload", node))
         }
         if arity > 1 {
             let payload = self.nodes[node].items[0]
             if self.nodes[payload].kind != 1 || self.nodes[payload].items.len() != arity {
                 let message = format("expected a sequence of {arity} payload values")
-                return Err(self.fail_node(message.as_str(), payload))
+                return Result.Err(self.fail_node(message.as_str(), payload))
             }
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Ok(())
+            return Result.Ok(())
         }
         let i = self.enums.len() - 1
         let node = self.enums[i].node
         if self.enums[i].option {
             self.cur = node
-            return Ok(())
+            return Result.Ok(())
         }
         if !self.enums[i].mapped {
-            return Ok(())
+            return Result.Ok(())
         }
         let payload = self.nodes[node].items[0]
         if self.enums[i].arity > 1 {
@@ -1725,15 +1725,15 @@ Reader: Deserializer {
         } else {
             self.cur = payload
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         self.enums.pop()
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -1743,16 +1743,16 @@ Reader {
         self.reads = self.reads + 1
         let node = self.cur
         if self.nodes[node].kind != 2 {
-            return Err(self.fail_node("expected a mapping", node))
+            return Result.Err(self.fail_node("expected a mapping", node))
         }
         self.frames.push(RFrame { node, cursor: 0, start: self.reads })
-        Ok(())
+        Result.Ok(())
     }
 
     /// Whether another sequence element follows, making it the next value.
     priv fn next_entry(mut self): Result<bool, DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a sequence element outside a sequence"))
+            return Result.Err(DeError.new("a sequence element outside a sequence"))
         }
         let f = self.frames.len() - 1
         let node = self.frames[f].node
@@ -1764,39 +1764,39 @@ Reader {
         if cursor < self.nodes[node].items.len() {
             self.cur = self.nodes[node].items[cursor]
             self.frames[f].cursor = cursor + 1
-            Ok(true)
+            Result.Ok(true)
         } else {
             self.frames[f].cursor = cursor
             self.cur = self.missing
             self.missing_at = self.nodes[node].pos
-            Ok(false)
+            Result.Ok(false)
         }
     }
 
     /// Whether another mapping entry follows.
     priv fn has_next_key(mut self): Result<bool, DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a mapping entry outside a mapping"))
+            return Result.Err(DeError.new("a mapping entry outside a mapping"))
         }
         let f = self.frames.len() - 1
         let node = self.frames[f].node
-        Ok(self.frames[f].cursor < self.nodes[node].items.len())
+        Result.Ok(self.frames[f].cursor < self.nodes[node].items.len())
     }
 
     /// Takes the next entry's key, making its value the next value.
     priv fn take_key(mut self): Result<String, DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a mapping entry outside a mapping"))
+            return Result.Err(DeError.new("a mapping entry outside a mapping"))
         }
         let f = self.frames.len() - 1
         let node = self.frames[f].node
         let cursor = self.frames[f].cursor
         if cursor >= self.nodes[node].items.len() {
-            return Err(self.fail_node("expected a mapping entry", node))
+            return Result.Err(self.fail_node("expected a mapping entry", node))
         }
         self.cur = self.nodes[node].items[cursor]
         self.frames[f].cursor = cursor + 1
-        Ok(self.nodes[node].keys[cursor].clone())
+        Result.Ok(self.nodes[node].keys[cursor].clone())
     }
 }
 
@@ -1858,14 +1858,14 @@ Writer {
     /// ```
     fn finish(own self): Result<String, DeError> {
         if !self.has_root {
-            return Err(DeError.new("no value was written"))
+            return Result.Err(DeError.new("no value was written"))
         }
         if !self.stack.is_empty() {
-            return Err(DeError.new("unbalanced YAML container"))
+            return Result.Err(DeError.new("unbalanced YAML container"))
         }
         let mut out = String.new()
         __emit_root(self.nodes, self.root, mut out)
-        Ok(out)
+        Result.Ok(out)
     }
 
     /// Places `node` where the next value goes: as the document, an element of the open sequence, or the value of
@@ -1874,62 +1874,62 @@ Writer {
         let idx = self.nodes.len()
         if self.stack.is_empty() {
             if self.has_root {
-                return Err(DeError.new("a YAML document holds one value"))
+                return Result.Err(DeError.new("a YAML document holds one value"))
             }
             self.nodes.push(node)
             self.root = idx
             self.has_root = true
-            return Ok(idx)
+            return Result.Ok(idx)
         }
         let top = self.stack[self.stack.len() - 1]
         if self.nodes[top].kind == 2 && self.nodes[top].keys.len() != self.nodes[top].items.len() + 1 {
-            return Err(DeError.new("a YAML mapping value without a key"))
+            return Result.Err(DeError.new("a YAML mapping value without a key"))
         }
         self.nodes.push(node)
         self.nodes[top].items.push(idx)
-        Ok(idx)
+        Result.Ok(idx)
     }
 
     priv fn add_scalar(mut self, own text: String): Result<(), DeError> {
         self.add_value(__scalar_node(text, false, 0))?
-        Ok(())
+        Result.Ok(())
     }
 
     /// Opens a sequence (`kind` 1) or mapping (`kind` 2) as the next value.
     priv fn open(mut self, kind: i32): Result<(), DeError> {
         let idx = self.add_value(__collection_node(kind, 0))?
         self.stack.push(idx)
-        Ok(())
+        Result.Ok(())
     }
 
     /// Closes the innermost container, checking that it is of `kind`.
     priv fn close(mut self, kind: i32): Result<(), DeError> {
         match self.stack.pop() {
-            Some(idx) => {
+            Option.Some(idx) => {
                 if self.nodes[idx].kind == kind {
-                    Ok(())
+                    Result.Ok(())
                 } else {
-                    Err(DeError.new("unbalanced YAML container"))
+                    Result.Err(DeError.new("unbalanced YAML container"))
                 }
             }
-            None => Err(DeError.new("unbalanced YAML container")),
+            Option.None => Result.Err(DeError.new("unbalanced YAML container")),
         }
     }
 
     /// Adds the key of the next mapping entry.
     priv fn add_key(mut self, key: str): Result<(), DeError> {
         if self.stack.is_empty() {
-            return Err(DeError.new("a YAML mapping key outside a mapping"))
+            return Result.Err(DeError.new("a YAML mapping key outside a mapping"))
         }
         let top = self.stack[self.stack.len() - 1]
         if self.nodes[top].kind != 2 {
-            return Err(DeError.new("a YAML mapping key outside a mapping"))
+            return Result.Err(DeError.new("a YAML mapping key outside a mapping"))
         }
         if self.nodes[top].keys.len() != self.nodes[top].items.len() {
-            return Err(DeError.new("two YAML keys in a row"))
+            return Result.Err(DeError.new("two YAML keys in a row"))
         }
         self.nodes[top].keys.push(__string_text(key))
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -2034,7 +2034,7 @@ Writer: Serializer {
         // A map's own order is unspecified, so its entries are printed in the order of their keys.
         let top = self.stack[self.stack.len() - 1]
         self.nodes[top].quoted = true
-        Ok(())
+        Result.Ok(())
     }
 
     fn map_key(mut self, key: str): Result<(), DeError> {
@@ -2070,12 +2070,12 @@ Writer: Serializer {
                 self.add_scalar("null".to_string())?
             }
             self.variants.push(0)
-            return Ok(())
+            return Result.Ok(())
         }
         if arity == 0 {
             self.add_scalar(__string_text(variant))?
             self.variants.push(0)
-            return Ok(())
+            return Result.Ok(())
         }
         self.open(2)?
         self.add_key(variant)?
@@ -2085,13 +2085,13 @@ Writer: Serializer {
         } else {
             self.variants.push(1)
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_variant(mut self, arity: usize): Result<(), DeError> {
         let kind = match self.variants.pop() {
-            Some(kind) => kind,
-            None => return Err(DeError.new("unbalanced YAML variant")),
+            Option.Some(kind) => kind,
+            Option.None => return Result.Err(DeError.new("unbalanced YAML variant")),
         }
         if kind == 2 {
             self.close(1)?
@@ -2099,7 +2099,7 @@ Writer: Serializer {
         if kind != 0 {
             self.close(2)?
         }
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -2443,11 +2443,11 @@ priv fn __parse_int(text: str): IntText {
         }
         if !result.overflow {
             match result.mag.checked_mul(radix) {
-                Some(shifted) => match shifted.checked_add(d as u64) {
-                    Some(sum) => result.mag = sum,
-                    None => result.overflow = true,
+                Option.Some(shifted) => match shifted.checked_add(d as u64) {
+                    Option.Some(sum) => result.mag = sum,
+                    Option.None => result.overflow = true,
                 }
-                None => result.overflow = true,
+                Option.None => result.overflow = true,
             }
         }
         i = i + 1
@@ -2595,13 +2595,13 @@ priv fn __push_breaks(mut out: String, count: usize) {
 priv fn __trim_blank_end(mut out: String, protect: usize) {
     while out.len() > protect {
         match out.pop() {
-            Some(c) => {
+            Option.Some(c) => {
                 if c != ' ' && c != '	' {
                     out.push(c)
                     break
                 }
             }
-            None => break,
+            Option.None => break,
         }
     }
 }

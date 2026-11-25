@@ -54,7 +54,7 @@ fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): Thread<T> {
         // The result slot holds `None` until the thread stores its value. It is written byte by byte from a real
         // `None`, because assigning through a raw pointer would first drop whatever the memory held.
         let slot = ((st as CPtr<u8>) + ThreadState.size()) as CPtr<Option<T>>
-        let empty: Option<T> = None
+        let empty: Option<T> = Option.None
         let src = (&empty) as CPtr<u8>
         let dst = slot as CPtr<u8>
         let mut i: usize = 0
@@ -67,7 +67,7 @@ fn spawn<T: Send, F: FnOnce(): T + Send>(own f: F): Thread<T> {
                 let value: T = __call_once(f)
                 __mutex_lock((*st).lock)
                 if (*st).detached == 0 {
-                    *slot = Some(value)
+                    *slot = Option.Some(value)
                     (*st).stored = 1
                 }
                 (*st).done = 1
@@ -139,8 +139,8 @@ Thread<T> {
             }
             me.joined = true
             match value {
-                Some(v) => v,
-                None => panic("thread: it finished without a result"),
+                Option.Some(v) => v,
+                Option.None => panic("thread: it finished without a result"),
             }
         }
     }
@@ -178,7 +178,7 @@ Thread<T>: Drop {
             let st = self.state as CPtr<ThreadState>
             let slot = (self.state + ThreadState.size()) as CPtr<Option<T>>
             __mutex_lock((*st).lock)
-            let mut leftover: Option<T> = None
+            let mut leftover: Option<T> = Option.None
             if (*st).stored == 1 {
                 leftover = (*slot).take()
             } else {

@@ -128,8 +128,11 @@ Tests: `unused/parameters.bd`.
 
 **LN17. `else_on_local_enum` (L0004).** A `match` with an `else` arm whose other arms name variants of an enum declared in
 the entry package is reported at the `else`, and the note lists the variants it catches. Enums from the standard library
-or a dependency, matches on other types, matches that name every variant, and `if let ... else` are not reported.
-Tests: `else_enum/hides_variants.bd`, `else_enum/negatives.bd`.
+or a dependency, matches on other types, matches that name every variant, and `if let ... else` are not reported. An
+inferred variant (`.Circle(r)`, `target-typing.md` TT13) names the enum its sibling arms name, or else the one local enum
+that declares every inferred variant; with no such enum the match is not reported. No lint writes a bare `Some`, `None`,
+`Ok`, or `Err` in a fix (TT15).
+Tests: `else_enum/hides_variants.bd`, `else_enum/inferred_variants.bd`, `else_enum/negatives.bd`.
 
 **LN18. `unreachable_code` (L0009).** The statement after one that never completes. A statement never completes when it
 is `return`, `break`, or `continue`; a call to `panic`, `unreachable`, `todo`, `unimplemented`, `process.exit`, or a

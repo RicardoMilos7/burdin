@@ -27,7 +27,7 @@ fn gcd(a: u64, b: u64): u64 {
 /// ```
 fn lcm(a: u64, b: u64): Option<u64> {
     if a == 0 || b == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
     let g = gcd(a, b)
     (a / g).checked_mul(b)
@@ -127,16 +127,16 @@ fn factorial(n: u64): Option<u64> {
     let mut i: u64 = 2
     while i <= n {
         match result.checked_mul(i) {
-            Some(next) => {
+            Option.Some(next) => {
                 result = next
             }
-            None => {
-                return None
+            Option.None => {
+                return Option.None
             }
         }
         i = i + 1
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `n` choose `k`: `Some(0)` when `k > n`, and `None` when the value does not fit in a `u64`.
@@ -148,7 +148,7 @@ fn factorial(n: u64): Option<u64> {
 /// ```
 fn binomial(n: u64, k: u64): Option<u64> {
     if k > n {
-        return Some(0)
+        return Option.Some(0)
     }
     let j = if k < n - k { k } else { n - k }
     let mut result: u64 = 1
@@ -159,12 +159,12 @@ fn binomial(n: u64, k: u64): Option<u64> {
         let product = (result as u128) * ((n - j + i) as u128)
         let next = product / (i as u128)
         if next > (u64.MAX as u128) {
-            return None
+            return Option.None
         }
         result = next as u64
         i = i + 1
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// The point `(1 - t) * a + t * b`: `t = 0` gives `a` and `t = 1` gives `b` exactly.
@@ -233,13 +233,13 @@ fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f6
     let mut fa = f(a)
     let fb = f(b)
     if fa == 0.0 {
-        return Some(a)
+        return Option.Some(a)
     }
     if fb == 0.0 {
-        return Some(b)
+        return Option.Some(b)
     }
     if (fa > 0.0) == (fb > 0.0) {
-        return None
+        return Option.None
     }
     let mut mid = a * 0.5 + b * 0.5
     let mut steps: usize = 0
@@ -247,7 +247,7 @@ fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f6
         mid = a * 0.5 + b * 0.5
         let fm = f(mid)
         if fm == 0.0 || (b - a).abs() * 0.5 <= tolerance {
-            return Some(mid)
+            return Option.Some(mid)
         }
         if (fm > 0.0) == (fa > 0.0) {
             a = mid
@@ -257,7 +257,7 @@ fn bisect<F: Fn(f64): f64>(f: F, low: f64, high: f64, tolerance: f64): Option<f6
         }
         steps = steps + 1
     }
-    Some(mid)
+    Option.Some(mid)
 }
 
 /// The composite Simpson rule for the integral of `f` over `a..b`. An odd `intervals` is rounded up to even. Panics

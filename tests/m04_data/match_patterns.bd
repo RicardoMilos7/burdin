@@ -49,10 +49,10 @@ fn where_is(x: i32, y: i32): str {
 
 fn opt_name(o: Option<i32>): str {
     match o {
-        Some(0) => "some zero",
-        Some(n) if n > 100 => "some big",
-        Some(_) => "some",
-        None => "none",
+        Option.Some(0) => "some zero",
+        Option.Some(n) if n > 100 => "some big",
+        Option.Some(_) => "some",
+        Option.None => "none",
     }
 }
 
@@ -69,8 +69,8 @@ fn main() {
     println(where_is(0, 3))
     println(where_is(4, 0))
     println(where_is(2, 2))
-    println(opt_name(Some(0)))
-    println(opt_name(Some(500)))
-    println(opt_name(Some(7)))
-    println(opt_name(None))
+    println(opt_name(Option.Some(0)))
+    println(opt_name(Option.Some(500)))
+    println(opt_name(Option.Some(7)))
+    println(opt_name(Option.None))
 }

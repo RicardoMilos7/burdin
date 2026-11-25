@@ -196,7 +196,7 @@ The reader works on the `Value` tree that `parse` returns. It is strict about ty
   is the variant `Rect` with two payload values. Any other form is `expected a variant: a string or a table with one key`.
 - An `Option` reads a present value as `Option.Some`. An absent key is not a value at all: a derived struct reports
   `missing field` for it (SER6). A hand-written reader may treat an absent key as `Option.None`. This is the one place
-  where the TOML form of `None` (its omission, TOML14) and the framework's rule for an absent field disagree, so the
+  where the TOML form of `Option.None` (its omission, TOML14) and the framework's rule for an absent field disagree, so the
   case is pinned by `tests/toml/write/sample.expected` (the second sample has no `backup`, and reading it back is
   `missing field 'backup'`) and by `tests/toml/config/missing_option`, and is an open decision for the framework, not
   for TOML.

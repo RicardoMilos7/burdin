@@ -5,5 +5,5 @@
 
 fn main(): Result<()> {
     println("done")
-    Ok(())
+    Result.Ok(())
 }

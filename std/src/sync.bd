@@ -253,17 +253,17 @@ Mutex<T> {
     ///
     /// ```
     /// let m = Mutex.new(1)
-    /// assert_eq(m.try_lock(|v| *v + 1), Some(2))
+    /// assert_eq(m.try_lock(|v| *v + 1), Option.Some(2))
     /// ```
     fn try_lock<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, true) {
-                return None
+                return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
             __release_write(self.head as CPtr<LockHead>)
-            Some(result)
+            Option.Some(result)
         }
     }
 
@@ -289,8 +289,8 @@ Mutex<T> {
     fn into_inner(own self): T {
         let mut inner = self
         match inner.value.pop() {
-            Some(v) => v,
-            None => panic("Mutex: the value is missing"),
+            Option.Some(v) => v,
+            Option.None => panic("Mutex: the value is missing"),
         }
     }
 }
@@ -375,17 +375,17 @@ RwLock<T> {
     ///
     /// ```
     /// let lock = RwLock.new(4)
-    /// assert_eq(lock.try_read(|v| *v), Some(4))
+    /// assert_eq(lock.try_read(|v| *v), Option.Some(4))
     /// ```
     fn try_read<R, F: FnOnce(&T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, false) {
-                return None
+                return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&(*p))
             __release_read(self.head as CPtr<LockHead>)
-            Some(result)
+            Option.Some(result)
         }
     }
 
@@ -396,17 +396,17 @@ RwLock<T> {
     /// assert_eq(lock.try_write(|v| {
     ///     *v = 5
     ///     *v
-    /// }), Some(5))
+    /// }), Option.Some(5))
     /// ```
     fn try_write<R, F: FnOnce(&mut T): R>(self, own f: F): Option<R> {
         unsafe {
             if !__try_acquire(self.head as CPtr<LockHead>, true) {
-                return None
+                return Option.None
             }
             let p = (&self.value[0]) as CPtr<T>
             let result = f(&mut (*p))
             __release_write(self.head as CPtr<LockHead>)
-            Some(result)
+            Option.Some(result)
         }
     }
 
@@ -431,8 +431,8 @@ RwLock<T> {
     fn into_inner(own self): T {
         let mut inner = self
         match inner.value.pop() {
-            Some(v) => v,
-            None => panic("RwLock: the value is missing"),
+            Option.Some(v) => v,
+            Option.None => panic("RwLock: the value is missing"),
         }
     }
 }

@@ -144,14 +144,14 @@ fn float_check(mut t: Tally, name: str, got: f64, want: str, tolerance: f64) {
 
 fn option_check(mut t: Tally, name: str, got: Option<f64>, want: str, tolerance: f64) {
     match got {
-        Some(v) => {
+        Option.Some(v) => {
             if want == "none" {
                 t.check(name, false, format("got {}, want none", v))
             } else {
                 t.check(name, close(v, float_of(want), tolerance), format("got {}, want {}", v, want))
             }
         }
-        None => {
+        Option.None => {
             t.check(name, want == "none", format("got none, want {}", want))
         }
     }
@@ -168,10 +168,10 @@ fn list_check(mut t: Tally, name: str, got: List<f64>, want: str, tolerance: f64
 
 fn option_list_check(mut t: Tally, name: str, got: Option<List<f64>>, want: str, tolerance: f64) {
     match got {
-        Some(values) => {
+        Option.Some(values) => {
             list_check(mut t, name, values, want, tolerance)
         }
-        None => {
+        Option.None => {
             t.check(name, want == "none", format("got none, want {}", want))
         }
     }
@@ -182,8 +182,8 @@ fn option_list_check(mut t: Tally, name: str, got: Option<List<f64>>, want: str,
 
 fn show_opt_u64(value: Option<u64>): String {
     match value {
-        Some(v) => v.to_string(),
-        None => String.from("none"),
+        Option.Some(v) => v.to_string(),
+        Option.None => String.from("none"),
     }
 }
 
@@ -364,18 +364,18 @@ fn vector_angle(a: List<f64>, b: List<f64>): Option<f64> {
 fn vector_normalized(a: List<f64>): Option<List<f64>> {
     if a.len() == 2 {
         match vec2(a).normalized() {
-            Some(v) => Some(components(v)),
-            None => None,
+            Option.Some(v) => Option.Some(components(v)),
+            Option.None => Option.None,
         }
     } else if a.len() == 3 {
         match vec3(a).normalized() {
-            Some(v) => Some(components(v)),
-            None => None,
+            Option.Some(v) => Option.Some(components(v)),
+            Option.None => Option.None,
         }
     } else {
         match vec4(a).normalized() {
-            Some(v) => Some(components(v)),
-            None => None,
+            Option.Some(v) => Option.Some(components(v)),
+            Option.None => Option.None,
         }
     }
 }
@@ -609,21 +609,21 @@ fn fixed_inverse(a: Mat): Option<Mat> {
     if a.rows == 2 {
         let x: Matrix<2, 2> = to_fixed(a)
         return match x.inverse() {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     if a.rows == 3 {
         let x: Matrix<3, 3> = to_fixed(a)
         return match x.inverse() {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     let x: Matrix<4, 4> = to_fixed(a)
     match x.inverse() {
-        Some(m) => Some(mat_of_fixed(m)),
-        None => None,
+        Option.Some(m) => Option.Some(mat_of_fixed(m)),
+        Option.None => Option.None,
     }
 }
 
@@ -632,40 +632,40 @@ fn fixed_solve(a: Mat, b: Mat): Option<Mat> {
         let x: Matrix<2, 2> = to_fixed(a)
         let y: Matrix<2, 1> = to_fixed(b)
         return match x.solve(y) {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     if a.rows == 2 && b.cols == 2 {
         let x: Matrix<2, 2> = to_fixed(a)
         let y: Matrix<2, 2> = to_fixed(b)
         return match x.solve(y) {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     if a.rows == 3 && b.cols == 1 {
         let x: Matrix<3, 3> = to_fixed(a)
         let y: Matrix<3, 1> = to_fixed(b)
         return match x.solve(y) {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     if a.rows == 3 && b.cols == 2 {
         let x: Matrix<3, 3> = to_fixed(a)
         let y: Matrix<3, 2> = to_fixed(b)
         return match x.solve(y) {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     if a.rows == 4 && b.cols == 1 {
         let x: Matrix<4, 4> = to_fixed(a)
         let y: Matrix<4, 1> = to_fixed(b)
         return match x.solve(y) {
-            Some(m) => Some(mat_of_fixed(m)),
-            None => None,
+            Option.Some(m) => Option.Some(mat_of_fixed(m)),
+            Option.None => Option.None,
         }
     }
     panic("fixed: no shape for solve")
@@ -673,8 +673,8 @@ fn fixed_solve(a: Mat, b: Mat): Option<Mat> {
 
 fn dyn_option_mat(value: Option<DynMatrix>): Option<Mat> {
     match value {
-        Some(d) => Some(mat_of_dyn(d)),
-        None => None,
+        Option.Some(d) => Option.Some(mat_of_dyn(d)),
+        Option.None => Option.None,
     }
 }
 
@@ -753,14 +753,14 @@ fn mat_check(mut t: Tally, name: str, got: Mat, want: str) {
 
 fn opt_mat_check(mut t: Tally, name: str, got: Option<Mat>, want: str) {
     match got {
-        Some(m) => {
+        Option.Some(m) => {
             if want == "none" {
                 t.check(name, false, format("got {}x{}:{}, want none", m.rows, m.cols, show_list(m.data)))
             } else {
                 mat_check(mut t, name, m, want)
             }
         }
-        None => {
+        Option.None => {
             t.check(name, want == "none", format("got none, want {}", want))
         }
     }

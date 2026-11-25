@@ -123,15 +123,15 @@ When you care about one case only, `if let` and `while let` take a pattern and r
 
 ```burdin
 fn main() {
-    let maybe: Option<i32> = Some(5)
-    if let Some(x) = maybe {
+    let maybe: Option<i32> = Option.Some(5)
+    if let Option.Some(x) = maybe {
         println("got {x}")
     }
 
     let mut stack = List<i32>.new()
     stack.push(1)
     stack.push(2)
-    while let Some(top) = stack.pop() {
+    while let Option.Some(top) = stack.pop() {
         println("popped {top}")
     }
 }
@@ -144,13 +144,13 @@ fn main() {
 
 ```burdin
 fn double_if_present(value: Option<i32>): i32 {
-    let Some(n) = value else { return 0 }
+    let Option.Some(n) = value else { return 0 }
     n * 2
 }
 
 fn main() {
-    println("{double_if_present(Some(21))}")
-    println("{double_if_present(None)}")
+    println("{double_if_present(Option.Some(21))}")
+    println("{double_if_present(Option.None)}")
 }
 ```
 

@@ -51,7 +51,7 @@ impl FnCx<'_> {
             K::Interp(parts) => self.interp_expr(parts, span),
             K::Bool(b) => mk(tir::ExprKind::Bool(*b), Ty::Bool, span),
             K::Unit => mk(tir::ExprKind::Unit, Ty::Unit, span),
-            K::Name { name, args } if args.is_empty() => self.name(name, expect),
+            K::Name { name, args } if args.is_empty() => self.name(name),
             // A generic type path only means something as the left side of an associated call.
             K::Name { name, args: _ } => {
                 self.diags.error(Code::TYPE_MISMATCH, span, format!("`{}` is a type, not a value", name.name));

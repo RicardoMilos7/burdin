@@ -70,6 +70,42 @@ impl FnCx<'_> {
         self.value_closure(fn_sig, &mutable, span, |args| mk(tir::ExprKind::Builtin(b, args), ret, span))
     }
 
+    /// `Option.None`, and `Option.Some`, `Result.Ok`, `Result.Err` used as values: a member of the built-in `Option` or
+    /// `Result` written without type arguments. `None` takes its type from the expected type.
+    pub(super) fn prelude_member(
+        &mut self,
+        owner: &str,
+        name: &ast::Ident,
+        expect: Option<&Ty>,
+        span: Span,
+    ) -> tir::Expr {
+        match (owner, name.name.as_str()) {
+            ("Option", "None") => match expect {
+                Some(t @ Ty::Option(_)) => mk(tir::ExprKind::None, t.clone(), span),
+                Some(Ty::Error) => error_expr(span),
+                _ => {
+                    self.diags.error(
+                        Code::TYPE_MISMATCH,
+                        span,
+                        "cannot tell the type of this `Option.None`; annotate the binding with an `Option` type",
+                    );
+                    error_expr(span)
+                }
+            },
+            ("Option", "Some") => self.constructor_value(Ctor::Some, expect, span),
+            ("Result", "Ok") => self.constructor_value(Ctor::Ok, expect, span),
+            ("Result", "Err") => self.constructor_value(Ctor::Err, expect, span),
+            _ => {
+                self.diags.error(
+                    Code::UNKNOWN_NAME,
+                    name.span,
+                    format!("`{owner}` has no function or variant `{}`", name.name),
+                );
+                error_expr(span)
+            }
+        }
+    }
+
     /// `Some`, `Ok`, or `Err` used as a value (CL11). A constructor has no signature of its own, so the expected
     /// closure type fixes its type arguments. The closure's one parameter is the payload; the expected result gives
     /// the argument the payload does not fix (`Err`'s `T`, `Ok`'s `E`), and `Some`'s result is built from the payload

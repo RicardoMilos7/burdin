@@ -35,7 +35,7 @@ against the certificate's IP entries). An expired, self-signed, untrusted, or wr
 (`CertificateInvalid` or `HostnameMismatch`). The one switch that turns it off is `insecure_skip_verify()`, which is
 named for what it does.
 
-`recv` returns `Ok(0)` only after the peer's `close_notify`. A transport that ends without one is
+`recv` returns `Result.Ok(0)` only after the peer's `close_notify`. A transport that ends without one is
 `TlsError.UnexpectedEof`, so a connection cut by someone else does not look like a complete message. `Read.read` and
 `Write.write` report the same failures as `IoError` (`UnexpectedEof` for a truncation, `InvalidData` for the rest);
 use `recv` and `send` to see the `TlsError`.
@@ -61,12 +61,12 @@ fn fetch(addr: str, host: str, ca_pem: str): Result<String> {
     let mut reply = List<u8>.new()
     stream.recv(mut reply, 1024)?
     stream.close()?
-    Ok(String.from_utf8_lossy(reply[0..reply.len()]))
+    Result.Ok(String.from_utf8_lossy(reply[0..reply.len()]))
 }
 
 fn main(): Result<()> {
     println("{}", fetch("127.0.0.1:8443", "example.test", "")?)
-    Ok(())
+    Result.Ok(())
 }
 ```
 
@@ -82,7 +82,7 @@ fn serve(own tcp: TcpStream, config: ServerConfig): Result<()> {
     let n = stream.recv(mut request, 4096)?
     stream.send_all(request[0..n])?
     stream.close()?
-    Ok(())
+    Result.Ok(())
 }
 
 fn main(): Result<()> {
@@ -99,7 +99,7 @@ fn main(): Result<()> {
 
 Server-side ALPN selection and SNI-based certificate selection (both are OpenSSL callbacks, and the C bridge cannot pass
 a Burdin function to C), encrypted private keys (a password callback), session resumption and tickets, 0-RTT,
-revocation checking, DTLS, and QUIC. A server speaks no ALPN, so `alpn_protocol()` is `None` against it. See
+revocation checking, DTLS, and QUIC. A server speaks no ALPN, so `alpn_protocol()` is `Option.None` against it. See
 `spec/tls.md`, TLS8.
 
 ## Decision: the platform's TLS stack

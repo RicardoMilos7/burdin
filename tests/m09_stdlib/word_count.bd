@@ -11,8 +11,8 @@
 
 fn bump(mut counts: Map<String, i32>, own word: String) {
     let current = match counts.get(word) {
-        Some(c) => *c,
-        None => 0,
+        Option.Some(c) => *c,
+        Option.None => 0,
     }
     counts.insert(word, current + 1)
 }
@@ -39,15 +39,15 @@ fn count_words(text: str): Map<String, i32> {
 fn main() {
     let path = "burdin_word_count.txt"
     match write_file(path, "the quick brown fox jumps over the lazy dog the end\n") {
-        Ok(_) => {},
-        Err(_) => {
+        Result.Ok(_) => {},
+        Result.Err(_) => {
             println("write failed")
             return
         },
     }
     let content = match read_to_string(path) {
-        Ok(t) => t,
-        Err(_) => {
+        Result.Ok(t) => t,
+        Result.Err(_) => {
             println("read failed")
             return
         },
@@ -63,8 +63,8 @@ fn main() {
     keys.sort()
     for key in keys {
         let n = match counts.get(key) {
-            Some(c) => *c,
-            None => 0,
+            Option.Some(c) => *c,
+            Option.None => 0,
         }
         let mut line = String.new()
         line.push_str(key)

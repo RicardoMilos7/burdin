@@ -26,7 +26,7 @@ interface Iterator<T> {
     ///
     /// ```
     /// let mut it = [7].into_iter()
-    /// assert_eq(it.next(), Some(7))
+    /// assert_eq(it.next(), Option.Some(7))
     /// assert(it.next().is_none())
     /// ```
     fn next(mut self): Option<T>
@@ -104,7 +104,7 @@ interface Iterator<T> {
     /// assert_eq([1, 2].into_iter().flat_map(|x| [x, x].into_iter()).count(), 4)
     /// ```
     fn flat_map<U, J: Iterator<U>, F: FnMut(T): J>(own self, own f: F): FlatMapIter<Self, T, J, U, F> {
-        let current: Option<J> = None
+        let current: Option<J> = Option.None
         FlatMapIter { inner: self, f: f, current: current }
     }
 
@@ -129,7 +129,7 @@ interface Iterator<T> {
     /// A lazy chain that applies `f` and stops at the first `None` it returns.
     ///
     /// ```
-    /// let v = [1, 2, 0, 4].into_iter().map_while(|x| if x > 0 { Some(x) } else { None }).to_list()
+    /// let v = [1, 2, 0, 4].into_iter().map_while(|x| if x > 0 { Option.Some(x) } else { Option.None }).to_list()
     /// assert_eq(v.len(), 2)
     /// ```
     fn map_while<U, F: FnMut(T): Option<U>>(own self, own f: F): MapWhileIter<Self, T, U, F> {
@@ -181,10 +181,10 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     acc = f(acc, x)
                 }
-                None => {
+                Option.None => {
                     return acc
                 }
             }
@@ -200,10 +200,10 @@ interface Iterator<T> {
         let mut n: usize = 0
         loop {
             match self.next() {
-                Some(_) => {
+                Option.Some(_) => {
                     n = n + 1
                 }
-                None => {
+                Option.None => {
                     return n
                 }
             }
@@ -221,12 +221,12 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if f(x) {
                         return true
                     }
                 }
-                None => {
+                Option.None => {
                     return false
                 }
             }
@@ -243,12 +243,12 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if !f(x) {
                         return false
                     }
                 }
-                None => {
+                Option.None => {
                     return true
                 }
             }
@@ -259,19 +259,19 @@ interface Iterator<T> {
     /// `xs.find(f)`, which clones the item it returns and needs `Clone`; this lazy form never clones.
     ///
     /// ```
-    /// assert_eq([5, 6, 7].into_iter().find(|x| *x > 5), Some(6))
+    /// assert_eq([5, 6, 7].into_iter().find(|x| *x > 5), Option.Some(6))
     /// ```
     fn find<F: FnMut(&T): bool>(mut self, own f: F): Option<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if f(&x) {
-                        return Some(x)
+                        return Option.Some(x)
                     }
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -280,16 +280,16 @@ interface Iterator<T> {
     /// The last item, or `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([5, 6, 7].into_iter().last(), Some(7))
+    /// assert_eq([5, 6, 7].into_iter().last(), Option.Some(7))
     /// ```
     fn last(mut self): Option<T> {
-        let mut result: Option<T> = None
+        let mut result: Option<T> = Option.None
         loop {
             match self.next() {
-                Some(x) => {
-                    result = Some(x)
+                Option.Some(x) => {
+                    result = Option.Some(x)
                 }
-                None => {
+                Option.None => {
                     return result
                 }
             }
@@ -299,21 +299,21 @@ interface Iterator<T> {
     /// The item `n` places on (counting from 0), or `None` when the iterator is shorter; it consumes the items before.
     ///
     /// ```
-    /// assert_eq([5, 6, 7].into_iter().nth(1), Some(6))
+    /// assert_eq([5, 6, 7].into_iter().nth(1), Option.Some(6))
     /// assert(([5].into_iter()).nth(3).is_none())
     /// ```
     fn nth(mut self, n: usize): Option<T> {
         let mut left = n
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if left == 0 {
-                        return Some(x)
+                        return Option.Some(x)
                     }
                     left = left - 1
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -322,21 +322,21 @@ interface Iterator<T> {
     /// The index of the first item `f` accepts.
     ///
     /// ```
-    /// assert_eq([5, 6, 7].into_iter().position(|x| x == 6), Some(1))
+    /// assert_eq([5, 6, 7].into_iter().position(|x| x == 6), Option.Some(1))
     /// ```
     fn position<F: FnMut(T): bool>(mut self, own f: F): Option<usize> {
         let mut f = f
         let mut i: usize = 0
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if f(x) {
-                        return Some(i)
+                        return Option.Some(i)
                     }
                     i = i + 1
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -353,10 +353,10 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     f(x)
                 }
-                None => {
+                Option.None => {
                     return
                 }
             }
@@ -366,25 +366,25 @@ interface Iterator<T> {
     /// Combines the items into one with `f`, left to right; `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([1, 2, 3].into_iter().reduce(|a, b| a + b), Some(6))
+    /// assert_eq([1, 2, 3].into_iter().reduce(|a, b| a + b), Option.Some(6))
     /// ```
     fn reduce<F: FnMut(T, T): T>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
-            Some(first) => {
+            Option.Some(first) => {
                 let mut acc = first
                 loop {
                     match self.next() {
-                        Some(x) => {
+                        Option.Some(x) => {
                             acc = f(acc, x)
                         }
-                        None => {
-                            return Some(acc)
+                        Option.None => {
+                            return Option.Some(acc)
                         }
                     }
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
@@ -401,14 +401,14 @@ interface Iterator<T> {
         let mut no = List<T>.new()
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if __accepts(mut f, x) {
                         yes.push(x)
                     } else {
                         no.push(x)
                     }
                 }
-                None => {
+                Option.None => {
                     return (yes, no)
                 }
             }
@@ -418,114 +418,114 @@ interface Iterator<T> {
     /// The least item under the comparator `f`; the first of equal items. `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([1, 3, 2].into_iter().min_by(|a, b| (*a).cmp(*b)), Some(1))
+    /// assert_eq([1, 3, 2].into_iter().min_by(|a, b| (*a).cmp(*b)), Option.Some(1))
     /// ```
     fn min_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
-            Some(first) => {
+            Option.Some(first) => {
                 let mut best = first
                 loop {
                     match self.next() {
-                        Some(x) => {
+                        Option.Some(x) => {
                             if __is_less(mut f, x, best) {
                                 best = x
                             }
                         }
-                        None => {
-                            return Some(best)
+                        Option.None => {
+                            return Option.Some(best)
                         }
                     }
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
     /// The greatest item under the comparator `f`; the last of equal items. `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([1, 3, 2].into_iter().max_by(|a, b| (*a).cmp(*b)), Some(3))
+    /// assert_eq([1, 3, 2].into_iter().max_by(|a, b| (*a).cmp(*b)), Option.Some(3))
     /// ```
     fn max_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
-            Some(first) => {
+            Option.Some(first) => {
                 let mut best = first
                 loop {
                     match self.next() {
-                        Some(x) => {
+                        Option.Some(x) => {
                             if !__is_less(mut f, x, best) {
                                 best = x
                             }
                         }
-                        None => {
-                            return Some(best)
+                        Option.None => {
+                            return Option.Some(best)
                         }
                     }
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
     /// The item with the least key; the first of equal ones. `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([1, -5, 3].into_iter().min_by_key(|x| (*x).abs()), Some(1))
+    /// assert_eq([1, -5, 3].into_iter().min_by_key(|x| (*x).abs()), Option.Some(1))
     /// ```
     fn min_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
-            Some(first) => {
+            Option.Some(first) => {
                 let mut best_key = f(&first)
                 let mut best = first
                 loop {
                     match self.next() {
-                        Some(x) => {
+                        Option.Some(x) => {
                             let k = f(&x)
                             if k.cmp(best_key).is_lt() {
                                 best = x
                                 best_key = k
                             }
                         }
-                        None => {
-                            return Some(best)
+                        Option.None => {
+                            return Option.Some(best)
                         }
                     }
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
     /// The item with the greatest key; the last of equal ones. `None` when the iterator is empty.
     ///
     /// ```
-    /// assert_eq([1, -5, 3].into_iter().max_by_key(|x| (*x).abs()), Some(-5))
+    /// assert_eq([1, -5, 3].into_iter().max_by_key(|x| (*x).abs()), Option.Some(-5))
     /// ```
     fn max_by_key<K: Ord, F: FnMut(&T): K>(mut self, own f: F): Option<T> {
         let mut f = f
         match self.next() {
-            Some(first) => {
+            Option.Some(first) => {
                 let mut best_key = f(&first)
                 let mut best = first
                 loop {
                     match self.next() {
-                        Some(x) => {
+                        Option.Some(x) => {
                             let k = f(&x)
                             if !k.cmp(best_key).is_lt() {
                                 best = x
                                 best_key = k
                             }
                         }
-                        None => {
-                            return Some(best)
+                        Option.None => {
+                            return Option.Some(best)
                         }
                     }
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
@@ -533,7 +533,7 @@ interface Iterator<T> {
     ///
     /// ```
     /// fn add_checked(acc: i32, x: i32): Result<i32, String> {
-    ///     Ok(acc + x)
+    ///     Result.Ok(acc + x)
     /// }
     /// let r: Result<i32, String> = [1, 2, 3].into_iter().try_fold(0, add_checked)
     /// assert_eq(r.unwrap(), 6)
@@ -543,18 +543,18 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     match f(acc, x) {
-                        Ok(next) => {
+                        Result.Ok(next) => {
                             acc = next
                         }
-                        Err(e) => {
-                            return Err(e)
+                        Result.Err(e) => {
+                            return Result.Err(e)
                         }
                     }
                 }
-                None => {
-                    return Ok(acc)
+                Option.None => {
+                    return Result.Ok(acc)
                 }
             }
         }
@@ -565,9 +565,9 @@ interface Iterator<T> {
     /// ```
     /// fn check_small(x: i32): Result<(), String> {
     ///     if x < 5 {
-    ///         Ok(())
+    ///         Result.Ok(())
     ///     } else {
-    ///         Err(String.from("big"))
+    ///         Result.Err(String.from("big"))
     ///     }
     /// }
     /// let r: Result<(), String> = [1, 2].into_iter().try_for_each(check_small)
@@ -577,16 +577,16 @@ interface Iterator<T> {
         let mut f = f
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     match f(x) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            return Err(e)
+                        Result.Ok(_) => {}
+                        Result.Err(e) => {
+                            return Result.Err(e)
                         }
                     }
                 }
-                None => {
-                    return Ok(())
+                Option.None => {
+                    return Result.Ok(())
                 }
             }
         }
@@ -617,10 +617,10 @@ interface Iterator<T> {
         let mut out: List<T> = List<T>.new()
         loop {
             match self.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     out.push(x)
                 }
-                None => {
+                Option.None => {
                     return out
                 }
             }
@@ -632,22 +632,22 @@ interface Iterator<T> {
 priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
     let mut it = it
     match it.next() {
-        Some(first) => {
+        Option.Some(first) => {
             let mut best = first
             loop {
                 match it.next() {
-                    Some(x) => {
+                    Option.Some(x) => {
                         if x.cmp(best).is_lt() {
                             best = x
                         }
                     }
-                    None => {
-                        return Some(best)
+                    Option.None => {
+                        return Option.Some(best)
                     }
                 }
             }
         }
-        None => None,
+        Option.None => Option.None,
     }
 }
 
@@ -655,22 +655,22 @@ priv fn __iter_min<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
 priv fn __iter_max<T: Ord, I: Iterator<T>>(own it: I): Option<T> {
     let mut it = it
     match it.next() {
-        Some(first) => {
+        Option.Some(first) => {
             let mut best = first
             loop {
                 match it.next() {
-                    Some(x) => {
+                    Option.Some(x) => {
                         if !x.cmp(best).is_lt() {
                             best = x
                         }
                     }
-                    None => {
-                        return Some(best)
+                    Option.None => {
+                        return Option.Some(best)
                     }
                 }
             }
         }
-        None => None,
+        Option.None => Option.None,
     }
 }
 
@@ -680,19 +680,19 @@ priv fn __iter_eq<T: Eq, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): bo
     let mut b = b
     loop {
         match a.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 match b.next() {
-                    Some(y) => {
+                    Option.Some(y) => {
                         if x != y {
                             return false
                         }
                     }
-                    None => {
+                    Option.None => {
                         return false
                     }
                 }
             }
-            None => {
+            Option.None => {
                 return b.next().is_none()
             }
         }
@@ -705,20 +705,20 @@ priv fn __iter_cmp<T: Ord, I: Iterator<T>, J: Iterator<T>>(own a: I, own b: J): 
     let mut b = b
     loop {
         match a.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 match b.next() {
-                    Some(y) => {
+                    Option.Some(y) => {
                         let order = x.cmp(y)
                         if !order.is_eq() {
                             return order
                         }
                     }
-                    None => {
+                    Option.None => {
                         return Ordering.Greater
                     }
                 }
             }
-            None => {
+            Option.None => {
                 if b.next().is_none() {
                     return Ordering.Equal
                 }
@@ -803,8 +803,8 @@ struct MapIter<I, T, U, F: FnMut(T): U> {
 MapIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): U {
     fn next(mut self): Option<U> {
         match self.inner.next() {
-            Some(x) => Some(self.f(x)),
-            None => None,
+            Option.Some(x) => Option.Some(self.f(x)),
+            Option.None => Option.None,
         }
     }
 }
@@ -824,13 +824,13 @@ FilterIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
     fn next(mut self): Option<T> {
         loop {
             match self.inner.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if self.f(&x) {
-                        return Some(x)
+                        return Option.Some(x)
                     }
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -851,7 +851,7 @@ struct TakeIter<I, T>: Clone {
 TakeIter<I, T>: Iterator<T> where I: Iterator<T> {
     fn next(mut self): Option<T> {
         if self.remaining == 0 {
-            return None
+            return Option.None
         }
         self.remaining = self.remaining - 1
         self.inner.next()
@@ -877,9 +877,9 @@ SkipIter<I, T>: Iterator<T> where I: Iterator<T> {
             }
             self.remaining = self.remaining - 1
             match self.inner.next() {
-                Some(_) => {}
-                None => {
-                    return None
+                Option.Some(_) => {}
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -901,12 +901,12 @@ struct EnumerateIter<I, T>: Clone {
 EnumerateIter<I, T>: Iterator<(usize, T)> where I: Iterator<T> {
     fn next(mut self): Option<(usize, T)> {
         match self.inner.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 let i = self.index
                 self.index = self.index + 1
-                Some((i, x))
+                Option.Some((i, x))
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -926,13 +926,13 @@ struct ZipIter<I, T, J, U>: Clone {
 ZipIter<I, T, J, U>: Iterator<(T, U)> where I: Iterator<T>, J: Iterator<U> {
     fn next(mut self): Option<(T, U)> {
         match self.first.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 match self.second.next() {
-                    Some(y) => Some((x, y)),
-                    None => None,
+                    Option.Some(y) => Option.Some((x, y)),
+                    Option.None => Option.None,
                 }
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -953,10 +953,10 @@ ChainIter<I, J, T>: Iterator<T> where I: Iterator<T>, J: Iterator<T> {
     fn next(mut self): Option<T> {
         if !self.first_done {
             match self.first.next() {
-                Some(x) => {
-                    return Some(x)
+                Option.Some(x) => {
+                    return Option.Some(x)
                 }
-                None => {
+                Option.None => {
                     self.first_done = true
                 }
             }
@@ -982,23 +982,23 @@ FlatMapIter<I, T, J, U, F>: Iterator<U> where I: Iterator<T>, J: Iterator<U>, F:
     fn next(mut self): Option<U> {
         loop {
             match self.current.take() {
-                Some(it) => {
+                Option.Some(it) => {
                     let mut it = it
                     match it.next() {
-                        Some(x) => {
-                            self.current = Some(it)
-                            return Some(x)
+                        Option.Some(x) => {
+                            self.current = Option.Some(it)
+                            return Option.Some(x)
                         }
-                        None => {}
+                        Option.None => {}
                     }
                 }
-                None => {
+                Option.None => {
                     match self.inner.next() {
-                        Some(x) => {
-                            self.current = Some(self.f(x))
+                        Option.Some(x) => {
+                            self.current = Option.Some(self.f(x))
                         }
-                        None => {
-                            return None
+                        Option.None => {
+                            return Option.None
                         }
                     }
                 }
@@ -1025,23 +1025,23 @@ FlattenIter<I, J, U>: Iterator<U> where I: Iterator<J>, J: Iterator<U> {
     fn next(mut self): Option<U> {
         loop {
             match self.current.take() {
-                Some(it) => {
+                Option.Some(it) => {
                     let mut it = it
                     match it.next() {
-                        Some(x) => {
-                            self.current = Some(it)
-                            return Some(x)
+                        Option.Some(x) => {
+                            self.current = Option.Some(it)
+                            return Option.Some(x)
                         }
-                        None => {}
+                        Option.None => {}
                     }
                 }
-                None => {
+                Option.None => {
                     match self.inner.next() {
-                        Some(it) => {
-                            self.current = Some(it)
+                        Option.Some(it) => {
+                            self.current = Option.Some(it)
                         }
-                        None => {
-                            return None
+                        Option.None => {
+                            return Option.None
                         }
                     }
                 }
@@ -1064,8 +1064,8 @@ struct ClonedIter<I, U>: Clone {
 ClonedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Clone {
     fn next(mut self): Option<U> {
         match self.inner.next() {
-            Some(x) => Some((*x).clone()),
-            None => None,
+            Option.Some(x) => Option.Some((*x).clone()),
+            Option.None => Option.None,
         }
     }
 }
@@ -1087,8 +1087,8 @@ struct CopiedIter<I, U>: Clone {
 CopiedIter<I, U>: Iterator<U> where I: Iterator<&U>, U: Copy {
     fn next(mut self): Option<U> {
         match self.inner.next() {
-            Some(x) => Some(*x),
-            None => None,
+            Option.Some(x) => Option.Some(*x),
+            Option.None => Option.None,
         }
     }
 }
@@ -1111,8 +1111,8 @@ struct CycleIter<I, T>: Clone {
 CycleIter<I, T>: Iterator<T> where I: Iterator<T> + Clone {
     fn next(mut self): Option<T> {
         match self.current.next() {
-            Some(x) => Some(x),
-            None => {
+            Option.Some(x) => Option.Some(x),
+            Option.None => {
                 self.current = self.original.clone()
                 self.current.next()
             }
@@ -1149,8 +1149,8 @@ RevIter<I, T>: DoubleEndedIterator<T> where I: Iterator<T> + DoubleEndedIterator
 MapIter<I, T, U, F>: DoubleEndedIterator<U> where I: DoubleEndedIterator<T>, F: FnMut(T): U {
     fn next_back(mut self): Option<U> {
         match self.inner.next_back() {
-            Some(x) => Some(self.f(x)),
-            None => None,
+            Option.Some(x) => Option.Some(self.f(x)),
+            Option.None => Option.None,
         }
     }
 }
@@ -1159,13 +1159,13 @@ FilterIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F: 
     fn next_back(mut self): Option<T> {
         loop {
             match self.inner.next_back() {
-                Some(x) => {
+                Option.Some(x) => {
                     if self.f(&x) {
-                        return Some(x)
+                        return Option.Some(x)
                     }
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -1175,11 +1175,11 @@ FilterIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F: 
 InspectIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F: FnMut(&T) {
     fn next_back(mut self): Option<T> {
         match self.inner.next_back() {
-            Some(x) => {
+            Option.Some(x) => {
                 self.f(&x)
-                Some(x)
+                Option.Some(x)
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -1187,8 +1187,8 @@ InspectIter<I, T, F>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, F:
 ChainIter<I, J, T>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, J: DoubleEndedIterator<T> {
     fn next_back(mut self): Option<T> {
         match self.second.next_back() {
-            Some(x) => Some(x),
-            None => self.first.next_back(),
+            Option.Some(x) => Option.Some(x),
+            Option.None => self.first.next_back(),
         }
     }
 }
@@ -1196,8 +1196,8 @@ ChainIter<I, J, T>: DoubleEndedIterator<T> where I: DoubleEndedIterator<T>, J: D
 ClonedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Clone {
     fn next_back(mut self): Option<U> {
         match self.inner.next_back() {
-            Some(x) => Some((*x).clone()),
-            None => None,
+            Option.Some(x) => Option.Some((*x).clone()),
+            Option.None => Option.None,
         }
     }
 }
@@ -1205,8 +1205,8 @@ ClonedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Cl
 CopiedIter<I, U>: DoubleEndedIterator<U> where I: DoubleEndedIterator<&U>, U: Copy {
     fn next_back(mut self): Option<U> {
         match self.inner.next_back() {
-            Some(x) => Some(*x),
-            None => None,
+            Option.Some(x) => Option.Some(*x),
+            Option.None => Option.None,
         }
     }
 }
@@ -1226,17 +1226,17 @@ struct TakeWhileIter<I, T, F: FnMut(&T): bool> {
 TakeWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
     fn next(mut self): Option<T> {
         if self.done {
-            return None
+            return Option.None
         }
         match self.inner.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 if self.f(&x) {
-                    return Some(x)
+                    return Option.Some(x)
                 }
                 self.done = true
-                None
+                Option.None
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -1257,15 +1257,15 @@ SkipWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
     fn next(mut self): Option<T> {
         loop {
             match self.inner.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     if self.skipping && self.f(&x) {
                         continue
                     }
                     self.skipping = false
-                    return Some(x)
+                    return Option.Some(x)
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
@@ -1275,7 +1275,7 @@ SkipWhileIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T): bool {
 /// The lazy `map_while` chain.
 ///
 /// ```
-/// let doubled = [1, 2, -1, 4].into_iter().map_while(|x| if x > 0 { Some(x * 2) } else { None }).to_list()
+/// let doubled = [1, 2, -1, 4].into_iter().map_while(|x| if x > 0 { Option.Some(x * 2) } else { Option.None }).to_list()
 /// assert_eq(doubled.len(), 2)
 /// ```
 struct MapWhileIter<I, T, U, F: FnMut(T): Option<U>> {
@@ -1287,17 +1287,17 @@ struct MapWhileIter<I, T, U, F: FnMut(T): Option<U>> {
 MapWhileIter<I, T, U, F>: Iterator<U> where I: Iterator<T>, F: FnMut(T): Option<U> {
     fn next(mut self): Option<U> {
         if self.done {
-            return None
+            return Option.None
         }
         match self.inner.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 let r = self.f(x)
                 if r.is_none() {
                     self.done = true
                 }
                 r
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -1324,9 +1324,9 @@ StepByIter<I, T>: Iterator<T> where I: Iterator<T> {
         let mut skipped: usize = 1
         while skipped < self.step {
             match self.inner.next() {
-                Some(_) => {}
-                None => {
-                    return None
+                Option.Some(_) => {}
+                Option.None => {
+                    return Option.None
                 }
             }
             skipped = skipped + 1
@@ -1351,11 +1351,11 @@ struct InspectIter<I, T, F: FnMut(&T)> {
 InspectIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T) {
     fn next(mut self): Option<T> {
         match self.inner.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 self.f(&x)
-                Some(x)
+                Option.Some(x)
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 }
@@ -1364,7 +1364,7 @@ InspectIter<I, T, F>: Iterator<T> where I: Iterator<T>, F: FnMut(&T) {
 ///
 /// ```
 /// let mut it = [5].into_iter().peekable()
-/// assert_eq(it.next(), Some(5))
+/// assert_eq(it.next(), Option.Some(5))
 /// assert(it.peek().is_none())
 /// ```
 struct PeekIter<I, T> {
@@ -1379,36 +1379,36 @@ PeekIter<I, T> where I: Iterator<T> {
     /// ```
     /// let mut it = [1, 2].into_iter().peekable()
     /// assert_eq(*it.peek().unwrap(), 1)
-    /// assert_eq(it.next(), Some(1))
+    /// assert_eq(it.next(), Option.Some(1))
     /// ```
     fn peek(mut self): Option<&T> {
         if !self.looked {
             match self.inner.next() {
-                Some(x) => {
+                Option.Some(x) => {
                     self.buffer.push(x)
                 }
-                None => {}
+                Option.None => {}
             }
             self.looked = true
         }
         if self.buffer.len() == 0 {
-            return None
+            return Option.None
         }
-        Some(&self.buffer[0])
+        Option.Some(&self.buffer[0])
     }
 }
 
 PeekIter<I, T>: Iterator<T> where I: Iterator<T> {
     fn next(mut self): Option<T> {
         match self.buffer.pop() {
-            Some(x) => {
+            Option.Some(x) => {
                 self.looked = false
-                Some(x)
+                Option.Some(x)
             }
-            None => {
+            Option.None => {
                 if self.looked {
                     self.looked = false
-                    return None
+                    return Option.None
                 }
                 self.inner.next()
             }
@@ -1423,7 +1423,7 @@ PeekIter<I, T>: Iterator<T> where I: Iterator<T> {
 
 /// `it.flatten()`: the items of each iterator the source yields.
 priv fn __iter_flatten<I: Iterator<J>, J: Iterator<U>, U>(own it: I): FlattenIter<I, J, U> {
-    let current: Option<J> = None
+    let current: Option<J> = Option.None
     FlattenIter { inner: it, current: current }
 }
 
@@ -1513,10 +1513,10 @@ priv fn __list_find<T: Clone, F: FnMut(&T): bool>(list: List<T>, own f: F): Opti
     let mut f = f
     for x in list {
         if f(&x) {
-            return Some(x.clone())
+            return Option.Some(x.clone())
         }
     }
-    None
+    Option.None
 }
 
 // The `FromIterator` implementations of the built-in collections (spec/iterators.md, IT18). The compiler resolves
@@ -1530,10 +1530,10 @@ priv fn __list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
     let mut out = List<T>.new()
     loop {
         match it.next() {
-            Some(x) => {
+            Option.Some(x) => {
                 out.push(x)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1546,10 +1546,10 @@ priv fn __map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
     let mut out = Map<K, V>.new()
     loop {
         match it.next() {
-            Some((k, v)) => {
+            Option.Some((k, v)) => {
                 out.insert(k, v)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1562,10 +1562,10 @@ priv fn __string_from_chars<I: Iterator<char>>(own iter: I): String {
     let mut out = String.new()
     loop {
         match it.next() {
-            Some(c) => {
+            Option.Some(c) => {
                 out.push(c)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1578,10 +1578,10 @@ priv fn __string_from_strs<I: Iterator<str>>(own iter: I): String {
     let mut out = String.new()
     loop {
         match it.next() {
-            Some(s) => {
+            Option.Some(s) => {
                 out.push_str(s)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1594,10 +1594,10 @@ priv fn __string_from_strings<I: Iterator<String>>(own iter: I): String {
     let mut out = String.new()
     loop {
         match it.next() {
-            Some(s) => {
+            Option.Some(s) => {
                 out.push_str(s)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1610,10 +1610,10 @@ priv fn __string_from_string_views<I: Iterator<&String>>(own iter: I): String {
     let mut out = String.new()
     loop {
         match it.next() {
-            Some(s) => {
+            Option.Some(s) => {
                 out.push_str(*s)
             }
-            None => {
+            Option.None => {
                 return out
             }
         }
@@ -1627,18 +1627,18 @@ priv fn __option_from_iter<T, C: FromIterator<T>, I: Iterator<Option<T>>>(own it
     let mut items = List<T>.new()
     loop {
         match it.next() {
-            Some(item) => {
+            Option.Some(item) => {
                 match item {
-                    Some(x) => {
+                    Option.Some(x) => {
                         items.push(x)
                     }
-                    None => {
-                        return None
+                    Option.None => {
+                        return Option.None
                     }
                 }
             }
-            None => {
-                return Some(C.from_iter(items.into_iter()))
+            Option.None => {
+                return Option.Some(C.from_iter(items.into_iter()))
             }
         }
     }
@@ -1651,18 +1651,18 @@ priv fn __result_from_iter<T, E, C: FromIterator<T>, I: Iterator<Result<T, E>>>(
     let mut items = List<T>.new()
     loop {
         match it.next() {
-            Some(item) => {
+            Option.Some(item) => {
                 match item {
-                    Ok(x) => {
+                    Result.Ok(x) => {
                         items.push(x)
                     }
-                    Err(e) => {
-                        return Err(e)
+                    Result.Err(e) => {
+                        return Result.Err(e)
                     }
                 }
             }
-            None => {
-                return Ok(C.from_iter(items.into_iter()))
+            Option.None => {
+                return Result.Ok(C.from_iter(items.into_iter()))
             }
         }
     }

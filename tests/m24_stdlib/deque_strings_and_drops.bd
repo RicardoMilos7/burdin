@@ -31,7 +31,7 @@ fn main() {
     let _ = tokens.pop_front()
     let _ = tokens.pop_front()
     match tokens.front() {
-        Some(t) => println("kept {t.id}"),
-        None => println("empty"),
+        Option.Some(t) => println("kept {t.id}"),
+        Option.None => println("empty"),
     }
 }

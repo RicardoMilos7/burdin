@@ -15,16 +15,16 @@
 fn main() {
     let n: usize = 1152921504606846976
     match List<i64>.try_with_capacity(n) {
-        Ok(_) => println("allocated"),
-        Err(e) => {
+        Result.Ok(_) => println("allocated"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
             println((e == AllocError.OutOfMemory).to_string())
         }
     }
     match String.try_with_capacity(n) {
-        Ok(_) => println("allocated"),
-        Err(e) => {
+        Result.Ok(_) => println("allocated"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
         }
@@ -32,8 +32,8 @@ fn main() {
     let mut ys = List<u8>.new()
     ys.push(7)
     match ys.try_reserve(n) {
-        Ok(_) => println("reserved"),
-        Err(e) => {
+        Result.Ok(_) => println("reserved"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
         }

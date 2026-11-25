@@ -156,7 +156,7 @@ priv fn __link_new(waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize): CPtr<
 /// held, so the bytes come from a real `None`.
 priv fn __init_none<T>(slot: CPtr<Option<T>>) {
     unsafe {
-        let empty: Option<T> = None
+        let empty: Option<T> = Option.None
         let src = (&empty) as CPtr<u8>
         let dst = slot as CPtr<u8>
         let mut i: usize = 0
@@ -174,7 +174,7 @@ priv fn __node_new<T>(own value: T): CPtr<u8> {
         *(n as CPtr<CPtr<u8>>) = CPtr.null()
         let item = (n + NODE_HEADER) as CPtr<Option<T>>
         __init_none(item)
-        *item = Some(value)
+        *item = Option.Some(value)
         n
     }
 }
@@ -190,7 +190,7 @@ priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
             return false
         }
         match slot.take() {
-            Some(v) => {
+            Option.Some(v) => {
                 let n = __node_new(v)
                 if (*h).last.is_null() {
                     (*h).first = n
@@ -202,7 +202,7 @@ priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
                 __sched_bump()
                 __wake_links((*h).recv_links)
             }
-            None => panic("channel: the value was already sent"),
+            Option.None => panic("channel: the value was already sent"),
         }
         true
     }
@@ -241,7 +241,7 @@ priv fn __recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
 /// ```
 /// let ch: Channel<i32> = Channel.bounded(4)
 /// ch.send(10)
-/// assert_eq(ch.recv(), Some(10))
+/// assert_eq(ch.recv(), Option.Some(10))
 /// ch.close()
 /// ```
 struct Channel<T: Send> {
@@ -274,7 +274,7 @@ Channel<T> {
     ///
     /// ```
     /// let ch: Channel<i32> = Channel.bounded(2)
-    /// assert_eq(ch.capacity(), Some(2))
+    /// assert_eq(ch.capacity(), Option.Some(2))
     /// ```
     fn bounded(capacity: usize): Channel<T> {
         if capacity == 0 {
@@ -307,12 +307,12 @@ Channel<T> {
     /// assert(ch.send(1).is_ok())
     /// ch.close()
     /// match ch.send(2) {
-    ///     Err(v) => assert_eq(v, 2),
-    ///     Ok(()) => assert(false),
+    ///     Result.Err(v) => assert_eq(v, 2),
+    ///     Result.Ok(()) => assert(false),
     /// }
     /// ```
     fn send(self, own value: T): Result<(), T> {
-        let mut slot = Some(value)
+        let mut slot = Option.Some(value)
         unsafe {
             let h = self.head as CPtr<Head>
             __sched_lock()
@@ -348,10 +348,10 @@ Channel<T> {
     /// ```
     /// let ch: Channel<String> = Channel.unbounded()
     /// ch.send(String.from("hi"))
-    /// assert_eq(ch.recv(), Some(String.from("hi")))
+    /// assert_eq(ch.recv(), Option.Some(String.from("hi")))
     /// ```
     fn recv(self): Option<T> {
-        let mut slot: Option<T> = None
+        let mut slot: Option<T> = Option.None
         unsafe {
             let h = self.head as CPtr<Head>
             __sched_lock()
@@ -395,7 +395,7 @@ Channel<T> {
     /// }
     /// ```
     fn try_send(self, own value: T): TrySend<T> {
-        let mut slot = Some(value)
+        let mut slot = Option.Some(value)
         unsafe {
             let h = self.head as CPtr<Head>
             __sched_lock()
@@ -403,8 +403,8 @@ Channel<T> {
             let done = __send_ready(h, mut slot)
             __sched_unlock()
             match slot.take() {
-                None => TrySend.Sent,
-                Some(v) => if done && closed { TrySend.Closed(v) } else { TrySend.Full(v) },
+                Option.None => TrySend.Sent,
+                Option.Some(v) => if done && closed { TrySend.Closed(v) } else { TrySend.Full(v) },
             }
         }
     }
@@ -424,15 +424,15 @@ Channel<T> {
     /// }
     /// ```
     fn try_recv(self): TryRecv<T> {
-        let mut slot: Option<T> = None
+        let mut slot: Option<T> = Option.None
         unsafe {
             let h = self.head as CPtr<Head>
             __sched_lock()
             let done = __recv_ready(h, mut slot)
             __sched_unlock()
             match slot {
-                Some(v) => TryRecv.Value(v),
-                None => if done { TryRecv.Closed } else { TryRecv.Empty },
+                Option.Some(v) => TryRecv.Value(v),
+                Option.None => if done { TryRecv.Closed } else { TryRecv.Empty },
             }
         }
     }
@@ -444,8 +444,8 @@ Channel<T> {
     /// let ch: Channel<i32> = Channel.unbounded()
     /// ch.send(5)
     /// ch.close()
-    /// assert_eq(ch.recv(), Some(5))
-    /// assert_eq(ch.recv(), None)
+    /// assert_eq(ch.recv(), Option.Some(5))
+    /// assert_eq(ch.recv(), Option.None)
     /// ```
     fn close(self) {
         unsafe {
@@ -501,17 +501,17 @@ Channel<T> {
     ///
     /// ```
     /// let ch: Channel<i32> = Channel.bounded(4)
-    /// assert_eq(ch.capacity(), Some(4))
+    /// assert_eq(ch.capacity(), Option.Some(4))
     /// let unbounded: Channel<i32> = Channel.unbounded()
-    /// assert_eq(unbounded.capacity(), None)
+    /// assert_eq(unbounded.capacity(), Option.None)
     /// ```
     fn capacity(self): Option<usize> {
         unsafe {
             let h = self.head as CPtr<Head>
             if (*h).cap == 0 {
-                None
+                Option.None
             } else {
-                Some((*h).cap)
+                Option.Some((*h).cap)
             }
         }
     }
@@ -523,7 +523,7 @@ Channel<T> {
     /// let ch: Channel<i32> = Channel.unbounded()
     /// let other = ch.clone()
     /// other.send(7)
-    /// assert_eq(ch.recv(), Some(7))
+    /// assert_eq(ch.recv(), Option.Some(7))
     /// ```
     fn clone(self): Channel<T> {
         unsafe {
@@ -539,12 +539,12 @@ Channel<T> {
 
     /// An empty slot for a received value.
     fn __empty(self): Option<T> {
-        None
+        Option.None
     }
 
     /// A slot holding a value to send.
     fn __wrap(self, own value: T): Option<T> {
-        Some(value)
+        Option.Some(value)
     }
 
     /// The value in `slot`, leaving it empty.
@@ -556,8 +556,8 @@ Channel<T> {
     /// `Err` with the value when the channel was closed (the slot still holds it).
     fn __send_outcome(self, mut slot: Option<T>): Result<(), T> {
         match slot.take() {
-            None => Ok(()),
-            Some(v) => Err(v),
+            Option.None => Result.Ok(()),
+            Option.Some(v) => Result.Err(v),
         }
     }
 
@@ -617,9 +617,9 @@ Channel<T>: Drop {
 /// ch.send(2)
 /// ch.close()
 /// let mut it = ch.iter()
-/// assert_eq(it.next(), Some(1))
-/// assert_eq(it.next(), Some(2))
-/// assert_eq(it.next(), None)
+/// assert_eq(it.next(), Option.Some(1))
+/// assert_eq(it.next(), Option.Some(2))
+/// assert_eq(it.next(), Option.None)
 /// ```
 struct ChannelIter<T> {
     channel: Channel<T>

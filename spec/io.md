@@ -181,10 +181,10 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
   (`__net_error`) to learn whether the connection was established or refused. `connect_timeout(addr, timeout)` puts
   a deadline on that wait: when it passes the attempt is abandoned, its socket is closed, and the call reports
   `IoErrorKind.TimedOut`.
-* A read returns `Ok(0)` at the end of the stream (`recv` returning 0), which is what `Read.read_to_end` expects.
+* A read returns `Result.Ok(0)` at the end of the stream (`recv` returning 0), which is what `Read.read_to_end` expects.
 * `TcpStream` implements `Read` and `Write`, so `read_exact`, `read_to_end`, `read_to_string`, `write_all`, `write_text`,
   and `write_line` come from `std.rw`.
-* `set_read_timeout`/`set_write_timeout` take an `Option<Duration>`; `None` waits forever. A timeout is a deadline on
+* `set_read_timeout`/`set_write_timeout` take an `Option<Duration>`; `Option.None` waits forever. A timeout is a deadline on
   the reactor's timer list, so a waiting task wakes at the deadline even with no traffic, and the call reports
   `IoError.Net` with `IoErrorKind.TimedOut`. A deadline is computed once per call and shared by its retries.
 * A write to a peer that has closed is an error, never a signal. `send` passes `MSG_NOSIGNAL` on Linux, and a macOS
@@ -205,7 +205,7 @@ fn lookup_host(host: str, port: u16): Result<List<SocketAddr>, IoError>
 * Errors are `IoError.Net { op, addr, kind, os_code }` (`spec/errors.md`, ERR10). The portable kinds gained
   `ConnectionRefused`, `ConnectionReset`, `ConnectionAborted`, `NotConnected`, `AddrInUse`, `AddrNotAvailable`,
   `NetworkUnreachable`, and `HostUnreachable` (ERR11), and the code tables map the Unix `errno` values and the Winsock
-  codes to them. A failure `std` detects itself (an unparsable address, a timeout) stores `os_code: None`.
+  codes to them. A failure `std` detects itself (an unparsable address, a timeout) stores `os_code: Option.None`.
 
 Limits: **IPv4 only**. `SocketAddr` holds four bytes, `lookup_host` returns IPv4 addresses, and a name with only IPv6
 answers is `NotFound`. IPv6 is a later item; the address type and the primitives are shaped so it can be added

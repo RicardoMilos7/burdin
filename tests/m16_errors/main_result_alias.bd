@@ -8,5 +8,5 @@ type Res = Result<()>
 
 fn main(): Res {
     println("done")
-    Ok(())
+    Result.Ok(())
 }

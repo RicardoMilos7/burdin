@@ -14,12 +14,12 @@
 
 fn main() {
     match i128.parse("-170141183460469231731687303715884105728") {
-        Ok(v) => println(v.to_string()),
-        Err(_) => println("bad"),
+        Result.Ok(v) => println(v.to_string()),
+        Result.Err(_) => println("bad"),
     }
     match u128.parse("340282366920938463463374607431768211455") {
-        Ok(v) => println(v.to_string()),
-        Err(_) => println("bad"),
+        Result.Ok(v) => println(v.to_string()),
+        Result.Err(_) => println("bad"),
     }
     println(u128.parse("340282366920938463463374607431768211456").is_err().to_string())
     println(u128.parse("-1").is_err().to_string())

@@ -28,7 +28,7 @@ fn main() {
     let io: AnyError = IoError.Read {
         path: "cfg.toml".to_string(),
         kind: IoErrorKind.NotFound,
-        os_code: None,
+        os_code: Option.None,
     }
     println(classify(io))
     println(classify(OtherError.Parse))
@@ -40,10 +40,10 @@ fn main() {
         else => println("?"),
     }
 
-    let failed: Result<i32> = Err(ConfigError.Missing("y".to_string()))
+    let failed: Result<i32> = Result.Err(ConfigError.Missing("y".to_string()))
     match failed.context("loading") {
-        Ok(_) => println("ok"),
-        Err(e) => match e {
+        Result.Ok(_) => println("ok"),
+        Result.Err(e) => match e {
             _: IoError => println("io"),
             rest => println("kept: {rest}"),
         },

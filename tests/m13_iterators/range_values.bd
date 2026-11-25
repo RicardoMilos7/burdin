@@ -15,16 +15,16 @@ fn main() {
     let mut it = r.iter()
     loop {
         match it.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
     let inc = 1..=3
     let mut it2 = inc.iter()
     loop {
         match it2.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
     let mut n = 0

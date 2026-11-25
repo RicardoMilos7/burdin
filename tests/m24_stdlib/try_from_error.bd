@@ -11,8 +11,8 @@
 fn main() {
     let big: i32 = 300
     match u8.try_from(big) {
-        Ok(b) => println("{}", b),
-        Err(e) => {
+        Result.Ok(b) => println("{}", b),
+        Result.Err(e) => {
             println("{}", e)
             println("{}", e == TryFromIntError.OutOfRange)
             println("{:?}", e)
@@ -21,7 +21,7 @@ fn main() {
     println("{} {}", u8.try_from(big).is_ok(), u8.try_from(big).is_err())
     let fits: i32 = 255
     match u8.try_from(fits) {
-        Ok(b) => println("{}", b),
-        Err(e) => println("{}", e),
+        Result.Ok(b) => println("{}", b),
+        Result.Err(e) => println("{}", e),
     }
 }

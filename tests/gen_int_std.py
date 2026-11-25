@@ -39,14 +39,14 @@ use unicode.to_digit
 # (`burdin test --doc` runs it), so the values fit every width.
 EXAMPLES = {
     "abs_diff": ["let x: {t} = 5", "assert_eq(x.abs_diff(9), 4)"],
-    "checked_div": ["let x: {t} = 7", "assert_eq(x.checked_div(2), Some(3))", "assert(x.checked_div(0).is_none())"],
-    "checked_neg#s": ["let x: {t} = 5", "assert_eq(x.checked_neg(), Some(-5))"],
-    "checked_neg#u": ["let x: {t} = 0", "assert_eq(x.checked_neg(), Some(0))", "let y: {t} = 1", "assert(y.checked_neg().is_none())"],
-    "checked_next_power_of_two": ["let x: {t} = 5", "assert_eq(x.checked_next_power_of_two(), Some(8))"],
-    "checked_pow": ["let x: {t} = 3", "assert_eq(x.checked_pow(3), Some(27))"],
-    "checked_rem": ["let x: {t} = 7", "assert_eq(x.checked_rem(4), Some(3))", "assert(x.checked_rem(0).is_none())"],
-    "checked_shl": ["let x: {t} = 1", "assert_eq(x.checked_shl(2), Some(4))", "assert(x.checked_shl(200).is_none())"],
-    "checked_shr": ["let x: {t} = 8", "assert_eq(x.checked_shr(2), Some(2))", "assert(x.checked_shr(200).is_none())"],
+    "checked_div": ["let x: {t} = 7", "assert_eq(x.checked_div(2), Option.Some(3))", "assert(x.checked_div(0).is_none())"],
+    "checked_neg#s": ["let x: {t} = 5", "assert_eq(x.checked_neg(), Option.Some(-5))"],
+    "checked_neg#u": ["let x: {t} = 0", "assert_eq(x.checked_neg(), Option.Some(0))", "let y: {t} = 1", "assert(y.checked_neg().is_none())"],
+    "checked_next_power_of_two": ["let x: {t} = 5", "assert_eq(x.checked_next_power_of_two(), Option.Some(8))"],
+    "checked_pow": ["let x: {t} = 3", "assert_eq(x.checked_pow(3), Option.Some(27))"],
+    "checked_rem": ["let x: {t} = 7", "assert_eq(x.checked_rem(4), Option.Some(3))", "assert(x.checked_rem(0).is_none())"],
+    "checked_shl": ["let x: {t} = 1", "assert_eq(x.checked_shl(2), Option.Some(4))", "assert(x.checked_shl(200).is_none())"],
+    "checked_shr": ["let x: {t} = 8", "assert_eq(x.checked_shr(2), Option.Some(2))", "assert(x.checked_shr(200).is_none())"],
     "count_ones": ["let x: {t} = 7", "assert_eq(x.count_ones(), 3)"],
     "count_zeros": ["let x: {t} = 7", "assert_eq(x.count_zeros(), {bits} - 3)"],
     "div_euclid": ["let x: {t} = 7", "assert_eq(x.div_euclid(2), 3)"],
@@ -168,81 +168,81 @@ let mut e = exp
 while e > 0 {{
     if e & 1 == 1 {{
         match result.checked_mul(base) {{
-            Some(v) => {{
+            Option.Some(v) => {{
                 result = v
             }}
-            None => {{
-                return None
+            Option.None => {{
+                return Option.None
             }}
         }}
     }}
     e = e >> 1
     if e > 0 {{
         match base.checked_mul(base) {{
-            Some(v) => {{
+            Option.Some(v) => {{
                 base = v
             }}
-            None => {{
-                return None
+            Option.None => {{
+                return Option.None
             }}
         }}
     }}
 }}
-Some(result)""")
+Option.Some(result)""")
     if signed:
         overflow_div = f"(self == __{t}_MIN && other == -1)"
         fn(f"checked_div(self, other: {t}): Option<{t}>", "`self / other`, or `None` when `other` is 0 or the quotient overflows.", f"""
 if other == 0 || {overflow_div} {{
-    return None
+    return Option.None
 }}
-Some(self / other)""")
+Option.Some(self / other)""")
         fn(f"checked_rem(self, other: {t}): Option<{t}>", "`self % other`, or `None` when `other` is 0 or the division overflows.", f"""
 if other == 0 || {overflow_div} {{
-    return None
+    return Option.None
 }}
-Some(self % other)""")
+Option.Some(self % other)""")
         fn(f"checked_neg(self): Option<{t}>", "`-self`, or `None` for the minimum value.", f"""
 if self == __{t}_MIN {{
-    return None
+    return Option.None
 }}
-Some(0 - self)""")
+Option.Some(0 - self)""")
         fn(f"wrapping_neg(self): {t}", "`-self`, wrapping around for the minimum value.", f"let zero: {t} = 0\nzero.wrapping_sub(self)")
     else:
         fn(f"checked_div(self, other: {t}): Option<{t}>", "`self / other`, or `None` when `other` is 0.", f"""
 if other == 0 {{
-    return None
+    return Option.None
 }}
-Some(self / other)""")
+Option.Some(self / other)""")
         fn(f"checked_rem(self, other: {t}): Option<{t}>", "`self % other`, or `None` when `other` is 0.", f"""
 if other == 0 {{
-    return None
+    return Option.None
 }}
-Some(self % other)""")
+Option.Some(self % other)""")
         fn(f"checked_neg(self): Option<{t}>", "`-self`: `Some(0)` for 0 and `None` for every other value.", f"""
 if self == 0 {{
-    return Some(0)
+    return Option.Some(0)
 }}
-None""")
+Option.None""")
         fn(f"wrapping_neg(self): {t}", "`-self`, wrapping around (two's complement).", f"let zero: {t} = 0\nzero.wrapping_sub(self)")
 
     fn(f"checked_shl(self, n: u32): Option<{t}>", "`self << n`, or `None` when `n` is the number of bits or more.", f"""
 if n >= {bits} {{
-    return None
+    return Option.None
 }}
-Some(self << n)""")
+Option.Some(self << n)""")
     fn(f"checked_shr(self, n: u32): Option<{t}>", "`self >> n`, or `None` when `n` is the number of bits or more.", f"""
 if n >= {bits} {{
-    return None
+    return Option.None
 }}
-Some(self >> n)""")
+Option.Some(self >> n)""")
     fn(f"wrapping_shl(self, n: u32): {t}", "`self << (n % bits)`.", f"self << (n % {bits})")
     fn(f"wrapping_shr(self, n: u32): {t}", "`self >> (n % bits)`.", f"self >> (n % {bits})")
 
     if signed:
         sat_add = f"""
 match self.checked_add(other) {{
-    Some(v) => v,
-    None => {{
+    Option.Some(v) => v,
+    Option.None => {{
         if other > 0 {{
             __{t}_MAX
         }} else {{
@@ -252,8 +252,8 @@ match self.checked_add(other) {{
 }}"""
         sat_sub = f"""
 match self.checked_sub(other) {{
-    Some(v) => v,
-    None => {{
+    Option.Some(v) => v,
+    Option.None => {{
         if other > 0 {{
             __{t}_MIN
         }} else {{
@@ -263,8 +263,8 @@ match self.checked_sub(other) {{
 }}"""
         sat_mul = f"""
 match self.checked_mul(other) {{
-    Some(v) => v,
-    None => {{
+    Option.Some(v) => v,
+    Option.None => {{
         if (self < 0) == (other < 0) {{
             __{t}_MAX
         }} else {{
@@ -274,8 +274,8 @@ match self.checked_mul(other) {{
 }}"""
         sat_pow = f"""
 match self.checked_pow(exp) {{
-    Some(v) => v,
-    None => {{
+    Option.Some(v) => v,
+    Option.None => {{
         if self < 0 && exp % 2 == 1 {{
             __{t}_MIN
         }} else {{
@@ -286,19 +286,19 @@ match self.checked_pow(exp) {{
     else:
         sat_add = f"""
 match self.checked_add(other) {{
-    Some(v) => v,
-    None => __{t}_MAX,
+    Option.Some(v) => v,
+    Option.None => __{t}_MAX,
 }}"""
         sat_sub = f"""
 match self.checked_sub(other) {{
-    Some(v) => v,
-    None => 0,
+    Option.Some(v) => v,
+    Option.None => 0,
 }}"""
         sat_mul = sat_add.replace("checked_add", "checked_mul")
         sat_pow = f"""
 match self.checked_pow(exp) {{
-    Some(v) => v,
-    None => __{t}_MAX,
+    Option.Some(v) => v,
+    Option.None => __{t}_MAX,
 }}"""
     fn(f"saturating_add(self, other: {t}): {t}", "`self + other`, clamped to the range of the type.", sat_add)
     fn(f"saturating_sub(self, other: {t}): {t}", "`self - other`, clamped to the range of the type.", sat_sub)
@@ -433,17 +433,17 @@ r as {t}""")
         fn("is_power_of_two(self): bool", "Whether exactly one bit is set.", "self != 0 && self & (self - 1) == 0")
         fn(f"checked_next_power_of_two(self): Option<{t}>", "The smallest power of two that is at least `self`, or `None` when it does not fit.", f"""
 if self <= 1 {{
-    return Some(1)
+    return Option.Some(1)
 }}
 let top = {bits} - (self - 1).leading_zeros()
 if top >= {bits} {{
-    return None
+    return Option.None
 }}
-Some(1 << top)""")
+Option.Some(1 << top)""")
         fn(f"next_power_of_two(self): {t}", "The smallest power of two that is at least `self`. It panics when the result does not fit.", f"""
 match self.checked_next_power_of_two() {{
-    Some(v) => v,
-    None => panic("next_power_of_two overflowed"),
+    Option.Some(v) => v,
+    Option.None => panic("next_power_of_two overflowed"),
 }}""")
 
     # ---- isqrt and logarithms ----
@@ -502,11 +502,11 @@ n""")
             let digit: {t} = d as {t}
             let scaled = value.checked_mul(base)
             if scaled.is_none() {{
-                return Err(ParseIntError.Invalid)
+                return Result.Err(ParseIntError.Invalid)
             }}
             let next = if negative {{ scaled.unwrap().checked_sub(digit) }} else {{ scaled.unwrap().checked_add(digit) }}
             if next.is_none() {{
-                return Err(ParseIntError.Invalid)
+                return Result.Err(ParseIntError.Invalid)
             }}
             value = next.unwrap()"""
         neg_decl = "let mut negative = false\n"
@@ -516,11 +516,11 @@ n""")
             let digit: {t} = d as {t}
             let scaled = value.checked_mul(base)
             if scaled.is_none() {{
-                return Err(ParseIntError.Invalid)
+                return Result.Err(ParseIntError.Invalid)
             }}
             let next = scaled.unwrap().checked_add(digit)
             if next.is_none() {{
-                return Err(ParseIntError.Invalid)
+                return Result.Err(ParseIntError.Invalid)
             }}
             value = next.unwrap()"""
         neg_decl = ""
@@ -535,18 +535,18 @@ let mut value: {t} = 0
 let mut seen_digit = false
 {neg_decl}{first_decl}for c in s.chars() {{{sign_branch}
     match c.to_digit(radix) {{
-        Some(d) => {{{accumulate}
+        Option.Some(d) => {{{accumulate}
             seen_digit = true
         }}
-        None => {{
-            return Err(ParseIntError.Invalid)
+        Option.None => {{
+            return Result.Err(ParseIntError.Invalid)
         }}
     }}
 }}
 if !seen_digit {{
-    return Err(ParseIntError.Invalid)
+    return Result.Err(ParseIntError.Invalid)
 }}
-Ok(value)""")
+Result.Ok(value)""")
     magnitude = "self.unsigned_abs()" if signed else "self"
     neg_prefix = "if self < 0 {\n    out.push('-')\n}\n" if signed else ""
     fn("to_string_radix(self, radix: u32): String", "The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.", f"""
