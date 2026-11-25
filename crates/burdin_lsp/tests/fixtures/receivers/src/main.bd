@@ -1,0 +1,19 @@
+fn main() {
+    let r = 0..5
+    let t = (1, "a")
+    let o: Option<i32> = Some(1)
+    let res: Result<i32> = Ok(1)
+    let mut m = Map<i32, i32>.new()
+    let s = "abc"
+    let ch = s.chars()
+    let it = [1, 2].iter()
+    let mut st = String.new()
+    let c = 'a'
+    let f = 1.5
+    let b = true
+    let list = List<i32>.new()
+    let unit = ()
+    m.insert(1, 2)
+    st.push('a')
+    println("{r.start} {t.0} {o.is_some()} {res.is_ok()} {m.len()} {ch.count()} {it.count()} {c} {f} {b} {list.len()} {st}")
+}

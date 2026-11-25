@@ -38,6 +38,8 @@ const TYPES: &[(&str, &str, &str)] = &[
     ("Option", "enum Option<T>", "`Some(T)` or `None`."),
     ("Result", "enum Result<T, E>", "`Ok(T)` or `Err(E)`; `Result<T>` means `Result<T, AnyError>`."),
     ("Heap", "struct Heap<T>", "One value in its own allocation."),
+    ("[T]", "struct [T]", "A borrowed view of contiguous values. An array has these methods through an implicit view."),
+    ("[T; N]", "struct [T; N]", "A fixed-size array of `N` values. It has the methods of `[T]` too."),
 ];
 
 /// The built-in functions and methods: who has them (`""` for a free function; `int`, `signed`, `float`, and `text`
@@ -186,6 +188,21 @@ const DECLS: &[(&str, &str, &str)] = &[
     ("Result", "fn context(own self, message: str): Result<T, AnyError>", "Prefixes a context message to the error."),
     ("Heap", "fn new(value: T): Heap<T>", "Moves the value into a new allocation."),
     ("Heap", "fn new_in(alloc: A, value: T): Heap<T, A>", "`new`, with an allocator."),
+    // Arrays and slices: the methods the compiler implements (`spec/stdlib.md`, "Slices"); the rest are the extension
+    // methods of `std/src/slice.bd`.
+    ("[T]", "fn len(self): usize", "The number of values."),
+    ("[T]", "fn iter(self): [T]", "Iterates over the values: `T` if it is `Copy`, else `&T`."),
+    ("[T]", "fn get(self, i: usize): Option<&T>", "The value at `i`, or `None` past the end; a range gives a view."),
+    ("[T]", "fn last(self): Option<&T>", "The last value."),
+    ("[T]", "fn to_list(self): List<T>", "A `List` of clones of the values."),
+    ("[T]", "fn swap(mut self, a: usize, b: usize)", "Swaps two values; panics when an index is out of bounds."),
+    ("[T]", "fn fill(mut self, value: T)", "Sets every value to a clone of `value`."),
+    ("[T]", "fn copy_from_slice(mut self, other: [T])", "Copies `other` in; panics on a length mismatch."),
+    ("[T]", "fn clone_from_slice(mut self, other: [T])", "Clones `other` in; panics on a length mismatch."),
+    ("[T]", "fn chunks(self, n: usize): Chunks<T>", "Views of `n` values at a time; the last may be shorter."),
+    ("[T]", "fn chunks_exact(self, n: usize): ChunksExact<T>", "Views of exactly `n` values; the rest is left out."),
+    ("[T]", "fn windows(self, n: usize): Windows<T>", "Every run of `n` consecutive values, as views."),
+    ("[T; N]", "fn iter_mut(mut self): IterMut<T>", "Iterates over the values, to change them."),
 ];
 
 /// The types an owner of [`DECLS`] stands for.
@@ -322,6 +339,9 @@ mod tests {
         assert_eq!(b.find("f32", "to_bits").unwrap().detail, "fn to_bits(self): u32");
         assert!(b.find("u8", "abs").is_none(), "an unsigned type has no `abs`");
         assert!(b.find("str", "len").is_some() && b.find("String", "len").is_some());
+        // Arrays and slices: `[T]` has the compiler's methods, and only an array has `iter_mut`.
+        assert_eq!(b.find("[T]", "swap").unwrap().detail, "fn swap(mut self, a: usize, b: usize)");
+        assert!(b.find("[T]", "iter_mut").is_none() && b.find("[T; N]", "iter_mut").is_some());
         // Every type's methods sit inside its declaration.
         let string = b.index.items.iter().position(|i| i.name == "String" && i.kind == Kind::Struct).unwrap();
         let new = b.find("String", "new").unwrap();

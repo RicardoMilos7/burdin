@@ -15,7 +15,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The commands the server runs itself (`workspace/executeCommand`).
-pub const SERVER_COMMANDS: &[&str] = &["burdin.runTest", "burdin.runTests", "burdin.structuralSearchReplace"];
+pub const SERVER_COMMANDS: &[&str] = &[
+    "burdin.runTest",
+    "burdin.runTests",
+    "burdin.searchReplace",
+    "burdin.structuralSearchReplace",
+    "burdin.changeSignature",
+    "burdin.moveItem",
+];
 
 /// Work a request hands to a worker thread; the response is sent when it ends.
 pub type Job = Box<dyn FnOnce() -> Result<crate::actions::RunOutcome, String> + Send>;
@@ -124,6 +131,12 @@ pub struct ClientCaps {
     /// `textDocument.completion.completionItem.additionalTextEditsSupport`: completion may insert a `use` alongside
     /// the item it completes (LS12).
     pub additional_edits: bool,
+    /// `textDocument.completion.completionItem.resolveSupport` lists `documentation`: an item's documentation is sent
+    /// by `completionItem/resolve` (LS23).
+    pub completion_resolve: bool,
+    /// `textDocument.codeAction.resolveSupport` lists `edit`: a refactoring's edit is sent by `codeAction/resolve`
+    /// (LS23).
+    pub code_action_resolve: bool,
 }
 
 /// An open document.
@@ -197,6 +210,15 @@ pub struct Server {
     broken: HashMap<PathBuf, String>,
     /// The official packages' public API, indexed on first use (`spec/lsp.md`, LS12).
     pub official: Option<Rc<crate::official::OfficialIndex>>,
+    /// The documentation of the items the latest completion left for `completionItem/resolve`, by label (LS23).
+    pub completion_docs: HashMap<String, String>,
+}
+
+/// The files and folders a rename request is about: Burdin sources, and any folder (a module directory).
+fn rename_filters() -> Json {
+    let source = Json::obj().with("pattern", Json::obj().with("glob", "**/*.bd"));
+    let folder = Json::obj().with("pattern", Json::obj().with("glob", "**").with("matches", "folder"));
+    Json::obj().with("filters", Json::Arr(vec![source, folder]))
 }
 
 /// Runs the server over a byte stream until `exit` or the end of the input. Returns the process exit code: 0 after
@@ -281,6 +303,7 @@ impl Server {
             published: HashMap::new(),
             broken: HashMap::new(),
             official: None,
+            completion_docs: HashMap::new(),
         }
     }
 
@@ -454,7 +477,7 @@ impl Server {
     }
 
     fn dispatch(&mut self, method: &str, params: &Json) -> Reply {
-        use crate::{actions, edit, nav, outline};
+        use crate::{actions, edit, files, nav, outline};
         match method {
             "initialize" => self.initialize(params),
             "shutdown" => {
@@ -471,6 +494,7 @@ impl Server {
             "textDocument/rangeFormatting" => edit::formatting(self, params, true),
             "textDocument/definition" | "textDocument/declaration" => nav::definition(self, params),
             "textDocument/implementation" => nav::implementation(self, params),
+            "textDocument/typeDefinition" => nav::type_definition(self, params),
             "textDocument/references" => nav::references(self, params),
             "textDocument/documentHighlight" => nav::highlight(self, params),
             "textDocument/prepareRename" => nav::prepare_rename(self, params),
@@ -487,6 +511,10 @@ impl Server {
             "textDocument/selectionRange" => outline::selection_ranges(self, params),
             "textDocument/documentLink" => outline::document_links(self, params),
             "textDocument/codeAction" => actions::code_actions(self, params),
+            "codeAction/resolve" => actions::resolve_code_action(self, params),
+            "completionItem/resolve" => edit::resolve_completion(self, params),
+            "textDocument/onTypeFormatting" => edit::on_type_formatting(self, params),
+            "workspace/willRenameFiles" => files::will_rename(self, params),
             "textDocument/codeLens" => actions::code_lenses(self, params),
             "workspace/executeCommand" => actions::execute_command(self, params),
             "burdin/status" => Ok(self.status()),
@@ -523,6 +551,7 @@ impl Server {
             }
             "workspace/didChangeWorkspaceFolders" => self.did_change_folders(params),
             "workspace/didChangeWatchedFiles" => self.did_change_watched(params),
+            "workspace/didRenameFiles" => self.did_rename(params),
             _ => {}
         }
         None
@@ -539,6 +568,7 @@ impl Server {
             caps.at(&["general", "positionEncodings"]).as_array().iter().filter_map(Json::as_str).collect();
         self.encoding = if encodings.contains(&"utf-8") { Encoding::Utf8 } else { Encoding::Utf16 };
         let flag = |path: &[&str]| caps.at(path).as_bool().unwrap_or(false);
+        let lists = |path: &[&str], name: &str| caps.at(path).as_array().iter().any(|p| p.as_str() == Some(name));
         self.caps = ClientCaps {
             progress: flag(&["window", "workDoneProgress"]),
             configuration: flag(&["workspace", "configuration"]),
@@ -548,6 +578,11 @@ impl Server {
             inlay_hint_refresh: flag(&["workspace", "inlayHint", "refreshSupport"]),
             snippets: flag(&["textDocument", "completion", "completionItem", "snippetSupport"]),
             additional_edits: flag(&["textDocument", "completion", "completionItem", "additionalTextEditsSupport"]),
+            completion_resolve: lists(
+                &["textDocument", "completion", "completionItem", "resolveSupport", "properties"],
+                "documentation",
+            ),
+            code_action_resolve: lists(&["textDocument", "codeAction", "resolveSupport", "properties"], "edit"),
         };
         self.config = self.config.apply(params.get("initializationOptions"));
         let mut folders: Vec<PathBuf> = params
@@ -583,12 +618,13 @@ impl Server {
             .with("definitionProvider", true)
             .with("declarationProvider", true)
             .with("implementationProvider", true)
+            .with("typeDefinitionProvider", true)
             .with("referencesProvider", true)
             .with("documentHighlightProvider", true)
             .with("renameProvider", Json::obj().with("prepareProvider", true))
             .with(
                 "completionProvider",
-                Json::obj().with("triggerCharacters", strings(&["."])).with("resolveProvider", false),
+                Json::obj().with("triggerCharacters", strings(&["."])).with("resolveProvider", true),
             )
             .with(
                 "signatureHelpProvider",
@@ -598,12 +634,27 @@ impl Server {
             )
             .with("documentFormattingProvider", true)
             .with("documentRangeFormattingProvider", true)
+            .with(
+                "documentOnTypeFormattingProvider",
+                Json::obj().with("firstTriggerCharacter", "}").with("moreTriggerCharacter", strings(&["\n"])),
+            )
             .with("documentSymbolProvider", true)
             .with("workspaceSymbolProvider", true)
             .with(
                 "codeActionProvider",
                 Json::obj()
-                    .with("codeActionKinds", strings(&["quickfix", "refactor.rewrite", "source.organizeImports"])),
+                    .with(
+                        "codeActionKinds",
+                        strings(&[
+                            "quickfix",
+                            "refactor.extract",
+                            "refactor.inline",
+                            "refactor.move",
+                            "refactor.rewrite",
+                            "source.organizeImports",
+                        ]),
+                    )
+                    .with("resolveProvider", true),
             )
             .with("codeLensProvider", Json::obj().with("resolveProvider", false))
             .with("executeCommandProvider", Json::obj().with("commands", strings(SERVER_COMMANDS)))
@@ -628,8 +679,23 @@ impl Server {
             .with(
                 "workspace",
                 Json::obj()
-                    .with("workspaceFolders", Json::obj().with("supported", true).with("changeNotifications", true)),
+                    .with("workspaceFolders", Json::obj().with("supported", true).with("changeNotifications", true))
+                    .with(
+                        "fileOperations",
+                        Json::obj().with("willRename", rename_filters()).with("didRename", rename_filters()),
+                    ),
             )
+    }
+
+    /// `workspace/didRenameFiles`: the files moved, so the packages that held or now hold them load again.
+    fn did_rename(&mut self, params: &Json) {
+        for file in params.get("files").as_array() {
+            for key in ["oldUri", "newUri"] {
+                if let Some(path) = file.get(key).as_str().and_then(|u| self.key_of_uri(u)) {
+                    self.reload_containing(&path);
+                }
+            }
+        }
     }
 
     /// The official packages' public API, indexed the first time completion asks for it (`spec/lsp.md`, LS12).

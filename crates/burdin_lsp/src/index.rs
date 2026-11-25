@@ -569,7 +569,12 @@ impl Builder<'_> {
             AstItem::Fn(f) => self.function(f, Kind::Function, None, None, None),
             AstItem::ExternFn(e) => self.function(&e.decl, Kind::Function, None, None, None),
             AstItem::Extension(e) => {
-                let owner = docs::type_name(&e.recv).map(str::to_string);
+                // A slice receiver (`fn [T].first`) is owned by the type as written, without spaces: `[T]`, `[[T]]`,
+                // `[u8]` (`nav::Owners` says which slices it fits).
+                let owner = match &e.recv.kind {
+                    ast::TypeKind::Slice(_) => Some(self.slice(e.recv.span.lo, e.recv.span.hi).replace(' ', "")),
+                    _ => docs::type_name(&e.recv).map(str::to_string),
+                };
                 self.function(&e.func, Kind::Method, None, owner, None);
             }
             AstItem::Const(c) => {

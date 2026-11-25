@@ -191,6 +191,11 @@ pub struct Analysis {
     /// The checked program. `None` when a file has syntax errors: its tree is partial, so the program is not handed
     /// out, but the other modules are still checked and their diagnostics are reported (`spec/check.md`, CK4).
     pub program: Option<Program>,
+    /// The program checked against the partial trees of the files with syntax errors, when there are any (and
+    /// `None` otherwise). Every item and statement the parser kept is typed in it; a statement it could not read is
+    /// missing. It answers the position queries of [`Analysis`] (`type_at`, `resolve_at`, ...) beside a syntax
+    /// error, and is never handed out as a program (`spec/query.md`, QL10).
+    pub(crate) partial: Option<Program>,
     /// The revision this analysis is of.
     pub revision: u64,
     /// The path of every file of the program, in module order (the ids the diagnostics' spans carry).
@@ -616,8 +621,8 @@ impl Db {
         }
         drop(packages);
         self.check_cache.evict(self.budget.bodies);
-        let program = (!syntax_errors).then_some(program);
-        Ok(Analysis { diagnostics: diags, program, revision: self.revision, files: self.paths() })
+        let (program, partial) = if syntax_errors { (None, Some(program)) } else { (Some(program), None) };
+        Ok(Analysis { diagnostics: diags, program, partial, revision: self.revision, files: self.paths() })
     }
 
     fn const_options(&self) -> burdin_interp::Options {

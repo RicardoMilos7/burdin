@@ -1,0 +1,24 @@
+struct Point: Clone {
+    x: i32
+    y: i32
+}
+
+Point {
+    fn sum(self): i32 {
+        self.x + self.y
+    }
+}
+
+fn unknown_name() {
+    let a = missing_function(1)
+}
+
+fn mismatch(): i32 {
+    "text"
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let total = p.sum()
+    println("{total}")
+}

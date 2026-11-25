@@ -185,6 +185,23 @@ one, two, and four modules. The run also prints how many bodies one keystroke re
 path with generous time budgets and fails unless exactly one body is rechecked, and the cases are part of the
 baseline comparison of `tests/bench_regression.py`.
 
+**QL10. Position queries beside a syntax error** (issue #1015). A file with a syntax error has a partial tree: the parser
+recovers at the statement (it skips to the end of the line) and at the item (it skips to the next item keyword), and keeps
+an unfinished expression that ends its statement: a dangling dot (`p.`) is reported once and kept as `p`, and a call whose
+arguments stop at a line that cannot continue them (`f(a,` and a `let` on the next line) is kept with the arguments read.
+The checker checks that tree like any other (an error type in one expression suppresses the errors that follow it and
+never stops the next body), but `Analysis::program` stays `None`, because nothing may build or run it. The program it
+checked is kept in `Analysis::partial`, and the position queries read it through `typed()`: `type_at`, `resolve_at`,
+`signature_of`, `members_of_type`, `locals`, and `functions` answer for every statement and item the parser kept, so a
+syntax error elsewhere (or in another statement of the same function) does not take them away. `Analysis::has_types()`
+says whether such a program exists and `Analysis::is_partial()` whether it is the partial one. The queries that need a
+whole program (ownership, references and occurrences, match cases, statements, tests, and anything that edits) keep
+reading `program` only, so they answer nothing beside a syntax error. A statement the parser could not read is simply not
+in the partial program; a tool that needs its meaning (the line being typed) asks the last analysis that had a program
+(`spec/lsp.md`, LS21).
+Tests: `position_queries_answer_beside_a_syntax_error` (`crates/burdin_query/tests/api.rs`) and the parser's
+`a_dangling_dot_keeps_its_receiver` and `an_unclosed_call_is_kept_with_the_arguments_read` (`burdin_syntax`).
+
 ## Tests and commands
 
 ```

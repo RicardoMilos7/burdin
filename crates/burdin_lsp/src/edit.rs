@@ -3,7 +3,7 @@
 
 use crate::index::{FileIndex, Item, KEYWORDS, Kind, Tk, Tok};
 use crate::json::Json;
-use crate::nav::{Resolver, SymKind, base_type, enclosing_brace, leading_dot, literal_owner};
+use crate::nav::{Owners, Resolver, SymKind, base_type, enclosing_brace, leading_dot, literal_owner, sequence_element};
 use crate::official::OfficialIndex;
 use crate::project::{Loc, Package};
 use crate::server::{Reply, ReqError, Server};
@@ -76,7 +76,7 @@ pub fn hover(server: &mut Server, params: &Json) -> Reply {
                 }
                 (text, tok)
             }
-            None => match r.p.current().and_then(|a| a.type_at(&path, offset)) {
+            None => match r.p.current_typed().and_then(|a| a.type_at(&path, offset)) {
                 Some(typed) => (format!("```burdin\n{}\n```", typed.ty), Some(Loc::from(&typed.at))),
                 None => return Ok(Json::Null),
             },
@@ -166,11 +166,14 @@ fn common(a: &str, b: &str) -> (usize, usize) {
     (prefix, suffix)
 }
 
-/// An analysis with a program and a way to translate positions of the current text into it.
+/// An analysis with a program and a way to translate positions of the current text into it. When the current text
+/// has a syntax error, the analysis is the partial one of the current text, and `older` is the last good analysis:
+/// the statement being typed is missing from the first and is still in the second.
 pub(crate) struct Answering<'a> {
     pub(crate) analysis: &'a Analysis,
     old: Option<Rc<str>>,
     new: String,
+    older: Option<(&'a Analysis, Rc<str>)>,
 }
 
 impl Answering<'_> {
@@ -178,40 +181,76 @@ impl Answering<'_> {
         let (analysis, texts) = p.program_analysis()?;
         let new = p.text(path)?.to_string();
         let old = texts.and_then(|t| t.get(path).cloned());
-        Some(Answering { analysis, old, new })
+        let older = p.older_analysis().and_then(|(a, texts)| Some((a, texts.get(path)?.clone())));
+        Some(Answering { analysis, old, new, older })
     }
 
-    /// The offset in the analyzed text of an offset of the current text.
+    /// The analyses to ask, with the text each was computed on (`None`: the current text): the primary one, then the
+    /// last good one when the primary is partial.
+    fn sources(&self) -> impl Iterator<Item = (&Analysis, Option<&str>)> {
+        std::iter::once((self.analysis, self.old.as_deref()))
+            .chain(self.older.iter().map(|(a, text)| (*a, Some(&**text))))
+    }
+
+    /// The offset in the primary analysis's text of an offset of the current text.
     fn old_offset(&self, offset: u32) -> Option<u32> {
-        match &self.old {
-            Some(old) => map_to_old(old, &self.new, offset),
-            None => Some(offset),
-        }
+        to_old(self.old.as_deref(), &self.new, offset)
     }
 
+    /// The offset in the current text of an offset of the primary analysis's text.
     fn new_offset(&self, offset: u32) -> Option<u32> {
-        match &self.old {
-            Some(old) => map_to_new(old, &self.new, offset),
-            None => Some(offset),
-        }
+        to_new(self.old.as_deref(), &self.new, offset)
     }
 
     fn type_at(&self, path: &str, offset: u32) -> Option<String> {
-        let at = self.old_offset(offset)?;
-        self.analysis.type_at(path, at).map(|t| t.ty)
+        self.sources().find_map(|(analysis, old)| {
+            let at = to_old(old, &self.new, offset)?;
+            analysis.type_at(path, at).map(|t| t.ty)
+        })
+    }
+
+    /// The type of the expression that ends where the token `lo..hi` of the current text does and starts at or before
+    /// it: the receiver of a member dot. The innermost expression at an offset of an older text may be an unrelated
+    /// one (text typed over the start of a line maps onto what was there before), so one that ends elsewhere is not
+    /// the receiver. The partial analysis of the current text lacks the statement being typed (`p.`), so the last good
+    /// one is asked next.
+    fn type_ending_at(&self, path: &str, lo: u32, hi: u32) -> Option<String> {
+        self.sources().find_map(|(analysis, old)| {
+            let at = to_old(old, &self.new, lo)?;
+            let end = to_old(old, &self.new, hi.checked_sub(1)?)? + 1;
+            let typed = analysis.type_at(path, at)?;
+            (typed.at.hi == end).then_some(typed.ty)
+        })
     }
 
     /// The type of the local `name` declared last before `offset` of the current text: what a name typed since the
     /// last good analysis most likely stands for.
     pub(crate) fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
-        self.analysis
-            .locals(path)
-            .into_iter()
-            .filter(|l| l.name == name)
-            .filter_map(|l| Some((self.new_offset(l.at.lo)?, l.ty)))
-            .filter(|(at, _)| *at < offset)
-            .max_by_key(|(at, _)| *at)
-            .map(|(_, ty)| ty)
+        self.sources().find_map(|(analysis, old)| {
+            analysis
+                .locals(path)
+                .into_iter()
+                .filter(|l| l.name == name)
+                .filter_map(|l| Some((to_new(old, &self.new, l.at.lo)?, l.ty)))
+                .filter(|(at, _)| *at < offset)
+                .max_by_key(|(at, _)| *at)
+                .map(|(_, ty)| ty)
+        })
+    }
+}
+
+/// The offset in the text an analysis was computed on (`old`; `None` is the current text) of an offset of `new`.
+fn to_old(old: Option<&str>, new: &str, offset: u32) -> Option<u32> {
+    match old {
+        Some(old) => map_to_old(old, new, offset),
+        None => Some(offset),
+    }
+}
+
+fn to_new(old: Option<&str>, new: &str, offset: u32) -> Option<u32> {
+    match old {
+        Some(old) => map_to_new(old, new, offset),
+        None => Some(offset),
     }
 }
 
@@ -278,9 +317,22 @@ struct Completions {
     /// A function's completion inserts the call's parentheses (LS12): snippets work, the position is not a `use`
     /// path, and no `(` follows already.
     calls: bool,
+    /// The client asks for documentation with `completionItem/resolve` (LS23): the items carry none, and `docs` keeps
+    /// it by label until they are resolved.
+    lazy_docs: bool,
+    docs: HashMap<String, String>,
 }
 
 impl Completions {
+    /// Documentation goes on the item, or waits for its resolve.
+    fn document(&mut self, item: &mut Json, label: &str, docs: &str) {
+        if self.lazy_docs {
+            self.docs.insert(label.to_string(), docs.to_string());
+        } else {
+            item.set("documentation", Json::obj().with("kind", "markdown").with("value", docs));
+        }
+    }
+
     fn add(&mut self, label: &str, kind: u32, detail: &str, docs: Option<&str>, group: u8) {
         if self.seen.iter().any(|s| s == label) {
             return;
@@ -292,7 +344,7 @@ impl Completions {
             .with("detail", detail)
             .with("sortText", format!("{group}{label}"));
         if let Some(docs) = docs {
-            item.set("documentation", Json::obj().with("kind", "markdown").with("value", docs));
+            self.document(&mut item, label, docs);
         }
         if self.calls
             && matches!(kind, 2 | 3)
@@ -355,7 +407,7 @@ impl Completions {
             .with("detail", item.detail.as_str())
             .with("sortText", format!("{group}{label}"));
         if let Some(docs) = &item.docs {
-            json.set("documentation", Json::obj().with("kind", "markdown").with("value", docs.as_str()));
+            self.document(&mut json, &label, docs);
         }
         if self.calls
             && matches!(kind, 2 | 3)
@@ -890,6 +942,11 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         }
         _ => None,
     };
+    // The receiver of a member dot is typed from the text without the dot (see `repaired_receiver_type`).
+    let receiver = match plain {
+        Context::Member(dot) => member_receiver_type(server, i, &path, &text, &ix, dot)?,
+        _ => None,
+    };
     let mut r = Resolver::new(&mut server.packages[i]);
     let all = r.all_items();
     // `Point {` and `.{` build a struct; `match Shape.Circle {` or `if FLAG {` do not, and keep their own context.
@@ -902,14 +959,15 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         _ => plain,
     };
     let calls = snippets && !paren_follows && !matches!(context, Context::Use);
-    let mut out = Completions { items: Vec::new(), seen: Vec::new(), snippets, calls };
+    let lazy_docs = server.caps.completion_resolve;
+    let mut out = Completions { items: Vec::new(), seen: Vec::new(), snippets, calls, lazy_docs, docs: HashMap::new() };
     match context {
         Context::Use => {
             let line_start = text[..start].rfind('\n').map_or(0, |n| n + 1);
             use_completions(&mut r, &path, text[line_start..start].trim_start(), &mut out);
         }
         Context::Member(dot) => {
-            member_completions(&mut r, &official, &imports, &path, &ix, &text, dot, &mut out);
+            member_completions(&mut r, &official, &imports, &path, &ix, &text, dot, receiver, &mut out);
         }
         Context::Leading(_) => {
             leading_completions(&mut r, expected.as_deref(), &mut out);
@@ -957,6 +1015,7 @@ pub fn completion(server: &mut Server, params: &Json) -> Reply {
         }
     }
     let mut items = out.items;
+    server.completion_docs = out.docs;
     items.sort_by(|a, b| a.get("sortText").as_str().cmp(&b.get("sortText").as_str()));
     Ok(Json::obj().with("isIncomplete", false).with("items", Json::Arr(items)))
 }
@@ -1015,6 +1074,7 @@ fn member_completions(
     ix: &FileIndex,
     text: &str,
     dot: u32,
+    receiver_ty: Option<String>,
     out: &mut Completions,
 ) {
     let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return };
@@ -1026,10 +1086,13 @@ fn member_completions(
         && !member
     {
         // The answering analysis may be older than the text: its offsets are mapped.
+        // Text typed since that analysis has no position in it, so a local declared before it still says the name is a
+        // value (`list.` is not the `list` module when a local `list` is in scope).
         let is_value = Answering::of(r.p, path).is_some_and(|a| {
             a.old_offset(receiver.lo)
                 .and_then(|at| a.analysis.resolve_at(path, at))
                 .is_some_and(|x| matches!(x.kind, DefinitionKind::Local | DefinitionKind::Parameter))
+                || a.local_before(path, name, receiver.lo).is_some()
         });
         if !is_value {
             let file = module_file_named(r, path, ix, name);
@@ -1076,30 +1139,80 @@ fn member_completions(
     if receiver.kind == Tk::SelfValue {
         if let Some(owner) = ix.self_owner(receiver.lo) {
             let all = r.all_items();
-            value_members(&all, &base_type(&owner), out);
+            value_members(&all, &owner, out);
         }
         return;
     }
     let all = r.all_items();
-    let ty = receiver_type(Answering::of(r.p, path).as_ref(), ix, &all, path, ti);
+    let ty = receiver_ty.or_else(|| receiver_type(Answering::of(r.p, path).as_ref(), ix, &all, path, text, ti));
     // A literal's spelling says its type when the analysis has not seen it yet.
     let ty = match (ty, literal_type(text, &receiver)) {
         (Some(ty), _) => ty,
         (None, Some(literal)) => literal.to_string(),
         (None, None) => return,
     };
-    let base = base_type(&ty);
-    match ix.bounds_of(receiver.lo, &base) {
+    match ix.bounds_of(receiver.lo, &base_type(&ty)) {
         // A generic parameter (`s: S` with `S: Serializer`): the methods of its bounds.
         Some(bounds) => bound_members(&all, &bounds, out),
-        None => value_members(&all, &base, out),
+        None => value_members(&all, &ty, out),
     }
+}
+
+/// The type of the receiver of the member dot at `dot`, cheapest answer first: the last analysis and the declarations
+/// ([`receiver_type`]), then [`repaired_receiver_type`], which analyzes the text again (a file that does not parse is
+/// checked without the memo, so that is the costly one). A receiver that no `let` or parameter in sight declares is a
+/// module, a type, or a name nothing types, and is not worth it.
+fn member_receiver_type(
+    server: &mut Server,
+    i: usize,
+    path: &str,
+    text: &str,
+    ix: &FileIndex,
+    dot: u32,
+) -> Result<Option<String>, ReqError> {
+    let Some(ti) = ix.tokens.iter().position(|t| t.hi == dot) else { return Ok(None) };
+    let mut r = Resolver::new(&mut server.packages[i]);
+    let all = r.all_items();
+    if let Some(ty) = receiver_type(Answering::of(r.p, path).as_ref(), ix, &all, path, text, ti) {
+        return Ok(Some(ty));
+    }
+    let receiver = &ix.tokens[ti];
+    let known = match &receiver.kind {
+        Tk::Ident(name) => declaration_before(ix, receiver.lo, name).is_some() || dot_before(ix, ti),
+        Tk::RParen | Tk::RBracket => true,
+        _ => false,
+    };
+    if known { repaired_receiver_type(server, i, path, text, ix, dot) } else { Ok(None) }
+}
+
+/// The type of the receiver of the member dot at `dot` (`x.`, `x.na`), from an analysis of the text without the dot and
+/// the member name typed after it: the line being typed does not parse with them, and a file that does not parse has no
+/// typed tree, but the receiver alone does, so the cursor's own expression is typed whatever the rest of the file holds
+/// (`spec/lsp.md`, LS12). `None` when the receiver is not an expression the analysis types (a module, a type name, a
+/// file that still does not parse): the stale analysis and the declarations answer then. The document's text is put
+/// back before the answer, as in [`expected_type_at`].
+fn repaired_receiver_type(
+    server: &mut Server,
+    i: usize,
+    path: &str,
+    text: &str,
+    ix: &FileIndex,
+    dot: u32,
+) -> Result<Option<String>, ReqError> {
+    let Some(receiver) = ix.tokens.iter().find(|t| t.hi == dot) else { return Ok(None) };
+    let after = dot as usize + 1;
+    if text.as_bytes().get(dot as usize) != Some(&b'.') {
+        return Ok(None);
+    }
+    let word = text.as_bytes()[after..].iter().take_while(|b| b.is_ascii_alphanumeric() || **b == b'_').count();
+    let repaired = format!("{}{}", &text[..dot as usize], &text[after + word..]);
+    expected_type_at(server, i, path, text, &repaired, receiver.lo)
 }
 
 /// The type a leading dot at `dot` stands for: the type its position expects (`spec/target-typing.md`). `repaired` is
 /// the text analyzed: the document's own, or [`repaired_for_completion`]'s with a placeholder. The document's text is
 /// put back before the answer is returned, so the server's state is the document's again.
-fn expected_type_at(
+pub(crate) fn expected_type_at(
     server: &mut Server,
     i: usize,
     path: &str,
@@ -1233,29 +1346,44 @@ fn receiver_type(
     ix: &FileIndex,
     all: &[(String, Item)],
     path: &str,
+    text: &str,
     ti: usize,
 ) -> Option<String> {
     let tok = &ix.tokens[ti];
-    if let Some(ty) = a.and_then(|a| a.type_at(path, tok.lo)).filter(|t| usable(t)) {
+    if let Some(ty) = a.and_then(|a| a.type_ending_at(path, tok.lo, tok.hi)).filter(|t| usable(t)) {
         return Some(ty);
     }
     match &tok.kind {
         Tk::SelfValue => ix.self_owner(tok.lo),
         // `resp.body`: the field's declared type, read from the value before the dot.
         Tk::Ident(name) if dot_before(ix, ti) => {
-            let owner = base_type(&receiver_type(a, ix, all, path, ti.checked_sub(2)?)?);
+            let owner = base_type(&receiver_type(a, ix, all, path, text, ti.checked_sub(2)?)?);
             field_type(all, &owner, name)
         }
         Tk::Ident(name) => a
             .and_then(|a| a.local_before(path, name, tok.lo))
             .filter(|t| usable(t))
-            .or_else(|| ix.parameter_type(tok.lo, name)),
+            .or_else(|| ix.parameter_type(tok.lo, name))
+            .or_else(|| declared_type(ix, all, text, tok.lo, name)),
+        // `[1, 2]`: an array literal, typed by its first element (`[_]` when that is not a literal). The typed tree
+        // answers first; this holds when the line being typed has no tree yet.
+        Tk::RBracket => {
+            let open = open_before(ix, ti, Tk::LBracket, Tk::RBracket)?;
+            let indexes = open.checked_sub(1).is_some_and(|b| {
+                matches!(ix.tokens[b].kind, Tk::Ident(_) | Tk::RParen | Tk::RBracket | Tk::SelfValue)
+                    && ix.tokens[b].hi == ix.tokens[open].lo
+            });
+            if indexes {
+                return None;
+            }
+            Some(array_literal_type(ix, text, open))
+        }
         // `client.send(req)` or `read(req)`: the return type of the method or function called.
         Tk::RParen => {
-            let open = open_before(ix, ti)?;
+            let open = open_before(ix, ti, Tk::LParen, Tk::RParen)?;
             let callee = ix.tokens.get(open.checked_sub(1)?)?.ident()?;
             if open >= 3 && dot_before(ix, open - 1) {
-                let owner = base_type(&receiver_type(a, ix, all, path, open - 3)?);
+                let owner = receiver_type(a, ix, all, path, text, open - 3)?;
                 method_return(all, &owner, callee)
             } else {
                 function_return(all, callee)
@@ -1265,24 +1393,98 @@ fn receiver_type(
     }
 }
 
+/// The type of the array literal whose `[` is token `open`, by its first element: `[i32; _]` for `[1, 2]`, and `[_; _]`
+/// when the first element is not a literal, which only the extensions that fit any element (`[T]`) match.
+fn array_literal_type(ix: &FileIndex, text: &str, open: usize) -> String {
+    let element = ix.tokens.get(open + 1).and_then(|t| literal_type(text, t)).unwrap_or("_");
+    format!("[{element}; _]")
+}
+
+/// The type of the local or parameter `name` read from the text before `at`, for a file that has no analysis to say
+/// (it never parsed since it was opened): the annotation after the name (`let p: Point`, `xs: [i32]`), or what its
+/// initializer says: a struct literal (`Point { ... }`), a call of an associated function (`Point.origin()`) or a
+/// function (`make()`) by the type it returns, an array literal by its first element, and a literal alone on its line.
+fn declared_type(ix: &FileIndex, all: &[(String, Item)], text: &str, at: u32, name: &str) -> Option<String> {
+    let after = declaration_before(ix, at, name)? + 1;
+    match &ix.tokens.get(after)?.kind {
+        Tk::Colon => {
+            let (mut depth, mut end) = (0i32, after + 1);
+            while let Some(t) = ix.tokens.get(end) {
+                match t.kind {
+                    Tk::LParen | Tk::LBracket | Tk::Lt => depth += 1,
+                    Tk::RBracket | Tk::Gt => depth -= 1,
+                    Tk::RParen if depth == 0 => break,
+                    Tk::RParen => depth -= 1,
+                    Tk::Comma | Tk::LBrace | Tk::Other if depth == 0 => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            let (lo, hi) = (ix.tokens.get(after + 1)?.lo, ix.tokens.get(end.checked_sub(1)?)?.hi);
+            text.get(lo as usize..hi as usize).map(|ty| ty.trim().to_string()).filter(|ty| usable(ty))
+        }
+        Tk::Other if text.get(ix.tokens[after].lo as usize..ix.tokens[after].hi as usize) == Some("=") => {
+            initializer_type(ix, all, text, after + 1)
+        }
+        _ => None,
+    }
+}
+
+/// The token of the last `let`, parameter, or `mut` binding of `name` before `at` in the function around it.
+fn declaration_before(ix: &FileIndex, at: u32, name: &str) -> Option<usize> {
+    let function = ix.function_around(at)?;
+    (1..ix.tokens.len()).rev().find(|&j| {
+        let t = &ix.tokens[j];
+        t.ident() == Some(name)
+            && t.lo >= function.span.0
+            && t.hi <= at
+            && matches!(ix.tokens[j - 1].kind, Tk::Keyword("let" | "mut" | "own") | Tk::LParen | Tk::Comma)
+    })
+}
+
+/// The type of the initializer that starts at token `first` (see [`declared_type`]).
+fn initializer_type(ix: &FileIndex, all: &[(String, Item)], text: &str, first: usize) -> Option<String> {
+    let head = ix.tokens.get(first)?;
+    let next = ix.tokens.get(first + 1);
+    match &head.kind {
+        Tk::Ident(name) if name.starts_with(|c: char| c.is_ascii_uppercase()) => match next.map(|t| &t.kind) {
+            Some(Tk::LBrace) => Some(name.clone()),
+            // `Point.origin()` or `List<i32>.new()`: the type the associated function returns.
+            Some(Tk::Dot) => method_return(all, name, ix.tokens.get(first + 2)?.ident()?),
+            Some(Tk::Lt) => {
+                let close = (first + 1..ix.tokens.len()).find(|&k| ix.tokens[k].kind == Tk::Gt)?;
+                let ty = text.get(head.lo as usize..ix.tokens[close].hi as usize)?.to_string();
+                (ix.tokens.get(close + 1)?.kind == Tk::Dot).then_some(ty)
+            }
+            _ => None,
+        },
+        Tk::Ident(name) if next.is_some_and(|t| t.kind == Tk::LParen) => function_return(all, name),
+        Tk::LBracket => Some(array_literal_type(ix, text, first)),
+        _ => {
+            let literal = literal_type(text, head)?;
+            // `1 + x` is not an `i32`: the literal must be the whole initializer.
+            let alone = next.is_none_or(|t| text[head.hi as usize..t.lo as usize].contains('\n'));
+            alone.then(|| literal.to_string())
+        }
+    }
+}
+
 /// Whether token `i` is a name a `.` touches on its left (`resp.body`, not a name on the next line after a `.`).
 fn dot_before(ix: &FileIndex, i: usize) -> bool {
     i > 0 && ix.tokens[i - 1].kind == Tk::Dot && ix.tokens[i - 1].hi == ix.tokens[i].lo
 }
 
-/// The `(` matching the `)` at token `close`.
-fn open_before(ix: &FileIndex, close: usize) -> Option<usize> {
+/// The `open` bracket matching the `close` one at token `close_at`.
+fn open_before(ix: &FileIndex, close_at: usize, open: Tk, close: Tk) -> Option<usize> {
     let mut depth = 0i32;
-    for i in (0..=close).rev() {
-        match ix.tokens[i].kind {
-            Tk::RParen => depth += 1,
-            Tk::LParen => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
+    for i in (0..=close_at).rev() {
+        if ix.tokens[i].kind == close {
+            depth += 1;
+        } else if ix.tokens[i].kind == open {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
             }
-            _ => {}
         }
     }
     None
@@ -1295,12 +1497,13 @@ fn field_type(all: &[(String, Item)], owner: &str, name: &str) -> Option<String>
     field.detail.split_once(':').map(|(_, ty)| ty.trim().to_string()).filter(|ty| usable(ty))
 }
 
-/// The return type of the method `name` of `owner`, read from its declaration.
-fn method_return(all: &[(String, Item)], owner: &str, name: &str) -> Option<String> {
+/// The return type of the method `name` of a value of type `ty`, read from its declaration.
+fn method_return(all: &[(String, Item)], ty: &str, name: &str) -> Option<String> {
+    let owners = Owners::of(ty);
     let (_, method) = all.iter().find(|(_, i)| {
-        matches!(i.kind, Kind::Method | Kind::InterfaceMethod) && i.owner.as_deref() == Some(owner) && i.name == name
+        matches!(i.kind, Kind::Method | Kind::InterfaceMethod) && owners.owns(i.owner.as_deref()) && i.name == name
     })?;
-    return_type_of(&method.detail, owner)
+    return_type_of(&method.detail, &base_type(ty))
 }
 
 /// The return type of the function `name`, preferring the file's own over the standard library's.
@@ -1368,11 +1571,33 @@ fn type_members(all: &[(String, Item)], name: &str, out: &mut Completions) {
     }
 }
 
-/// The fields and methods of a value of type `owner`: its own, its extension methods, the methods of the
+/// The iterator types the compiler provides (`spec/iterators.md`, IT5), which `Iterator`'s methods apply to, and the
+/// ones among them that also take items from the back.
+const COMPILER_ITERATORS: &[&str] = &[
+    "Chars",
+    "RangeIter",
+    "MapIter",
+    "MapIterMut",
+    "IterMut",
+    "ListIntoIter",
+    "ArrayIntoIter",
+    "MapIntoIter",
+    "Chunks",
+    "ChunksExact",
+    "Windows",
+];
+const DOUBLE_ENDED: &[&str] = &["Chars", "RangeIter", "IterMut", "ListIntoIter", "ArrayIntoIter"];
+
+/// The fields and methods of a value of type `ty`: its own, its extension methods, the methods of the
 /// interfaces it implements, and the ones an implementation or a derive provides (`to_string` through `Display`,
-/// `clone` through `Clone`, `cmp` through `Ord`).
-fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
-    for (_, item) in all.iter().filter(|(_, i)| i.owner.as_deref() == Some(owner)) {
+/// `clone` through `Clone`, `cmp` through `Ord`). An array or a slice has the methods of `[T]` (the compiler's and
+/// the extensions of `std/src/slice.bd` that fit its element), and a slice is an `Iterator`, so it has the adapters;
+/// an array needs `iter()` first, and a `List` needs `as_slice()` (`spec/stdlib.md`, "Slices").
+fn value_members(all: &[(String, Item)], ty: &str, out: &mut Completions) {
+    let owners = Owners::of(ty);
+    let owner = base_type(ty);
+    let owner = owner.as_str();
+    for (_, item) in all.iter().filter(|(_, i)| owners.owns(i.owner.as_deref())) {
         match item.kind {
             Kind::Field => out.item(item, 0),
             Kind::Method | Kind::InterfaceMethod if takes_self(&item.detail) => out.item(item, 1),
@@ -1384,6 +1609,31 @@ fn value_members(all: &[(String, Item)], owner: &str, out: &mut Completions) {
         .filter(|(_, i)| i.kind == Kind::Impl && i.owner.as_deref() == Some(owner))
         .filter_map(|(_, i)| i.interface.clone())
         .collect();
+    match owners {
+        Owners::Sequence { array: false, .. } => {
+            interfaces.extend(["Iterator", "DoubleEndedIterator"].map(str::to_string));
+        }
+        Owners::Sequence { array: true, .. } | Owners::Named(_) => {}
+    }
+    // The types the compiler knows without declaring them: tuples and arrays clone and compare, a range does too and
+    // gives its iterator, and its own iterators are `Iterator`s (`spec/iterators.md`, IT5; `spec/stdlib.md`).
+    let shown = ty.trim().trim_start_matches('&').trim();
+    let range = matches!(owner, "Range" | "RangeInclusive");
+    let tuple = shown.starts_with('(') && shown != "()";
+    if tuple || range || matches!(owners, Owners::Sequence { array: true, .. }) {
+        out.add("clone", 2, &format!("fn clone(self): {shown}"), Some("A copy, field by field."), 1);
+        out.add("cmp", 2, &format!("fn cmp(self, other: {shown}): Ordering"), Some("The order, through `Ord`."), 1);
+    }
+    if range {
+        out.add("iter", 2, "fn iter(self): RangeIter", Some("Iterates over the range."), 1);
+        out.add("into_iter", 2, "fn into_iter(own self): RangeIter", Some("Iterates over the range."), 1);
+    }
+    if COMPILER_ITERATORS.contains(&owner) {
+        interfaces.push("Iterator".to_string());
+    }
+    if DOUBLE_ENDED.contains(&owner) {
+        interfaces.push("DoubleEndedIterator".to_string());
+    }
     // `struct Point: Clone, Ord` in the type's declaration.
     if let Some((_, decl)) = all.iter().find(|(_, i)| i.kind.is_type() && i.name == owner) {
         interfaces.extend(declared_interfaces(&decl.detail));
@@ -1725,13 +1975,18 @@ pub fn signature_help(server: &mut Server, params: &Json) -> Reply {
     };
     let dotted = open >= 3 && ix.tokens[open - 2].kind == Tk::Dot;
     let receiver = if dotted { Some(ix.tokens[open - 3].clone()) } else { None };
+    let all = r.all_items();
     let Some(answer) = Answering::of(r.p, &path) else { return Ok(Json::Null) };
     let functions = answer.analysis.functions();
     // A method call on a value names the receiver's type; a call through a type or module names it directly.
     let is_type_name = |n: &str| n.starts_with(|c: char| c.is_ascii_uppercase()) || BUILTIN_TYPES.contains(&n);
     let receiver_type = receiver.as_ref().and_then(|t| match &t.kind {
         Tk::Ident(n) if is_type_name(n) => Some(n.clone()),
-        _ => answer.type_at(&path, t.lo).map(|ty| base_type(&ty)),
+        // An array or a slice is owned by `[T]` (the declarations' name for it, `nav::Owners`).
+        _ => answer.type_at(&path, t.lo).map(|ty| match sequence_element(&ty) {
+            Some(_) => "[T]".to_string(),
+            None => base_type(&ty),
+        }),
     });
     let by_value = receiver.as_ref().is_some_and(|t| match &t.kind {
         Tk::Ident(n) => !is_type_name(n) && answer.type_at(&path, t.lo).is_some(),
@@ -1752,12 +2007,32 @@ pub fn signature_help(server: &mut Server, params: &Json) -> Reply {
     let builtin = match (best, &receiver_type) {
         (Some(f), Some(_)) if owner_match(f) => None,
         (Some(_), None) if !dotted => None,
-        (_, Some(t)) => crate::builtins::get().find(t, &callee.0),
+        (_, Some(t)) => {
+            let builtins = crate::builtins::get();
+            // An array's own methods (`iter_mut`) are declared on `[T; N]`.
+            builtins.find(t, &callee.0).or_else(|| if t == "[T]" { builtins.find("[T; N]", &callee.0) } else { None })
+        }
         (None, None) if !dotted => crate::builtins::get().find("", &callee.0),
         _ => None,
     };
+    // An extension on an array or a slice is not found by name among the functions: the declarations of the
+    // standard library say which fits the receiver's element (`[u8].is_ascii`).
+    let declared = receiver
+        .as_ref()
+        .and_then(|t| answer.type_at(&path, t.lo))
+        .map(|ty| Owners::of(&ty))
+        .filter(|owners| matches!(owners, Owners::Sequence { .. }))
+        .and_then(|owners| {
+            all.iter()
+                .map(|(_, i)| i)
+                .find(|i| i.kind == Kind::Method && i.name == callee.0 && owners.owns(i.owner.as_deref()))
+        });
     let (label, has_self) = match (builtin, best) {
         (Some(item), _) => (item.detail.clone(), takes_self(&item.detail)),
+        (None, _) if declared.is_some() => {
+            let item = declared.expect("checked");
+            (item.detail.clone(), takes_self(&item.detail))
+        }
         (None, Some(f)) => (f.display.clone(), f.params.first().is_some_and(|p| p.name == "self")),
         (None, None) => return Ok(Json::Null),
     };
@@ -1998,7 +2273,7 @@ fn classify(p: &mut Package, path: &str) -> Vec<(u32, u32, u32, u32)> {
         }
     }
     // What the analysis resolved.
-    if let Some(analysis) = r.p.current() {
+    if let Some(analysis) = r.p.current_typed() {
         let locals = analysis.locals(path);
         let mutable: Vec<(u32, bool)> = locals.iter().map(|l| (l.at.lo, l.mutable)).collect();
         for local in &locals {
@@ -2152,6 +2427,45 @@ pub fn formatting(server: &mut Server, params: &Json, ranged: bool) -> Reply {
         .with("range", index.range(prefix as u32, old_hi.max(prefix) as u32))
         .with("newText", &formatted[prefix..new_hi.max(prefix)]);
     Ok(Json::Arr(vec![edit]))
+}
+
+/// `completionItem/resolve`: the documentation of an item of the latest completion (`spec/lsp.md`, LS23). An item the
+/// server does not know, or one that has its documentation, comes back as it is.
+pub fn resolve_completion(server: &mut Server, params: &Json) -> Reply {
+    let mut item = params.clone();
+    if item.get("documentation").is_null()
+        && let Some(label) = item.get("label").as_str()
+        && let Some(docs) = server.completion_docs.get(label)
+    {
+        let docs = Json::obj().with("kind", "markdown").with("value", docs.as_str());
+        item.set("documentation", docs);
+    }
+    Ok(item)
+}
+
+/// `textDocument/onTypeFormatting`: typing `}` formats the line it closes, and a newline the line it ends, with the
+/// rules of `burdin fmt` (`spec/lsp.md`, LS24). A file that does not parse yet is left alone.
+pub fn on_type_formatting(server: &mut Server, params: &Json) -> Reply {
+    let (i, path) = server.document(params, false)?;
+    let text = server.packages[i].text(&path).unwrap_or("").to_string();
+    let index = LineIndex::new(&text, server.encoding);
+    let Some(at) = index.offset_of(params.get("position")) else { return Err(ReqError::params("missing position")) };
+    let at = (at as usize).min(text.len());
+    let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    // A newline was typed: the line it ended is the one before the cursor's.
+    let (lo, hi) = match params.get("ch").as_str() {
+        Some("\n") if line_start > 0 => {
+            let before = line_start - 1;
+            (text[..before].rfind('\n').map_or(0, |n| n + 1), before)
+        }
+        _ => (line_start, text[at..].find('\n').map_or(text.len(), |n| at + n)),
+    };
+    let range = index.range(lo as u32, hi as u32);
+    formatting(server, &doc_range(params, range), true)
+}
+
+fn doc_range(params: &Json, range: Json) -> Json {
+    Json::obj().with("textDocument", params.get("textDocument").clone()).with("range", range)
 }
 
 #[cfg(test)]

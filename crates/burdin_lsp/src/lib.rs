@@ -15,13 +15,16 @@
 //! official       the official packages' public API, for completion before anything imports them
 //! edit           hover, completion, signature help, inlay hints, semantic tokens, formatting
 //! outline        document and workspace symbols, folding, selection ranges, document links
-//! actions        code actions, code lenses, and the test commands
+//! actions        code actions, code lenses, and the commands
+//! files          the edits for files the editor renames
 //! ```
 
 mod actions;
 mod builtins;
 mod diagnostics;
 mod edit;
+mod files;
+mod fixes;
 mod index;
 mod nav;
 mod official;

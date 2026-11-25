@@ -1,0 +1,15 @@
+use util.double
+
+fn scale(value: i32, factor: i32, note: i32): i32 {
+    value * factor
+}
+
+fn twice(n: i32): i32 {
+    scale(n, 2, 0)
+}
+
+fn main() {
+    let a = scale(2, 3, 0)
+    let b = scale(value: 5, factor: 6, note: 1)
+    println("{a} {b} {double(4)} {twice(1)}")
+}

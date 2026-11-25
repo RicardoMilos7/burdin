@@ -4,7 +4,7 @@
 //! Integers and characters use ranges as constructors. A column of ranges is split at every range boundary into
 //! segments that lie entirely inside or outside each range, and those segments are the constructors to try.
 
-use burdin_tir::{Pat, Ty, TypeDefs};
+use burdin_tir::{FieldDef, Pat, Ty, TypeDefs, VariantShape};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ctor {
@@ -63,6 +63,117 @@ fn lower(p: &Pat) -> P {
 pub fn exhaustive(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> bool {
     let rows: Vec<Vec<P>> = pats.iter().map(|p| vec![lower(p)]).collect();
     !missing(rows, std::slice::from_ref(ty), adts)
+}
+
+/// The values `pats` leave out, as patterns written in source form, in the order the type declares them: one for
+/// each uncovered case (`Color.Green`, `Shape.Circle(_)`, `Option.Some(_)`, `(Color.Red, _)`). An open domain (an integer, a
+/// string, a slice) that a pattern does not finish shows as `_`, so the list for a match on an integer is just `_`.
+/// Empty when `pats` cover every value of `ty`.
+pub fn missing_patterns(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> Vec<String> {
+    let rows: Vec<Vec<P>> = pats.iter().map(|p| vec![lower(p)]).collect();
+    let mut out: Vec<String> = Vec::new();
+    for witness in witnesses(rows, std::slice::from_ref(ty), adts, true) {
+        let text = witness.into_iter().next().unwrap_or_else(|| "_".to_string());
+        if !out.contains(&text) {
+            out.push(text);
+        }
+    }
+    out
+}
+
+/// The vectors of patterns (one per type of `tys`) that match the values no row matches. `top` is whether `rows` is
+/// the whole matrix: below the top, a matrix without rows is one wildcard per column, not every combination.
+fn witnesses(rows: Vec<Vec<P>>, tys: &[Ty], adts: &TypeDefs, top: bool) -> Vec<Vec<String>> {
+    let Some((first, rest)) = tys.split_first() else {
+        return if rows.is_empty() { vec![Vec::new()] } else { Vec::new() };
+    };
+    let rows = expand_or(rows);
+    if rows.is_empty() && !top && !matches!(first, Ty::Never | Ty::Error) {
+        return vec![vec!["_".to_string(); tys.len()]];
+    }
+    if seq_lengths(first, &rows).is_some() {
+        // Arrays and slices are not listed length by length: what is left out is one wildcard.
+        return if missing(rows, tys, adts) { vec![vec!["_".to_string(); tys.len()]] } else { Vec::new() };
+    }
+    let heads: Vec<Ctor> =
+        rows.iter().filter_map(|r| if let P::Ctor(c, _) = &r[0] { Some(c.clone()) } else { None }).collect();
+    match finite_ctors(first, adts).or_else(|| complete_ctors(first, &heads, adts)) {
+        Some(ctors) => {
+            let mut out = Vec::new();
+            for c in ctors {
+                let mut sub = sub_tys(first, c.clone(), adts);
+                let arity = sub.len();
+                sub.extend_from_slice(rest);
+                for mut w in witnesses(specialize(&rows, c.clone(), arity), &sub, adts, false) {
+                    let tail = w.split_off(arity);
+                    let mut full = vec![apply(first, &c, &w, adts)];
+                    full.extend(tail);
+                    out.push(full);
+                }
+            }
+            out
+        }
+        None => {
+            let default: Vec<Vec<P>> =
+                rows.iter().filter(|r| matches!(r[0], P::Wild)).map(|r| r[1..].to_vec()).collect();
+            let mut out = Vec::new();
+            for mut w in witnesses(default, rest, adts, false) {
+                w.insert(0, "_".to_string());
+                out.push(w);
+            }
+            out
+        }
+    }
+}
+
+/// Every constructor of a type with a finite, listed set of them, in declaration order.
+fn finite_ctors(ty: &Ty, adts: &TypeDefs) -> Option<Vec<Ctor>> {
+    match ty {
+        Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) => Some(vec![Ctor::Single]),
+        Ty::Never | Ty::Error => Some(Vec::new()),
+        Ty::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
+        Ty::Option(_) | Ty::Result(..) => Some(vec![Ctor::Variant(0), Ctor::Variant(1)]),
+        Ty::Enum(a) => Some((0..adts.enums[a.id].variants.len()).map(Ctor::Variant).collect()),
+        _ => None,
+    }
+}
+
+/// The last segment of a type's name, without type arguments: how a pattern names it.
+fn pattern_name(name: &str) -> &str {
+    let name = name.split('<').next().unwrap_or(name);
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// The pattern of constructor `c` of `ty` with `args` as its fields.
+fn apply(ty: &Ty, c: &Ctor, args: &[String], adts: &TypeDefs) -> String {
+    match (ty, c) {
+        (Ty::Bool, Ctor::Bool(b)) => b.to_string(),
+        (Ty::Option(_), Ctor::Variant(0)) => "Option.None".to_string(),
+        (Ty::Option(_), Ctor::Variant(_)) => format!("Option.Some({})", args[0]),
+        (Ty::Result(..), Ctor::Variant(0)) => format!("Result.Ok({})", args[0]),
+        (Ty::Result(..), Ctor::Variant(_)) => format!("Result.Err({})", args[0]),
+        (Ty::Tuple(_), Ctor::Single) => format!("({})", args.join(", ")),
+        (Ty::Unit, Ctor::Single) => "()".to_string(),
+        (Ty::Struct(a), Ctor::Single) => {
+            let fields = &adts.structs[a.id].fields;
+            format!("{} {{ {} }}", pattern_name(&a.name), named_fields(fields, args))
+        }
+        (Ty::Enum(a), Ctor::Variant(i)) => {
+            let variant = &adts.enums[a.id].variants[*i];
+            let name = format!("{}.{}", pattern_name(&a.name), variant.name);
+            match variant.shape {
+                VariantShape::Unit => name,
+                VariantShape::Tuple => format!("{name}({})", args.join(", ")),
+                VariantShape::Struct => format!("{name} {{ {} }}", named_fields(&variant.fields, args)),
+            }
+        }
+        _ => "_".to_string(),
+    }
+}
+
+fn named_fields(fields: &[FieldDef], args: &[String]) -> String {
+    let named: Vec<String> = fields.iter().zip(args).map(|(f, a)| format!("{}: {a}", f.name)).collect();
+    named.join(", ")
 }
 
 /// Whether some vector of values of types `tys` matches none of `rows`.
@@ -529,5 +640,45 @@ mod tests {
         let large = Ty::Array(Box::new(Ty::Bool), u64::MAX);
         assert!(exhaustive_with(&large, &[Pat::Wild]));
         assert!(!exhaustive_with(&large, &[]));
+    }
+
+    #[test]
+    fn missing_patterns_name_each_uncovered_case() {
+        let shape = enum_def(
+            "Shape",
+            vec![
+                variant("Dot", vec![]),
+                variant("Circle", vec![field("r", Ty::Int(IntTy::I32))]),
+                variant("Rect", vec![field("w", Ty::Bool), field("h", Ty::Bool)]),
+            ],
+        );
+        let enums = [shape];
+        let defs = TypeDefs { structs: &[], enums: &enums };
+        let ty = Ty::Enum(adt("Shape", 0));
+        let dot = Pat::Variant(0, vec![]);
+        assert_eq!(missing_patterns(&ty, &[&dot], &defs), ["Shape.Circle(_)", "Shape.Rect(_, _)"]);
+        let rect_true = Pat::Variant(2, vec![Pat::Bool(true), Pat::Wild]);
+        assert_eq!(
+            missing_patterns(&ty, &[&rect_true], &defs),
+            ["Shape.Dot", "Shape.Circle(_)", "Shape.Rect(false, _)"]
+        );
+        assert!(missing_patterns(&ty, &[&Pat::Wild], &defs).is_empty());
+        let none: [&Pat; 0] = [];
+        assert_eq!(missing_patterns(&Ty::Int(IntTy::I32), &none, &defs), ["_"]);
+    }
+
+    #[test]
+    fn missing_patterns_of_options_results_and_tuples() {
+        let defs = TypeDefs { structs: &[], enums: &[] };
+        let opt = Ty::Option(Box::new(Ty::Bool));
+        assert_eq!(missing_patterns(&opt, &[&Pat::None], &defs), ["Option.Some(_)"]);
+        let some_true = Pat::Some(Box::new(Pat::Bool(true)));
+        assert_eq!(missing_patterns(&opt, &[&some_true, &Pat::None], &defs), ["Option.Some(false)"]);
+        let res = Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Bool));
+        let ok = Pat::Ok(Box::new(Pat::Wild));
+        assert_eq!(missing_patterns(&res, &[&ok], &defs), ["Result.Err(_)"]);
+        let pair = Ty::Tuple(vec![Ty::Bool, Ty::Bool]);
+        let tt = Pat::Product(vec![Pat::Bool(true), Pat::Bool(true)]);
+        assert_eq!(missing_patterns(&pair, &[&tt], &defs), ["(false, _)", "(true, false)"]);
     }
 }

@@ -4,6 +4,12 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Language server gaps closed (2026-11-25, issue #1068).** All eight children are implemented (see `CHANGELOG.md`).
+Known limits: `p.` followed by a line that starts with an identifier still parses as a method chain, so completion uses
+the text fallbacks there; a call cut off by `}` is dropped by the parser; the editor's "add parameter" code action
+writes the placeholder `extra: i32 = 0` (the VS Code command `burdin.changeSignature` prompts instead); refactoring
+edits are one span per file.
+
 **Inferred variants, and `Option`/`Result` without bare names (2026-11-25, issue #1069).** `.Variant`, `.Variant(p)`, and
 `.Variant { f }` now work in patterns (match, `let`, `if let`, or-patterns, nested) and in expressions with an expected
 type (`spec/target-typing.md`, TT13-TT19). The names `Some`, `None`, `Ok`, and `Err` no longer exist: each is E0305

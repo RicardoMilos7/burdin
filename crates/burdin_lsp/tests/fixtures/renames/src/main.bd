@@ -1,0 +1,8 @@
+use shapes
+use shapes.Square
+use geo.inner.depth
+
+fn main() {
+    let s = Square { side: 1 }
+    println("{s.side} {depth()}")
+}

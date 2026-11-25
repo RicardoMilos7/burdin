@@ -1,0 +1,3 @@
+struct Square {
+    side: i32
+}

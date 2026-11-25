@@ -47,6 +47,7 @@ mod user_derives;
 mod validate;
 
 pub use cache::{CheckCache, CheckStats, Edit};
+pub use exhaust::missing_patterns;
 
 use burdin_diag::{Diagnostics, FileId, SourceMap};
 use burdin_syntax::ast;

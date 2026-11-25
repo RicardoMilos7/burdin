@@ -114,7 +114,7 @@ impl<'a> Resolver<'a> {
         if let Some(l) = self.locals.get(path) {
             return l.clone();
         }
-        let list = Rc::new(self.p.current().map(|a| a.locals(path)).unwrap_or_default());
+        let list = Rc::new(self.p.current_typed().map(|a| a.locals(path)).unwrap_or_default());
         self.locals.insert(path.to_string(), list.clone());
         list
     }
@@ -216,8 +216,8 @@ impl<'a> Resolver<'a> {
 
     /// A member (field, variant, or method) of a type.
     fn member(&mut self, from: &str, owner: &str, name: &str) -> Option<Symbol> {
-        let owner = base_type(owner);
-        self.find(from, name, |i| i.owner.as_deref() == Some(owner.as_str()) && i.kind != Kind::Impl)
+        let owners = Owners::of(owner);
+        self.find(from, name, |i| owners.owns(i.owner.as_deref()) && i.kind != Kind::Impl)
     }
 
     /// A member of a value of type `ty`: a member of the type, or, when `ty` is a generic parameter of the function
@@ -274,7 +274,7 @@ impl<'a> Resolver<'a> {
         // member `Color.Green` names (`spec/lsp.md`, LS8).
         if prev_dot && leading_dot(&ix, ti - 1) {
             let dot = ix.tokens[ti - 1].lo;
-            let ty = self.p.current().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
+            let ty = self.p.current_typed().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
             // A pattern (`.Circle(r)` in an arm) holds no expression the analysis could type: the variant is the one
             // of that name, nearest to this file (`spec/target-typing.md`, TT13).
             return ty
@@ -282,7 +282,7 @@ impl<'a> Resolver<'a> {
                 .or_else(|| self.find(path, &name, |i| i.kind == Kind::Variant));
         }
         // The analysis's answer for an expression.
-        if let Some(analysis) = self.p.current()
+        if let Some(analysis) = self.p.current_typed()
             && let Some(r) = analysis.resolve_at(path, tok.lo)
             && r.name == name
         {
@@ -353,7 +353,7 @@ impl<'a> Resolver<'a> {
             if !receiver_is_member && let Some(ty) = self.local_type(path, &receiver) {
                 return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
-            if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
+            if let Some(ty) = self.p.current_typed().and_then(|a| a.type_at(path, receiver.lo)) {
                 // The innermost expression at the receiver's start may be longer than the receiver (`a.b` at `a` is
                 // `a`); only one that ends at the dot is the receiver.
                 if ty.at.hi == receiver.hi || ty.at.hi == ix.tokens[ti - 1].lo {
@@ -391,7 +391,7 @@ impl<'a> Resolver<'a> {
         }
         let brace = enclosing_brace(ix, ti)?;
         let dot = ix.tokens.get(brace.checked_sub(1)?).filter(|t| t.kind == Tk::Dot)?;
-        let ty = self.p.current().and_then(|a| a.type_at(path, dot.lo)).map(|t| t.ty)?;
+        let ty = self.p.current_typed().and_then(|a| a.type_at(path, dot.lo)).map(|t| t.ty)?;
         Some(base_type(&ty))
     }
 
@@ -407,7 +407,7 @@ impl<'a> Resolver<'a> {
     /// the one that knows `sq`.
     fn local_type(&mut self, path: &str, tok: &crate::index::Tok) -> Option<String> {
         let name = tok.ident()?;
-        if let Some(analysis) = self.p.current()
+        if let Some(analysis) = self.p.current_typed()
             && let Some(r) = analysis.resolve_at(path, tok.lo)
             && r.name == name
             && matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter)
@@ -462,6 +462,71 @@ pub fn base_type(ty: &str) -> String {
     let t = ty.trim().trim_start_matches('&').trim_start();
     let t = t.strip_prefix("mut ").unwrap_or(t);
     t.split(['<', '[', '(']).next().unwrap_or(t).trim().to_string()
+}
+
+/// The element type of an array or slice type, and whether it is an array: `i32` and `true` for `[i32; 3]`, `u8` and
+/// `false` for `&[u8]`. A type that is neither gives `None`.
+pub fn sequence_element(ty: &str) -> Option<(String, bool)> {
+    let t = ty.trim().trim_start_matches('&').trim_start();
+    let t = t.strip_prefix("mut ").unwrap_or(t);
+    let inner = t.strip_prefix('[')?.strip_suffix(']')?;
+    let mut depth = 0i32;
+    for (at, c) in inner.char_indices() {
+        match c {
+            '[' | '(' | '<' => depth += 1,
+            ']' | ')' | '>' => depth -= 1,
+            ';' if depth == 0 => return Some((inner[..at].trim().to_string(), true)),
+            _ => {}
+        }
+    }
+    Some((inner.trim().to_string(), false))
+}
+
+/// Whether a name is a type parameter an extension declares in its receiver (`T` in `fn [T].first`): one capital
+/// letter, then digits. The syntax tree does not record a slice receiver's parameters, so the spelling decides.
+pub fn is_type_parameter(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_uppercase()) && chars.all(|c| c.is_ascii_digit())
+}
+
+/// Whether the element pattern of a slice extension's receiver (`T`, `[T]`, `u8`) fits an element type.
+fn element_fits(pattern: &str, element: &str) -> bool {
+    if is_type_parameter(pattern.trim()) {
+        return true;
+    }
+    match (sequence_element(pattern), sequence_element(element)) {
+        (Some((p, _)), Some((e, _))) => element_fits(&p, &e),
+        _ => pattern.trim() == element.trim(),
+    }
+}
+
+/// The declarations that belong to a value's type: what `owner` of an [`Item`] must be (`spec/lsp.md`, LS12). A named
+/// type owns its members by name; an array or a slice owns the extensions of `std/src/slice.bd`, whose owner is the
+/// receiver as written (`[T]`, `[[T]]`, `[u8]`, `[String]`), when the element fits, and the built-ins' `[T]` and
+/// (for an array only) `[T; N]`.
+pub enum Owners {
+    Named(String),
+    Sequence { element: String, array: bool },
+}
+
+impl Owners {
+    pub fn of(ty: &str) -> Owners {
+        match sequence_element(ty) {
+            Some((element, array)) => Owners::Sequence { element, array },
+            None => Owners::Named(base_type(ty)),
+        }
+    }
+
+    pub fn owns(&self, owner: Option<&str>) -> bool {
+        let Some(owner) = owner else { return false };
+        match self {
+            Owners::Named(name) => owner == name,
+            Owners::Sequence { array, .. } if owner == "[T; N]" => *array,
+            Owners::Sequence { element, .. } => {
+                sequence_element(owner).is_some_and(|(pattern, array)| !array && element_fits(&pattern, element))
+            }
+        }
+    }
 }
 
 /// Whether the dot token at `i` starts an expression (`.Red`, `.{ x: 1 }`, `name(.new())`) rather than follows one
@@ -530,6 +595,49 @@ fn symbol_for(server: &mut Server, params: &Json) -> Result<Option<(usize, Strin
 pub fn definition(server: &mut Server, params: &Json) -> Reply {
     let Some((_, _, symbol)) = symbol_for(server, params)? else { return Ok(Json::Null) };
     Ok(server.location(&symbol.def))
+}
+
+/// `textDocument/typeDefinition`: the declaration of the type of the value under the cursor (`spec/lsp.md`, LS22). A
+/// type name goes to its own declaration; a local, parameter, or field to the declaration of the type it holds; a
+/// function to the type it returns; any other expression to the type the analysis gives it. An array or a slice goes
+/// to its element type, and a generic type to the generic (`List<Point>` to `List`).
+pub fn type_definition(server: &mut Server, params: &Json) -> Reply {
+    let (i, path) = server.document(params, true)?;
+    let offset = server.offset(i, &path, params.get("position"))?;
+    let (symbol, typed) = {
+        let mut r = Resolver::new(&mut server.packages[i]);
+        let symbol = r.symbol_at(&path, offset);
+        let typed = r.p.current_typed().and_then(|a| a.type_at(&path, offset)).map(|t| t.ty);
+        (symbol, typed)
+    };
+    let ty = match &symbol {
+        Some(s) => match s.kind {
+            SymKind::Item(kind) if kind.is_type() => return Ok(server.location(&s.def)),
+            SymKind::Local | SymKind::Parameter => s.ty.clone(),
+            SymKind::Item(Kind::Field) => {
+                s.detail.as_deref().and_then(|d| d.split_once(':')).map(|(_, t)| t.to_string())
+            }
+            SymKind::Item(kind) if kind.is_function() => {
+                s.detail.as_deref().and_then(|d| d.rsplit_once("): ")).map(|(_, t)| t.to_string())
+            }
+            SymKind::Item(_) | SymKind::Module => None,
+        },
+        None => typed,
+    };
+    let Some(mut ty) = ty else { return Ok(Json::Null) };
+    while let Some((element, _)) = sequence_element(&ty) {
+        ty = element;
+    }
+    let name = base_type(&ty);
+    let all = Resolver::new(&mut server.packages[i]).all_items();
+    let found = all
+        .iter()
+        .filter(|(_, item)| item.kind.is_type() && item.name == name)
+        .min_by_key(|(file, _)| (*file != path, file.starts_with("<std>/") || file == crate::builtins::PATH));
+    Ok(match found {
+        Some((file, item)) => server.location(&Loc::new(file, item.name_span.0, item.name_span.1)),
+        None => Json::Null,
+    })
 }
 
 /// Every place that names the symbol, its declaration included. Locals are searched in their file; anything else in
@@ -963,4 +1071,30 @@ pub fn type_hierarchy(server: &mut Server, params: &Json, up: bool) -> Reply {
             })
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sequence_type_gives_its_element() {
+        assert_eq!(sequence_element("[i32; 3]"), Some(("i32".to_string(), true)));
+        assert_eq!(sequence_element("&[u8]"), Some(("u8".to_string(), false)));
+        assert_eq!(sequence_element("[[i32; 2]; 3]"), Some(("[i32; 2]".to_string(), true)));
+        assert_eq!(sequence_element("List<i32>"), None);
+        assert_eq!(sequence_element("(i32, [u8])"), None);
+    }
+
+    #[test]
+    fn slice_extensions_fit_by_their_element() {
+        let slice = Owners::of("[u8]");
+        assert!(slice.owns(Some("[T]")) && slice.owns(Some("[u8]")));
+        assert!(!slice.owns(Some("[String]")) && !slice.owns(Some("[[T]]")) && !slice.owns(Some("[T; N]")));
+        assert!(Owners::of("[i32; 3]").owns(Some("[T; N]")));
+        assert!(Owners::of("[[i32; 2]]").owns(Some("[[T]]")));
+        assert!(Owners::of("[String]").owns(Some("[String]")) && !Owners::of("[str]").owns(Some("[String]")));
+        assert!(Owners::of("List<i32>").owns(Some("List")) && !Owners::of("List<i32>").owns(Some("[T]")));
+        assert!(!Owners::of("[i32]").owns(None));
+    }
 }

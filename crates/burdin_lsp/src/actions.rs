@@ -1,5 +1,6 @@
 //! Code actions, code lenses, and the commands they run (`spec/lsp.md`, LS18-LS19).
 
+use crate::fixes::{self, Edit};
 use crate::index::{Kind, Tk};
 use crate::json::Json;
 use crate::nav::Resolver;
@@ -7,6 +8,8 @@ use crate::project::{self, Loc};
 use crate::server::{Reply, ReqError, Server, TestResult};
 use crate::text::LineIndex;
 use burdin_diag::Diagnostic;
+use burdin_refactor::FileChange;
+use burdin_syntax::ast;
 use std::path::{Path, PathBuf};
 
 /// The `quickfix` and refactoring actions for a range, and the `source.organizeImports` action for the file.
@@ -62,9 +65,29 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
                         .with("edit", edit_of(edits)),
                 );
             }
+            let mut written = fixes::missing_derive(server, i, d);
+            written.extend(fixes::missing_method(server, i, &path, &text, d));
+            for fix in written {
+                let edit = edit_in_file(server, &fix.path, &fix.edits);
+                actions.push(
+                    Json::obj()
+                        .with("title", fix.title)
+                        .with("kind", "quickfix")
+                        .with("diagnostics", Json::Arr(vec![diagnostic.clone()]))
+                        .with("edit", edit),
+                );
+            }
         }
     }
     if wanted("refactor.rewrite") {
+        for fix in fixes::implement_interfaces(server, i, &path, lo, hi) {
+            let edit = edit_in_file(server, &fix.path, &fix.edits);
+            actions.push(Json::obj().with("title", fix.title).with("kind", "refactor.rewrite").with("edit", edit));
+        }
+        for (title, edits) in fixes::expand_wildcard(server, i, &path, &text, lo, hi) {
+            actions
+                .push(Json::obj().with("title", title).with("kind", "refactor.rewrite").with("edit", edit_of(edits)));
+        }
         // Write the inferred type of a `let` binding.
         let p = &mut server.packages[i];
         if let (Some(ix), Some(analysis)) = (p.index(&path), p.current()) {
@@ -92,29 +115,21 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
             }
         }
     }
-    if wanted("refactor.extract") && lo < hi {
-        for (kind, name, title) in [
-            ("extract-variable", "value", "extract the selection into a local"),
-            ("extract-function", "extracted", "extract the selection into a function"),
-        ] {
-            if let Some(edits) = refactor_edits(server, i, &path, lo, hi, kind, Some(name)) {
-                actions.push(
-                    Json::obj().with("title", title).with("kind", "refactor.extract").with("edit", edit_of(edits)),
-                );
+    for offer in refactor_offers(server, i, &path, lo, hi, &wanted) {
+        let mut action = Json::obj().with("title", offer.title.as_str()).with("kind", offer.kind);
+        if server.caps.code_action_resolve {
+            // The edit is computed when the action is chosen (`codeAction/resolve`, LS23).
+            action.set("data", offer.data);
+        } else {
+            match refactor_changes(server, &offer.data) {
+                Ok(changes) => action.set("edit", workspace_edit(server, &changes)),
+                Err(refusal) => {
+                    server.log(format!("{}: {refusal}", offer.title));
+                    continue;
+                }
             }
         }
-    }
-    if wanted("refactor.inline") && lo == hi {
-        for (kind, title) in [
-            ("inline-variable", "inline the local at the cursor"),
-            ("inline-function", "inline the function at the cursor"),
-        ] {
-            if let Some(edits) = refactor_edits(server, i, &path, lo, hi, kind, None) {
-                actions.push(
-                    Json::obj().with("title", title).with("kind", "refactor.inline").with("edit", edit_of(edits)),
-                );
-            }
-        }
+        actions.push(action);
     }
     if wanted("source.organizeImports") {
         let removals: Vec<(u32, u32, String)> = diags
@@ -134,36 +149,202 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
     Ok(Json::Arr(actions))
 }
 
-/// The edits one refactoring makes to the package, in the text the editor has (RF7). `None` when the refactoring
-/// would change what the program means; the editor then offers no action, and the command line explains why.
-fn refactor_edits(
+/// A refactoring the editor offers: its title and kind, and the `data` that says what to run (`refactor_changes`).
+struct Offer {
+    title: String,
+    kind: &'static str,
+    data: Json,
+}
+
+/// The refactorings that fit the selection `lo..hi` (LS18): extract for a selection, inline at a name, change
+/// signature at a function's name or one of its parameters, and move item at an item's name. This looks only at the
+/// syntax, so the menu is cheap; the engine decides when the edit is computed, and a refusal removes the action
+/// (RF7) or, when the edit is resolved later, is the answer to the resolve.
+fn refactor_offers(
     server: &mut Server,
     i: usize,
     path: &str,
     lo: u32,
     hi: u32,
-    kind: &str,
-    name: Option<&str>,
-) -> Option<Vec<Edit>> {
-    let encoding = server.encoding;
-    let package = &mut server.packages[i];
-    let mut engine = burdin_refactor::Engine::new(&mut package.db).ok()?;
-    let outcome = match (kind, name) {
-        ("extract-variable", Some(name)) => burdin_refactor::extract::variable(&mut engine, path, lo, hi, name),
-        ("extract-function", Some(name)) => burdin_refactor::extract::function(&mut engine, path, lo, hi, name),
-        ("inline-variable", _) => burdin_refactor::inline::variable(&mut engine, path, lo, hi),
-        ("inline-function", _) => burdin_refactor::inline::function(&mut engine, path, lo, hi),
-        _ => return None,
-    };
-    let changes = outcome.ok()?;
-    let mut edits = Vec::new();
-    for change in changes {
-        if let Some(edit) = minimal_edit(&change.before, &change.after) {
-            edits.push(edit);
+    wanted: &dyn Fn(&str) -> bool,
+) -> Vec<Offer> {
+    let uri = server.uri_of(path);
+    let data =
+        |refactor: &str| Json::obj().with("refactor", refactor).with("uri", uri.as_str()).with("lo", lo).with("hi", hi);
+    let mut out = Vec::new();
+    if wanted("refactor.extract") && lo < hi {
+        for (refactor, name, title) in [
+            ("extract-variable", "value", "extract the selection into a local"),
+            ("extract-function", "extracted", "extract the selection into a function"),
+        ] {
+            out.push(Offer { title: title.into(), kind: "refactor.extract", data: data(refactor).with("name", name) });
         }
     }
-    let _ = encoding;
-    (!edits.is_empty()).then_some(edits)
+    let on_name = lo == hi && server.packages[i].index(path).is_some_and(|ix| ix.ident_at(lo).is_some());
+    if wanted("refactor.inline") && on_name {
+        for (refactor, title) in [
+            ("inline-variable", "inline the local at the cursor"),
+            ("inline-function", "inline the function at the cursor"),
+        ] {
+            out.push(Offer { title: title.into(), kind: "refactor.inline", data: data(refactor) });
+        }
+    }
+    let Some(parsed) = server.packages[i].db.syntax(path) else { return out };
+    let inside = |span: burdin_diag::Span| span.lo <= lo && hi <= span.hi;
+    for item in &parsed.ast.items {
+        if let ast::Item::Fn(decl) = item
+            && wanted("refactor.rewrite")
+            && !decl.params.iter().any(|p| matches!(p.kind, ast::ParamKind::SelfParam))
+        {
+            let named: Vec<(&ast::Param, &str)> = decl
+                .params
+                .iter()
+                .filter_map(|p| match &p.kind {
+                    ast::ParamKind::Named { name, .. } => Some((p, name.name.as_str())),
+                    ast::ParamKind::SelfParam => None,
+                })
+                .collect();
+            let names: Vec<&str> = named.iter().map(|(_, n)| *n).collect();
+            let signature = |change: Json| data("change-signature").with("change", change);
+            let strings = |list: &[&str]| Json::Arr(list.iter().map(|n| Json::from(*n)).collect());
+            if inside(decl.name.span) {
+                let mut extra = "extra".to_string();
+                while names.contains(&extra.as_str()) {
+                    extra.push('_');
+                }
+                let added = Json::obj().with("name", extra.as_str()).with("type", "i32").with("default", "0");
+                out.push(Offer {
+                    title: format!("add a parameter to `{}`", decl.name.name),
+                    kind: "refactor.rewrite",
+                    data: signature(Json::obj().with("add", Json::Arr(vec![added]))),
+                });
+            }
+            if let Some(k) = named.iter().position(|(p, _)| inside(p.span)) {
+                let name = names[k];
+                out.push(Offer {
+                    title: format!("remove the parameter `{name}`"),
+                    kind: "refactor.rewrite",
+                    data: signature(Json::obj().with("remove", strings(&[name]))),
+                });
+                for (to, direction) in [(k.wrapping_sub(1), "before"), (k + 1, "after")] {
+                    let Some(other) = names.get(to) else { continue };
+                    let mut order = names.clone();
+                    order.swap(k, to);
+                    out.push(Offer {
+                        title: format!("move the parameter `{name}` {direction} `{other}`"),
+                        kind: "refactor.rewrite",
+                        data: signature(Json::obj().with("reorder", strings(&order))),
+                    });
+                }
+            }
+        }
+        let movable = matches!(
+            item,
+            ast::Item::Fn(_)
+                | ast::Item::Const(_)
+                | ast::Item::Struct(_)
+                | ast::Item::Enum(_)
+                | ast::Item::TypeAlias(_)
+                | ast::Item::Interface(_)
+        );
+        if movable
+            && wanted("refactor.move")
+            && let Some(name) = burdin_refactor::tree::item_name(item)
+            && inside(name.span)
+        {
+            let package = &server.packages[i];
+            for module in &package.modules {
+                if module.path == path || module.module.is_empty() || !package.packages[module.package].is_entry {
+                    continue;
+                }
+                let to = module.module.join(".");
+                out.push(Offer {
+                    title: format!("move `{}` to the module `{to}`", name.name),
+                    kind: "refactor.move",
+                    data: data("move-item").with("to", to),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The files one refactoring changes, as the engine computes them from the package's current texts (RF7); the reason
+/// when it refuses. The editor shows no action for a refusal, and the reason goes to the log.
+fn refactor_changes(server: &mut Server, data: &Json) -> Result<Vec<FileChange>, String> {
+    let uri = data.get("uri").as_str().ok_or("missing uri")?;
+    let path = server.key_of_uri(uri).ok_or_else(|| format!("`{uri}` is not a file URI"))?;
+    let i = server.owner(&path).ok_or_else(|| format!("`{uri}` is not a file of a Burdin package"))?;
+    let (lo, hi) = (data.get("lo").as_u32().unwrap_or(0), data.get("hi").as_u32().unwrap_or(0));
+    let name = data.get("name").as_str().unwrap_or("");
+    let mut engine = burdin_refactor::Engine::new(&mut server.packages[i].db).map_err(|r| r.0)?;
+    let outcome = match data.get("refactor").as_str() {
+        Some("extract-variable") => burdin_refactor::extract::variable(&mut engine, &path, lo, hi, name),
+        Some("extract-function") => burdin_refactor::extract::function(&mut engine, &path, lo, hi, name),
+        Some("inline-variable") => burdin_refactor::inline::variable(&mut engine, &path, lo, hi),
+        Some("inline-function") => burdin_refactor::inline::function(&mut engine, &path, lo, hi),
+        Some("change-signature") => {
+            burdin_refactor::signature::change(&mut engine, &path, lo, hi, &signature_change(data.get("change")))
+        }
+        Some("move-item") => {
+            burdin_refactor::move_item::item(&mut engine, &path, lo, hi, data.get("to").as_str().unwrap_or(""))
+        }
+        other => return Err(format!("unknown refactoring {other:?}")),
+    };
+    outcome.map_err(|r| r.0)
+}
+
+/// `{ "remove": [name], "reorder": [name], "add": [{name, type, default}], "rename": [{from, to}] }` as the engine's
+/// change (RF13).
+fn signature_change(value: &Json) -> burdin_refactor::signature::Change {
+    let names =
+        |v: &Json| -> Vec<String> { v.as_array().iter().filter_map(|n| n.as_str().map(str::to_string)).collect() };
+    let text = |v: &Json, key: &str| v.get(key).as_str().unwrap_or("").to_string();
+    burdin_refactor::signature::Change {
+        remove: names(value.get("remove")),
+        reorder: (!value.get("reorder").is_null()).then(|| names(value.get("reorder"))),
+        add: value
+            .get("add")
+            .as_array()
+            .iter()
+            .map(|a| (text(a, "name"), text(a, "type"), text(a, "default")))
+            .collect(),
+        rename: value.get("rename").as_array().iter().map(|r| (text(r, "from"), text(r, "to"))).collect(),
+    }
+}
+
+/// A workspace edit for the files a refactoring changed. Each file gets the one edit between its first and last
+/// difference, in the text the editor has.
+fn workspace_edit(server: &Server, changes: &[FileChange]) -> Json {
+    let mut all = Json::obj();
+    for change in changes {
+        if let Some((lo, hi, text)) = minimal_edit(&change.before, &change.after) {
+            let index = LineIndex::new(&change.before, server.encoding);
+            let edit = Json::obj().with("range", index.range(lo, hi)).with("newText", text);
+            all = all.with(&server.uri_of(&change.path), Json::Arr(vec![edit]));
+        }
+    }
+    Json::obj().with("changes", all)
+}
+
+/// `codeAction/resolve`: the edit of a refactoring the menu listed without one (LS23). A refusal is the error's
+/// message and goes to the log; an action that has its edit comes back as it is.
+pub fn resolve_code_action(server: &mut Server, params: &Json) -> Reply {
+    let mut action = params.clone();
+    if !action.get("edit").is_null() || action.get("data").is_null() {
+        return Ok(action);
+    }
+    let data = action.get("data").clone();
+    match refactor_changes(server, &data) {
+        Ok(changes) => {
+            action.set("edit", workspace_edit(server, &changes));
+            Ok(action)
+        }
+        Err(refusal) => {
+            server.log(format!("{}: {refusal}", action.get("title").as_str().unwrap_or("refactoring")));
+            Err(ReqError::failed(refusal))
+        }
+    }
 }
 
 /// The one edit that turns `before` into `after`: the text between their common prefix and their common suffix.
@@ -187,14 +368,31 @@ fn minimal_edit(before: &str, after: &str) -> Option<(u32, u32, String)> {
     (before[prefix..b.len() - suffix] != text).then(|| (prefix as u32, (b.len() - suffix) as u32, text))
 }
 
-/// A text edit: the byte range it replaces and the new text.
-type Edit = (u32, u32, String);
+/// A workspace edit that changes one file, which is not always the one the request is about.
+fn edit_in_file(server: &Server, path: &str, edits: &[Edit]) -> Json {
+    let text = server.packages.iter().find_map(|p| p.text(path)).unwrap_or("");
+    let index = LineIndex::new(text, server.encoding);
+    let items: Vec<Json> = edits
+        .iter()
+        .map(|(a, b, t)| Json::obj().with("range", index.range(*a, *b)).with("newText", t.as_str()))
+        .collect();
+    Json::obj().with("changes", Json::obj().with(&server.uri_of(path), Json::Arr(items)))
+}
 
 /// The fixes the server writes itself, for a diagnostic the compiler gives no suggestion for: a stub for a missing
 /// interface method. Everything else (`mut` on a binding, an import, the `mut` marker) is the compiler's suggestion
 /// (`spec/fix.md`, FX13), which the server offers like any other.
 fn fixes_for(server: &mut Server, i: usize, path: &str, text: &str, d: &Diagnostic) -> Vec<(String, Vec<Edit>)> {
     let mut out = Vec::new();
+    if d.code.0 == "E0006" {
+        out.extend(fixes::missing_arms(server, i, path, text, d));
+    }
+    if d.code.0 == "E0003" {
+        out.extend(fixes::missing_fields(server, i, path, text, d));
+    }
+    if d.code.0 == "E0002" {
+        out.extend(fixes::missing_function(server, i, path, text, d));
+    }
     if d.code.0 == "E0140" {
         let Some(method) = d.message.split('`').nth(3).map(str::to_string) else { return out };
         let mut r = Resolver::new(&mut server.packages[i]);
@@ -396,8 +594,12 @@ pub fn execute_command(server: &mut Server, params: &Json) -> Reply {
         return Err(ReqError::params(format!("unknown command `{command}`")));
     }
     let argument = params.get("arguments").as_array().first().cloned().unwrap_or(Json::Null);
-    if command == "burdin.structuralSearchReplace" {
-        return structural_search_replace(server, &argument);
+    match command {
+        "burdin.searchReplace" | "burdin.structuralSearchReplace" => {
+            return structural_search_replace(server, &argument);
+        }
+        "burdin.changeSignature" | "burdin.moveItem" => return refactor_command(server, command, &argument),
+        _ => {}
     }
     let argv: Vec<String> =
         argument.get("argv").as_array().iter().filter_map(|a| a.as_str().map(str::to_string)).collect();
@@ -413,9 +615,10 @@ pub fn execute_command(server: &mut Server, params: &Json) -> Reply {
     Err(ReqError::deferred(Box::new(move || run_tests(&command_line, &root))))
 }
 
-/// `burdin.structuralSearchReplace`: replace every match of a pattern in a package (spec/refactor.md, RF6). The
-/// argument is `{ "pattern": "...", "replacement": "...", "root": "<package directory>" }`; the answer is a workspace
-/// edit for the editor to apply.
+/// `burdin.searchReplace` (also spelled `burdin.structuralSearchReplace`): replace every match of a pattern in a
+/// package (spec/refactor.md, RF6). The argument is `{ "pattern": "...", "replacement": "...", "root": "<package
+/// directory>" }`; the answer is a workspace edit for the editor to apply. A refusal is the error's message, and goes
+/// to the log.
 fn structural_search_replace(server: &mut Server, argument: &Json) -> Reply {
     let pattern_text = argument.get("pattern").as_str().ok_or_else(|| ReqError::params("missing pattern"))?;
     let replacement = argument.get("replacement").as_str().ok_or_else(|| ReqError::params("missing replacement"))?;
@@ -427,22 +630,40 @@ fn structural_search_replace(server: &mut Server, argument: &Json) -> Reply {
         .position(|p| p.root.canonicalize().map(|r| r == root).unwrap_or(p.root == root))
         .ok_or_else(|| ReqError::params("the root is not a package this server has open"))?;
     let pattern = burdin_refactor::ssr::parse(pattern_text).map_err(|r| ReqError::params(r.0))?;
-    let encoding = server.encoding;
-    let changes = {
-        let package = &mut server.packages[index];
-        let mut engine = burdin_refactor::Engine::new(&mut package.db).map_err(|r| ReqError::failed(r.0))?;
-        burdin_refactor::ssr::replace(&mut engine, &pattern, replacement).map_err(|r| ReqError::failed(r.0))?.changes
-    };
-    let mut all = Json::obj();
-    for change in &changes {
-        if let Some((lo, hi, text)) = minimal_edit(&change.before, &change.after) {
-            let index = LineIndex::new(&change.before, encoding);
-            let uri = server.uri_of(&change.path);
-            let edit = Json::obj().with("range", index.range(lo, hi)).with("newText", text);
-            all = all.with(&uri, Json::Arr(vec![edit]));
+    let result = burdin_refactor::Engine::new(&mut server.packages[index].db)
+        .and_then(|mut engine| burdin_refactor::ssr::replace(&mut engine, &pattern, replacement));
+    match result {
+        Ok(report) => Ok(workspace_edit(server, &report.changes)),
+        Err(refusal) => {
+            server.log(format!("search and replace: {refusal}"));
+            Err(ReqError::failed(refusal.0))
         }
     }
-    Ok(Json::obj().with("changes", all))
+}
+
+/// `burdin.changeSignature` and `burdin.moveItem`: the refactorings that need input a code action cannot ask for.
+/// The argument is `{ "uri": "...", "position": {line, character} }` and, for the first, `remove`, `reorder`, `add`,
+/// and `rename` as `burdin refactor change-signature` takes them; for the second, `"to": "<module>"`. The answer is
+/// a workspace edit; a refusal is the error's message, and goes to the log.
+fn refactor_command(server: &mut Server, command: &str, argument: &Json) -> Reply {
+    let document = Json::obj().with("textDocument", Json::obj().with("uri", argument.get("uri").clone()));
+    let (i, path) = server.document(&document, false)?;
+    let at = server.offset(i, &path, argument.get("position"))?;
+    let mut data = Json::obj().with("uri", argument.get("uri").clone()).with("lo", at).with("hi", at);
+    if command == "burdin.moveItem" {
+        data.set("refactor", "move-item");
+        data.set("to", argument.get("to").clone());
+    } else {
+        data.set("refactor", "change-signature");
+        data.set("change", argument.clone());
+    }
+    match refactor_changes(server, &data) {
+        Ok(changes) => Ok(workspace_edit(server, &changes)),
+        Err(refusal) => {
+            server.log(format!("{command}: {refusal}"));
+            Err(ReqError::failed(refusal))
+        }
+    }
 }
 
 fn run_tests(argv: &[String], root: &Path) -> Result<RunOutcome, String> {

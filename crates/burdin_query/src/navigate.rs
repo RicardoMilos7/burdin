@@ -32,6 +32,45 @@ pub struct LocalInfo {
     pub mutable: bool,
 }
 
+/// What a `match` leaves out and what each of its arms covers, as patterns written in source form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchCases {
+    /// The cases no unguarded arm matches: empty when the `match` is exhaustive. An open domain shows as `_`.
+    pub missing: Vec<String>,
+    /// For each arm, the cases that no unguarded arm before it matches: the values the arm is the first to see.
+    pub before: Vec<Vec<String>>,
+}
+
+struct MatchFinder<'a> {
+    analysis: &'a Analysis,
+    path: &'a str,
+    lo: u32,
+    hi: u32,
+    defs: burdin_tir::TypeDefs<'a>,
+    found: Option<MatchCases>,
+}
+
+impl Visit for MatchFinder<'_> {
+    fn expr(&mut self, e: &Expr) {
+        if self.found.is_some() {
+            return;
+        }
+        if let ExprKind::Match(scrutinee, arms) = &e.kind
+            && e.span.lo == self.lo
+            && e.span.hi == self.hi
+            && self.analysis.files.get(e.span.file.0 as usize).is_some_and(|p| p == self.path)
+        {
+            let unguarded = |n: usize| -> Vec<&burdin_tir::Pat> {
+                arms[..n].iter().filter(|a| a.guard.is_none()).map(|a| &a.pat).collect()
+            };
+            let cases = |n: usize| burdin_sema::missing_patterns(&scrutinee.ty, &unguarded(n), &self.defs);
+            self.found = Some(MatchCases { missing: cases(arms.len()), before: (0..arms.len()).map(cases).collect() });
+            return;
+        }
+        visit::walk_expr(self, e);
+    }
+}
+
 /// A call of a function or method the program declares, with its arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallSite {
@@ -130,9 +169,24 @@ impl Analysis {
         out
     }
 
+    /// What the `match` whose whole expression spans `lo..hi` of `path` leaves out and what each arm covers, for the
+    /// actions that write arms (`spec/lsp.md`, LS18). `None` when no checked `match` has that span.
+    pub fn match_cases(&self, path: &str, lo: u32, hi: u32) -> Option<MatchCases> {
+        let program = self.program.as_ref()?;
+        let defs = burdin_tir::TypeDefs { structs: &program.structs, enums: &program.enums };
+        for function in bodies(program) {
+            let mut finder = MatchFinder { analysis: self, path, lo, hi, defs, found: None };
+            finder.block(&function.body);
+            if finder.found.is_some() {
+                return finder.found;
+            }
+        }
+        None
+    }
+
     /// The locals and parameters whose binding is in `path`, in source order, once each.
     pub fn locals(&self, path: &str) -> Vec<LocalInfo> {
-        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(program) = self.typed() else { return Vec::new() };
         let mut out: Vec<LocalInfo> = Vec::new();
         for function in bodies(program) {
             for local in &function.locals {
@@ -191,7 +245,7 @@ impl Analysis {
 
     /// Every function and method the program declares, once each (a generic function is listed by its declaration).
     pub fn functions(&self) -> Vec<FunctionInfo> {
-        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(program) = self.typed() else { return Vec::new() };
         let mut out: Vec<(bool, FunctionInfo)> = Vec::new();
         for (index, function) in program.functions.iter().enumerate() {
             let Some(location) = self.real(function.span) else { continue };

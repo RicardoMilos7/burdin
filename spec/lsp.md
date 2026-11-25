@@ -1,7 +1,7 @@
 # The language server
 
 `burdin lsp` is the Burdin language server (stage 3; issue #242 and its sub-issues #309-#313, #365-#376, #470, and
-#662; completion, snippets, and the built-ins in #819-#824). It speaks the Language Server Protocol 3.17 over standard input and output and answers every request from the
+#662; completion, snippets, and the built-ins in #819-#824; arrays and slices in #1039; completion beside errors in #1015). It speaks the Language Server Protocol 3.17 over standard input and output and answers every request from the
 query-based compiler library (`spec/query.md`), so an editor sees exactly the diagnostics, types, and names the command
 line does. This file is the exact behavior, with a rule ID for each point and the tests that cover it.
 
@@ -215,6 +215,22 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   literal is a value of its type: `"..."` a `str` (an interpolated one a `String`), an integer literal an `i32`, a float
   literal an `f64`, a character a `char`, and `true`/`false` a `bool`. On a line that does not parse yet, the type
   comes from the last analysis with a program and the receiver's declaration (or its spelling, for a literal).
+  An array or a slice (`[T; N]`, `[T]`, `&[T]`; issue #1039) has the methods of `[T]`: the ones the compiler
+  implements (`len`, `iter`, `get`, `last`, `to_list`, `swap`, `fill`, `copy_from_slice`, `clone_from_slice`, `chunks`,
+  `chunks_exact`, `windows`, and, for an array only, `iter_mut`; `spec/stdlib.md`, "Slices"), declared in `builtins.bd`
+  under the owners `[T]` and `[T; N]`, and the extension methods of `std/src/slice.bd`, whose owner is the receiver as
+  written (`[T]`, `[[T]]`, `[u8]`, `[String]`, `[str]`) and which fit when the element does (a one-capital-letter
+  name is a type parameter and fits any element, so `[u8].is_ascii` is offered on `[u8]` only and `[T].first` on every
+  slice). An array also has `clone` and `cmp`; a slice is an `Iterator` (`spec/iterators.md`, IT5), so it has the
+  adapters (`map`, `filter`, `fold`, ...) and `next_back` too, which an array does not (`xs.map(f)` is E0002;
+  `xs.iter().map(f)` is the spelling). A `List` is not viewed as a slice implicitly: it offers its own methods (its
+  `first`, `contains`, and `sort` are built in) and never an extension of `[T]` that needs `as_slice()`
+  (`list.binary_search(1)` is E0002, so it is not offered). A range offers `clone`, `cmp`, `iter`, and `into_iter`, a
+  tuple `clone` and `cmp`, and the compiler's own iterators (`Chars`, `RangeIter`, `MapIter`, `IterMut`,
+  `ListIntoIter`, `ArrayIntoIter`, `MapIntoIter`, `Chunks`, `ChunksExact`, `Windows`) the methods of `Iterator`. Hover,
+  definition, and signature help answer the same methods: `xs.len` lands in `builtins.bd`, `xs.first` in `slice.bd`,
+  and `xs.swap(` shows `fn swap(mut self, a: usize, b: usize)`. The element of an array literal receiver is read
+  from its first element when the typed tree does not hold it (`[1, 2].` is `[i32; _]`).
   `self.` in a method offers the members of the type the method belongs to (its impl block's type, or an extension
   method's receiver), whether or not the body parses. A value whose type is a generic parameter (`s: S`) offers the
   methods of the parameter's bounds (`S: Serializer` gives `serialize_bool`, `serialize_unit`, ...), read from the
@@ -276,6 +292,29 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   offered too, as a module (`htt` offers `http`), with the same `additionalTextEdits` entry: accepting it loads the
   package the way accepting one of its items does.
 
+**LS21. Completion does not depend on the file being error-free** (issue #1015). An error elsewhere in the file or the
+package (an unknown name, a type mismatch, an unfinished statement, a dangling dot) never takes away what the position's
+own code resolves: members after a dot, the names in scope, struct-literal fields, and hover, definition, and signature
+help beside it. The compiler hands over a typed program only when no file has a syntax error, but it also checks the
+partial trees of the files that have one, and the position queries read that program (`spec/query.md`, QL10): every
+statement and item the parser kept is typed, and an unfinished statement that ends its line is kept too (a dangling dot
+keeps its receiver, an unclosed call keeps its arguments). The statement being typed is often missing from it (`p.` before
+the next statement continues it), so the server types the receiver of a member dot in this order, cheapest first: the
+partial analysis of the current text; the last analysis that had a whole program, trusted only for an expression that
+ends where the receiver does (text typed over a line maps onto unrelated code in an older tree); the receiver's
+declaration read from the text, for a file that never parsed since it opened (`let p: Point`, `Point { ... }`,
+`Point.origin()`, `make()`, an array literal, a literal alone on its line, and a parameter's annotation); and an
+analysis of a copy of the text without the dot and the member name being typed (`p.` becomes `p`), which types the
+receiver whenever the rest of the file parses. The last costs a check without the memo, so it runs only for a receiver
+that a `let` or a parameter in sight declares, or that ends in `)` or `]`. A local the older analysis saw still says
+that its name is a value, so `list.` is not the `list` module (`is_value`). The document's own text is put back before the answer.
+Tests: `completion_does_not_wait_for_the_rest_of_the_file_to_be_error_free` (an unknown name, a mismatch, an unfinished
+statement, and an unfinished member on another line, in the same function and in another, and an error after the
+cursor's line), `completion_works_in_a_file_that_never_parsed` (`fixtures/partial-syntax`),
+`hover_and_definition_work_beside_an_unrelated_error` (`fixtures/partial`), and
+`types_work_beside_a_syntax_error_elsewhere` (a name typed beside a syntax error, completed and hovered from the partial
+program alone).
+
 **Snippets.** When the client advertises `textDocument.completion.completionItem.snippetSupport`, the server adds
 snippet items (kind `Snippet`, `insertTextFormat` 2, tab stops `${n:...}` and the final `$0`). A snippet replaces the
 plain keyword of the same label. At the start of a line at the top level (item position):
@@ -312,8 +351,11 @@ Tests: `completion_offers_members_names_in_scope_and_imports`, `a_dependency_in_
 `a_dependency_completes_without_a_use_in_the_file`, `a_use_offers_every_official_package`,
 `official_packages_complete_before_any_file_imports_them`, `a_local_module_shadows_an_official_package`
 (`fixtures/official-shadow`), `an_official_package_name_completes_and_loads_itself`,
-`a_member_of_an_unloaded_official_package_adds_its_use`; the `builtins.rs` unit test and the
-`official.rs` unit test.
+`a_member_of_an_unloaded_official_package_adds_its_use`,
+`arrays_and_slices_offer_the_slice_methods_and_a_list_does_not` (`fixtures/arrays`: an array local, an array literal,
+a `[i32]` and a `[u8]` parameter, and a `List`), `ranges_tuples_and_iterators_have_members` (`fixtures/receivers`),
+`array_and_slice_methods_answer_hover_definition_and_signature_help`; the `builtins.rs`, `nav.rs`, and
+`official.rs` unit tests.
 
 **LS13. Signature help and inlay hints.** Inside a call's argument list, signature help shows the callee's signature
 with each parameter's label range and the active parameter (counting commas at the call's depth; a method's `self` is
@@ -380,6 +422,135 @@ Tests: `quick_fixes_for_the_errors_of_a_file`, `organize_imports_and_write_a_typ
 `an_official_package_used_without_a_use_is_imported_by_a_quick_fix`,
 `a_bare_official_item_is_imported_by_a_quick_fix`.
 
+*Missing match arms (issue #1040).* An E0006 gets the quick fix "add the missing match arms": one `case => todo(),`
+arm per uncovered case, after the last arm, at that arm's indentation. The cases are the witnesses the exhaustiveness
+checker computes (`burdin_sema::missing_patterns`, `crates/burdin_sema/src/exhaust.rs`), never a guess: the variants of
+an enum in declaration order (`Color.Green`), a payload as wildcards (`Shape.Circle(_)`, `Shape.Rect { w: _, h: _ }`,
+`Option.Some(_)`, `Result.Err(_)`), and for a tuple or a nested pattern the uncovered combinations (`(Color.Red, Color.Green)`,
+`(Color.Green, _)`, `Some(Color.Blue)`). An open domain (an integer, a string, a slice) has no finite list, so the
+action writes one `_ => todo(),` arm. An arm with a guard does not cover its pattern, so the case it names is still
+missing. The last arm gets a comma when it is an expression without one, and none is added after a block body; a
+`match` with no arms gets them all inside its braces. The type is named as the file would write it (`Color`, not its
+module path), so a type that is not in scope in the file can need an import afterwards.
+Tests: `the_missing_arms_of_a_plain_enum_follow_the_declaration`, `a_last_arm_without_a_comma_gets_one`,
+`a_block_arm_needs_no_comma_before_the_new_arms`, `a_match_with_no_arms_gets_all_of_them`,
+`the_missing_arms_of_a_payload_enum_bind_wildcards`, `the_missing_arm_of_an_option_is_none`,
+`the_missing_arm_of_a_result_is_err`, `a_tuple_of_enums_lists_the_uncovered_pairs`,
+`a_nested_payload_names_the_uncovered_inner_case`, `an_arm_with_a_guard_does_not_cover_its_pattern`,
+`an_open_domain_gets_one_wildcard_arm` (`crates/burdin_lsp/tests/match_actions.rs`; each applied edit is sent back
+through the checker and must leave no error).
+
+*Expanding a wildcard arm (issue #1041).* A `refactor.rewrite` action, "expand `_` into the remaining cases" (or
+"expand `else` ..."), is offered with the cursor on the pattern or the `=>` of a `_` or `else` arm of a `match`. It
+replaces the arm with one arm per case the arm is the first to see (the missing cases of the unguarded arms before it,
+the same witnesses as above), each carrying a copy of the arm's body text: it only duplicates text, so a body is never
+evaluated more than once per run, and the new patterns bind nothing (payloads are `_`), so no name in the body is
+shadowed. It is not offered when the cases are not a finite list (an integer, a string, or a tuple of them: a case that
+is only wildcards), when the arm has a guard, when no arm before it leaves anything for it, or when the cursor is inside
+the arm's body (an inner `match` is expanded on its own arm). The arms after it are kept.
+Tests: `a_wildcard_arm_of_a_plain_enum_becomes_the_remaining_variants`, `the_body_is_copied_whole_into_each_arm`,
+`a_wildcard_arm_of_a_payload_enum_uses_wildcard_payloads`, `a_wildcard_arm_of_an_option_or_a_bool_is_the_other_case`,
+`a_wildcard_in_a_tuple_expands_to_the_pairs_it_covers`, `an_else_arm_expands_like_a_wildcard`,
+`an_arm_with_a_guard_is_not_expanded`, `an_integer_or_string_wildcard_is_not_expanded`,
+`a_wildcard_with_nothing_before_it_is_not_expanded_beyond_the_variants`,
+`the_cursor_inside_the_body_offers_the_arm_it_is_in_not_the_wildcard_around_it` (same file).
+
+*Missing derives (issue #1043).* An E0141 whose message says `` `Point` does not implement `Clone` `` and an E0130
+whose message names the field's type (`` `Clone` requires every field to be `Clone`, but this one is `Inner` ``) get
+the quick fix "derive `Clone` for `Point`" when the interface is derivable (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`,
+`Default`, `Debug`, `Serialize`, `Deserialize`; `spec/derives.md`) and the type is the one struct or enum of that name
+that the entry package declares. The edit is in the type's own file (which can be another file than the diagnostic's):
+`, Clone` after the last name of the type's `: A, B` list, or `: Clone` after the type's name and type parameters when
+it has no list. `Ord` is written with `Eq` and `Copy` with `Clone` in one edit ("derive `Eq, Ord` for `Version`"),
+leaving out what the list already has; this is the convention, not a requirement (`Ord` implies `Eq`, and `Copy` does
+not need `Clone`; `spec/derives.md`). Nothing is offered for a type of the standard library or a dependency, for a type
+that is not a plain struct or enum (a `List<T>`, a tuple, a reference), or for an interface that is not derivable (a
+user interface: the fix there is an `impl`, E0140's stub action).
+Tests: `a_derive_is_added_to_an_existing_list`, `a_list_is_made_for_a_type_with_none`, `an_enum_gets_the_derive_too`,
+`a_generic_struct_keeps_its_type_parameters_before_the_list`, `ord_is_written_with_the_eq_it_comes_with`,
+`eq_already_written_is_not_written_again`, `copy_is_written_with_clone`,
+`a_field_that_lacks_a_derive_is_fixed_at_its_type`, `a_type_outside_the_package_gets_no_derive`,
+`an_interface_that_cannot_be_derived_gets_no_derive`, `a_type_in_another_module_is_fixed_in_its_own_file`
+(`crates/burdin_lsp/tests/derive_actions.rs`; each applied edit is sent back through the checker and the error is gone).
+
+*Generating code (issue #1044).* Four more actions write code that the compiler's suggestions do not. Each result
+checks (a `todo()` body has the type of anything) and is what `burdin fmt` writes.
+
+- **Missing struct fields.** An E0003 whose message says `` `Point` is missing the field(s) `x`, `z` `` gets the quick fix
+  "add the missing fields": each missing field is written `name: todo()` after the last one the literal has, in
+  declaration order, on the same line (`Point { y: 2, x: todo(), z: todo() }`) or, in a literal that spans lines, one per
+  line at the last field's indentation, after its trailing comma when it has one. A literal with no fields gets them
+  all inside its braces. It covers `Path { }`, a variant's `Enum.Variant { }`, and `.{ }`; a literal with a base
+  (`..base`) misses nothing. The diagnostic is the existing E0003; no code is added.
+- **A missing function.** An E0002 `` unknown function `area` `` on a call gets "create function `area`": a function
+  after the item the call is in (after a whole `impl` block when the call is in a method), with one parameter for each
+  argument and `todo()` as the body. An argument's type is the checker's: the call is analyzed as the tuple of its
+  arguments, so the type of `p.x` or `a + 1` is known even though the callee is not. A plain name is the parameter's
+  name (`area(r)` gives `r: Rect`; a named argument keeps its label; a `mut` argument gives a `mut` parameter) and any
+  other argument is `arg<n>`. In `let x: T = area(r)` the function returns `T`; elsewhere it returns nothing, so a call
+  whose value is used in another way needs its type written by hand.
+- **A missing method.** An E0002 `` no method `grow` on type `Rect` `` where the entry package declares `Rect` gets
+  "create method `grow` on `Rect`": `fn grow(self, ...)` with the parameters of the arguments (as above) and `todo()`,
+  in the type's own `Rect { }` block (before its closing brace, after a blank line), or in a new block after the type
+  (`Wrapper<T> { }` for a generic one). The edit is in the file that declares the type. A method on a standard-library
+  or dependency type gets no action.
+- **Implementing an interface.** A `refactor.rewrite` action "implement `Shape` for `Rect`" is offered with the range on
+  the name of a struct or enum of the entry package, for each interface of the entry package that the type does not
+  implement (an `impl` block or a `: Shape` derive list) and that has at least one method without a default body. It
+  writes `Rect: Shape { }` after the type with those methods (the interface's signatures, `todo()` bodies), and adds
+  `use module.Shape` when the interface is in another file the type's file does not import. An interface with type
+  parameters, associated types, or requirements is not offered: its implementation needs more than the signatures.
+
+*No standard-library import action.* The prelude makes every public name of every standard-library module visible in
+every module (`spec/stdlib.md`), so an E0002 never stands for a standard-library name that only needs a `use`; there is
+nothing to import (checked against every public top-level name of `std`), and the official-package imports above are the
+only import actions.
+Tests: `a_literal_with_missing_fields_gets_them_in_declaration_order`, `a_literal_with_no_fields_gets_all_of_them`,
+`a_multi_line_literal_gets_one_field_per_line_with_the_trailing_comma`, `a_target_literal_gets_the_fields_too`,
+`a_struct_variant_gets_its_missing_fields`, `a_called_function_is_created_after_its_caller_with_the_argument_types`,
+`an_argument_that_is_not_a_name_is_called_argn_and_the_let_type_is_the_return_type`,
+`a_call_without_arguments_makes_a_function_without_parameters`,
+`a_function_called_from_a_method_goes_after_the_whole_impl_block`,
+`a_method_is_added_in_a_new_impl_block_after_the_type`, `a_method_is_added_to_the_impl_block_the_type_has`,
+`a_method_of_a_generic_type_keeps_the_type_parameters`, `a_method_on_a_receiver_that_is_a_chain_is_typed_from_its_arguments`,
+`a_method_of_a_type_in_another_module_is_written_in_its_own_file`, `a_method_of_a_standard_type_gets_no_action`,
+`an_interface_is_implemented_with_the_methods_that_have_no_default`, `a_generic_type_is_implemented_too`,
+`an_interface_the_type_already_implements_is_not_offered`, `an_interface_with_only_default_methods_is_not_offered`,
+`the_cursor_away_from_the_type_name_offers_nothing`, `an_interface_of_another_module_brings_its_use`
+(`crates/burdin_lsp/tests/generate_actions.rs`; each applied edit is sent back through the checker and through
+`burdin_fmt`, which must leave it unchanged).
+
+*Refactorings (issue #1042).* Every refactoring of `spec/refactor.md` is in the editor: extract variable and function
+(`refactor.extract`, RF9-RF10), inline variable and function (`refactor.inline`, RF11-RF12), change signature
+(`refactor.rewrite`, RF13), move item (`refactor.move`, RF14), and structural search and replace (the command below).
+The actions come from the same functions as `burdin refactor` (`burdin_refactor`), run on the texts the editor has, so an
+action's edit is the one the command line writes for the same position. Each is a workspace edit with one edit per
+changed file, from the first difference to the last. The menu is decided from the syntax tree, so it is cheap:
+
+- *Change signature*, on a free function's name: "add a parameter to `f`" (a parameter `extra: i32 = 0`, which the user
+  renames and retypes; a call written before the change does not pass it). On a parameter: "remove the parameter `p`",
+  "move the parameter `p` before `q`", and "move the parameter `p` after `r`" (its neighbors). A method is not offered
+  (RF13).
+- *Move item*, on the name of a top-level function, constant, struct, enum, alias, or interface: "move `f` to the module
+  `m`", one action per other module of the package.
+
+An action the engine would refuse (a parameter the body uses, a move that would not compile, a package with errors) is
+not shown: the refusal's text goes to the log (`window/logMessage`) with the action's title, and the command line
+prints the same text (RF7). When the client resolves actions lazily (LS23) the menu is the syntactic one, the refusal
+answers `codeAction/resolve` with the text as the error's message, and it is logged too.
+
+Some changes need input a code action cannot ask for, so they are server commands (`workspace/executeCommand`) that
+answer a workspace edit, as `burdin.searchReplace` does: `burdin.changeSignature` takes `{ "uri", "position",
+"remove": [name], "reorder": [name], "add": [{ "name", "type", "default" }], "rename": [{ "from", "to" }] }` (the
+function is the one at the position) and `burdin.moveItem` takes `{ "uri", "position", "to": "<module>" }`.
+`burdin.searchReplace` (spelled `burdin.structuralSearchReplace` before; both are accepted) takes `{ "pattern",
+"replacement", "root" }` (RF6). A refusal is the command's error, with its text, and is logged too.
+Tests (`crates/burdin_lsp/tests/refactor_actions.rs`):
+`change_signature_actions_edit_what_the_engine_edits`, `move_item_actions_list_the_modules_and_edit_what_the_engine_edits`,
+`commands_take_what_a_code_action_cannot_ask_for`, `search_and_replace_is_a_command_and_a_refusal_is_logged` (each edit
+equals what the engine computes on the same package; each refused case has no action and a log line), and the extract
+and inline actions in `structural_search_replace_and_refactoring_actions_use_the_refactoring_engine` (`actions.rs`).
+
 **LS19. Lenses and test commands.** In a file with tests, a lens at the top runs them all (`▶ Run N tests in file`), and
 above each `test` block a lens runs it and another debugs it; above the entry module's `main`, a lens runs the program
 and another debugs it. Each lens's argument carries the exact command line (`burdin test <root> --exact <path>`, where
@@ -397,11 +568,68 @@ Tests: `lenses_run_and_debug_tests_and_main_with_exact_command_lines` (`code-len
 `the_test_command_reports_a_missing_compiler_and_rejects_other_commands`; `tests/check_lsp.py` runs a test through a
 lens with the real driver and checks the result lens.
 
+## Protocol coverage
+
+**LS22. Type definition and renamed files** (issue #1045). `textDocument/typeDefinition` goes to the declaration of the
+type of what is under the cursor: a type's own name to itself, a local, parameter, or field to the type it holds, a
+function to its return type, and any other expression to the type the analysis gives it. An array or slice goes to its
+element type, and a generic type to the generic (`List<Point>` to `List`); a type the package does not declare (a
+primitive) answers `null`.
+`workspace/willRenameFiles` (and `workspace/didRenameFiles`, which reloads the packages that held or now hold the
+files) answers the edits that keep the `use` paths of the package pointing at a module whose file the editor renames or
+moves under `src`, or whose folder it renames: every `use` that begins with the old module path begins with the new one.
+A `use shapes` that renamed `shapes.bd` to `figures.bd` becomes `use figures as shapes`, so the code that writes
+`shapes.Square` still compiles; an item path (`use shapes.Square`) and a brace list take the new module path.
+A file moved out of `src`, or outside every package, changes nothing. (Move item, RF14, needs no such edit: the module
+re-exports the item.)
+Tests (`crates/burdin_lsp/tests/protocol_features.rs`): `type_definition_goes_to_the_declaration_of_the_type`,
+`renaming_a_module_file_rewrites_the_use_paths` (a file, a folder, a file moved out of `src`, and the package checking
+after `didRenameFiles`).
+
+**LS23. Resolving lazily** (issue #1045). Completion and code actions advertise `resolveProvider`. A client that
+lists `documentation` in `completionItem.resolveSupport.properties` gets completion items without their documentation
+(the doc comments of the package, the standard library, and the official packages), and `completionItem/resolve` of an
+item of the latest completion adds it; an item the server does not know, or that has it, comes back unchanged. A client
+that lists `edit` in `codeAction.resolveSupport.properties` gets the refactoring actions of LS18 without their edit but
+with `data`, and `codeAction/resolve` computes the edit (the engine runs when the user chooses, not on every cursor
+move). The quick fixes of diagnostics keep their edit: they cost nothing to compute. A client with no resolve support
+gets everything up front, as before.
+Tests: `completion_documentation_is_resolved_when_an_item_is_chosen` (`protocol_features.rs`),
+`refactorings_are_resolved_when_chosen` (`refactor_actions.rs`).
+
+**LS24. Formatting as the user types** (issue #1045). Decision: wanted, because `burdin fmt` already formats a range.
+`textDocument/onTypeFormatting` triggers on `}` and on a newline: typing `}` formats the line it is on, and a newline
+the line before the cursor, through the range formatting of LS15 (`burdin_fmt::format_range`). A file that does not parse
+yet is left alone, as in LS15, so typing a half-written statement never moves text. `formatting.enabled` (LS5) turns it
+off.
+Test: `typing_a_brace_or_a_newline_formats_the_line` (`protocol_features.rs`).
+
+**LS25. The rest of LSP 3.17** (issue #1045). The server was compared with the whole 3.17 method list. Not implemented,
+on purpose:
+
+| Feature | Decision |
+| --- | --- |
+| `textDocument/diagnostic`, `workspace/diagnostic` (pull diagnostics) | The server publishes (LS7), with versions and a debounce, and a client that also pulls would show each error twice; the analysis is per package, so a pull would cost the same. Revisit when a supported editor needs it. |
+| `textDocument/linkedEditingRange` | Burdin has no paired tags or delimiters that must be edited together; renaming is `rename` (LS9). |
+| `textDocument/documentColor`, `colorPresentation`, `moniker`, `inlineValue`, `inlineCompletion` | Nothing in the language corresponds; inline values are `burdin dap`'s (`spec/debug.md`). |
+| `notebookDocument/*`, `workspace/textDocumentContent` | There are no notebooks. |
+| `workspace/willCreateFiles`, `willDeleteFiles` and their `did` notifications | A new or deleted file needs no edit to another; a deleted module's `use` is an E0002 the quick fixes of LS18 already explain. The watched-files notification below reloads the package. |
+| `codeLens/resolve`, `documentLink/resolve`, `inlayHint/resolve`, `workspaceSymbol/resolve` | Their answers are complete and cheap; the providers say `resolveProvider: false`. |
+| `window/showDocument`, `$/setTrace`, `$/logTrace` | Not needed; messages go through `window/logMessage` and `window/showMessage`. |
+
+Already implemented and recorded here: `workspace/didChangeWatchedFiles` (the server registers `**/*.bd` and
+`**/burdin.toml` watchers and reloads what changed, LS4), `workspace/didChangeWorkspaceFolders`, `$/cancelRequest`,
+`$/progress`, call and type hierarchies (LS10), selection ranges, folding ranges, semantic tokens (LS14), and the inlay
+hint refresh. `tests/check_lsp.py` checks that the driver's server announces the capabilities above.
+
 ## Editors
 
 **LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path` setting,
 else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a TextMate
-grammar and a language configuration (comments, brackets, indentation), implements the client commands of LS19, and
+grammar and a language configuration (comments, brackets, indentation), implements the client commands of LS19, implements `burdin.searchReplace`, `burdin.changeSignature`, and
+`burdin.moveItem` (LS18) as input boxes and quick picks (a pattern then a replacement; add, remove, reorder, or rename
+parameters, where adding asks for `name: Type = default`; a module picked from the package's files) that call
+`workspace/executeCommand` and apply the workspace edit the server answers, and
 registers the `burdin` debug type against `burdin dap` (`spec/debug.md`, DBG12).
 `editors/zed` is a Zed extension: it registers the `Burdin` language for `.bd` files, highlighted by the tree-sitter
 grammar in `editors/tree-sitter-burdin`, and starts `burdin lsp` (`lsp.burdin.binary.path`, else `burdin` on `PATH`)

@@ -12,6 +12,7 @@
     "definitionProvider": true,
     "declarationProvider": true,
     "implementationProvider": true,
+    "typeDefinitionProvider": true,
     "referencesProvider": true,
     "documentHighlightProvider": true,
     "renameProvider": {
@@ -21,7 +22,7 @@
       "triggerCharacters": [
         "."
       ],
-      "resolveProvider": false
+      "resolveProvider": true
     },
     "signatureHelpProvider": {
       "triggerCharacters": [
@@ -34,14 +35,24 @@
     },
     "documentFormattingProvider": true,
     "documentRangeFormattingProvider": true,
+    "documentOnTypeFormattingProvider": {
+      "firstTriggerCharacter": "}",
+      "moreTriggerCharacter": [
+        "\n"
+      ]
+    },
     "documentSymbolProvider": true,
     "workspaceSymbolProvider": true,
     "codeActionProvider": {
       "codeActionKinds": [
         "quickfix",
+        "refactor.extract",
+        "refactor.inline",
+        "refactor.move",
         "refactor.rewrite",
         "source.organizeImports"
-      ]
+      ],
+      "resolveProvider": true
     },
     "codeLensProvider": {
       "resolveProvider": false
@@ -50,7 +61,10 @@
       "commands": [
         "burdin.runTest",
         "burdin.runTests",
-        "burdin.structuralSearchReplace"
+        "burdin.searchReplace",
+        "burdin.structuralSearchReplace",
+        "burdin.changeSignature",
+        "burdin.moveItem"
       ]
     },
     "semanticTokensProvider": {
@@ -90,6 +104,38 @@
       "workspaceFolders": {
         "supported": true,
         "changeNotifications": true
+      },
+      "fileOperations": {
+        "willRename": {
+          "filters": [
+            {
+              "pattern": {
+                "glob": "**/*.bd"
+              }
+            },
+            {
+              "pattern": {
+                "glob": "**",
+                "matches": "folder"
+              }
+            }
+          ]
+        },
+        "didRename": {
+          "filters": [
+            {
+              "pattern": {
+                "glob": "**/*.bd"
+              }
+            },
+            {
+              "pattern": {
+                "glob": "**",
+                "matches": "folder"
+              }
+            }
+          ]
+        }
       }
     }
   },
