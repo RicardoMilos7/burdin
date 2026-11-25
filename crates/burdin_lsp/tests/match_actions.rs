@@ -136,20 +136,20 @@ fn area(s: Shape): i32 {
 
 #[test]
 fn the_missing_arm_of_an_option_is_none() {
-    let body = "fn get(o: Option<i32>): i32 {\n    match o {\n        Some(v) => v,\n    }\n}\n";
+    let body = "fn get(o: Option<i32>): i32 {\n    match o {\n        Option.Some(v) => v,\n    }\n}\n";
     let (_, fixed) = fill(body);
-    assert!(fixed.contains("        Some(v) => v,\n        None => todo(),\n    }"), "{fixed}");
+    assert!(fixed.contains("        Option.Some(v) => v,\n        Option.None => todo(),\n    }"), "{fixed}");
 
-    let body = "fn get(o: Option<i32>): i32 {\n    match o {\n        None => 0,\n    }\n}\n";
+    let body = "fn get(o: Option<i32>): i32 {\n    match o {\n        Option.None => 0,\n    }\n}\n";
     let (_, fixed) = fill(body);
-    assert!(fixed.contains("        None => 0,\n        Some(_) => todo(),\n    }"), "{fixed}");
+    assert!(fixed.contains("        Option.None => 0,\n        Option.Some(_) => todo(),\n    }"), "{fixed}");
 }
 
 #[test]
 fn the_missing_arm_of_a_result_is_err() {
-    let body = "fn get(r: Result<i32, i32>): i32 {\n    match r {\n        Ok(v) => v,\n    }\n}\n";
+    let body = "fn get(r: Result<i32, i32>): i32 {\n    match r {\n        Result.Ok(v) => v,\n    }\n}\n";
     let (_, fixed) = fill(body);
-    assert!(fixed.contains("        Ok(v) => v,\n        Err(_) => todo(),\n    }"), "{fixed}");
+    assert!(fixed.contains("        Result.Ok(v) => v,\n        Result.Err(_) => todo(),\n    }"), "{fixed}");
 }
 
 #[test]
@@ -169,11 +169,11 @@ fn a_tuple_of_enums_lists_the_uncovered_pairs() {
 #[test]
 fn a_nested_payload_names_the_uncovered_inner_case() {
     let body = format!(
-        "{COLOR}fn code(o: Option<Color>): i32 {{\n    match o {{\n        None => 0,\n        Some(Color.Red) => 1,\n    }}\n}}\n"
+        "{COLOR}fn code(o: Option<Color>): i32 {{\n    match o {{\n        Option.None => 0,\n        Option.Some(Color.Red) => 1,\n    }}\n}}\n"
     );
     let (_, fixed) = fill(&body);
     assert!(
-        fixed.contains("        Some(Color.Red) => 1,\n        Some(Color.Green) => todo(),\n        Some(Color.Blue) => todo(),\n    }"),
+        fixed.contains("        Option.Some(Color.Red) => 1,\n        Option.Some(Color.Green) => todo(),\n        Option.Some(Color.Blue) => todo(),\n    }"),
         "{fixed}"
     );
 }
@@ -276,9 +276,10 @@ fn area(s: Shape): i32 {
 
 #[test]
 fn a_wildcard_arm_of_an_option_or_a_bool_is_the_other_case() {
-    let fixed =
-        expand("fn get(o: Option<i32>): i32 {\n    match o {\n        Some(v) => v,\n        _ => 0,\n    }\n}\n");
-    assert!(fixed.contains("        Some(v) => v,\n        None => 0,\n    }"), "{fixed}");
+    let fixed = expand(
+        "fn get(o: Option<i32>): i32 {\n    match o {\n        Option.Some(v) => v,\n        _ => 0,\n    }\n}\n",
+    );
+    assert!(fixed.contains("        Option.Some(v) => v,\n        Option.None => 0,\n    }"), "{fixed}");
 
     let fixed = expand("fn get(b: bool): i32 {\n    match b {\n        true => 1,\n        _ => 0,\n    }\n}\n");
     assert!(fixed.contains("        true => 1,\n        false => 0,\n    }"), "{fixed}");

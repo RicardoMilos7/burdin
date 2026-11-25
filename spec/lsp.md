@@ -426,7 +426,7 @@ Tests: `quick_fixes_for_the_errors_of_a_file`, `organize_imports_and_write_a_typ
 arm per uncovered case, after the last arm, at that arm's indentation. The cases are the witnesses the exhaustiveness
 checker computes (`burdin_sema::missing_patterns`, `crates/burdin_sema/src/exhaust.rs`), never a guess: the variants of
 an enum in declaration order (`Color.Green`), a payload as wildcards (`Shape.Circle(_)`, `Shape.Rect { w: _, h: _ }`,
-`Some(_)`, `Err(_)`), and for a tuple or a nested pattern the uncovered combinations (`(Color.Red, Color.Green)`,
+`Option.Some(_)`, `Result.Err(_)`), and for a tuple or a nested pattern the uncovered combinations (`(Color.Red, Color.Green)`,
 `(Color.Green, _)`, `Some(Color.Blue)`). An open domain (an integer, a string, a slice) has no finite list, so the
 action writes one `_ => todo(),` arm. An arm with a guard does not cover its pattern, so the case it names is still
 missing. The last arm gets a comma when it is an expression without one, and none is added after a block body; a

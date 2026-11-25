@@ -66,7 +66,7 @@ pub fn exhaustive(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> bool {
 }
 
 /// The values `pats` leave out, as patterns written in source form, in the order the type declares them: one for
-/// each uncovered case (`Color.Green`, `Shape.Circle(_)`, `Some(_)`, `(Color.Red, _)`). An open domain (an integer, a
+/// each uncovered case (`Color.Green`, `Shape.Circle(_)`, `Option.Some(_)`, `(Color.Red, _)`). An open domain (an integer, a
 /// string, a slice) that a pattern does not finish shows as `_`, so the list for a match on an integer is just `_`.
 /// Empty when `pats` cover every value of `ty`.
 pub fn missing_patterns(ty: &Ty, pats: &[&Pat], adts: &TypeDefs) -> Vec<String> {
@@ -148,10 +148,10 @@ fn pattern_name(name: &str) -> &str {
 fn apply(ty: &Ty, c: &Ctor, args: &[String], adts: &TypeDefs) -> String {
     match (ty, c) {
         (Ty::Bool, Ctor::Bool(b)) => b.to_string(),
-        (Ty::Option(_), Ctor::Variant(0)) => "None".to_string(),
-        (Ty::Option(_), Ctor::Variant(_)) => format!("Some({})", args[0]),
-        (Ty::Result(..), Ctor::Variant(0)) => format!("Ok({})", args[0]),
-        (Ty::Result(..), Ctor::Variant(_)) => format!("Err({})", args[0]),
+        (Ty::Option(_), Ctor::Variant(0)) => "Option.None".to_string(),
+        (Ty::Option(_), Ctor::Variant(_)) => format!("Option.Some({})", args[0]),
+        (Ty::Result(..), Ctor::Variant(0)) => format!("Result.Ok({})", args[0]),
+        (Ty::Result(..), Ctor::Variant(_)) => format!("Result.Err({})", args[0]),
         (Ty::Tuple(_), Ctor::Single) => format!("({})", args.join(", ")),
         (Ty::Unit, Ctor::Single) => "()".to_string(),
         (Ty::Struct(a), Ctor::Single) => {
@@ -671,12 +671,12 @@ mod tests {
     fn missing_patterns_of_options_results_and_tuples() {
         let defs = TypeDefs { structs: &[], enums: &[] };
         let opt = Ty::Option(Box::new(Ty::Bool));
-        assert_eq!(missing_patterns(&opt, &[&Pat::None], &defs), ["Some(_)"]);
+        assert_eq!(missing_patterns(&opt, &[&Pat::None], &defs), ["Option.Some(_)"]);
         let some_true = Pat::Some(Box::new(Pat::Bool(true)));
-        assert_eq!(missing_patterns(&opt, &[&some_true, &Pat::None], &defs), ["Some(false)"]);
+        assert_eq!(missing_patterns(&opt, &[&some_true, &Pat::None], &defs), ["Option.Some(false)"]);
         let res = Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Bool));
         let ok = Pat::Ok(Box::new(Pat::Wild));
-        assert_eq!(missing_patterns(&res, &[&ok], &defs), ["Err(_)"]);
+        assert_eq!(missing_patterns(&res, &[&ok], &defs), ["Result.Err(_)"]);
         let pair = Ty::Tuple(vec![Ty::Bool, Ty::Bool]);
         let tt = Pat::Product(vec![Pat::Bool(true), Pat::Bool(true)]);
         assert_eq!(missing_patterns(&pair, &[&tt], &defs), ["(false, _)", "(true, false)"]);
