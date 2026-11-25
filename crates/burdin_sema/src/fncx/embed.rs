@@ -1,4 +1,4 @@
-//! `embed("path")` (`spec/comptime.md`, CT15): the contents of a file, read while compiling.
+//! `embed("path")` (`spec/const-eval.md`, CE12): the contents of a file, read while compiling.
 //!
 //! The result is `str` for a text file, `[u8; N]` when the expected type is an array of the file's length, or a
 //! static `[u8]` view when the expected type is `[u8]` (no length is written, and the view is static data, RT4).

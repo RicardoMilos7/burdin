@@ -1,7 +1,7 @@
 //! `--emit=tir`: the typed tree of the program's own functions, as a debug dump (`spec/inspect.md`, INS7).
 //!
 //! The dump is the derived `Debug` text of each function with its spans shortened to `@<file>:<lo>..<hi>`, one
-//! function after another in program order. It is meant for reading what sema and the comptime pass produced, and its
+//! function after another in program order. It is meant for reading what sema and the interpreter pass produced, and its
 //! layout is not a stable format.
 
 use crate::reach;

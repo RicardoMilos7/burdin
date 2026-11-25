@@ -18,7 +18,7 @@ fn codes(source: &str) -> Vec<String> {
         deps: Vec::new(),
         root_module: None,
         official: Vec::new(),
-        modules: vec![Module { file, path: Vec::new(), ast: &ast, generated: "" }],
+        modules: vec![Module { file, path: Vec::new(), ast: &ast }],
     }];
     check(&packages, 0, 0, crate::EntryMode::Build, false, &sources, &mut diags);
     diags.iter().filter(|d| d.severity == burdin_diag::Severity::Error).map(|d| d.code.0.to_string()).collect()
@@ -40,7 +40,7 @@ fn errors_with_official(source: &str, official: &[&str]) -> Vec<(String, Vec<Str
         deps: Vec::new(),
         root_module: None,
         official: official.iter().map(|name| name.to_string()).collect(),
-        modules: vec![Module { file, path: Vec::new(), ast: &ast, generated: "" }],
+        modules: vec![Module { file, path: Vec::new(), ast: &ast }],
     }];
     check(&packages, 0, 0, crate::EntryMode::Build, false, &sources, &mut diags);
     diags

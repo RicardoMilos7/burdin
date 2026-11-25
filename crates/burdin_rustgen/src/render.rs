@@ -41,17 +41,19 @@ pub fn burdin_module(api: &Api, format_version: u32) -> String {
                 out.push_str("}\n");
                 let _ = writeln!(
                     out,
-                    "comptime assert({0}.size() == {1}, {2})",
+                    "priv const {3}_SIZE_CHECK: () = if {0}.size() == {1} {{ }} else {{ panic({2}) }}",
                     def.name,
                     size,
-                    burdin_string(&format!("`{}` must have size {size}, as in the Rust crate", def.name))
+                    burdin_string(&format!("`{}` must have size {size}, as in the Rust crate", def.name)),
+                    screaming(&def.name)
                 );
                 let _ = writeln!(
                     out,
-                    "comptime assert({0}.align() == {1}, {2})",
+                    "priv const {3}_ALIGN_CHECK: () = if {0}.align() == {1} {{ }} else {{ panic({2}) }}",
                     def.name,
                     align,
-                    burdin_string(&format!("`{}` must have alignment {align}, as in the Rust crate", def.name))
+                    burdin_string(&format!("`{}` must have alignment {align}, as in the Rust crate", def.name)),
+                    screaming(&def.name)
                 );
             }
             Class::Handle => {
@@ -73,6 +75,21 @@ pub fn burdin_module(api: &Api, format_version: u32) -> String {
             let _ = writeln!(out, "    fn {name}(text: CPtr<CChar>)");
         }
         out.push_str("}\n");
+    }
+    out
+}
+
+/// The name of a type in `SCREAMING_SNAKE_CASE`, for the constants that check its layout: `Pair` is `PAIR` and
+/// `RecordType` is `RECORD_TYPE`.
+fn screaming(name: &str) -> String {
+    let mut out = String::new();
+    let mut previous_lower = false;
+    for c in name.chars() {
+        if c.is_uppercase() && previous_lower {
+            out.push('_');
+        }
+        previous_lower = c.is_lowercase() || c.is_ascii_digit();
+        out.extend(c.to_uppercase());
     }
     out
 }

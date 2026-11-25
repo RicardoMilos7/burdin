@@ -248,7 +248,7 @@ fn run_script(
         link_libs: &[],
         mode: EntryMode::Build,
         diagnostics: options.diagnostics,
-        comptime_steps: options.comptime_steps,
+        const_steps: options.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: false,

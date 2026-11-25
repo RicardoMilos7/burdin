@@ -8,7 +8,7 @@ use json
 ```
 
 An official package is never declared in `burdin.toml`: `use <name>` is the only way to reach one. A module a
-`comptime generate` block or a build script produces cannot bring one in on its own; a hand-written file of the same
+build script produces cannot bring one in on its own; a hand-written file of the same
 package that imports it loads it for the whole package. An official package is versioned with the compiler: the release
 archive and the installers put this folder next to the `burdin` executable, and the lockfile pins the files of each one
 (a different compiler brings different files). The behavior, including where the compiler looks for this folder, is

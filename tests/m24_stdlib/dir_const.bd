@@ -1,0 +1,19 @@
+//@ compile-fail
+
+// The directory operations reach the operating system, so a constant evaluation that reaches one is E0224
+// (spec/const-eval.md, CE6; spec/stdlib.md, "Directories, metadata, and walking"). A helper that calls one is
+// impure too, and the error is reported at the constant.
+
+fn names(): usize {
+    read_dir(".").unwrap().len()
+}
+
+const A: bool = read_dir(".").is_ok() //~ E0224
+const B: bool = metadata(".").is_ok() //~ E0224
+const C: bool = canonicalize(".").is_ok() //~ E0224
+const D: bool = create_dir("made").is_ok() //~ E0224
+const E: bool = remove_file("gone").is_ok() //~ E0224
+const F: bool = walk(".").is_ok() //~ E0224
+const G: usize = names() //~ E0224
+
+fn main() {}

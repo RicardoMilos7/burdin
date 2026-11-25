@@ -26,6 +26,9 @@ Ticker {
     }
 }
 
+const FOLDED: Result<u8, TryFromIntError> = u8.try_from(300)
+const SIGNED: Result<i8, TryFromIntError> = i8.try_from(-5)
+
 fn main() {
     // The first values that fit each type's range, and the first that do not.
     let fits: i32 = 127
@@ -61,7 +64,5 @@ fn main() {
     println("{:?} {}", u8.try_from(u.next()), u.n)
 
     // The same conversion runs at compile time.
-    let folded = comptime u8.try_from(300)
-    let signed = comptime i8.try_from(-5)
-    println("{:?} {:?}", folded, signed)
+    println("{:?} {:?}", FOLDED, SIGNED)
 }

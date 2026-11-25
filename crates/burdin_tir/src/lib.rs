@@ -21,7 +21,7 @@ pub use tree::*;
 pub use ty::*;
 
 /// The operating system programs are compiled for, as `target.os()` reports it: the host's unless `--target` named
-/// another platform (`spec/comptime.md`, CT5; `spec/cross-compilation.md`).
+/// another platform (`spec/const-eval.md`, CE4; `spec/cross-compilation.md`).
 pub fn target_os() -> &'static str {
     target::current().os_name()
 }

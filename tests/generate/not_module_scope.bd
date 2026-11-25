@@ -1,9 +1,0 @@
-//@ compile-fail
-
-// `comptime generate` in a function body is E0243 (spec/generate.md, GN2).
-
-fn main() {
-    comptime generate { //~ E0243
-        String.new()
-    }
-}

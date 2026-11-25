@@ -517,7 +517,7 @@ jobs:
         run: python3 tests/run_tests.py m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21
       - name: Conformance tests (m22-s3)
         if: matrix.part == 'debug-2'
-        run: python3 tests/run_tests.py -v m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 generate compound_assign rest_patterns struct_update array_patterns target_typing
+        run: python3 tests/run_tests.py -v m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 compound_assign rest_patterns struct_update array_patterns target_typing
       - name: Conformance tests under AddressSanitizer (scheduled)
         if: matrix.part == 'debug-1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: python3 tests/run_tests.py --sanitize address m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21 m22 m23 m24
@@ -527,7 +527,7 @@ jobs:
         run: python3 tests/run_tests.py --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21
       - name: Conformance tests (release profile, m22-s3)
         if: matrix.part == 'release-2'
-        run: python3 tests/run_tests.py -v --release m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 generate compound_assign rest_patterns struct_update array_patterns target_typing
+        run: python3 tests/run_tests.py -v --release m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 compound_assign rest_patterns struct_update array_patterns target_typing
       - name: Incremental equivalence sweep
         if: matrix.part == 'unit'
         env:
@@ -1023,13 +1023,13 @@ jobs:
         run: python3 tests/run_tests.py -v m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21
       - name: Conformance tests (m22-s3)
         if: matrix.part == 'debug-2'
-        run: python3 tests/run_tests.py -v m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 generate compound_assign rest_patterns struct_update array_patterns target_typing
+        run: python3 tests/run_tests.py -v m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 compound_assign rest_patterns struct_update array_patterns target_typing
       - name: Conformance tests (release profile, m01-m21)
         if: matrix.part == 'release-1'
         run: python3 tests/run_tests.py -v --release m01 m02 m03 m04 m05 m06 m07 m08 m09 m10 m11 m12 m13 m14 m15 m16 m17 m18 m19 m20 m21
       - name: Conformance tests (release profile, m22-s3)
         if: matrix.part == 'release-2'
-        run: python3 tests/run_tests.py -v --release m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 generate compound_assign rest_patterns struct_update array_patterns target_typing
+        run: python3 tests/run_tests.py -v --release m22 m23 m24 s2_tasks s2_channels s2_shared s2_io s3_bench s3_scripts s3_serialize s3_crypto s3_math s3_http s3_tls s3_regex s3_parallel int128 compound_assign rest_patterns struct_update array_patterns target_typing
       - name: Channel and shared-state stress tests (repeated, debug)
         if: matrix.part == 'debug-1'
         run: |

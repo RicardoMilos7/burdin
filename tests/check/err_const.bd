@@ -1,0 +1,10 @@
+//% exit: 1
+//% stderr: the buffer must be a whole number of cache lines
+
+// Constant evaluation runs too: a failed `assert` in a `const` initializer is E0222.
+
+const BUFFER_SIZE: usize = 100
+
+const BUFFER_CHECK: () = assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cache lines") //~ E0222
+
+fn main() {}

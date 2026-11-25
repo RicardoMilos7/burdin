@@ -8,7 +8,7 @@ that build C. Both are installed in every CI job.
   * each fixture header generates the module in tests/bindgen/expected byte for byte (the goldens are compared
     everywhere but Windows: they assume a 64-bit non-MSVC C ABI. On Windows the generated module is still compiled and
     run, which is what checks its declarations);
-  * the generated module compiles and its `comptime assert`s hold, and its constants, sizes, and alignments are the
+  * the generated module compiles and its layout-check constants hold, and its constants, sizes, and alignments are the
     ones the C header gives;
   * `-I` and `-D` reach the C front end: a declaration behind `#ifdef` appears only when it is defined, and a struct
     from an included header becomes a field;

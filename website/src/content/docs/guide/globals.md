@@ -100,7 +100,7 @@ that write it at once race, and keeping them from doing so is your job inside th
   `str`, scalars, tuples, arrays, and structs, enums, `Option`, and `Result` of those are allowed. A `String`, `List`,
   `Map`, `Shared`, a closure, an `any`, or a type with a `Drop` implementation is `E0303`.
 - **Statics are module items.** A `static` declared inside a function body is `E0302`.
-- **Compile-time code cannot read a static.** A `const` initializer or a `comptime` block that names one is `E0220` and
+- **Compile-time code cannot read a static.** A `const` initializer that names one is `E0220` and
   `E0224`, and a static cannot give an array length, which is `E0251`.
 - **Atomics and `Mutex` cannot be statics yet.** They cannot be built at compile time, so
   `static COUNT: AtomicI64 = ...` is `E0221`. Pass a counter to the tasks that share it instead, as a `Shared<T>` or an

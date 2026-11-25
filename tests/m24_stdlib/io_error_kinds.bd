@@ -50,7 +50,7 @@ fn main() {
     match create_dir("plain") {
         Ok(_) => println("create succeeded"),
         Err(e) => {
-            comptime if target.os() == target.Os.Windows {
+            if target.os() == target.Os.Windows {
                 assert(e.os_code() == Some(183)) // ERROR_ALREADY_EXISTS
             } else {
                 assert(e.os_code() == Some(17)) // EEXIST
@@ -62,7 +62,7 @@ fn main() {
     match read_dir("plain") {
         Ok(_) => println("read_dir succeeded"),
         Err(e) => {
-            comptime if target.os() == target.Os.Windows {
+            if target.os() == target.Os.Windows {
                 assert(e.os_code() == Some(267)) // ERROR_DIRECTORY
             } else {
                 assert(e.os_code() == Some(20)) // ENOTDIR
@@ -76,7 +76,7 @@ fn main() {
     match remove_dir("d") {
         Ok(_) => println("remove_dir succeeded"),
         Err(e) => {
-            comptime if target.os() == target.Os.Windows {
+            if target.os() == target.Os.Windows {
                 assert(e.os_code() == Some(145)) // ERROR_DIR_NOT_EMPTY
             } else if target.os() == target.Os.MacOs {
                 assert(e.os_code() == Some(66)) // ENOTEMPTY

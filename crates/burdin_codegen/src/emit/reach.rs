@@ -269,9 +269,9 @@ impl Walker<'_> {
             | K::AnyIs { value, .. }
             | K::AnyDowncast { value, .. }
             | K::AnyUpcast { value, .. } => self.expr(value),
-            // The comptime pass replaces these before code generation (spec/comptime.md, CT13); what they call is
+            // The interpreter replaces this before code generation (spec/const-eval.md, CE10); what it calls is
             // not reachable from the generated program.
-            K::Comptime(_) | K::ComptimeFor { .. } => {}
+            K::ConstCond(_) => {}
             K::StringAsStr(inner)
             | K::Unary(_, inner)
             | K::Cast(inner)

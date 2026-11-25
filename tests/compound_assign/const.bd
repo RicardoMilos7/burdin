@@ -1,0 +1,28 @@
+//@ run
+//> 55
+//> 3
+
+// Compound assignment in constant evaluation has the run-time rules (spec/compound-assignment.md, CA6).
+
+fn sum_to(n: i32): i32 {
+    let mut total = 0
+    let mut i = 1
+    while i <= n {
+        total += i
+        i += 1
+    }
+    total
+}
+
+const T: i32 = sum_to(10)
+const BITS: i32 = {
+    let mut b = 1
+    b <<= 1
+    b |= 1
+    b
+}
+
+fn main() {
+    println("{T}")
+    println("{BITS}")
+}

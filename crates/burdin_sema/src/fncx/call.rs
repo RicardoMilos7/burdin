@@ -867,8 +867,6 @@ impl FnCx<'_> {
                 self.static_mut_borrowed(&arg, arg.span);
             }
             let arg = self.coerce_arg(arg, &p.ty);
-            // The argument of a `comptime` parameter is a compile-time value (spec/comptime.md, CT4).
-            let arg = if p.comptime { self.comptime_argument(arg) } else { arg };
             if p.mut_param && !matches!(arg.ty, Ty::Error) {
                 if !is_place_expr(&arg) {
                     self.diags.error(

@@ -20,7 +20,7 @@ command line, the exit status, and the text the output must contain. The Rust un
 
 ```
 burdin lint <file.bd | package directory> [-A <lint>]... [-W <lint>]... [-D <lint>]... [--deny-warnings]
-            [--fix [--dry-run]] [--comptime-steps <n>] [diagnostics]
+            [--fix [--dry-run]] [--const-steps <n>] [diagnostics]
 burdin lint --list
 burdin lint --explain <lint>
 ```
@@ -86,7 +86,7 @@ one section for each lint in `--list`, each with a `**How to fix:**` paragraph a
 Tests: `check_lint.py` (documentation checks, `--explain`).
 
 **LN11. Generated code.** Code the compiler or the parser makes up is never linted: derived impls, the impls of an `error
-enum`, the type parameter of an `impl` argument, `comptime assert` items, `main`, and the wrapper of a `test` body. A name
+enum`, the type parameter of an `impl` argument, `main`, and the wrapper of a `test` body. A name
 or an item whose source text is not what the compiler recorded for it is generated.
 Tests: `generated/no_findings.bd`.
 
@@ -232,7 +232,7 @@ tests.
 - **Silence is preferred to a wrong finding.** Wherever the analysis cannot tell (a name shared by two items, a slice, a
   capture, a mention it cannot place), it reports nothing. The false-positive rate was measured by running the linter over
   the conformance programs that compile (665 single-file programs); the findings were reviewed by lint, and each false
-  positive that turned up (generated names, `test` bodies, writes inside closures, slices, `comptime` blocks) was fixed
+  positive that turned up (generated names, `test` bodies, writes inside closures, slices) was fixed
   and now has a fixture.
 - **Lint codes are not error codes.** `L0000`-`L0017` are not in the `E` registry of `tests/README.md`, so
   `tests/check_tests.py` and `docs/error-codes.md` do not know them; `docs/lints.md` is their registry.

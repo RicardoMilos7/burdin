@@ -4,7 +4,7 @@
 //> 65 66 67
 
 // `embed("path")` is the contents of a file, read while compiling, relative to this source file: `str` for text
-// and `[u8; N]` for bytes (spec/comptime.md, CT15).
+// and `[u8; N]` for bytes (spec/const-eval.md, CE12).
 
 const GREETING: str = embed("data/greeting.txt")
 

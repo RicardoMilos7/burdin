@@ -1,7 +1,0 @@
-//@ test-compile-fail
-
-// `differential` takes its expectation from the compile-time run, so it cannot be combined with an attribute that
-// states a separate one, and it takes no value; every mistake is E0170 (spec/test-runner.md).
-test "panic and differential" [differential, should_panic] { } //~ E0170
-test "fail and differential" [differential, should_fail] { } //~ E0170
-test "differential takes no value" [differential("strict")] { } //~ E0170

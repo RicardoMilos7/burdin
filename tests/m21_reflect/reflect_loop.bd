@@ -1,0 +1,69 @@
+//@ run
+//> x = 1
+//> y = 2
+//> total 3
+//> Dot Line Pair
+//> 3 variants, arity sum 3
+//> 2 items
+//> 2 fields of Pair<i32>
+
+// A `for` over `Type.fields` or `Type.variants` is unrolled while it is checked: `item.name` and `item.index` are
+// literals, `x.{item.name}` is the field, and a loop over the array bound first is an ordinary run-time loop
+// (spec/reflection.md, RFL4; spec/const-eval.md, CE5).
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+enum Shape {
+    Dot
+    Line(i32)
+    Pair(i32, i32)
+}
+
+struct Pair<T> {
+    a: T
+    b: T
+}
+
+fn count_fields<T>(): usize {
+    let mut n: usize = 0
+    for _ in T.fields {
+        n = n + 1
+    }
+    n
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let mut total = 0
+    for field in Point.fields {
+        println("{} = {}", field.name, p.{field.name})
+        total = total + p.{field.name}
+    }
+    println("total {total}")
+
+    let mut names = String.new()
+    let mut arity: usize = 0
+    for v in Shape.variants {
+        if v.index > 0 {
+            names.push_str(" ")
+        }
+        names.push_str(v.name)
+        arity = arity + v.arity
+    }
+    println(names)
+    println("{Shape.variants.len()} variants, arity sum {arity}")
+
+    // Bound first, the array is an ordinary value and the loop runs at run time.
+    let fields = Point.fields
+    let mut seen = 0
+    for f in fields {
+        if f.name.len() > 0 {
+            seen = seen + 1
+        }
+    }
+    println("{seen} items")
+    println("{count_fields<Pair<i32>>()} fields of {Pair<i32>.name}")
+}

@@ -14,7 +14,7 @@ output of every failing fixture. The Rust unit tests in `crates/burdin_driver/sr
 ## The command
 
 ```
-burdin check <file.bd | package directory> [--release | --profile <name>] [--tests] [--comptime-steps <n>] [diagnostics]
+burdin check <file.bd | package directory> [--release | --profile <name>] [--tests] [--const-steps <n>] [diagnostics]
       [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain]
 ```
 
@@ -23,7 +23,7 @@ burdin check <file.bd | package directory> [--release | --profile <name>] [--tes
 
 **CK1. The same front end as a build.** `burdin check` loads the target like `burdin build` does and runs the same
 stages in the same order: build scripts, parsing, name resolution and type checking (including monomorphization), the
-return-origin, move, and borrow checks, and compile-time evaluation (`comptime`, constants, `embed`). It is one function,
+return-origin, move, and borrow checks, and compile-time evaluation (constants, compile-time conditions, `embed`). It is one function,
 `front_end` in `crates/burdin_driver/src/main.rs`, which `build`, `run`, `test`, and `lint` call too, so a diagnostic
 cannot be reported by one command and missed by another. The command exits 0 exactly when `burdin build` would reach code
 generation, and 1 when the front end reports an error. A `main` is required (E0002, "the program has no `main`
@@ -60,7 +60,7 @@ names of a `fn`, the interface and type of an `impl` header, the variants of an 
 declarations declare is never a follow-on, so an error that names it is reported. When in doubt the follow-on is dropped: a diagnostic in a
 file with a syntax error never survives, and a missing `main` is not reported when the unreadable declarations declare
 `main`. The syntax errors themselves are always reported. With syntax errors the program is not returned (the
-language server keeps its last good one), and compile-time evaluation never runs (`spec/comptime.md`, CT1).
+language server keeps its last good one), and compile-time evaluation never runs (`spec/const-eval.md`, CE1).
 The rule lives in `crates/burdin_query/src/follow_on.rs`, so a build, a check, and a language server report the same.
 Tests: `err_syntax_declared.bd` (a broken function is not reported, and neither is a mismatch in the broken file),
 `packages/syntax_neighbors` (a broken module's neighbors are checked against what it parsed), `packages/syntax_no_main`
@@ -76,13 +76,13 @@ Tests: `lib_tests` and `tests_error` packages, the `test-compile-fail` and `burd
 
 **CK6. The profile.** The profile changes what the front end does in two places: error trace frames are recorded only
 when the profile's `debug-assertions` is on (`spec/errors.md`, ERR7), and compile-time evaluation follows its
-`overflow-checks` and `debug-assertions` (`spec/comptime.md`). `--profile <name>` selects one
+`overflow-checks` and `debug-assertions` (`spec/const-eval.md`). `--profile <name>` selects one
 (`spec/profiles.md`); `--release` is `--profile release`, and the default is `dev`. `-O<n>` is accepted
 for the same reason, and changes nothing: a check generates no code, so no optimization level applies (BP4).
 Tests: `--release on a clean program`, the `release-only` conformance tests.
 
-**CK7. `--comptime-steps <n>`.** Sets the step budget of each compile-time evaluation, as for a build
-(`spec/comptime.md`, CT11). `0` and non-numbers are usage errors.
+**CK7. `--const-steps <n>`.** Sets the step budget of each compile-time evaluation, as for a build
+(`spec/const-eval.md`, CE8). `0` and non-numbers are usage errors.
 Tests: `budget.bd` (fine with the default budget, E0225 with 1000 steps), the usage-error checks.
 
 **CK8. Exit statuses.** 0: no errors (warnings allowed). 1: the front end reported errors, or the package could not be

@@ -15,7 +15,7 @@ pub(crate) mod snapshots;
 use crate::package::{self, Workspace};
 use crate::workspace;
 use crate::{Args, CompileOptions, EntryMode, Site, TempDir, TestFormat, compile};
-use burdin_tir::{TestAttrs, TestEntry, TestOutcome};
+use burdin_tir::{TestAttrs, TestEntry};
 use doc_tests::{DocAttrs, DocExample};
 use select::FailedRecord;
 use std::path::{Path, PathBuf};
@@ -57,9 +57,8 @@ struct TestCase {
 /// the plan hold a `DocExample` until the build turns them into executables or decided outcomes.
 #[derive(Clone, Debug)]
 enum Run {
-    /// A `test` block: the package's test binary and the dispatcher index that selects it. The compile-time
-    /// outcome of a `[differential]` test rides along; `None` for an ordinary test.
-    Block { exe: PathBuf, index: usize, comptime: Option<TestOutcome> },
+    /// A `test` block: the package's test binary and the dispatcher index that selects it.
+    Block { exe: PathBuf, index: usize },
     /// A doc test that still needs its program built (the plan holds these until the build decides them).
     Doc(DocExample),
     /// A doc test whose program is built: ready for its process, which takes no index argument.
@@ -78,8 +77,7 @@ struct Attrs {
     pub(super) should_panic: bool,
     pub(super) should_panic_message: Option<String>,
     pub(super) should_fail: bool,
-    pub(super) differential: bool,
-    /// A doc test: the attributes below are its, and `should_fail`, `differential`, and `timeout_ms` never apply.
+    /// A doc test: the attributes below are its, and `should_fail` and `timeout_ms` never apply.
     pub(super) doc: bool,
     pub(super) no_run: bool,
     pub(super) compile_fail: bool,
@@ -95,7 +93,6 @@ impl Attrs {
             should_panic: attrs.should_panic,
             should_panic_message: attrs.should_panic_message.clone(),
             should_fail: attrs.should_fail,
-            differential: attrs.differential,
             doc: false,
             no_run: false,
             compile_fail: false,
@@ -227,7 +224,7 @@ pub(crate) fn run(args: &Args) -> ExitCode {
         link_libs: &args.link_libs,
         mode: EntryMode::Test,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
@@ -481,7 +478,7 @@ fn run_interpreted(args: &Args) -> ExitCode {
         link_libs: &[],
         mode: EntryMode::Test,
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         report_clean: false,
         run_build_scripts: true,
@@ -494,10 +491,10 @@ fn run_interpreted(args: &Args) -> ExitCode {
         verbose: false,
     };
     let compile_options = CompileOptions { link_libs: args.link_libs.as_slice(), ..options };
-    let interp_options = burdin_comptime::Options {
+    let interp_options = burdin_interp::Options {
         overflow_checks: args.profile.overflow_checks,
         debug_assertions: args.profile.debug_assertions,
-        steps: args.comptime_steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
+        steps: args.const_steps.unwrap_or(burdin_interp::DEFAULT_STEPS),
     };
     let qualify = selected.len() > 1;
     let mut passed = 0usize;
@@ -540,18 +537,18 @@ fn run_interpreted(args: &Args) -> ExitCode {
                 println!("SKIP {display} ([ignore])");
                 continue;
             }
-            match burdin_comptime::interpret_test(&program, test.func, interp_options) {
-                burdin_comptime::Interpreted::Passed => {
+            match burdin_interp::interpret_test(&program, test.func, interp_options) {
+                burdin_interp::Interpreted::Passed => {
                     passed += 1;
                     if args.verbose {
                         println!("PASS {display} (interpreted)");
                     }
                 }
-                burdin_comptime::Interpreted::Skipped(reason) => {
+                burdin_interp::Interpreted::Skipped(reason) => {
                     skipped += 1;
                     println!("SKIP {display} ({reason})");
                 }
-                burdin_comptime::Interpreted::Failed(message, span) => {
+                burdin_interp::Interpreted::Failed(message, span) => {
                     failed += 1;
                     let (file, (line, column)) = site(span);
                     println!("---- test \"{display}\" failed ----");
@@ -595,7 +592,7 @@ fn discover(compiled: &[CompiledPackage], qualify: bool) -> Vec<TestCase> {
                 path,
                 file,
                 line,
-                run: Run::Block { exe: package.exe.clone(), index, comptime: test.comptime },
+                run: Run::Block { exe: package.exe.clone(), index },
                 attrs: Attrs::of_block(&test.attrs),
             });
         }
@@ -778,10 +775,10 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
     let Planned { case, timeout, .. } = planned;
     let TestCase { display, attrs, run, .. } = case;
     // A doc test's process takes no dispatcher index: the program is the test.
-    let (exe, argument, comptime) = match run {
-        Run::Block { exe, index, comptime } => (exe, Some(index.to_string()), *comptime),
-        Run::Replay { exe, index, .. } => (exe, Some(index.to_string()), None),
-        Run::DocExe(exe) => (exe, None, None),
+    let (exe, argument) = match run {
+        Run::Block { exe, index } => (exe, Some(index.to_string())),
+        Run::Replay { exe, index, .. } => (exe, Some(index.to_string())),
+        Run::DocExe(exe) => (exe, None),
         Run::Doc(_) => unreachable!("the doc build decided or compiled every planned doc test"),
     };
     let work = TempDir::new().map_err(|e| format!("cannot create a temporary directory: {e}"))?;
@@ -832,7 +829,7 @@ fn run_one(planned: &Planned, capture_dir: &Path, slot: usize) -> Result<Outcome
     let note = match timed_out_after {
         Some(ms) => Some(format!("timed out after {ms} ms")),
         None => match run {
-            Run::Block { .. } => verdict(ending(&status), attrs, comptime, &String::from_utf8_lossy(&stderr)).err(),
+            Run::Block { .. } => verdict(ending(&status), attrs, &String::from_utf8_lossy(&stderr)).err(),
             Run::DocExe(_) => doc_verdict(ending(&status), attrs).err(),
             Run::Replay { input, .. } => replay_verdict(&status, input).err(),
             Run::Doc(_) => unreachable!("the doc build decided every planned doc test"),
@@ -912,28 +909,9 @@ pub(crate) fn isolation_env(
     vars
 }
 
-/// Whether the test's ending satisfies its attributes. For a `[differential]` test, `comptime` is the outcome of
-/// the same body run by the interpreter while the package was compiled; the compiled test must produce it too
-/// (`spec/test-runner.md`). A doc test has its own verdict (`doc_verdict`): it is an ordinary program, so no
-/// dispatcher exit status and no differential comparison apply.
-fn verdict(ending: Ending, attrs: &Attrs, comptime: Option<TestOutcome>, stderr: &str) -> Result<(), String> {
-    if let Some(expected) = comptime {
-        return match (ending, expected) {
-            (Ending::Success, TestOutcome::Ok) | (Ending::ReturnedError, TestOutcome::Err) => Ok(()),
-            (Ending::Success, TestOutcome::Err) => {
-                Err("the compiled test returned `Ok`, but the comptime interpreter returned `Err`".to_string())
-            }
-            (Ending::ReturnedError, TestOutcome::Ok) => {
-                Err("the compiled test returned `Err`, but the comptime interpreter returned `Ok`".to_string())
-            }
-            (Ending::Abnormal, TestOutcome::Ok) => {
-                Err("the compiled test aborted, but the comptime interpreter returned `Ok`".to_string())
-            }
-            (Ending::Abnormal, TestOutcome::Err) => {
-                Err("the compiled test aborted, but the comptime interpreter returned `Err`".to_string())
-            }
-        };
-    }
+/// Whether the test's ending satisfies its attributes. A doc test has its own verdict (`doc_verdict`): it is an
+/// ordinary program, so no dispatcher exit status applies.
+fn verdict(ending: Ending, attrs: &Attrs, stderr: &str) -> Result<(), String> {
     if attrs.should_panic {
         return match ending {
             Ending::Abnormal => match &attrs.should_panic_message {
@@ -1036,30 +1014,30 @@ mod tests {
         let mut with_message = attrs();
         with_message.should_panic = true;
         with_message.should_panic_message = Some("boom".to_string());
-        assert!(verdict(Ending::Abnormal, &with_message, None, "panic: boom\n").is_ok());
-        assert!(verdict(Ending::Abnormal, &with_message, None, "panic: other\n").is_err());
-        assert!(verdict(Ending::Success, &with_message, None, "").is_err());
-        assert!(verdict(Ending::ReturnedError, &with_message, None, "").is_err());
+        assert!(verdict(Ending::Abnormal, &with_message, "panic: boom\n").is_ok());
+        assert!(verdict(Ending::Abnormal, &with_message, "panic: other\n").is_err());
+        assert!(verdict(Ending::Success, &with_message, "").is_err());
+        assert!(verdict(Ending::ReturnedError, &with_message, "").is_err());
 
         let mut plain = attrs();
         plain.should_panic = true;
-        assert!(verdict(Ending::Abnormal, &plain, None, "").is_ok());
+        assert!(verdict(Ending::Abnormal, &plain, "").is_ok());
     }
 
     #[test]
     fn should_fail_requires_a_returned_error() {
         let mut fail = attrs();
         fail.should_fail = true;
-        assert!(verdict(Ending::ReturnedError, &fail, None, "").is_ok());
-        assert!(verdict(Ending::Success, &fail, None, "").is_err());
-        assert!(verdict(Ending::Abnormal, &fail, None, "").is_err());
+        assert!(verdict(Ending::ReturnedError, &fail, "").is_ok());
+        assert!(verdict(Ending::Success, &fail, "").is_err());
+        assert!(verdict(Ending::Abnormal, &fail, "").is_err());
     }
 
     #[test]
     fn a_normal_test_passes_only_on_success() {
-        assert!(verdict(Ending::Success, &attrs(), None, "").is_ok());
-        assert_eq!(verdict(Ending::ReturnedError, &attrs(), None, ""), Err(String::new()));
-        assert_eq!(verdict(Ending::Abnormal, &attrs(), None, ""), Err(String::new()));
+        assert!(verdict(Ending::Success, &attrs(), "").is_ok());
+        assert_eq!(verdict(Ending::ReturnedError, &attrs(), ""), Err(String::new()));
+        assert_eq!(verdict(Ending::Abnormal, &attrs(), ""), Err(String::new()));
     }
 
     #[test]
@@ -1079,30 +1057,6 @@ mod tests {
         assert_eq!(
             doc_verdict(Ending::ReturnedError, &panics),
             Err("expected a panic abort, but the example exited with status 1".to_string())
-        );
-    }
-
-    #[test]
-    fn a_differential_test_must_match_the_compile_time_outcome() {
-        // Agreement passes whether the body returns `Ok` or `Err`; agreement is the expectation, not success.
-        assert!(verdict(Ending::Success, &attrs(), Some(TestOutcome::Ok), "").is_ok());
-        assert!(verdict(Ending::ReturnedError, &attrs(), Some(TestOutcome::Err), "").is_ok());
-        // A different outcome, or a compiled run that aborts, is a divergence and fails with an explanation.
-        assert_eq!(
-            verdict(Ending::Success, &attrs(), Some(TestOutcome::Err), ""),
-            Err("the compiled test returned `Ok`, but the comptime interpreter returned `Err`".to_string())
-        );
-        assert_eq!(
-            verdict(Ending::ReturnedError, &attrs(), Some(TestOutcome::Ok), ""),
-            Err("the compiled test returned `Err`, but the comptime interpreter returned `Ok`".to_string())
-        );
-        assert_eq!(
-            verdict(Ending::Abnormal, &attrs(), Some(TestOutcome::Ok), ""),
-            Err("the compiled test aborted, but the comptime interpreter returned `Ok`".to_string())
-        );
-        assert_eq!(
-            verdict(Ending::Abnormal, &attrs(), Some(TestOutcome::Err), ""),
-            Err("the compiled test aborted, but the comptime interpreter returned `Err`".to_string())
         );
     }
 
@@ -1154,7 +1108,6 @@ mod tests {
             func: burdin_tir::FuncId(0),
             body: burdin_tir::FuncId(0),
             attrs: TestAttrs::default(),
-            comptime: None,
         }
     }
 

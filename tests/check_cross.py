@@ -10,7 +10,7 @@ What it checks:
     with `--sanitize` are usage errors that say why;
   * XC3: for each of the six targets, the object file `--emit obj` writes is in the target's format and for the
     target's architecture (ELF `e_machine`, Mach-O `cputype`, COFF `Machine`), and `--emit asm` is written;
-  * XC2: `target.os()` and `target.arch()` report the target in `comptime if`, in the LLVM IR the build emits, and in
+  * XC2: `target.os()` and `target.arch()` report the target in a compile-time `if`, in the LLVM IR the build emits, and in
     `burdin check --target`, whatever the host is;
   * XC5: the runtime's system calls and structure layouts are the target's (`lstat` on Linux, `lstat$INODE64` on
     Intel macOS, `_stat64` on Windows, and the arm64 Linux `struct stat` offsets);
@@ -138,14 +138,14 @@ HELLO = 'fn main() {\n    println("hello")\n}\n'
 
 PLATFORM_MARKS = """\
 fn main() {
-    comptime if target.os() == target.Os.Linux {
+    if target.os() == target.Os.Linux {
         println("OS_LINUX")
     } else if target.os() == target.Os.MacOs {
         println("OS_MACOS")
     } else {
         println("OS_WINDOWS")
     }
-    comptime if target.arch() == target.Arch.Aarch64 {
+    if target.arch() == target.Arch.Aarch64 {
         println("ARCH_AARCH64")
     } else {
         println("ARCH_X86_64")
@@ -230,17 +230,17 @@ with harness.temporary_dir("burdin-cross-") as work:
         check(("ARCH_X86_64" in ir) != ("ARCH_AARCH64" in ir), f"{triple}: both architectures' branches were kept")
         check(f'target triple = "{triple}"' in ir, f"{triple}: the module's triple is not the target's")
 
-    # `burdin check --target`: the compile-time assertion holds only for the named target.
+    # `burdin check --target`: the constant check holds only for the named target.
     harness.write_text(
         work / "assert_windows.bd",
-        "comptime assert(target.os() == target.Os.Windows)\n\nfn main() {\n    println(\"ok\")\n}\n",
+        "const WINDOWS_ONLY: () = if target.os() == target.Os.Windows { } else { panic(\"not windows\") }\n\nfn main() {\n    println(\"ok\")\n}\n",
     )
     windows_check = harness.run(
         [burdin, "check", "assert_windows.bd", "--target", "x86_64-pc-windows-msvc"], cwd=work
     )
     check(windows_check.returncode == 0, f"check --target windows: {harness.text(windows_check.stderr)}")
     linux_check = harness.run([burdin, "check", "assert_windows.bd", "--target", "aarch64-unknown-linux-gnu"], cwd=work)
-    check(linux_check.returncode != 0, "check --target linux: the Windows-only assertion passed")
+    check(linux_check.returncode != 0, "check --target linux: the Windows-only const passed")
     bad_check = harness.run([burdin, "check", "hello.bd", "--target", "nope"], cwd=work)
     check(bad_check.returncode == 2, "check --target with an unknown triple is a usage error")
 

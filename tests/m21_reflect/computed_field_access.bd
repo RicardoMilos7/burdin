@@ -23,7 +23,7 @@ interface Bump {
 
 derive Bump {
     fn bump(mut self) {
-        comptime for field in Self.fields {
+        for field in Self.fields {
             self.{field.name} = self.{field.name} + 1
         }
     }

@@ -4,7 +4,7 @@
 // The compiler's primitives (`__read_dir`, `__create_dir`, `__remove_dir`, `__remove_file`, `__rename`,
 // `__metadata`, `__canonicalize`, and the `__file_*` handle operations) reach the operating system; the signatures,
 // the error values, the recursive helpers, the glob matcher, and the file handle are Burdin. Every function is
-// impure: a comptime evaluation that reaches one fails with E0224.
+// impure: a constant evaluation that reaches one fails with E0224.
 
 use fmt.{Debug, Formatter}
 use path.Path

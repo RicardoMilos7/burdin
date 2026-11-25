@@ -27,12 +27,12 @@ It cannot be combined with `--sanitize` or profile-guided optimization, whose ru
 
 ## What follows the target
 
-XC2. The compile-time facts follow the target, not the host: `target.os()` and `target.arch()` (`spec/comptime.md`,
-CT5) in `comptime if` and at run time, the `cfg(...)` predicates of a manifest's `[target.'cfg(...)'...]` tables
+XC2. The compile-time facts follow the target, not the host: `target.os()` and `target.arch()` (`spec/const-eval.md`,
+CE4) in a compile-time `if` and at run time, the `cfg(...)` predicates of a manifest's `[target.'cfg(...)'...]` tables
 (`spec/packages.md`), and the `[link]` tables chosen by them. The driver records the target once, before the front end
 starts (`burdin_tir::target`); the checker, the compile-time interpreter, and the code generator all read it from
 there, so they cannot disagree. Compile-time evaluation still runs on the host, so what it *does* (reading a file with
-`embed`, a `comptime` call to the file system) is the host's; only what it reports about the target is the target's.
+`embed`, a `const` initializer that calls the file system) is the host's; only what it reports about the target is the target's.
 
 XC3. Code generation uses the target's machine: the module's triple and data layout are the target's, and the object
 file is in the target's format (ELF, Mach-O, or COFF) for the target's architecture. `--emit obj`, `--emit asm`,
@@ -90,7 +90,7 @@ codegen units are still reused between cross builds of the same target. `--targe
 XC10. A build script (`build.bd`) runs on the host, so it is compiled for the host and sees the host as the target
 (`spec/build-scripts.md`). The package it generates code for is built for `--target`.
 
-XC11. `burdin check --target <triple>` type-checks, evaluates `comptime`, and runs the memory checks with the target's
+XC11. `burdin check --target <triple>` type-checks, evaluates `const`s, and runs the memory checks with the target's
 facts (XC2). It generates no code and links nothing, so it needs no cross toolchain.
 
 ## What is not supported

@@ -11,7 +11,7 @@ Reflection is not a library and not a macro system. It is five members that ever
 compiler while it checks a function body, and two loop and access forms that make them useful:
 
 - the members `Type.name`, `Type.size`, `Type.align`, `Type.fields`, `Type.variants` (RFL2),
-- `comptime for item in Type.fields { ... }` and the same over `Type.variants`, which is unrolled (RFL4),
+- `for item in Type.fields { ... }` and the same over `Type.variants`, which is unrolled (RFL4),
 - `x.{name}`, a field access whose name is known while compiling (RFL5).
 
 Reflection runs when a function body is checked for a concrete type, so a derive body sees the type it is applied to
@@ -59,28 +59,32 @@ looped over at run time too.
 named one of them, or an enum variant named one of them, would be ambiguous with the member and is E0231. A method
 with `self` (`fn name(self): String`) is called on a value and does not conflict.
 
-## RFL4. `comptime for` over fields and variants
+## RFL4. `for` over fields and variants
 
-`comptime for item in Type.fields { body }` and `comptime for item in Type.variants { body }` are unrolled while
-the body is checked: the body is checked once per item, in order, with `item` standing for that item's value. The
+`for item in Type.fields { body }` and `for item in Type.variants { body }` are unrolled while
+the body is checked. The rule is syntactic: the loop is unrolled when its iterable is literally `Type.fields` or
+`Type.variants`, that is, a type path, `Self`, or a type parameter followed by `.fields` or `.variants`. Any other `for`
+is the ordinary run-time loop, so `Type.fields` bound first (`let fs = Point.fields; for f in fs { ... }`) loops over
+the array at run time. Unrolling works like this: the body is checked once per item, in order, with `item` standing for that item's value. The
 loop variable is a plain name or `_`. In each copy `item.name`, `item.type_name`, `item.index` (a field) and
 `item.name`, `item.index`, `item.arity` (a variant) are literals, so they fold into the code, and `item` alone is
 the item's `FieldInfo` or `VariantInfo` value. An empty array unrolls to nothing. `break` and `continue` cannot leave
-the loop (E0220, as for every `comptime for`).
+an unrolled loop (E0220, because the unrolled body is no loop); a loop written inside the body may use them for itself.
+The body is checked like a loop body, so moving an outer value in it is E0104, as in any loop.
 
-Any other `comptime for` (over an array, a range, a constant) is the ordinary one of `spec/comptime.md` CT6.
+The unrolled loop is the only `for` evaluated at compile time (`spec/const-eval.md`, CE5).
 
 ## RFL5. Computed field access
 
 `x.{name}` reads the field whose name is the compile-time string in the braces. The name is a string literal or the
-`name` of the loop variable of a `comptime for` over `Type.fields`; the access then means exactly `x.that_name`, with
+`name` of the loop variable of a `for` over `Type.fields`; the access then means exactly `x.that_name`, with
 the same rules (a missing field is E0002, a private field E0150, the borrow and move rules of a field). It can be
 assigned (`x.{field.name} = v`) and borrowed like any field. A name that is not a compile-time string is E0232.
 
 ## RFL6. Where the members are legal
 
-The members are expressions of the checked body, so they work anywhere an expression does, including in `comptime`
-blocks and `const` initializers. `Type.size` and `Type.align` keep their existing rules. Reading `Type.fields`
+The members are expressions of the checked body, so they work anywhere an expression does, including in `const`
+initializers. `Type.size` and `Type.align` keep their existing rules. Reading `Type.fields`
 costs nothing at run time beyond building the array it is bound to.
 
 ## RFL7. Reflection in generic code

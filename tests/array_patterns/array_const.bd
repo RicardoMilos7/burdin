@@ -1,0 +1,18 @@
+//@ run
+//> sum 7
+//> first 3
+
+// A constant array is destructured like a run-time one (AP12): the constant's elements are read at compile time.
+
+const PAIR: [i32; 2] = [3, 4]
+
+const TOTAL: i32 = {
+    let [x, y] = PAIR
+    x + y
+}
+
+fn main() {
+    println("sum {TOTAL}")
+    let [first, _] = PAIR
+    println("first {first}")
+}

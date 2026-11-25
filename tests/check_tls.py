@@ -337,7 +337,7 @@ with harness.temporary_dir("burdin-tls-") as work:
         else:
             check(False, "`burdin build .` did not produce tls_link")
 
-    # The package's own build can still turn the `openssl` feature off (it is internal now): the `comptime if` path
+    # The package's own build can still turn the `openssl` feature off (it is internal now): the compile-time `if` path
     # compiles, so a no-OpenSSL build of the package itself stays possible.
     no_openssl = run_in(official / "tls", "check", ".", "--tests", "--no-default-features")
     check(

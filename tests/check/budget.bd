@@ -1,7 +1,7 @@
-//% args: --comptime-steps 1000
+//% args: --const-steps 1000
 //% exit: 1
 
-// `--comptime-steps` sets the step budget of compile-time evaluation. This constant needs about a hundred thousand
+// `--const-steps` sets the step budget of constant evaluation. This constant needs about a hundred thousand
 // steps: it is fine with the default budget (the check script runs the file without the option too) and E0225 with
 // a budget of a thousand.
 

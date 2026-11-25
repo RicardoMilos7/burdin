@@ -171,25 +171,25 @@ usage:
   burdin build [file.bd | package directory] [--release | --profile <name>] [-g] [--strip] [--lto] [--tests] [-j <n>]
                [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
                [-p <member>]... [--workspace [--exclude <member>]...] [--link-lib <name>]...
-               [--comptime-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
+               [--const-steps <n>] [--emit-deps <file>] [--sanitize <list>] [diagnostics]
   burdin run [file.bd | package directory] [--release | --profile <name>] [-g] [-j <n>] [--link-lib <name>]...
-             [-p <member>]... [--workspace [--exclude <member>]...] [--comptime-steps <n>] [--sanitize <list>]
+             [-p <member>]... [--workspace [--exclude <member>]...] [--const-steps <n>] [--sanitize <list>]
              [diagnostics] [-- <program arguments>...]
   burdin test [file.bd | package directory] [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
               [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]...
               [--ignored | --include-ignored]
               [--failed] [--shard <i>/<n>] [--timeout <ms>] [--slow-threshold <ms>] [--list]
               [--format <human|json>] [--junit <file>] [--fuzz-replay] [--bless | --review] [--interpret]
-              [--sanitize <list>] [--comptime-steps <n>] [diagnostics]
+              [--sanitize <list>] [--const-steps <n>] [diagnostics]
   burdin bench <file.bd | package directory> [<filter>...] [--release | --profile <name>] [-g] [-j <n>] [--verbose]
                [-p <package>]... [--workspace [--exclude <member>]...] [--exact] [--skip <pattern>]... [--list]
                [--format <human|json>] [--timeout <ms>] [--warmup <ms>] [--sample-count <n>] [--sample-time <ms>]
                [--save-baseline <name>] [--baseline <name>] [--fail-on-regression <percent>]
-               [--profile-time <seconds>] [--comptime-steps <n>] [diagnostics]
+               [--profile-time <seconds>] [--const-steps <n>] [diagnostics]
   burdin fuzz <file.bd | package directory> <name> [--max-time <seconds>] [--minimize <file>]
               [--release | --profile <name>] [-g] [-j <n>]
-              [--comptime-steps <n>] [diagnostics] [-- <libFuzzer options>...]
-  burdin check <file.bd | package directory> [--release | --profile <name>] [--tests] [-j <n>] [--comptime-steps <n>]
+              [--const-steps <n>] [diagnostics] [-- <libFuzzer options>...]
+  burdin check <file.bd | package directory> [--release | --profile <name>] [--tests] [-j <n>] [--const-steps <n>]
                [--explain-ownership [--fn <name>] [--format <text|json>]] [--explain] [diagnostics]
   burdin watch [check|build|test|run] <file.bd | package directory> [options of that command] [--no-clear]
   burdin <build|run|test|check> <target> --watch [--no-clear] ...
@@ -209,7 +209,7 @@ usage:
   burdin bindgen --rust <crate> --out <file> --shim <dir> [--rust-toolchain <version>] [--rustdoc-json <file>]
   burdin new <name> [--lib | --bin]
   burdin init [<dir>] [--lib | --bin]
-  burdin repl [--release] [-j <n>] [--comptime-steps <n>] [diagnostics]
+  burdin repl [--release] [-j <n>] [--const-steps <n>] [diagnostics]
   burdin lsp [--stdio]
   burdin dap [--stdio]
   burdin --version
@@ -224,7 +224,7 @@ compile options:
   -O <n>               optimize at level n, from 0 to 3, instead of the profile's opt-level: `-O2` is `-O 2`;
                        it changes the optimizer only, so the overflow and assertion checks stay as the profile
                        sets them (spec/profiles.md, BP4 and BP5)
-  --comptime-steps <n> the step budget of each compile-time evaluation (default: 10000000)
+  --const-steps <n> the step budget of each compile-time evaluation (default: 10000000)
   --emit-deps <file>   write the files the build read besides the sources (`embed`), one path per line
   --tests              with `build`: compile the package's `test` blocks and their dispatcher instead of `main`,
                        as `burdin test` does, without running anything (the debug adapter builds a test this way)
@@ -350,7 +350,7 @@ there are errors or the package cannot be read, and `2` for a usage error. A fai
 `error:` line and no summary. The human format is unchanged. [`spec/check.md`](spec/check.md) CK12 is the contract.
 
 `burdin expand <target> [--item <path>] [--instances]` prints Burdin source for the program after compile-time evaluation,
-`comptime if` and `comptime for` unrolling, user derives, default and named arguments, and operators: the text of each
+compile-time `if` and reflection-loop unrolling, user derives, default and named arguments, and operators: the text of each
 file with only the rewritten parts replaced, through `burdin fmt`. The output is a program: `burdin check` accepts it
 wherever it accepted the input. `--item` prints one function, type, constant, or method, and `--instances` adds each
 instance of a generic function. `burdin build --emit <kinds>` writes `tir`, `llvm-ir`, `llvm-ir-opt`, `llvm-bc`, `asm`,
@@ -387,8 +387,8 @@ The dependency tables select which packages a build loads. `[features]` declares
 features, `dep:x` to enable an optional dependency, or `x/feature` to forward to a dependency), with `default` enabled
 unless `--no-default-features`; `--features <list>` and `--all-features` add more, on `build`, `run`, `check`, `test`,
 `bench`, and `fuzz` (and `burdin watch` passes them to each run). A package with a `[features]` table or an optional
-dependency gets a generated `features` module of `const <name>: bool` constants, so code branches with `comptime if
-features.<name>`. Features unify across the graph: one package has one feature set, the union of every request.
+dependency gets a generated `features` module of `const <name>: bool` constants, so code branches with a plain `if
+features.<name>` (a compile-time condition). Features unify across the graph: one package has one feature set, the union of every request.
 `[dev-dependencies]` are loaded only by `test`, `bench`, `fuzz`, and `check --tests`, and a test reaches one by its
 package name (`testkit.answer()`); a normal build does not read them. `[target.'cfg(...)'.dependencies]` applies only on
 the host platform (`unix`, `windows`, `target_os`, `target_arch`, `target_family`, `all`/`any`/`not`). `burdin.lock`
@@ -482,7 +482,7 @@ $ ./target/debug/burdin bindgen c/strings.h --out src/bindings.bd
 ```
 burdin build <target> [--release] [-g] [--strip] [--lto]
              [--pgo-generate | --pgo-use <profile>] [-o <output>] [--emit-ir <file.ll>]
-             [--link-lib <name>]... [--comptime-steps <n>] [--emit-deps <file>] [diagnostics]```
+             [--link-lib <name>]... [--const-steps <n>] [--emit-deps <file>] [diagnostics]```
 
 Compiles the target to a native executable. On success it prints nothing and exits 0.
 
@@ -509,13 +509,13 @@ Compiles the target to a native executable. On success it prints nothing and exi
   driver). Run the program with `LLVM_PROFILE_FILE=default.profraw`, then `--pgo-use default.profraw` merges the
   profile with `llvm-profdata`, applies `pgo-instr-use` with `opt`, and compiles the result with `llc`. The LLVM 21
   command-line tools must be on `PATH` or under `LLVM_SYS_211_PREFIX`. `--lto` cannot be combined with PGO.
-- `--comptime-steps <n>` sets the step budget of each compile-time evaluation (a constant, a comptime expression, or
-  a specialization; `spec/comptime.md`, CT11). The default is 10,000,000; an evaluation that runs out is E0225. `n`
+- `--const-steps <n>` sets the step budget of each compile-time evaluation (a constant or a compile-time condition;
+  `spec/const-eval.md`, CE8). The default is 10,000,000; an evaluation that runs out is E0225. `n`
   must be a positive integer. `burdin run` and `burdin test` accept it too.
 - `--emit-ir <file.ll>` also writes the module's textual LLVM IR to that path, as generated and before the release
   optimization passes.
 - `--emit-deps <file>` writes the files the build read besides the sources, one path per line: the files `embed`
-  embedded (`spec/comptime.md`, CT15). A build system uses it to rebuild when one of them changes.
+  embedded (`spec/const-eval.md`, CE12). A build system uses it to rebuild when one of them changes.
 - A package directory keeps the executable it links under `<package>/target/burdin/<profile>/bin/` (`burdin test`
   keeps its binary under `test/`), beside a fingerprint of every input. An unchanged package is copied rather than
   linked again, and the front end still runs, so the diagnostics are the same. `-g`, `--emit-ir`, `--emit`, and
@@ -567,8 +567,7 @@ helper can propagate it. A `main` function is not required in test mode.
 Test attributes are written after the name: `[ignore]` skips a test by default (`--ignored` runs only ignored tests,
 `--include-ignored` runs all); `[timeout(ms)]` bounds one test (`0` disables the limit); `[should_panic]` and
 `[should_panic("text")]` expect a panic abort (and the text on stderr); `[should_fail]` expects the test to return
-an error; `[differential]` runs the body through the comptime interpreter too and requires the compiled test to
-produce the same `Ok`/`Err` outcome. An invalid attribute is E0170.
+an error. An invalid attribute is E0170.
 
 Tests run concurrently (`-j`, default: the number of CPUs), each in a fresh temporary working directory with a
 clean environment. Their output is captured and printed only when they fail; `--verbose` prints passing output too.
@@ -1047,7 +1046,7 @@ checksums, and publishes only from a tag push or an explicit manual `publish`. S
 `burdin build`, every conformance test (a `compile-fail` program reports exactly its markers, every other program is
 accepted), the absence of code generation and linking, and the command line. Every CI job runs it after the build.
 `tests/check_inspect.py` covers the inspection commands: the golden expansion of fixtures from `m17_arguments`, `m19_operators`,
-`m20_comptime`, and `m21_reflect`, the expansion of every program of those folders going back through `burdin check` and
+`m20_const`, and `m21_reflect`, the expansion of every program of those folders going back through `burdin check` and
 printing what the original prints, `--emit`, `burdin asm`, `burdin bloat`, and the instance report. Every CI job runs it
 after the build.
 `tests/check_lint.py` covers `burdin lint`: every documented example, the fixtures under `tests/lint/` (each with the

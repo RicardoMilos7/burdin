@@ -286,7 +286,7 @@ features. The switch remains for the package's own builds (its `--no-default-fea
 mechanism; on Windows it has no effect (TLS1a).
 
 **The `openssl` feature is a compile-time switch.** Every function of `tls` that calls an OpenSSL symbol is written as
-`comptime if features.openssl { ... } else { ... }` (CT5). With the feature on, the body is the real one. With it off,
+`if features.openssl { ... } else { ... }` (a compile-time condition, CE4). With the feature on, the body is the real one. With it off,
 the body is a failure: a function that returns a `Result` returns `TlsError.Unsupported` ("no OpenSSL in this build: the
 `openssl` feature of the tls package is off"), and any other function returns an empty value (an empty string or list,
 `None`, zero, or nothing). The declarations and the safe types still compile, so the package's code is the same either

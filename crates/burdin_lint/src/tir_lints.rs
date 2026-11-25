@@ -229,7 +229,7 @@ impl An<'_> {
             {
                 continue;
             }
-            // A local the body never binds was declared inside a `comptime` block, which is already evaluated.
+            // A local the body never binds belongs to code the compiler removed, such as the untaken branch of a compile-time `if`.
             if !self.cx.in_package(local.span) || !self.decl.contains_key(&id) {
                 continue;
             }
@@ -489,7 +489,7 @@ impl An<'_> {
             | K::Err(inner)
             | K::Return(Some(inner))
             | K::ArrayRepeat(inner, _)
-            | K::Comptime(inner) => self.expr(inner, false),
+            | K::ConstCond(inner) => self.expr(inner, false),
             K::Ref { place, mutable } => {
                 self.expr(place, false);
                 if *mutable {
@@ -548,8 +548,7 @@ impl An<'_> {
             K::ForArray { pat, array: iter, body }
             | K::ForSlice { pat, slice: iter, body }
             | K::ForMap { pat, map: iter, body }
-            | K::ForChars { pat, string: iter, body }
-            | K::ComptimeFor { pat, iter, body } => self.looped(&[&**iter], &[pat], None, body),
+            | K::ForChars { pat, string: iter, body } => self.looped(&[&**iter], &[pat], None, body),
             K::ForList { pat, list, body } => {
                 self.check_to_list(list, "iterated right away by this loop");
                 self.looped(&[&**list], &[pat], None, body);

@@ -21,7 +21,7 @@ priv fn __splitmix_next(mut state: u64): u64 {
 }
 
 /// 64 random bits from the operating system's entropy source, to seed a `Random`. Every call returns new bits. This
-/// is impure: a comptime evaluation that reaches it fails with E0224.
+/// is impure: a constant evaluation that reaches it fails with E0224.
 ///
 /// ```
 /// let a = random_seed()

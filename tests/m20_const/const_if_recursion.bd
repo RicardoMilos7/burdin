@@ -1,0 +1,32 @@
+//@ run
+//> 0 1 2 3
+//> 1
+//> done
+
+// A compile-time `if` ends a recursion in the generated code: the call in the branch that is not taken is not
+// generated (spec/const-eval.md, CE4).
+
+const DEPTH: i32 = 0
+
+fn count_up(n: i32) {
+    if DEPTH > 0 {
+        count_up(n - 1)
+    }
+    print("{n}")
+}
+
+fn walk(n: i32) {
+    if n > 0 {
+        walk(n - 1)
+        print(" ")
+    }
+    print("{n}")
+}
+
+fn main() {
+    walk(3)
+    println("")
+    count_up(1)
+    println("")
+    println("done")
+}

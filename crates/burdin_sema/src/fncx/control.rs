@@ -30,6 +30,7 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         let cond = self.expr(cond, Some(&Ty::Bool));
         let cond = self.expect_ty(cond, &Ty::Bool);
+        let cond = self.mark_const_condition(cond);
         let (then, then_ty) = self.block(then_block, if else_expr.is_some() { expect } else { None });
         let Some(else_expr) = else_expr else {
             return mk(tir::ExprKind::If(Box::new(cond), then, None), Ty::Unit, span);
@@ -188,7 +189,7 @@ impl FnCx<'_> {
             }
             return error_expr(span);
         };
-        if self.leaves_comptime_for(word, span, target) {
+        if self.leaves_reflect_loop(word, span, target) {
             if let Some(value) = value {
                 self.expr(value, None);
             }
@@ -273,6 +274,12 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         if mutable {
             return self.for_mut(pattern, iter, body, label, span);
+        }
+        // A loop over `Type.fields` or `Type.variants` is unrolled while it is checked (`spec/reflection.md`, RFL4).
+        if label.is_none()
+            && let Some(unrolled) = self.for_reflect(pattern, iter, body, span)
+        {
+            return unrolled;
         }
         if let ast::ExprKind::Range { lo, hi, inclusive } = &iter.kind {
             let (lo, hi) = self.operands(lo, hi, None);

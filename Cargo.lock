@@ -61,7 +61,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "burdin_comptime"
+name = "burdin_interp"
 version = "0.1.3"
 dependencies = [
  "burdin_diag",
@@ -93,7 +93,7 @@ version = "0.1.3"
 dependencies = [
  "burdin_bindgen",
  "burdin_codegen",
- "burdin_comptime",
+ "burdin_interp",
  "burdin_dap",
  "burdin_diag",
  "burdin_doc",
@@ -178,7 +178,7 @@ name = "burdin_query"
 version = "0.1.3"
 dependencies = [
  "burdin_check",
- "burdin_comptime",
+ "burdin_interp",
  "burdin_diag",
  "burdin_sema",
  "burdin_syntax",
@@ -198,7 +198,7 @@ dependencies = [
 name = "burdin_repl"
 version = "0.1.3"
 dependencies = [
- "burdin_comptime",
+ "burdin_interp",
  "burdin_diag",
  "burdin_query",
  "burdin_syntax",

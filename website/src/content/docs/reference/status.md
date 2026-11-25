@@ -14,7 +14,7 @@ The record below is from `HANDOFF.md` in the repository, as of 2026-11-24. That 
 | Part | Status |
 | --- | --- |
 | Stage 0 (milestones 1 to 11): the core language, ownership, generics, modules, the first standard library, and the test runner | Complete |
-| Stage 1 (milestones 12 to 24): closures, iterators, formatting, `any`, errors, arguments, extension methods, operators, comptime, reflection and derives, build scripts, allocators, and the standard library | Complete |
+| Stage 1 (milestones 12 to 24): closures, iterators, formatting, `any`, errors, arguments, extension methods, operators, constant evaluation, reflection and derives, build scripts, allocators, and the standard library | Complete |
 | Stage 2 tasks (2.1 to 2.4): the task scheduler, channels, shared state, and asynchronous I/O | Complete |
 | Tooling: the formatter, linter, documentation generator, language server, debug adapter, REPL, and toolchain manager | Available; see the [command line](/reference/cli/) |
 | Official packages: `json`, `toml`, `crypto`, `math`, `http`, and `tls` | Available |

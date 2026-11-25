@@ -4,8 +4,8 @@ This is the grammar the compiler accepts. It covers exactly the stage 0 subset p
 milestone 13's member names, milestone 14's string interpolation (the details are in `format.md`), milestone 15's
 `any`/`impl` existential types (the details are in `existentials.md`), milestone 16's `error` declarations
 (the details are in `errors.md`), milestone 17's default and named arguments (the details are in
-`arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), milestone 20's comptime
-forms (the details are in `comptime.md`), and milestone 21's `derive` item, const parameters, computed field access,
+`arguments.md`), milestone 18's extension methods (the details are in `extensions.md`), milestone 20's constant
+evaluation (the details are in `const-eval.md`; the `comptime` forms it first added were removed), and milestone 21's `derive` item, const parameters, computed field access,
 generic type aliases, impl blocks for specific type arguments, and associated types (the details are in
 `reflection.md`, `const-generics.md`, `type-aliases.md`, `impls.md`, and `associated-types.md`). It is derived from
 the conformance tests in `tests/`, so every construct
@@ -31,14 +31,14 @@ and `/* ... */` (block comments do not nest).
 **Keywords** (reserved):
 
 ```
-any  as  break  comptime  const  continue  derive  else  enum  error  extern  false  fn  for  if  impl  in  interface
+any  as  break  const  continue  derive  else  enum  error  extern  false  fn  for  if  impl  in  interface
 let  loop  match  mut  orelse  own  priv  return  self  Self  struct  true  type  unsafe  use  where  while
 ```
 
 `derive` starts a user derive declaration (`DeriveItem`, `reflection.md`, RFL8). No keyword is an identifier, except
 in a member position, where it is a member name (issue #933). The member positions are a word immediately after a `.`
 and the name of a method declared in an `impl` block, an `interface`, or a `derive` body (`MemberFnSig`, below). The
-member names are `any`, `impl`, `error`, `comptime`, and `derive`: the words a `.` already lets stand as names. So
+member names are `any`, `impl`, `error`, and `derive`: the words a `.` already lets stand as names. So
 `.any(...)` reaches the `Iterator` default method `any` (`iterators.md`, IT9), and `fn any(self)` declares it. The
 name of an extension method follows a `.` in its declaration (`fn Type.name`), so it may be a member name too. A
 keyword is still rejected as the name of a free function or an `extern` function, since no `.` reaches those names.
@@ -55,7 +55,7 @@ name), `from` (after an error variant's payload), `pub` (immediately before `use
 followed by `{` on the same line, `channels.md` CH6), `default` (the head of a `select` arm), `blocking` (before `fn`
 or `unsafe fn` inside an `extern "C" { ... }` block, `io.md` IO4; before a `fn` anywhere else it is reported as
 E0290), and `Fn`/`FnMut`/`FnOnce` (a closure type when followed by `(`). The attribute names of a test item (`ignore`,
-`timeout`, `should_panic`, `should_fail`, `differential`) are contextual only inside the `[...]` after the test name; the checker rejects an
+`timeout`, `should_panic`, `should_fail`) are contextual only inside the `[...]` after the test name; the checker rejects an
 unknown name with E0170 ([`test-runner.md`](test-runner.md)). A bench item takes no attributes in this stage, so
 anything after its name is a syntax error.
 
@@ -119,14 +119,14 @@ foo()
 ```
 File          = { Item } ;
 
-Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock | ComptimeAssert | ComptimeGenerate
+Item          = TestItem | BenchItem | FuzzItem | UseItem | ImplBlock
               | [ "priv" ] ( FnItem | ExtensionItem | StructItem | EnumItem | ErrorItem | InterfaceItem | DeriveItem | TypeAlias | ConstItem | ExternItem ) ;
 
 FnSig         = [ "unsafe" ] "fn" IDENT [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
 FnItem        = FnSig Block ;
 (* A method in an `impl` block, an `interface`, or a `derive` body: its name may also be a member name (issue #933). *)
 MemberFnSig   = [ "unsafe" ] "fn" MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ;
-MemberName    = IDENT | "any" | "impl" | "error" | "comptime" | "derive" ;
+MemberName    = IDENT | "any" | "impl" | "error" | "derive" ;
                                                         (* the words a `.` lets stand as names (Keywords) *)
 
 (* `fn Type.name(self, ...)`: an extension method. The receiver is the type path before the last dot, including
@@ -134,8 +134,7 @@ MemberName    = IDENT | "any" | "impl" | "error" | "comptime" | "derive" ;
    `<...>` after the method name declares method-level parameters. `spec/extensions.md`, EX1. *)
 ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
 ParamList     = Param { "," Param } [ "," ] ;
-Param         = SelfParam | [ "comptime" ] [ Convention ] IDENT ":" Type [ "=" Expr ] ;
-                                                        (* `comptime` takes a compile-time value: comptime.md, CT4 *)
+Param         = SelfParam | [ Convention ] IDENT ":" Type [ "=" Expr ] ;
 SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)
 Convention    = "mut" | "own" ;                         (* no convention = read-only *)
 
@@ -194,7 +193,7 @@ ExternParams  = Param { "," Param } [ "," [ "..." ] ] ;   (* `...` only in a dec
 
 TestItem      = "test" STRING [ TestAttrs ] Block ;
 TestAttrs     = "[" TestAttr { "," TestAttr } [ "," ] "]" ;
-TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail, differential *)
+TestAttr      = IDENT [ "(" ( INT | STRING ) ")" ] ;   (* ignore, timeout(ms), should_panic[(message)], should_fail *)
 
 (* `bench.md`, BN1. Only `burdin bench` declares and checks these; every other build strips them. *)
 BenchItem     = "bench" STRING Block ;
@@ -378,18 +377,7 @@ Precedence from loosest to tightest:
 | 15 | postfix `?`, `.field`, `.0`, `call(...)`, `index[...]` | tightest |
 
 ```
-UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | ComptimeExpr | PostfixExpr ;
-(* `comptime E` evaluates E while compiling (comptime.md, CT2); `comptime if` and `comptime for` select a branch
-   and unroll a body (CT5, CT6); `comptime assert(...)` is checked while compiling (CT8). The operand of `comptime`
-   is a unary expression, so `comptime f(x) + 1` adds 1 at run time to a compile-time `f(x)`. `comptime if let` is
-   a syntax error. The message of an assertion parses as an expression, and the checker requires a string
-   literal (E0220). *)
-ComptimeExpr  = ComptimeAssert | "comptime" UnaryExpr ;
-ComptimeAssert = "comptime" "assert" "(" Expr [ "," Expr ] [ "," ] ")" ;
-(* `comptime generate { ... }` is an item, and only at module scope (E0243 elsewhere): its block is the body of a
-   function that returns the `String` of source text the compiler parses as declarations (`spec/generate.md`, GN2).
-   `generate` is a keyword only right after `comptime`, and is not reserved. *)
-ComptimeGenerate = "comptime" "generate" Block ;
+UnaryExpr     = ( "-" | "!" | "*" | "&" [ "mut" ] ) UnaryExpr | PostfixExpr ;
 PostfixExpr   = Primary { "?" | "." IDENT [ GenericArgs ] | "." "{" Expr "}" | "." INT | "(" [ ArgList ] ")" | "[" Expr "]" } ;
                                                         (* `x.{name}`: a field chosen by a compile-time string, `spec/reflection.md` RFL5 *)
 ArgList       = Arg { "," Arg } [ "," ] ;
@@ -417,6 +405,7 @@ TargetExpr    = "." IDENT | "." "{" [ FieldInit { Sep FieldInit } [ Sep ] ] "}" 
                                                        (* `.name`, `.name(args)`, `.{ ... }`: the type is the expected type of the position, spec/target-typing.md TT1 *)
 
 IfExpr        = "if" Cond Block [ "else" ( IfExpr | Block ) ] ;
+(* An `if` whose condition is a compile-time condition keeps only the taken branch: const-eval.md, CE4. No syntax marks it. *)
 Cond          = Expr | "let" Pattern "=" Expr ;
 MatchExpr     = "match" Expr "{" { Arm } "}" ;
 Arm           = ( "else" | Pattern [ "if" Expr ] | TypePat ) "=>" ( Block | Expr ) [ Sep ] ;
@@ -429,6 +418,7 @@ SelectArm     = [ SelectBind "=" ] Expr "." "recv" "(" ")" [ "if" Expr ] "=>" ( 
 SelectBind    = "_" | [ "mut" ] IDENT ;
 LoopExpr      = "loop" Block ;
 WhileExpr     = "while" Cond Block ;                      (* a `let` condition is `while let`, rule 8.11 *)
+(* `for item in Type.fields` and `for item in Type.variants` are unrolled: reflection.md, RFL4. No syntax marks them. *)
 ForExpr       = "for" Pattern "in" [ "mut" ] Expr Block ;    (* `mut`: iterate `iter_mut()`, spec/iterators.md IT15 *)
 LabeledExpr   = LABEL ":" ( LoopExpr | WhileExpr | ForExpr ) ;   (* the label names the loop for `break LABEL` and `continue LABEL` (rule 8.9); any other body is E0001 *)
 ```

@@ -14,7 +14,7 @@
 
 // The keywords of crates/burdin_syntax/src/token.rs, `derive` (reserved) included.
 const KEYWORDS = [
-  'any', 'as', 'break', 'comptime', 'const', 'continue', 'derive', 'else', 'enum', 'error', 'extern', 'false', 'fn',
+  'any', 'as', 'break', 'const', 'continue', 'derive', 'else', 'enum', 'error', 'extern', 'false', 'fn',
   'for', 'if', 'impl', 'in', 'interface', 'let', 'loop', 'match', 'mut', 'orelse', 'own', 'priv', 'return', 'self',
   'Self', 'struct', 'true', 'type', 'unsafe', 'use', 'where', 'while',
 ];

@@ -1,0 +1,2 @@
+err_const.bd:8:7: error[E0222]: evaluating the constant `BUFFER_CHECK` at compile time panicked: the buffer must be a whole number of cache lines
+error: could not check err_const.bd (1 error)

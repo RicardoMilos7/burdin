@@ -614,7 +614,6 @@ impl<'t> Sema<'t> {
                         func,
                         body,
                         attrs,
-                        comptime: None,
                     });
                 }
             }
@@ -818,10 +817,9 @@ pub(crate) fn method_bounds(
 }
 
 /// Validates the attributes of a `test` item and returns the runner-visible form. The accepted attributes are
-/// `ignore`, `timeout(ms)`, `should_panic`, `should_panic("text")`, `should_fail`, and `differential`
-/// (spec/test-runner.md). An unknown name, a repeated attribute, a value an attribute does not take, `should_panic`
-/// together with `should_fail`, or `differential` together with `should_panic` or `should_fail` is E0170. A bad
-/// attribute never removes the test from the program, so one report does not turn into follow-on diagnostics.
+/// `ignore`, `timeout(ms)`, `should_panic`, `should_panic("text")`, and `should_fail`
+/// (spec/test-runner.md). An unknown name, a repeated attribute, a value an attribute does not take, or `should_panic`
+/// together with `should_fail` is E0170. A bad attribute never removes the test from the program, so one report does not turn into follow-on diagnostics.
 /// The module part of a test's full path: the file's path inside the package's `src`, dotted. The entry files
 /// `src/main.bd` and `src/lib.bd` (a one-segment `main` or `lib`) and a single-file target contribute nothing, so
 /// a test in the package's entry file is named by its own name alone (spec/test-runner.md).
@@ -856,7 +854,7 @@ fn fuzz_signature_problem(func: &ast::FnDecl) -> Option<(String, Option<burdin_d
     if !is_bytes {
         return Some((format!("{SHAPE}; this parameter is not a `[u8]`"), Some(ty.span)));
     }
-    if param.convention != ast::Convention::Read || param.default.is_some() || param.comptime.is_some() {
+    if param.convention != ast::Convention::Read || param.default.is_some() {
         return Some((format!("{SHAPE}, read-only and without a default"), Some(param.span)));
     }
     if let Some(ret) = &func.ret {
@@ -870,7 +868,6 @@ fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestA
     let mut seen: Vec<&str> = Vec::new();
     let mut should_fail_span = None;
     let mut should_panic_span = None;
-    let mut differential_span = None;
     for attr in &test.attrs {
         let name = attr.name.name.as_str();
         if seen.contains(&name) {
@@ -919,18 +916,10 @@ fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestA
                     ),
                 }
             }
-            "differential" => {
-                differential_span = Some(attr.name.span);
-                match attr.value {
-                    None => attrs.differential = true,
-                    Some(_) => error(diags, "`differential` takes no value; write `differential`".to_string()),
-                }
-            }
             _ => error(
                 diags,
                 format!(
-                    "unknown test attribute `{name}`; expected `ignore`, `timeout`, `should_panic`, `should_fail`, \
-                     or `differential`"
+                    "unknown test attribute `{name}`; expected `ignore`, `timeout`, `should_panic`, or `should_fail`"
                 ),
             ),
         }
@@ -943,17 +932,6 @@ fn check_test_attrs(test: &ast::TestDecl, diags: &mut Diagnostics) -> tir::TestA
             (None, None) => test.name_span,
         };
         diags.error(Code::TEST_ATTRIBUTE, span, "`should_panic` and `should_fail` cannot be combined");
-    }
-    // A differential test takes its expectation from the compile-time run, so an attribute that states a separate
-    // expectation would either duplicate it or contradict it (`spec/test-runner.md`).
-    if attrs.differential && (attrs.should_panic || attrs.should_fail) {
-        let span = differential_span.unwrap_or(test.name_span);
-        diags.error(
-            Code::TEST_ATTRIBUTE,
-            span,
-            "`differential` takes its expectation from the compile-time run, so it cannot be combined with \
-             `should_panic` or `should_fail`",
-        );
     }
     attrs
 }

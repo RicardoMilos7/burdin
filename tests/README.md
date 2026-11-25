@@ -31,7 +31,7 @@ tests/
   m17_arguments/       default arguments, named arguments at call sites, conventions and evaluation order
   m18_extension/       extension methods, resolution order, imports, shadowing diagnostics
   m19_operators/       operator overloading, Eq/Ord, Index/IndexMut, built-in regressions
-  m20_comptime/        comptime expressions and parameters, comptime if/for, const evaluation, comptime assert
+  m20_const/           const evaluation, compile-time `if` conditions, purity, the step budget, materializable values
   m21_reflect/         reflection members, user derives, const generics, embed, generic aliases, impls for
                        specific instances
   m22_build/           build.bd, dependency grants, generated modules, the minimal bindgen, Rust crates through `[rust.crates]`
@@ -45,7 +45,7 @@ tests/
                        UDP sockets, name resolution, and their stress tests
   s3_bench/            stage 3: `bench` blocks, `black_box`, and `burdin bench` (spec/bench.md)
   s3_parallel/         stage 3: parallel iteration in `std.parallel` (`spec/parallel.md`): ordered pipelines, owned and
-                       borrowed sources, `par_iter_mut`, nested pipelines, stress, `Send`/`Sync` and comptime errors,
+                       borrowed sources, `par_iter_mut`, nested pipelines, stress, `Send`/`Sync` and compile-time evaluation errors,
                        a panic abort, a leak check under `burdin test`, and the scaling bench
   s3_scripts/          stage 3: the shebang line of a single-file script and its inline dependency manifest
   s3_serialize/        stage 3: the serialization framework's data model, error paths, test format, and the
@@ -120,7 +120,7 @@ Runner rules: run each test in a fresh empty temporary directory as the working 
 the `//@ stdin:`/`//@ stdin-eof:` bytes (an empty pipe when neither is present, so a test never waits for input);
 compare stdout after normalizing `\r\n` to `\n`; every `compile-fail` file must report all of its errors (no
 stopping at the first error) and no others. The `test` item's attributes (`[ignore]`, `[timeout(ms)]`,
-`[should_panic]`, `[should_fail]`, `[differential]`) and the `burdin test` flags are specified in
+`[should_panic]`, `[should_fail]`) and the `burdin test` flags are specified in
 [`spec/test-runner.md`](../spec/test-runner.md).
 
 ## Running the tests
@@ -264,7 +264,7 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0162 | Type or convention not allowed in an `extern "C"` declaration (parameters and results are integers, floats, and `CPtr`) |
 | E0163 | Invalid `extern` declaration: a runtime-reserved symbol, a generic function, or a signature that conflicts with an earlier declaration of the symbol |
 | E0164 | Unsupported `repr`: only `repr(C)` exists |
-| E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, `should_panic` with `should_fail`, or `differential` with `should_panic` or `should_fail` |
+| E0170 | Invalid test attribute: an unknown name, a repeated attribute, a value the attribute does not take, or `should_panic` with `should_fail` |
 | E0171 | A closure whose captures or result would outlive the storage they borrow: a second-class closure used as an owned one, a closure returning a view, or a task of `Scope.spawn` that borrows a local of the scope body or is passed by name |
 | E0172 | An invalid snapshot assertion: an inline snapshot `@"..."` anywhere but the second argument of `assert_snapshot`, or an `assert_snapshot` call that is not a value, an optional inline snapshot, and an optional `display:` given a `bool` literal |
 | E0173 | An invalid `fuzz` block: a parameter list other than exactly one `[u8]` parameter, a result type, or two fuzz blocks of one package with the same name |
@@ -286,21 +286,18 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 | E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
 | E0216 | Invalid extension method declaration: no `self` first parameter, or a receiver path with type arguments on a segment other than the type, or a `where` clause naming something that is not one of its type parameters |
-| E0220 | Invalid comptime construct: a run-time local, `self`, or capture used in a compile-time context; `comptime` on a parameter that cannot take it (`mut`/`own`, `self`, an interface method or its implementation, an `extern` declaration); a comptime-parameter function used as a value; `break`/`continue` leaving a `comptime for`; a `mut` `comptime for` binding; or a `comptime assert` message that is not a string literal |
-| E0221 | A compile-time value whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
+| E0220 | Invalid compile-time construct: `break` or `continue` leaving an unrolled reflection loop (`for` over `Type.fields` or `Type.variants`), or a `static` named in a `const` initializer |
+| E0221 | A `const` whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
 | E0222 | Compile-time evaluation panicked |
-| E0223 | A `comptime assert` failed |
 | E0224 | An impure operation (output, files, the environment, processes, or C) during compile-time evaluation |
-| E0225 | Compile-time evaluation exceeded its step budget, the comptime call depth, or the specialization limit of a function with comptime parameters |
+| E0225 | Compile-time evaluation exceeded its step budget or its call depth |
 | E0230 | Invalid reflection: `Type.fields` or `Type.variants` on a type that is neither a struct nor an enum (a number, `bool`, `str`, a tuple, ...) |
 | E0231 | A name the reflection members reserve (`name`, `size`, `align`, `fields`, `variants`) used for an associated function or an enum variant |
-| E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `comptime for` variable over `Type.fields` |
+| E0232 | Invalid computed field access `x.{name}`: the name is not a string literal or the `name` of a `for` variable over `Type.fields` |
 | E0233 | Invalid derive declaration or use: a user derive named like a built-in derive, or `struct T: Name` with a user derive and no interface `Name` in scope |
 | E0234 | An interface after a struct's or enum's name that the declaration cannot implement: it has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...) |
 | E0240 | `embed` could not read its file: it is missing, unreadable, or (for `str`) not valid UTF-8 text |
 | E0241 | Invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected `[u8; N]` is not the file's length |
-| E0242 | Invalid generated text from a `comptime generate` block (`spec/generate.md`): it does not parse, or it declares an item other than a `struct`, `enum`, or `fn` (a `const`, `use`, `impl`, `interface`, `derive`, `type`, test, bench, `comptime assert`, or a nested `comptime generate`) |
-| E0243 | `comptime generate` outside module scope (in a function body, an impl block, or an expression) |
 | E0250 | Invalid const generic declaration or argument: a type where a value is expected or the other way round, a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit |
 | E0251 | A const expression (an array length or const argument) that cannot be computed: an unknown name, overflow, a division by zero, or a length out of range |
 | E0252 | A const generic argument that cannot be inferred from the call |
@@ -530,25 +527,25 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `spec/operators.md` OP1-OP14, `tests/m19_operators/`. OP14 (issue #936) is the one built-in mixed-type pair: `String + str`
     and the comparisons between a `String` and a `str` (either order); every other pair stays same-type.
 
-25. **Comptime.** The comptime engine interprets the checked typed tree; there is no MIR (issue #158, #159 not
-    chosen). It runs after the memory checks and before code generation, in its own crate, and behaves like
-    compiled code of the same profile (overflow panics in debug and wraps in release). `comptime E` and `comptime
-    { ... }` evaluate while compiling and may use only constants, `comptime` parameters, `comptime for` bindings,
-    and their own locals (E0220). The value must be materializable: scalars, `str`, `String`, and tuples, arrays,
-    structs, enums, `Option`, `Result`, and ranges of those (E0221). `comptime name: T` parameters specialize each
-    call per distinct argument value (at most 1024 per function). `comptime if` keeps only the selected branch, and
-    `comptime for` unrolls its body over a range, array, or `List`. A `const` initializer is any materializable
-    expression, evaluated once in declaration order; a cycle through calls is E0009. `comptime assert(cond, "msg")`
-    fails with E0223. Evaluation is pure (E0224 for output, files, the environment, processes, and C), panics are
-    E0222, and each evaluation has a budget of 10,000,000 steps (`--comptime-steps N`), a call depth of 512, and
-    E0225 beyond any limit. `target.os()` and `target.arch()` name the compilation target.
-    `spec/comptime.md` CT1-CT14, `tests/m20_comptime/`.
+25. **Constant evaluation.** The constant-evaluation engine interprets the checked typed tree; there is no MIR (issue
+    #158, #159 not chosen). It runs after the memory checks and before code generation, in its own crate
+    (`burdin_interp`), and behaves like compiled code of the same profile (overflow panics in debug and wraps in
+    release). A `const` initializer is any materializable expression (scalars, `str`, `String`, and tuples, arrays,
+    structs, enums, `Option`, `Result`, and ranges of those; E0221), evaluated once in declaration order; a cycle
+    through calls is E0009. An `if` whose condition is built only from literals, `const` items, operators, enum
+    variant paths, and the `target` and `features` modules keeps only the taken branch in the generated code (both
+    branches are still checked). Evaluation is pure (E0224 for output, files, the environment, processes, and C), panics
+    are E0222, and each evaluation has a budget of 10,000,000 steps (`--const-steps N`), a call depth of 512, and
+    E0225 beyond either limit. `target.os()` and `target.arch()` name the compilation target. The `comptime`
+    expressions, parameters, `comptime if`/`for`, and `comptime assert` this decision first listed were removed (E0223
+    is retired); a macro system is planned. `spec/const-eval.md` CE1-CE12, `tests/m20_const/`.
 
 26. **Reflection and user derives.** Reflection is five compile-time members of every type: `Type.name` (`str`),
     `.size` and `.align` (`usize`), `.fields` (an array of the standard library's `FieldInfo`), and `.variants` (an
     array of `VariantInfo`). A struct has no variants and an enum no fields (both empty arrays), any other type has
     neither (E0230), and a function without `self` or a variant with one of the five names is E0231.
-    `comptime for item in Type.fields` (or `.variants`) is unrolled while the body is checked, with `item.name`,
+    `for item in Type.fields` (or `.variants`) is unrolled while the body is checked (the iterable is literally
+    `Type.fields` or `Type.variants`), with `item.name`,
     `item.type_name`, `item.index`, `item.arity` as literals. `x.{name}` is a field access whose name is a string
     literal or `item.name` (E0232 otherwise). `derive Name { fn ... }` declares the methods of a user derive, and
     `struct T: Name` applies it as the impl block `Type: Name`, with `where P: Name` on each type parameter. A derive
@@ -562,7 +559,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     file read at compile time, as `str`, with the expected type `[u8; N]` as bytes of that length, or with the
     expected type `[u8]` as a static byte view with no length written (`embed_slice`; RT4). The file is a build input
     (`--emit-deps`), a missing one is E0240 and a bad path or length E0241. `spec/const-generics.md` CG1-CG9,
-    `spec/comptime.md` CT15, `tests/m21_reflect/`.
+    `spec/const-eval.md` CE12, `tests/m21_reflect/`.
 
 28. **Generic aliases, impls for specific instances, and built-in interfaces on generic types.** `type Pair<T> =
     (T, T)` is a template expanded where it is used; an alias is the aliased type, so an `impl` block written
@@ -642,15 +639,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     E0007. An explicit type-argument list seeds the inference (TA1-TA5). Issue #391; `spec/arguments.md` GM1-GM6,
     `m07_generics/generic_methods`, `generic_methods_errors`, `duplicate_type_parameter`,
     `m18_extension/method_type_params`.
-34. **Declaration generation (first slice).** A module-scope `comptime generate { ... }` block is evaluated at compile
-    time to a `String` of Burdin source, and the compiler adds the `struct`, `enum`, and `fn` declarations the text
-    holds to its module. The mechanism is source text, parsed like a derive body, not typed item values. Generated
-    names are not hygienic, as user derives are (decision 26), and every generated token carries the block's span. The
-    front end runs generation before the whole-program check: generators are checked against the hand-written
-    declarations only, evaluated in module and source order, and their text is then declared. A generator that
-    fails stops generation, and its errors are reported without the rest of the program's. Other items in the text
-    (constants, impls, interfaces, derives, aliases, tests) are E0242, and `comptime generate` outside module scope is
-    E0243. Issue #280; `spec/generate.md` GN1-GN10, `tests/generate/`.
+34. **Declaration generation (removed).** A module-scope `comptime generate { ... }` block (issue #280) was removed with
+    `comptime`; E0242 and E0243 are retired and their numbers are never reused. A macro system is planned to replace it.
 35. **Compound assignment.** `place op= value` for `+= -= *= /= %= &= |= ^= <<= >>=` on the built-in integers, floats,
     and `bool`. The value is evaluated first, then the place once, and the operator has the binary operator's rules.
     On a user type or a type parameter, `a op= b` is `a = a op b` through the operator's interface (`Add` for `+=`,
@@ -661,9 +651,9 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     (writable, only in `unsafe` code), with the rules of `spec/globals.md` GL1-GL8 (issue #485). A static's value is
     computed at compile time and stored before `main` runs; its type is plain data (no memory owned, no destructor),
     so it is never dropped; a `static mut` may not be borrowed (E0304). A `static` in a function body is E0302. A
-    `const` remains the value copied into each use. Tests: `m20_comptime/static_values`, `static_mut`,
+    `const` remains the value copied into each use. Tests: `m20_const/static_values`, `static_mut`,
     `static_view`, `static_in_block`, `static_string`, `static_drop`, `static_assign`, `static_move`,
-    `static_mut_safe`, `static_mut_borrow`, `static_comptime`, `static_const_init`, `static_array_len`,
+    `static_mut_safe`, `static_mut_borrow`, `static_in_const`, `static_const_init`, `static_array_len`,
     `const_global`, and `s2_tasks/static_in_task`. A lazily initialized process-wide cell (`Once`, `Lazy`) is not
     part of this decision; it is a later issue.
 37. **Rest patterns.** `..` in a tuple or tuple-variant pattern stands for the elements it does not name, anywhere in
@@ -797,7 +787,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   operators with fields in declaration order and variants in declaration order. Decision 15;
   `m07_generics/derives.bd`, `derive_values.bd`.
 - **No MIR (deviation).** The design's compiler architecture has a MIR; the compiler checks the typed tree
-  (`burdin_tir`) and interprets that same tree for comptime, with no `burdin_mir` (`spec/comptime.md`, CT1;
+  (`burdin_tir`) and interprets that same tree for constant evaluation, with no `burdin_mir` (`spec/const-eval.md`, CE1;
   `spec/stage1-subset.md`, decision 6; issue #159 closed as not chosen). The header and RF2 of
   [the memory rules](../spec/memory-rules.md) now say so.
 - **Borrow liveness is conservative (deviation in precision).** The rule is "until the last use", but stage 0
@@ -874,7 +864,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   Unicode scalar values. `s[a..b]` on `str` or `String` panics unless both ends are character boundaries (issue #916),
   so a `str` is always valid UTF-8; `get(a, b)` is the `None` form. The design says UTF-8 but does not define `len`.
   `m09_stdlib/string_ops.bd`, `m09_stdlib/file_io.bd`, `file_io_binary.bd`, `m24_stdlib/string_slice_boundary`,
-  `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_comptime_aborts`; decision 7.
+  `string_slice_start_aborts`, `string_slice_end_aborts`, `string_slice_const_aborts`; decision 7.
 - **`String` and `str` compare by bytes.** `==`/`!=` and `<`/`<=`/`>`/`>=` require both operands to have the same
   type; there is no conversion in an operator. `List<String>.sort()` uses the same order.
   `m09_stdlib/string_order.bd`, `string_ops.bd`; [standard library](../spec/stdlib.md).

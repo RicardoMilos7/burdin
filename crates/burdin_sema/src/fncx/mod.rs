@@ -5,7 +5,7 @@ mod aggregate;
 mod any;
 mod call;
 mod closure;
-mod comptime;
+mod constcond;
 mod control;
 pub(crate) mod conversion;
 mod edition;
@@ -77,7 +77,7 @@ impl LoopScope {
         LoopScope::unit_loop(label, LoopKind::While)
     }
 
-    /// The entry of a `for` (or a `comptime for`), which always gives back `()`.
+    /// The entry of a `for`, which always gives back `()`.
     fn for_body(label: Option<&ast::Ident>) -> Self {
         LoopScope::unit_loop(label, LoopKind::For)
     }
@@ -128,12 +128,10 @@ struct FnCx<'a> {
     /// Set while checking a place that will be written: the left side of `=`, the operand of `&mut`, and the
     /// argument of a `mut` parameter. An index expression then lowers to `index_mut` (`spec/operators.md`, OP10).
     write_place: bool,
-    /// The locals whose values are known at compile time: `comptime` parameters and `comptime for` bindings
-    /// (`spec/comptime.md`, CT2).
-    comptime_known: Vec<LocalId>,
-    /// The loop depth just outside the innermost `comptime for` body, which `break`/`continue` cannot leave.
-    comptime_loop_barrier: Option<usize>,
-    /// The variables of the `comptime for` loops over `Type.fields` and `Type.variants` that are being unrolled, and
+    /// The loop depth just outside the innermost unrolled reflection loop body, which `break`/`continue` cannot
+    /// leave (`spec/reflection.md`, RFL4).
+    reflect_loop_barrier: Option<usize>,
+    /// The variables of the `for` loops over `Type.fields` and `Type.variants` that are being unrolled, and
     /// the item each one stands for (`spec/reflection.md`, RFL4).
     reflect: reflect::ReflectBindings,
     /// The body is checked to find the concrete type of an `impl Interface` return (`crate::opaque`): the result
@@ -195,8 +193,7 @@ impl<'a> FnCx<'a> {
             fn_name,
             traces,
             write_place: false,
-            comptime_known: Vec::new(),
-            comptime_loop_barrier: None,
+            reflect_loop_barrier: None,
             reflect: HashMap::new(),
             infer_returns: false,
             returned: Vec::new(),

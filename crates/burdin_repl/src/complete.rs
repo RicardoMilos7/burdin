@@ -10,7 +10,6 @@ const KEYWORDS: &[&str] = &[
     "any",
     "as",
     "break",
-    "comptime",
     "const",
     "continue",
     "else",

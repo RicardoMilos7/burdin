@@ -23,7 +23,7 @@ expansions applied. It stops before code generation, so it needs no linker. A pr
 diagnostics go to standard error as for `burdin build` and the status is 1.
 
 The expansion starts from the text of each source file and replaces only what the compiler rewrote, so everything it did
-not touch (names, comments, layout, what a `comptime` argument stands for) is the author's own text. The result goes
+not touch (names, comments, layout, what a constant's use stands for) is the author's own text. The result goes
 through `burdin fmt` (`--no-format` prints it as built), so the one style applies to it. A single file prints as the
 file; a package prints each file after a `// ==== <path> ====` line, with the path relative to the package directory and
 `/` separators. The standard library and the dependencies' files are not printed.
@@ -42,29 +42,25 @@ own and is not part of the guarantee of INS6.
 Tests: `tests/inspect/expand_mix.bd` and the goldens in `tests/inspect/golden/expand/`, `check_expand_item_and_instances`,
 `check_expand_package`, `check_expand_failures`.
 
-## INS2. What `comptime` and reflection become
+## INS2. What constants, compile-time conditions, and reflection become
 
-- `comptime E` becomes the value `E` evaluated to, when the value has a literal form: a number, `bool`, `char`, `str`, a
-  `String` made from a literal, an array, a tuple, `Some`/`None`/`Ok`/`Err`, a struct or enum value of such parts, or a
-  constant. A number whose type is not `i32` is written `(64 as usize)`, so the type survives; a number that is not an
-  `i32` and does not fit one stays `comptime E` where nothing but the expression fixes its type, because the language has
-  no literal suffixes. Inside a `{...}` hole of an interpolated string a number is parenthesized (`{(10)}`, which is not
-  the positional hole `{10}`), and a string literal cannot be written there, so the `comptime` stays.
-- `comptime if` becomes the block of the branch it chose; the other branch is dropped without being read.
-- `comptime for` becomes one block per item. Each block holds the loop's pattern as a `let` with the item's value, when
-  the body still reads it, and the body with that item's results: `field.name`, `field.index`, `Self.name`, and
-  `comptime` expressions inside it are the literals they evaluated to for that item.
+- A `const` initializer becomes the value it evaluated to, when the value has a literal form: a number, `bool`, `char`,
+  `str`, a `String` made from a literal, an array, a tuple, `Some`/`None`/`Ok`/`Err`, a struct or enum value of such
+  parts, or a constant. A number whose type is not `i32` is written `(64 as usize)`, so the type survives. Inside a
+  `{...}` hole of an interpolated string a number is parenthesized (`{(10)}`, which is not the positional hole `{10}`).
+- An `if` with a compile-time condition (`const-eval.md`, CE4) becomes the block of the branch it chose; the other
+  branch is dropped without being read.
+- A `for` over `Type.fields` or `Type.variants` (`reflection.md`, RFL4) becomes one block per item. Each block holds
+  the loop's pattern as a `let` with the item's value, when the body still reads it, and the body with that item's
+  results: `field.name`, `field.index`, and `Self.name` are the literals they evaluated to for that item.
 - `x.{name}` becomes `x.field`, the field the compile-time name chose.
-- A `comptime assert` has already held; in a body it becomes `{}` and a module-level one becomes a comment.
 - A constant's initializer becomes the value it evaluated to (`const SIZE: usize = 4 * 16` is `64`), written where the
   constant's own type fixes the types of its parts.
-- A call whose callee has a `comptime` parameter, and a function that declares one, are left as written: each call is a
-  specialization, and its source is the generic form.
 
 Anything with no literal form is left as written, never guessed, so an expansion never claims more than the compiler
 established.
 
-Tests: `m20_comptime__*` and `m21_reflect__*` goldens, `expand_mix.golden`.
+Tests: `m20_const__*` and `m21_reflect__*` goldens, `expand_mix.golden`.
 
 ## INS3. Operators, arguments, and extension calls
 
@@ -107,7 +103,7 @@ Tests: every golden with a built-in derive.
 
 The output is Burdin source, and `burdin check` accepts it wherever it accepted the input: an expansion that did not
 re-check would be a printer lying about what the compiler built. `tests/check_inspect.py` expands every program of
-`m17_arguments`, `m19_operators`, `m20_comptime`, and `m21_reflect` that builds, checks the expansion with `burdin check`,
+`m17_arguments`, `m19_operators`, `m20_const`, and `m21_reflect` that builds, checks the expansion with `burdin check`,
 and, for a program that runs, runs both and compares what they print. A rewrite that cannot be written as source is
 skipped (INS2), so the guarantee costs completeness, never correctness. Line and column numbers of untouched code do not
 change, so a panic reported in an expanded program names the same lines as in the original when the layout allows.
@@ -267,7 +263,7 @@ platform it runs on).
   tree has lost the source's layout and comments, spells string interpolation as calls to the formatter, and cannot name
   things that are only in scope in another module, so a printer over it would be a second pretty-printer for the whole
   language that must also pass the type checker. Patching keeps the author's text, and uses the typed tree for what only
-  it knows: what a `comptime` evaluated to, what an operator resolved to, which branch was chosen.
+  it knows: what a constant evaluated to, what an operator resolved to, which branch was chosen.
 - **A rewrite that cannot be printed is skipped.** The guarantee that the output checks (INS6) is the point of the
   command; an expansion that guessed would turn a debugging aid into a source of wrong beliefs.
 - **The reasons for instances are derived.** Recording them in sema would touch the hottest path of the checker for a
@@ -284,7 +280,7 @@ platform it runs on).
 | --- | --- |
 | INS1 | `tests/check_inspect.py`: `check_expand_goldens`, `check_expand_item_and_instances`, `check_expand_package`, `check_expand_failures` |
 | INS2-INS5 | the goldens `tests/inspect/golden/expand/*.golden` |
-| INS6 | `check_expand_reparse` over `m17_arguments`, `m19_operators`, `m20_comptime`, `m21_reflect` |
+| INS6 | `check_expand_reparse` over `m17_arguments`, `m19_operators`, `m20_const`, `m21_reflect` |
 | INS7-INS8 | `check_emit`, the unit tests of `driver/src/emit.rs` |
 | INS9-INS11 | `check_asm`, the unit tests of `burdin_inspect::asm` |
 | INS12-INS15 | `check_print_instances`, the unit tests of `burdin_inspect::instances` |

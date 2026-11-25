@@ -1,0 +1,30 @@
+//@ run
+//> fine
+//> kept
+
+// The branch that is not taken is type-checked but never evaluated and never generated: its panic has no effect,
+// and a C function only it calls is not linked (spec/const-eval.md, CE4).
+
+extern "C" {
+    fn burdin_no_such_symbol(x: i32): i32
+}
+
+fn boom(): i32 {
+    panic("never evaluated")
+}
+
+const DEBUG: bool = false
+const LIMIT: i32 = 3
+
+fn main() {
+    if DEBUG {
+        let x = boom()
+        let y = unsafe { burdin_no_such_symbol(x) }
+        println("{y}")
+    } else {
+        println("fine")
+    }
+    if LIMIT > 2 && !DEBUG {
+        println("kept")
+    }
+}

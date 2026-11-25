@@ -196,14 +196,33 @@ fn render_record(record: &Record, text: &mut String) {
     }
     if !matches!(record.layout, Layout::Opaque { .. }) {
         text.push_str(&format!(
-            "comptime assert({name}.size() == {}, \"`{name}` must have size {}, as in the C header\")\n",
-            record.size, record.size
+            "priv const {}_SIZE_CHECK: () = if {name}.size() == {} {{ }} else {{ panic(\"`{name}` must have size {}, as in the C header\") }}\n",
+            screaming(name),
+            record.size,
+            record.size
         ));
         text.push_str(&format!(
-            "comptime assert({name}.align() == {}, \"`{name}` must have alignment {}, as in the C header\")\n",
-            record.align, record.align
+            "priv const {}_ALIGN_CHECK: () = if {name}.align() == {} {{ }} else {{ panic(\"`{name}` must have alignment {}, as in the C header\") }}\n",
+            screaming(name),
+            record.align,
+            record.align
         ));
     }
+}
+
+/// The name of a type in `SCREAMING_SNAKE_CASE`, for the constants that check its layout: `Pair` is `PAIR` and
+/// `RecordType` is `RECORD_TYPE`.
+fn screaming(name: &str) -> String {
+    let mut out = String::new();
+    let mut previous_lower = false;
+    for c in name.chars() {
+        if c.is_uppercase() && previous_lower {
+            out.push('_');
+        }
+        previous_lower = c.is_lowercase() || c.is_ascii_digit();
+        out.extend(c.to_uppercase());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -240,8 +259,8 @@ mod tests {
         let mut text = String::new();
         render_record(&pair(), &mut text);
         assert!(text.starts_with("struct Pair repr(C) {\n    first: i32\n    second: i32\n}\n"), "{text}");
-        assert!(text.contains("comptime assert(Pair.size() == 8,"), "{text}");
-        assert!(text.contains("comptime assert(Pair.align() == 4,"), "{text}");
+        assert!(text.contains("priv const PAIR_SIZE_CHECK: () = if Pair.size() == 8 { } else { panic("), "{text}");
+        assert!(text.contains("priv const PAIR_ALIGN_CHECK: () = if Pair.align() == 4 { } else { panic("), "{text}");
     }
 
     #[test]

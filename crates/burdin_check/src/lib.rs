@@ -64,7 +64,7 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
         closure.func.events.sort_by_key(|e| (e.span.file.0, e.span.lo, e.span.hi));
         origins::check_closure(&closure.func, signatures, diags);
     }
-    // A constant's initializer is code the comptime engine runs (`spec/comptime.md`, CT7), so it follows the same
+    // A constant's initializer is code the interpreter runs (`spec/const-eval.md`, CE2), so it follows the same
     // move and borrow rules as a function body that returns the value.
     for c in &program.consts {
         let func = Function {

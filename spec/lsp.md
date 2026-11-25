@@ -241,7 +241,7 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   dependencies (a dependency's `priv` items are left out).
 - **At a function declaration's parameter**: directly after `fn name(` inside an impl block, an interface, or a
   `derive`, or in an extension method (`fn Type.name(`), the receiver forms `self`, `mut self`, and `own self`; at any
-  other parameter, and in a free function, only the conventions `mut`, `own`, and `comptime`. A `self` parameter is
+  other parameter, and in a free function, only the conventions `mut` and `own`. A `self` parameter is
   valid only first and only in a method, so it is never offered elsewhere.
 - **In the `: A, B` list after `struct Name` or `enum Name`** (and their generic parameters; issue #825), after the
   `:` or a `,`, the nine derives the compiler knows (`Copy`, `Clone`, `Eq`, `Ord`, `Hash`, `Default`, `Debug`,

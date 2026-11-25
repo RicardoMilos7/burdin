@@ -11,7 +11,7 @@ extern "C" {
 }
 
 fn block(ms: u32) {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         unsafe {
             Sleep(ms)
         }

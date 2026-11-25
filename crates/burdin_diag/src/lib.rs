@@ -292,20 +292,18 @@ impl Code {
     /// An invalid extension method declaration: no `self` first parameter, a receiver that is not a type name,
     /// or a `where` clause naming something that is not one of its type parameters.
     pub const INVALID_EXTENSION: Code = Code("E0216");
-    /// An invalid comptime construct (`spec/comptime.md`): a runtime local used in a compile-time context,
-    /// `comptime` on a parameter that cannot take it, a comptime-parameter function used as a value, `break` or
-    /// `continue` leaving a `comptime for`, a `mut` `comptime for` binding, or a non-literal assertion message.
-    pub const INVALID_COMPTIME: Code = Code("E0220");
-    /// A compile-time value whose type cannot be materialized in the program (CT3).
+    /// A construct compile-time evaluation or unrolling cannot allow (`spec/const-eval.md`, CE5, `spec/reflection.md`, RFL4):
+    /// `break` or `continue` leaving the unrolled loop over `Type.fields` or `Type.variants` (RFL4), or a constant or
+    /// static initializer that names a static (GL1).
+    pub const INVALID_CONST_EVAL: Code = Code("E0220");
+    /// A `const` whose type cannot be materialized in the program (CE3).
     pub const NOT_MATERIALIZABLE: Code = Code("E0221");
-    /// Compile-time evaluation panicked (CT10).
-    pub const COMPTIME_PANIC: Code = Code("E0222");
-    /// A `comptime assert` failed (CT8).
-    pub const COMPTIME_ASSERT: Code = Code("E0223");
-    /// An impure operation during compile-time evaluation (CT9).
-    pub const COMPTIME_IMPURE: Code = Code("E0224");
-    /// Compile-time evaluation exceeded its step budget, call depth, or specialization limit (CT11).
-    pub const COMPTIME_BUDGET: Code = Code("E0225");
+    /// Constant evaluation panicked (CE7).
+    pub const CONST_PANIC: Code = Code("E0222");
+    /// An impure operation during constant evaluation (CE6).
+    pub const CONST_IMPURE: Code = Code("E0224");
+    /// Constant evaluation exceeded its step budget or call depth (CE8).
+    pub const CONST_BUDGET: Code = Code("E0225");
     /// A reflection member used where it does not apply: `fields` or `variants` on a type that is neither a struct
     /// nor an enum (`spec/reflection.md`, RFL2).
     pub const INVALID_REFLECTION: Code = Code("E0230");
@@ -321,17 +319,12 @@ impl Code {
     /// has a method with no default body and no `derive` declaration supplies one (`Drop`, `From`, `Display`, ...).
     /// `spec/derives.md`.
     pub const NOT_DERIVABLE: Code = Code("E0234");
-    /// `embed` could not read its file: the file is missing, unreadable, or not UTF-8 text (`spec/comptime.md`,
-    /// CT15).
+    /// `embed` could not read its file: the file is missing, unreadable, or not UTF-8 text (`spec/const-eval.md`,
+    /// CE12).
     pub const EMBED_FAILED: Code = Code("E0240");
     /// An invalid `embed` use: the path is not a string literal, is absolute, or has `..`, or the expected
-    /// `[u8; N]` is not the file's length (CT15).
+    /// `[u8; N]` is not the file's length (CE12).
     pub const INVALID_EMBED: Code = Code("E0241");
-    /// The text a `comptime generate` block produced is not valid: it does not parse, or it declares an item other
-    /// than a `struct`, `enum`, or `fn` (`spec/generate.md`, GN4).
-    pub const INVALID_GENERATED: Code = Code("E0242");
-    /// `comptime generate` outside module scope (GN2).
-    pub const GENERATE_SCOPE: Code = Code("E0243");
     /// An invalid const generic declaration or argument: a type where a value is expected or the other way round,
     /// a const parameter of a type that is not an integer, `bool`, or `char`, or a value that does not fit the
     /// parameter's type (`spec/const-generics.md`, CG1-CG2).

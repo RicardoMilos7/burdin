@@ -159,9 +159,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             v.pattern(pattern);
             v.block(body);
         }
-        K::Return(Some(x)) | K::Unary(_, x) | K::Try(x) | K::Comptime(x) | K::Field(x, _) | K::TupleField(x, ..) => {
-            v.expr(x)
-        }
+        K::Return(Some(x)) | K::Unary(_, x) | K::Try(x) | K::Field(x, _) | K::TupleField(x, ..) => v.expr(x),
         K::Cast(x, t) => {
             v.expr(x);
             v.ty(t);
@@ -235,12 +233,6 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
             v.block(then_block);
             if let Some(o) = else_expr {
                 v.expr(o);
-            }
-        }
-        K::ComptimeAssert(c, m) => {
-            v.expr(c);
-            if let Some(m) = m {
-                v.expr(m);
             }
         }
     }

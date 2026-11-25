@@ -26,10 +26,9 @@ not updated and may disagree with the repository.
    and `impl` existential types, object safety, boxing, and downcasts, `spec/errors.md` is `error` declarations, the
    dynamic `Error`, `Result<T>`, `context`, traces, and `main(): Result<T>`, `spec/arguments.md` is default and named
    arguments, `spec/extensions.md` is extension methods and their resolution order, `spec/operators.md` is operator
-   overloading and `Index`/`IndexMut`, `spec/comptime.md` is compile-time evaluation (`comptime` expressions,
-   parameters, `if`, `for`, `assert`, constants, and `embed`), `spec/globals.md` is global variables: `static` and
-   `static mut` (issue #485, GL1-GL8), `spec/generate.md` is declaration generation (`comptime
-   generate`, the text it produces, the order of generation, and what stops it), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
+   overloading and `Index`/`IndexMut`, `spec/const-eval.md` is compile-time evaluation (`const`
+   evaluation, compile-time `if` conditions, materializable values, the step budget, and `embed`), `spec/globals.md` is global variables: `static` and
+   `static mut` (issue #485, GL1-GL8), `spec/reflection.md` is `Type.fields`/`variants`/`name`,
    `x.{name}`, and user `derive` declarations, `spec/const-generics.md` is const parameters, const arguments, and array
    lengths, `spec/type-aliases.md` is generic type aliases, `spec/impls.md` is impl blocks for specific instances,
    `Drop` on a generic type, and the built-in interfaces on one, `spec/associated-types.md` is associated types
@@ -200,8 +199,8 @@ crates/
                             exhaustiveness (declare, imports, impls, instances, resolve, bodies, validate; fncx/
                             checks one function body)
   burdin_check/             return-origin, move, and borrow checks over the typed tree (spec/memory-rules.md)
-  burdin_comptime/          the compile-time interpreter over the typed tree: constants, comptime expressions,
-                            specialization of comptime parameters (spec/comptime.md)
+  burdin_interp/            the interpreter over the typed tree: `const` evaluation, compile-time `if` conditions,
+                            `burdin repl`, and `burdin test --interpret` (spec/const-eval.md)
   burdin_lint/              the linter (`burdin lint`, spec/lint.md): syntax-tree lints (names, imports, unused and
                             unreachable code, dead code, `else` on a local enum) and typed-tree lints (clones, copies,
                             `mut`, allocations in loops), suppression comments, levels, and the `--fix` edits; reads
@@ -287,17 +286,17 @@ spec/                     grammar, memory rules, standard-library surface, itera
 tests/                    conformance tests and scripts
 ```
 
-Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_comptime` to `burdin_codegen`, with
+Data flows one way: `burdin_syntax` to `burdin_sema` to `burdin_check` to `burdin_interp` to `burdin_codegen`, with
 `burdin_tir` as the shared vocabulary and `burdin_diag` under everything. `burdin_query` sits beside the stages: it
 drives them for a whole package, memoizes what an edit cannot affect, and is the one front end the driver and a tool
 share. `burdin_lsp` is such a tool: it depends on `burdin_query`, `burdin_fmt`, `burdin_lint`, `burdin_syntax`, and
 `burdin_diag`, never on LLVM, and the driver calls it for `burdin lsp`. `burdin_lint` is a side branch: it reads the
 syntax tree and the typed tree the compiler built, depends on `burdin_syntax`, `burdin_tir`, and `burdin_diag` only, and
 is called from the driver, never from the compiler stages. `burdin_bindgen` is another: it depends on nothing in the
-compiler (only libc, for loading libclang), and the driver calls it for `burdin bindgen`. `burdin_check`, `burdin_comptime`, and
+compiler (only libc, for loading libclang), and the driver calls it for `burdin bindgen`. `burdin_check`, `burdin_interp`, and
 `burdin_codegen` depend only on `burdin_tir` (and `burdin_diag`), not on sema. Keep everything before codegen free of
 LLVM so the checks can be tested without a backend. There is no MIR (`burdin_mir`), decided in milestone 20 (issue
-#158): sema monomorphizes, the checks read the typed tree, and the comptime engine interprets the same tree and
+#158): sema monomorphizes, the checks read the typed tree, and the interpreter (`burdin_interp`) evaluates the same tree and
 rewrites it before code generation.
 
 ## Toolchain

@@ -34,10 +34,6 @@ pub fn map_spans(file: &mut File, f: &mut dyn FnMut(&mut Span)) {
         (m.f)(&mut z.span);
     }
     file.bodies.iter_mut().for_each(|s| (m.f)(s));
-    for g in &mut file.generators {
-        (m.f)(&mut g.span);
-        (m.f)(&mut g.keyword);
-    }
 }
 
 struct Mapper<'a> {
@@ -203,9 +199,6 @@ impl Mapper<'_> {
             }
             if let Some(e) = &mut p.default {
                 self.expr(e);
-            }
-            if let Some(s) = &mut p.comptime {
-                (self.f)(s);
             }
             (self.f)(&mut p.span);
         }
@@ -396,7 +389,7 @@ impl Mapper<'_> {
                     self.expr(x);
                 }
             }
-            ExprKind::Unary(_, x) | ExprKind::Try(x) | ExprKind::Comptime(x) => self.expr(x),
+            ExprKind::Unary(_, x) | ExprKind::Try(x) => self.expr(x),
             ExprKind::Cast(x, t) => {
                 self.expr(x);
                 self.ty(t);
@@ -487,12 +480,6 @@ impl Mapper<'_> {
                 self.block(then_block);
                 if let Some(x) = else_expr {
                     self.expr(x);
-                }
-            }
-            ExprKind::ComptimeAssert(a, b) => {
-                self.expr(a);
-                if let Some(b) = b {
-                    self.expr(b);
                 }
             }
         }

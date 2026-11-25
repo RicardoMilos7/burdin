@@ -118,7 +118,7 @@ fn check_one(
 }
 
 /// Checks the initializer of a constant against its declared type. Any expression of a materializable type is
-/// allowed: the comptime engine evaluates it after the memory checks (`spec/comptime.md`, CT7). The closures it
+/// allowed: the interpreter evaluates it after the memory checks (`spec/const-eval.md`, CE2). The closures it
 /// creates go to the program's list, because the engine may call them.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn check_const(
@@ -153,9 +153,9 @@ pub(crate) fn check_const(
             Code::NOT_MATERIALIZABLE,
             decl.ty.span,
             format!(
-                "a constant cannot have type `{ty}`: its value is computed at compile time and copied into every \
-                 use, so it must be a scalar, `str`, `String`, or a struct, enum, tuple, array, `Option`, or \
-                 `Result` of those (spec/comptime.md, CT3)"
+                "a `const` of type `{ty}` cannot be evaluated at compile time: its value is computed by the \
+                 compiler and copied into every use, so it must be a scalar, `str`, `String`, or a struct, enum, \
+                 tuple, array, `Option`, or `Result` of those (spec/const-eval.md, CE3)"
             ),
         );
     } else if decl.kind != ast::ConstKind::Const {
@@ -338,9 +338,6 @@ impl FnCx<'_> {
             let kind = if ps.own { LocalKind::OwnParam } else { LocalKind::BorrowedParam };
             let id = self.declare(name, ps.ty.clone(), mutable, kind, name_span);
             self.locals[id.0].by_ref = ps.by_ref;
-            if ps.comptime {
-                self.comptime_known.push(id);
-            }
             if name == "self" {
                 self.self_local = Some(id);
             }

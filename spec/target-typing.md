@@ -85,7 +85,7 @@ Each message names the form and says what to write, for example: "`.new` needs a
 `List<String>.new()`". Every error in a file is reported (`tests/README.md`, the working rules), not only the first.
 
 **TT9 (lowering and the checks).** Sema lowers a form to the typed-tree node that `T.name(args)` or `T { ... }` lowers
-to. The memory checks (`burdin_check`), the comptime engine (`burdin_comptime`), and code generation see no new node and
+to. The memory checks (`burdin_check`), the compile-time engine (`burdin_interp`), and code generation see no new node and
 no new rule. The expected type is local to one function body: it comes from annotations and signatures, never from a
 later use (TT3), so the checker stays local.
 

@@ -1,0 +1,28 @@
+//@ compile-fail
+
+// `break` and `continue` cannot leave an unrolled loop over `Type.fields` or `Type.variants`: the body is repeated,
+// not looped (spec/reflection.md, RFL4). A loop written inside the body may use them for itself.
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn main() {
+    for field in Point.fields {
+        if field.index == 1 {
+            break //~ E0220
+        }
+        continue //~ E0220
+    }
+    for field in Point.fields {
+        let mut j = 0
+        while j < 2 {
+            j = j + 1
+            if j == 1 {
+                continue
+            }
+        }
+        println(field.name)
+    }
+}

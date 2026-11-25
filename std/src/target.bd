@@ -1,5 +1,5 @@
 // The system the program is compiled for. The compiler builds for the machine it runs on, so these are known
-// while compiling and work in `comptime if` (spec/comptime.md, CT5).
+// while compiling and work in a compile-time `if` (spec/const-eval.md, CE4).
 
 /// An operating system.
 ///

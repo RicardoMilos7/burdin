@@ -18,7 +18,7 @@ must reuse those rules, not add parallel ones.
 A feature is in stage 1 only if one of these is true:
 
 1. It is needed to finish the core language as designed: closures, iterators, formatting, `any`/`impl`, `error`
-   declarations, extension methods, default and named arguments, operator overloading, comptime, allocators.
+   declarations, extension methods, default and named arguments, operator overloading, constant evaluation, allocators.
 2. A standard-library type or the author's own projects need it to be usable (a `for` loop over a user-defined
    collection, `List.map`, a `Result` returned from `main`, a test that reports a typed failure).
 3. It closes a stage 0 gap that would otherwise be a soundness or consistency problem. Issue #48 closed the known
@@ -49,7 +49,7 @@ every stage 0 gap listed in "Fixes that ship with stage 1" has a registry code a
 | Arguments | Default arguments, named arguments at call sites, not in interface signatures | S |
 | Extension methods | `fn Type.name(self, ...)` on any local or imported type, resolution order, conflict diagnostics | M |
 | Operators | Overloadable arithmetic, comparison, unary, and `Index`/`IndexMut` through interfaces; built-in operators unchanged | M |
-| Comptime | An interpreter over the typed tree (no MIR, decision 6), `comptime` blocks/parameters/values, `comptime if`/`for`, `const` evaluation, `comptime assert`, a step budget | L |
+| Constant evaluation | An interpreter over the typed tree (no MIR, decision 6), `const` evaluation, compile-time `if` conditions, a step budget (milestone 20 first shipped `comptime` forms too; they were removed, see the note below) | L |
 | Reflection and derives | `Self.fields`/`variants`/`name`/`size`/`align`, user-written derive bodies, const generics, `embed` | L |
 | Build scripts | `build.bd`, dependency grants, generated sources, invoking `bindgen` from the script | M |
 | Allocators | Allocator parameters, `Arena`, `Shared<T>`, leak-detecting allocator in tests, allocator-aware containers | L |
@@ -70,7 +70,7 @@ folder and every earlier folder pass in debug and release.
 | 17 | `m17_arguments` | Default and named arguments on functions and methods | A call that omits a default; a call with reordered named arguments |
 | 18 | `m18_extension` | Extension methods, resolution order, shadowing diagnostics | An extension on `String` called with dot syntax; a method that shadows it |
 | 19 | `m19_operators` | Overloadable operators and `Index`/`IndexMut` through interfaces | A `Vec`-like type with `+` and `[]`; a built-in operator still behaving as before |
-| 20 | `m20_comptime` | The typed-tree interpreter (`burdin_comptime`), `comptime` blocks/params/values, `comptime if`/`for`, const evaluation, step budget | A const table built at compile time; a compile-time assertion; a loop past the budget rejected |
+| 20 | `m20_const` | The typed-tree interpreter (`burdin_interp`), const evaluation, compile-time `if`, step budget | A const table built at compile time; a loop past the budget rejected |
 | 21 | `m21_reflect` | Reflection members, user derive bodies, const generics, `embed` | A derive written in Burdin; `Matrix<T, const R: usize, const C: usize>` |
 | 22 | `m22_build` | `build.bd`, dependency grants, generated sources, `bindgen` invocation | A build script writes a generated module that the package imports |
 | 23 | `m23_allocators` | Allocator parameters, `Arena`, `Shared<T>`, leak detection in tests, allocator-aware containers | A list with an arena allocator; a leaked allocation fails a test; `Shared<T>` outlives a scope |
@@ -123,20 +123,28 @@ compound assignment and shifts are not overloadable; issue #277 later made compo
 implementation), E0113 (`index_mut` through an immutable place), E0101 (moving out of an indexed element), and E0003
 (wrong operand types) cover the new rejections; no new error code was needed.
 
-Milestone 20 is complete: `tests/m20_comptime` and every earlier folder pass in debug and release, and the rules are
-recorded in `spec/comptime.md` CT1-CT14 (the decisions that the engine interprets the checked typed tree in its own
-crate, `burdin_comptime`, between the memory checks and code generation, with no MIR; that a compile-time value
-crosses into the program only when its type is materializable; that each call of a function with `comptime`
-parameters is specialized per argument value; that `const` evaluation is the same engine; that comptime is pure and
-deterministic; and that each evaluation has a step budget, `--comptime-steps N`). The new diagnostics are E0220
-(invalid comptime construct), E0221 (not materializable), E0222 (comptime panic), E0223 (failed `comptime
-assert`), E0224 (impure operation), and E0225 (budget, depth, or specialization limit). `comptime` is a keyword
-now, and `std` gained the `target` module. The `const-expression` E9000 site is gone.
+Milestone 20 is complete: `tests/m20_const` and every earlier folder pass in debug and release, and the rules are
+recorded in `spec/const-eval.md` CE1-CE11 (the decisions that the engine interprets the checked typed tree in its own
+crate, `burdin_interp`, between the memory checks and code generation, with no MIR; that a compile-time value
+crosses into the program only when its type is materializable; that `const` evaluation is the same engine; that
+evaluation is pure and deterministic; and that each evaluation has a step budget, `--const-steps N`). The new
+diagnostics were E0220 (invalid compile-time construct), E0221 (not materializable), E0222 (a panic during evaluation),
+E0223 (failed `comptime assert`), E0224 (impure operation), and E0225 (budget or depth). `std` gained the `target`
+module. The `const-expression` E9000 site is gone.
+
+**Removed by the comptime removal.** The milestone first shipped `comptime` expressions and blocks, `comptime`
+parameters with per-value specialization, `comptime if`, `comptime for`, `comptime assert`, and (issue #280) `comptime
+generate`, and made `comptime` a keyword. They were removed afterwards, because a macro system is planned to replace
+them: `spec/comptime.md` and `spec/generate.md` are gone, E0223, E0242, and E0243 are retired, `comptime` is an ordinary
+identifier, `--comptime-steps` became `--const-steps`, `tests/m20_comptime` became `tests/m20_const`, and the
+`[differential]` test attribute is gone. A plain `if` with a compile-time condition (`spec/const-eval.md`, CE4)
+replaces `comptime if`, and a plain `for` over `Type.fields` or `Type.variants` (`spec/reflection.md`, RFL4) replaces
+`comptime for`. The prose of this file below keeps the milestone's own words.
 
 Milestone 21 is complete: `tests/m21_reflect` and every earlier folder pass in debug and release, and the rules are
-recorded in `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9, `spec/comptime.md` CT15,
+recorded in `spec/reflection.md` RFL1-RFL10, `spec/const-generics.md` CG1-CG9, `spec/const-eval.md` CE12,
 `spec/type-aliases.md` AL1-AL6, and `spec/impls.md` IM1-IM9. It did not split. The decisions: reflection is five compile-time members of every type, resolved by sema while a body is checked,
-with `comptime for` over `Type.fields`/`variants` unrolled there (not in `burdin_comptime`), because `x.{name}` needs
+with `for` over `Type.fields`/`variants` unrolled there (not in `burdin_interp`), because `x.{name}` needs
 the field's name to type; `x.{name}` is the computed field access syntax; a user derive is `derive Name { fn ... }`,
 syntax for the methods of an impl block that `struct T: Name` registers for the type; const generics put values in
 `Ty::Const` so instances and inference reuse the type machinery, with array lengths evaluated by sema (CG3); and
@@ -182,7 +190,7 @@ Windows rules), directories and metadata, time (`Duration`, `Instant`, `SystemTi
 are implemented and listed in `spec/stdlib.md`. Issue #196 audits their tests: every public function of those types is
 called by a conformance test, the gaps found (construction and `extend`, `into_list`, `clear`, `Set` with an allocator,
 `Path` formatting, `Instant` arithmetic, the control-character predicates) are filled, and three tests use the types
-together (`containers_graph_search`, `containers_comptime`, `roundout_text_and_time`). The milestone closes when issue
+together (`containers_graph_search`, `containers_const`, `roundout_text_and_time`). The milestone closes when issue
 #189's remaining sub-issues are done.
 
 ## Fixes that ship with stage 1
@@ -281,20 +289,18 @@ code; do not invent them inside the implementation.
    test (`test leak: ...`, `allocated at path:line:column`), failing it. The rules are `spec/allocators.md`
    AL1-AL10 and the tests are `tests/m23_allocators/`.
 
-6. **Comptime execution — settled with milestone 20 (issue #158): interpret the typed tree.** The engine is
-   `burdin_comptime`, an interpreter over `burdin_tir` that runs after the memory checks; there is no `burdin_mir`
+6. **Compile-time execution — settled with milestone 20 (issue #158): interpret the typed tree.** The engine is
+   `burdin_interp`, an interpreter over `burdin_tir` that runs after the memory checks; there is no `burdin_mir`
    (issue #159 is closed as not chosen, and a MIR stays on the "when wanted" list). The reasons are in
-   `spec/comptime.md`, CT1. The options that were considered:
+   `spec/const-eval.md`, CE1. The options that were considered:
    - introduce `burdin_mir` at milestone 20 (typed tree to MIR to LLVM), the design's architecture;
    - write an interpreter over `burdin_tir` first and add MIR later;
    - evaluate only the subset of expression forms the tests need, rejecting the rest with E9000.
 
    The second option was taken without the "add MIR later" part. The interpreter shares the memory rules with
    compiled code: it runs only programs the checks accepted, moves where the tree moves, and drops where compiled
-   code drops (CT12). Differential tests between comptime and
-   compiled code (issue #444) run the same test both ways and compare the `Ok`/`Err` outcome; the `[differential]`
-   attribute and the runner's comparison are in [`test-runner.md`](test-runner.md#differential-tests), built on the
-   interpreter.
+   code drops (CE9). Differential tests between the interpreter and
+   compiled code (issue #444) once ran a test both ways; the `[differential]` attribute was removed with `comptime`.
 
 7. **Default and named arguments — settled with milestone 17.** A parameter written `name: Type = expr` may be
    omitted at the call site. The default is a constant expression checked once at the declaration (the function's
@@ -334,7 +340,7 @@ easier with them:
 - `burdin doc`, `add`, the language server, the lockfile, multiple-package workspaces, and the package registry.
   (`burdin fmt` and `lint` have landed; `burdin bindgen` is `spec/bindgen.md`.)
 - Doc tests, `bench` blocks, a custom debug backend, fallible allocation. (Declaration generation in comptime landed
-  with issue #280: `spec/generate.md`.) (`i128`/`u128` landed with issue #273; `spec/int128.md`.)
+  with issue #280 and was removed with `comptime`.) (`i128`/`u128` landed with issue #273; `spec/int128.md`.)
 - Declaration generation in comptime (new types or functions), doc tests, `bench` blocks, a custom debug backend.
   (`i128`/`u128` landed with issue #273; `spec/int128.md`. Fallible allocation landed with issue #278;
   `spec/allocators.md`, AL11.)
@@ -415,11 +421,11 @@ written down.
 | Struct update syntax (`Name { field: v, ..base }`) | landed | `struct-update.md`, SU1-SU10 | #994 |
 | Array and slice patterns (`[a, ..rest]` on `[T; n]` and `[T]`, with `..` and `..name`) | landed | `array-patterns.md`, AP1-AP12 | #486 |
 | `Set<T>` and `Deque<T>` | landed | `stdlib.md`, "`Set<T>`" and "`Deque<T>`" | #190, #191 |
-| Declaration generation in comptime | landed | `generate.md` | #280 |
+| Declaration generation in comptime | landed, then removed with `comptime` (a macro system is planned) | not applicable | #280 |
 | Doc tests | landed | `test-runner.md`, "Doc tests" | #250, #650-#652 |
 | `bench` blocks | landed | `bench.md`, BN1 | not recorded |
 | Compiler-inserted preemption checks | not landed; cooperative preemption points are a later concurrency item | `tasks.md` (no preemption in stage 2.1) | not recorded |
-| A MIR | not planned: the comptime engine and the checks read the typed tree (decision 6) | `comptime.md`, CT1 | #158, #159 (closed as not chosen) |
+| A MIR | not planned: the compile-time engine and the checks read the typed tree (decision 6) | `const-eval.md`, CE1 | #158, #159 (closed as not chosen) |
 | A package registry | not landed; a `version` with no `path` or `git` is an error | `packages.md`, PKG2 and PKG11 | not recorded |
 | Target-typed initializers: `.name`, `.name(args)`, and `.{ ... }` take their type from the expected type | landed outside the milestones (`tests/target_typing`); not a stage 1 milestone | `target-typing.md`, TT1-TT12 | #998 |
 
@@ -434,6 +440,6 @@ written down.
   remaining E9000 site with the milestone and issue that remove it; `tests/check_e9000.py` fails when the list and
   the source disagree, or when a site names a milestone that has shipped.
 - Keep the stage 0 checks local (one body, signatures only) and keep the compiler free of LLVM before codegen. If
-  a MIR is ever introduced, put it between `burdin_tir` and `burdin_codegen`; the comptime engine
-  (`burdin_comptime`) depends only on `burdin_tir` and `burdin_diag`, like the checks.
+  a MIR is ever introduced, put it between `burdin_tir` and `burdin_codegen`; the compile-time engine
+  (`burdin_interp`) depends only on `burdin_tir` and `burdin_diag`, like the checks.
 - Update `HANDOFF.md`, the design document, and this file when a decision changes, in that order.

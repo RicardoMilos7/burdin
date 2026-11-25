@@ -10,7 +10,7 @@ pub trait Visit {
     fn block(&mut self, b: &Block) {
         walk_block(self, b);
     }
-    /// A pattern that binds locals: a `let`, a `match` arm, a `for` loop, or a `comptime for`.
+    /// A pattern that binds locals: a `let`, a `match` arm, or a `for` loop.
     fn pat(&mut self, _p: &Pat) {}
 }
 
@@ -84,7 +84,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
-        | K::Comptime(inner) => v.expr(inner),
+        | K::ConstCond(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
         K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
@@ -131,8 +131,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::ForSlice { pat, slice: src, body }
         | K::ForList { pat, list: src, body }
         | K::ForMap { pat, map: src, body }
-        | K::ForChars { pat, string: src, body }
-        | K::ComptimeFor { pat, iter: src, body } => {
+        | K::ForChars { pat, string: src, body } => {
             v.expr(src);
             v.pat(pat);
             v.block(body);
@@ -228,7 +227,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
-        | K::Comptime(inner) => v.expr(inner),
+        | K::ConstCond(inner) => v.expr(inner),
         K::Ref { place, .. } => v.expr(place),
         K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
             v.expr(a);
@@ -266,8 +265,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::ForSlice { slice: src, body, .. }
         | K::ForList { list: src, body, .. }
         | K::ForMap { map: src, body, .. }
-        | K::ForChars { string: src, body, .. }
-        | K::ComptimeFor { iter: src, body, .. } => {
+        | K::ForChars { string: src, body, .. } => {
             v.expr(src);
             v.block(body);
         }
@@ -305,8 +303,7 @@ pub fn pat_locals(p: &Pat, out: &mut Vec<crate::LocalId>) {
 }
 
 /// The locals `e` reads without binding them itself, each with the span of its first use: the locals of the
-/// enclosing function a comptime expression would need (`spec/comptime.md`, CT2). A closure's captures count as
-/// uses.
+/// enclosing function a compile-time expression would need. A closure's captures count as uses.
 pub fn free_locals(e: &Expr) -> Vec<(crate::LocalId, burdin_diag::Span)> {
     struct Free {
         bound: Vec<crate::LocalId>,

@@ -2,7 +2,6 @@
 
 use crate::cursor::{D, Fmt, R};
 use crate::doc::{Doc, concat, space};
-use crate::exprs::Restriction;
 use crate::layout::{Elem, Member};
 use crate::trivia::Comment;
 use crate::uses::UseEntry;
@@ -96,7 +95,6 @@ impl Fmt<'_> {
             {
                 self.static_decl()?
             }
-            TokenKind::Comptime if !is_priv => self.comptime_item()?,
             TokenKind::Extern => self.extern_item()?,
             TokenKind::Reserved(word) if word == "derive" => self.derive_decl()?,
             TokenKind::Ident(_) | TokenKind::SelfType if !is_priv => self.impl_block()?,
@@ -193,10 +191,6 @@ impl Fmt<'_> {
             return Ok(self.tok_doc());
         }
         let mut parts = Vec::new();
-        if self.at(&TokenKind::Comptime) {
-            parts.push(self.tok_doc());
-            parts.push(space());
-        }
         if matches!(self.kind(), TokenKind::Mut | TokenKind::Own) {
             parts.push(self.tok_doc());
             parts.push(space());
@@ -394,18 +388,6 @@ impl Fmt<'_> {
         parts.push(eq);
         parts.push(self.after_operator(value));
         Ok(concat(parts))
-    }
-
-    /// `comptime assert(condition, "message")` or `comptime generate { ... }` at module scope. The block is laid
-    /// out as a function body (`spec/generate.md`, GN9).
-    fn comptime_item(&mut self) -> R<D> {
-        if matches!(self.nth(1), TokenKind::Ident(name) if name == "generate") && self.nth(2) == &TokenKind::LBrace {
-            let comptime = self.tok_doc();
-            let generate = self.tok_doc();
-            let block = self.block_parts()?;
-            return Ok(concat(vec![comptime, space(), generate, space(), self.block_doc(block, false)]));
-        }
-        Ok(self.expr_r(Restriction::None)?.doc)
     }
 
     // ----- interfaces, impls, extern ---------------------------------------------------------------------------

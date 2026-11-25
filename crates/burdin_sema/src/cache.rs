@@ -505,7 +505,7 @@ pub(crate) fn declaration_fingerprint(
         (&package.name, package.is_root, package.edition, &package.deps, package.root_module).hash(&mut h);
         for module in &package.modules {
             let file = sources.get(module.file);
-            (&module.path, &file.path, module.generated).hash(&mut h);
+            (&module.path, &file.path).hash(&mut h);
             let text = file.text.as_str();
             let mut bodies: Vec<Span> = module.ast.bodies.clone();
             bodies.sort_by_key(|s| s.lo);

@@ -1,13 +1,12 @@
 // Reserved words in every position, and identifiers that look like keywords.
 fn impl() {}
 fn f(impl: i32) {}
-fn g(any: i32, comptime: i32, derive: i32) {}
+fn g(any: i32, derive: i32) {}
 const impl: i32 = 1
 struct derive { impl: i32 }
 fn main() {
     let impl = impl
     let any = any
-    let comptime = comptime
     let derive = derive
     let _impl = 1
     let impl_ = 2

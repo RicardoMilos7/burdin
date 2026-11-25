@@ -16,7 +16,7 @@ pub enum ConstKind {
     StaticMut,
 }
 
-/// A constant or a static. Its initializer is evaluated by the comptime engine (`spec/comptime.md`, CT7), which
+/// A constant or a static. Its initializer is evaluated by the interpreter (`spec/const-eval.md`, CE2), which
 /// replaces `value` with the materialized result. A `const` is expanded at every use, so it costs nothing at run time
 /// beyond the expression itself; a static is stored once, before `main` runs (`spec/globals.md`, GL1).
 #[derive(Clone, Debug)]
@@ -238,8 +238,8 @@ pub enum ExprKind {
     Float(f64),
     Char(char),
     Str(String),
-    /// A static byte view of an embedded file (`embed("path")` with the expected type `[u8]`, `spec/comptime.md`
-    /// CT15). Its type is `[u8]`; it is static data, like a string literal (RT4).
+    /// A static byte view of an embedded file (`embed("path")` with the expected type `[u8]`, `spec/const-eval.md`
+    /// CE12). Its type is `[u8]`; it is static data, like a string literal (RT4).
     Bytes(Vec<u8>),
     Local(LocalId),
     Const(ConstId),
@@ -419,17 +419,10 @@ pub enum ExprKind {
     Err(Box<Expr>),
     /// Field `n` of a struct or tuple.
     Field(Box<Expr>, usize),
-    /// `comptime E` (`spec/comptime.md`, CT2): evaluated while compiling and replaced by its value. A `comptime
-    /// if` is an [`ExprKind::If`] whose condition is this node; an argument for a `comptime` parameter is one too
-    /// (CT4). No comptime node reaches code generation.
-    Comptime(Box<Expr>),
-    /// `comptime for pattern in iter { body }` (CT6): `iter` is a comptime expression and the body is repeated
-    /// once per item with the pattern bound to it. The pattern binds owned items, like [`ExprKind::ForArray`].
-    ComptimeFor {
-        pat: Pat,
-        iter: Box<Expr>,
-        body: Block,
-    },
+    /// The condition of an `if` that is a compile-time condition (`spec/const-eval.md`, CE4): evaluated while
+    /// compiling and replaced by its value, which keeps one branch of the `if`. No such node reaches code
+    /// generation.
+    ConstCond(Box<Expr>),
 }
 
 #[derive(Clone, Debug)]

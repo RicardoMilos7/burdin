@@ -18,7 +18,7 @@ ones last; `burdin commands` lists every command alphabetically):
 | `test` | build and run the `test` blocks (and doc tests) of a package | `spec/test-runner.md` |
 | `bench` | build and measure the `bench` blocks | `spec/bench.md` |
 | `fuzz` | build a `fuzz` target with libFuzzer and fuzz it | `spec/fuzz.md` |
-| `check` | type-check and run the memory and comptime checks, without code generation | `spec/check.md` |
+| `check` | type-check and run the memory and constant-evaluation checks, without code generation | `spec/check.md` |
 | `fmt` | format source files, with one style and nothing to configure | `spec/fmt.md` |
 | `lint` | report and fix common mistakes | `spec/lint.md` |
 | `fix` | apply the compiler's and the linter's machine-applicable fixes | `spec/fix.md` |
@@ -34,7 +34,7 @@ ones last; `burdin commands` lists every command alphabetically):
 | `repl` | start an interactive session | `spec/repl.md` |
 | `watch` | rerun `check`, `build`, `test`, or `run` when the sources change | `spec/watch.md` |
 | `debug` | build with debug information and start a debugger | `spec/debug.md` |
-| `expand` | print the source after comptime, derives, default arguments, and operators | `spec/inspect.md` |
+| `expand` | print the source after constants, derives, default arguments, and operators | `spec/inspect.md` |
 | `asm` | print one function's assembly or LLVM IR with its source | `spec/inspect.md` |
 | `bloat` | report where a binary's size comes from | `spec/inspect.md` |
 | `bindgen` | generate a module from a C header (or a Rust crate), or a C header for a package | `spec/bindgen.md`, `spec/rust-interop.md` |

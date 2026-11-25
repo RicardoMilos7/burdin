@@ -73,7 +73,7 @@ Stdin  { fn is_terminal(self): bool }
   runner, for a pipe, and for a file.
 - `burdin test` gives each test process a closed standard input (`test-runner.md`, Isolation), so a read sees the
   end of the input and never waits for a person.
-- None of these runs at compile time: reaching one in a comptime evaluation is E0224 (`comptime.md`, CT9).
+- None of these runs at compile time: reaching one in a compile-time evaluation is E0224 (`const-eval.md`, CE6).
 
 ## Readers and writers (issue #409)
 
@@ -281,7 +281,7 @@ an LLVM intrinsic or to a C math library call, as it does for the integer method
 `std/src/float.bd` (`extensions.md`), so the prelude makes them visible everywhere.
 
 ```
-// Exactly rounded: the result is the IEEE 754 result. Compiled code and the comptime interpreter agree bit for bit.
+// Exactly rounded: the result is the IEEE 754 result. Compiled code and the constant-evaluation interpreter agree bit for bit.
 fn T.abs(self): T                    fn T.sqrt(self): T                 fn T.floor(self): T
 fn T.ceil(self): T                   fn T.round(self): T                fn T.round_ties_even(self): T
 fn T.trunc(self): T                  fn T.mul_add(self, a: T, b: T): T   fn T.copysign(self, sign: T): T
@@ -338,8 +338,7 @@ The exact semantics:
   `MIN_POSITIVE` is the smallest positive normal value, and `EPSILON` is the gap between `1.0` and the next value.
   `INFINITY`, `NEG_INFINITY`, and `NAN` are written as divisions (`1.0 / 0.0`, `-1.0 / 0.0`, `0.0 / 0.0`) because a
   float literal must be finite; `NAN`'s payload and sign are unspecified.
-- Compiled code and the comptime interpreter agree bit for bit on the exactly rounded operations, and the
-  differential tests assert the bits (`test-runner.md`, "Differential tests"). The transcendental functions are the
+- Compiled code and the constant-evaluation interpreter agree bit for bit on the exactly rounded operations. The transcendental functions are the
   C library's, through an LLVM intrinsic where LLVM has one (`tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
   `cosh`, and `tanh` do in LLVM 21; `cbrt` and `hypot` are direct library calls), so their last bit is the
   library's and is not promised across platforms.
@@ -349,7 +348,7 @@ method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, 
 `f64.pow` and `f64.cmp` are `E0002`, and the integer functions do not apply to floats.
 
 Tests: `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`,
-`float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names`.
+`float_clamp_abort`, `float_clamp_nan_abort`, `float_unknown_names`.
 
 ## Conversions (issue #274)
 
@@ -674,7 +673,7 @@ texts and borrows both operands. The comparisons `==`, `!=`, `<`, `<=`, `>`, `>=
 `s += "x"` is E0003. `push_str`, `format`, the interpolated string literal, and `join` are the other ways to build text.
 The rule is `operators.md` OP14.
 
-Tests: `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, and the abort cases
+Tests: `m24_stdlib/string_capacity`, `string_editing`, `string_edit_const`, and the abort cases
 `string_edit_boundary_aborts` (a non-boundary insert), `string_edit_bounds_aborts` (a reversed range), and
 `string_truncate_bounds_aborts` (a length past the end); `string_plus_unsupported` (E0003) pins `"a" + "b"`, and the
 mixed forms are in `m19_operators/string_str_operators` and `string_str_mixed_compile_fail`.
@@ -947,7 +946,7 @@ the iterator the drain returned.
 not require `Clone`; the source keeps its own allocator and the moved elements are freed through `Global`.
 
 Tests: `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`,
-`list_leaks`, `list_comptime`, `list_get_mut_immutable` (E0113), `list_extend_from_slice_needs_clone` (E0141),
+`list_leaks`, `list_const`, `list_get_mut_immutable` (E0113), `list_extend_from_slice_needs_clone` (E0141),
 `list_capacity_stored_allocator` (E0272), `list_with_capacity_in_not_allocator` (E0270), `list_drain_not_range`
 (E0003), `list_append_wrong_allocator` (E0003), `list_get_mut_borrow` (E0111), `list_swap_remove_out_of_bounds`,
 `list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, and `list_reserve_overflow`.
@@ -1043,7 +1042,7 @@ Tests: `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `
 `slice_as_slice_borrow` (E0111), `slice_array_view_borrow` (E0111), `slice_fill_needs_clone` (E0141),
 `slice_to_list_needs_clone` (E0141), `slice_copy_needs_copy` (E0141), `slice_sort_needs_ord` (E0141),
 `slice_reverse_immutable` (E0113), `slice_view_immutable_list` (E0113), `slice_write_exclusivity` (E0110),
-`slice_comptime_write` (E0224), and `slice_comptime_read` (the reads at compile time).
+`slice_const_write` (E0224), and `slice_const_read` (the reads at compile time).
 
 ## `Map<K, V>`
 
@@ -1096,7 +1095,7 @@ and probe again only when the insert has to grow the map. A stored allocator (`a
 The `&mut V` keeps the map exclusively borrowed until its last use (a `m.insert(...)` while it is live is E0111),
 because inserting may move the table; an entry that has not been filled holds the map the same way. The key needs
 `==`, like every map operation (E0141), and neither the entry nor its operations run at compile time
-(`comptime.md`, CT9).
+(`const-eval.md`, CE6).
 
 `get_or_insert` returns the value stored under `key`; when the key is absent it first stores `value`. A value that is
 already there is kept, and the incoming key and value are dropped on the spot. It looks the key up once.
@@ -1112,7 +1111,7 @@ let count = map.entry(word).or_insert(0)
 ```
 
 Tests: `m24_stdlib/map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`
-(E0111), `map_entry_needs_eq` (E0141), `map_entry_second_class` (E0120, E0123), and `map_entry_comptime` (E0224).
+(E0111), `map_entry_needs_eq` (E0141), `map_entry_second_class` (E0120, E0123), and `map_entry_const` (E0224).
 
 ### Map views, updates, and construction (issue #712)
 
@@ -1330,7 +1329,7 @@ result; `peek` never computes. The views `get`, `get_or_init`, `force`, and `pee
 (writable, in `unsafe` code only), with the rules in `globals.md` (issue #485). A `static` holds plain data: a scalar,
 `str`, or an aggregate of those, never a `String` or a collection (GL2). A value that owns memory, such as a cache or a
 `String` of configuration, is a value that lives in a local or a struct and is passed to whatever needs it, and `Once`
-and `Lazy` are ordinary values like that. A value that is known at compile time is a `const` or a `comptime` expression
+and `Lazy` are ordinary values like that. A value that is known at compile time is a `const`
 instead. A cell several threads can race to fill is a value handed to the tasks that share it (`globals.md`, GL6).
 
 ## Paths (issue #194)
@@ -1369,7 +1368,7 @@ resolves symbolic links.
   root, and writes the rules' separator; an empty result is `.`. It is lexical, so it can change what a path with
   symbolic links names.
 - `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
-  comptime evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
+  compile-time evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
 
 Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists`.
 
@@ -1404,7 +1403,7 @@ Path {   // extension methods, the same operations with the receiver as the path
 }
 ```
 
-Every function is impure: a comptime evaluation that reaches one fails with E0224. A read that only inspects the
+Every function is impure: a compile-time evaluation that reaches one fails with E0224. A read that only inspects the
 file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
 (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
 Each error carries the portable kind and the OS code (`errors.md`, ERR10-ERR11). `rename` names its destination `to`
@@ -1495,9 +1494,9 @@ fn exists(path: str): bool
   returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
   that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
   `exists` is `Path.exists`.
-- Every operation is impure: a comptime evaluation that reaches one fails with E0224.
+- Every operation is impure: a compile-time evaluation that reaches one fails with E0224.
 
-Tests: `m24_stdlib/file_handles`, `file_errors`, `file_comptime`.
+Tests: `m24_stdlib/file_handles`, `file_errors`, `file_const`.
 
 ## Time (issue #195)
 
@@ -1597,11 +1596,11 @@ ManualClock {
   (whole milliseconds on Windows), and on Unix a signal can end it early. A long sleep is made of sleeps of at most
   one hour.
 - **Compile time.** `Instant.now`, `SystemTime.now`, `SystemClock`'s methods, and `sleep` reach the operating
-  system, so a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9). The rest is pure and
-  works in a `const` or a `comptime` expression.
+  system, so a compile-time evaluation that reaches one fails with E0224 (`const-eval.md`, CE6). The rest is pure and
+  works in a `const`.
 
 Tests: `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`,
-`time_clock`, `time_comptime`, `time_comptime_impure`.
+`time_clock`, `time_const`, `time_const_impure`.
 
 ## Random numbers (issue #195)
 
@@ -1639,10 +1638,10 @@ Random {
   result is a function of the generator's state alone. An empty list and a one-element list are unchanged and
   consume no numbers.
 - **Compile time.** `random_seed` and `from_entropy` fail with E0224 at compile time; `seeded` and every draw are
-  pure and work there (`comptime.md`, CT9).
+  pure and work there (`const-eval.md`, CE6).
 
 Tests: `m24_stdlib/random_seeded` (known answers from an independent implementation), `random_properties`,
-`random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure`.
+`random_entropy`, `random_below_zero`, `random_range_empty`, `time_const`, `time_const_impure`.
 
 ## Roundout tests (issue #196)
 
@@ -1651,14 +1650,14 @@ change to one of them is also checked against the others:
 
 - `containers_graph_search`: a `Deque` drives a breadth-first search, a `Set` marks what was visited, and a
   `PriorityHeap` of `Reverse` entries is the frontier of a shortest-path search, with the distances in a `Map`.
-- `containers_comptime`: `Set`, `Deque`, and `PriorityHeap` are ordinary library code, so a `comptime` expression
-  can build and consume them; only a scalar, `String`, or composite of those leaves it (`comptime.md`, CT3).
+- `containers_const`: `Set`, `Deque`, and `PriorityHeap` are ordinary library code, so a `const` initializer
+  can build and consume them; only a scalar, `String`, or composite of those leaves it (`const-eval.md`, CE3).
 - `roundout_text_and_time`: Unicode case mapping and `split_whitespace` into a `Set`, `Path` edits, a `ManualClock`
   with `DateTime` formatting, and a seeded `Random` shuffle.
 
 Every public function of `Set`, `Deque`, `PriorityHeap`, `Path`, the time types, `Random`, and the character
 predicates (apart from the `DequeLen` and `HeapLen` helper interfaces the iterators use) is called by at least one test in `tests/`. The compile-fail cases are `set_needs_eq` and `heap_needs_ord`
-(E0141, an element type that does not meet the container's bound) and `time_comptime_impure` (E0224, the clocks, sleep,
+(E0141, an element type that does not meet the container's bound) and `time_const_impure` (E0224, the clocks, sleep,
 and the entropy source at compile time). There is no new diagnostic.
 
 ## `Heap<T>`
@@ -1785,7 +1784,7 @@ fn hash_seeded<T: Hash>(seed: u64, value: T): u64           // `Hasher.with_seed
 ```
 
 **HS1. One stable algorithm.** There is one hash, the FNV-1a fold of `derives.md`, and it is stable: the same value
-gives the same `u64` on every run, every platform, and every build profile, in `comptime` and at run time. It does not
+gives the same `u64` on every run, every platform, and every build profile, in a `const` and at run time. It does not
 change between compiler versions without a breaking-change entry in `CHANGELOG.md`, so a program may store it (an
 on-disk cache key, a content hash). `Map` and `Set` hash their keys with this same fold; the order they iterate in is
 still unspecified, and a program must not depend on it (the table's layout is not part of the contract, only the
@@ -1828,7 +1827,7 @@ The primitive behind `Hasher.write` is `x.hash_from(state)`: it is declared for 
 evaluates `x` once, and `x.hash()` is `x.hash_from(0xcbf29ce484222325)`.
 
 Tests: `m24_stdlib/hash_values` (HS1, HS2), `hash_hasher` (HS3), `hash_seeded` (HS4), `hash_generic` (HS2, bounds),
-`hash_map_consistent` (HS1), `hash_case_insensitive` (HS5, workaround), `hash_comptime` (HS1), `hash_float`
+`hash_map_consistent` (HS1), `hash_case_insensitive` (HS5, workaround), `hash_const` (HS1), `hash_float`
 (HS2, E0141), `hash_float_derive` (HS2, E0130).
 
 ## `Option<T>` and `Result<T, E>`
@@ -1973,7 +1972,7 @@ Set<T, A>.extend_iter    Deque<T>.extend_iter    PriorityHeap<T>.extend_iter    
 an extension cannot pick its body by item type. A `Map` built from pairs keeps the last value of a repeated key.
 
 Tests: `m24_stdlib/collect_basic`, `collect_adapters`, `collect_result_option`, `collect_drops`, `collect_user_type`,
-`collect_allocator`, `collect_comptime`, `collect_views`, `extend_iter`, `from_array`, and the compile-fail cases
+`collect_allocator`, `collect_const`, `collect_views`, `extend_iter`, `from_array`, and the compile-fail cases
 `collect_needs_target` (E0003), `collect_not_from_iterator` (E0141), `collect_allocator_target` (E0272, E0141),
 `collect_map_needs_eq` (E0141), `collect_view_target` (E0141), and `from_array_view_key` (E0120). The explicit target
 (`it.collect<C>()`) is `m24_stdlib/collect_explicit` (runs), with the refusals in `collect_explicit_errors` (E0003 for
@@ -2129,7 +2128,7 @@ returned as is. On failure each returns the matching `IoError` variant with its 
 `parse` returns `ParseIntError.Invalid` (`errors.md`, ERR10-ERR11). The byte-level helpers (`read`, `write`,
 `append`, `copy_file`, `exists`) and the owning `File` handle are in "Files and file handles".
 
-None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+None of these runs at compile time: a compile-time evaluation that reaches one fails with E0224 (`const-eval.md`, CE6).
 
 ### Environment variables and the working directory (issue #412)
 
@@ -2163,7 +2162,7 @@ present. `set` replaces an existing value, and `remove` succeeds when the variab
 trailing separator except at a root, and `set_current_dir` reports `SetWorkingDirectory` when the path is not a
 directory. A change is visible to a child started with `process.run`.
 
-None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+None of these runs at compile time: a compile-time evaluation that reaches one fails with E0224 (`const-eval.md`, CE6).
 
 Tests: `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`,
 `env_test_mode`.
@@ -2243,10 +2242,10 @@ struct Output { status: ExitStatus   stdout: String   stderr: String }
   `IoError.Read` with `<stdout>`, `<stderr>`, or `<child>`, and a write failure is `IoError.Write` with `<stdin>`.
   A program name without a separator is looked up on `PATH`: on Unix the search uses the child's environment, while
   on Windows `CreateProcessW` searches the calling process's `PATH`.
-- None of these runs at compile time: a comptime evaluation that reaches one fails with E0224 (`comptime.md`, CT9).
+- None of these runs at compile time: a compile-time evaluation that reaches one fails with E0224 (`const-eval.md`, CE6).
 
 Tests: `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`,
-and `m20_comptime/purity_process`.
+and `m20_const/purity_process`.
 
 ## The compilation target
 
@@ -2258,8 +2257,8 @@ fn target.arch(): target.Arch               // the processor architecture the pr
 ```
 
 The compiler builds for the machine it runs on, so both are the host's. They are ordinary functions, usable at run
-time and at compile time, which is how `comptime if target.os() == target.Os.Windows { ... }` selects a platform
-branch (`comptime.md`, CT5). `tests/m20_comptime/comptime_if_platform.bd`, `comptime_target_values.bd`.
+time and at compile time, which is how `if target.os() == target.Os.Windows { ... }` (a compile-time condition) selects a platform
+branch (`const-eval.md`, CE4). `tests/m20_const/const_if_platform.bd`, `const_target_values.bd`.
 
 ## Memory helpers and assertions
 
@@ -2560,25 +2559,25 @@ lists them by rule).
 | Operators and `Index` | `m19_operators/*` (`operators.md`) |
 | `String`, `str`, slicing, ordering | `m09_stdlib/string_ops`, `string_order`, `slice_inclusive`, `slice_inclusive_bounds`, `m06_conventions/str_views`, `slice_views` |
 | `List` | `m09_stdlib/list_ops`, `list_of_drops`, `m06_conventions/for_borrows_list` |
-| Slices and arrays | `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `list_as_slice`, `slice_bytes_ascii`, `slice_join_concat`, `slice_binary_search`, `slice_strings`, `slice_edges`, `slice_drops`, `slice_chunks_borrow`, `slice_split_at_mut_borrow`, `slice_as_slice_borrow`, `slice_array_view_borrow`, `slice_fill_needs_clone`, `slice_to_list_needs_clone`, `slice_copy_needs_copy`, `slice_sort_needs_ord`, `slice_reverse_immutable`, `slice_view_immutable_list`, `slice_write_exclusivity`, `slice_comptime_write`, `slice_comptime_read`, `slice_chunks_zero`, `slice_windows_zero`, `slice_split_at_bounds`, `slice_rotate_bounds`, `slice_swap_bounds`, `slice_copy_length`, `slice_clone_length` |
-| `List` capacity, access, and bulk edits | `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`, `list_leaks`, `list_comptime`, `list_get_mut_immutable`, `list_extend_from_slice_needs_clone`, `list_capacity_stored_allocator`, `list_with_capacity_in_not_allocator`, `list_drain_not_range`, `list_append_wrong_allocator`, `list_get_mut_borrow`, `list_swap_remove_out_of_bounds`, `list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, `list_reserve_overflow` |
+| Slices and arrays | `m24_stdlib/slice_read`, `slice_write`, `slice_chunks`, `slice_arrays`, `list_as_slice`, `slice_bytes_ascii`, `slice_join_concat`, `slice_binary_search`, `slice_strings`, `slice_edges`, `slice_drops`, `slice_chunks_borrow`, `slice_split_at_mut_borrow`, `slice_as_slice_borrow`, `slice_array_view_borrow`, `slice_fill_needs_clone`, `slice_to_list_needs_clone`, `slice_copy_needs_copy`, `slice_sort_needs_ord`, `slice_reverse_immutable`, `slice_view_immutable_list`, `slice_write_exclusivity`, `slice_const_write`, `slice_const_read`, `slice_chunks_zero`, `slice_windows_zero`, `slice_split_at_bounds`, `slice_rotate_bounds`, `slice_swap_bounds`, `slice_copy_length`, `slice_clone_length` |
+| `List` capacity, access, and bulk edits | `m24_stdlib/list_capacity`, `list_access`, `list_bulk_edits`, `list_drop_order`, `list_allocator_methods`, `list_leaks`, `list_const`, `list_get_mut_immutable`, `list_extend_from_slice_needs_clone`, `list_capacity_stored_allocator`, `list_with_capacity_in_not_allocator`, `list_drain_not_range`, `list_append_wrong_allocator`, `list_get_mut_borrow`, `list_swap_remove_out_of_bounds`, `list_split_off_out_of_bounds`, `list_drain_out_of_bounds`, `list_reserve_overflow` |
 | `Map` | `m09_stdlib/map_ops`, `map_key_types`, `map_remove_and_clear`, `map_many_keys`, `word_count` |
 | Iteration | `m13_iterators/*` (`iterators.md`); `m06_conventions/return_aggregate_two_sources` and its error tests (RT3a) |
 | Tasks, scopes, and threads | `s2_tasks/two_tasks`, `moved_value`, `detach_runs`, `yield_interleave`, `scope_disjoint`, `thread_spawn`, `workers_steal`, `stress_many_tasks` |
 | Channels and `select` | `s2_channels/producer_consumer`, `close_semantics`, `bounded_capacity`, `select_priority`, `select_default`, `select_send`, `stress_mpmc`, `select_stress` |
 | Networking and asynchronous I/O | `s2_io/net_tcp_echo`, `net_tcp_messages`, `net_tcp_timeout`, `net_tcp_refused`, `net_udp`, `net_lookup_host`, `file_in_task`, `file_fifo_offload`, `blocking_parks_worker`, `timer_parks_task`, `stress_files`, `stress_connections` (`io.md` lists them by rule) |
 | `Ordering`, `cmp`, `Reverse` | `m24_stdlib/ordering_methods`, `cmp_builtin_types`, `cmp_option_result`, `cmp_generic`, `cmp_functions`, `reverse` |
-| Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_comptime`, `hash_float`, `hash_float_derive` |
+| Hashing | `m24_stdlib/hash_values`, `hash_hasher`, `hash_seeded`, `hash_generic`, `hash_map_consistent`, `hash_case_insensitive`, `hash_const`, `hash_float`, `hash_float_derive` |
 | `Heap` | `m05_ownership/heap_tree_eval` |
 | `Option`, `Result`, `?`, `orelse` | `m09_stdlib/option_result_basics`, `question_and_from`, `m16_errors/dynamic_result`, `orelse_closure` |
 | Characters of a text | `m24_stdlib/text_characters` |
 | Iterator consumers | `m24_stdlib/iter_last_nth_position`, `iter_for_each_reduce`, `iter_partition`, `iter_min_max`, `iter_min_max_ord`, `iter_min_max_drops`, `iter_min_needs_ord`, `iter_eq_cmp`, `iter_sum_product`, `iter_product_needs_number`, `iter_sum_overflow`, `iter_product_overflow`, `iter_try_fold`, `iter_consumers_user_iterator` |
-| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable`, `iter_zip`, `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`, `iter_adapters_no_leaks`, `iter_adapters_comptime`; errors `iter_zip_from_temporary`, `iter_zip_in_struct_field`, `iter_chain_in_collection`, `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`, `iter_rev_needs_double_ended`, `iter_rev_through_adapter`, `iter_cloned_needs_clone`, `iter_cloned_needs_views`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch`, `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` |
+| Iterator adapters | `m24_stdlib/iter_enumerate`, `iter_take_skip_while`, `iter_step_by`, `iter_step_by_zero`, `iter_inspect_peekable`, `iter_zip`, `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`, `iter_adapters_no_leaks`, `iter_adapters_const`; errors `iter_zip_from_temporary`, `iter_zip_in_struct_field`, `iter_chain_in_collection`, `iter_chain_while_mutating_second`, `iter_zip_while_mutating_first`, `iter_rev_needs_double_ended`, `iter_rev_through_adapter`, `iter_cloned_needs_clone`, `iter_cloned_needs_views`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch`, `iter_flatten_needs_iterators`, `iter_zip_needs_iterator` |
 | Sorting | `m24_stdlib/sort_by`, `sort_by_key`, `sort_unstable`, `sort_inconsistent_comparator`, `sort_drops` |
 | Text helpers | `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`, `string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern` |
 | String bytes, UTF-8, and checked slicing | `m24_stdlib/string_bytes`, `string_utf8_validation`, `string_from_utf8_lossy`, `string_utf8_file`, `string_find_all`, `string_checked_slice`, `string_bytes_second_class`, `string_view_as_text_unsafe` |
-| String capacity and editing | `m24_stdlib/string_capacity`, `string_editing`, `string_edit_comptime`, `string_edit_boundary_aborts`, `string_edit_bounds_aborts`, `string_truncate_bounds_aborts`, `string_plus_unsupported` |
-| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_comptime` |
+| String capacity and editing | `m24_stdlib/string_capacity`, `string_editing`, `string_edit_const`, `string_edit_boundary_aborts`, `string_edit_bounds_aborts`, `string_truncate_bounds_aborts`, `string_plus_unsupported` |
+| Map entry operations | `m24_stdlib/map_get_mut`, `map_get_or_insert`, `map_get_or_insert_drops`, `map_get_or_insert_borrow`, `map_get_mut_needs_eq`, `map_entry`, `map_entry_drops`, `map_entry_generic`, `map_entry_allocator`, `map_entry_borrow`, `map_entry_needs_eq`, `map_entry_second_class`, `map_entry_const` |
 | Map views, updates, and construction | `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`, `map_borrowed_key`, `map_borrowed_key_type`, `map_get_or_needs_eq`, `map_with_capacity_allocator` |
 | Encodings | `m24_stdlib/encoding_hex`, `encoding_base64`, `encoding_url`, `encoding_utf8` |
 | Readers and writers | `m24_stdlib/rw_cursor_read`, `rw_cursor_write_seek`, `rw_read_exact_eof`, `rw_read_chunks`, `rw_write_all`, `rw_bufreader_lines`, `rw_bufreader_buffering`, `rw_bufwriter`, `rw_bufwriter_drop`, `rw_seek_buffered`, `rw_copy`, `rw_bytesmut_write`, `rw_error_propagation`, `rw_reader_needs_read`, `rw_bufreader_capacity_zero`, `rw_bufwriter_capacity_zero` |
@@ -2592,22 +2591,22 @@ lists them by rule).
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists` |
 | Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
-| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_comptime` |
-| Time | `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_comptime`, `time_comptime_impure` |
-| Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_comptime`, `time_comptime_impure` |
+| Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_const` |
+| Time | `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_const`, `time_const_impure` |
+| Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_const`, `time_const_impure` |
 | Float parsing | `m24_stdlib/float_parse`, `float_round_trip` |
-| Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_math_differential`, `float_unknown_names` |
+| Float functions | `m24_stdlib/float_math`, `float_constants`, `float_predicates`, `float_min_max`, `float_bits`, `float_clamp_abort`, `float_clamp_nan_abort`, `float_unknown_names` |
 | Characters | `m24_stdlib/char_ascii`, `char_control`, `char_unicode_classes`, `char_case`, `char_digits_and_code_points`, `char_bad_radix` |
 | `PriorityHeap` | `m24_stdlib/heap_basic`, `heap_construction`, `heap_iteration`, `heap_equal_priorities`, `heap_min_heap`, `heap_drops`, `heap_index_out_of_bounds`, `heap_needs_ord`, `heap_equality` |
-| Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_comptime` |
+| Mutable iteration | `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_deque`, `iter_mut_adapters`, `iter_mut_drops`, `iter_mut_mutates_collection`, `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable`, `iter_mut_map_key_readonly`, `iter_mut_no_iter_mut`, `iter_mut_const` |
 | `Deque` | `m24_stdlib/deque_basic`, `deque_construction`, `deque_index_iteration`, `deque_strings_and_drops`, `deque_index_out_of_bounds` |
 | `Set` | `m24_stdlib/set_basic`, `set_construction`, `set_algebra`, `set_iteration`, `set_strings_and_drops`, `set_allocator`, `set_needs_eq` |
-| Roundout (containers, text, paths, time, random together) | `m24_stdlib/containers_graph_search`, `containers_comptime`, `roundout_text_and_time` |
+| Roundout (containers, text, paths, time, random together) | `m24_stdlib/containers_graph_search`, `containers_const`, `roundout_text_and_time` |
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
 | Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
-| Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_comptime/purity_process` |
+| Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_const/purity_process` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m24_stdlib/mem_helpers`, `mem_drop_moves`, `mem_take_needs_default`, `assert_messages`, `assert_ne_passes`, `assert_needs_eq`, `assert_message_bad_args`, `assert_ne_aborts`, `assert_message_aborts`, `assert_eq_message_aborts`, `debug_assert_release`, `debug_assert_aborts`, `debug_assert_eq_aborts`, `todo_aborts`, `unimplemented_aborts`, `m10_test_runner/assert_messages_typed`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |
 | Dynamic errors, `main`, assertions | `m16_errors/dynamic_error_downcast`, `error_context_chain`, `error_context_non_error`, `traces_debug`, `main_result_ok`, `main_result_err`, `main_result_typed`, `main_result_alias`, `assert_typed`, `std_errors` |

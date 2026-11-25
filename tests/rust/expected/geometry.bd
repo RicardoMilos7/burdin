@@ -22,16 +22,16 @@ struct Vec2 repr(C) {
     x: f64
     y: f64
 }
-comptime assert(Vec2.size() == 16, "`Vec2` must have size 16, as in the Rust crate")
-comptime assert(Vec2.align() == 8, "`Vec2` must have alignment 8, as in the Rust crate")
+priv const VEC2_SIZE_CHECK: () = if Vec2.size() == 16 { } else { panic("`Vec2` must have size 16, as in the Rust crate") }
+priv const VEC2_ALIGN_CHECK: () = if Vec2.align() == 8 { } else { panic("`Vec2` must have alignment 8, as in the Rust crate") }
 struct Segment repr(C) {
     a: Vec2
     b: Vec2
     tag: u8
     weight: f32
 }
-comptime assert(Segment.size() == 40, "`Segment` must have size 40, as in the Rust crate")
-comptime assert(Segment.align() == 8, "`Segment` must have alignment 8, as in the Rust crate")
+priv const SEGMENT_SIZE_CHECK: () = if Segment.size() == 40 { } else { panic("`Segment` must have size 40, as in the Rust crate") }
+priv const SEGMENT_ALIGN_CHECK: () = if Segment.align() == 8 { } else { panic("`Segment` must have alignment 8, as in the Rust crate") }
 extern "C" {
     fn geometry_add(a: CPtr<Vec2>, b: CPtr<Vec2>, result: CPtr<Vec2>)
     fn geometry_describe(kind: u8): u32

@@ -444,7 +444,7 @@ Path {
     /// ```
     fn exists(self): bool {
         let text = CString.from(self.text.as_str())
-        comptime if os() == Os.Windows {
+        if os() == Os.Windows {
             let status = unsafe { _access(text.as_ptr(), 0) }
             status == 0
         } else {

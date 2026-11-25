@@ -325,12 +325,12 @@ Returning a chain from a function is allowed when it derives from view-typed par
   mutable iterator is not a `DoubleEndedIterator` (IT14), so `rev` over it is E0141.
   `filter`, `find`, and the other adapters that hand the closure `&T` see a `&&mut T`.
 - *Compile time.* A mutable iterator mutates a run-time collection, so `iter_mut` is impure at compile time (E0224,
-  CT9), like `get_mut`.
+  CE6), like `get_mut`.
 - *Drops.* A mutable iterator owns nothing and has no drop glue. Writing `*x = v` drops the element it replaces.
 
 Tests: `tests/m13_iterators/`; the adapters of IT9, IT13, and IT14 are covered by `tests/m24_stdlib/iter_zip`,
 `iter_chain`, `iter_flat_map`, `iter_flatten`, `iter_cloned_copied`, `iter_cycle`, `iter_rev`, `iter_adapters_drops`,
-`iter_adapters_no_leaks`, and `iter_adapters_comptime`; errors: `iter_zip_from_temporary` (E0123),
+`iter_adapters_no_leaks`, and `iter_adapters_const`; errors: `iter_zip_from_temporary` (E0123),
 `iter_zip_in_struct_field`, `iter_chain_in_collection` (E0120), `iter_chain_while_mutating_second`,
 `iter_zip_while_mutating_first` (E0111), `iter_rev_needs_double_ended`, `iter_rev_through_adapter`,
 `iter_cloned_needs_clone`, `iter_cycle_needs_clone`, `iter_chain_item_mismatch` (E0141), `iter_cloned_needs_views`,

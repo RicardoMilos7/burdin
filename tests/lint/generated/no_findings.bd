@@ -1,6 +1,6 @@
 // Code the compiler generates is never linted (spec/lint.md LN11): derived impls, the impls of an `error enum`, the
-// type parameter of an `impl` argument, `comptime assert` items, and the wrapper around `test` bodies. Nothing here is
-// reported, although the generated names (`impl0`, `comptime assert 1`) and statements would break several lints.
+// type parameter of an `impl` argument, and the wrapper around `test` bodies. Nothing here is
+// reported, although the generated names (`impl0`) and statements would break several lints.
 
 interface Shape {
     fn area(self): i32
@@ -23,8 +23,6 @@ error enum ConfigError {
 
 const BUFFER_SIZE: usize = 256
 
-comptime assert(BUFFER_SIZE % 64 == 0, "the buffer must be a whole number of cache lines")
-comptime assert(BUFFER_SIZE > 0)
 
 fn total(shape: impl Shape): i32 {
     shape.area()
@@ -43,7 +41,7 @@ test "returns a value" {
 }
 
 fn main() {
-    comptime assert(BUFFER_SIZE / 64 == 4)
+    assert(BUFFER_SIZE / 64 == 4)
     let s = Square { side: 3 }
     println("{} {:?} {}", total(s), s, lookup(true).is_ok())
 }

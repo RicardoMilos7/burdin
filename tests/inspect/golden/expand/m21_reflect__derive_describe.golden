@@ -23,17 +23,13 @@ Point: Describe {
         let mut out = String.from("Point")
         out.push_str("(")
         {
-            if (0 as usize) > 0 {
-                out.push_str(", ")
-            }
+            {}
             out.push_str("x")
             out.push_str("=")
             out.push_str(format("{}", self.x))
         }
         {
-            if (1 as usize) > 0 {
-                out.push_str(", ")
-            }
+            { out.push_str(", ") }
             out.push_str("y")
             out.push_str("=")
             out.push_str(format("{}", self.y))
@@ -53,17 +49,13 @@ Pair: Describe {
         let mut out = String.from("Pair")
         out.push_str("(")
         {
-            if (0 as usize) > 0 {
-                out.push_str(", ")
-            }
+            {}
             out.push_str("a")
             out.push_str("=")
             out.push_str(format("{}", self.a))
         }
         {
-            if (1 as usize) > 0 {
-                out.push_str(", ")
-            }
+            { out.push_str(", ") }
             out.push_str("b")
             out.push_str("=")
             out.push_str(format("{}", self.b))

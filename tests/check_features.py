@@ -6,7 +6,7 @@ Needs a built driver (BURDIN selects it, like tests/run_tests.py).
 
 What it checks:
   * `[features]` and `--features`/`--no-default-features`/`--all-features` decide the constants of the generated
-    `features` module, and a program branches on them with `comptime if` (PKG28, PKG29, PKG32);
+    `features` module, and a program branches on them with a plain `if` on the constants (PKG28, PKG29, PKG32);
   * a feature forwards to a dependency's feature (`x/feature`) and an optional dependency is switched by `dep:x`
     (PKG28);
   * features unify across the graph: two dependents request different features of one package and both are enabled,
@@ -102,8 +102,8 @@ use features.polite
 
 fn answer(): i32 {
     let base = 5
-    let loud_part = comptime if loud { 2 } else { 0 }
-    let polite_part = comptime if polite { 1 } else { 0 }
+    let loud_part = if loud { 2 } else { 0 }
+    let polite_part = if polite { 1 } else { 0 }
     base + loud_part + polite_part
 }
 """
@@ -128,17 +128,17 @@ use features.extra
 
 fn main() {
     println("{answer()}")
-    comptime if fast {
+    if fast {
         println("fast on")
     } else {
         println("fast off")
     }
-    comptime if slow {
+    if slow {
         println("slow on")
     } else {
         println("slow off")
     }
-    comptime if extra {
+    if extra {
         println("extra on")
     } else {
         println("extra off")

@@ -24,13 +24,17 @@ fn main() {
     println("Point")
     println("{Point.size} {Point.align}")
     let mut text = String.new()
-    for f in Point.fields {
-        if f.index > 0 {
-            text.push_str(", ")
-        }
-        text.push_str(f.name)
+    {
+        {}
+        text.push_str("x")
         text.push_str(": ")
-        text.push_str(f.type_name)
+        text.push_str("f64")
+    }
+    {
+        { text.push_str(", ") }
+        text.push_str("y")
+        text.push_str(": ")
+        text.push_str("f64")
     }
     println(text)
     println("{Shape.name} has {Shape.variants.len()} variants")

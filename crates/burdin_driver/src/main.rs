@@ -96,8 +96,8 @@ pub(crate) struct Args {
     pub(crate) link_libs: Vec<String>,
     pub(crate) program_args: Vec<String>,
     pub(crate) diagnostics: DiagnosticOptions,
-    /// The step budget of each compile-time evaluation (`spec/comptime.md`, CT11). `None` keeps the default.
-    pub(crate) comptime_steps: Option<u64>,
+    /// The step budget of each compile-time evaluation (`spec/const-eval.md`, CE8). `None` keeps the default.
+    pub(crate) const_steps: Option<u64>,
     /// Where to list the files `embed` read (`--emit-deps`).
     pub(crate) emit_deps: Option<PathBuf>,
     /// `-j`: the most threads (and, for `burdin test`, test processes) at once. `None` is the default.
@@ -340,14 +340,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 args.slow_ms = Some(ms);
             }
             "--emit-deps" => args.emit_deps = Some(option_value(&mut it, inline, a, "a path")?.into()),
-            "--comptime-steps" => {
+            "--const-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
                     .parse()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
-                args.comptime_steps = Some(steps);
+                    .ok_or_else(|| format!("`--const-steps` needs a positive number of steps, got `{value}`"))?;
+                args.const_steps = Some(steps);
             }
             "--timeout" => {
                 let value = option_value(&mut it, inline, a, "a number of milliseconds")?;
@@ -720,8 +720,8 @@ pub(crate) fn parse_number(option: &str, value: &str) -> Result<usize, String> {
     value.parse::<usize>().map_err(|_| format!("`{option}` needs a non-negative number, got `{value}`"))
 }
 
-/// The compiler runs on a thread with a large stack: the comptime interpreter recurses once per nested expression
-/// and call it evaluates, up to the call depth `spec/comptime.md` (CT11) allows.
+/// The compiler runs on a thread with a large stack: the interpreter recurses once per nested expression
+/// and call it evaluates, up to the call depth `spec/const-eval.md` (CE8) allows.
 const COMPILER_STACK: usize = 1 << 30;
 
 fn main() -> ExitCode {
@@ -858,7 +858,7 @@ fn driver_main() -> ExitCode {
         link_libs: &args.link_libs,
         mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: args.emit_deps.as_deref(),
         report_clean: args.command == "build",
         run_build_scripts: true,
@@ -1056,8 +1056,8 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) mode: EntryMode,
     /// How diagnostics are rendered (format, color, width, and limit).
     pub(crate) diagnostics: &'a DiagnosticOptions,
-    /// The step budget of each compile-time evaluation; `None` is the default (`spec/comptime.md`, CT11).
-    pub(crate) comptime_steps: Option<u64>,
+    /// The step budget of each compile-time evaluation; `None` is the default (`spec/const-eval.md`, CE8).
+    pub(crate) const_steps: Option<u64>,
     /// Where to list the files `embed` read; `None` writes nothing.
     pub(crate) emit_deps: Option<&'a Path>,
     /// Write a SARIF log even when the build found nothing (`burdin build` only).
@@ -1255,7 +1255,7 @@ pub(crate) fn front_end(
         release: !options.profile.debug_assertions,
         overflow_checks: options.profile.overflow_checks,
         debug_assertions: options.profile.debug_assertions,
-        comptime_steps: options.comptime_steps,
+        const_steps: options.const_steps,
         no_cache: true,
         jobs: options.jobs,
     };

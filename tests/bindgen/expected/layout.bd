@@ -10,28 +10,28 @@
 struct Number repr(C) {
     bytes: [u64; 2]
 }
-comptime assert(Number.size() == 16, "`Number` must have size 16, as in the C header")
-comptime assert(Number.align() == 8, "`Number` must have alignment 8, as in the C header")
+priv const NUMBER_SIZE_CHECK: () = if Number.size() == 16 { } else { panic("`Number` must have size 16, as in the C header") }
+priv const NUMBER_ALIGN_CHECK: () = if Number.align() == 8 { } else { panic("`Number` must have alignment 8, as in the C header") }
 // `Packed` is declared as words with C's size and alignment because `value` is at offset 1 in C, not 4
 // members: `tag`: CChar at 0, `value`: i32 at 1
 struct Packed repr(C) {
     bytes: [u8; 5]
 }
-comptime assert(Packed.size() == 5, "`Packed` must have size 5, as in the C header")
-comptime assert(Packed.align() == 1, "`Packed` must have alignment 1, as in the C header")
+priv const PACKED_SIZE_CHECK: () = if Packed.size() == 5 { } else { panic("`Packed` must have size 5, as in the C header") }
+priv const PACKED_ALIGN_CHECK: () = if Packed.align() == 1 { } else { panic("`Packed` must have alignment 1, as in the C header") }
 // `Flags` is declared as words with C's size and alignment because `ready` is a bit-field
 struct Flags repr(C) {
     bytes: [u32; 1]
 }
-comptime assert(Flags.size() == 4, "`Flags` must have size 4, as in the C header")
-comptime assert(Flags.align() == 4, "`Flags` must have alignment 4, as in the C header")
+priv const FLAGS_SIZE_CHECK: () = if Flags.size() == 4 { } else { panic("`Flags` must have size 4, as in the C header") }
+priv const FLAGS_ALIGN_CHECK: () = if Flags.align() == 4 { } else { panic("`Flags` must have alignment 4, as in the C header") }
 // `Header` is declared as words with C's size and alignment because `data` is a flexible array member
 // members: `length`: i32 at 0
 struct Header repr(C) {
     bytes: [u32; 1]
 }
-comptime assert(Header.size() == 4, "`Header` must have size 4, as in the C header")
-comptime assert(Header.align() == 4, "`Header` must have alignment 4, as in the C header")
+priv const HEADER_SIZE_CHECK: () = if Header.size() == 4 { } else { panic("`Header` must have size 4, as in the C header") }
+priv const HEADER_ALIGN_CHECK: () = if Header.align() == 4 { } else { panic("`Header` must have alignment 4, as in the C header") }
 // `Wide` is declared without fields because its alignment of 16 bytes has no Burdin integer
 struct Wide repr(C) { }
 // `Anonymous` is declared as words with C's size and alignment because it has an anonymous struct or union member
@@ -39,22 +39,22 @@ struct Wide repr(C) { }
 struct Anonymous repr(C) {
     bytes: [u32; 2]
 }
-comptime assert(Anonymous.size() == 8, "`Anonymous` must have size 8, as in the C header")
-comptime assert(Anonymous.align() == 4, "`Anonymous` must have alignment 4, as in the C header")
+priv const ANONYMOUS_SIZE_CHECK: () = if Anonymous.size() == 8 { } else { panic("`Anonymous` must have size 8, as in the C header") }
+priv const ANONYMOUS_ALIGN_CHECK: () = if Anonymous.align() == 4 { } else { panic("`Anonymous` must have alignment 4, as in the C header") }
 struct Plain repr(C) {
     a: CChar
     b: i32
     c: CChar
 }
-comptime assert(Plain.size() == 12, "`Plain` must have size 12, as in the C header")
-comptime assert(Plain.align() == 4, "`Plain` must have alignment 4, as in the C header")
+priv const PLAIN_SIZE_CHECK: () = if Plain.size() == 12 { } else { panic("`Plain` must have size 12, as in the C header") }
+priv const PLAIN_ALIGN_CHECK: () = if Plain.align() == 4 { } else { panic("`Plain` must have alignment 4, as in the C header") }
 struct Holder repr(C) {
     number: Number
     plain: Plain
     pointer: CPtr<Number>
 }
-comptime assert(Holder.size() == 40, "`Holder` must have size 40, as in the C header")
-comptime assert(Holder.align() == 8, "`Holder` must have alignment 8, as in the C header")
+priv const HOLDER_SIZE_CHECK: () = if Holder.size() == 40 { } else { panic("`Holder` must have size 40, as in the C header") }
+priv const HOLDER_ALIGN_CHECK: () = if Holder.align() == 8 { } else { panic("`Holder` must have alignment 8, as in the C header") }
 extern "C" {
     fn use_number(n: CPtr<Number>)
     fn use_packed(p: CPtr<Packed>, f: CPtr<Flags>, h: CPtr<Header>, w: CPtr<Wide>, a: CPtr<Anonymous>)

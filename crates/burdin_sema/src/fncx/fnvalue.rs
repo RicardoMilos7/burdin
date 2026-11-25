@@ -43,14 +43,6 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let sig = self.globals.sigs[f.0].clone();
-        if sig.params.iter().any(|p| p.comptime) {
-            self.diags.error(
-                Code::INVALID_COMPTIME,
-                span,
-                "a function with a `comptime` parameter cannot be used as a value: each call is specialized for its                  compile-time arguments (spec/comptime.md, CT4)",
-            );
-            return error_expr(span);
-        }
         if sig.ret.is_second_class() {
             self.diags.error(
                 Code::CLOSURE_ESCAPES,

@@ -46,7 +46,7 @@ struct CheckArgs {
     cross: Option<burdin_tir::target::Target>,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
-    comptime_steps: Option<u64>,
+    const_steps: Option<u64>,
     jobs: Option<usize>,
     diagnostics: DiagnosticOptions,
     explain_ownership: bool,
@@ -109,14 +109,14 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
                     _ => return Err(format!("`--format` takes `human`, `text`, or `json`, got `{value}`")),
                 });
             }
-            "--comptime-steps" => {
+            "--const-steps" => {
                 let value = option_value(&mut it, inline, a, "a number of steps")?;
                 let steps: u64 = value
                     .parse()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| format!("`--comptime-steps` needs a positive number of steps, got `{value}`"))?;
-                args.comptime_steps = Some(steps);
+                    .ok_or_else(|| format!("`--const-steps` needs a positive number of steps, got `{value}`"))?;
+                args.const_steps = Some(steps);
             }
             _ if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             _ if target.is_none() => target = Some(PathBuf::from(a)),
@@ -174,7 +174,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         link_libs: &[],
         mode: if args.tests { EntryMode::Test } else { EntryMode::Build },
         diagnostics: &args.diagnostics,
-        comptime_steps: args.comptime_steps,
+        const_steps: args.const_steps,
         emit_deps: None,
         // A CI gate gets a log even when the package is clean, like `burdin build` (`spec/diagnostics.md`, DG11).
         report_clean: true,
@@ -247,13 +247,9 @@ fn ownership_functions<'a>(
     let bodies =
         program.functions.iter().filter(|f| !f.symbolic).chain(program.closures.iter().map(|closure| &closure.func));
     for function in bodies {
-        // Skip the compiler's own items: a generic instance, a comptime specialization, a test wrapper.
+        // Skip the compiler's own items: a generic instance, a test wrapper.
         let generated = function.name.rsplit('.').next().is_some_and(|name| name.starts_with("__"));
-        if function.span.lo >= function.span.hi
-            || function.name.contains('<')
-            || function.name.contains(".comptime")
-            || generated
-        {
+        if function.span.lo >= function.span.hi || function.name.contains('<') || generated {
             continue;
         }
         let path = front.sources.get(function.span.file).path.clone();
@@ -593,16 +589,16 @@ mod tests {
         let args = parse(&argv(&["app"])).unwrap();
         assert_eq!(args.target, PathBuf::from("app"));
         assert!(!args.release && !args.tests);
-        assert_eq!(args.comptime_steps, None);
+        assert_eq!(args.const_steps, None);
         assert!(!args.explain_ownership && !args.explain);
         assert_eq!(args.format, None);
     }
 
     #[test]
     fn options_and_diagnostics_flags_are_read_in_any_order() {
-        let args = parse(&argv(&["--tests", "app", "--release", "--comptime-steps=50", "--error-limit", "3"])).unwrap();
+        let args = parse(&argv(&["--tests", "app", "--release", "--const-steps=50", "--error-limit", "3"])).unwrap();
         assert!(args.release && args.tests);
-        assert_eq!(args.comptime_steps, Some(50));
+        assert_eq!(args.const_steps, Some(50));
         assert_eq!(args.diagnostics.error_limit, Some(3));
     }
 
@@ -622,7 +618,7 @@ mod tests {
         assert!(parse(&argv(&["a", "b"])).unwrap_err().contains("unexpected argument `b`"));
         assert!(parse(&argv(&["a", "--bogus"])).unwrap_err().contains("unknown option `--bogus`"));
         assert!(parse(&argv(&["a", "--release=yes"])).unwrap_err().contains("takes no value"));
-        assert!(parse(&argv(&["a", "--comptime-steps", "0"])).unwrap_err().contains("positive number"));
+        assert!(parse(&argv(&["a", "--const-steps", "0"])).unwrap_err().contains("positive number"));
         assert!(parse(&argv(&["a", "--diagnostic-format", "xml"])).unwrap_err().contains("unknown diagnostic format"));
         assert!(
             parse(&argv(&["a", "--format", "xml", "--explain-ownership"]))

@@ -811,10 +811,6 @@
     "named": true
   },
   {
-    "type": "comptime",
-    "named": false
-  },
-  {
     "type": "const",
     "named": false
   },

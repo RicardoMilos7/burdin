@@ -3,7 +3,7 @@
 // A `Duration` is a length of time, an `Instant` a reading of the monotonic clock, a `SystemTime` a reading of the
 // real-time clock, and a `DateTime` that reading broken into a calendar date and a time of day in UTC. The compiler's
 // primitives (`__clock`, `__sleep`) reach the operating system; everything else is Burdin and pure, so a `Duration`,
-// a `DateTime`, and the calendar arithmetic work at compile time. Reading a clock and sleeping are impure: a comptime
+// a `DateTime`, and the calendar arithmetic work at compile time. Reading a clock and sleeping are impure: a constant
 // evaluation that reaches one fails with E0224.
 //
 // Determinism for tests: the `Clock` interface is what code that needs the time takes as a parameter. `SystemClock`
@@ -976,7 +976,7 @@ ManualClock: Clock {
 }
 
 /// Suspends the current thread for about `d`: the system may round it up to its timer resolution, and a signal can
-/// end a Unix sleep early. A comptime evaluation that reaches it fails with E0224.
+/// end a Unix sleep early. A constant evaluation that reaches it fails with E0224.
 ///
 /// ```
 /// sleep(Duration.from_millis(1))

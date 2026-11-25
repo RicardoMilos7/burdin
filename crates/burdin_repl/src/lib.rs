@@ -2,7 +2,7 @@
 //!
 //! Everything a session is comes from one design: the session is a program — one module file whose `fn main`
 //! body grows with every statement input and whose items accumulate below it — and every input is checked by
-//! the real front end through the query-based compiler library and evaluated by the comptime interpreter. So
+//! the real front end through the query-based compiler library and evaluated by the interpreter. So
 //! every diagnostic is the one `burdin build` reports, moves and borrows persist across lines exactly as in a
 //! function body, and a printed value is byte for byte what the compiled program prints, because the printing
 //! runs the same standard-library `Formatter` code.
@@ -16,8 +16,8 @@ mod highlight;
 mod terminal;
 mod text;
 
-use burdin_comptime::{Bindings, SessionFault};
 use burdin_diag::{Code, Diagnostics, RenderOptions, SourceMap, Span};
+use burdin_interp::{Bindings, SessionFault};
 use burdin_query::{Analysis, Db, MoveEvent, StmtKind};
 use std::collections::BTreeSet;
 use std::io::{IsTerminal, Write};
@@ -158,7 +158,7 @@ impl<'a, 'n> Repl<'a, 'n> {
             release: config.release,
             overflow_checks: !config.release,
             debug_assertions: !config.release,
-            comptime_steps: config.steps,
+            const_steps: config.steps,
             no_cache: false,
             jobs: config.jobs,
         };
@@ -177,11 +177,11 @@ impl<'a, 'n> Repl<'a, 'n> {
         repl
     }
 
-    fn comptime_options(&self) -> burdin_comptime::Options {
-        burdin_comptime::Options {
+    fn const_options(&self) -> burdin_interp::Options {
+        burdin_interp::Options {
             overflow_checks: !self.config.release,
             debug_assertions: !self.config.release,
-            steps: self.config.steps.unwrap_or(burdin_comptime::DEFAULT_STEPS),
+            steps: self.config.steps.unwrap_or(burdin_interp::DEFAULT_STEPS),
         }
     }
 
@@ -328,10 +328,10 @@ impl<'a, 'n> Repl<'a, 'n> {
         let Some(program) = analysis.program.as_ref() else { return Outcome::Failed };
         let count = analysis.statements_of(SESSION_FILE, SESSION_FN).unwrap_or_default().len();
         let file = self.db.file_id(SESSION_FILE).expect("the session file is loaded");
-        let Some(main) = burdin_comptime::session_function(program, SESSION_FN, file) else { return Outcome::Failed };
+        let Some(main) = burdin_interp::session_function(program, SESSION_FN, file) else { return Outcome::Failed };
         let snapshot = self.bindings.clone();
-        let opts = self.comptime_options();
-        let result = burdin_comptime::eval_stmts(program, main, self.done, &mut self.bindings, opts);
+        let opts = self.const_options();
+        let result = burdin_interp::eval_stmts(program, main, self.done, &mut self.bindings, opts);
         match result {
             Ok(()) => {
                 self.done = count;
@@ -394,10 +394,10 @@ impl<'a, 'n> Repl<'a, 'n> {
         let mut failed = false;
         if let Some(program) = &analysis.program
             && let Some(file) = self.db.file_id(SESSION_FILE)
-            && let Some(main) = burdin_comptime::session_function(program, SESSION_FN, file)
+            && let Some(main) = burdin_interp::session_function(program, SESSION_FN, file)
         {
-            let opts = self.comptime_options();
-            let result = burdin_comptime::drop_bindings(program, main, &mut self.bindings, opts);
+            let opts = self.const_options();
+            let result = burdin_interp::drop_bindings(program, main, &mut self.bindings, opts);
             if let Err(fault) = result {
                 self.report_fault(&fault);
                 failed = true;

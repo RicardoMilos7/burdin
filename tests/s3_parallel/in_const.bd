@@ -1,0 +1,14 @@
+//@ compile-fail
+
+// Parallel iteration is neither pure nor deterministic, so a `const` cannot evaluate it (spec/parallel.md, PR10;
+// spec/const-eval.md, CE6).
+
+fn total(): i64 {
+    par_range(0, 10).count() as i64
+}
+
+const N: i64 = total() //~ E0224
+
+fn main() {
+    println("{}", N)
+}

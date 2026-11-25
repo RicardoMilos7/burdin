@@ -1,0 +1,21 @@
+//@ compile-fail
+
+// Only values of materializable types can cross from compile time into the program: not a `List`, a `Map`, a
+// `Heap`, or a closure (spec/const-eval.md, CE3).
+
+fn numbers(): List<i32> {
+    let mut xs = List<i32>.new()
+    xs.push(1)
+    xs
+}
+
+const XS: List<i32> = numbers() //~ E0221
+
+const BOXED: Heap<i32> = Heap.new(1) //~ E0221
+
+// A `List` may be built and used inside a constant's initializer; only the value must be materializable.
+const COUNT: usize = numbers().len()
+
+fn main() {
+    println("{COUNT}")
+}

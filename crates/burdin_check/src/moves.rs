@@ -1009,25 +1009,8 @@ impl<'a> Checker<'a> {
             K::Block(b) => {
                 self.block(b, Mode::Move);
             }
-            // A comptime expression uses only its own locals (spec/comptime.md, CT2), checked like any code.
-            K::Comptime(inner) => self.expr(inner, mode),
-            // The unrolled body is checked as a loop body over owned items (CT6), so a move of an outer value in
-            // it is reported as a move in a loop, like any loop.
-            K::ComptimeFor { pat, iter, body } => {
-                self.expr(iter, Mode::Move);
-                let entry = self.states.clone();
-                let outer = self.outer_locals();
-                self.loops.push(LoopInfo { label: None, outer, exits: Vec::new(), moves: HashMap::new() });
-                self.scopes.push(Vec::new());
-                let elem = match &iter.ty {
-                    Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => (**t).clone(),
-                    _ => Ty::Error,
-                };
-                self.bind_pattern(pat, &elem, &mut Vec::new(), None, iter.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
+            // A compile-time condition reads only constants, checked like any code.
+            K::ConstCond(inner) => self.expr(inner, mode),
             K::If(cond, then, other) => self.if_expr(cond, then, other.as_deref()),
             K::While(..)
             | K::Loop(_)

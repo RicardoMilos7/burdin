@@ -72,7 +72,7 @@ TlsVersion {
 
 /// A new context with TLS 1.2 as the lowest version. The library must be OpenSSL 3 or later.
 priv unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         // On Windows the "context" is the configuration of schannel.bd.
         let cfg = config_new(server)
         if cfg.is_null() {
@@ -99,7 +99,7 @@ priv unsafe fn new_ctx(server: bool): Result<CPtr<SslCtx>, TlsError> {
 
 /// Gives `ctx` the roots of `trust`.
 priv unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), TlsError> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         let mut roots = List<CPtr<CertContext>>.new()
         for cert in trust.roots.iter() {
             roots.push(cert.handle as CPtr<CertContext>)
@@ -128,7 +128,7 @@ priv unsafe fn apply_trust(ctx: CPtr<SslCtx>, trust: TrustStore): Result<(), Tls
 }
 
 priv unsafe fn set_version(ctx: CPtr<SslCtx>, command: i32, version: TlsVersion): Result<(), TlsError> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         let code: u32 = if version.code() == TLS1_2_VERSION { 0 } else { 1 }
         if !config_set_version(ctx as CPtr<WinConfig>, command == SSL_CTRL_SET_MIN_PROTO_VERSION, code) {
             return Err(TlsError.Config("the protocol version range is empty".to_string()))
@@ -160,7 +160,7 @@ priv fn alpn_wire(protocols: List<String>): Result<List<u8>, TlsError> {
 }
 
 priv unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), TlsError> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         let wire = alpn_wire(protocols)?
         if !config_set_alpn(ctx as CPtr<WinConfig>, wire[0..wire.len()]) {
             return Err(TlsError.Config("cannot set the ALPN protocols".to_string()))
@@ -184,7 +184,7 @@ priv unsafe fn set_alpn(ctx: CPtr<SslCtx>, protocols: List<String>): Result<(), 
 
 /// Installs a certificate chain (leaf first) and its key, and checks that they belong together.
 priv unsafe fn use_identity(ctx: CPtr<SslCtx>, chain: List<Certificate>, key: PrivateKey): Result<(), TlsError> {
-    comptime if target.os() == target.Os.Windows {
+    if target.os() == target.Os.Windows {
         let mut contexts = List<CPtr<CertContext>>.new()
         for cert in chain.iter() {
             contexts.push(cert.handle as CPtr<CertContext>)
@@ -273,7 +273,7 @@ ClientConfig {
     /// assert(!config.skips_verification())
     /// ```
     fn with_trust(trust: TrustStore): Result<ClientConfig, TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 let ctx = new_ctx(false)?
                 match apply_trust(ctx, trust) {
@@ -369,7 +369,7 @@ ClientConfig {
     /// assert(config.skips_verification())
     /// ```
     fn insecure_skip_verify(mut self) {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { (*(self.ctx as CPtr<WinConfig>)).mode = MODE_SKIP }
             self.skip_verify = true
         } else if features.openssl {
@@ -393,7 +393,7 @@ ClientConfig {
 
 ClientConfig: Drop {
     fn drop(mut self) {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { config_free(self.ctx as CPtr<WinConfig>) }
         } else if features.openssl {
             unsafe {
@@ -440,7 +440,7 @@ ServerConfig {
     /// let _config = ServerConfig.new(chain, key).unwrap()
     /// ```
     fn new(chain: List<Certificate>, key: PrivateKey): Result<ServerConfig, TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 let ctx = new_ctx(true)?
                 match use_identity(ctx, chain, key) {
@@ -525,7 +525,7 @@ ServerConfig {
     /// config.require_client_certificate(roots).unwrap()
     /// ```
     fn require_client_certificate(mut self, roots: TrustStore): Result<(), TlsError> {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe {
                 apply_trust(self.ctx, roots)?
                 (*(self.ctx as CPtr<WinConfig>)).require_client = 1
@@ -545,7 +545,7 @@ ServerConfig {
 
 ServerConfig: Drop {
     fn drop(mut self) {
-        comptime if target.os() == target.Os.Windows {
+        if target.os() == target.Os.Windows {
             unsafe { config_free(self.ctx as CPtr<WinConfig>) }
         } else if features.openssl {
             unsafe {

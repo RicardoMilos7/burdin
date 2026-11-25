@@ -1,0 +1,13 @@
+//@ compile-fail
+
+// A constant whose evaluation reaches itself through a call is a cycle (spec/const-eval.md, CE2).
+
+const A: i32 = helper() //~ E0009
+
+fn helper(): i32 {
+    A + 1
+}
+
+fn main() {
+    println("{A}")
+}

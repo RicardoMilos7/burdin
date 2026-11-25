@@ -134,13 +134,9 @@ fn class_of(tokens: &[burdin_syntax::token::Token], index: usize) -> Option<Clas
         | TokenKind::Struct
         | TokenKind::Type
         | TokenKind::Use => Class::Keyword,
-        TokenKind::Any
-        | TokenKind::Comptime
-        | TokenKind::Mut
-        | TokenKind::Own
-        | TokenKind::Priv
-        | TokenKind::Unsafe
-        | TokenKind::Where => Class::Modifier,
+        TokenKind::Any | TokenKind::Mut | TokenKind::Own | TokenKind::Priv | TokenKind::Unsafe | TokenKind::Where => {
+            Class::Modifier
+        }
         TokenKind::As => Class::Keyword,
         TokenKind::False | TokenKind::True => Class::Constant,
         TokenKind::SelfValue | TokenKind::SelfType => Class::SelfName,

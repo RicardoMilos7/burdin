@@ -195,8 +195,8 @@ pub fn function(engine: &mut Engine<'_>, path: &str, lo: u32, hi: u32) -> Outcom
     if flow.returns {
         return refuse(format!("`{name}` returns early; inlining it would move that `return` into the caller"));
     }
-    if flow.self_value || flow.comptime {
-        return refuse(format!("`{name}` uses `self` or `comptime`, which cannot move into the caller"));
+    if flow.self_value {
+        return refuse(format!("`{name}` uses `self`, which cannot move into the caller"));
     }
     // One call, not inside the function itself.
     let calls: Vec<_> = engine

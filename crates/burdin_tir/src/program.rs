@@ -110,22 +110,11 @@ pub struct TestEntry {
     pub span: Span,
     /// The function the runner calls: the test body plus the wrapper that prints an `Err` before returning it.
     pub func: FuncId,
-    /// The test's own body, `__burdin_test_N_body`. A `[differential]` test is executed at compile time through
-    /// this function, without the wrapper's output (spec/test-runner.md).
+    /// The test's own body, `__burdin_test_N_body`: the function without the wrapper's output, which
+    /// `burdin test --interpret` runs (spec/test-runner.md).
     pub body: FuncId,
     /// The validated attributes of the test item (spec/test-runner.md).
     pub attrs: TestAttrs,
-    /// The `Ok`/`Err` outcome of running `body` at compile time; `Some` exactly for a `[differential]` test.
-    /// `burdin_sema` leaves it `None`; `burdin_comptime` fills it in during a test build.
-    pub comptime: Option<TestOutcome>,
-}
-
-/// The outcome of a `[differential]` test body run at compile time (spec/test-runner.md): the result the compiled
-/// test must also produce.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TestOutcome {
-    Ok,
-    Err,
 }
 
 /// One `bench "name" { ... }` block, compiled as the function `func` (`spec/bench.md`, BN1). One call of `func`
@@ -166,9 +155,6 @@ pub struct TestAttrs {
     pub should_panic_message: Option<String>,
     /// `should_fail`: the test must return an error instead of passing.
     pub should_fail: bool,
-    /// `differential`: run the body at compile time too, and require the compiled test to produce the same
-    /// `Ok`/`Err` outcome (spec/test-runner.md).
-    pub differential: bool,
 }
 
 /// One `extern "C"` declaration. Its parameters are passed by value, as the C ABI expects.
@@ -205,25 +191,13 @@ pub struct ParamSig {
     /// `None` when the parameter is required. A default is a constant expression, so a call may insert it
     /// directly, and it may not mention a type parameter.
     pub default: Option<Expr>,
-    /// A `comptime` parameter (`spec/comptime.md`, CT4): its argument is a [`crate::ExprKind::Comptime`]
-    /// expression, and every call is specialized for the argument's value before code generation.
-    pub comptime: bool,
 }
 
 impl ParamSig {
     /// A plain read-only parameter: borrowed for the call, never dropped by the callee. Used for built-in
     /// functions and methods, whose arguments code generation evaluates directly.
     pub fn plain(ty: Ty) -> ParamSig {
-        ParamSig {
-            ty,
-            by_ref: false,
-            mut_param: false,
-            own: false,
-            exclusive: false,
-            name: None,
-            default: None,
-            comptime: false,
-        }
+        ParamSig { ty, by_ref: false, mut_param: false, own: false, exclusive: false, name: None, default: None }
     }
 }
 

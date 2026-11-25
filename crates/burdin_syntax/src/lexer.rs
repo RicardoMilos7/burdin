@@ -192,9 +192,11 @@ impl Lexer<'_> {
             match TokenKind::keyword(word) {
                 // A member name after `.` is its own namespace: `.any()` stays spellable even though `any` is a
                 // keyword (spec/grammar.md, "Keywords").
-                Some(
-                    TokenKind::Reserved(_) | TokenKind::Any | TokenKind::Impl | TokenKind::Error | TokenKind::Comptime,
-                ) if self.after_dot() => TokenKind::Ident(word.to_string()),
+                Some(TokenKind::Reserved(_) | TokenKind::Any | TokenKind::Impl | TokenKind::Error)
+                    if self.after_dot() =>
+                {
+                    TokenKind::Ident(word.to_string())
+                }
                 Some(keyword) => keyword,
                 None => TokenKind::Ident(word.to_string()),
             }
@@ -674,7 +676,6 @@ mod tests {
             ("use", Use),
             ("where", Where),
             ("while", While),
-            ("comptime", Comptime),
             ("derive", Reserved("derive".into())),
         ];
         for (word, want) in cases {

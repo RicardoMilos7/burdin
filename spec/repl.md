@@ -1,7 +1,7 @@
 # The REPL
 
 `burdin repl` is the interactive read-eval-print loop (stage 3; issue #578 and its sub-issues #580, #582, #584). It
-is built on the comptime interpreter (`spec/comptime.md`), which already evaluates the typed tree with a step
+is built on the compile-time interpreter (`spec/const-eval.md`), which already evaluates the typed tree with a step
 budget, and it checks every input through the query-based compiler library (`spec/query.md`), so every diagnostic
 is the one `burdin build` reports. This file is the exact behavior, with a rule ID for each point and the tests
 that cover it.
@@ -45,10 +45,10 @@ Tests: `tests/repl/items.session`, `closure.session`, `multiline.session`; `text
 White space and comments alone are accepted and append nothing.
 Tests: `text.rs` unit tests; `multiline.session`; `empty` and per-line behavior in every session.
 
-**RP3. Evaluation by the interpreter, printing is real.** An accepted statement input is evaluated by the comptime
+**RP3. Evaluation by the interpreter, printing is real.** An accepted statement input is evaluated by the compile-time
 interpreter, which sees the program the checks accepted — every relevant diagnostic is therefore the front end's.
 Printing — `print`, `println`, `eprint`, `eprintln`, the standard library's writer builtins, and `is_terminal` —
-writes the process's real streams in a session (compile-time evaluation still rejects it, CT9). Every other
+writes the process's real streams in a session (compile-time evaluation still rejects it, CE6). Every other
 compile-time restriction stands: files, the environment, processes, tasks, threads, and C calls are E0224 with a
 note that `:compile` builds the session and runs it natively. A panic is E0222 and the budget E0225, both reported
 at the fault's own span. In every fault case the input is discarded and the session is unchanged (RP7).

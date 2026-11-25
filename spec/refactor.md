@@ -82,7 +82,7 @@ with `name`, and inserts `let name = <expression>` on its own line before the st
 It refuses when:
 
 - the expression would run a different number of times where the local is declared — it is inside a loop body, a
-  `while` condition, the right of `&&`/`||`/`orelse`, a branch, a closure, a `comptime` expression, or a string's hole;
+  `while` condition, the right of `&&`/`||`/`orelse`, a branch, a closure, or a string's hole;
 - the expression is assigned to or taken with `&mut` (its value is not what is meant);
 - the statement does not start its line;
 - the name is not free in the function.
@@ -101,8 +101,7 @@ declared after the one they came from, and replaces them with a call.
   it and the call stands in its place.
 - **The body** is re-indented by one level.
 
-It refuses when the selection is not whole statements of one block, holds `return`, `break`, `continue`, `self`, or a
-`comptime` expression, binds a local the code after the selection uses, or uses a local whose type is not one a
+It refuses when the selection is not whole statements of one block, holds `return`, `break`, `continue`, or `self`, binds a local the code after the selection uses, or uses a local whose type is not one a
 parameter can take.
 
 ## RF11 — Inline variable
@@ -120,7 +119,7 @@ number of times than the declaration (RF9's list).
 block expression, and removes the declaration with its doc comment.
 
 It refuses when the function is generic, a method, `unsafe`, `blocking`, called zero or more than one time, calls
-itself, holds `return`, `self`, or `comptime`, or takes an argument that is not a name or a literal (moving it could
+itself, holds `return` or `self`, or takes an argument that is not a name or a literal (moving it could
 reorder effects) or whose text names a local the body declares (the substitution would capture it).
 
 ## RF13 — Change signature

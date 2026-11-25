@@ -34,7 +34,7 @@ pub(crate) fn run(target: &Path, out: &Path, guard: Option<&str>, diagnostics: &
         // A library package has no `main`, and the checks are the same.
         mode: EntryMode::Test,
         diagnostics,
-        comptime_steps: None,
+        const_steps: None,
         emit_deps: None,
         run_build_scripts: true,
         locked: false,
