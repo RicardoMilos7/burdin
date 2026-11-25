@@ -1,0 +1,82 @@
+// --fix applies the style lints that cannot change the program (spec/lint.md LN40): the `return` goes, the comparison
+// with a literal goes, the `if` becomes its condition, the empty `else` goes, the parentheses go, and the `let` is
+// folded into its value. A change that would lose a comment or a line break is only reported.
+
+fn ready(): bool {
+    true
+}
+
+fn sum(a: i32, b: i32): i32 {
+    return a + b
+}
+
+fn choose(x: i32): i32 {
+    if x > 0 {
+        return 1
+    } else {
+        return 2
+    }
+}
+
+fn compare(a: bool, b: bool): bool {
+    let one = a == true
+    let two = a != true
+    let three = (a && b) == false
+    one && two && three
+}
+
+fn bool_if(x: i32): bool {
+    if x > 100 { true } else { false }
+}
+
+fn bool_if_negated(x: i32): bool {
+    if x > 100 { false } else { true }
+}
+
+fn bool_return(): bool {
+    if ready() {
+        return true
+    } else {
+        return false
+    }
+}
+
+fn empty_else(x: i32) {
+    if x > 1 {
+        println("big")
+    } else {}
+    if x > 2 {
+        println("bigger")
+    } else {
+    }
+}
+
+fn parens(x: i32): i32 {
+    let a = (x + 1)
+    if (a > 2) {
+        println("big")
+    }
+    return (a * 2)
+}
+
+fn folded(x: i32): i32 {
+    let y = x * 3
+    y
+}
+
+fn kept_with_comment(x: i32): i32 {
+    let y = x * 3 // the answer
+    y
+}
+
+fn kept_with_type(x: i32): i64 {
+    let y: i64 = x as i64
+    y
+}
+
+fn main() {
+    println("{} {} {}", sum(1, 2), choose(1), compare(true, false))
+    println("{} {} {}", bool_if(1), bool_if_negated(1), bool_return())
+    empty_else(2)
+    println("{} {} {} {}", parens(1), folded(2), kept_with_comment(3), kept_with_type(4))
+}

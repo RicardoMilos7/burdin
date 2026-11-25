@@ -1,0 +1,30 @@
+// A boolean compared with `true` or `false` (spec/lint.md LN35).
+
+fn ready(): bool {
+    true
+}
+
+fn main() {
+    let a = ready()
+    let b = !a
+    if a == true { //~ L0019
+        println("a")
+    }
+    if a != false { //~ L0019
+        println("a")
+    }
+    if b == false { //~ L0019
+        println("b")
+    }
+    if true != b { //~ L0019
+        println("b")
+    }
+    let c = ready() == false //~ L0019
+    let d = (a && b) == true //~ L0019
+    // Not a comparison with a literal, or not a comparison at all.
+    let e = a == b
+    let f = 1 == 1
+    if a && !b {
+        println("{} {} {} {}", c, d, e, f)
+    }
+}

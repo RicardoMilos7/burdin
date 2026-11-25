@@ -1,0 +1,38 @@
+// A value bound with `let` and returned on the next line (spec/lint.md LN39).
+
+fn total(xs: List<i32>): i32 {
+    let sum = xs.len() as i32 //~ L0023
+    sum
+}
+
+fn typed(): i64 {
+    let n: i64 = 5 //~ L0023
+    n
+}
+
+fn in_branch(flag: bool): i32 {
+    if flag {
+        let r = 7 //~ L0023
+        r
+    } else {
+        0
+    }
+}
+
+// Not reported: the value is used again, or a different value is returned.
+fn used_twice(): i32 {
+    let a = 1
+    println("{}", a)
+    a
+}
+
+fn other(): i32 {
+    let a = 1
+    let b = a + 1
+    println("{}", b)
+    a
+}
+
+fn main() {
+    println("{} {} {} {} {}", total([1, 2].iter().to_list()), typed(), in_branch(true), used_twice(), other())
+}

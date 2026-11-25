@@ -6,6 +6,13 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #779: six style lints for `burdin lint`, all at `warn`: `needless_return` (`L0018`), `bool_comparison`
+  (`L0019`), `needless_bool` (`L0020`), `empty_else` (`L0021`), `redundant_parens` (`L0022`), and `let_and_return`
+  (`L0023`). They read the syntax tree only, each has a message with a span and a note, and `--fix` applies an edit
+  when it cannot change the program (a comment or a line break inside parentheses makes the finding report-only).
+  The seventh lint the issue names, a `mut` that is never mutated, is `unused_mut` (`L0013`), which already existed.
+  `spec/lint.md` LN34-LN40, `docs/lints.md`, `tests/lint/style/`, and `tests/lint/fix/style.bd` prove them.
+
 - Issue #1018: the standard library's helpers have plain names. The `__` prefix is gone from the 385 helpers in
   `std/src`, which are package-private (`priv`): `__split` is `split_text`, `__f64_parse` is `f64_parse`,
   `__serialize_i8` is `serialize_value_i8`, and the compiler's name maps follow (`u32.from_le_bytes`, `f64.PI`, the

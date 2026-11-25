@@ -107,6 +107,18 @@ lints! {
         "`to_list()` builds a list only to iterate it right away";
     MissingDocs, "missing_docs", "L0017", Allow,
         "a public item has no doc comment";
+    NeedlessReturn, "needless_return", "L0018", Warn,
+        "a `return` is the last thing a function does; the value alone is enough";
+    BoolComparison, "bool_comparison", "L0019", Warn,
+        "a boolean is compared with `true` or `false`";
+    NeedlessBool, "needless_bool", "L0020", Warn,
+        "an `if` produces `true` or `false` from its condition";
+    EmptyElse, "empty_else", "L0021", Warn,
+        "an `else` block has nothing in it";
+    RedundantParens, "redundant_parens", "L0022", Warn,
+        "parentheses around a whole expression that needs none";
+    LetAndReturn, "let_and_return", "L0023", Warn,
+        "a value is bound with `let` and returned on the next line";
 }
 
 impl fmt::Display for Lint {

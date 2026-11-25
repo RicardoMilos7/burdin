@@ -15,7 +15,7 @@ type my_alias = i32 //~ L0002
 const maxSize: i32 = 8 //~ L0003
 
 fn doThing(someArg: i32): i32 { //~ L0001 L0001
-    let myLocal = someArg + 1 //~ L0001
+    let myLocal = someArg + 1 //~ L0001 L0023
     myLocal
 }
 
