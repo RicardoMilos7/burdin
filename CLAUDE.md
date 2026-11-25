@@ -46,6 +46,8 @@ not updated and may disagree with the repository.
    modules, caching, and the `bindgen` a script may invoke, `spec/bindgen.md` is `burdin bindgen`: libclang, the
    import rules, layout checks, wrappers, and `--export`; `spec/rust-interop.md` is Rust interop: rustdoc JSON, the C-ABI
    shim, `[rust.crates]`, the pinned toolchain, and the layout checks; `spec/fix.md` is the suggestion model, `burdin fix`, and editions;
+   `spec/cross-compilation.md` is `--target <triple>`: the six targets, the target facts, the per-platform runtime
+   layouts, the cross link (`BURDIN_CC_<TRIPLE>`, `BURDIN_SYSROOT_<TRIPLE>`), and what it does not support;
    `spec/refactor.md` is `burdin ssr` and the refactorings (`burdin refactor`, the language server's structural search
    and extract/inline actions); `spec/lint.md` is `burdin lint` (the `[lint]` table,
    suppression comments, and `--fix`); `spec/doc.md` is `burdin doc`, the doc comments, the Markdown subset,
@@ -162,6 +164,7 @@ python3 tests/check_cli.py               check the command surface: every comman
 python3 tests/check_verbosity.py          check `-q`/`--quiet` and `-v`/`--verbose` on build, run, and check: the golden quiet errors, the phases and codegen units
 python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_target.py            check the target directory's artifact cache: the layout, fingerprints, invalidation, the failure paths (spec/target.md)
+python3 tests/check_cross.py             check `--target`: the six targets' objects, the target facts, the per-platform runtime layouts, and the cross link (spec/cross-compilation.md)
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
 python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links

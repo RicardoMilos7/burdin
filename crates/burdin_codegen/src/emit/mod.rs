@@ -239,13 +239,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let triple = machine.get_triple().as_str().to_string_lossy().to_string();
         let windows = triple.contains("windows");
         let darwin = triple.contains("darwin") || triple.contains("apple");
+        let aarch64 = triple.starts_with("aarch64") || triple.starts_with("arm64");
         let platform = tir::ioerror::platform(windows, darwin);
         // The checking allocator is a `burdin test` build's (`spec/allocators.md`, AL9): a bench build measures the
         // plain C heap, so its numbers are not the allocator's bookkeeping.
         // A library has no test entry point either, so it is not a `burdin test` build (`spec/library.md`, LB6).
         let checking =
             !flags.library && program.main.is_none() && program.benches.is_empty() && program.fuzz_target.is_none();
-        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, checking)?;
+        let rt = runtime::generate(cx, module, usize_ty, string_ty, windows, darwin, aarch64, checking)?;
         Ok(Codegen {
             cx,
             module,

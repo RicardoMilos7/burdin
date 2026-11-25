@@ -28,6 +28,7 @@ Tests: `tests/check_target.py` (the layout, the profiles, and the kinds).
 **TG2. What is cached.** `build`, `run`, and `test` of a package directory (a directory with a `burdin.toml`) use the
 cache. Every other build links into its output as it always did, without reading or writing the cache:
 
+- a build for another platform (`--target`, `spec/cross-compilation.md`, XC9), whose executable is not the host's;
 - a debug build (`-g`), because the linker writes sidecar files beside the executable (the PDB, the Natvis file, and the
   dSYM bundle on macOS), and a copy would leave them behind;
 - a build with `--emit` or `--emit-ir`, which writes files of its own;

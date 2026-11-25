@@ -1,9 +1,12 @@
-//@ compile-fail
+//@ run
+//> abc
+//> abc
 
-// The conversion does not apply to a `let` annotation.
+// A `let` annotation is a type-directed position: the `String` is borrowed as a `str` (IC1).
 
 fn main() {
     let s = String.from("abc")
-    let t: str = s //~ E0003
+    let t: str = s
     println(t)
+    println(s)
 }

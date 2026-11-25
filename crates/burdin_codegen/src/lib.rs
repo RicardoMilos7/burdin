@@ -30,6 +30,7 @@
 //! predecessors, so the rest of the tree can be generated without special cases.
 mod cache;
 mod emit;
+mod platform;
 mod runtime;
 mod split;
 mod taskrt;
@@ -41,7 +42,7 @@ use inkwell::OptimizationLevel;
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
+use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple};
 use std::path::{Path, PathBuf};
 
 pub use split::{MAX_UNITS, UNIT_INSTRUCTIONS};
@@ -236,12 +237,27 @@ pub fn llvm_version() -> String {
     format!("{major}.{minor}.{patch}")
 }
 
-/// The host target machine at the optimization level of the profile. PIC on every platform, including COFF: a
+/// The triple of the platform being built for: the one `--target` named (`burdin_tir::target`), or the host's own.
+/// Every LLVM target the compiler links is initialized, since a cross build needs the other architecture's backend.
+fn target_triple() -> Result<TargetTriple, String> {
+    let config = InitializationConfig::default();
+    match burdin_tir::target::explicit() {
+        Some(target) => {
+            Target::initialize_all(&config);
+            Ok(TargetTriple::create(target.triple()))
+        }
+        None => {
+            Target::initialize_native(&config)?;
+            Ok(TargetMachine::get_default_triple())
+        }
+    }
+}
+
+/// The target machine at the optimization level of the profile, for the platform being built for. PIC on every platform, including COFF: a
 /// static relocation model makes LLVM address string constants with 32-bit absolute relocations
 /// (`IMAGE_REL_AMD64_ADDR32`), which the MSVC linker rejects without `/LARGEADDRESSAWARE:NO`.
 fn target_machine(level: OptLevel) -> Result<TargetMachine, String> {
-    Target::initialize_native(&InitializationConfig::default())?;
-    let triple = TargetMachine::get_default_triple();
+    let triple = target_triple()?;
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
     let level = match level {
         OptLevel::None => OptimizationLevel::None,
@@ -291,7 +307,7 @@ pub fn emit_object_timed(
     // The dialect is read when the target machine builds its assembly printer, so it is set first.
     set_asm_syntax(opts.asm_syntax)?;
     let machine = target_machine(opts.opt_level)?;
-    let triple = TargetMachine::get_default_triple();
+    let triple = target_triple()?;
 
     let context = Context::create();
     let module = context.create_module(module_name);
@@ -557,7 +573,7 @@ fn set_asm_syntax(syntax: AsmSyntax) -> Result<(), String> {
         AsmSyntax::Intel => "-x86-asm-syntax=intel",
         AsmSyntax::Att => "-x86-asm-syntax=att",
     };
-    if cfg!(not(target_arch = "x86_64")) {
+    if burdin_tir::target::current().arch != burdin_tir::target::Arch::X86_64 {
         return Err("`--intel` and `--att` choose between the two x86 assembly dialects; this processor has only one"
             .to_string());
     }

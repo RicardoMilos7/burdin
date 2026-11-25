@@ -146,18 +146,22 @@ The receiver of a `mut self` method is borrowed mutably without a marker (`c.bum
 position is a syntax error (E0001).
 Tests: `m06_conventions/conventions_basic`, `call_site_markers`, `receiver_mut_marker`, `m04_data/struct_and_methods`.
 
-**IC1 Implicit conversion.** A `String` value passed as an argument whose parameter type is `str` is borrowed as a
-`str` for the call; the `String` is not moved. The same conversion applies to the argument-like positions that
-already have a `str` type: the payload of `Some`, `Ok`, and `Err` and the value of `mem.replace`; `assert_eq` converts
-its second operand when the first is a `str`. It does not apply anywhere else: a `let` annotation, an assignment, a
-return type, an array or tuple element, a struct-literal field (a concrete `str` field is E0120, and #919 tracks that),
-a built-in name that is not an argument keeps the type `String` and is E0003 when `str` is expected. A comparison
+**IC1 Implicit conversion.** A `String` value at a position whose type is `str` is borrowed as a `str`; the `String`
+is not moved, and the view follows the lifetime rules of an explicit `.as_str()` (a view of a temporary or a local
+that is returned is E0122, one that outlives its storage is E0123). The positions are: a call argument whose parameter
+type is `str`, the payload of `Some`, `Ok`, and `Err`, the value of `mem.replace`, `assert_eq`'s second operand when the
+first is a `str`, a `let` with a `str` annotation, the right side of `=`, a `return` value and a function body's tail
+whose return type is `str`, an element of an array or tuple whose element type is `str`, and a struct-literal field
+of a generic struct instantiated with `str` (a concrete `str` field is E0120). The conversion applies to the `String`
+itself, never inside another type (`Option<String>` is not `Option<str>`, E0003), and a built-in name that is not
+in one of these positions keeps the type `String` and is E0003 when `str` is expected. A comparison
 (`==`, `!=`, `<`, `<=`, `>`, `>=`) with a `String` on one side and a `str` on the other borrows the `String` as a `str`
 too, and so does the `String` operand of `String + str` (`operators.md` OP14). `.as_str()` is the explicit conversion. These are
 the **only** implicit conversions in the language. There are no `&mut T` to `&T`, `&T` to `&mut T`, `&String` to
 `str`, `String` to `[u8]`, numeric widening, or user-defined conversions (all E0003).
-Tests: `m06_conventions/string_str_conversion`, `m09_stdlib/string_ops`, `m19_operators/string_str_operators`; errors: `let_string_to_str`,
-`mut_ref_to_shared_ref`, `ref_string_to_str`, `string_to_slice`.
+Tests: `m06_conventions/string_str_conversion`, `string_str_positions`, `let_string_to_str`, `m09_stdlib/string_ops`,
+`m19_operators/string_str_operators`; errors: `string_str_not_nested`, `return_temp_string_as_str`, `mut_ref_to_shared_ref`,
+`ref_string_to_str`, `string_to_slice`.
 
 ## 4. Exclusivity (EX)
 

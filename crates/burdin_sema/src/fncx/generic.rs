@@ -747,6 +747,21 @@ impl FnCx<'_> {
             let v = self.expr(value, hint.as_ref());
             checked.push((index, v));
         }
+        // A `String` value where the expected instance has a `str` field is borrowed as a `str` (IC1), so the
+        // argument the field gives is `str`, not `String`.
+        if let Some(Ty::Struct(want)) = expect {
+            let wanted = &globals.structs[want.id].fields;
+            for (i, v) in &mut checked {
+                if v.ty == Ty::String
+                    && wanted.len() == defs.len()
+                    && wanted[*i].name == defs[*i].name
+                    && wanted[*i].ty == Ty::Str
+                {
+                    let taken = std::mem::replace(v, error_expr(span));
+                    *v = self.coerce_arg(taken, &Ty::Str);
+                }
+            }
+        }
         let mut bindings = Vec::new();
         for (i, v) in &checked {
             globals.unify(&defs[*i].ty, &v.ty, &mut bindings);

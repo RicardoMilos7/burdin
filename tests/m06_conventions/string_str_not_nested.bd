@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// IC1 converts a `String` itself, at the position that has a `str` type. It does not look inside another type.
+
+fn main() {
+    let o = Some(String.from("abc"))
+    let p: Option<str> = o //~ E0003
+    let a = [String.from("a")]
+    let b: [str; 1] = a //~ E0003
+}

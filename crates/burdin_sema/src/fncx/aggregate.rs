@@ -623,7 +623,10 @@ impl FnCx<'_> {
         for e in elems {
             let c = self.expr(e, elem_ty.as_ref());
             let c = match &elem_ty {
-                Some(t) => self.expect_ty(c, t),
+                Some(t) => {
+                    let c = self.coerce_arg(c, t);
+                    self.expect_ty(c, t)
+                }
                 None => {
                     elem_ty = Some(c.ty.clone());
                     c

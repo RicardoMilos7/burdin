@@ -88,6 +88,7 @@ impl FnCx<'_> {
                         if self.infer_returns {
                             self.returned.push(v.ty.clone());
                         }
+                        let v = self.coerce_arg(v, &ret);
                         Some(Box::new(self.expect_ty(v, &ret)))
                     }
                     None => {
@@ -162,8 +163,17 @@ impl FnCx<'_> {
                     Some(Ty::Tuple(ts)) if ts.len() == elems.len() => ts.iter().cloned().map(Some).collect(),
                     _ => vec![None; elems.len()],
                 };
-                let checked: Vec<tir::Expr> =
-                    elems.iter().zip(&expects).map(|(e, t)| self.expr(e, t.as_ref())).collect();
+                let checked: Vec<tir::Expr> = elems
+                    .iter()
+                    .zip(&expects)
+                    .map(|(e, t)| {
+                        let v = self.expr(e, t.as_ref());
+                        match t {
+                            Some(want) => self.coerce_arg(v, want),
+                            None => v,
+                        }
+                    })
+                    .collect();
                 let ty = Ty::Tuple(checked.iter().map(|e| e.ty.clone()).collect());
                 mk(tir::ExprKind::Tuple(checked), ty, span)
             }

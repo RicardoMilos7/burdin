@@ -18,6 +18,7 @@ impl FnCx<'_> {
         let place = self.expr(lhs, None);
         self.write_place = saved;
         let rhs = self.expr(rhs, Some(&place.ty));
+        let rhs = self.coerce_arg(rhs, &place.ty);
         let rhs = self.expect_ty(rhs, &place.ty);
         self.check_assign_target(&place, lhs.span, "=");
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)

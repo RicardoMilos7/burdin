@@ -42,6 +42,8 @@ struct CheckArgs {
     features: burdin_query::package::FeatureRequest,
     /// `--offline`: fetch no git package (`spec/packages.md`, PKG24).
     offline: bool,
+    /// `--target <triple>`: check the program as it is for that platform (`spec/cross-compilation.md`, XC11).
+    cross: Option<burdin_tir::target::Target>,
     /// `--print-instances`: print the monomorphization report after a clean check.
     print_instances: bool,
     const_steps: Option<u64>,
@@ -88,6 +90,10 @@ fn parse(argv: &[String]) -> Result<CheckArgs, String> {
             "--no-default-features" => args.features.no_default_features = flag_without_value(a, inline)?,
             "--all-features" => args.features.all_features = flag_without_value(a, inline)?,
             "--offline" => args.offline = flag_without_value(a, inline)?,
+            "--target" => {
+                let triple = option_value(&mut it, inline, a, "a target triple")?;
+                args.cross = Some(burdin_tir::target::Target::parse(&triple)?);
+            }
             "--print-instances" => args.print_instances = flag_without_value(a, inline)?,
             "--explain-ownership" => args.explain_ownership = flag_without_value(a, inline)?,
             "--explain" => args.explain = flag_without_value(a, inline)?,
@@ -145,6 +151,7 @@ pub(crate) fn run(argv: &[String]) -> ExitCode {
         Ok(a) => a,
         Err(message) => return crate::cli::usage_error("check", &message),
     };
+    burdin_tir::target::set(args.cross);
     let profile = match crate::profile::resolve_for_command(
         "check",
         &args.target,

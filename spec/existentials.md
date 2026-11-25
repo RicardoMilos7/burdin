@@ -63,8 +63,8 @@ list.push(circle)                       // the element type is the expected type
 S { shape: circle }                      // a struct or enum field
 ```
 
-This is an implicit conversion that produces an **owned** value, so unlike the `String`-to-`str` borrow (IC1) it is
-allowed in every position where an expected type is known, not only in argument-like positions. Boxing moves a
+This is an implicit conversion that produces an **owned** value, so like the `String`-to-`str` borrow (IC1) it is
+allowed in every position where an expected type is known. Boxing moves a
 non-`Copy` value and copies a `Copy` value; the source is left moved.
 
 The value must implement `I` (E0141) and must be first-class: boxing a view (`str`, `[T]`, `&T`, `&mut T`, a closure

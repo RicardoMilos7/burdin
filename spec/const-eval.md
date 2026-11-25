@@ -104,6 +104,9 @@ Rules:
   without `else` whose condition is false generates `()`.
 - Evaluating the condition is pure (CE6) and bounded (CE8), as the evaluation of a `const`.
 
+`target.os()` and `target.arch()` report the platform the program is built for: the host's, or the one `--target`
+names (`spec/cross-compilation.md`, XC2). Compile-time evaluation itself still runs on the host.
+
 ## CE5. Reflection loops
 
 A plain `for item in Type.fields { ... }` or `for item in Type.variants { ... }` is unrolled by sema while the body is

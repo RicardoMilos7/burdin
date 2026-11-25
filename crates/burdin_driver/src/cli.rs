@@ -495,6 +495,14 @@ fn link_lib() -> Arg {
     option("link-lib", "name", "Link against a native library; may repeat").action(ArgAction::Append)
 }
 
+/// `--target`: the platform to build for (`spec/cross-compilation.md`, XC1).
+fn target_triple() -> Arg {
+    Arg::new("triple").long("target").value_name("triple").help(
+        "Build for another platform: x86_64 or aarch64 with unknown-linux-gnu, apple-darwin, or pc-windows-msvc \
+         (spec/cross-compilation.md)",
+    )
+}
+
 fn sanitize() -> Arg {
     option(
         "sanitize",
@@ -548,6 +556,7 @@ fn build() -> Command {
                 offline(),
                 flag("strip", "Strip the executable (with MSVC, optimize for size)"),
                 flag("lto", "Emit bitcode and link with -flto (needs an LLVM compiler driver)"),
+                target_triple(),
                 flag("pgo-generate", "Instrument the program for profile-guided optimization"),
                 option("pgo-use", "profile", "Optimize with this profile (*.profraw or *.profdata)"),
                 flag(
@@ -845,6 +854,7 @@ fn check() -> Command {
                 profile_option(),
                 opt_level(),
                 flag("tests", "Also check the `test` blocks, and do not require a `main` (a library package)"),
+                target_triple(),
                 flag("print-instances", "Print every generic instance the program created and why (spec/inspect.md)"),
                 locked(),
                 features_option(),

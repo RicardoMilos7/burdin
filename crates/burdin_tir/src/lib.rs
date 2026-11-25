@@ -8,6 +8,7 @@ pub mod ops;
 pub mod place;
 pub mod program;
 pub mod query;
+pub mod target;
 pub mod tree;
 pub mod ty;
 pub mod visit;
@@ -19,19 +20,13 @@ pub use query::TypeDefs;
 pub use tree::*;
 pub use ty::*;
 
-/// The operating system programs are compiled for, as `target.os()` reports it: the compiler's own host
-/// (`spec/const-eval.md`, CE4; the compiler does not cross-compile).
+/// The operating system programs are compiled for, as `target.os()` reports it: the host's unless `--target` named
+/// another platform (`spec/const-eval.md`, CE4; `spec/cross-compilation.md`).
 pub fn target_os() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    }
+    target::current().os_name()
 }
 
 /// The processor architecture programs are compiled for, as `target.arch()` reports it.
 pub fn target_arch() -> &'static str {
-    if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }
+    target::current().arch_name()
 }

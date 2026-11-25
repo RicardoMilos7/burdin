@@ -1,6 +1,7 @@
 //! The mapping from an operating system's error code to `std.IoErrorKind` (`spec/errors.md`, ERR11).
 //!
-//! The compiler is not a cross-compiler (`target_os`), so exactly one of these tables is the program's. Each
+//! The program's table is the one of the platform it is built for (`platform`); the compiler's own is `host_platform`,
+//! which compile-time evaluation uses because it runs on the host. Each
 //! entry pairs the platform's own code with the *name* of a kind: names, not variant indices, so reordering
 //! `std.IoErrorKind` cannot silently change a classification. A code no table lists is `Other`.
 //!
@@ -42,8 +43,7 @@ pub const KINDS: [&str; 22] = [
     "Other",
 ];
 
-/// The platform of the code the program's primitives report: the host's, because the compiler does not
-/// cross-compile.
+/// The platform the compiler runs on: the code compile-time evaluation sees comes from the host's own system calls.
 pub fn host_platform() -> Platform {
     if cfg!(target_os = "windows") {
         Platform::Windows

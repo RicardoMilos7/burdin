@@ -363,9 +363,11 @@ executable form. The design document leaves them open; where a rule says "deviat
    moves the value. A read-only parameter is passed plainly and borrows. A `mut self` receiver takes no marker (a
    marker there is a syntax error, E0001). `spec/grammar.md` 8.4, `spec/memory-rules.md` CV2-CV4.
 2. **One implicit coercion.** A `String` passed where `str` is expected is borrowed as a `str` and stays usable.
-   This is the only implicit conversion, and it applies only to argument-like positions (call arguments, `Some`/`Ok`/
-   `Err` payloads, `assert_eq`, `mem.replace`); a `let`, assignment, return, array or tuple element, struct-literal
-   field, or comparison does not convert. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
+   This is the only implicit conversion, and it applies at every position that has a `str` type (call arguments,
+   `Some`/`Ok`/`Err` payloads, `assert_eq`, `mem.replace`, a `let` annotation, assignment, `return` and a function's
+   tail, an array or tuple element, and a struct-literal field of a generic struct instantiated with `str`); it does
+   not look inside another type (`Option<String>` is not `Option<str>`). A comparison borrows the `String` operand
+   as before. There are no `&mut T`-to-`&T`, `&T`-to-`&mut T`, `&String`-to-`str`, or user-defined conversions.
    `spec/memory-rules.md` IC1.
 3. **Views are copyable.** `str`, `[T]`, `&T`, and `CPtr<T>` can be used many times without a derive. `&mut T` cannot
    be copied: assigning it moves it (E0100), while passing it to `&mut` or dereferencing reborrows it.
@@ -755,7 +757,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   writes `fn max_of<T: Ord>(own a: T, own b: T): T` (`m07_generics/generic_functions.bd`). Returning a read-only
   parameter is E0101 (`m06_conventions/move_out_of_readonly_param.bd`; CV1, RT2).
 - **One implicit conversion (deviation).** A `String` passed where `str` is expected is borrowed as a `str`; no other
-  conversion is implicit, and it applies only to argument-like positions. The design says "no implicit conversions".
+  conversion is implicit, and it applies at every position that has a `str` type. The design says "no implicit conversions".
   Decision 2; [memory rules](../spec/memory-rules.md) IC1; `m06_conventions/str_views.bd`,
   `m06_conventions/string_str_conversion.bd`, `m09_stdlib/string_ops.bd`.
 - **Views are copyable without deriving `Copy` (deviation).** `&T`, `str`, `[T]`, and `CPtr<T>` are Copy; `&mut T` is

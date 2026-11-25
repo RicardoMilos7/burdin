@@ -129,7 +129,7 @@ pub(crate) fn dir_is_library(dir: &Path) -> bool {
 /// LB3): `NAME.lib` and `NAME.dll` on Windows, `libNAME.dylib` on macOS, `libNAME.so` elsewhere, and `libNAME.a` for a
 /// static library on Unix.
 pub(crate) fn file_name(kind: Kind, stem: &str) -> String {
-    match (kind, cfg!(windows), cfg!(target_os = "macos")) {
+    match (kind, crate::platform::windows(), crate::platform::macos()) {
         (Kind::Static, true, _) => format!("{stem}.lib"),
         (Kind::Static, false, _) => format!("lib{stem}.a"),
         (Kind::Shared, true, _) => format!("{stem}.dll"),

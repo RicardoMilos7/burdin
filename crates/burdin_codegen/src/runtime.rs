@@ -30,6 +30,7 @@
 //! The functions are internal to the module and keep the names they had as C functions (`burdin_rt_*`).
 
 use crate::emit::{GenResult, llvm_err};
+use crate::platform::SysLayout;
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -67,24 +68,6 @@ const MAGIC: u64 = 0x4255_5244_4e41_4c4c;
 /// a leak report does not mention it.
 const UNTRACKED_MAGIC: u64 = MAGIC + 1;
 
-/// The offset of `d_name` in a `struct dirent`, read from the host's own C layout.
-#[cfg(unix)]
-const DIRENT_NAME_OFFSET: u64 = std::mem::offset_of!(libc::dirent, d_name) as u64;
-/// Windows has no `dirent`; its directory listing reads `WIN32_FIND_DATAA` instead.
-#[cfg(windows)]
-const DIRENT_NAME_OFFSET: u64 = 0;
-/// The size of a `struct stat`, rounded up to whole 8-byte words so the buffer is 8-byte aligned.
-const STAT_WORDS: u32 = (std::mem::size_of::<libc::stat>() as u32).div_ceil(8);
-/// The fields the runtime reads from `struct stat`, as the host's C layout puts them.
-const STAT_SIZE_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_size) as u64;
-const STAT_MODE_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_mode) as u64;
-const STAT_ATIME_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_atime) as u64;
-const STAT_MTIME_OFFSET: u64 = std::mem::offset_of!(libc::stat, st_mtime) as u64;
-/// `st_mode` is 16 bits on macOS and Windows, and 32 on Linux.
-#[cfg(any(target_os = "macos", windows))]
-const STAT_MODE_BYTES: u32 = 2;
-#[cfg(not(any(target_os = "macos", windows)))]
-const STAT_MODE_BYTES: u32 = 4;
 /// The Windows `WIN32_FIND_DATAA` layout: `dwFileAttributes` first and `cFileName` after the fixed fields.
 const FIND_DATA_FILE_NAME_OFFSET: u64 = 44;
 /// `sockaddr_in` is 16 bytes on every supported platform. The address bytes start at offset 4; the family's
@@ -92,24 +75,6 @@ const FIND_DATA_FILE_NAME_OFFSET: u64 = 44;
 const SOCKADDR_PORT_OFFSET: u64 = 2;
 const SOCKADDR_ADDR_OFFSET: u64 = 4;
 const SOCKADDR_SIZE: u64 = 16;
-/// The fields of `struct addrinfo` the resolver reads. The Boost/Winsock `ADDRINFOA` has the same 48-byte layout
-/// on 64-bit Windows with 32-bit `int` fields; the Unix structure's offsets come from the host header.
-#[cfg(unix)]
-const ADDRINFO_FAMILY_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_family) as u64;
-#[cfg(windows)]
-const ADDRINFO_FAMILY_OFFSET: u64 = 4;
-#[cfg(unix)]
-const ADDRINFO_ADDR_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_addr) as u64;
-#[cfg(windows)]
-const ADDRINFO_ADDR_OFFSET: u64 = 32;
-#[cfg(unix)]
-const ADDRINFO_NEXT_OFFSET: u64 = std::mem::offset_of!(libc::addrinfo, ai_next) as u64;
-#[cfg(windows)]
-const ADDRINFO_NEXT_OFFSET: u64 = 40;
-#[cfg(unix)]
-const ADDRINFO_SIZE: u64 = std::mem::size_of::<libc::addrinfo>() as u64;
-#[cfg(windows)]
-const ADDRINFO_SIZE: u64 = 48;
 /// `addrinfo.ai_flags`, at the start of the structure on both platforms.
 const ADDRINFO_FLAGS_OFFSET: u64 = 0;
 /// `AI_PASSIVE`: resolve a wildcard address for `bind`.
@@ -117,56 +82,13 @@ const AI_PASSIVE: i32 = 1;
 const AF_INET: i32 = 2;
 const SOCK_STREAM: i32 = 1;
 const SOCK_DGRAM: i32 = 2;
-#[cfg(unix)]
-const SOL_SOCKET: i32 = libc::SOL_SOCKET;
-#[cfg(windows)]
-const SOL_SOCKET: i32 = 0xffff;
-#[cfg(unix)]
-const SO_ERROR: i32 = libc::SO_ERROR;
-#[cfg(windows)]
-const SO_ERROR: i32 = 0x1007;
-#[cfg(unix)]
-const SO_REUSEADDR: i32 = libc::SO_REUSEADDR;
-#[cfg(windows)]
-const SO_REUSEADDR: i32 = 0x0004;
 const IPPROTO_TCP: i32 = 6;
-#[cfg(unix)]
-const TCP_NODELAY: i32 = libc::TCP_NODELAY;
-#[cfg(windows)]
-const TCP_NODELAY: i32 = 0x0001;
-/// `send`'s flag that turns a write to a peer that has gone away into `EPIPE` instead of a `SIGPIPE`, which would end
-/// the process. Linux has the flag (`0x4000`). Windows raises no signal, and macOS takes `SO_NOSIGPIPE` on the socket
-/// instead (`SO_NOSIGPIPE_OPTION`), so the flag is zero there. An accepted socket inherits the option from its
-/// listener on macOS.
-const MSG_NOSIGNAL: i32 = if cfg!(target_os = "linux") { 0x4000 } else { 0 };
 /// `SO_NOSIGPIPE`, the macOS socket option that does what `MSG_NOSIGNAL` does for one socket. The value is defined
 /// everywhere so the same function body can name it; only macOS sets it.
 const SO_NOSIGPIPE_OPTION: i32 = 0x1022;
 /// `ioctlsocket`'s "set non-blocking" request. Only Windows uses it; the value is defined everywhere so the
 /// same function body can name it.
 const FIONBIO: i32 = 0x8004_667e_u32 as i32;
-/// `fcntl`'s "get the file status flags" and "set them", and the non-blocking bit among them. `libc` exports
-/// these on Unix only, so a build on Windows (where the socket path uses `ioctlsocket`) still gets a value for the
-/// branch it never runs.
-#[cfg(unix)]
-const F_GETFL: i32 = libc::F_GETFL;
-#[cfg(unix)]
-const F_SETFL: i32 = libc::F_SETFL;
-#[cfg(unix)]
-const O_NONBLOCK: i32 = libc::O_NONBLOCK;
-#[cfg(windows)]
-const F_GETFL: i32 = 3;
-#[cfg(windows)]
-const F_SETFL: i32 = 4;
-#[cfg(windows)]
-const O_NONBLOCK: i32 = 0x800;
-/// The `errno` values that mean "try again": a non-blocking call would block, a connect is still in progress,
-/// or a signal interrupted the call.
-#[cfg(unix)]
-const RETRY_CODES: [i32; 4] = [libc::EAGAIN, libc::EWOULDBLOCK, libc::EINPROGRESS, libc::EINTR];
-/// The Winsock equivalents, reported by `WSAGetLastError`.
-#[cfg(windows)]
-const RETRY_CODES: [i32; 5] = [10035, 10036, 10004, 10037, 10055];
 /// `WIN32_FIND_DATAA` is 320 bytes with its 4-byte alignment.
 const FIND_DATA_WORDS: u32 = 40;
 /// `FILE_ATTRIBUTE_REPARSE_POINT`, the bit that marks a link or junction on Windows.
@@ -424,8 +346,9 @@ pub(crate) struct Runtime<'ctx> {
     pub run: FunctionValue<'ctx>,
 }
 
-/// Generates the runtime into `module`. `windows` selects the Windows CRT functions and `darwin` the macOS signal
-/// structures.
+/// Generates the runtime into `module`. `windows` selects the Windows CRT functions, `darwin` the macOS signal
+/// structures, and with `aarch64` the platform's system constants (`platform.rs`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate<'ctx>(
     cx: &'ctx Context,
     module: &Module<'ctx>,
@@ -433,9 +356,10 @@ pub(crate) fn generate<'ctx>(
     string_ty: StructType<'ctx>,
     windows: bool,
     darwin: bool,
+    aarch64: bool,
     checking: bool,
 ) -> GenResult<Runtime<'ctx>> {
-    let mut g = Gen::new(cx, module, usize_ty, string_ty, windows, darwin, checking);
+    let mut g = Gen::new(cx, module, usize_ty, string_ty, windows, darwin, aarch64, checking);
     g.generate()
 }
 
@@ -1264,6 +1188,10 @@ struct Gen<'ctx, 'a> {
     b: Builder<'ctx>,
     windows: bool,
     darwin: bool,
+    /// The platform's C structure offsets and system constants (`platform.rs`).
+    sys: SysLayout,
+    /// Arm64 rather than x86-64, for the few places where the two differ on one operating system.
+    aarch64: bool,
     usize_ty: IntType<'ctx>,
     ptr_ty: PointerType<'ctx>,
     string_ty: StructType<'ctx>,
@@ -1322,6 +1250,7 @@ impl<'ctx> BaseHelpers<'ctx> {
 }
 
 impl<'ctx, 'a> Gen<'ctx, 'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         cx: &'ctx Context,
         module: &'a Module<'ctx>,
@@ -1329,6 +1258,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         string_ty: StructType<'ctx>,
         windows: bool,
         darwin: bool,
+        aarch64: bool,
         checking: bool,
     ) -> Self {
         Gen {
@@ -1337,6 +1267,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             b: cx.create_builder(),
             windows,
             darwin,
+            sys: SysLayout::new(windows, darwin, aarch64),
+            aarch64,
             usize_ty,
             ptr_ty: cx.ptr_type(AddressSpace::default()),
             string_ty,
@@ -4501,7 +4433,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let f = self.function("burdin_rt_file_open", i32_ty.fn_type(&params, false));
         let (path, plen) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
         let options: Vec<IntValue<'ctx>> = (2..8).map(|i| Self::int_param(f, i)).collect();
-        let c = open_flag_constants(self.windows, cfg!(target_os = "macos"));
+        let c = open_flag_constants(self.windows, self.darwin);
         let zero = i32_ty.const_zero();
         let flag = |v: u32| i32_ty.const_int(u64::from(v), false);
         let nonzero = |v: IntValue<'ctx>| -> GenResult<IntValue<'ctx>> {
@@ -4860,7 +4792,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_return(Some(&code)).map_err(llvm_err)?;
 
         self.b.position_at_end(entry);
-        let name = self.offset(ent, usize_ty.const_int(DIRENT_NAME_OFFSET, false))?;
+        let name = self.offset(ent, usize_ty.const_int(self.sys.dirent_name_offset, false))?;
         let nlen = self.call(strlen, &[name.into()])?.expect("strlen returns a size").into_int_value();
         let skip = self.is_dot_or_dotdot(name, nlen)?;
         self.b.build_conditional_branch(skip, scan, append).map_err(llvm_err)?;
@@ -5179,7 +5111,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
         let symbol = if self.windows {
             "_stat64"
-        } else if self.darwin && cfg!(target_arch = "x86_64") {
+        } else if self.darwin && !self.aarch64 {
             // The modern 64-bit-inode layout; plain `stat` is the legacy struct on Intel macOS.
             "lstat$INODE64"
         } else {
@@ -5190,7 +5122,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let f = self.function("burdin_rt_metadata", i32_ty.fn_type(&params, false));
         let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
         let cpath = self.cstring_of(path, plen, malloc)?;
-        let buf = self.b.build_alloca(i64_ty.array_type(STAT_WORDS), "stat.buf").map_err(llvm_err)?;
+        let buf = self.b.build_alloca(i64_ty.array_type(self.sys.stat_words), "stat.buf").map_err(llvm_err)?;
         let status = self.call(stat, &[cpath.into(), buf.into()])?.expect("stat returns an int").into_int_value();
         let ok = self.b.build_int_compare(IntPredicate::EQ, status, i32_ty.const_zero(), "").map_err(llvm_err)?;
         let fill = self.block(f, "meta.fill");
@@ -5206,12 +5138,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let at = self.offset(buf, usize_ty.const_int(offset, false))?;
             Ok(b.build_load(ty, at, name).map_err(llvm_err)?.into_int_value())
         };
-        let size = load(&self.b, STAT_SIZE_OFFSET, i64_ty, "stat.size")?;
-        let mode_ty = if STAT_MODE_BYTES == 2 { self.cx.i16_type() } else { self.cx.i32_type() };
-        let mode_raw = load(&self.b, STAT_MODE_OFFSET, mode_ty, "stat.mode")?;
+        let size = load(&self.b, self.sys.stat_size_offset, i64_ty, "stat.size")?;
+        let mode_ty = if self.sys.stat_mode_bytes == 2 { self.cx.i16_type() } else { self.cx.i32_type() };
+        let mode_raw = load(&self.b, self.sys.stat_mode_offset, mode_ty, "stat.mode")?;
         let mode = self.b.build_int_z_extend(mode_raw, i64_ty, "stat.mode.wide").map_err(llvm_err)?;
-        let modified = load(&self.b, STAT_MTIME_OFFSET, i64_ty, "stat.mtime")?;
-        let accessed = load(&self.b, STAT_ATIME_OFFSET, i64_ty, "stat.atime")?;
+        let modified = load(&self.b, self.sys.stat_mtime_offset, i64_ty, "stat.mtime")?;
+        let accessed = load(&self.b, self.sys.stat_atime_offset, i64_ty, "stat.atime")?;
         let kind = self.b.build_and(mode, i64_ty.const_int(S_IFMT, false), "stat.kind").map_err(llvm_err)?;
         let is_file =
             self.b.build_int_compare(IntPredicate::EQ, kind, i64_ty.const_int(S_IFREG, false), "").map_err(llvm_err)?;
@@ -8358,11 +8290,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .build_int_compare(
                 IntPredicate::EQ,
                 code,
-                self.i32().const_int(u64::from(RETRY_CODES[0] as u32), false),
+                self.i32().const_int(u64::from(self.sys.retry_codes[0] as u32), false),
                 "",
             )
             .map_err(llvm_err)?;
-        for c in &RETRY_CODES[1..] {
+        for c in &self.sys.retry_codes[1..] {
             let same = self
                 .b
                 .build_int_compare(IntPredicate::EQ, code, self.i32().const_int(u64::from(*c as u32), false), "")
@@ -8420,11 +8352,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         );
         let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[self.usize_ty.into()], false));
         let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
-        let hints = self.b.build_alloca(self.i8().array_type(ADDRINFO_SIZE as u32), "ai.hints").map_err(llvm_err)?;
+        let hints =
+            self.b.build_alloca(self.i8().array_type(self.sys.addrinfo_size as u32), "ai.hints").map_err(llvm_err)?;
         self.b
-            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(ADDRINFO_SIZE, false))
+            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(self.sys.addrinfo_size, false))
             .map_err(llvm_err)?;
-        let family = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FAMILY_OFFSET, false))?;
+        let family = self.offset(hints, self.usize_ty.const_int(self.sys.addrinfo_family_offset, false))?;
         self.b.build_store(family, i32_ty.const_int(u64::from(AF_INET as u32), false)).map_err(llvm_err)?;
         let flags = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FLAGS_OFFSET, false))?;
         let passive_flag = self
@@ -8488,7 +8421,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_return(Some(&i64_ty.const_int(u64::MAX - 1, true))).map_err(llvm_err)?;
 
         self.b.position_at_end(copy);
-        let addr_at = self.offset(first, self.usize_ty.const_int(ADDRINFO_ADDR_OFFSET, false))?;
+        let addr_at = self.offset(first, self.usize_ty.const_int(self.sys.addrinfo_addr_offset, false))?;
         let addr = self.b.build_load(ptr_ty, addr_at, "ai.addr").map_err(llvm_err)?.into_pointer_value();
         self.b.build_memcpy(out, 1, addr, 1, self.usize_ty.const_int(SOCKADDR_SIZE, false)).map_err(llvm_err)?;
         // The port is in network byte order: the high byte first.
@@ -8570,12 +8503,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
             let small = self.b.build_int_truncate(fd, i32_ty, "fd32").map_err(llvm_err)?;
             let current = self
-                .call(fcntl, &[small.into(), i32_ty.const_int(F_GETFL as u32 as u64, false).into()])?
+                .call(fcntl, &[small.into(), i32_ty.const_int(self.sys.f_getfl as u32 as u64, false).into()])?
                 .expect("fcntl returns flags")
                 .into_int_value();
-            let flags =
-                self.b.build_or(current, i32_ty.const_int(O_NONBLOCK as u32 as u64, false), "").map_err(llvm_err)?;
-            self.call(fcntl, &[small.into(), i32_ty.const_int(F_SETFL as u32 as u64, false).into(), flags.into()])?;
+            let flags = self
+                .b
+                .build_or(current, i32_ty.const_int(self.sys.o_nonblock as u32 as u64, false), "")
+                .map_err(llvm_err)?;
+            self.call(
+                fcntl,
+                &[small.into(), i32_ty.const_int(self.sys.f_setfl as u32 as u64, false).into(), flags.into()],
+            )?;
             // A TCP socket takes `SO_REUSEADDR`, so a quick restart can bind a port a test just used. Windows
             // gives the option a different meaning (it permits hijacking), so it is not set there.
             let one = self.b.build_alloca(i32_ty, "reuse").map_err(llvm_err)?;
@@ -8589,19 +8527,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 setsockopt,
                 &[
                     fd.into(),
-                    i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
-                    i32_ty.const_int(u64::from(SO_REUSEADDR as u32), false).into(),
+                    i32_ty.const_int(u64::from(self.sys.sol_socket as u32), false).into(),
+                    i32_ty.const_int(u64::from(self.sys.so_reuseaddr as u32), false).into(),
                     one.into(),
                     i32_ty.const_int(4, false).into(),
                 ],
             )?;
             // macOS has no `MSG_NOSIGNAL`: a write to a closed peer must not raise `SIGPIPE` on this socket.
-            if cfg!(target_os = "macos") {
+            if self.darwin {
                 self.call(
                     setsockopt,
                     &[
                         fd.into(),
-                        i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
+                        i32_ty.const_int(u64::from(self.sys.sol_socket as u32), false).into(),
                         i32_ty.const_int(u64::from(SO_NOSIGPIPE_OPTION as u32), false).into(),
                         one.into(),
                         i32_ty.const_int(4, false).into(),
@@ -8679,12 +8617,17 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let fcntl = libc(self.module, "fcntl", i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], true));
             let small = self.b.build_int_truncate(out, i32_ty, "fd32").map_err(llvm_err)?;
             let current = self
-                .call(fcntl, &[small.into(), i32_ty.const_int(F_GETFL as u32 as u64, false).into()])?
+                .call(fcntl, &[small.into(), i32_ty.const_int(self.sys.f_getfl as u32 as u64, false).into()])?
                 .expect("fcntl returns flags")
                 .into_int_value();
-            let flags =
-                self.b.build_or(current, i32_ty.const_int(O_NONBLOCK as u32 as u64, false), "").map_err(llvm_err)?;
-            self.call(fcntl, &[small.into(), i32_ty.const_int(F_SETFL as u32 as u64, false).into(), flags.into()])?;
+            let flags = self
+                .b
+                .build_or(current, i32_ty.const_int(self.sys.o_nonblock as u32 as u64, false), "")
+                .map_err(llvm_err)?;
+            self.call(
+                fcntl,
+                &[small.into(), i32_ty.const_int(self.sys.f_setfl as u32 as u64, false).into(), flags.into()],
+            )?;
         }
         self.b.build_return(Some(&out)).map_err(llvm_err)?;
 
@@ -8732,7 +8675,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let raw = self
             .call(
                 send,
-                &[fd.into(), data.into(), len.into(), i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into()],
+                &[
+                    fd.into(),
+                    data.into(),
+                    len.into(),
+                    i32_ty.const_int(self.sys.msg_nosignal as u32 as u64, false).into(),
+                ],
             )?
             .expect("send returns a count")
             .into_int_value();
@@ -8785,7 +8733,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                     fd.into(),
                     data.into(),
                     len.into(),
-                    i32_ty.const_int(MSG_NOSIGNAL as u32 as u64, false).into(),
+                    i32_ty.const_int(self.sys.msg_nosignal as u32 as u64, false).into(),
                     sockaddr.into(),
                     i32_ty.const_int(SOCKADDR_SIZE, false).into(),
                 ],
@@ -8964,8 +8912,8 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             getsockopt,
             &[
                 fd.into(),
-                i32_ty.const_int(u64::from(SOL_SOCKET as u32), false).into(),
-                i32_ty.const_int(u64::from(SO_ERROR as u32), false).into(),
+                i32_ty.const_int(u64::from(self.sys.sol_socket as u32), false).into(),
+                i32_ty.const_int(u64::from(self.sys.so_error as u32), false).into(),
                 value.into(),
                 length.into(),
             ],
@@ -8989,7 +8937,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
                 &[
                     fd.into(),
                     i32_ty.const_int(u64::from(IPPROTO_TCP as u32), false).into(),
-                    i32_ty.const_int(u64::from(TCP_NODELAY as u32), false).into(),
+                    i32_ty.const_int(u64::from(self.sys.tcp_nodelay as u32), false).into(),
                     option.into(),
                     i32_ty.const_int(4, false).into(),
                 ],
@@ -9043,11 +8991,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             .function("burdin_rt_dns_lookup", i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false));
         let (host, len, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
         self.net_startup()?;
-        let hints = self.b.build_alloca(self.i8().array_type(ADDRINFO_SIZE as u32), "dns.hints").map_err(llvm_err)?;
+        let hints =
+            self.b.build_alloca(self.i8().array_type(self.sys.addrinfo_size as u32), "dns.hints").map_err(llvm_err)?;
         self.b
-            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(ADDRINFO_SIZE, false))
+            .build_memset(hints, 8, self.i8().const_zero(), self.usize_ty.const_int(self.sys.addrinfo_size, false))
             .map_err(llvm_err)?;
-        let family = self.offset(hints, self.usize_ty.const_int(ADDRINFO_FAMILY_OFFSET, false))?;
+        let family = self.offset(hints, self.usize_ty.const_int(self.sys.addrinfo_family_offset, false))?;
         self.b.build_store(family, i32_ty.const_int(u64::from(AF_INET as u32), false)).map_err(llvm_err)?;
         let node = self.cstring_of(host, len, malloc)?;
         let head = self.b.build_alloca(ptr_ty, "dns.head").map_err(llvm_err)?;
@@ -9079,7 +9028,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let at_end = self.b.build_is_null(entry, "dns.end").map_err(llvm_err)?;
         self.b.build_conditional_branch(at_end, done, next).map_err(llvm_err)?;
         self.b.position_at_end(next);
-        let addr_at = self.offset(entry, self.usize_ty.const_int(ADDRINFO_ADDR_OFFSET, false))?;
+        let addr_at = self.offset(entry, self.usize_ty.const_int(self.sys.addrinfo_addr_offset, false))?;
         let addr = self.b.build_load(ptr_ty, addr_at, "dns.addr").map_err(llvm_err)?.into_pointer_value();
         // `inet_ntop` takes the 4-byte address, not the whole `sockaddr_in`. Winsock's `InetNtopA` is a macro for
         // it, and `ws2_32.lib` exports the `inet_ntop` symbol, so the same name works on both platforms.
@@ -9103,7 +9052,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let text_len = self.call(strlen, &[text.into()])?.expect("strlen returns a size").into_int_value();
         self.call(string_push_str, &[out.into(), text.into(), text_len.into()])?;
         self.call(string_push_char, &[out.into(), i32_ty.const_int(10, false).into()])?;
-        let next_at = self.offset(entry, self.usize_ty.const_int(ADDRINFO_NEXT_OFFSET, false))?;
+        let next_at = self.offset(entry, self.usize_ty.const_int(self.sys.addrinfo_next_offset, false))?;
         let following = self.b.build_load(ptr_ty, next_at, "dns.next").map_err(llvm_err)?.into_pointer_value();
         self.b.build_store(cursor, following).map_err(llvm_err)?;
         self.b.build_unconditional_branch(walk).map_err(llvm_err)?;
@@ -9157,7 +9106,8 @@ mod tests {
             let ptr = cx.ptr_type(AddressSpace::default());
             let usize_ty = cx.i64_type();
             let string_ty = cx.struct_type(&[ptr.into(), usize_ty.into(), usize_ty.into()], false);
-            generate(&cx, &module, usize_ty, string_ty, windows, false, false).expect("the runtime is generated");
+            generate(&cx, &module, usize_ty, string_ty, windows, false, false, false)
+                .expect("the runtime is generated");
             let symbol = if windows { "_open" } else { "open" };
             let open = module.get_function(symbol).unwrap_or_else(|| panic!("{symbol} is declared"));
             assert!(open.get_type().is_var_arg(), "{symbol} must be variadic to pass the create mode");
@@ -9284,7 +9234,7 @@ mod tests {
                 let ptr = cx.ptr_type(AddressSpace::default());
                 let usize_ty = cx.i64_type();
                 let string_ty = cx.struct_type(&[ptr.into(), usize_ty.into(), usize_ty.into()], false);
-                generate(&cx, &module, usize_ty, string_ty, windows, false, checking)
+                generate(&cx, &module, usize_ty, string_ty, windows, false, false, checking)
                     .unwrap_or_else(|e| panic!("generating the runtime (windows={windows}) failed: {e}"));
                 module.verify().unwrap_or_else(|e| {
                     panic!("the runtime (windows={windows}, checking={checking}) does not verify: {e}")
@@ -9315,9 +9265,9 @@ mod tests {
         fn host_lstat(path: *const c_char, buf: *mut c_void) -> c_int;
     }
 
-    fn stat_probe(path: &std::path::Path) -> [i64; STAT_WORDS as usize] {
+    fn stat_probe(path: &std::path::Path) -> Vec<i64> {
         let cpath = CString::new(path.to_str().expect("a UTF-8 temporary path")).expect("no NUL in the path");
-        let mut buf = [0i64; STAT_WORDS as usize];
+        let mut buf = vec![0i64; SysLayout::host().stat_words as usize];
         // SAFETY: `buf` is `size_of::<libc::stat>()` bytes rounded up to whole words and 8-byte aligned, which
         // is what the C function writes; the path is NUL-terminated.
         let status = unsafe { host_lstat(cpath.as_ptr(), buf.as_mut_ptr().cast()) };
@@ -9340,12 +9290,15 @@ mod tests {
 
     #[test]
     fn stat_layout_fits_the_buffer() {
-        let bytes = u64::from(STAT_WORDS) * 8;
-        assert!(STAT_SIZE_OFFSET + 8 <= bytes, "st_size is inside the buffer");
-        assert!(STAT_MODE_OFFSET + u64::from(STAT_MODE_BYTES) <= bytes, "st_mode is inside the buffer");
-        assert!(STAT_ATIME_OFFSET + 8 <= bytes, "st_atime is inside the buffer");
-        assert!(STAT_MTIME_OFFSET + 8 <= bytes, "st_mtime is inside the buffer");
-        assert!(u64::from(STAT_WORDS) * 8 >= std::mem::size_of::<libc::stat>() as u64);
+        let bytes = u64::from(SysLayout::host().stat_words) * 8;
+        assert!(SysLayout::host().stat_size_offset + 8 <= bytes, "st_size is inside the buffer");
+        assert!(
+            SysLayout::host().stat_mode_offset + u64::from(SysLayout::host().stat_mode_bytes) <= bytes,
+            "st_mode is inside the buffer"
+        );
+        assert!(SysLayout::host().stat_atime_offset + 8 <= bytes, "st_atime is inside the buffer");
+        assert!(SysLayout::host().stat_mtime_offset + 8 <= bytes, "st_mtime is inside the buffer");
+        assert!(u64::from(SysLayout::host().stat_words) * 8 >= std::mem::size_of::<libc::stat>() as u64);
     }
 
     #[test]
@@ -9355,16 +9308,20 @@ mod tests {
         let path = dir.join("probe.txt");
         std::fs::write(&path, b"12345").expect("a probe file");
         let buf = stat_probe(&path);
-        assert_eq!(field(&buf, STAT_SIZE_OFFSET, 8), 5, "st_size is the file's length");
+        assert_eq!(field(&buf, SysLayout::host().stat_size_offset, 8), 5, "st_size is the file's length");
         let meta = std::fs::metadata(&path).expect("the probe file's metadata");
-        assert_eq!(field(&buf, STAT_SIZE_OFFSET, 8) as u64, meta.len());
+        assert_eq!(field(&buf, SysLayout::host().stat_size_offset, 8) as u64, meta.len());
         let modified = meta.modified().expect("a modification time");
         let seconds = modified.duration_since(std::time::UNIX_EPOCH).expect("after the epoch").as_secs() as i64;
-        assert_eq!(field(&buf, STAT_MTIME_OFFSET, 8), seconds, "st_mtime is in seconds since the epoch");
+        assert_eq!(
+            field(&buf, SysLayout::host().stat_mtime_offset, 8),
+            seconds,
+            "st_mtime is in seconds since the epoch"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = field(&buf, STAT_MODE_OFFSET, STAT_MODE_BYTES) as u32;
+            let mode = field(&buf, SysLayout::host().stat_mode_offset, SysLayout::host().stat_mode_bytes) as u32;
             assert_eq!(mode & 0o7777, meta.permissions().mode() & 0o7777, "st_mode is the file's mode");
             let kind = mode & 0o170000;
             assert_eq!(kind, 0o100000, "a regular file");
@@ -9398,7 +9355,9 @@ mod tests {
                 if entry.is_null() {
                     break;
                 }
-                let name = CStr::from_ptr((entry as *const u8).add(DIRENT_NAME_OFFSET as usize) as *const c_char);
+                let name = CStr::from_ptr(
+                    (entry as *const u8).add(SysLayout::host().dirent_name_offset as usize) as *const c_char
+                );
                 names.push(name.to_string_lossy().into_owned());
             }
             closedir(stream);
@@ -9420,7 +9379,7 @@ mod tests {
         let ptr_ty = cx.ptr_type(AddressSpace::default());
         let usize_ty = cx.i64_type();
         let string_ty = cx.struct_type(&[ptr_ty.into(), usize_ty.into(), usize_ty.into()], false);
-        generate(&cx, &module, usize_ty, string_ty, true, false, false).expect("the runtime generates");
+        generate(&cx, &module, usize_ty, string_ty, true, false, false, false).expect("the runtime generates");
         let ir = module.print_to_string().to_string();
         let guarantee =
             ir.find("call i32 @SetThreadStackGuarantee").expect("the Windows guard reserves a stack guarantee");
