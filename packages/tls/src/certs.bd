@@ -62,7 +62,7 @@ use schannel.{
 /// The bytes of a file as text.
 priv fn read_text(path: str): Result<String, TlsError> {
     let bytes = fs.read(path)?
-    Ok(String.from_utf8_lossy(bytes[0..bytes.len()]))
+    Result.Ok(String.from_utf8_lossy(bytes[0..bytes.len()]))
 }
 
 // ----- certificates ---------------------------------------------------------------------------------------------
@@ -137,9 +137,9 @@ Certificate {
     fn from_pem(pem: str): Result<Certificate, TlsError> {
         let all = read_pem_certificates(pem)
         for cert in all.into_iter() {
-            return Ok(cert)
+            return Result.Ok(cert)
         }
-        Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
+        Result.Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
     }
 
     /// Reads every certificate of a PEM text (a chain or a bundle), in order. At least one is required.
@@ -156,9 +156,9 @@ Certificate {
     fn chain_from_pem(pem: str): Result<List<Certificate>, TlsError> {
         let all = read_pem_certificates(pem)
         if all.is_empty() {
-            return Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
+            return Result.Err(TlsError.BadCertificate("no certificate found in the PEM text".to_string()))
         }
-        Ok(all)
+        Result.Ok(all)
     }
 
     /// Reads one certificate from its DER encoding.
@@ -174,30 +174,30 @@ Certificate {
     fn from_der(data: [u8]): Result<Certificate, TlsError> {
         if target.os() == target.Os.Windows {
             if data.len() == 0 {
-                return Err(TlsError.BadCertificate("the DER input is empty".to_string()))
+                return Result.Err(TlsError.BadCertificate("the DER input is empty".to_string()))
             }
             unsafe {
                 let handle = cert_from_der(data)
                 if handle.is_null() {
-                    return Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
+                    return Result.Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
                 }
-                Ok(Certificate { handle: handle as CPtr<X509> })
+                Result.Ok(Certificate { handle: handle as CPtr<X509> })
             }
         } else if features.openssl {
             if data.len() == 0 {
-                return Err(TlsError.BadCertificate("the DER input is empty".to_string()))
+                return Result.Err(TlsError.BadCertificate("the DER input is empty".to_string()))
             }
             unsafe {
                 let mut cursor = bytes_ptr(data)
                 let handle = d2i_X509(CPtr.null(), &mut cursor as CPtr<CPtr<u8>>, data.len() as i64)
                 if handle.is_null() {
                     clear_errors()
-                    return Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
+                    return Result.Err(TlsError.BadCertificate("the bytes are not a DER certificate".to_string()))
                 }
-                Ok(Certificate { handle: handle })
+                Result.Ok(Certificate { handle: handle })
             }
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 
@@ -475,10 +475,10 @@ PrivateKey {
     fn from_pem(pem: str): Result<PrivateKey, TlsError> {
         if target.os() == target.Os.Windows {
             if pem.as_bytes().len() == 0 {
-                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+                return Result.Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
             }
             if pem.contains("ENCRYPTED") {
-                return Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
+                return Result.Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
             }
             let mut der = pem_blocks(pem, "PRIVATE KEY")
             if der.is_empty() {
@@ -488,24 +488,24 @@ PrivateKey {
                 der = pem_blocks(pem, "EC PRIVATE KEY")
             }
             if der.is_empty() {
-                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+                return Result.Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
             }
             match PrivateKey.__from_der(der[0][0..der[0].len()]) {
-                Some(key) => Ok(key),
-                None => Err(TlsError.BadKey("no private key found in the PEM text".to_string())),
+                Option.Some(key) => Result.Ok(key),
+                Option.None => Result.Err(TlsError.BadKey("no private key found in the PEM text".to_string())),
             }
         } else if features.openssl {
             let bytes = pem.as_bytes()
             if bytes.len() == 0 {
-                return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+                return Result.Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
             }
             if pem.contains("ENCRYPTED") {
-                return Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
+                return Result.Err(TlsError.BadKey("encrypted private keys are not supported".to_string()))
             }
             unsafe {
                 let bio = BIO_new_mem_buf(bytes_ptr(bytes), bytes.len() as i32)
                 if bio.is_null() {
-                    return Err(TlsError.BadKey(or_else(error_text(), "out of memory")))
+                    return Result.Err(TlsError.BadKey(or_else(error_text(), "out of memory")))
                 }
                 // A non-null password argument keeps OpenSSL from prompting on the terminal for one.
                 let empty = CString.from("")
@@ -513,12 +513,12 @@ PrivateKey {
                 let _ = BIO_free(bio)
                 if handle.is_null() {
                     clear_errors()
-                    return Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
+                    return Result.Err(TlsError.BadKey("no private key found in the PEM text".to_string()))
                 }
-                Ok(PrivateKey { handle: handle })
+                Result.Ok(PrivateKey { handle: handle })
             }
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 
@@ -534,27 +534,27 @@ PrivateKey {
     fn from_der(data: [u8]): Result<PrivateKey, TlsError> {
         if target.os() == target.Os.Windows {
             if data.len() == 0 {
-                return Err(TlsError.BadKey("the DER input is empty".to_string()))
+                return Result.Err(TlsError.BadKey("the DER input is empty".to_string()))
             }
             match PrivateKey.__from_der(data) {
-                Some(key) => Ok(key),
-                None => Err(TlsError.BadKey("the bytes are not a DER private key".to_string())),
+                Option.Some(key) => Result.Ok(key),
+                Option.None => Result.Err(TlsError.BadKey("the bytes are not a DER private key".to_string())),
             }
         } else if features.openssl {
             if data.len() == 0 {
-                return Err(TlsError.BadKey("the DER input is empty".to_string()))
+                return Result.Err(TlsError.BadKey("the DER input is empty".to_string()))
             }
             unsafe {
                 let mut cursor = bytes_ptr(data)
                 let handle = d2i_AutoPrivateKey(CPtr.null(), &mut cursor as CPtr<CPtr<u8>>, data.len() as i64)
                 if handle.is_null() {
                     clear_errors()
-                    return Err(TlsError.BadKey("the bytes are not a DER private key".to_string()))
+                    return Result.Err(TlsError.BadKey("the bytes are not a DER private key".to_string()))
                 }
-                Ok(PrivateKey { handle: handle })
+                Result.Ok(PrivateKey { handle: handle })
             }
         } else {
-            Err(no_openssl())
+            Result.Err(no_openssl())
         }
     }
 
@@ -563,7 +563,7 @@ PrivateKey {
         if target.os() == target.Os.Windows {
             let pkcs8 = key_to_pkcs8(data)
             if pkcs8.is_none() {
-                return None
+                return Option.None
             }
             let pkcs8 = pkcs8.unwrap()
             unsafe {
@@ -572,7 +572,7 @@ PrivateKey {
                 if !is_ed25519(pkcs8[0..pkcs8.len()]) {
                     let imported = import_key(bytes_at(pkcs8[0..pkcs8.len()]), pkcs8.len(), CPtr.null(), 0)
                     if imported.is_none() {
-                        return None
+                        return Option.None
                     }
                     let (provider, key) = imported.unwrap()
                     let _ = NCryptFreeObject(key)
@@ -583,10 +583,10 @@ PrivateKey {
                 let _ = memcpy(der, bytes_at(pkcs8[0..pkcs8.len()]), pkcs8.len())
                 (*block).der = der
                 (*block).len = pkcs8.len()
-                Some(PrivateKey { handle: block as CPtr<EvpPkey> })
+                Option.Some(PrivateKey { handle: block as CPtr<EvpPkey> })
             }
         } else {
-            None
+            Option.None
         }
     }
 
@@ -699,7 +699,7 @@ TrustStore {
         for cert in all.into_iter() {
             self.roots.push(cert)
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Trusts every certificate of a PEM file.

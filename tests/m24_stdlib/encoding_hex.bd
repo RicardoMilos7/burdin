@@ -14,10 +14,10 @@
 
 fn show(r: Result<List<u8>, DecodeError>) {
     match r {
-        Ok(b) => {
+        Result.Ok(b) => {
             println("ok {b.len()} [{b.to_hex()}]")
         }
-        Err(e) => {
+        Result.Err(e) => {
             println("err {e}")
         }
     }

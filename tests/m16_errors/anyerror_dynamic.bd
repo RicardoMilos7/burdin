@@ -11,12 +11,12 @@ error enum ConfigError {
 }
 
 fn load(ok: bool): Result<i32, ConfigError> {
-    if ok { Ok(1) } else { Err(ConfigError.Missing("port".to_string())) }
+    if ok { Result.Ok(1) } else { Result.Err(ConfigError.Missing("port".to_string())) }
 }
 
 fn direct(ok: bool): Result<i32, AnyError> {
     let n = load(ok)?
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn describe(e: AnyError): String {
@@ -25,15 +25,15 @@ fn describe(e: AnyError): String {
 
 fn main() {
     match direct(true) {
-        Ok(n) => println("ok {n}"),
-        Err(e) => println("err {e}"),
+        Result.Ok(n) => println("ok {n}"),
+        Result.Err(e) => println("err {e}"),
     }
     match direct(false) {
-        Ok(n) => println("ok {n}"),
-        Err(e) => println("err {e}"),
+        Result.Ok(n) => println("ok {n}"),
+        Result.Err(e) => println("err {e}"),
     }
     match load(false).context("reading") {
-        Ok(_) => println("unexpected"),
-        Err(e) => println(describe(e)),
+        Result.Ok(_) => println("unexpected"),
+        Result.Err(e) => println(describe(e)),
     }
 }

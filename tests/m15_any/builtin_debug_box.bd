@@ -17,7 +17,7 @@ fn main() {
     items.push(3)
     items.push(String.from("hi"))
     items.push('c')
-    items.push(Some(5))
+    items.push(Option.Some(5))
     items.push([1, 2, 3].to_list())
     items.push((1, true))
     items.push(D { v: 3 })

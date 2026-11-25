@@ -24,8 +24,8 @@ Stack<T> {
 
     fn pop(own self): Option<(T, Stack<T>)> {
         match self {
-            Stack.Empty => None,
-            Stack.Node(value, rest) => Some((value, *rest)),
+            Stack.Empty => Option.None,
+            Stack.Node(value, rest) => Option.Some((value, *rest)),
         }
     }
 }
@@ -40,11 +40,11 @@ fn main() {
     let mut rest = s
     loop {
         match rest.pop() {
-            Some((value, next)) => {
+            Option.Some((value, next)) => {
                 println("popped {value}")
                 rest = next
             },
-            None => break,
+            Option.None => break,
         }
     }
 }

@@ -41,7 +41,7 @@ fn breadth_first(graph: List<List<Edge>>, start: usize): List<usize> {
     queue.push_back(start)
     loop {
         match queue.pop_front() {
-            Some(node) => {
+            Option.Some(node) => {
                 order.push(node)
                 for edge in graph[node].iter() {
                     if seen.insert(edge.to) {
@@ -49,7 +49,7 @@ fn breadth_first(graph: List<List<Edge>>, start: usize): List<usize> {
                     }
                 }
             },
-            None => break,
+            Option.None => break,
         }
     }
     order
@@ -61,7 +61,7 @@ fn shortest(graph: List<List<Edge>>, start: usize): Map<usize, u32> {
     frontier.push(Reverse { value: Entry { cost: 0, node: start } })
     loop {
         match frontier.pop() {
-            Some(top) => {
+            Option.Some(top) => {
                 let entry = top.value
                 if dist.contains_key(entry.node) {
                     continue
@@ -73,7 +73,7 @@ fn shortest(graph: List<List<Edge>>, start: usize): Map<usize, u32> {
                     }
                 }
             },
-            None => break,
+            Option.None => break,
         }
     }
     dist
@@ -81,8 +81,8 @@ fn shortest(graph: List<List<Edge>>, start: usize): Map<usize, u32> {
 
 fn at(dist: Map<usize, u32>, node: usize): u32 {
     match dist.get(node) {
-        Some(d) => *d,
-        None => 0,
+        Option.Some(d) => *d,
+        Option.None => 0,
     }
 }
 

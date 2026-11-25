@@ -55,8 +55,8 @@ in the `enum` declaration, from 0; it is metadata a format such as a binary enco
 | `Map<String, V>` | map |
 | a struct | struct |
 | an enum | enum variant |
-| `Option<T>` | enum variant: type `Option`, `Some` (index 0) with one payload value, `None` (index 1) with none |
-| `Result<T, E>` | enum variant: type `Result`, `Ok` (index 0) with one payload value, `Err` (index 1) with one |
+| `Option<T>` | enum variant: type `Option`, `Option.Some` (index 0) with one payload value, `Option.None` (index 1) with none |
+| `Result<T, E>` | enum variant: type `Result`, `Result.Ok` (index 0) with one payload value, `Result.Err` (index 1) with one |
 | a tuple `(A, B)`, `(A, B, C)`, `(A, B, C, D)` | sequence of its parts, in order |
 | an array `[T; N]` | sequence of its elements, in order |
 | a reference or slice (`&T`, `&mut T`, `[T]`) | not serializable (E0120 at a derive; a hand-written impl cannot name it in a field) |
@@ -89,7 +89,7 @@ interface Deserialize {
 ```
 
 `Serialize::serialize` borrows the value (`self`) and borrows the serializer exclusively for the call (`mut s`). It
-writes exactly one value and returns `Ok(())`. `Deserialize::deserialize` is an associated function: an impl block for
+writes exactly one value and returns `Result.Ok(())`. `Deserialize::deserialize` is an associated function: an impl block for
 `T` returns `Result<T, DeError>`, and a call is written `T.deserialize(mut d)`. Both methods are generic over the
 format type, so dispatch is static and a format is monomorphized like any other generic argument. The interfaces are
 ordinary `std` interfaces; a user or a package writes an impl block by hand, and the compiler generates one for a
@@ -429,7 +429,7 @@ The generated impls are:
 - A struct reader holds every field as an `Option<T>` (there is no default value to hold an unread field of any type),
   loops on `has_next_field()`/`field_name()`, reports `duplicate_field(name)` for a repeated name and
   `unknown_field(name)` for an unknown one, calls `end_struct()`, reports `missing_field(name)` for each remaining
-  `None` in declaration order, and builds the value. A field value's error is wrapped with `.field(name)`.
+  `Option.None` in declaration order, and builds the value. A field value's error is wrapped with `.field(name)`.
 - An enum reader calls `begin_enum(name)` and `variant_name()`, then one branch per variant:
   `begin_variant_payload(arity)`, `variant_payload_field(i)` and value `i`, `end_variant_payload(arity)`, and the
   constructor. A payload value's error is wrapped with `.index(i).variant(name)`; an unknown name is
@@ -571,7 +571,7 @@ annotation on the call rather than on the `?` result:
 
 ```
 let read: Result<List<Leaf>, DeError> = deserialize_list(mut d)
-let items = match read { Ok(value) => value, Err(e) => return Err(e.field("items")) }
+let items = match read { Result.Ok(value) => value, Result.Err(e) => return Result.Err(e.field("items")) }
 ```
 
 A hand-written impl that wraps the error itself does not need `?` at that step; the generated impls write the
@@ -608,8 +608,8 @@ Color: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Self, DeError> {
         let s = String.deserialize(mut d)?
         match Color.from_hex(s.as_str()) {
-            Some(color) => Ok(color),
-            None => Err(DeError.new(format("Invalid hex color: {s}"))),
+            Option.Some(color) => Result.Ok(color),
+            Option.None => Result.Err(DeError.new(format("Invalid hex color: {s}"))),
         }
     }
 }

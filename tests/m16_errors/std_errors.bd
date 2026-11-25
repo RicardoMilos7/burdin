@@ -8,14 +8,14 @@
 
 fn main() {
     match i32.parse("nope") {
-        Ok(n) => println("ok {n}"),
-        Err(e) => println("{e}"),
+        Result.Ok(n) => println("ok {n}"),
+        Result.Err(e) => println("{e}"),
     }
     println("{}", i32.parse("nope").is_err())
 
     match read_to_string("missing.txt") {
-        Ok(text) => println("read {text.len()}"),
-        Err(e) => println("{e}"),
+        Result.Ok(text) => println("read {text.len()}"),
+        Result.Err(e) => println("{e}"),
     }
     println("{}", read_to_string("missing.txt").is_err())
 }

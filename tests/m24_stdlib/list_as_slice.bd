@@ -51,7 +51,7 @@ fn main() {
     // A stored `Range<usize>` works with the checked slicing form.
     let middle: Range<usize> = 1..3
     match xs.as_slice().get(middle) {
-        Some(part) => println("{} {}", part.len(), part[0]),
-        None => println("none"),
+        Option.Some(part) => println("{} {}", part.len(), part[0]),
+        Option.None => println("none"),
     }
 }

@@ -29,7 +29,7 @@ fn main() {
     h.push(Token { id: 1 })
     let _ = h.pop()
     match h.peek() {
-        Some(t) => println("kept {t.id}"),
-        None => println("empty"),
+        Option.Some(t) => println("kept {t.id}"),
+        Option.None => println("empty"),
     }
 }

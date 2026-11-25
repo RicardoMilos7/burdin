@@ -122,9 +122,9 @@ fn [T].split_at_mut(mut self, mid: usize): ([T], [T]) {
 /// ```
 fn [T].split_first(self): Option<(&T, [T])> {
     if self.len() == 0 {
-        None
+        Option.None
     } else {
-        Some((&self[0], self[1..self.len()]))
+        Option.Some((&self[0], self[1..self.len()]))
     }
 }
 
@@ -138,10 +138,10 @@ fn [T].split_first(self): Option<(&T, [T])> {
 /// ```
 fn [T].split_last(self): Option<(&T, [T])> {
     if self.len() == 0 {
-        None
+        Option.None
     } else {
         let last = self.len() - 1
-        Some((&self[last], self[0..last]))
+        Option.Some((&self[last], self[0..last]))
     }
 }
 
@@ -149,8 +149,8 @@ fn [T].split_last(self): Option<(&T, [T])> {
 /// checked by comparisons with `<`, so a slice that is not sorted gives an unspecified result.
 ///
 /// ```
-/// assert_eq([1, 3, 5].binary_search(5), Ok(2))
-/// assert_eq([1, 3, 5].binary_search(0), Err(0))
+/// assert_eq([1, 3, 5].binary_search(5), Result.Ok(2))
+/// assert_eq([1, 3, 5].binary_search(0), Result.Err(0))
 /// ```
 fn [T].binary_search(self, value: T): Result<usize, usize> where T: Ord {
     self.binary_search_by(|x: &T| x.cmp(value))
@@ -160,7 +160,7 @@ fn [T].binary_search(self, value: T): Result<usize, usize> where T: Ord {
 ///
 /// ```
 /// let xs = [1, 3, 5]
-/// assert_eq(xs.binary_search_by(|x| (*x).cmp(3)), Ok(1))
+/// assert_eq(xs.binary_search_by(|x| (*x).cmp(3)), Result.Ok(1))
 /// ```
 fn [T].binary_search_by<F: FnMut(&T): Ordering>(self, own compare: F): Result<usize, usize> {
     let mut compare = compare
@@ -171,18 +171,18 @@ fn [T].binary_search_by<F: FnMut(&T): Ordering>(self, own compare: F): Result<us
         match compare(&self[mid]) {
             Ordering.Less => low = mid + 1,
             Ordering.Greater => high = mid,
-            Ordering.Equal => return Ok(mid),
+            Ordering.Equal => return Result.Ok(mid),
         }
     }
-    Err(low)
+    Result.Err(low)
 }
 
 /// Like `binary_search`, ordered by the key `key_of` computes for each element.
 ///
 /// ```
 /// let xs = [1, 3, 5]
-/// assert_eq(xs.binary_search_by_key(3, |x| *x), Ok(1))
-/// assert_eq(xs.binary_search_by_key(4, |x| *x), Err(2))
+/// assert_eq(xs.binary_search_by_key(3, |x| *x), Result.Ok(1))
+/// assert_eq(xs.binary_search_by_key(4, |x| *x), Result.Err(2))
 /// ```
 fn [T].binary_search_by_key<K: Ord, F: FnMut(&T): K>(self, key: K, own key_of: F): Result<usize, usize> {
     let mut key_of = key_of

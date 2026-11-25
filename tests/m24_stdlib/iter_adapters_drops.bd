@@ -61,14 +61,14 @@ fn main() {
     println("partial")
     let mut c = tokens(40, 2).into_iter().chain(tokens(50, 2).into_iter())
     match c.next() {
-        Some(t) => println("took {t.id}"),
-        None => {}
+        Option.Some(t) => println("took {t.id}"),
+        Option.None => {}
     }
     println("flat_map")
     let mut f = (0..2).iter().flat_map(|n| tokens(60 + n * 10, 2).into_iter())
     match f.next() {
-        Some(t) => println("took {t.id}"),
-        None => {}
+        Option.Some(t) => println("took {t.id}"),
+        Option.None => {}
     }
     println("end")
 }

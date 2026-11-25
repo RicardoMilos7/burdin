@@ -15,11 +15,11 @@ const ED25519_KEY: str = embed("certs/ed25519.key")
 
 fn main() {
     match PrivateKey.from_pem(ED25519_KEY) {
-        Ok(_) => println("ed25519 key: loaded"),
-        Err(failure) => println("ed25519 key: {}", failure),
+        Result.Ok(_) => println("ed25519 key: loaded"),
+        Result.Err(failure) => println("ed25519 key: {}", failure),
     }
     match ServerConfig.from_pem(ED25519, ED25519_KEY) {
-        Ok(_) => println("server ed25519: ok"),
-        Err(failure) => println("server ed25519: {}", failure),
+        Result.Ok(_) => println("server ed25519: ok"),
+        Result.Err(failure) => println("server ed25519: {}", failure),
     }
 }

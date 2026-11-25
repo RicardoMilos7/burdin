@@ -11,7 +11,7 @@ modules are loaded from `<out>/src`, and reruns are decided by a content-keyed p
 `build.bd` is an optional file next to a package's `burdin.toml`. It is **not** a module of the package and is not
 part of the program: it is a standalone Burdin program with its own `fn main`, compiled by the driver as a one-file
 target and run before the package's sources are read. It has the standard library, no imports of the package, and
-the ordinary `main` rules (unit, or `Result<T>` with the `main` printing an `Err`). A one-file target has no package
+the ordinary `main` rules (unit, or `Result<T>` with the `main` printing an `Result.Err`). A one-file target has no package
 directory and therefore no script; the embedded standard library has none either.
 
 Only the entry package and the packages loaded as its dependencies can have scripts.
@@ -69,8 +69,8 @@ fn main() {
     let args = env.args()      // argv, program name first
     let out = args[2]
     match write_file("{out}/src/generated.bd", "const ANSWER: i32 = 42\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }
 ```
@@ -139,9 +139,9 @@ The script invokes it through `process.run` and passes the failure on:
 
 ```
 match process.run("burdin bindgen c/strings.h --out \"{out}/src/bindings.bd\"") {
-    Ok(0) => {}
-    Ok(code) => process.exit(code)
-    Err(_) => process.exit(1)
+    Result.Ok(0) => {}
+    Result.Ok(code) => process.exit(code)
+    Result.Err(_) => process.exit(1)
 }
 ```
 

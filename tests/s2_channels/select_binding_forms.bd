@@ -27,7 +27,7 @@ fn main() {
     a.send(4)
     select {
         mut v = a.recv() => {
-            v = Some(5)
+            v = Option.Some(5)
             println("mutated: {:?}", v)
         }
     }

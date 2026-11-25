@@ -44,20 +44,20 @@ fn attempt(label: str, name: str, client: ClientConfig, server: ServerConfig, be
         s.spawn(|| peer.serve_tls(server, behavior))
         s.spawn(|| {
             match TlsStream.connect(peer.dial(), name, client) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     println(
                         "{}: connected {} peer={}",
                         label,
                         stream.tls_version(),
                         match stream.peer_certificate() {
-                            Some(cert) => cert.subject(),
-                            None => "-".to_string(),
+                            Option.Some(cert) => cert.subject(),
+                            Option.None => "-".to_string(),
                         },
                     )
                     let _ = stream.close()
                 }
-                Err(failure) => {
+                Result.Err(failure) => {
                     // OpenSSL's wording of a handshake failure differs between versions; a verification result does not.
                     if failure.is_verification() {
                         println("{}: {} ({})", label, kind_of(failure), failure)
@@ -79,25 +79,25 @@ fn echo_and_info() {
         s.spawn(|| {
             let config = client_config()
             match TlsStream.connect(peer.dial(), "localhost", config) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     println("echo: version={} cipher known={}", stream.tls_version(), stream.cipher().len() > 0)
                     match round_trip(mut stream, "hello tls") {
-                        Ok(text) => println("echo: reply={:?}", text),
-                        Err(failure) => println("echo: {}", failure),
+                        Result.Ok(text) => println("echo: reply={:?}", text),
+                        Result.Err(failure) => println("echo: {}", failure),
                     }
                     match round_trip(mut stream, "second message") {
-                        Ok(text) => println("echo: reply={:?}", text),
-                        Err(failure) => println("echo: {}", failure),
+                        Result.Ok(text) => println("echo: reply={:?}", text),
+                        Result.Err(failure) => println("echo: {}", failure),
                     }
                     match stream.peer_certificate() {
-                        Some(cert) => println("echo: peer subject={} issuer={}", cert.subject(), cert.issuer()),
-                        None => println("echo: no peer certificate"),
+                        Option.Some(cert) => println("echo: peer subject={} issuer={}", cert.subject(), cert.issuer()),
+                        Option.None => println("echo: no peer certificate"),
                     }
                     println("echo: alpn={:?}", stream.alpn_protocol())
                     // Dropping the stream sends close_notify, so the server sees a clean end.
                 }
-                Err(failure) => println("echo: {}", failure),
+                Result.Err(failure) => println("echo: {}", failure),
             }
         })
     })
@@ -126,12 +126,12 @@ fn large_echo() {
             for i in 0..50 {
                 let text = format("message {}", i)
                 match round_trip(mut stream, text.as_str()) {
-                    Ok(reply) => {
+                    Result.Ok(reply) => {
                         if reply != text {
                             ok = false
                         }
                     }
-                    Err(_) => ok = false,
+                    Result.Err(_) => ok = false,
                 }
             }
             println("small messages: 50 round trips ok={}", ok)
@@ -152,12 +152,12 @@ fn large_push() {
             let mut ended = "no end".to_string()
             loop {
                 match stream.recv(mut data, 4096) {
-                    Ok(0) => {
+                    Result.Ok(0) => {
                         ended = "clean end".to_string()
                         break
                     }
-                    Ok(_) => {}
-                    Err(failure) => {
+                    Result.Ok(_) => {}
+                    Result.Err(failure) => {
                         ended = kind_of(failure)
                         break
                     }
@@ -171,8 +171,8 @@ fn large_push() {
                 ended,
             )
             match stream.recv(mut data, 10) {
-                Ok(n) => println("push: another read after the end: {} bytes", n),
-                Err(failure) => println("push: another read after the end: {}", kind_of(failure)),
+                Result.Ok(n) => println("push: another read after the end: {} bytes", n),
+                Result.Err(failure) => println("push: another read after the end: {}", kind_of(failure)),
             }
         })
     })
@@ -196,8 +196,8 @@ fn names_and_protocols() {
             protocols.push("http/1.1".to_string())
             config.alpn(protocols).unwrap()
             match TlsStream.connect(peer.dial(), "localhost", config) {
-                Ok(stream) => println("alpn: connected, chosen protocol={:?}", stream.alpn_protocol()),
-                Err(failure) => println("alpn: {}", failure),
+                Result.Ok(stream) => println("alpn: connected, chosen protocol={:?}", stream.alpn_protocol()),
+                Result.Err(failure) => println("alpn: {}", failure),
             }
         })
     })
@@ -318,14 +318,14 @@ fn mutual() {
                 )
                 .unwrap()
             match TlsStream.connect(peer.dial(), "localhost", config) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     match round_trip(mut stream, "mutual") {
-                        Ok(text) => println("mutual with a certificate: echo={:?}", text),
-                        Err(failure) => println("mutual with a certificate: {}", kind_of(failure)),
+                        Result.Ok(text) => println("mutual with a certificate: echo={:?}", text),
+                        Result.Err(failure) => println("mutual with a certificate: {}", kind_of(failure)),
                     }
                 }
-                Err(failure) => println("mutual with a certificate: {}", failure),
+                Result.Err(failure) => println("mutual with a certificate: {}", failure),
             }
         })
     })
@@ -360,15 +360,15 @@ fn rejected(label: str, client: ClientConfig, server: ServerConfig) {
         s.spawn(|| peer.serve_tls(server, Behavior.Echo))
         s.spawn(|| {
             let outcome = match TlsStream.connect(peer.dial(), "localhost", client) {
-                Ok(stream) => {
+                Result.Ok(stream) => {
                     let mut stream = stream
                     let mut data = List<u8>.new()
                     match stream.recv(mut data, 16) {
-                        Ok(_) => "the first read succeeded",
-                        Err(_) => "rejected",
+                        Result.Ok(_) => "the first read succeeded",
+                        Result.Err(_) => "rejected",
                     }
                 }
-                Err(_) => "rejected",
+                Result.Err(_) => "rejected",
             }
             println("{}: {}", label, outcome)
         })
@@ -410,12 +410,12 @@ fn endings() {
             let first = stream.recv(mut data, 100).unwrap()
             println("truncation: read {} bytes {:?}", first, String.from_utf8_lossy(data[0..data.len()]))
             match stream.recv(mut data, 100) {
-                Ok(n) => println("truncation: then {} bytes", n),
-                Err(failure) => println("truncation: then {} ({})", kind_of(failure), failure),
+                Result.Ok(n) => println("truncation: then {} bytes", n),
+                Result.Err(failure) => println("truncation: then {} ({})", kind_of(failure), failure),
             }
             match stream.recv(mut data, 100) {
-                Ok(n) => println("truncation: and then {} bytes", n),
-                Err(failure) => println("truncation: and then {}", kind_of(failure)),
+                Result.Ok(n) => println("truncation: and then {} bytes", n),
+                Result.Err(failure) => println("truncation: and then {}", kind_of(failure)),
             }
         })
     })
@@ -431,18 +431,18 @@ fn endings() {
             println(
                 "close: {}",
                 match stream.close() {
-                    Ok(()) => "ok".to_string(),
-                    Err(failure) => kind_of(failure),
+                    Result.Ok(()) => "ok".to_string(),
+                    Result.Err(failure) => kind_of(failure),
                 },
             )
             match stream.send("late".as_bytes()) {
-                Ok(_) => println("write after close: accepted"),
-                Err(failure) => println("write after close: {}", kind_of(failure)),
+                Result.Ok(_) => println("write after close: accepted"),
+                Result.Err(failure) => println("write after close: {}", kind_of(failure)),
             }
             let mut data = List<u8>.new()
             match stream.recv(mut data, 10) {
-                Ok(_) => println("read after close: accepted"),
-                Err(failure) => println("read after close: {}", kind_of(failure)),
+                Result.Ok(_) => println("read after close: accepted"),
+                Result.Err(failure) => println("read after close: {}", kind_of(failure)),
             }
             println("close twice: {}", stream.close().is_ok())
         })
@@ -457,8 +457,8 @@ fn bad_peers() {
         s.spawn(|| peer.serve_plain("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".as_bytes(), 0))
         s.spawn(|| {
             match TlsStream.connect(peer.dial(), "localhost", client_config()) {
-                Ok(_) => println("plain-text peer with a reply: connected"),
-                Err(failure) => println("plain-text peer with a reply: {}", kind_of(failure)),
+                Result.Ok(_) => println("plain-text peer with a reply: connected"),
+                Result.Err(failure) => println("plain-text peer with a reply: {}", kind_of(failure)),
             }
         })
     })
@@ -469,8 +469,8 @@ fn bad_peers() {
         s.spawn(|| peer.serve_plain("".as_bytes(), 0))
         s.spawn(|| {
             match TlsStream.connect(peer.dial(), "localhost", client_config()) {
-                Ok(_) => println("plain peer that closes: connected"),
-                Err(failure) => println("plain peer that closes: {} ({})", kind_of(failure), failure),
+                Result.Ok(_) => println("plain peer that closes: connected"),
+                Result.Err(failure) => println("plain peer that closes: {} ({})", kind_of(failure), failure),
             }
         })
     })
@@ -485,8 +485,8 @@ fn bad_peers() {
         s.spawn(|| peer.serve_plain(record[0..record.len()], 0))
         s.spawn(|| {
             match TlsStream.connect(peer.dial(), "localhost", client_config()) {
-                Ok(_) => println("garbage record: connected"),
-                Err(failure) => println("garbage record: {}", kind_of(failure)),
+                Result.Ok(_) => println("garbage record: connected"),
+                Result.Err(failure) => println("garbage record: {}", kind_of(failure)),
             }
         })
     })
@@ -497,10 +497,10 @@ fn bad_peers() {
         s.spawn(|| peer.serve_plain("".as_bytes(), 500))
         s.spawn(|| {
             let mut tcp = peer.dial()
-            tcp.set_read_timeout(Some(Duration.from_millis(100)))
+            tcp.set_read_timeout(Option.Some(Duration.from_millis(100)))
             match TlsStream.connect(tcp, "localhost", client_config()) {
-                Ok(_) => println("silent peer: connected"),
-                Err(failure) => println("silent peer: {} timeout={}", kind_of(failure), failure.is_timeout()),
+                Result.Ok(_) => println("silent peer: connected"),
+                Result.Err(failure) => println("silent peer: {} timeout={}", kind_of(failure), failure.is_timeout()),
             }
         })
     })
@@ -512,20 +512,20 @@ fn bad_peers() {
         s.spawn(|| peer.serve_tls(server, Behavior.Idle(400)))
         s.spawn(|| {
             let mut stream = TlsStream.connect(peer.dial(), "localhost", client_config()).unwrap()
-            stream.set_read_timeout(Some(Duration.from_millis(100)))
+            stream.set_read_timeout(Option.Some(Duration.from_millis(100)))
             let mut data = List<u8>.new()
             match stream.recv(mut data, 10) {
-                Ok(n) => println("read timeout: read {} bytes", n),
-                Err(failure) => println("read timeout: {} timeout={}", kind_of(failure), failure.is_timeout()),
+                Result.Ok(n) => println("read timeout: read {} bytes", n),
+                Result.Err(failure) => println("read timeout: {} timeout={}", kind_of(failure), failure.is_timeout()),
             }
-            stream.set_read_timeout(None)
+            stream.set_read_timeout(Option.None)
             match stream.recv(mut data, 10) {
-                Ok(n) => println(
+                Result.Ok(n) => println(
                     "after the timeout: read {} bytes {:?}",
                     n,
                     String.from_utf8_lossy(data[0..data.len()]),
                 ),
-                Err(failure) => println("after the timeout: {}", kind_of(failure)),
+                Result.Err(failure) => println("after the timeout: {}", kind_of(failure)),
             }
         })
     })
@@ -540,8 +540,8 @@ fn bad_peers() {
             let mut data = List<u8>.new()
             let first = stream.read(mut data, 10).unwrap()
             match stream.read(mut data, 10) {
-                Ok(n) => println("Read: {} then {} bytes", first, n),
-                Err(failure) => println("Read: {} bytes, then {:?}", first, failure.kind()),
+                Result.Ok(n) => println("Read: {} then {} bytes", first, n),
+                Result.Err(failure) => println("Read: {} bytes, then {:?}", first, failure.kind()),
             }
         })
     })
@@ -554,12 +554,12 @@ fn two_client(peer: Peer, results: Mutex<List<String>>, client: usize) {
     for i in 0..30 {
         let text = format("client {} message {}", client, i)
         match round_trip(mut stream, text.as_str()) {
-            Ok(reply) => {
+            Result.Ok(reply) => {
                 if reply != text {
                     ok = false
                 }
             }
-            Err(_) => ok = false,
+            Result.Err(_) => ok = false,
         }
     }
     results.lock(|list| list.push(format("two streams: client {} ok={}", client, ok)))

@@ -5,8 +5,8 @@
 /// ```
 /// # use regex.{Regex}
 /// match Regex.new("(") {
-///     Ok(_) => assert(false),
-///     Err(err) => {
+///     Result.Ok(_) => assert(false),
+///     Result.Err(err) => {
 ///         assert_eq(err.offset(), 0)
 ///         assert_eq(err.reason().as_str(), "unclosed group")
 ///     }
@@ -22,8 +22,8 @@ RegexError {
     /// ```
     /// # use regex.{Regex}
     /// match Regex.new("a(b") {
-    ///     Ok(_) => assert(false),
-    ///     Err(err) => assert_eq(err.offset(), 1),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(err) => assert_eq(err.offset(), 1),
     /// }
     /// ```
     fn offset(self): usize {
@@ -37,8 +37,8 @@ RegexError {
     /// ```
     /// # use regex.{Regex}
     /// match Regex.new("a)") {
-    ///     Ok(_) => assert(false),
-    ///     Err(err) => assert_eq(err.reason().as_str(), "unopened group"),
+    ///     Result.Ok(_) => assert(false),
+    ///     Result.Err(err) => assert_eq(err.reason().as_str(), "unopened group"),
     /// }
     /// ```
     fn reason(self): String {

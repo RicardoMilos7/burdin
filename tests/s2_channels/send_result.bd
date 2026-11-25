@@ -9,19 +9,19 @@
 fn main() {
     let ch = Channel<i32>.bounded(1)
     match ch.send(1) {
-        Ok(()) => println("open channel: queued"),
-        Err(_) => println("open channel: refused"),
+        Result.Ok(()) => println("open channel: queued"),
+        Result.Err(_) => println("open channel: refused"),
     }
     let tx = ch.clone()
     let waiting = task.spawn(|| tx.send(9))
     task.yield()
     ch.close()
     match waiting.join() {
-        Err(v) => println("full then closed: Err({})", v),
-        Ok(()) => println("full then closed: queued"),
+        Result.Err(v) => println("full then closed: Err({})", v),
+        Result.Ok(()) => println("full then closed: queued"),
     }
     match ch.send(2) {
-        Err(v) => println("closed: Err({})", v),
-        Ok(()) => println("closed: queued"),
+        Result.Err(v) => println("closed: Err({})", v),
+        Result.Ok(()) => println("closed: queued"),
     }
 }

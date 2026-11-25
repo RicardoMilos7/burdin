@@ -99,11 +99,11 @@ Metadata {
 /// ```
 fn read_dir(path: str): Result<List<String>, IoError> {
     match __offload(|| __read_dir(path)) {
-        Ok(names) => Ok(names),
-        Err(code) => Err(IoError.Read {
+        Result.Ok(names) => Result.Ok(names),
+        Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -118,11 +118,11 @@ fn read_dir(path: str): Result<List<String>, IoError> {
 /// ```
 fn create_dir(path: str): Result<(), IoError> {
     match __offload(|| __create_dir(path)) {
-        Ok(_) => Ok(()),
-        Err(code) => Err(IoError.Write {
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -137,18 +137,18 @@ fn create_dir(path: str): Result<(), IoError> {
 /// ```
 fn create_dir_all(path: str): Result<(), IoError> {
     match create_dir(path) {
-        Ok(()) => Ok(()),
-        Err(failure) => {
+        Result.Ok(()) => Result.Ok(()),
+        Result.Err(failure) => {
             match metadata(path) {
-                Ok(info) if info.is_dir() => return Ok(()),
+                Result.Ok(info) if info.is_dir() => return Result.Ok(()),
                 _ => {}
             }
             match Path.new(path).parent() {
-                Some(parent) if parent.as_str().len() > 0 => {
+                Option.Some(parent) if parent.as_str().len() > 0 => {
                     create_dir_all(parent.as_str())?;
                     create_dir(path)
                 }
-                _ => Err(failure),
+                _ => Result.Err(failure),
             }
         }
     }
@@ -163,11 +163,11 @@ fn create_dir_all(path: str): Result<(), IoError> {
 /// ```
 fn remove_dir(path: str): Result<(), IoError> {
     match __offload(|| __remove_dir(path)) {
-        Ok(_) => Ok(()),
-        Err(code) => Err(IoError.Write {
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -181,11 +181,11 @@ fn remove_dir(path: str): Result<(), IoError> {
 /// ```
 fn remove_file(path: str): Result<(), IoError> {
     match __offload(|| __remove_file(path)) {
-        Ok(_) => Ok(()),
-        Err(code) => Err(IoError.Write {
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -200,12 +200,12 @@ fn remove_file(path: str): Result<(), IoError> {
 /// ```
 fn remove_dir_all(path: str): Result<(), IoError> {
     let info = match metadata(path) {
-        Ok(info) => info,
-        Err(failure) => return Err(failure),
+        Result.Ok(info) => info,
+        Result.Err(failure) => return Result.Err(failure),
     }
     if !info.is_dir() {
         // `std` sees the kind itself here; no system call failed.
-        return Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.NotADirectory, os_code: None })
+        return Result.Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.NotADirectory, os_code: Option.None })
     }
     __remove_entry(path)
 }
@@ -215,22 +215,22 @@ fn remove_dir_all(path: str): Result<(), IoError> {
 /// its target is never walked.
 priv fn __remove_entry(path: str): Result<(), IoError> {
     if remove_dir(path).is_ok() {
-        return Ok(())
+        return Result.Ok(())
     }
     if remove_file(path).is_ok() {
-        return Ok(())
+        return Result.Ok(())
     }
     // Both removals failed. A link that could not be removed is an error rather than a directory to walk.
     let info = match metadata(path) {
-        Ok(info) => info,
-        Err(failure) => return Err(failure),
+        Result.Ok(info) => info,
+        Result.Err(failure) => return Result.Err(failure),
     }
     if info.is_symlink() {
-        return Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.Other, os_code: None })
+        return Result.Err(IoError.Write { path: path.to_string(), kind: IoErrorKind.Other, os_code: Option.None })
     }
     let names = match read_dir(path) {
-        Ok(names) => names,
-        Err(failure) => return Err(failure),
+        Result.Ok(names) => names,
+        Result.Err(failure) => return Result.Err(failure),
     }
     for name in names {
         let child = Path.new(path).join(name.as_str())
@@ -250,11 +250,11 @@ priv fn __remove_entry(path: str): Result<(), IoError> {
 /// ```
 fn rename(from: str, to: str): Result<(), IoError> {
     match __offload(|| __rename(from, to)) {
-        Ok(_) => Ok(()),
-        Err(code) => Err(IoError.Write {
+        Result.Ok(_) => Result.Ok(()),
+        Result.Err(code) => Result.Err(IoError.Write {
             path: to.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -271,17 +271,17 @@ fn rename(from: str, to: str): Result<(), IoError> {
 /// ```
 fn metadata(path: str): Result<Metadata, IoError> {
     match __offload(|| __metadata(path)) {
-        Ok((size, mode, modified, accessed, flags)) => Ok(Metadata {
+        Result.Ok((size, mode, modified, accessed, flags)) => Result.Ok(Metadata {
             size,
             mode: mode as u32,
             modified,
             accessed,
             kind: __file_kind(flags),
         }),
-        Err(code) => Err(IoError.Read {
+        Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -308,11 +308,11 @@ priv fn __file_kind(flags: u64): FileKind {
 /// ```
 fn canonicalize(path: str): Result<String, IoError> {
     match __offload(|| __canonicalize(path)) {
-        Ok(text) => Ok(text),
-        Err(code) => Err(IoError.Read {
+        Result.Ok(text) => Result.Ok(text),
+        Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
             kind: __io_kind(code),
-            os_code: Some(code),
+            os_code: Option.Some(code),
         }),
     }
 }
@@ -331,11 +331,11 @@ fn canonicalize(path: str): Result<String, IoError> {
 fn walk(root: str): Result<List<String>, IoError> {
     let mut out = List<String>.new()
     match __walk(root, "", mut out) {
-        Ok(()) => {}
-        Err(failure) => return Err(failure),
+        Result.Ok(()) => {}
+        Result.Err(failure) => return Result.Err(failure),
     }
     out.sort_by(|a, b| a.cmp(*b))
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// The entries under `root` whose relative path matches `pattern`, recursively, sorted as `walk` sorts them.
@@ -360,7 +360,7 @@ fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
             out.push(rel.clone())
         }
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoError> {
@@ -370,8 +370,8 @@ priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoErro
         Path.new(root).join(prefix).as_str().to_string()
     }
     let names = match read_dir(dir.as_str()) {
-        Ok(names) => names,
-        Err(failure) => return Err(failure),
+        Result.Ok(names) => names,
+        Result.Err(failure) => return Result.Err(failure),
     }
     for name in names {
         let rel = if prefix.len() == 0 {
@@ -384,15 +384,15 @@ priv fn __walk(root: str, prefix: str, mut out: List<String>): Result<(), IoErro
         }
         let full = Path.new(root).join(rel.as_str())
         let info = match metadata(full.as_str()) {
-            Ok(info) => info,
-            Err(failure) => return Err(failure),
+            Result.Ok(info) => info,
+            Result.Err(failure) => return Result.Err(failure),
         }
         out.push(rel.clone())
         if info.is_dir() && !info.is_symlink() {
             __walk(root, rel.as_str(), mut out)?
         }
     }
-    Ok(())
+    Result.Ok(())
 }
 
 priv fn __glob_sep(c: char): bool {
@@ -518,7 +518,7 @@ priv fn __io_error_kind(code: i32): IoErrorKind {
 
 /// The OS code of a file failure, when the primitive reported one.
 priv fn __io_error_code(code: i32): Option<i32> {
-    if code > 0 { Some(code) } else { None }
+    if code > 0 { Option.Some(code) } else { Option.None }
 }
 
 /// The options that open a file. Every option starts off; `open` rejects a set with no access and the combinations
@@ -655,13 +655,13 @@ OpenOptions {
     /// ```
     fn open(self, path: str): Result<File, IoError> {
         if !self.read && !self.write && !self.append {
-            return Err(IoError.InvalidInput)
+            return Result.Err(IoError.InvalidInput)
         }
         if self.truncate && !self.write && !self.append {
-            return Err(IoError.InvalidInput)
+            return Result.Err(IoError.InvalidInput)
         }
         if self.truncate && self.append {
-            return Err(IoError.InvalidInput)
+            return Result.Err(IoError.InvalidInput)
         }
         let read = self.read
         let write = self.write
@@ -670,18 +670,18 @@ OpenOptions {
         let create = self.create
         let create_new = self.create_new
         match __offload(|| __file_open(path, read, write, append, truncate, create, create_new)) {
-            Ok(fd) => Ok(File { fd: fd, path: path.to_string() }),
-            Err(_) => {
+            Result.Ok(fd) => Result.Ok(File { fd: fd, path: path.to_string() }),
+            Result.Err(_) => {
                 let code = __file_error()
                 let changes = self.write || self.append || self.truncate || self.create || self.create_new
                 if changes {
-                    Err(IoError.Write {
+                    Result.Err(IoError.Write {
                         path: path.to_string(),
                         kind: __io_error_kind(code),
                         os_code: __io_error_code(code),
                     })
                 } else {
-                    Err(IoError.Read {
+                    Result.Err(IoError.Read {
                         path: path.to_string(),
                         kind: __io_error_kind(code),
                         os_code: __io_error_code(code),
@@ -751,10 +751,10 @@ File {
     fn sync_all(self): Result<(), IoError> {
         let fd = self.fd
         match __offload(|| __file_sync(fd)) {
-            Ok(()) => Ok(()),
-            Err(_) => {
+            Result.Ok(()) => Result.Ok(()),
+            Result.Err(_) => {
                 let code = __file_error()
-                Err(IoError.Write {
+                Result.Err(IoError.Write {
                     path: self.path.clone(),
                     kind: __io_error_kind(code),
                     os_code: __io_error_code(code),
@@ -776,10 +776,10 @@ File {
     fn set_len(mut self, size: u64): Result<(), IoError> {
         let fd = self.fd
         match __offload(|| __file_set_len(fd, size)) {
-            Ok(()) => Ok(()),
-            Err(_) => {
+            Result.Ok(()) => Result.Ok(()),
+            Result.Err(_) => {
                 let code = __file_error()
-                Err(IoError.Write {
+                Result.Err(IoError.Write {
                     path: self.path.clone(),
                     kind: __io_error_kind(code),
                     os_code: __io_error_code(code),
@@ -802,10 +802,10 @@ File {
         let fd = me.fd
         me.fd = -1
         match __file_close(fd) {
-            Ok(()) => Ok(()),
-            Err(_) => {
+            Result.Ok(()) => Result.Ok(()),
+            Result.Err(_) => {
                 let code = __file_error()
-                Err(IoError.Write {
+                Result.Err(IoError.Write {
                     path: me.path.clone(),
                     kind: __io_error_kind(code),
                     os_code: __io_error_code(code),
@@ -824,10 +824,10 @@ File: Read {
                 __file_read(fd, mut *buf_ptr, max)
             })
         } {
-            Ok(n) => Ok(n),
-            Err(_) => {
+            Result.Ok(n) => Result.Ok(n),
+            Result.Err(_) => {
                 let code = __file_error()
-                Err(IoError.Read {
+                Result.Err(IoError.Read {
                     path: self.path.clone(),
                     kind: __io_error_kind(code),
                     os_code: __io_error_code(code),
@@ -841,10 +841,10 @@ File: Write {
     fn write(mut self, data: [u8]): Result<usize, IoError> {
         let fd = self.fd
         match __offload(|| __file_write(fd, data)) {
-            Ok(n) => Ok(n),
-            Err(_) => {
+            Result.Ok(n) => Result.Ok(n),
+            Result.Err(_) => {
                 let code = __file_error()
-                Err(IoError.Write {
+                Result.Err(IoError.Write {
                     path: self.path.clone(),
                     kind: __io_error_kind(code),
                     os_code: __io_error_code(code),
@@ -855,7 +855,7 @@ File: Write {
 
     /// Does nothing: a file handle writes through to the system, so there is no buffer to push out.
     fn flush(mut self): Result<(), IoError> {
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -868,8 +868,8 @@ File: Seek {
         }
         let fd = self.fd
         match __offload(|| __file_seek(fd, offset, whence)) {
-            Ok(position) => Ok(position as u64),
-            Err(_) => Err(IoError.Seek),
+            Result.Ok(position) => Result.Ok(position as u64),
+            Result.Err(_) => Result.Err(IoError.Seek),
         }
     }
 }
@@ -879,8 +879,8 @@ File: Drop {
         if self.fd >= 0 {
             let closed = __file_close(self.fd)
             match closed {
-                Ok(()) => {}
-                Err(_) => {}
+                Result.Ok(()) => {}
+                Result.Err(_) => {}
             }
         }
     }
@@ -891,14 +891,14 @@ File: Drop {
 /// ```
 /// write("burdin-doc-read-bytes.txt", "hi".as_bytes()).unwrap()
 /// let bytes = read("burdin-doc-read-bytes.txt").unwrap()
-/// assert_eq(bytes.to_text(), Ok(String.from("hi")))
+/// assert_eq(bytes.to_text(), Result.Ok(String.from("hi")))
 /// remove_file("burdin-doc-read-bytes.txt").unwrap()
 /// ```
 fn read(path: str): Result<List<u8>, IoError> {
     let mut file = File.open(path)?
     let mut bytes = List<u8>.new()
     file.read_to_end(mut bytes)?
-    Ok(bytes)
+    Result.Ok(bytes)
 }
 
 /// Writes `data` to `path`, creating the file when it is missing and replacing its contents when it exists.
@@ -951,7 +951,7 @@ fn copy_file(from: str, to: str): Result<u64, IoError> {
         chunk.clear()
         let n = source.read(mut chunk, 65536)?
         if n == 0 {
-            return Ok(total)
+            return Result.Ok(total)
         }
         destination.write_all(chunk[0..chunk.len()])?
         total = total + (n as u64)

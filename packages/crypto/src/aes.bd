@@ -579,7 +579,7 @@ Aes {
     /// ```
     fn new(key: [u8]): Result<Aes, CryptoError> {
         if key.len() != 16 && key.len() != 24 && key.len() != 32 {
-            return Err(CryptoError.InvalidLength { what: "an AES key is 16, 24, or 32 bytes".to_string() })
+            return Result.Err(CryptoError.InvalidLength { what: "an AES key is 16, 24, or 32 bytes".to_string() })
         }
         let nk = key.len() / 4
         let rounds = nk + 6
@@ -617,7 +617,7 @@ Aes {
             w.push(p3)
             i = i + 1
         }
-        Ok(Aes { rk: w, rounds: rounds })
+        Result.Ok(Aes { rk: w, rounds: rounds })
     }
 
     priv fn add_round_key(self, mut s: [u8; 16], round: usize) {
@@ -787,7 +787,7 @@ priv fn increment_be(mut counter: List<u8>, from: usize) {
 fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
-        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
     }
     let mut counter = iv.to_list()
     let mut out = List<u8>.new()
@@ -803,7 +803,7 @@ fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
         increment_be(mut counter, 0)
         pos = pos + 16
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 // ----- CBC ----------------------------------------------------------------------------------------------------
@@ -824,7 +824,7 @@ fn aes_ctr_xor(key: [u8], iv: [u8], data: [u8]): Result<List<u8>, CryptoError> {
 fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
-        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
     }
     let mut padded = plaintext.to_list()
     let pad = 16 - plaintext.len() % 16
@@ -847,7 +847,7 @@ fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, Crypt
         out.extend_from_slice(previous.as_slice())
         pos = pos + 16
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// Decrypts `aes_cbc_encrypt` output and removes the padding; bad padding is `InvalidPadding`.
@@ -864,10 +864,10 @@ fn aes_cbc_encrypt(key: [u8], iv: [u8], plaintext: [u8]): Result<List<u8>, Crypt
 fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if iv.len() != 16 {
-        return Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 16, got: iv.len() })
     }
     if ciphertext.len() == 0 || ciphertext.len() % 16 != 0 {
-        return Err(
+        return Result.Err(
             CryptoError.InvalidLength { what: "a CBC ciphertext is a non-empty multiple of 16 bytes".to_string() },
         )
     }
@@ -887,7 +887,7 @@ fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, Cryp
     }
     let pad = out[out.len() - 1] as usize
     if pad == 0 || pad > 16 || pad > out.len() {
-        return Err(CryptoError.InvalidPadding)
+        return Result.Err(CryptoError.InvalidPadding)
     }
     let mut bad: u8 = 0
     let mut i: usize = 0
@@ -896,11 +896,11 @@ fn aes_cbc_decrypt(key: [u8], iv: [u8], ciphertext: [u8]): Result<List<u8>, Cryp
         i = i + 1
     }
     if bad != 0 {
-        return Err(CryptoError.InvalidPadding)
+        return Result.Err(CryptoError.InvalidPadding)
     }
     let keep = out.len() - pad
     out.truncate(keep)
-    Ok(out)
+    Result.Ok(out)
 }
 
 // ----- GCM ----------------------------------------------------------------------------------------------------
@@ -1042,12 +1042,12 @@ priv fn gcm_crypt(aes: Aes, nonce: [u8], data: [u8]): List<u8> {
 fn aes_gcm_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if nonce.len() != 12 {
-        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
     }
     let mut sealed = gcm_crypt(aes, nonce, plaintext)
     let tag = gcm_tag(aes, nonce, aad, sealed.as_slice())
     sealed.extend_from_slice(tag.as_slice())
-    Ok(sealed)
+    Result.Ok(sealed)
 }
 
 /// Verifies and decrypts `aes_gcm_seal` output; a wrong tag is `AuthenticationFailed` and no plaintext is released.
@@ -1063,16 +1063,16 @@ fn aes_gcm_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List
 fn aes_gcm_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     let aes = Aes.new(key)?
     if nonce.len() != 12 {
-        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
     }
     if sealed.len() < 16 {
-        return Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
+        return Result.Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
     }
     let split = sealed.len() - 16
     let ciphertext = sealed[0..split]
     let expected = gcm_tag(aes, nonce, aad, ciphertext)
     if !constant_time_eq(expected.as_slice(), sealed[split..sealed.len()]) {
-        return Err(CryptoError.AuthenticationFailed)
+        return Result.Err(CryptoError.AuthenticationFailed)
     }
-    Ok(gcm_crypt(aes, nonce, ciphertext))
+    Result.Ok(gcm_crypt(aes, nonce, ciphertext))
 }

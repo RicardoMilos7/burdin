@@ -48,8 +48,8 @@ fn main() {
     blob.push(1)
     blob.push(2)
     let wrapped = Wrapped {
-        maybe: Some(7),
-        outcome: Ok(Leaf { value: 1 }),
+        maybe: Option.Some(7),
+        outcome: Result.Ok(Leaf { value: 1 }),
         pair: (2, Leaf { value: 3 }),
         blob,
     }
@@ -58,12 +58,12 @@ fn main() {
     let wrapped_read: Result<Wrapped, DeError> = from_text(wrapped_text)
     let wrapped_back = wrapped_read.unwrap()
     let maybe = match wrapped_back.maybe {
-        Some(value) => value,
-        None => 0,
+        Option.Some(value) => value,
+        Option.None => 0,
     }
     let outcome = match wrapped_back.outcome {
-        Ok(leaf) => leaf.value,
-        Err(_) => -1,
+        Result.Ok(leaf) => leaf.value,
+        Result.Err(_) => -1,
     }
     println("{} {} {} {}", maybe, outcome, wrapped_back.pair.1.value, wrapped_back.blob.len())
 }

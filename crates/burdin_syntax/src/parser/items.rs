@@ -508,7 +508,9 @@ impl Parser<'_> {
         };
         let ret = path("Result", vec![Type { kind: TypeKind::Unit, span }]);
         let unit = Expr { kind: ExprKind::Unit, span };
-        let ok = Expr { kind: ExprKind::Name { name: Ident { name: "Ok".to_string(), span }, args: Vec::new() }, span };
+        let result =
+            Expr { kind: ExprKind::Name { name: Ident { name: "Result".to_string(), span }, args: Vec::new() }, span };
+        let ok = Expr { kind: ExprKind::Field(Box::new(result), Ident { name: "Ok".to_string(), span }), span };
         let tail = Expr {
             kind: ExprKind::Call(Box::new(ok), vec![Arg { name: None, mut_marker: false, mut_span: None, expr: unit }]),
             span: body_span,

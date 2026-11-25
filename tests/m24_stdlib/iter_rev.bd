@@ -61,21 +61,21 @@ struct Span {
 Span: Iterator<i32> {
     fn next(mut self): Option<i32> {
         if self.lo >= self.hi {
-            return None
+            return Option.None
         }
         let v = self.lo
         self.lo = v + 1
-        Some(v)
+        Option.Some(v)
     }
 }
 
 Span: DoubleEndedIterator<i32> {
     fn next_back(mut self): Option<i32> {
         if self.lo >= self.hi {
-            return None
+            return Option.None
         }
         self.hi = self.hi - 1
-        Some(self.hi)
+        Option.Some(self.hi)
     }
 }
 

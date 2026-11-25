@@ -28,7 +28,7 @@ fn main() {
         s.spawn(|| {
             let (tcp, _) = listener.accept().unwrap()
             let mut tcp = tcp
-            tcp.set_read_timeout(Some(Duration.from_millis(5000)))
+            tcp.set_read_timeout(Option.Some(Duration.from_millis(5000)))
             let mut hello = List<u8>.new()
             let _ = tcp.read(mut hello, 16384)
             seen.lock(|list| {
@@ -41,8 +41,8 @@ fn main() {
         s.spawn(|| {
             let tcp = net.TcpStream.connect(format("127.0.0.1:{}", port).as_str()).unwrap()
             match TlsStream.connect(tcp, "localhost", config) {
-                Ok(_) => outcome.lock(|list| list.push("connected".to_string())),
-                Err(_) => outcome.lock(|list| list.push("failed".to_string())),
+                Result.Ok(_) => outcome.lock(|list| list.push("connected".to_string())),
+                Result.Err(_) => outcome.lock(|list| list.push("failed".to_string())),
             }
         })
     })

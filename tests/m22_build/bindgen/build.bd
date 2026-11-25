@@ -5,8 +5,8 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match process.run("burdin bindgen c/strings.h --out \"{out}/src/bindings.bd\"") {
-        Ok(0) => {}
-        Ok(code) => process.exit(code)
-        Err(_) => process.exit(1)
+        Result.Ok(0) => {}
+        Result.Ok(code) => process.exit(code)
+        Result.Err(_) => process.exit(1)
     }
 }

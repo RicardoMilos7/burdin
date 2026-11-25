@@ -400,9 +400,9 @@ fn char.is_digit(self, radix: u32): bool {
 ///
 /// ```
 /// let f: char = 'F'
-/// assert_eq(f.to_digit(16), Some(15))
+/// assert_eq(f.to_digit(16), Option.Some(15))
 /// let g: char = 'g'
-/// assert_eq(g.to_digit(16), None)
+/// assert_eq(g.to_digit(16), Option.None)
 /// ```
 fn char.to_digit(self, radix: u32): Option<u32> {
     if radix < 2 || radix > 36 {
@@ -418,9 +418,9 @@ fn char.to_digit(self, radix: u32): Option<u32> {
         value = n - 65 + 10
     }
     if value < radix {
-        return Some(value)
+        return Option.Some(value)
     }
-    None
+    Option.None
 }
 
 /// The number of bytes the character takes in UTF-8.
@@ -449,15 +449,15 @@ fn char.len_utf8(self): usize {
 ///
 /// ```
 /// let n: u32 = 65
-/// assert_eq(n.to_char(), Some('A'))
+/// assert_eq(n.to_char(), Option.Some('A'))
 /// let surrogate: u32 = 55296
-/// assert_eq(surrogate.to_char(), None)
+/// assert_eq(surrogate.to_char(), Option.None)
 /// ```
 fn u32.to_char(self): Option<char> {
     if self > 1114111 || __in(self, 55296, 57343) {
-        return None
+        return Option.None
     }
-    Some(self as char)
+    Option.Some(self as char)
 }
 
 /// The digit `0`-`9` or lowercase letter `a`-`z` for the value `self` in `radix` (2 to 36), or `None` when the value
@@ -465,21 +465,21 @@ fn u32.to_char(self): Option<char> {
 ///
 /// ```
 /// let n: u32 = 11
-/// assert_eq(n.digit_char(16), Some('b'))
+/// assert_eq(n.digit_char(16), Option.Some('b'))
 /// let big: u32 = 12
-/// assert_eq(big.digit_char(10), None)
+/// assert_eq(big.digit_char(10), Option.None)
 /// ```
 fn u32.digit_char(self, radix: u32): Option<char> {
     if radix < 2 || radix > 36 {
         panic("digit_char: radix must be 2 to 36")
     }
     if self >= radix {
-        return None
+        return Option.None
     }
     if self < 10 {
-        return Some((48 + self) as char)
+        return Option.Some((48 + self) as char)
     }
-    Some((97 + self - 10) as char)
+    Option.Some((97 + self - 10) as char)
 }
 
 // ---- Text ----

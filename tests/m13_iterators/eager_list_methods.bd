@@ -22,8 +22,8 @@ fn main() {
     let mut it = doubled.iter()
     loop {
         match it.next() {
-            Some(x) => println(x.to_string()),
-            None => break,
+            Option.Some(x) => println(x.to_string()),
+            Option.None => break,
         }
     }
 
@@ -33,7 +33,7 @@ fn main() {
     println(xs.any(|x| *x == 2).to_string())
     println(xs.all(|x| *x > 0).to_string())
     match xs.find(|x| *x == 3) {
-        Some(v) => println(v.to_string()),
-        None => println("none"),
+        Option.Some(v) => println(v.to_string()),
+        Option.None => println("none"),
     }
 }

@@ -24,7 +24,7 @@ $ burdin run rpn-calculator.bd
 ## What to notice
 
 - `error enum CalcError` declares the messages once. Printing an error prints its message, so the loop in `main` only writes `{e}`.
-- `let Some(b) = stack.pop() else { return Err(...) }` takes the value, or leaves the function with an error. See [control flow](/guide/control-flow/).
+- `let Option.Some(b) = stack.pop() else { return Result.Err(...) }` takes the value, or leaves the function with an error. See [control flow](/guide/control-flow/).
 - `apply(op, a, b)?` passes a failed division up to `evaluate`, which returns it to its caller. See [errors](/guide/errors/).
 - `match token` handles both kinds of token. The compiler checks that the match covers `Num` and `Op`.
 

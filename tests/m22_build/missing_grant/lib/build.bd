@@ -2,7 +2,7 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file("{out}/src/extra.bd", "const VALUE: i32 = 1\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }

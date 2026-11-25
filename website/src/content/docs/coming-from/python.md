@@ -55,7 +55,7 @@ string literal with braces is interpolated.
 | `x = 1` | `let mut x = 1` | Names are immutable unless declared `mut`. |
 | `x += 1` | `x = x + 1` | No compound assignment. |
 | `True`, `False` | `true`, `false` | |
-| `None` | `None` (`Option<T>`) | Use `Option<T>` when a value may be missing. |
+| `Option.None` | `Option.None` (`Option<T>`) | Use `Option<T>` when a value may be missing. |
 | `if`, `elif`, `else` | `if`, `else if`, `else` | |
 | `and`, `or`, `not` | `&&`, `\|\|`, `!` | |
 | `for i in range(n)` | `for i in 0..n` | |
@@ -74,7 +74,7 @@ string literal with braces is interpolated.
 | `class C:` | `struct C { ... }` and `C { fn ... }` | No inheritance. |
 | `self` | `self`, `mut self`, or `own self` | Read-only unless marked. |
 | `try: ... except E:` | `match` on a `Result`, or `?` | |
-| `raise E("msg")` | `Err(E.Variant)` | Errors are returned, not raised. |
+| `raise E("msg")` | `Result.Err(E.Variant)` | Errors are returned, not raised. |
 | `assert x == y` | `assert_eq(x, y)?` in a `test` | |
 | `with open(...) as f:` | a scope with a value that has `Drop` | Cleanup runs when the value goes out of scope. |
 | `import json` | `use json` | No setup: `use` loads an official package. |
@@ -113,13 +113,13 @@ Python raises exceptions and catches them far away. Burdin returns errors as val
 ```burdin
 fn parse_age(text: str): Result<i32, ParseIntError> {
     let age = i32.parse(text)?
-    Ok(age)
+    Result.Ok(age)
 }
 
 fn main() {
     match parse_age("42") {
-        Ok(age) => println("age {age}"),
-        Err(e) => println("not an age: {e}"),
+        Result.Ok(age) => println("age {age}"),
+        Result.Err(e) => println("not an age: {e}"),
     }
 }
 ```

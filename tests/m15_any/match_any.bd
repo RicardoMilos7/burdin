@@ -61,7 +61,7 @@ fn main() {
     shapes.push(Circle { r: 1 })
     shapes.push(Tri { base: 2 })
     let mut circles = 0
-    while let Some(shape) = shapes.pop() {
+    while let Option.Some(shape) = shapes.pop() {
         match shape {
             _: Circle => circles += 1,
             _: Tri => circles += 1,

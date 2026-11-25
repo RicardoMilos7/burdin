@@ -275,7 +275,11 @@ impl<'a> Resolver<'a> {
         if prev_dot && leading_dot(&ix, ti - 1) {
             let dot = ix.tokens[ti - 1].lo;
             let ty = self.p.current().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
-            return ty.and_then(|ty| self.member(path, &ty, &name));
+            // A pattern (`.Circle(r)` in an arm) holds no expression the analysis could type: the variant is the one
+            // of that name, nearest to this file (`spec/target-typing.md`, TT13).
+            return ty
+                .and_then(|ty| self.member(path, &ty, &name))
+                .or_else(|| self.find(path, &name, |i| i.kind == Kind::Variant));
         }
         // The analysis's answer for an expression.
         if let Some(analysis) = self.p.current()

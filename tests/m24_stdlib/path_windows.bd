@@ -13,8 +13,8 @@
 
 fn show(own name: Option<String>): String {
     match name {
-        Some(s) => s,
-        None => "none".to_string(),
+        Option.Some(s) => s,
+        Option.None => "none".to_string(),
     }
 }
 

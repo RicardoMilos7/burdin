@@ -126,7 +126,7 @@ builder methods and is only read afterwards, so it is `Send` and `Sync` (an `uns
   minimum to 1.3 and `max_version` can cap the maximum at 1.2 (a server limited to 1.2 is how the tests make a version
   mismatch); a range that no version satisfies fails the handshake, not the setter.
 - **ALPN** (`ClientConfig.alpn`) offers the protocols in order on a client; the stream reports the one the peer chose,
-  or `None` (`TlsStream.alpn_protocol()`). A server's selection is TLS8.
+  or `Option.None` (`TlsStream.alpn_protocol()`). A server's selection is TLS8.
 - **`insecure_skip_verify`** is the single way to turn verification off. It is named for what it does, it is the only
   setting that can make a handshake succeed with an unverified peer, and the documentation says so in a warning. It
   sets `SSL_VERIFY_NONE` and skips the hostname check; it does not skip the protocol-version minimum.
@@ -203,9 +203,9 @@ return the socket; the socket closes when the stream is dropped) and the engine 
   `TlsError` that stopped it and close the socket. A read timeout set on the `TcpStream` before the handshake applies to
   the handshake's waits and surfaces as `TlsError.Io` with `IoErrorKind.TimedOut` (`TlsError.is_timeout()`). When a
   handshake fails, any alert OpenSSL queued is sent to the peer first, best effort.
-- `recv` returns decrypted bytes, `Ok(0)` at a clean end of stream (the peer's `close_notify`, and every later call),
+- `recv` returns decrypted bytes, `Result.Ok(0)` at a clean end of stream (the peer's `close_notify`, and every later call),
   and an error for anything else. **A socket that ends without a `close_notify` is `TlsError.UnexpectedEof`, not
-  `Ok(0)`**: an attacker who cuts the connection must not look like an orderly end. After a fatal error every call is
+  `Result.Ok(0)`**: an attacker who cuts the connection must not look like an orderly end. After a fatal error every call is
   `TlsError.Closed`; after a timeout the stream stays usable. `send` encrypts at most one record (16 KiB) and sends all
   the ciphertext to the socket before it returns, so a short count is only the record limit and `send_all` is the usual
   way to write.
@@ -289,7 +289,7 @@ mechanism; on Windows it has no effect (TLS1a).
 `if features.openssl { ... } else { ... }` (a compile-time condition, CE4). With the feature on, the body is the real one. With it off,
 the body is a failure: a function that returns a `Result` returns `TlsError.Unsupported` ("no OpenSSL in this build: the
 `openssl` feature of the tls package is off"), and any other function returns an empty value (an empty string or list,
-`None`, zero, or nothing). The declarations and the safe types still compile, so the package's code is the same either
+`Option.None`, zero, or nothing). The declarations and the safe types still compile, so the package's code is the same either
 way. A build with the feature off references no OpenSSL symbol, so it links and runs on a machine with no OpenSSL
 installed.
 

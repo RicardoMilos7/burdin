@@ -19,16 +19,16 @@ fn main() {
     println("{}", OptionHolder.default().value.is_none())
     println(
         "{} {}",
-        OptionHolder { value: None }.value < OptionHolder { value: Some(0) }.value,
-        OptionHolder { value: Some(1) } < OptionHolder { value: Some(2) },
+        OptionHolder { value: Option.None }.value < OptionHolder { value: Option.Some(0) }.value,
+        OptionHolder { value: Option.Some(1) } < OptionHolder { value: Option.Some(2) },
     )
-    let ok = ResultHolder { value: Ok(1) }
-    let other = ResultHolder { value: Ok(1) }
+    let ok = ResultHolder { value: Result.Ok(1) }
+    let other = ResultHolder { value: Result.Ok(1) }
     println("{} {} {}", ok == other, ok.hash() == other.hash(), ok.clone() == ok)
     // `Ok` is the first variant, so every `Ok` sorts before every `Err`.
     println(
         "{} {}",
-        (ResultHolder { value: Ok(9) }.value) < (ResultHolder { value: Err(0) }.value),
-        (ResultHolder { value: Err(1) }.value) < (ResultHolder { value: Err(2) }.value),
+        (ResultHolder { value: Result.Ok(9) }.value) < (ResultHolder { value: Result.Err(0) }.value),
+        (ResultHolder { value: Result.Err(1) }.value) < (ResultHolder { value: Result.Err(2) }.value),
     )
 }

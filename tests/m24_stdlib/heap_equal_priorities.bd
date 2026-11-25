@@ -26,8 +26,8 @@ fn main() {
     h.push(Job { priority: 2, name: String.from("c") })
     loop {
         match h.pop() {
-            Some(job) => println("{job.name}"),
-            None => break,
+            Option.Some(job) => println("{job.name}"),
+            Option.None => break,
         }
     }
 }

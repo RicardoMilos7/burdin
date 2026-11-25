@@ -10,8 +10,8 @@ fn main() {
     let rx = ch.clone()
     let waiter = task.spawn(|| {
         match rx.recv() {
-            Some(v) => format("the receiver saw {}", v),
-            None => "the receiver saw None".to_string(),
+            Option.Some(v) => format("the receiver saw {}", v),
+            Option.None => "the receiver saw None".to_string(),
         }
     })
     task.yield()
@@ -24,8 +24,8 @@ fn main() {
         let mut n = 0
         loop {
             match rx2.recv() {
-                Some(_) => n = n + 1,
-                None => break,
+                Option.Some(_) => n = n + 1,
+                Option.None => break,
             }
         }
         n

@@ -164,24 +164,24 @@ struct Wire {
 
 Wire {
     fn bare(own stream: net.TcpStream): Wire {
-        Wire { plain: Some(stream), secure: None }
+        Wire { plain: Option.Some(stream), secure: Option.None }
     }
 
     fn tls(own stream: TlsStream): Wire {
-        Wire { plain: None, secure: Some(stream) }
+        Wire { plain: Option.None, secure: Option.Some(stream) }
     }
 
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 let result = stream.read(mut buf, max)
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
                 result
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 let result = stream.read(mut buf, max)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
                 result
             }
         }
@@ -189,18 +189,18 @@ Wire {
 
     fn write_all(mut self, data: [u8]): Result<(), IoError> {
         match self.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 let result: Result<(), IoError> = match stream.send_all(data) {
-                    Ok(_) => Ok(()),
-                    Err(failure) => Err(failure.to_io()),
+                    Result.Ok(_) => Result.Ok(()),
+                    Result.Err(failure) => Result.Err(failure.to_io()),
                 }
-                self.secure = Some(stream)
+                self.secure = Option.Some(stream)
                 result
             }
-            None => {
+            Option.None => {
                 let mut stream = self.plain.take().unwrap()
                 let result = stream.write_all(data)
-                self.plain = Some(stream)
+                self.plain = Option.Some(stream)
                 result
             }
         }
@@ -214,19 +214,19 @@ Wire {
     fn finish(own self, notify: bool) {
         let mut me = self
         match me.secure.take() {
-            Some(mut stream) => {
+            Option.Some(mut stream) => {
                 if notify {
                     let _ = stream.close()
                 } else {
                     stream.abort()
                 }
             }
-            None => {
+            Option.None => {
                 match me.plain.take() {
-                    Some(stream) => {
+                    Option.Some(stream) => {
                         let _ = stream.close()
                     }
-                    None => {}
+                    Option.None => {}
                 }
             }
         }
@@ -251,12 +251,12 @@ struct Server {
 Server {
     /// A server that speaks no TLS; `total` is how many connections the test makes.
     fn start(total: usize): Server {
-        Server.open(total, None)
+        Server.open(total, Option.None)
     }
 
     /// A server that runs a TLS handshake with `config` on every connection (but those of `plain` scripts).
     fn start_tls(total: usize, own config: ServerConfig): Server {
-        Server.open(total, Some(config))
+        Server.open(total, Option.Some(config))
     }
 
     priv fn open(total: usize, own config: Option<ServerConfig>): Server {
@@ -312,8 +312,8 @@ Server {
             for _ in 0..count {
                 s.spawn(|| {
                     match work.recv() {
-                        Some((index, conn)) => self.play(conn, scripts[index].clone(), index),
-                        None => {}
+                        Option.Some((index, conn)) => self.play(conn, scripts[index].clone(), index),
+                        Option.None => {}
                     }
                 })
             }
@@ -332,10 +332,10 @@ Server {
         while self.finished.load() < self.total && spins < 3000 {
             if self.accepts.load() < self.total {
                 match net.TcpStream.connect(format("127.0.0.1:{}", self.port).as_str()) {
-                    Ok(stream) => {
+                    Result.Ok(stream) => {
                         let _ = stream.close()
                     }
-                    Err(_) => {}
+                    Result.Err(_) => {}
                 }
             }
             time.sleep(Duration.from_millis(2))
@@ -409,28 +409,28 @@ Server {
     /// `plain`. `None` when the handshake failed.
     priv fn wire_for(self, own conn: net.TcpStream, bare: bool, index: usize): Option<Wire> {
         match self.config {
-            Some(config) => {
+            Option.Some(config) => {
                 if bare {
-                    Some(Wire.bare(conn))
+                    Option.Some(Wire.bare(conn))
                 } else {
                     match TlsStream.accept(conn, config) {
-                        Ok(stream) => {
+                        Result.Ok(stream) => {
                             let name = match stream.server_name() {
-                                Some(text) => text,
-                                None => "-".to_string(),
+                                Option.Some(text) => text,
+                                Option.None => "-".to_string(),
                             }
                             let note = format("#{} {} sni={}", index + 1, stream.tls_version(), name)
                             self.hellos.lock(|list| list.push(note))
-                            Some(Wire.tls(stream))
+                            Option.Some(Wire.tls(stream))
                         }
-                        Err(_) => {
+                        Result.Err(_) => {
                             let _ = self.failed.fetch_add(1)
-                            None
+                            Option.None
                         }
                     }
                 }
             }
-            None => Some(Wire.bare(conn)),
+            Option.None => Option.Some(Wire.bare(conn)),
         }
     }
 
@@ -439,11 +439,11 @@ Server {
         let mut conn = conn
         // A client that gave up leaves a write with nowhere to go, and one that never speaks leaves a read waiting:
         // neither may hold a test up for long.
-        conn.set_write_timeout(Some(Duration.from_millis(1000)))
-        conn.set_read_timeout(Some(Duration.from_millis(5000)))
+        conn.set_write_timeout(Option.Some(Duration.from_millis(1000)))
+        conn.set_read_timeout(Option.Some(Duration.from_millis(5000)))
         let mut wire = match self.wire_for(conn, script.bare, index) {
-            Some(w) => w,
-            None => {
+            Option.Some(w) => w,
+            Option.None => {
                 let _ = self.finished.fetch_add(1)
                 return
             }
@@ -454,8 +454,8 @@ Server {
             match step {
                 Step.Read => {
                     match read_request(mut wire, mut pending) {
-                        Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
-                        None => self.record(format("#{}\n(no request)", index + 1)),
+                        Option.Some(raw) => self.record(format("#{}\n{}", index + 1, raw)),
+                        Option.None => self.record(format("#{}\n(no request)", index + 1)),
                     }
                 }
                 Step.Drain => {
@@ -477,9 +477,9 @@ Server {
                     let mut how = "(client closed)".to_string()
                     loop {
                         match wire.read(mut scratch, 1024) {
-                            Ok(0) => break,
-                            Ok(_) => {}
-                            Err(failure) => {
+                            Result.Ok(0) => break,
+                            Result.Ok(_) => {}
+                            Result.Err(failure) => {
                                 how = match failure.kind() {
                                     IoErrorKind.UnexpectedEof => "(client closed without close_notify)".to_string(),
                                     IoErrorKind.TimedOut => "(client never closed)".to_string(),
@@ -535,34 +535,34 @@ fn read_request(mut conn: Wire, mut pending: List<u8>): Option<String> {
     let mut end: usize = 0
     loop {
         match http.find_head_end(pending) {
-            Some(at) => {
+            Option.Some(at) => {
                 end = at
                 break
             }
-            None => {}
+            Option.None => {}
         }
         match conn.read(mut pending, 4096) {
-            Ok(0) => return None,
-            Ok(_) => {}
-            Err(_) => return None,
+            Result.Ok(0) => return Option.None,
+            Result.Ok(_) => {}
+            Result.Err(_) => return Option.None,
         }
     }
     let head = text_of(pending, end)
     let length = match u64.parse(header_of(head.as_str(), "content-length").as_str()) {
-        Ok(n) => n as usize,
-        Err(_) => 0,
+        Result.Ok(n) => n as usize,
+        Result.Err(_) => 0,
     }
     while pending.len() < end + length {
         match conn.read(mut pending, 4096) {
-            Ok(0) => return None,
-            Ok(_) => {}
-            Err(_) => return None,
+            Result.Ok(0) => return Option.None,
+            Result.Ok(_) => {}
+            Result.Err(_) => return Option.None,
         }
     }
     let raw = text_of(pending, end + length)
     let rest = tail_of(pending, end + length)
     pending = rest
-    Some(raw)
+    Option.Some(raw)
 }
 
 // ----- looking into a recorded request --------------------------------------------------------------------------
@@ -572,8 +572,8 @@ fn request_line(recorded: str): String {
     let lines = recorded.split("\r\n")
     let first = lines[0].as_str()
     match first.find('\n') {
-        Some(at) => first[at + 1..first.len()].to_string(),
-        None => first.to_string(),
+        Option.Some(at) => first[at + 1..first.len()].to_string(),
+        Option.None => first.to_string(),
     }
 }
 
@@ -584,12 +584,12 @@ fn header_of(recorded: str, name: str): String {
     while i < lines.len() {
         let line = lines[i].as_str()
         match line.find(':') {
-            Some(colon) => {
+            Option.Some(colon) => {
                 if line[0..colon].eq_ignore_ascii_case(name) {
                     return line[colon + 1..line.len()].trim().to_string()
                 }
             }
-            None => {}
+            Option.None => {}
         }
         i = i + 1
     }
@@ -599,8 +599,8 @@ fn header_of(recorded: str, name: str): String {
 /// The body of a recorded request.
 fn body_of(recorded: str): String {
     match recorded.find_str("\r\n\r\n") {
-        Some(at) => recorded[at + 4..recorded.len()].to_string(),
-        None => String.new(),
+        Option.Some(at) => recorded[at + 4..recorded.len()].to_string(),
+        Option.None => String.new(),
     }
 }
 
@@ -609,8 +609,8 @@ fn body_of(recorded: str): String {
 /// The status and text of a response, or the failure, on one line.
 fn fetch(client: http.Client, url: str): String {
     match client.get(url) {
-        Ok(response) => finish(response),
-        Err(e) => format("error: {}", e),
+        Result.Ok(response) => finish(response),
+        Result.Err(e) => format("error: {}", e),
     }
 }
 
@@ -618,8 +618,8 @@ fn finish(own response: http.Response): String {
     let mut response = response
     let status = response.status
     match response.text() {
-        Ok(text) => format("{} body={:?}", status, text),
-        Err(e) => e.to_string(),
+        Result.Ok(text) => format("{} body={:?}", status, text),
+        Result.Err(e) => e.to_string(),
     }
 }
 

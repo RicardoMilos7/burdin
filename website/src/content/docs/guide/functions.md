@@ -21,10 +21,10 @@ The last expression of the body is the return value, so there is no `return` and
 fn first_negative(xs: [i32]): Option<i32> {
     for x in xs {
         if x < 0 {
-            return Some(x)
+            return Option.Some(x)
         }
     }
-    None
+    Option.None
 }
 ```
 
@@ -117,11 +117,11 @@ program with a message:
 fn main(): Result<()> {
     let n = i32.parse("12")?
     println("parsed {n}")
-    Ok(())
+    Result.Ok(())
 }
 ```
 
-If `main` returns `Err`, the program prints the error and exits with a failure status. The [errors](/guide/errors/)
+If `main` returns `Result.Err`, the program prints the error and exits with a failure status. The [errors](/guide/errors/)
 chapter explains `Result` and `?`.
 
 ## Methods

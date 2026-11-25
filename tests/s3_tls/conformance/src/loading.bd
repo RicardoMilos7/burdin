@@ -19,15 +19,15 @@ use support.{
 
 fn show_cert(label: str, result: Result<Certificate, TlsError>) {
     match result {
-        Ok(cert) => println("{}: subject={} issuer={}", label, cert.subject(), cert.issuer()),
-        Err(failure) => println("{}: {} ({})", label, kind_of(failure), failure),
+        Result.Ok(cert) => println("{}: subject={} issuer={}", label, cert.subject(), cert.issuer()),
+        Result.Err(failure) => println("{}: {} ({})", label, kind_of(failure), failure),
     }
 }
 
 fn show_key(label: str, result: Result<PrivateKey, TlsError>) {
     match result {
-        Ok(_) => println("{}: loaded", label),
-        Err(failure) => println("{}: {} ({})", label, kind_of(failure), failure),
+        Result.Ok(_) => println("{}: loaded", label),
+        Result.Err(failure) => println("{}: {} ({})", label, kind_of(failure), failure),
     }
 }
 
@@ -50,8 +50,8 @@ fn run() {
     let copy = root.duplicate()
     println("duplicate: same fingerprint={}", copy.fingerprint() == root.fingerprint())
     match Certificate.from_der("not a certificate".as_bytes()) {
-        Ok(_) => println("garbage der: loaded"),
-        Err(failure) => println("garbage der: {} ({})", kind_of(failure), failure),
+        Result.Ok(_) => println("garbage der: loaded"),
+        Result.Err(failure) => println("garbage der: {} ({})", kind_of(failure), failure),
     }
     show_cert("empty der", Certificate.from_der("".as_bytes()))
 
@@ -71,13 +71,13 @@ fn run() {
     show_cert("empty text", Certificate.from_pem(""))
     show_cert("a key is not a certificate", Certificate.from_pem(SERVER_KEY))
     match Certificate.chain_from_pem("hello") {
-        Ok(_) => println("chain of plain text: loaded"),
-        Err(failure) => println("chain of plain text: {}", kind_of(failure)),
+        Result.Ok(_) => println("chain of plain text: loaded"),
+        Result.Err(failure) => println("chain of plain text: {}", kind_of(failure)),
     }
     let mut store = TrustStore.system()
     match store.add_pem("hello") {
-        Ok(()) => println("trust of plain text: accepted"),
-        Err(failure) => println("trust of plain text: {}", kind_of(failure)),
+        Result.Ok(()) => println("trust of plain text: accepted"),
+        Result.Err(failure) => println("trust of plain text: {}", kind_of(failure)),
     }
 
     // Files.
@@ -86,13 +86,13 @@ fn run() {
     fs.write(path, ROOT.as_bytes()).unwrap()
     show_cert("file", Certificate.load_pem_file(path))
     match Certificate.load_chain_file(path) {
-        Ok(list) => println("file chain: {} certificate", list.len()),
-        Err(failure) => println("file chain: {}", kind_of(failure)),
+        Result.Ok(list) => println("file chain: {} certificate", list.len()),
+        Result.Err(failure) => println("file chain: {}", kind_of(failure)),
     }
     fs.remove_file(path).unwrap()
     match PrivateKey.load_pem_file("no/such/dir/key.pem") {
-        Ok(_) => println("missing key file: loaded"),
-        Err(failure) => println("missing key file: {}", kind_of(failure)),
+        Result.Ok(_) => println("missing key file: loaded"),
+        Result.Err(failure) => println("missing key file: {}", kind_of(failure)),
     }
 
     // Keys.
@@ -107,63 +107,63 @@ fn run() {
 
     // A configuration checks the key against the certificate when it is built.
     match ServerConfig.from_pem(CHAIN, SERVER_KEY) {
-        Ok(_) => println("server chain and key: ok"),
-        Err(failure) => println("server chain and key: {}", failure),
+        Result.Ok(_) => println("server chain and key: ok"),
+        Result.Err(failure) => println("server chain and key: {}", failure),
     }
     match ServerConfig.from_pem(RSA, RSA_KEY) {
-        Ok(_) => println("server rsa: ok"),
-        Err(failure) => println("server rsa: {}", failure),
+        Result.Ok(_) => println("server rsa: ok"),
+        Result.Err(failure) => println("server rsa: {}", failure),
     }
     match ServerConfig.from_pem(CHAIN, RSA_KEY) {
-        Ok(_) => println("server mismatched key: ok"),
-        Err(failure) => println("server mismatched key: {} ({})", kind_of(failure), failure),
+        Result.Ok(_) => println("server mismatched key: ok"),
+        Result.Err(failure) => println("server mismatched key: {} ({})", kind_of(failure), failure),
     }
     match ServerConfig.from_pem(RSA, SERVER_KEY) {
-        Ok(_) => println("server mismatched cert: ok"),
-        Err(failure) => println("server mismatched cert: {}", kind_of(failure)),
+        Result.Ok(_) => println("server mismatched cert: ok"),
+        Result.Err(failure) => println("server mismatched cert: {}", kind_of(failure)),
     }
     match ServerConfig.from_pem(CLIENT, ENCRYPTED_KEY) {
-        Ok(_) => println("server encrypted key: ok"),
-        Err(failure) => println("server encrypted key: {}", kind_of(failure)),
+        Result.Ok(_) => println("server encrypted key: ok"),
+        Result.Err(failure) => println("server encrypted key: {}", kind_of(failure)),
     }
     match ServerConfig.new(List<Certificate>.new(), PrivateKey.from_pem(SERVER_KEY).unwrap()) {
-        Ok(_) => println("server empty chain: ok"),
-        Err(failure) => println("server empty chain: {}", kind_of(failure)),
+        Result.Ok(_) => println("server empty chain: ok"),
+        Result.Err(failure) => println("server empty chain: {}", kind_of(failure)),
     }
 
     // Client configurations.
     match ClientConfig.new() {
-        Ok(config) => println("system trust: built, skips verification={}", config.skips_verification()),
-        Err(failure) => println("system trust: {}", failure),
+        Result.Ok(config) => println("system trust: built, skips verification={}", config.skips_verification()),
+        Result.Err(failure) => println("system trust: {}", failure),
     }
     let mut config = ClientConfig.with_trust(TrustStore.empty()).unwrap()
     match config.alpn(List<String>.new()) {
-        Ok(()) => println("empty alpn list: ok"),
-        Err(failure) => println("empty alpn list: {}", kind_of(failure)),
+        Result.Ok(()) => println("empty alpn list: ok"),
+        Result.Err(failure) => println("empty alpn list: {}", kind_of(failure)),
     }
     let mut names = List<String>.new()
     names.push("h2".to_string())
     names.push("".to_string())
     match config.alpn(names) {
-        Ok(()) => println("empty alpn name: ok"),
-        Err(failure) => println("empty alpn name: {}", failure),
+        Result.Ok(()) => println("empty alpn name: ok"),
+        Result.Err(failure) => println("empty alpn name: {}", failure),
     }
     let mut names = List<String>.new()
     names.push("h2".to_string())
     names.push("http/1.1".to_string())
     match config.alpn(names) {
-        Ok(()) => println("alpn h2, http/1.1: ok"),
-        Err(failure) => println("alpn h2, http/1.1: {}", failure),
+        Result.Ok(()) => println("alpn h2, http/1.1: ok"),
+        Result.Err(failure) => println("alpn h2, http/1.1: {}", failure),
     }
     match config.min_version(TlsVersion.Tls13) {
-        Ok(()) => println("min version 1.3: ok"),
-        Err(failure) => println("min version 1.3: {}", failure),
+        Result.Ok(()) => println("min version 1.3: ok"),
+        Result.Err(failure) => println("min version 1.3: {}", failure),
     }
     config.insecure_skip_verify()
     println("after insecure_skip_verify: {}", config.skips_verification())
     let chain = Certificate.chain_from_pem(CLIENT).unwrap()
     match config.client_certificate(chain, PrivateKey.from_pem(RSA_KEY).unwrap()) {
-        Ok(()) => println("client identity mismatched: ok"),
-        Err(failure) => println("client identity mismatched: {}", kind_of(failure)),
+        Result.Ok(()) => println("client identity mismatched: ok"),
+        Result.Err(failure) => println("client identity mismatched: {}", kind_of(failure)),
     }
 }

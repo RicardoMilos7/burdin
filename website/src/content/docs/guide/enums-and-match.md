@@ -71,14 +71,14 @@ the missing case when you forget it.
 
 ## Options and Results are enums
 
-`Option<T>` is `Some(value)` or `None`. `Result<T, E>` is `Ok(value)` or `Err(error)`. Both are ordinary enums, so they
+`Option<T>` is `Option.Some(value)` or `Option.None`. `Result<T, E>` is `Result.Ok(value)` or `Result.Err(error)`. Both are ordinary enums, so they
 are matched the same way:
 
 ```burdin
 fn parse_or_zero(text: str): i32 {
     match i32.parse(text) {
-        Ok(n) => n,
-        Err(_) => 0,
+        Result.Ok(n) => n,
+        Result.Err(_) => 0,
     }
 }
 

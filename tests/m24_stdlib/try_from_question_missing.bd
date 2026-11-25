@@ -9,7 +9,7 @@ enum PercentError {
 
 fn byte_of(v: i64): Result<u8, PercentError> {
     let b = u8.try_from(v)? //~ E0212
-    Ok(b)
+    Result.Ok(b)
 }
 
 fn main() {}

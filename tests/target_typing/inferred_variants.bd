@@ -1,0 +1,78 @@
+//@ run
+//> 4 6 3 4 12
+//> 1 2
+//> unit 2
+//> 9
+//> 5
+//> 25
+
+// Inferred variant expressions (spec/target-typing.md, TT13): `.Variant`, `.Variant(args)`, and `.Variant { fields }`
+// take the enum from the expected type of their position: an annotated `let`, an argument, a return value and a
+// body's tail, a struct field, an assignment, an `if` arm, an array element, and a generic argument.
+
+enum Shape<T> {
+    Dot,
+    Circle(T),
+    Rect { w: T, h: T },
+}
+
+struct Holder {
+    shape: Shape<i32>,
+    pick: Option<i32>,
+}
+
+fn area(s: Shape<i32>): i32 {
+    match s {
+        .Dot => 0,
+        .Circle(r) => r * r,
+        .Rect { w, h } => w * h,
+    }
+}
+
+fn make(n: i32): Shape<i32> {
+    if n == 0 {
+        return .Dot
+    }
+    return .Circle(n)
+}
+
+fn pair(): Result<i32, String> {
+    return .Ok(9)
+}
+
+fn first(xs: [i32; 3]): Option<i32> {
+    for v in xs.iter() {
+        if v > 3 {
+            return .Some(v)
+        }
+    }
+    return .None
+}
+
+fn main() {
+    let a: Shape<i32> = .Circle(2)
+    let b: Shape<i32> = .Rect { w: 2, h: 3 }
+    println("{area(a)} {area(b)} {area(make(0)) + 3} {area(.Circle(2))} {area(.Rect { w: 3, h: 4 })}")
+
+    let mut holder = Holder { shape: .Dot, pick: .Some(1) }
+    holder.shape = .Circle(1)
+    holder.pick = if area(holder.shape) == 1 { .Some(2) } else { .None }
+    match holder.pick {
+        .Some(v) => println("1 {v}"),
+        .None => println("none"),
+    }
+
+    let shapes: [Shape<i32>; 2] = [.Dot, .Circle(1)]
+    let n = shapes.len()
+    println("unit {n}")
+
+    match pair() {
+        .Ok(v) => println("{v}"),
+        .Err(e) => println(e),
+    }
+    match first([1, 5, 2]) {
+        .Some(v) => println("{v}"),
+        .None => println("none"),
+    }
+    println("{area(make(5))}")
+}

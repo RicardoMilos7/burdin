@@ -54,12 +54,12 @@ def write_package(directory: Path) -> None:
     let header = embed("header.h")
     let source = "const N: i32 = {header.len()}\\n"
     match write_file("{out}/src/generated.bd", source) {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
     match write_file("{out}/inputs", "declared.txt\\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the input list"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the input list"),
     }
 }
 """,

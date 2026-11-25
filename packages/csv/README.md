@@ -86,9 +86,9 @@ doubled (`"Say ""hi"""`). A reader accepts quotes only around a whole field; a q
 field, or text after a closing quote, is a syntax error. Embedded line breaks are kept exactly as they were read,
 `\r\n` included. Spaces are part of the field: nothing is trimmed.
 
-An empty string is written as `""` so that it can be told from `None`: an empty field with no quotes is `None` (or
+An empty string is written as `""` so that it can be told from `Option.None`: an empty field with no quotes is `Option.None` (or
 the unit value), and an empty quoted field is the empty string. In a record of one field an empty quoted field
-reads as `None` too, because that is how a lone `None` is written (an empty line would be skipped as a blank line).
+reads as `Option.None` too, because that is how a lone `Option.None` is written (an empty line would be skipped as a blank line).
 
 ## Reading
 

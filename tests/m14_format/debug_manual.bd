@@ -33,13 +33,13 @@ struct Holder: Debug {
 fn main() {
     let s = Secret { id: 7, key: String.from("hunter2") }
     println("{s} / {s:?}")
-    let holder = Holder { secret: s, spare: None }
+    let holder = Holder { secret: s, spare: Option.None }
     println("{holder:?}")
-    let r: Result<Secret, i32> = Err(3)
+    let r: Result<Secret, i32> = Result.Err(3)
     println("{r:?}")
     let pairs = (1, "one", 'c', true)
     println("{pairs:?}")
-    let nested: Option<Option<i32>> = Some(Some(4))
+    let nested: Option<Option<i32>> = Option.Some(Option.Some(4))
     println("{nested:?}")
     println("{():?}")
 }

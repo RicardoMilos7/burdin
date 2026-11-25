@@ -79,7 +79,7 @@ fn field(text: str): List<u8> {
     }
     if text.starts_with("x") {
         match text.find(':') {
-            Some(colon) => {
+            Option.Some(colon) => {
                 let count = usize.parse(text[1..colon]).unwrap()
                 let chunk = hex_decode(text[colon + 1..text.len()]).unwrap()
                 let mut out = List<u8>.new()
@@ -90,7 +90,7 @@ fn field(text: str): List<u8> {
                 }
                 return out
             }
-            None => {}
+            Option.None => {}
         }
     }
     hex_decode(text).unwrap()
@@ -287,8 +287,8 @@ fn run_aead(mut t: Tally, p: List<String>) {
     let sealed = seal(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), plain.as_slice())
     t.same(name, sealed, want.clone())
     match open(alg, key.as_slice(), nonce.as_slice(), aad.as_slice(), want.as_slice()) {
-        Ok(back) => t.same(tag(name, " (open)").as_str(), back, plain),
-        Err(e) => t.check(tag(name, " (open)").as_str(), false, e.to_string()),
+        Result.Ok(back) => t.same(tag(name, " (open)").as_str(), back, plain),
+        Result.Err(e) => t.check(tag(name, " (open)").as_str(), false, e.to_string()),
     }
     let mut flipped = want.clone()
     flipped[0] = flipped[0] ^ 1
@@ -412,8 +412,8 @@ fn zeros(n: usize): List<u8> {
 
 fn message(result: Result<List<u8>, CryptoError>): String {
     match result {
-        Ok(_) => "ok".to_string(),
-        Err(e) => e.to_string(),
+        Result.Ok(_) => "ok".to_string(),
+        Result.Err(e) => e.to_string(),
     }
 }
 
@@ -426,8 +426,8 @@ fn scenario(name: str): String {
     let nothing = List<u8>.new()
     match name {
         "aes_key_7" => match Aes.new(zeros(7).as_slice()) {
-            Ok(_) => "ok".to_string(),
-            Err(e) => e.to_string(),
+            Result.Ok(_) => "ok".to_string(),
+            Result.Err(e) => e.to_string(),
         }
         "aes_ctr_iv_8" => message(aes_ctr_xor(key16.as_slice(), zeros(8).as_slice(), nothing.as_slice())),
         "aes_cbc_iv_8" => message(aes_cbc_encrypt(key16.as_slice(), zeros(8).as_slice(), nothing.as_slice())),

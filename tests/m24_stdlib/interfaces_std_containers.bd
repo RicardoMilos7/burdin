@@ -23,7 +23,7 @@ fn main() {
     heap.push(3)
     heap.push(1)
     let mut copy = heap.clone()
-    println("{} {} {}", copy.len() == 2, heap[0] == 3, copy.pop() == Some(3))
+    println("{} {} {}", copy.len() == 2, heap[0] == 3, copy.pop() == Option.Some(3))
     let boxed = Heap.new(String.from("x"))
     let copy = boxed.clone()
     println("{} {}", format("{:?}", copy) == format("{:?}", boxed), (*copy).len() == 1)

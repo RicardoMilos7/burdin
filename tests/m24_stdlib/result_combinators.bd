@@ -23,22 +23,22 @@
 // The `Result` combinators. Most of them take the result by value, so each line builds its own.
 
 fn ok(): Result<i32, String> {
-    Ok(10)
+    Result.Ok(10)
 }
 
 fn bad(): Result<i32, String> {
-    Err(String.from("bad"))
+    Result.Err(String.from("bad"))
 }
 
 fn length_error(e: String): Result<i32, usize> {
-    Err(e.len())
+    Result.Err(e.len())
 }
 
 fn halve(x: i32): Result<i32, String> {
     if x % 2 == 0 {
-        Ok(x / 2)
+        Result.Ok(x / 2)
     } else {
-        Err(String.from("odd"))
+        Result.Err(String.from("odd"))
     }
 }
 
@@ -48,10 +48,10 @@ fn main() {
     let wrapped = bad().map_err(|e| format("wrapped: {e}"))
     println("{wrapped:?}")
 
-    let first: Result<i32, String> = Ok(1)
+    let first: Result<i32, String> = Result.Ok(1)
     let kept: Result<i32, usize> = first.or_else(length_error)
     println("{kept:?}")
-    let second: Result<i32, String> = Err(String.from("1234567"))
+    let second: Result<i32, String> = Result.Err(String.from("1234567"))
     let recovered: Result<i32, usize> = second.or_else(length_error)
     println("{recovered:?}")
 

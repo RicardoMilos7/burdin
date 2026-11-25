@@ -28,8 +28,8 @@ fn main() {
     let pair = (String.from("abc"), 7)
     println("{tag.hash()} {pair.hash()}")
 
-    let some: Option<String> = Some(String.from("abc"))
-    let none: Option<String> = None
+    let some: Option<String> = Option.Some(String.from("abc"))
+    let none: Option<String> = Option.None
     println("{some.hash()} {none.hash()}")
 
     println("{true.hash()} {'a'.hash()}")

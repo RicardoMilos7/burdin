@@ -46,39 +46,39 @@ fn show(n: i32) {
 }
 
 fn parse_num(s: str): Result<i32, ParseError> {
-    if s.len() == 0 { return Err(ParseError.Empty) }
+    if s.len() == 0 { return Result.Err(ParseError.Empty) }
     match i32.parse(s) {
-        Ok(n) => Ok(n),
-        Err(_) => Err(ParseError.NotNumber),
+        Result.Ok(n) => Result.Ok(n),
+        Result.Err(_) => Result.Err(ParseError.NotNumber),
     }
 }
 
 fn checked_num(s: str): Result<i32, AppError> {
     let n = parse_num(s)?
-    if n > 100 { return Err(AppError.TooBig(n)) }
-    Ok(n)
+    if n > 100 { return Result.Err(AppError.TooBig(n)) }
+    Result.Ok(n)
 }
 
 fn describe(r: Result<i32, AppError>): str {
     match r {
-        Ok(_) => "ok",
-        Err(AppError.Parse(ParseError.Empty)) => "empty",
-        Err(AppError.Parse(ParseError.NotNumber)) => "not a number",
-        Err(AppError.TooBig(_)) => "too big",
+        Result.Ok(_) => "ok",
+        Result.Err(AppError.Parse(ParseError.Empty)) => "empty",
+        Result.Err(AppError.Parse(ParseError.NotNumber)) => "not a number",
+        Result.Err(AppError.TooBig(_)) => "too big",
     }
 }
 
 fn add_options(a: Option<i32>, b: Option<i32>): Option<i32> {
     let x = a?
     let y = b?
-    Some(x + y)
+    Option.Some(x + y)
 }
 
 // An early return through `?` still drops everything that is alive.
 fn with_cleanup(fail: bool): Result<i32, ParseError> {
     let _g = Noisy { id: 1 }
     let n = if fail { parse_num("")? } else { 5 }
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {
@@ -87,15 +87,15 @@ fn main() {
     println(describe(checked_num("abc")))
     println(describe(checked_num("500")))
 
-    show(add_options(Some(2), Some(3)) orelse -1)
-    show(add_options(Some(2), None) orelse -1)
+    show(add_options(Option.Some(2), Option.Some(3)) orelse -1)
+    show(add_options(Option.Some(2), Option.None) orelse -1)
 
     match with_cleanup(true) {
-        Err(_) => println("failed"),
-        Ok(_) => println("ok"),
+        Result.Err(_) => println("failed"),
+        Result.Ok(_) => println("ok"),
     }
     match with_cleanup(false) {
-        Err(_) => println("failed"),
-        Ok(_) => println("ok"),
+        Result.Err(_) => println("failed"),
+        Result.Ok(_) => println("ok"),
     }
 }

@@ -12,11 +12,11 @@
 
 fn main() {
     match List<i64>.try_with_capacity(10) {
-        Ok(xs) => {
+        Result.Ok(xs) => {
             println(xs.len().to_string())
             println((xs.capacity() >= 10).to_string())
         }
-        Err(e) => println("{}", e),
+        Result.Err(e) => println("{}", e),
     }
     let mut ys = List<i64>.new()
     ys.push(1)
@@ -26,15 +26,15 @@ fn main() {
 
     let n: usize = 2305843009213693952
     match List<i64>.try_with_capacity(n) {
-        Ok(_) => println("allocated"),
-        Err(e) => {
+        Result.Ok(_) => println("allocated"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
             println((e == AllocError.CapacityOverflow).to_string())
         }
     }
     match List<i64>.try_with_capacity(0) {
-        Ok(_) => println("ok"),
-        Err(_) => println("failed"),
+        Result.Ok(_) => println("ok"),
+        Result.Err(_) => println("failed"),
     }
 }

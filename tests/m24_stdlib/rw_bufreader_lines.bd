@@ -15,8 +15,8 @@ fn main() {
     let mut r = BufReader.new(Cursor.from_text("alpha\nbeta\r\n\ngamma"))
     loop {
         match r.read_line().unwrap() {
-            Some(line) => println("[{}]", line),
-            None => {
+            Option.Some(line) => println("[{}]", line),
+            Option.None => {
                 println("end")
                 break
             }

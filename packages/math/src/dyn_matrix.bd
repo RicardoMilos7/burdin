@@ -109,7 +109,7 @@ priv fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<Lis
             r = r + 1
         }
         if best == 0.0 {
-            return None
+            return Option.None
         }
         if pivot != col {
             swap_rows(mut m, n, pivot, col)
@@ -149,7 +149,7 @@ priv fn solve_by_elimination(n: usize, a: [f64], k: usize, b: [f64]): Option<Lis
             j = j + 1
         }
     }
-    Some(x)
+    Option.Some(x)
 }
 
 DynMatrix {
@@ -425,8 +425,8 @@ DynMatrix {
         let n = self.nrows
         let identity = DynMatrix.identity(n)
         match solve_by_elimination(n, self.data.as_slice(), n, identity.data.as_slice()) {
-            Some(x) => Some(DynMatrix { nrows: n, ncols: n, data: x }),
-            None => None,
+            Option.Some(x) => Option.Some(DynMatrix { nrows: n, ncols: n, data: x }),
+            Option.None => Option.None,
         }
     }
 
@@ -452,8 +452,8 @@ DynMatrix {
         let n = self.nrows
         let k = b.ncols
         match solve_by_elimination(n, self.data.as_slice(), k, b.data.as_slice()) {
-            Some(x) => Some(DynMatrix { nrows: n, ncols: k, data: x }),
-            None => None,
+            Option.Some(x) => Option.Some(DynMatrix { nrows: n, ncols: k, data: x }),
+            Option.None => Option.None,
         }
     }
 }

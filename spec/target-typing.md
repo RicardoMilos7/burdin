@@ -1,7 +1,7 @@
 # Target-typed initializers
 
-Status: implemented (issue #998, 2026-11-24). The forms are in `grammar.md` (`TargetExpr`), and their tests are in
-`tests/target_typing/`. Before this, a leading `.` was a syntax error (E0001). The stage placement is in
+Status: implemented (issue #998, 2026-11-24; the variant forms and the removal of the bare prelude names, issue #1069,
+TT13-TT19). The forms are in `grammar.md` (`TargetExpr`, `PatPath`), and their tests are in `tests/target_typing/`. Before this, a leading `.` was a syntax error (E0001). The stage placement is in
 `stage1-subset.md`, under "When wanted".
 
 A value's type can come from the place it is used, so a constructor or a struct literal does not repeat a type the
@@ -63,8 +63,8 @@ form does not look through a reference: a `&Point` parameter does not take `.{ x
 **TT6 (what a name means).** `.name` resolves as `T.name` resolves in the same position: an associated function, a
 method value (`memory-rules.md`, CL11), a variant, including an associated extension function (`extensions.md`, EX).
 `.Some(x)`, `.None`, `.Ok(v)`, and `.Err(e)` work when the expected type is `Option<T>` or `Result<T, E>`, because
-`Option.Some(x)`, `Option.None`, `Result.Ok(v)`, and `Result.Err(e)` already are their spellings. The bare prelude
-names `Some`, `Ok`, and `Err` do not change. A name that `T` does not have is E0002, as `T.name` reports it.
+`Option.Some(x)`, `Option.None`, `Result.Ok(v)`, and `Result.Err(e)` are their spellings (TT14). The bare prelude
+names `Some`, `None`, `Ok`, and `Err` no longer exist (TT15). A name that `T` does not have is E0002, as `T.name` reports it.
 
 **TT7 (the struct form).** `.{ fields }` is `T { fields }`: the same field list, the same shorthand, and the same checks,
 reporting the same codes. `T` must be a struct that the program declares. For any other expected type (an enum, a
@@ -101,9 +101,78 @@ or that closes a stage 0 gap. None of the three applies: every form has a spelli
 `stage1-subset.md`, and the folder `tests/target_typing/` is outside the milestone list, so it is not one of the
 milestone folders CI checks for completeness. CI runs it with the other non-milestone folders.
 
-**TT12 (registry).** The forms add no registry code, so `tests/README.md` gets a note pointing here and no new row.
-A new code would need a compile-fail test in the same change (`tests/check_tests.py`) and a checked example in
-`docs/error-codes.md` (`tests/check_error_docs.py`), and neither can exist before the compiler reports it.
+**TT12 (registry).** The forms of TT1-TT11 add no registry code, so `tests/README.md` gets a note pointing here and no
+new row. A new code would need a compile-fail test in the same change (`tests/check_tests.py`) and a checked example in
+`docs/error-codes.md` (`tests/check_error_docs.py`), and neither can exist before the compiler reports it. The one
+code of TT13-TT19 is E0305 (TT15).
+
+## Inferred variants, and `Option` and `Result` without bare names (issue #1069)
+
+**TT13 (inferred variants).** A leading dot names a variant of an enum whose type the position gives, in a pattern
+and in an expression:
+
+```
+fn area(s: Shape<i32>): i32 {
+    match s {
+        .Dot => 0,
+        .Circle(r) => r * r,
+        .Rect { w, h } => w * h,
+    }
+}
+let c: Shape<i32> = .Circle(2)
+let r: Shape<i32> = .Rect { w: 3, h: 4 }
+```
+
+In a pattern (`match` arm, `let`, `if let`, `while let`, a nested pattern, an or-pattern alternative) the type is the
+scrutinee's type, or the type of the sub-pattern's position. `.Name`, `.Name(p, ..)`, and `.Name { f, g: p, .. }` mean
+`T.Name`, `T.Name(p, ..)`, and `T.Name { f, g: p, .. }` for that enum `T`; the same arity, field, shape, visibility
+(the enum's name is not written, so only the variant's own fields are checked), and exhaustiveness rules apply, and
+the `Or` pattern is unchanged (`.Dot | .Circle(_) => 0`). In an expression the type is the expected type (TT2),
+and `.Name { fields }` is the struct-like variant's literal, which joins `.name` and `.name(args)` of TT1. A pattern or
+a literal whose type is not an enum, or is unknown (a type parameter, an `any`, no expected type), is E0003, as TT3-TT5
+say for the other forms; a name the enum lacks is E0002. The parser reads `.Name` in a pattern as the path whose first
+segment is empty (`Ident.is_inferred`), so the tools that print or walk paths need no new node.
+
+A `.` that starts a line continues the previous expression as a member access, except when a `=>` follows on that
+line outside any bracket: then it begins the next match arm, so arms separated by line breaks alone may start with
+`.Variant`.
+
+**TT14 (`Option` and `Result` are enums).** `Option` and `Result` take part in TT13 as the enums they are:
+`Option.Some(x)`, `Option.None`, `Result.Ok(v)`, and `Result.Err(e)`, and the inferred `.Some(x)`, `.None`, `.Ok(v)`,
+and `.Err(e)`, in patterns and in expressions. The qualified spellings take their type arguments from the payload and
+the expected type exactly as the bare names did (`Option.Some(3)` is an `Option<i32>`; `Result.Ok(v)` and
+`Option.None` need an expected type), and may carry them (`Option<i32>.Some(3)`). Used as a function value,
+`Option.Some`, `Result.Ok`, and `Result.Err` follow `memory-rules.md`, CL11. A program that declares its own type
+named `Option` or `Result` keeps its own meaning for that name.
+
+**TT15 (the bare names are gone).** `Some`, `None`, `Ok`, and `Err` are not names of the prelude. A bare one, as an
+expression, a call, a function value, or a pattern, is E0305 at the name, with the machine-applicable suggestion
+`Option.Some` (or `.None`, `Result.Ok`, `Result.Err`) that means the same wherever the bare name did. There is no
+deprecation period, no warning, and no lint. A binding named `None` is E0305 too (it was the unit variant before);
+a name the program itself declares (a local, a function, a constant) is that name, as before.
+
+**TT16 (no guess).** The expected type is never found by looking at the rest of the function (TT3): `let x = .Circle(2)`,
+`.Circle(2).area()`, and `s == .Dot` are E0003. The last needs the other operand's type, which TT3 refuses to use;
+write `s == Shape.Dot`. This is the decision on the optional shorthands of issue #1069: struct literals `.{ ... }`
+(TT7), associated functions `.new()` and `.default()`, and constants `.MAX` (TT6) exist already, and the comparison
+`== .Dot` is not added.
+
+**TT17 (name clashes).** `.Name` is the variant of the type in its position. An item in scope with the same name does
+not take part: `.Circle` is the variant even when a function `Circle` is declared, and the bare `Circle` is that
+function.
+
+**TT18 (tools).** `burdin fmt` prints a leading dot attached to the name, keeps the author's choice between `Option.None`
+and `.None`, and is idempotent (`fmt.md`); `burdin lint` treats the inferred and qualified forms as the written
+`Enum.Variant`, and its fixes never write a bare name (`lint.md`); `burdin lsp` completes the variants after a dot,
+resolves `.Variant` as a reference to the variant (hover, definition, references, rename, semantic tokens), and offers
+the E0305 suggestion as a quick fix (`lsp.md`); `burdin ssr` and `burdin refactor` see `.Variant` as a reference to
+the variant (`refactor.md`).
+
+**TT19 (tests).** `tests/target_typing/` has the folder's tests: `inferred_patterns` (run: unit, tuple, and struct
+variants, or-patterns, `if let`, `while let`, nested, a generic enum, `Option` and `Result`), `inferred_variants` (run:
+each expected-type position), `option_result_qualified` (run: the qualified spellings and function values),
+`inferred_unknown_type` (E0003), `inferred_names` (E0002), `bare_prelude_names` (E0305 for each bare name, with
+suggestions), and `deferred_comparison` (E0003).
 
 ## Answers to the open questions in issue #998
 

@@ -63,7 +63,7 @@ fn i8.wrapping_pow(self, exp: u32): i8 {
 ///
 /// ```
 /// let x: i8 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn i8.checked_pow(self, exp: u32): Option<i8> {
     let mut result: i8 = 1
@@ -72,68 +72,68 @@ fn i8.checked_pow(self, exp: u32): Option<i8> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: i8 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn i8.checked_div(self, other: i8): Option<i8> {
     if other == 0 || (self == __i8_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: i8 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn i8.checked_rem(self, other: i8): Option<i8> {
     if other == 0 || (self == __i8_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: i8 = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn i8.checked_neg(self): Option<i8> {
     if self == __i8_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -151,28 +151,28 @@ fn i8.wrapping_neg(self): i8 {
 ///
 /// ```
 /// let x: i8 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn i8.checked_shl(self, n: u32): Option<i8> {
     if n >= 8 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: i8 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn i8.checked_shr(self, n: u32): Option<i8> {
     if n >= 8 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -203,8 +203,8 @@ fn i8.wrapping_shr(self, n: u32): i8 {
 /// ```
 fn i8.saturating_add(self, other: i8): i8 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i8_MAX
             } else {
@@ -222,8 +222,8 @@ fn i8.saturating_add(self, other: i8): i8 {
 /// ```
 fn i8.saturating_sub(self, other: i8): i8 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i8_MIN
             } else {
@@ -241,8 +241,8 @@ fn i8.saturating_sub(self, other: i8): i8 {
 /// ```
 fn i8.saturating_mul(self, other: i8): i8 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __i8_MAX
             } else {
@@ -260,8 +260,8 @@ fn i8.saturating_mul(self, other: i8): i8 {
 /// ```
 fn i8.saturating_pow(self, exp: u32): i8 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __i8_MIN
             } else {
@@ -601,28 +601,28 @@ fn __i8_parse_radix(s: str, radix: u32): Result<i8, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: i8 = d as i8
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -766,7 +766,7 @@ fn i16.wrapping_pow(self, exp: u32): i16 {
 ///
 /// ```
 /// let x: i16 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn i16.checked_pow(self, exp: u32): Option<i16> {
     let mut result: i16 = 1
@@ -775,68 +775,68 @@ fn i16.checked_pow(self, exp: u32): Option<i16> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: i16 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn i16.checked_div(self, other: i16): Option<i16> {
     if other == 0 || (self == __i16_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: i16 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn i16.checked_rem(self, other: i16): Option<i16> {
     if other == 0 || (self == __i16_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: i16 = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn i16.checked_neg(self): Option<i16> {
     if self == __i16_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -854,28 +854,28 @@ fn i16.wrapping_neg(self): i16 {
 ///
 /// ```
 /// let x: i16 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn i16.checked_shl(self, n: u32): Option<i16> {
     if n >= 16 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: i16 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn i16.checked_shr(self, n: u32): Option<i16> {
     if n >= 16 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -906,8 +906,8 @@ fn i16.wrapping_shr(self, n: u32): i16 {
 /// ```
 fn i16.saturating_add(self, other: i16): i16 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i16_MAX
             } else {
@@ -925,8 +925,8 @@ fn i16.saturating_add(self, other: i16): i16 {
 /// ```
 fn i16.saturating_sub(self, other: i16): i16 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i16_MIN
             } else {
@@ -944,8 +944,8 @@ fn i16.saturating_sub(self, other: i16): i16 {
 /// ```
 fn i16.saturating_mul(self, other: i16): i16 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __i16_MAX
             } else {
@@ -963,8 +963,8 @@ fn i16.saturating_mul(self, other: i16): i16 {
 /// ```
 fn i16.saturating_pow(self, exp: u32): i16 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __i16_MIN
             } else {
@@ -1312,28 +1312,28 @@ fn __i16_parse_radix(s: str, radix: u32): Result<i16, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: i16 = d as i16
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -1477,7 +1477,7 @@ fn i32.wrapping_pow(self, exp: u32): i32 {
 ///
 /// ```
 /// let x: i32 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn i32.checked_pow(self, exp: u32): Option<i32> {
     let mut result: i32 = 1
@@ -1486,68 +1486,68 @@ fn i32.checked_pow(self, exp: u32): Option<i32> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: i32 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn i32.checked_div(self, other: i32): Option<i32> {
     if other == 0 || (self == __i32_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: i32 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn i32.checked_rem(self, other: i32): Option<i32> {
     if other == 0 || (self == __i32_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: i32 = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn i32.checked_neg(self): Option<i32> {
     if self == __i32_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -1565,28 +1565,28 @@ fn i32.wrapping_neg(self): i32 {
 ///
 /// ```
 /// let x: i32 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn i32.checked_shl(self, n: u32): Option<i32> {
     if n >= 32 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: i32 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn i32.checked_shr(self, n: u32): Option<i32> {
     if n >= 32 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -1617,8 +1617,8 @@ fn i32.wrapping_shr(self, n: u32): i32 {
 /// ```
 fn i32.saturating_add(self, other: i32): i32 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i32_MAX
             } else {
@@ -1636,8 +1636,8 @@ fn i32.saturating_add(self, other: i32): i32 {
 /// ```
 fn i32.saturating_sub(self, other: i32): i32 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i32_MIN
             } else {
@@ -1655,8 +1655,8 @@ fn i32.saturating_sub(self, other: i32): i32 {
 /// ```
 fn i32.saturating_mul(self, other: i32): i32 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __i32_MAX
             } else {
@@ -1674,8 +1674,8 @@ fn i32.saturating_mul(self, other: i32): i32 {
 /// ```
 fn i32.saturating_pow(self, exp: u32): i32 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __i32_MIN
             } else {
@@ -2023,28 +2023,28 @@ fn __i32_parse_radix(s: str, radix: u32): Result<i32, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: i32 = d as i32
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -2188,7 +2188,7 @@ fn i64.wrapping_pow(self, exp: u32): i64 {
 ///
 /// ```
 /// let x: i64 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn i64.checked_pow(self, exp: u32): Option<i64> {
     let mut result: i64 = 1
@@ -2197,68 +2197,68 @@ fn i64.checked_pow(self, exp: u32): Option<i64> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: i64 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn i64.checked_div(self, other: i64): Option<i64> {
     if other == 0 || (self == __i64_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: i64 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn i64.checked_rem(self, other: i64): Option<i64> {
     if other == 0 || (self == __i64_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: i64 = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn i64.checked_neg(self): Option<i64> {
     if self == __i64_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -2276,28 +2276,28 @@ fn i64.wrapping_neg(self): i64 {
 ///
 /// ```
 /// let x: i64 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn i64.checked_shl(self, n: u32): Option<i64> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: i64 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn i64.checked_shr(self, n: u32): Option<i64> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -2328,8 +2328,8 @@ fn i64.wrapping_shr(self, n: u32): i64 {
 /// ```
 fn i64.saturating_add(self, other: i64): i64 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i64_MAX
             } else {
@@ -2347,8 +2347,8 @@ fn i64.saturating_add(self, other: i64): i64 {
 /// ```
 fn i64.saturating_sub(self, other: i64): i64 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i64_MIN
             } else {
@@ -2366,8 +2366,8 @@ fn i64.saturating_sub(self, other: i64): i64 {
 /// ```
 fn i64.saturating_mul(self, other: i64): i64 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __i64_MAX
             } else {
@@ -2385,8 +2385,8 @@ fn i64.saturating_mul(self, other: i64): i64 {
 /// ```
 fn i64.saturating_pow(self, exp: u32): i64 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __i64_MIN
             } else {
@@ -2734,28 +2734,28 @@ fn __i64_parse_radix(s: str, radix: u32): Result<i64, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: i64 = d as i64
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -2899,7 +2899,7 @@ fn i128.wrapping_pow(self, exp: u32): i128 {
 ///
 /// ```
 /// let x: i128 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn i128.checked_pow(self, exp: u32): Option<i128> {
     let mut result: i128 = 1
@@ -2908,68 +2908,68 @@ fn i128.checked_pow(self, exp: u32): Option<i128> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: i128 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn i128.checked_div(self, other: i128): Option<i128> {
     if other == 0 || (self == __i128_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: i128 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn i128.checked_rem(self, other: i128): Option<i128> {
     if other == 0 || (self == __i128_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: i128 = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn i128.checked_neg(self): Option<i128> {
     if self == __i128_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -2987,28 +2987,28 @@ fn i128.wrapping_neg(self): i128 {
 ///
 /// ```
 /// let x: i128 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn i128.checked_shl(self, n: u32): Option<i128> {
     if n >= 128 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: i128 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn i128.checked_shr(self, n: u32): Option<i128> {
     if n >= 128 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -3039,8 +3039,8 @@ fn i128.wrapping_shr(self, n: u32): i128 {
 /// ```
 fn i128.saturating_add(self, other: i128): i128 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i128_MAX
             } else {
@@ -3058,8 +3058,8 @@ fn i128.saturating_add(self, other: i128): i128 {
 /// ```
 fn i128.saturating_sub(self, other: i128): i128 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __i128_MIN
             } else {
@@ -3077,8 +3077,8 @@ fn i128.saturating_sub(self, other: i128): i128 {
 /// ```
 fn i128.saturating_mul(self, other: i128): i128 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __i128_MAX
             } else {
@@ -3096,8 +3096,8 @@ fn i128.saturating_mul(self, other: i128): i128 {
 /// ```
 fn i128.saturating_pow(self, exp: u32): i128 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __i128_MIN
             } else {
@@ -3445,28 +3445,28 @@ fn __i128_parse_radix(s: str, radix: u32): Result<i128, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: i128 = d as i128
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -3610,7 +3610,7 @@ fn isize.wrapping_pow(self, exp: u32): isize {
 ///
 /// ```
 /// let x: isize = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn isize.checked_pow(self, exp: u32): Option<isize> {
     let mut result: isize = 1
@@ -3619,68 +3619,68 @@ fn isize.checked_pow(self, exp: u32): Option<isize> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0 or the quotient overflows.
 ///
 /// ```
 /// let x: isize = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn isize.checked_div(self, other: isize): Option<isize> {
     if other == 0 || (self == __isize_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0 or the division overflows.
 ///
 /// ```
 /// let x: isize = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn isize.checked_rem(self, other: isize): Option<isize> {
     if other == 0 || (self == __isize_MIN && other == -1) {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`, or `None` for the minimum value.
 ///
 /// ```
 /// let x: isize = 5
-/// assert_eq(x.checked_neg(), Some(-5))
+/// assert_eq(x.checked_neg(), Option.Some(-5))
 /// ```
 fn isize.checked_neg(self): Option<isize> {
     if self == __isize_MIN {
-        return None
+        return Option.None
     }
-    Some(0 - self)
+    Option.Some(0 - self)
 }
 
 /// `-self`, wrapping around for the minimum value.
@@ -3698,28 +3698,28 @@ fn isize.wrapping_neg(self): isize {
 ///
 /// ```
 /// let x: isize = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn isize.checked_shl(self, n: u32): Option<isize> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: isize = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn isize.checked_shr(self, n: u32): Option<isize> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -3750,8 +3750,8 @@ fn isize.wrapping_shr(self, n: u32): isize {
 /// ```
 fn isize.saturating_add(self, other: isize): isize {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __isize_MAX
             } else {
@@ -3769,8 +3769,8 @@ fn isize.saturating_add(self, other: isize): isize {
 /// ```
 fn isize.saturating_sub(self, other: isize): isize {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if other > 0 {
                 __isize_MIN
             } else {
@@ -3788,8 +3788,8 @@ fn isize.saturating_sub(self, other: isize): isize {
 /// ```
 fn isize.saturating_mul(self, other: isize): isize {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if (self < 0) == (other < 0) {
                 __isize_MAX
             } else {
@@ -3807,8 +3807,8 @@ fn isize.saturating_mul(self, other: isize): isize {
 /// ```
 fn isize.saturating_pow(self, exp: u32): isize {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => {
+        Option.Some(v) => v,
+        Option.None => {
             if self < 0 && exp % 2 == 1 {
                 __isize_MIN
             } else {
@@ -4156,28 +4156,28 @@ fn __isize_parse_radix(s: str, radix: u32): Result<isize, ParseIntError> {
             }
         }
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: isize = d as isize
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = if negative { scaled.unwrap().checked_sub(digit) } else { scaled.unwrap().checked_add(digit) }
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -4321,7 +4321,7 @@ fn u8.wrapping_pow(self, exp: u32): u8 {
 ///
 /// ```
 /// let x: u8 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn u8.checked_pow(self, exp: u32): Option<u8> {
     let mut result: u8 = 1
@@ -4330,70 +4330,70 @@ fn u8.checked_pow(self, exp: u32): Option<u8> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u8 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn u8.checked_div(self, other: u8): Option<u8> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u8 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn u8.checked_rem(self, other: u8): Option<u8> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: u8 = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: u8 = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn u8.checked_neg(self): Option<u8> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -4411,28 +4411,28 @@ fn u8.wrapping_neg(self): u8 {
 ///
 /// ```
 /// let x: u8 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn u8.checked_shl(self, n: u32): Option<u8> {
     if n >= 8 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: u8 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn u8.checked_shr(self, n: u32): Option<u8> {
     if n >= 8 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -4463,8 +4463,8 @@ fn u8.wrapping_shr(self, n: u32): u8 {
 /// ```
 fn u8.saturating_add(self, other: u8): u8 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __u8_MAX,
+        Option.Some(v) => v,
+        Option.None => __u8_MAX,
     }
 }
 
@@ -4476,8 +4476,8 @@ fn u8.saturating_add(self, other: u8): u8 {
 /// ```
 fn u8.saturating_sub(self, other: u8): u8 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -4489,8 +4489,8 @@ fn u8.saturating_sub(self, other: u8): u8 {
 /// ```
 fn u8.saturating_mul(self, other: u8): u8 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __u8_MAX,
+        Option.Some(v) => v,
+        Option.None => __u8_MAX,
     }
 }
 
@@ -4502,8 +4502,8 @@ fn u8.saturating_mul(self, other: u8): u8 {
 /// ```
 fn u8.saturating_pow(self, exp: u32): u8 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __u8_MAX,
+        Option.Some(v) => v,
+        Option.None => __u8_MAX,
     }
 }
 
@@ -4709,17 +4709,17 @@ fn u8.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: u8 = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn u8.checked_next_power_of_two(self): Option<u8> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 8 - (self - 1).leading_zeros()
     if top >= 8 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -4730,8 +4730,8 @@ fn u8.checked_next_power_of_two(self): Option<u8> {
 /// ```
 fn u8.next_power_of_two(self): u8 {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -4802,28 +4802,28 @@ fn __u8_parse_radix(s: str, radix: u32): Result<u8, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: u8 = d as u8
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -4964,7 +4964,7 @@ fn u16.wrapping_pow(self, exp: u32): u16 {
 ///
 /// ```
 /// let x: u16 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn u16.checked_pow(self, exp: u32): Option<u16> {
     let mut result: u16 = 1
@@ -4973,70 +4973,70 @@ fn u16.checked_pow(self, exp: u32): Option<u16> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u16 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn u16.checked_div(self, other: u16): Option<u16> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u16 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn u16.checked_rem(self, other: u16): Option<u16> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: u16 = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: u16 = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn u16.checked_neg(self): Option<u16> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -5054,28 +5054,28 @@ fn u16.wrapping_neg(self): u16 {
 ///
 /// ```
 /// let x: u16 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn u16.checked_shl(self, n: u32): Option<u16> {
     if n >= 16 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: u16 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn u16.checked_shr(self, n: u32): Option<u16> {
     if n >= 16 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -5106,8 +5106,8 @@ fn u16.wrapping_shr(self, n: u32): u16 {
 /// ```
 fn u16.saturating_add(self, other: u16): u16 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __u16_MAX,
+        Option.Some(v) => v,
+        Option.None => __u16_MAX,
     }
 }
 
@@ -5119,8 +5119,8 @@ fn u16.saturating_add(self, other: u16): u16 {
 /// ```
 fn u16.saturating_sub(self, other: u16): u16 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -5132,8 +5132,8 @@ fn u16.saturating_sub(self, other: u16): u16 {
 /// ```
 fn u16.saturating_mul(self, other: u16): u16 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __u16_MAX,
+        Option.Some(v) => v,
+        Option.None => __u16_MAX,
     }
 }
 
@@ -5145,8 +5145,8 @@ fn u16.saturating_mul(self, other: u16): u16 {
 /// ```
 fn u16.saturating_pow(self, exp: u32): u16 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __u16_MAX,
+        Option.Some(v) => v,
+        Option.None => __u16_MAX,
     }
 }
 
@@ -5360,17 +5360,17 @@ fn u16.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: u16 = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn u16.checked_next_power_of_two(self): Option<u16> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 16 - (self - 1).leading_zeros()
     if top >= 16 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -5381,8 +5381,8 @@ fn u16.checked_next_power_of_two(self): Option<u16> {
 /// ```
 fn u16.next_power_of_two(self): u16 {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -5453,28 +5453,28 @@ fn __u16_parse_radix(s: str, radix: u32): Result<u16, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: u16 = d as u16
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -5615,7 +5615,7 @@ fn u32.wrapping_pow(self, exp: u32): u32 {
 ///
 /// ```
 /// let x: u32 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn u32.checked_pow(self, exp: u32): Option<u32> {
     let mut result: u32 = 1
@@ -5624,70 +5624,70 @@ fn u32.checked_pow(self, exp: u32): Option<u32> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u32 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn u32.checked_div(self, other: u32): Option<u32> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u32 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn u32.checked_rem(self, other: u32): Option<u32> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: u32 = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: u32 = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn u32.checked_neg(self): Option<u32> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -5705,28 +5705,28 @@ fn u32.wrapping_neg(self): u32 {
 ///
 /// ```
 /// let x: u32 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn u32.checked_shl(self, n: u32): Option<u32> {
     if n >= 32 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: u32 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn u32.checked_shr(self, n: u32): Option<u32> {
     if n >= 32 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -5757,8 +5757,8 @@ fn u32.wrapping_shr(self, n: u32): u32 {
 /// ```
 fn u32.saturating_add(self, other: u32): u32 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __u32_MAX,
+        Option.Some(v) => v,
+        Option.None => __u32_MAX,
     }
 }
 
@@ -5770,8 +5770,8 @@ fn u32.saturating_add(self, other: u32): u32 {
 /// ```
 fn u32.saturating_sub(self, other: u32): u32 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -5783,8 +5783,8 @@ fn u32.saturating_sub(self, other: u32): u32 {
 /// ```
 fn u32.saturating_mul(self, other: u32): u32 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __u32_MAX,
+        Option.Some(v) => v,
+        Option.None => __u32_MAX,
     }
 }
 
@@ -5796,8 +5796,8 @@ fn u32.saturating_mul(self, other: u32): u32 {
 /// ```
 fn u32.saturating_pow(self, exp: u32): u32 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __u32_MAX,
+        Option.Some(v) => v,
+        Option.None => __u32_MAX,
     }
 }
 
@@ -6011,17 +6011,17 @@ fn u32.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: u32 = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn u32.checked_next_power_of_two(self): Option<u32> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 32 - (self - 1).leading_zeros()
     if top >= 32 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -6032,8 +6032,8 @@ fn u32.checked_next_power_of_two(self): Option<u32> {
 /// ```
 fn u32.next_power_of_two(self): u32 {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -6104,28 +6104,28 @@ fn __u32_parse_radix(s: str, radix: u32): Result<u32, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: u32 = d as u32
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -6266,7 +6266,7 @@ fn u64.wrapping_pow(self, exp: u32): u64 {
 ///
 /// ```
 /// let x: u64 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn u64.checked_pow(self, exp: u32): Option<u64> {
     let mut result: u64 = 1
@@ -6275,70 +6275,70 @@ fn u64.checked_pow(self, exp: u32): Option<u64> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u64 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn u64.checked_div(self, other: u64): Option<u64> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u64 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn u64.checked_rem(self, other: u64): Option<u64> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: u64 = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: u64 = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn u64.checked_neg(self): Option<u64> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -6356,28 +6356,28 @@ fn u64.wrapping_neg(self): u64 {
 ///
 /// ```
 /// let x: u64 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn u64.checked_shl(self, n: u32): Option<u64> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: u64 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn u64.checked_shr(self, n: u32): Option<u64> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -6408,8 +6408,8 @@ fn u64.wrapping_shr(self, n: u32): u64 {
 /// ```
 fn u64.saturating_add(self, other: u64): u64 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __u64_MAX,
+        Option.Some(v) => v,
+        Option.None => __u64_MAX,
     }
 }
 
@@ -6421,8 +6421,8 @@ fn u64.saturating_add(self, other: u64): u64 {
 /// ```
 fn u64.saturating_sub(self, other: u64): u64 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -6434,8 +6434,8 @@ fn u64.saturating_sub(self, other: u64): u64 {
 /// ```
 fn u64.saturating_mul(self, other: u64): u64 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __u64_MAX,
+        Option.Some(v) => v,
+        Option.None => __u64_MAX,
     }
 }
 
@@ -6447,8 +6447,8 @@ fn u64.saturating_mul(self, other: u64): u64 {
 /// ```
 fn u64.saturating_pow(self, exp: u32): u64 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __u64_MAX,
+        Option.Some(v) => v,
+        Option.None => __u64_MAX,
     }
 }
 
@@ -6662,17 +6662,17 @@ fn u64.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: u64 = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn u64.checked_next_power_of_two(self): Option<u64> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 64 - (self - 1).leading_zeros()
     if top >= 64 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -6683,8 +6683,8 @@ fn u64.checked_next_power_of_two(self): Option<u64> {
 /// ```
 fn u64.next_power_of_two(self): u64 {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -6755,28 +6755,28 @@ fn __u64_parse_radix(s: str, radix: u32): Result<u64, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: u64 = d as u64
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -6917,7 +6917,7 @@ fn u128.wrapping_pow(self, exp: u32): u128 {
 ///
 /// ```
 /// let x: u128 = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn u128.checked_pow(self, exp: u32): Option<u128> {
     let mut result: u128 = 1
@@ -6926,70 +6926,70 @@ fn u128.checked_pow(self, exp: u32): Option<u128> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u128 = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn u128.checked_div(self, other: u128): Option<u128> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: u128 = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn u128.checked_rem(self, other: u128): Option<u128> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: u128 = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: u128 = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn u128.checked_neg(self): Option<u128> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -7007,28 +7007,28 @@ fn u128.wrapping_neg(self): u128 {
 ///
 /// ```
 /// let x: u128 = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn u128.checked_shl(self, n: u32): Option<u128> {
     if n >= 128 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: u128 = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn u128.checked_shr(self, n: u32): Option<u128> {
     if n >= 128 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -7059,8 +7059,8 @@ fn u128.wrapping_shr(self, n: u32): u128 {
 /// ```
 fn u128.saturating_add(self, other: u128): u128 {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __u128_MAX,
+        Option.Some(v) => v,
+        Option.None => __u128_MAX,
     }
 }
 
@@ -7072,8 +7072,8 @@ fn u128.saturating_add(self, other: u128): u128 {
 /// ```
 fn u128.saturating_sub(self, other: u128): u128 {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -7085,8 +7085,8 @@ fn u128.saturating_sub(self, other: u128): u128 {
 /// ```
 fn u128.saturating_mul(self, other: u128): u128 {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __u128_MAX,
+        Option.Some(v) => v,
+        Option.None => __u128_MAX,
     }
 }
 
@@ -7098,8 +7098,8 @@ fn u128.saturating_mul(self, other: u128): u128 {
 /// ```
 fn u128.saturating_pow(self, exp: u32): u128 {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __u128_MAX,
+        Option.Some(v) => v,
+        Option.None => __u128_MAX,
     }
 }
 
@@ -7313,17 +7313,17 @@ fn u128.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: u128 = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn u128.checked_next_power_of_two(self): Option<u128> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 128 - (self - 1).leading_zeros()
     if top >= 128 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -7334,8 +7334,8 @@ fn u128.checked_next_power_of_two(self): Option<u128> {
 /// ```
 fn u128.next_power_of_two(self): u128 {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -7406,28 +7406,28 @@ fn __u128_parse_radix(s: str, radix: u32): Result<u128, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: u128 = d as u128
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.
@@ -7568,7 +7568,7 @@ fn usize.wrapping_pow(self, exp: u32): usize {
 ///
 /// ```
 /// let x: usize = 3
-/// assert_eq(x.checked_pow(3), Some(27))
+/// assert_eq(x.checked_pow(3), Option.Some(27))
 /// ```
 fn usize.checked_pow(self, exp: u32): Option<usize> {
     let mut result: usize = 1
@@ -7577,70 +7577,70 @@ fn usize.checked_pow(self, exp: u32): Option<usize> {
     while e > 0 {
         if e & 1 == 1 {
             match result.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     result = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
         e = e >> 1
         if e > 0 {
             match base.checked_mul(base) {
-                Some(v) => {
+                Option.Some(v) => {
                     base = v
                 }
-                None => {
-                    return None
+                Option.None => {
+                    return Option.None
                 }
             }
         }
     }
-    Some(result)
+    Option.Some(result)
 }
 
 /// `self / other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: usize = 7
-/// assert_eq(x.checked_div(2), Some(3))
+/// assert_eq(x.checked_div(2), Option.Some(3))
 /// assert(x.checked_div(0).is_none())
 /// ```
 fn usize.checked_div(self, other: usize): Option<usize> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self / other)
+    Option.Some(self / other)
 }
 
 /// `self % other`, or `None` when `other` is 0.
 ///
 /// ```
 /// let x: usize = 7
-/// assert_eq(x.checked_rem(4), Some(3))
+/// assert_eq(x.checked_rem(4), Option.Some(3))
 /// assert(x.checked_rem(0).is_none())
 /// ```
 fn usize.checked_rem(self, other: usize): Option<usize> {
     if other == 0 {
-        return None
+        return Option.None
     }
-    Some(self % other)
+    Option.Some(self % other)
 }
 
 /// `-self`: `Some(0)` for 0 and `None` for every other value.
 ///
 /// ```
 /// let x: usize = 0
-/// assert_eq(x.checked_neg(), Some(0))
+/// assert_eq(x.checked_neg(), Option.Some(0))
 /// let y: usize = 1
 /// assert(y.checked_neg().is_none())
 /// ```
 fn usize.checked_neg(self): Option<usize> {
     if self == 0 {
-        return Some(0)
+        return Option.Some(0)
     }
-    None
+    Option.None
 }
 
 /// `-self`, wrapping around (two's complement).
@@ -7658,28 +7658,28 @@ fn usize.wrapping_neg(self): usize {
 ///
 /// ```
 /// let x: usize = 1
-/// assert_eq(x.checked_shl(2), Some(4))
+/// assert_eq(x.checked_shl(2), Option.Some(4))
 /// assert(x.checked_shl(200).is_none())
 /// ```
 fn usize.checked_shl(self, n: u32): Option<usize> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self << n)
+    Option.Some(self << n)
 }
 
 /// `self >> n`, or `None` when `n` is the number of bits or more.
 ///
 /// ```
 /// let x: usize = 8
-/// assert_eq(x.checked_shr(2), Some(2))
+/// assert_eq(x.checked_shr(2), Option.Some(2))
 /// assert(x.checked_shr(200).is_none())
 /// ```
 fn usize.checked_shr(self, n: u32): Option<usize> {
     if n >= 64 {
-        return None
+        return Option.None
     }
-    Some(self >> n)
+    Option.Some(self >> n)
 }
 
 /// `self << (n % bits)`.
@@ -7710,8 +7710,8 @@ fn usize.wrapping_shr(self, n: u32): usize {
 /// ```
 fn usize.saturating_add(self, other: usize): usize {
     match self.checked_add(other) {
-        Some(v) => v,
-        None => __usize_MAX,
+        Option.Some(v) => v,
+        Option.None => __usize_MAX,
     }
 }
 
@@ -7723,8 +7723,8 @@ fn usize.saturating_add(self, other: usize): usize {
 /// ```
 fn usize.saturating_sub(self, other: usize): usize {
     match self.checked_sub(other) {
-        Some(v) => v,
-        None => 0,
+        Option.Some(v) => v,
+        Option.None => 0,
     }
 }
 
@@ -7736,8 +7736,8 @@ fn usize.saturating_sub(self, other: usize): usize {
 /// ```
 fn usize.saturating_mul(self, other: usize): usize {
     match self.checked_mul(other) {
-        Some(v) => v,
-        None => __usize_MAX,
+        Option.Some(v) => v,
+        Option.None => __usize_MAX,
     }
 }
 
@@ -7749,8 +7749,8 @@ fn usize.saturating_mul(self, other: usize): usize {
 /// ```
 fn usize.saturating_pow(self, exp: u32): usize {
     match self.checked_pow(exp) {
-        Some(v) => v,
-        None => __usize_MAX,
+        Option.Some(v) => v,
+        Option.None => __usize_MAX,
     }
 }
 
@@ -7964,17 +7964,17 @@ fn usize.is_power_of_two(self): bool {
 ///
 /// ```
 /// let x: usize = 5
-/// assert_eq(x.checked_next_power_of_two(), Some(8))
+/// assert_eq(x.checked_next_power_of_two(), Option.Some(8))
 /// ```
 fn usize.checked_next_power_of_two(self): Option<usize> {
     if self <= 1 {
-        return Some(1)
+        return Option.Some(1)
     }
     let top = 64 - (self - 1).leading_zeros()
     if top >= 64 {
-        return None
+        return Option.None
     }
-    Some(1 << top)
+    Option.Some(1 << top)
 }
 
 /// The smallest power of two that is at least `self`. It panics when the result does not fit.
@@ -7985,8 +7985,8 @@ fn usize.checked_next_power_of_two(self): Option<usize> {
 /// ```
 fn usize.next_power_of_two(self): usize {
     match self.checked_next_power_of_two() {
-        Some(v) => v,
-        None => panic("next_power_of_two overflowed"),
+        Option.Some(v) => v,
+        Option.None => panic("next_power_of_two overflowed"),
     }
 }
 
@@ -8057,28 +8057,28 @@ fn __usize_parse_radix(s: str, radix: u32): Result<usize, ParseIntError> {
     let mut seen_digit = false
     for c in s.chars() {
         match c.to_digit(radix) {
-            Some(d) => {
+            Option.Some(d) => {
                 let digit: usize = d as usize
                 let scaled = value.checked_mul(base)
                 if scaled.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 let next = scaled.unwrap().checked_add(digit)
                 if next.is_none() {
-                    return Err(ParseIntError.Invalid)
+                    return Result.Err(ParseIntError.Invalid)
                 }
                 value = next.unwrap()
                 seen_digit = true
             }
-            None => {
-                return Err(ParseIntError.Invalid)
+            Option.None => {
+                return Result.Err(ParseIntError.Invalid)
             }
         }
     }
     if !seen_digit {
-        return Err(ParseIntError.Invalid)
+        return Result.Err(ParseIntError.Invalid)
     }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The number written in base `radix` (2 to 36, lowercase digits; any other radix panics), with a leading `-` when negative.

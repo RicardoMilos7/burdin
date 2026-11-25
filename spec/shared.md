@@ -208,7 +208,7 @@ m.into_inner(): T               // takes the value out
 * **No poisoning.** A panic aborts the process (`spec/tasks.md`, TK8), so no task can see a lock that a panicking task
   left held.
 * The mutex is not re-entrant. Calling `lock` on a mutex the same task already holds waits forever; `try_lock` returns
-  `None` and is how a task tests. (The deadlock is not detected.)
+  `Option.None` and is how a task tests. (The deadlock is not detected.)
 * Dropping a `Mutex<T>` drops the value; the lock's state is freed with it.
 
 Tests: `s2_shared/mutex_basic`, `mutex_counter`, `mutex_scoped`, `stress_mutex`, `stress_mutex_threads`, `lock_not_send`.
@@ -242,7 +242,7 @@ rw.get_mut(): &mut T             rw.into_inner(): T
   time, so it must be safe to share. A `RwLock<T>` of a value that is not `Sync` can be moved, not borrowed by
   several tasks (E0280, `s2_shared/lock_not_send`).
 * Like `Mutex`, the closure forms mean no guard, no poisoning, and no re-entrance: `read` inside `write` on the same
-  lock waits forever, `try_read` returns `None`.
+  lock waits forever, `try_read` returns `Option.None`.
 
 Tests: `s2_shared/rwlock_basic`, `stress_rwlock`, `lock_not_send`.
 

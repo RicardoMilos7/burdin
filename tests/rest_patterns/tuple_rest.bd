@@ -42,7 +42,7 @@ fn main() {
         Token.Triple(p, .., q) => println("ends of triple {p} {q}")
         Token.Num(n) => println("num {n}")
     }
-    if let Some((s, ..)) = Some((7, 8)) {
+    if let Option.Some((s, ..)) = Option.Some((7, 8)) {
         println("some {s}")
     }
 }

@@ -15,9 +15,9 @@ error enum ConfigError {
 
 fn into_dynamic(ok: bool): Result<i32> {
     if ok {
-        Ok(7)
+        Result.Ok(7)
     } else {
-        Err(ConfigError.Missing("port".to_string()))
+        Result.Err(ConfigError.Missing("port".to_string()))
     }
 }
 
@@ -25,32 +25,32 @@ fn main() {
     let io: AnyError = IoError.Read {
         path: "cfg.toml".to_string(),
         kind: IoErrorKind.NotFound,
-        os_code: None,
+        os_code: Option.None,
     }
     println("{}", io.is<IoError>())
     match io.downcast<ConfigError>() {
-        Some(_) => println("config"),
-        None => println("wrong"),
+        Option.Some(_) => println("config"),
+        Option.None => println("wrong"),
     }
 
     let io2: AnyError = IoError.Read {
         path: "cfg.toml".to_string(),
         kind: IoErrorKind.NotFound,
-        os_code: None,
+        os_code: Option.None,
     }
     match io2.downcast<IoError>() {
-        Some(e) => println("{e}"),
-        None => println("no"),
+        Option.Some(e) => println("{e}"),
+        Option.None => println("no"),
     }
 
     match into_dynamic(false) {
-        Ok(_) => println("ok"),
-        Err(e) => {
+        Result.Ok(_) => println("ok"),
+        Result.Err(e) => {
             println("{e}")
             match e.downcast<ConfigError>() {
-                Some(ConfigError.Missing(key)) => println("key {key}"),
-                Some(_) => println("other"),
-                None => println("no"),
+                Option.Some(ConfigError.Missing(key)) => println("key {key}"),
+                Option.Some(_) => println("other"),
+                Option.None => println("no"),
             }
         }
     }
@@ -62,7 +62,7 @@ fn main() {
 
     let boxed: AnyError = ConfigError.Missing("y".to_string())
     match boxed.downcast<ConfigError>() {
-        Some(ConfigError.Missing(key)) => println("key {key}"),
+        Option.Some(ConfigError.Missing(key)) => println("key {key}"),
         _ => println("no"),
     }
 }

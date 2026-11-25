@@ -12,7 +12,7 @@ fn get_basic() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/greet?name=burdin").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let content_type = response.header("content-type").unwrap()
                     let ones = response.headers.get_all("X-ONE")
@@ -22,7 +22,7 @@ fn get_basic() {
                     let text = response.text().unwrap()
                     println("get_basic: {} {} content-type={} x-one={:?} fields={} body={:?}", status, reason, content_type, ones, fields, text)
                 }
-                Err(e) => println("get_basic: error {}", e),
+                Result.Err(e) => println("get_basic: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -52,14 +52,14 @@ fn post_body() {
                 .header("X-Token", "abc")
                 .body_text("name=burdin")
             match client.send(request) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let reason = response.reason.clone()
                     let status = response.status
                     let text = response.text().unwrap()
                     println("post_body: {} {} body={:?}", status, reason, text)
                 }
-                Err(e) => println("post_body: error {}", e),
+                Result.Err(e) => println("post_body: error {}", e),
             }
             let empty = http.Request.post(server.url("/empty").as_str()).unwrap()
             let _ = client.send(empty)
@@ -126,14 +126,14 @@ fn statuses() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/missing").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let status = response.status
                     let success = response.is_success()
                     let text = response.text().unwrap()
                     println("status 404: {} is_success={} body={:?}", status, success, text)
                 }
-                Err(e) => println("status 404: error {}", e),
+                Result.Err(e) => println("status 404: error {}", e),
             }
             println("status 204: {}", fetch(client.clone(), server.url("/empty").as_str()))
             let b = fetch(client.clone(), server.url("/cached").as_str())
@@ -160,14 +160,14 @@ fn head_request() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.head(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let status = response.status
                     let text = response.text().unwrap()
                     let next = fetch(client.clone(), server.url("/").as_str())
                     println("head: {} body={:?} next={:?}", status, text, next.replace("200 body=\"", "").replace("\"", ""))
                 }
-                Err(e) => println("head: error {}", e),
+                Result.Err(e) => println("head: error {}", e),
             }
             client.close_idle()
             server.settle()
@@ -185,7 +185,7 @@ fn stream() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let mut line = String.new()
                     loop {
@@ -199,7 +199,7 @@ fn stream() {
                     }
                     println("stream: {}", line)
                 }
-                Err(e) => println("stream: error {}", e),
+                Result.Err(e) => println("stream: error {}", e),
             }
             let _ = fetch(client.clone(), server.url("/").as_str())
             client.close_idle()
@@ -234,14 +234,14 @@ fn chunked_body() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let text = response.text().unwrap()
                     let trailer = response.trailers().get("x-sum").unwrap()
                     let finished = response.body.is_finished()
                     println("chunked: body={:?} trailer={} complete={}", text, trailer, finished)
                 }
-                Err(e) => println("chunked: error {}", e),
+                Result.Err(e) => println("chunked: error {}", e),
             }
             let _ = fetch(client.clone(), server.url("/").as_str())
             client.close_idle()
@@ -294,16 +294,16 @@ fn truncated_stream() {
         s.spawn(|| {
             let client = http.Client.new()
             match client.get(server.url("/").as_str()) {
-                Ok(response) => {
+                Result.Ok(response) => {
                     let mut response = response
                     let mut chunk = List<u8>.new()
                     let first = response.body.read(mut chunk, 100).unwrap()
                     match response.body.read(mut chunk, 100) {
-                        Ok(_) => println("truncated stream: no error"),
-                        Err(e) => println("truncated stream: {} after {} bytes", e, first),
+                        Result.Ok(_) => println("truncated stream: no error"),
+                        Result.Err(e) => println("truncated stream: {} after {} bytes", e, first),
                     }
                 }
-                Err(e) => println("truncated stream: error {}", e),
+                Result.Err(e) => println("truncated stream: error {}", e),
             }
             client.close_idle()
             server.settle()

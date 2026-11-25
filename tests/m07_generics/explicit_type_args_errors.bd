@@ -61,5 +61,5 @@ fn main() {
     let g = with_impl<i32>(1, One { n: 2 }) //~ E0003
     let i = show<i32>(1) //~ E0141
     let j = env.args<i32>() //~ E0003
-    let k = Some<i32>(1) //~ E0003
+    let k = Option.Some<i32>(1) //~ E0003
 }

@@ -104,12 +104,12 @@ Grid: Deserialize {
     fn deserialize<D: Deserializer>(mut d: D): Result<Grid, DeError> {
         d.begin_struct("Grid")?
         if !d.has_next_field()? {
-            return Err(missing_field("rows"))
+            return Result.Err(missing_field("rows"))
         }
         let name = d.field_name()?
         if name.as_str() != "rows" {
             let failure = unknown_field(name.as_str())
-            return Err(failure.field(name.as_str()))
+            return Result.Err(failure.field(name.as_str()))
         }
         d.begin_seq()?
         let mut rows = List<List<i32>>.new()
@@ -132,7 +132,7 @@ Grid: Deserialize {
         }
         d.end_seq()?
         d.end_struct()?
-        Ok(Grid { rows })
+        Result.Ok(Grid { rows })
     }
 }
 
@@ -164,30 +164,30 @@ fn main() {
 fn run_doc(text: str) {
     let read: Result<Doc, DeError> = yaml.from_str(text)
     match read {
-        Ok(doc) => {
+        Result.Ok(doc) => {
             print(yaml.to_string(doc).unwrap())
             let back: Result<Doc, DeError> = yaml.from_str(yaml.to_string(doc).unwrap().as_str())
             match back {
-                Ok(again) => println("grid={} rows={} raw={} pair={} {}", again.grid.rows.len(), again.rows.len(), again.raw.len(), again.pair.0, again.pair.1),
-                Err(e) => println("round trip failed: {}", e.to_string()),
+                Result.Ok(again) => println("grid={} rows={} raw={} pair={} {}", again.grid.rows.len(), again.rows.len(), again.raw.len(), again.pair.0, again.pair.1),
+                Result.Err(e) => println("round trip failed: {}", e.to_string()),
             }
         }
-        Err(e) => println(e.to_string()),
+        Result.Err(e) => println(e.to_string()),
     }
 }
 
 fn run_config(text: str) {
     let read: Result<Config, DeError> = yaml.from_str(text)
     match read {
-        Ok(config) => {
+        Result.Ok(config) => {
             print(yaml.to_string(config).unwrap())
         }
-        Err(e) => println(e.to_string()),
+        Result.Err(e) => println(e.to_string()),
     }
 
     let again: Result<Config, DeError> = yaml.from_str(text)
     match again {
-        Ok(config) => {
+        Result.Ok(config) => {
             println("name={:?} servers={} note={}", config.name, config.servers.len(), config.note)
             match config.protocol {
                 Protocol.Http => println("protocol=Http"),
@@ -195,8 +195,8 @@ fn run_config(text: str) {
                 Protocol.Both(first, second) => println("protocol=Both {first} {second}"),
             }
             match config.backup {
-                Some(server) => println("backup={} {}", server.host, server.port),
-                None => println("backup=none"),
+                Option.Some(server) => println("backup={} {}", server.host, server.port),
+                Option.None => println("backup=none"),
             }
             println("weights={}", config.weights.len())
             if config.servers.len() > 0 {
@@ -209,7 +209,7 @@ fn run_config(text: str) {
                 )
             }
         }
-        Err(_) => {}
+        Result.Err(_) => {}
     }
 }
 """

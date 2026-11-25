@@ -907,7 +907,7 @@ error type the value can convert into.
 <!-- error-example: E0160 -->
 ```burdin
 fn get(): Result<i32, i32> {
-    Ok(1)
+    Result.Ok(1)
 }
 
 fn f(): i32 {
@@ -1406,12 +1406,12 @@ converted this way, and `.context(...)` needs an error type too.
 <!-- error-example: E0212 -->
 ```burdin
 fn load(): Result<i32, i32> {
-    Ok(1)
+    Result.Ok(1)
 }
 
 fn run(): Result<i32, AnyError> {
     let n = load()? //~ E0212
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {}
@@ -1851,8 +1851,8 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file("{out}/src/generated.bd", "const VALUE: i32 = 1\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }
 
@@ -1906,8 +1906,8 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file("{out}/src/main.bd", "fn main() {{}}\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }
 
@@ -2241,3 +2241,28 @@ fn main() {
 
 **How to fix:** read the value into a local with a copy, `let count = COUNT`, and borrow the local. An immutable
 `static` may be borrowed freely, since it is never written (`spec/globals.md`, GL3).
+
+## E0305: a bare `Some`, `None`, `Ok`, or `Err`
+
+`Option` and `Result` are ordinary enums, so their variants are written like any variant's: with the enum's name, as in
+`Option.Some(x)`, `Option.None`, `Result.Ok(v)`, and `Result.Err(e)`, or with a leading dot where the type is known,
+as in `.Some(x)` (`spec/target-typing.md`, TT14). The names `Some`, `None`, `Ok`, and `Err` alone are not names, in an
+expression or in a pattern (TT15).
+
+<!-- error-example: E0305 -->
+```burdin
+fn first(xs: [i32; 2]): Option<i32> {
+    if xs.len() == 0 {
+        return None //~ E0305
+    }
+    return Some(xs[0]) //~ E0305
+}
+
+fn main() {
+    println("{first([1, 2]):?}")
+}
+```
+<!-- /error-example -->
+
+**How to fix:** write the enum's name, `Option.None` and `Option.Some(xs[0])`, or `.None` and `.Some(xs[0])` where the
+return type, the annotation, or the parameter gives the type. `burdin fix` applies the first spelling.

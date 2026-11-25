@@ -37,7 +37,7 @@ fn after_catch_all(own shape: any Shape): i32 {
 
 fn mixed(own shape: any Shape): i32 {
     match shape {
-        Some(x) => 1, //~ E0003
+        Option.Some(x) => 1, //~ E0003
         _ => 0,
     }
 }

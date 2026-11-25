@@ -38,13 +38,13 @@ fn announce(prefix: str, id: i32) {
 }
 
 fn make(id: i32): Option<Noisy> {
-    if id < 0 { return None }
-    Some(Noisy { id })
+    if id < 0 { return Option.None }
+    Option.Some(Noisy { id })
 }
 
 fn make_result(id: i32): Result<Noisy, i32> {
-    if id < 0 { return Err(id) }
-    Ok(Noisy { id })
+    if id < 0 { return Result.Err(id) }
+    Result.Ok(Noisy { id })
 }
 
 // `n` is read-only, so the caller's argument is a temporary that it does not own.
@@ -55,47 +55,47 @@ fn show(n: Noisy): i32 {
 
 fn from_option(id: i32): Option<i32> {
     let v = show(make(id)?)
-    Some(v)
+    Option.Some(v)
 }
 
 fn from_result(id: i32): Result<i32, i32> {
     let v = show(make_result(id)?)
-    Ok(v)
+    Result.Ok(v)
 }
 
 // The statement that passes the temporary is the tail, so the temporary drops when `show` returns.
 fn from_match(id: i32): i32 {
     show(match make_result(id) {
-        Ok(n) => n,
-        Err(_) => Noisy { id: 0 },
+        Result.Ok(n) => n,
+        Result.Err(_) => Noisy { id: 0 },
     })
 }
 
 fn field_of_block(id: i32): i32 {
     let x = match make_result(id) {
-        Ok(n) => n,
-        Err(_) => Noisy { id: 0 },
+        Result.Ok(n) => n,
+        Result.Err(_) => Noisy { id: 0 },
     }.id
     x
 }
 
 fn show_option(o: Option<i32>) {
     match o {
-        Some(n) => {
+        Option.Some(n) => {
             println("some")
             println(n.to_string())
         }
-        None => println("none"),
+        Option.None => println("none"),
     }
 }
 
 fn show_result(r: Result<i32, i32>) {
     match r {
-        Ok(n) => {
+        Result.Ok(n) => {
             println("ok")
             println(n.to_string())
         }
-        Err(e) => {
+        Result.Err(e) => {
             println("err")
             println(e.to_string())
         }
@@ -109,8 +109,8 @@ fn main() {
     show_result(from_result(-2))
     println(from_match(9).to_string())
     let _ = match make_result(10) {
-        Ok(n) => n,
-        Err(_) => Noisy { id: 0 },
+        Result.Ok(n) => n,
+        Result.Err(_) => Noisy { id: 0 },
     }
     println("after let _")
     println(field_of_block(11).to_string())

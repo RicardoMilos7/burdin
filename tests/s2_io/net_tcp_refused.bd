@@ -8,11 +8,11 @@
 fn main() {
     task.set_workers(1)
     match net.TcpStream.connect("127.0.0.1:1") {
-        Ok(stream) => {
+        Result.Ok(stream) => {
             let _ = stream.close()
             println("connected")
         }
-        Err(failure) => match failure.kind() {
+        Result.Err(failure) => match failure.kind() {
             IoErrorKind.ConnectionRefused => println("refused: connection refused"),
             other => println("refused: {}", other),
         },

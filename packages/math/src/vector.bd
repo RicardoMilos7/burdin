@@ -158,9 +158,9 @@ Vector<N> {
     fn normalized(self): Option<Vector<N>> {
         let length = self.norm()
         if length == 0.0 {
-            return None
+            return Option.None
         }
-        Some(self.scale(1.0 / length))
+        Option.Some(self.scale(1.0 / length))
     }
 
     /// The angle between the vectors in radians, or `None` when either is the zero vector. The cosine is clamped to
@@ -176,11 +176,11 @@ Vector<N> {
     fn angle(self, other: Vector<N>): Option<f64> {
         let lengths = self.norm() * other.norm()
         if lengths == 0.0 {
-            return None
+            return Option.None
         }
         let cosine = self.dot(other) / lengths
         let clamped = if cosine > 1.0 { 1.0 } else if cosine < -1.0 { -1.0 } else { cosine }
-        Some(clamped.acos())
+        Option.Some(clamped.acos())
     }
 
     /// Whether every component differs from `other`'s by at most `tolerance`.

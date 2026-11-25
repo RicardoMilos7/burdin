@@ -10,8 +10,8 @@
 fn poll(ch: Channel<i32>): String {
     select {
         v = ch.recv() => match v {
-            Some(n) => format("got {}", n),
-            None => "closed".to_string(),
+            Option.Some(n) => format("got {}", n),
+            Option.None => "closed".to_string(),
         }
         default => "nothing ready".to_string()
     }

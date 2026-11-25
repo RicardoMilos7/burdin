@@ -117,17 +117,17 @@ priv fn posix_ranges(name: str): Option<List<(u32, u32)>> {
         "print" => r.push((32, 126)),
         "graph" => r.push((33, 126)),
         "ascii" => r.push((0, 127)),
-        _ => return None,
+        _ => return Option.None,
     }
-    Some(r)
+    Option.Some(r)
 }
 
 /// The items of the POSIX class `name` (`[:alpha:]`), or of its complement when `negated` (`[:^alpha:]`). None when
 /// the name is not a POSIX class.
 priv fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
     let ranges = match posix_ranges(name) {
-        Some(r) => r,
-        None => return None,
+        Option.Some(r) => r,
+        Option.None => return Option.None,
     }
     let mut items = List<ClassItem>.new()
     if !negated {
@@ -137,7 +137,7 @@ priv fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
             items.push(ClassItem.Range(lo, hi))
             i = i + 1
         }
-        return Some(items)
+        return Option.Some(items)
     }
     // The complement over every code point: the gaps between the sorted ranges, and the tail after the last one.
     let mut next: u32 = 0
@@ -153,5 +153,5 @@ priv fn posix_items(name: str, negated: bool): Option<List<ClassItem>> {
     if next <= 1114111 {
         items.push(ClassItem.Range(next, 1114111))
     }
-    Some(items)
+    Option.Some(items)
 }

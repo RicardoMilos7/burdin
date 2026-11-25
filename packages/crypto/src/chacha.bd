@@ -100,10 +100,10 @@ fn chacha20_block(key: [u8], counter: u32, nonce: [u8]): List<u8> {
 /// ```
 fn chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
     }
     if nonce.len() != 12 {
-        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
     }
     let mut out = List<u8>.new()
     let mut block_counter = counter
@@ -118,7 +118,7 @@ fn chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u
         pos = pos + 64
         block_counter = block_counter.wrapping_add(1)
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// HChaCha20: a 32-byte subkey from a 32-byte key and a 16-byte nonce (the first step of XChaCha20).
@@ -132,10 +132,10 @@ fn chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u
 /// ```
 fn hchacha20(key: [u8], nonce: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
     }
     if nonce.len() != 16 {
-        return Err(CryptoError.InvalidNonceLength { expected: 16, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 16, got: nonce.len() })
     }
     let mut x: [u32; 16] = [0; 16]
     let mut i: usize = 0
@@ -165,7 +165,7 @@ fn hchacha20(key: [u8], nonce: [u8]): Result<List<u8>, CryptoError> {
         push_le32(mut out, x[i])
         i = i + 1
     }
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// XChaCha20 (24-byte nonce): encrypts or decrypts `data`, starting at block `counter`.
@@ -181,7 +181,7 @@ fn hchacha20(key: [u8], nonce: [u8]): Result<List<u8>, CryptoError> {
 /// ```
 fn xchacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
-        return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
     }
     let subkey = hchacha20(key, nonce[0..16])?
     let mut inner = List<u8>.new()
@@ -220,14 +220,14 @@ Poly1305 {
     /// ```
     fn new(key: [u8]): Result<Poly1305, CryptoError> {
         if key.len() != 32 {
-            return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
+            return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
         }
         let r0 = (le32(key, 0) as u64) & 0x3ffffff
         let r1 = ((le32(key, 3) as u64) >> 2) & 0x3ffff03
         let r2 = ((le32(key, 6) as u64) >> 4) & 0x3ffc0ff
         let r3 = ((le32(key, 9) as u64) >> 6) & 0x3f03fff
         let r4 = ((le32(key, 12) as u64) >> 8) & 0x00fffff
-        Ok(Poly1305 {
+        Result.Ok(Poly1305 {
             r: [r0, r1, r2, r3, r4],
             h: [0, 0, 0, 0, 0],
             pad: [le32(key, 16) as u64, le32(key, 20) as u64, le32(key, 24) as u64, le32(key, 28) as u64],
@@ -413,7 +413,7 @@ Poly1305 {
 fn poly1305(key: [u8], data: [u8]): Result<List<u8>, CryptoError> {
     let mut p = Poly1305.new(key)?
     p.update(data)
-    Ok(p.finish())
+    Result.Ok(p.finish())
 }
 
 // ----- the AEADs ----------------------------------------------------------------------------------------------
@@ -458,12 +458,12 @@ priv fn aead_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<Li
     let mut sealed = chacha20_xor(key, nonce, 1, plaintext)?
     let tag = aead_tag(block0[0..32], aad, sealed.as_slice())
     sealed.extend_from_slice(tag.as_slice())
-    Ok(sealed)
+    Result.Ok(sealed)
 }
 
 priv fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if sealed.len() < 16 {
-        return Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
+        return Result.Err(CryptoError.InvalidLength { what: "a sealed message is at least 16 bytes (the tag)".to_string() })
     }
     let split = sealed.len() - 16
     let ciphertext = sealed[0..split]
@@ -471,7 +471,7 @@ priv fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<
     let block0 = chacha20_block(key, 0, nonce)
     let expected = aead_tag(block0[0..32], aad, ciphertext)
     if !constant_time_eq(expected.as_slice(), tag) {
-        return Err(CryptoError.AuthenticationFailed)
+        return Result.Err(CryptoError.AuthenticationFailed)
     }
     chacha20_xor(key, nonce, 1, ciphertext)
 }
@@ -490,10 +490,10 @@ priv fn aead_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<
 /// ```
 fn chacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
     }
     if nonce.len() != 12 {
-        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
     }
     aead_seal(key, nonce, aad, plaintext)
 }
@@ -511,10 +511,10 @@ fn chacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): R
 /// ```
 fn chacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if key.len() != 32 {
-        return Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
+        return Result.Err(CryptoError.InvalidKeyLength { expected: 32, got: key.len() })
     }
     if nonce.len() != 12 {
-        return Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 12, got: nonce.len() })
     }
     aead_open(key, nonce, aad, sealed)
 }
@@ -532,7 +532,7 @@ fn chacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Resu
 /// ```
 fn xchacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
-        return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
     }
     let subkey = hchacha20(key, nonce[0..16])?
     let mut inner = List<u8>.new()
@@ -554,7 +554,7 @@ fn xchacha20_poly1305_seal(key: [u8], nonce: [u8], aad: [u8], plaintext: [u8]): 
 /// ```
 fn xchacha20_poly1305_open(key: [u8], nonce: [u8], aad: [u8], sealed: [u8]): Result<List<u8>, CryptoError> {
     if nonce.len() != 24 {
-        return Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
+        return Result.Err(CryptoError.InvalidNonceLength { expected: 24, got: nonce.len() })
     }
     let subkey = hchacha20(key, nonce[0..16])?
     let mut inner = List<u8>.new()

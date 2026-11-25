@@ -12,12 +12,12 @@ fn first_even(ch: Channel<i32>): Option<i32> {
     loop {
         select {
             v = ch.recv() => match v {
-                Some(n) => {
+                Option.Some(n) => {
                     if n % 2 == 0 {
-                        return Some(n)
+                        return Option.Some(n)
                     }
                 }
-                None => return None,
+                Option.None => return Option.None,
             }
         }
     }
@@ -51,7 +51,7 @@ fn main() {
     other.send(9)
     other.send(12)
     match first_even(other) {
-        Some(n) => println("found {} in the helper", n),
-        None => println("nothing"),
+        Option.Some(n) => println("found {} in the helper", n),
+        Option.None => println("nothing"),
     }
 }

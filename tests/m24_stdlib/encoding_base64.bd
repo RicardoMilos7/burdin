@@ -30,10 +30,10 @@
 
 fn show(r: Result<List<u8>, DecodeError>) {
     match r {
-        Ok(b) => {
+        Result.Ok(b) => {
             println("ok [{b.to_text().unwrap()}]")
         }
-        Err(e) => {
+        Result.Err(e) => {
             println("err {e}")
         }
     }

@@ -56,7 +56,7 @@ Rejected alternatives:
   (capacity 0) channels in this milestone; a channel of capacity 1 is the nearest thing, and `select` makes a send arm
   ready as soon as there is room.
 * `Channel<T>.unbounded()` has no limit: `send` never waits and the queue grows with the memory it uses.
-* `len(self): usize` is the number of queued values and `capacity(self): Option<usize>` is the limit (`None` for an
+* `len(self): usize` is the number of queued values and `capacity(self): Option<usize>` is the limit (`Option.None` for an
   unbounded channel). Both are a snapshot: another task may change the channel at once.
 
 ## CH3. Closing (decision, issue #208)
@@ -64,10 +64,10 @@ Rejected alternatives:
 `close(self)` marks the channel closed for every handle and wakes every task and thread waiting on it. Closing twice does
 nothing.
 
-* The values already queued stay in the channel. `recv` keeps returning them, in order, and returns `None` only when the
+* The values already queued stay in the channel. `recv` keeps returning them, in order, and returns `Option.None` only when the
   channel is closed *and* empty.
-* `send` on a closed channel does not queue anything. It returns `Err(value)`: the value it was given, so nothing is
-  lost. (`send` returns `Ok(())` when the value was queued.) A sender that was waiting for room when the channel closed
+* `send` on a closed channel does not queue anything. It returns `Result.Err(value)`: the value it was given, so nothing is
+  lost. (`send` returns `Result.Ok(())` when the value was queued.) A sender that was waiting for room when the channel closed
   gets its value back the same way.
 * `is_closed(self): bool` reports whether `close` has been called.
 
@@ -77,8 +77,8 @@ senders went away.
 
 Why `send` hands the value back instead of panicking (Go) or failing without the value (`Result<()>`): a close races with
 senders by design, so a send on a closed channel is an ordinary outcome, not a bug; and a value that is moved in and then
-refused would otherwise be lost silently. The result is `Result<(), T>`, so `Ok` means "queued" and `Err` means "refused,
-and here is the value" (issue #929). It is not `Option<T>`: there `None` meant success and `Some` meant failure, the
+refused would otherwise be lost silently. The result is `Result<(), T>`, so `Result.Ok` means "queued" and `Result.Err` means "refused,
+and here is the value" (issue #929). It is not `Option<T>`: there `Option.None` meant success and `Option.Some` meant failure, the
 reverse of what `recv` returns.
 
 ## CH4. Ownership, drops, and no sharing (decision, issues #208 and #211)
@@ -172,12 +172,12 @@ members the rewriting calls (`__empty`, `__wrap`, `__take`, `__try_recv_slot`, `
 type with `__select_new`) are public only because the rewritten code lives in the user's module; a program does not call
 them.
 
-**What the arm's binding is.** The same thing the method would have returned: for a `recv` arm an `Option<T>` (`None` when
-the channel is closed and empty), for a `send` arm a `Result<(), T>` (`Ok(())` when the value was queued, `Err(value)` when
+**What the arm's binding is.** The same thing the method would have returned: for a `recv` arm an `Option<T>` (`Option.None` when
+the channel is closed and empty), for a `send` arm a `Result<(), T>` (`Result.Ok(())` when the value was queued, `Result.Err(value)` when
 the channel was closed). The arm may leave the binding out or use `_`.
 
 **When an arm can run.** A `recv` arm can run when the channel has a value or is closed. A `send` arm can run when the
-channel has room or is closed. So a closed channel's arms can always run (the receive returns `None`, the send hands the
+channel has room or is closed. So a closed channel's arms can always run (the receive returns `Option.None`, the send hands the
 value back); CH8 shows how a loop turns such an arm off.
 
 ## CH7. Which arm runs, and what happens while none can (decision, issue #208)

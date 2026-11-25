@@ -84,8 +84,8 @@ priv fn __reverse_strings(own parts: List<String>): List<String> {
     let mut out = List<String>.new()
     loop {
         match parts.pop() {
-            Some(x) => out.push(x),
-            None => break,
+            Option.Some(x) => out.push(x),
+            Option.None => break,
         }
     }
     out
@@ -299,9 +299,9 @@ fn str.replace(self, from: str, to: str): String {
 /// ```
 fn str.strip_prefix(self, prefix: str): Option<str> {
     if self.starts_with(prefix) {
-        return Some(self[prefix.len()..self.len()])
+        return Option.Some(self[prefix.len()..self.len()])
     }
-    None
+    Option.None
 }
 
 /// The text before `suffix`, or `None` when it does not end with `suffix`; a view of the text.
@@ -311,9 +311,9 @@ fn str.strip_prefix(self, prefix: str): Option<str> {
 /// ```
 fn str.strip_suffix(self, suffix: str): Option<str> {
     if self.ends_with(suffix) {
-        return Some(self[0..self.len() - suffix.len()])
+        return Option.Some(self[0..self.len() - suffix.len()])
     }
-    None
+    Option.None
 }
 
 /// The text `count` times in a row.
@@ -526,17 +526,17 @@ fn str.is_char_boundary(self, i: usize): bool {
 /// The `n`th character (counting from 0), or `None` when the text is shorter.
 ///
 /// ```
-/// assert_eq("abc".nth_char(1), Some('b'))
+/// assert_eq("abc".nth_char(1), Option.Some('b'))
 /// ```
 fn str.nth_char(self, n: usize): Option<char> {
     let mut i: usize = 0
     for c in self.chars() {
         if i == n {
-            return Some(c)
+            return Option.Some(c)
         }
         i = i + 1
     }
-    None
+    Option.None
 }
 
 /// The characters as a list.
@@ -580,8 +580,8 @@ fn str.reverse_chars(self): String {
     let mut out = String.new()
     loop {
         match chars.pop() {
-            Some(c) => out.push(c),
-            None => break,
+            Option.Some(c) => out.push(c),
+            Option.None => break,
         }
     }
     out
@@ -646,7 +646,7 @@ fn String.is_char_boundary(self, i: usize): bool {
 /// The `n`th character, or `None`.
 ///
 /// ```
-/// assert_eq(String.from("abc").nth_char(1), Some('b'))
+/// assert_eq(String.from("abc").nth_char(1), Option.Some('b'))
 /// assert(String.from("abc").nth_char(5).is_none())
 /// ```
 fn String.nth_char(self, n: usize): Option<char> {
@@ -728,17 +728,17 @@ fn String.truncate(mut self, len: usize) {
 ///
 /// ```
 /// let mut s = String.from("ab")
-/// assert_eq(s.pop(), Some('b'))
+/// assert_eq(s.pop(), Option.Some('b'))
 /// assert_eq(s, String.from("a"))
 /// ```
 fn String.pop(mut self): Option<char> {
     let pairs = self.char_indices()
     if pairs.len() == 0 {
-        return None
+        return Option.None
     }
     let last = pairs[pairs.len() - 1]
     self.truncate(last.0)
-    Some(last.1)
+    Option.Some(last.1)
 }
 
 /// Inserts the character `c` at byte index `at`, which must be a character boundary. A later byte moves right by
@@ -904,14 +904,14 @@ fn String.contains_str(self, needle: str): bool {
 /// The byte offset of the last occurrence of `c`, or `None`.
 ///
 /// ```
-/// assert_eq("abcabc".rfind('b'), Some(4))
+/// assert_eq("abcabc".rfind('b'), Option.Some(4))
 /// ```
 fn str.rfind(self, c: char): Option<usize> {
     let mut at: usize = 0
-    let mut found: Option<usize> = None
+    let mut found: Option<usize> = Option.None
     for current in self.chars() {
         if current == c {
-            found = Some(at)
+            found = Option.Some(at)
         }
         at = at + current.len_utf8()
     }
@@ -921,7 +921,7 @@ fn str.rfind(self, c: char): Option<usize> {
 /// The byte offset of the last occurrence of `c` in the string, or `None`.
 ///
 /// ```
-/// assert_eq(String.from("abcabc").rfind('b'), Some(4))
+/// assert_eq(String.from("abcabc").rfind('b'), Option.Some(4))
 /// ```
 fn String.rfind(self, c: char): Option<usize> {
     self.as_str().rfind(c)
@@ -930,23 +930,23 @@ fn String.rfind(self, c: char): Option<usize> {
 /// The byte offset of the last occurrence of `needle`, or `None`. The empty needle matches at the end.
 ///
 /// ```
-/// assert_eq("abcabc".rfind_str("bc"), Some(4))
+/// assert_eq("abcabc".rfind_str("bc"), Option.Some(4))
 /// ```
 fn str.rfind_str(self, needle: str): Option<usize> {
     let n = needle.len()
     if n == 0 {
-        return Some(self.len())
+        return Option.Some(self.len())
     }
     if n > self.len() {
-        return None
+        return Option.None
     }
     let mut i = self.len() - n
     loop {
         if __matches_at(self, i, needle) {
-            return Some(i)
+            return Option.Some(i)
         }
         if i == 0 {
-            return None
+            return Option.None
         }
         i = i - 1
     }
@@ -955,7 +955,7 @@ fn str.rfind_str(self, needle: str): Option<usize> {
 /// The byte offset of the last occurrence of `needle` in the string, or `None`.
 ///
 /// ```
-/// assert_eq(String.from("abcabc").rfind_str("bc"), Some(4))
+/// assert_eq(String.from("abcabc").rfind_str("bc"), Option.Some(4))
 /// ```
 fn String.rfind_str(self, needle: str): Option<usize> {
     self.as_str().rfind_str(needle)
@@ -1026,12 +1026,12 @@ fn String.find_all(self, needle: str): List<(usize, String)> {
 /// ```
 fn str.get(self, from: usize, to: usize): Option<str> {
     if from > to || to > self.len() {
-        return None
+        return Option.None
     }
     if !self.is_char_boundary(from) || !self.is_char_boundary(to) {
-        return None
+        return Option.None
     }
-    Some(self[from..to])
+    Option.Some(self[from..to])
 }
 
 /// The bytes `from..to` of the string as a view, or `None` when the range is invalid or splits a character.
@@ -1056,8 +1056,8 @@ fn String.extend_iter<I: Iterator<char>>(mut self, own iter: I) {
     let mut iter = iter
     loop {
         match iter.next() {
-            Some(c) => self.push(c),
-            None => break,
+            Option.Some(c) => self.push(c),
+            Option.None => break,
         }
     }
 }

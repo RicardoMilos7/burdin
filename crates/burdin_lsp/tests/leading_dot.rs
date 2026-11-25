@@ -175,3 +175,42 @@ fn a_field_name_in_a_leading_struct_literal_completes_the_fields_of_its_expected
     assert!(labels.contains(&"y".to_string()), "{labels:?}");
     assert!(!labels.contains(&"x".to_string()), "{labels:?}");
 }
+
+#[test]
+fn an_inferred_variant_in_a_pattern_defines_like_its_explicit_spelling() {
+    // TT13, LS8: the `.Green` of an arm is the variant `Color.Green`, found by name since a pattern holds no expression
+    // the analysis could type, and it hovers like the explicit spelling.
+    let (mut client, uri, text, _root) = open();
+    let edited = text.replacen("Color.Green => \"green\"", ".Green => \"green\"", 1);
+    assert_ne!(edited, text);
+    client.change(&uri, 2, &edited);
+    let diagnostics = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(2));
+    assert!(diagnostics.is_empty(), "{:?}", diagnostics.iter().map(Json::to_text).collect::<Vec<_>>());
+    let explicit = definition(&mut client, &uri, &edited, "= Color.Green", 0, 8);
+    assert_eq!(explicit, "main.bd:3:Green");
+    assert_eq!(definition(&mut client, &uri, &edited, ".Green =>", 0, 3), explicit);
+    assert!(hover(&mut client, &uri, &edited, ".Green =>", 3).contains("variant of `Color`"));
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
+fn a_bare_prelude_name_has_a_quick_fix_that_qualifies_it() {
+    // TT15: `Some(1)` is E0305, and the fix writes `Option.Some(1)`, which means the same.
+    let (mut client, uri, text, _root) = open();
+    let edited = text.replacen("    let r = Point", "    let o: Option<i32> = Some(1)\n    let r = Point", 1);
+    client.change(&uri, 2, &edited);
+    let diagnostics = client.diagnostics(&uri, |p| p.get("version").as_i64() == Some(2));
+    let codes: Vec<&str> = diagnostics.iter().map(|d| d.get("code").as_str().unwrap()).collect();
+    assert_eq!(codes, ["E0305"], "{diagnostics:?}");
+    let line = edited.lines().position(|l| l.contains("Some(1)")).unwrap() as u32;
+    let range = burdin_lsp::text::range_json(line, 26, line, 26);
+    let context =
+        Json::obj().with("diagnostics", Json::Arr(Vec::new())).with("only", Json::Arr(vec![Json::from("quickfix")]));
+    let fixes = client.call("textDocument/codeAction", doc(&uri).with("range", range).with("context", context));
+    let fix = &fixes.as_array()[0];
+    assert_eq!(fix.get("title").as_str(), Some("write `Option.Some`"));
+    let changes = fix.at(&["edit", "changes"]).as_object();
+    let fixed = apply(&edited, changes[0].1.as_array(), client.encoding);
+    assert!(fixed.contains("let o: Option<i32> = Option.Some(1)"), "{fixed}");
+    assert_eq!(client.shutdown(), 0);
+}

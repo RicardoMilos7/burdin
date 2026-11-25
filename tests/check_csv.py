@@ -90,8 +90,8 @@ fn columns(): List<String> {
 
 fn rows(text: str) {
     let mut reader = match Reader.with_options(text, ',', false) {
-        Ok(reader) => reader,
-        Err(e) => {
+        Result.Ok(reader) => reader,
+        Result.Err(e) => {
             println("error: {}", e.to_string())
             return
         }
@@ -99,12 +99,12 @@ fn rows(text: str) {
     let mut count: usize = 0
     loop {
         match reader.read_row() {
-            Ok(Some(fields)) => {
+            Result.Ok(Option.Some(fields)) => {
                 count = count + 1
                 println("row {} ({} fields): [{}]", count, fields.len(), escape(fields.join("|").as_str(), true))
             }
-            Ok(None) => break,
-            Err(e) => {
+            Result.Ok(Option.None) => break,
+            Result.Err(e) => {
                 println("error: {}", e.to_string())
                 break
             }
@@ -118,8 +118,8 @@ fn typed(mode: str, text: str) {
     let headers = mode != "noheader"
     let delimiter = if semi { ';' } else { ',' }
     let mut reader = match Reader.with_options(text, delimiter, headers) {
-        Ok(reader) => reader,
-        Err(e) => {
+        Result.Ok(reader) => reader,
+        Result.Err(e) => {
             println("error: {}", e.to_string())
             return
         }
@@ -128,8 +128,8 @@ fn typed(mode: str, text: str) {
         reader.set_headers(columns())
     }
     let mut writer = match Writer.with_options(delimiter, headers) {
-        Ok(writer) => writer,
-        Err(e) => {
+        Result.Ok(writer) => writer,
+        Result.Err(e) => {
             println("error: {}", e.to_string())
             return
         }
@@ -142,10 +142,10 @@ fn typed(mode: str, text: str) {
     loop {
         let next: Result<Option<Person>, DeError> = reader.read()
         match next {
-            Ok(Some(person)) => {
+            Result.Ok(Option.Some(person)) => {
                 match writer.write(person) {
-                    Ok(_) => {}
-                    Err(e) => {
+                    Result.Ok(_) => {}
+                    Result.Err(e) => {
                         println("error: {}", e.to_string())
                         return
                     }
@@ -155,8 +155,8 @@ fn typed(mode: str, text: str) {
                 streamed.push_str(chunk.as_str())
                 all.push(person)
             }
-            Ok(None) => break,
-            Err(e) => {
+            Result.Ok(Option.None) => break,
+            Result.Err(e) => {
                 println("error: {}", e.to_string())
                 break
             }
@@ -165,14 +165,14 @@ fn typed(mode: str, text: str) {
     println("records={}", all.len())
     if mode != "crlf" {
         match csv.to_string_with(all, delimiter, headers) {
-            Ok(whole) => println("same={}", whole == streamed),
-            Err(e) => println("error: {}", e.to_string()),
+            Result.Ok(whole) => println("same={}", whole == streamed),
+            Result.Err(e) => println("error: {}", e.to_string()),
         }
     }
     for person in all {
         let email = match person.email {
-            Some(address) => address.clone(),
-            None => "<none>".to_string(),
+            Option.Some(address) => address.clone(),
+            Option.None => "<none>".to_string(),
         }
         let role = match person.role {
             Role.Admin => "Admin",

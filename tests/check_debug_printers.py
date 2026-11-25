@@ -104,9 +104,9 @@ fn main() {
     let mut map = Map<String, i32>.new()
     map.insert("a".to_string(), 1)
     map.insert("b".to_string(), 2)
-    let opt: Option<i32> = Some(5)
-    let none: Option<i32> = None
-    let res: Result<i32, String> = Ok(7)
+    let opt: Option<i32> = Option.Some(5)
+    let none: Option<i32> = Option.None
+    let res: Result<i32, String> = Result.Ok(7)
     let shape = Shape.Circle { radius: 1.5 }
     let unit = Shape.Square { side: 2.0 }
     let item = Item { name: "bolt".to_string(), count: 3 }

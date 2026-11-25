@@ -38,34 +38,34 @@ fn report(failure: IoError) {
 
 fn main() {
     match read_to_string("missing.txt") {
-        Ok(_) => println("read succeeded"),
-        Err(e) => {
+        Result.Ok(_) => println("read succeeded"),
+        Result.Err(e) => {
             // ENOENT and ERROR_FILE_NOT_FOUND are both 2.
-            assert(e.os_code() == Some(2))
+            assert(e.os_code() == Option.Some(2))
             report(e)
         }
     }
 
     write_file("plain", "x").unwrap()
     match create_dir("plain") {
-        Ok(_) => println("create succeeded"),
-        Err(e) => {
+        Result.Ok(_) => println("create succeeded"),
+        Result.Err(e) => {
             if target.os() == target.Os.Windows {
-                assert(e.os_code() == Some(183)) // ERROR_ALREADY_EXISTS
+                assert(e.os_code() == Option.Some(183)) // ERROR_ALREADY_EXISTS
             } else {
-                assert(e.os_code() == Some(17)) // EEXIST
+                assert(e.os_code() == Option.Some(17)) // EEXIST
             }
             report(e)
         }
     }
 
     match read_dir("plain") {
-        Ok(_) => println("read_dir succeeded"),
-        Err(e) => {
+        Result.Ok(_) => println("read_dir succeeded"),
+        Result.Err(e) => {
             if target.os() == target.Os.Windows {
-                assert(e.os_code() == Some(267)) // ERROR_DIRECTORY
+                assert(e.os_code() == Option.Some(267)) // ERROR_DIRECTORY
             } else {
-                assert(e.os_code() == Some(20)) // ENOTDIR
+                assert(e.os_code() == Option.Some(20)) // ENOTDIR
             }
             report(e)
         }
@@ -74,14 +74,14 @@ fn main() {
     create_dir("d").unwrap()
     write_file("d/f", "x").unwrap()
     match remove_dir("d") {
-        Ok(_) => println("remove_dir succeeded"),
-        Err(e) => {
+        Result.Ok(_) => println("remove_dir succeeded"),
+        Result.Err(e) => {
             if target.os() == target.Os.Windows {
-                assert(e.os_code() == Some(145)) // ERROR_DIR_NOT_EMPTY
+                assert(e.os_code() == Option.Some(145)) // ERROR_DIR_NOT_EMPTY
             } else if target.os() == target.Os.MacOs {
-                assert(e.os_code() == Some(66)) // ENOTEMPTY
+                assert(e.os_code() == Option.Some(66)) // ENOTEMPTY
             } else {
-                assert(e.os_code() == Some(39)) // ENOTEMPTY
+                assert(e.os_code() == Option.Some(39)) // ENOTEMPTY
             }
             report(e)
         }
@@ -89,8 +89,8 @@ fn main() {
 
     // `std` itself sees that `plain` is not a directory: no system call failed, so there is no code.
     match remove_dir_all("plain") {
-        Ok(_) => println("remove_dir_all succeeded"),
-        Err(e) => {
+        Result.Ok(_) => println("remove_dir_all succeeded"),
+        Result.Err(e) => {
             assert(e.os_code().is_none())
             report(e)
         }
@@ -98,7 +98,7 @@ fn main() {
 
     // `process.run` fails only when the shell cannot start, which a test cannot arrange portably, so the third
     // variant is built directly (spec/errors.md, ERR10).
-    report(IoError.Run { command: "no-such-command".to_string(), kind: IoErrorKind.Other, os_code: None })
+    report(IoError.Run { command: "no-such-command".to_string(), kind: IoErrorKind.Other, os_code: Option.None })
 
     // The reader and writer failures of #409 and the option rejection of #702 carry no path and no OS code;
     // `kind()` still classifies every one.

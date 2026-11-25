@@ -5,7 +5,7 @@ fn main() {
     let args = env.args()
     let out = args[2]
     match write_file("{out}/src/main.bd", "fn main() {{}}\n") {
-        Ok(_) => {}
-        Err(_) => panic("cannot write the generated module"),
+        Result.Ok(_) => {}
+        Result.Err(_) => panic("cannot write the generated module"),
     }
 }

@@ -21,12 +21,12 @@ use unicode.{is_ascii_digit, to_ascii_lowercase}
 ///
 /// ```
 /// match f64.parse("") {
-///     Ok(_) => assert(false),
-///     Err(e) => assert_eq(e, ParseFloatError.Empty),
+///     Result.Ok(_) => assert(false),
+///     Result.Err(e) => assert_eq(e, ParseFloatError.Empty),
 /// }
 /// match f64.parse("x1") {
-///     Ok(_) => assert(false),
-///     Err(e) => assert_eq(e, ParseFloatError.Invalid),
+///     Result.Ok(_) => assert(false),
+///     Result.Err(e) => assert_eq(e, ParseFloatError.Invalid),
 /// }
 /// ```
 error enum ParseFloatError: Eq, Debug {
@@ -100,27 +100,27 @@ priv fn __is_float_text(text: str): bool {
 /// and a `0x` prefix, is `Invalid`, and an empty text is `Empty`. A number too large for the type is infinity.
 fn __f64_parse(s: str): Result<f64, ParseFloatError> {
     if s.len() == 0 {
-        return Err(ParseFloatError.Empty)
+        return Result.Err(ParseFloatError.Empty)
     }
     if !__is_float_text(s) {
-        return Err(ParseFloatError.Invalid)
+        return Result.Err(ParseFloatError.Invalid)
     }
     let text = CString.from(s)
     let value = unsafe { strtod(text.as_ptr(), CPtr<CPtr<CChar>>.null()) }
-    Ok(value)
+    Result.Ok(value)
 }
 
 /// The `f32` form of `f64.parse`: the same grammar, rounded once to `f32`.
 fn __f32_parse(s: str): Result<f32, ParseFloatError> {
     if s.len() == 0 {
-        return Err(ParseFloatError.Empty)
+        return Result.Err(ParseFloatError.Empty)
     }
     if !__is_float_text(s) {
-        return Err(ParseFloatError.Invalid)
+        return Result.Err(ParseFloatError.Invalid)
     }
     let text = CString.from(s)
     let value = unsafe { strtof(text.as_ptr(), CPtr<CPtr<CChar>>.null()) }
-    Ok(value)
+    Result.Ok(value)
 }
 
 // ---- Constants (spec/stdlib.md, "Float functions") ----

@@ -16,23 +16,23 @@ struct Point: Default {
 }
 
 fn main() {
-    let a: Option<i32> = None
-    let b: Option<i32> = Some(7)
+    let a: Option<i32> = Option.None
+    let b: Option<i32> = Option.Some(7)
     println("{a.unwrap_or_default()}")
     println("{b.unwrap_or_default()}")
 
-    let s: Option<String> = None
+    let s: Option<String> = Option.None
     println("[{s.unwrap_or_default()}]")
-    let k: Option<String> = Some(String.from("kept"))
+    let k: Option<String> = Option.Some(String.from("kept"))
     println("{k.unwrap_or_default()}")
 
-    let flag: Option<bool> = None
+    let flag: Option<bool> = Option.None
     println("{flag.unwrap_or_default()}")
 
-    let p: Option<Point> = None
+    let p: Option<Point> = Option.None
     let q = p.unwrap_or_default()
     println("{q.x} {q.y}")
 
-    let xs: Option<List<i32>> = None
+    let xs: Option<List<i32>> = Option.None
     println("{xs.unwrap_or_default().len()}")
 }

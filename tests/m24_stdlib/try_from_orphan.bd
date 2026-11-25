@@ -5,7 +5,7 @@
 
 i32: TryFrom<i64> { //~ E0142
     fn try_from(v: i64): Result<i32, i64> {
-        Ok(v as i32)
+        Result.Ok(v as i32)
     }
 }
 

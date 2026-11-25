@@ -24,11 +24,11 @@ fn main() {
     let mut it = m.iter()
     loop {
         match it.next() {
-            Some((k, v)) => {
+            Option.Some((k, v)) => {
                 n = n + 1
                 total = total + *k + *v
             }
-            None => break,
+            Option.None => break,
         }
     }
     println(total.to_string())
@@ -39,11 +39,11 @@ fn main() {
     let mut it2 = m.into_iter()
     loop {
         match it2.next() {
-            Some((k, v)) => {
+            Option.Some((k, v)) => {
                 count = count + 1
                 moved = moved + k + v
             }
-            None => break,
+            Option.None => break,
         }
     }
     println(moved.to_string())

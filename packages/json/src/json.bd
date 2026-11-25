@@ -107,7 +107,7 @@ Writer {
     /// Places the separator a value needs in the innermost open container.
     priv fn value_start(mut self): Result<(), DeError> {
         if self.frames.is_empty() {
-            return Ok(())
+            return Result.Ok(())
         }
         let i = self.frames.len() - 1
         let kind = self.frames[i].kind
@@ -124,23 +124,23 @@ Writer {
             if self.frames[i].pending {
                 self.frames[i].pending = false
             } else {
-                return Err(DeError.new("a JSON object value without a member name"))
+                return Result.Err(DeError.new("a JSON object value without a member name"))
             }
         }
-        Ok(())
+        Result.Ok(())
     }
 
     /// Writes the name of the next object member and its `:`.
     priv fn write_member(mut self, name: str): Result<(), DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a JSON object member outside an object"))
+            return Result.Err(DeError.new("a JSON object member outside an object"))
         }
         let i = self.frames.len() - 1
         if self.frames[i].kind != 1 {
-            return Err(DeError.new("a JSON object member outside an object"))
+            return Result.Err(DeError.new("a JSON object member outside an object"))
         }
         if self.frames[i].pending {
-            return Err(DeError.new("two JSON member names in a row"))
+            return Result.Err(DeError.new("two JSON member names in a row"))
         }
         if self.frames[i].count > 0 {
             self.out.push(',')
@@ -156,20 +156,20 @@ Writer {
         }
         self.frames[i].count = self.frames[i].count + 1
         self.frames[i].pending = true
-        Ok(())
+        Result.Ok(())
     }
 
     /// Removes the innermost container, checking that it is of `kind`.
     priv fn pop(mut self, kind: i32): Result<Frame, DeError> {
         match self.frames.pop() {
-            Some(frame) => {
+            Option.Some(frame) => {
                 if frame.kind == kind {
-                    Ok(frame)
+                    Result.Ok(frame)
                 } else {
-                    Err(DeError.new("unbalanced JSON container"))
+                    Result.Err(DeError.new("unbalanced JSON container"))
                 }
             }
-            None => Err(DeError.new("unbalanced JSON container")),
+            Option.None => Result.Err(DeError.new("unbalanced JSON container")),
         }
     }
 }
@@ -178,7 +178,7 @@ Writer: Serializer {
     fn serialize_unit(mut self): Result<(), DeError> {
         self.value_start()?
         self.out.push_str("null")
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_bool(mut self, value: bool): Result<(), DeError> {
@@ -188,87 +188,87 @@ Writer: Serializer {
         } else {
             self.out.push_str("false")
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_i8(mut self, value: i8): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_i16(mut self, value: i16): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_i32(mut self, value: i32): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_i64(mut self, value: i64): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_isize(mut self, value: isize): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_u8(mut self, value: u8): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_u16(mut self, value: u16): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_u32(mut self, value: u32): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_u64(mut self, value: u64): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_usize(mut self, value: usize): Result<(), DeError> {
         self.value_start()?
         self.out.push_str(value.to_string())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_f32(mut self, value: f32): Result<(), DeError> {
         if !value.is_finite() {
-            return Err(DeError.new("a float that is not finite cannot be written to JSON"))
+            return Result.Err(DeError.new("a float that is not finite cannot be written to JSON"))
         }
         self.value_start()?
         let text = value.to_string()
         __write_number(mut self.out, text.as_str())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_f64(mut self, value: f64): Result<(), DeError> {
         if !value.is_finite() {
-            return Err(DeError.new("a float that is not finite cannot be written to JSON"))
+            return Result.Err(DeError.new("a float that is not finite cannot be written to JSON"))
         }
         self.value_start()?
         let text = value.to_string()
         __write_number(mut self.out, text.as_str())
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_char(mut self, value: char): Result<(), DeError> {
@@ -276,13 +276,13 @@ Writer: Serializer {
         self.out.push('"')
         __write_escaped(mut self.out, value)
         self.out.push('"')
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_str(mut self, value: str): Result<(), DeError> {
         self.value_start()?
         __write_quoted(mut self.out, value)
-        Ok(())
+        Result.Ok(())
     }
 
     fn serialize_bytes(mut self, value: [u8]): Result<(), DeError> {
@@ -299,7 +299,7 @@ Writer: Serializer {
         self.value_start()?
         self.out.push('[')
         self.frames.push(Frame { kind: 0, count: 0, pending: false })
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_seq(mut self): Result<(), DeError> {
@@ -309,14 +309,14 @@ Writer: Serializer {
             self.indent()
         }
         self.out.push(']')
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_map(mut self, len: usize): Result<(), DeError> {
         self.value_start()?
         self.out.push('{')
         self.frames.push(Frame { kind: 1, count: 0, pending: false })
-        Ok(())
+        Result.Ok(())
     }
 
     fn map_key(mut self, key: str): Result<(), DeError> {
@@ -330,14 +330,14 @@ Writer: Serializer {
             self.indent()
         }
         self.out.push('}')
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_struct(mut self, name: str, len: usize): Result<(), DeError> {
         self.value_start()?
         self.out.push('{')
         self.frames.push(Frame { kind: 1, count: 0, pending: false })
-        Ok(())
+        Result.Ok(())
     }
 
     fn struct_field(mut self, name: str): Result<(), DeError> {
@@ -351,7 +351,7 @@ Writer: Serializer {
             self.indent()
         }
         self.out.push('}')
-        Ok(())
+        Result.Ok(())
     }
 
     fn begin_variant(
@@ -368,13 +368,13 @@ Writer: Serializer {
                 self.out.push_str("null")
             }
             self.frames.push(Frame { kind: 2, count: 0, pending: false })
-            return Ok(())
+            return Result.Ok(())
         }
         self.value_start()?
         if arity == 0 {
             __write_quoted(mut self.out, variant)
             self.frames.push(Frame { kind: 2, count: 0, pending: false })
-            return Ok(())
+            return Result.Ok(())
         }
         self.out.push('{')
         self.frames.push(Frame { kind: 1, count: 0, pending: false })
@@ -385,7 +385,7 @@ Writer: Serializer {
             self.out.push('[')
             self.frames.push(Frame { kind: 0, count: 0, pending: false })
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_variant(mut self, arity: usize): Result<(), DeError> {
@@ -393,7 +393,7 @@ Writer: Serializer {
             let i = self.frames.len() - 1
             if self.frames[i].kind == 2 {
                 self.frames.pop()
-                return Ok(())
+                return Result.Ok(())
             }
         }
         if arity > 1 {
@@ -410,7 +410,7 @@ Writer: Serializer {
             self.indent()
         }
         self.out.push('}')
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -483,9 +483,9 @@ Parser {
     fn end(mut self): Result<(), DeError> {
         self.skip_ws()
         if self.pos < self.text.len() {
-            Err(self.fail("trailing characters"))
+            Result.Err(self.fail("trailing characters"))
         } else {
-            Ok(())
+            Result.Ok(())
         }
     }
 
@@ -570,9 +570,9 @@ Parser {
         self.skip_ws()
         if self.pos < self.text.len() && self.peek() == b {
             self.pos = self.pos + 1
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(self.fail(message))
+            Result.Err(self.fail(message))
         }
     }
 
@@ -581,9 +581,9 @@ Parser {
         self.skip_ws()
         if self.starts_with_at(literal) {
             self.pos = self.pos + literal.len()
-            Ok(())
+            Result.Ok(())
         } else {
-            Err(self.fail(message))
+            Result.Err(self.fail(message))
         }
     }
 
@@ -591,20 +591,20 @@ Parser {
     priv fn read_number_text(mut self): Result<String, DeError> {
         self.skip_ws()
         if self.pos >= self.text.len() {
-            return Err(self.fail("unexpected end of input"))
+            return Result.Err(self.fail("unexpected end of input"))
         }
         let start = self.pos
         if self.peek() == 45 {
             self.pos = self.pos + 1
         }
         if self.pos >= self.text.len() {
-            return Err(self.fail("expected a number"))
+            return Result.Err(self.fail("expected a number"))
         }
         let first = self.peek()
         if first == 48 {
             self.pos = self.pos + 1
             if self.pos < self.text.len() && __is_digit(self.peek()) {
-                return Err(self.fail("leading zeros are not allowed"))
+                return Result.Err(self.fail("leading zeros are not allowed"))
             }
         } else if first >= 49 && first <= 57 {
             self.pos = self.pos + 1
@@ -612,12 +612,12 @@ Parser {
                 self.pos = self.pos + 1
             }
         } else {
-            return Err(self.fail("expected a number"))
+            return Result.Err(self.fail("expected a number"))
         }
         if self.pos < self.text.len() && self.peek() == 46 {
             self.pos = self.pos + 1
             if self.pos >= self.text.len() || !__is_digit(self.peek()) {
-                return Err(self.fail("expected a digit after the decimal point"))
+                return Result.Err(self.fail("expected a digit after the decimal point"))
             }
             while self.pos < self.text.len() && __is_digit(self.peek()) {
                 self.pos = self.pos + 1
@@ -634,14 +634,14 @@ Parser {
                     }
                 }
                 if self.pos >= self.text.len() || !__is_digit(self.peek()) {
-                    return Err(self.fail("expected a digit in the exponent"))
+                    return Result.Err(self.fail("expected a digit in the exponent"))
                 }
                 while self.pos < self.text.len() && __is_digit(self.peek()) {
                     self.pos = self.pos + 1
                 }
             }
         }
-        Ok(self.text[start..self.pos].to_string())
+        Result.Ok(self.text[start..self.pos].to_string())
     }
 
     /// Reads a signed integer of the range `low..=high`, reporting `width` on overflow. A fraction or exponent
@@ -651,31 +651,31 @@ Parser {
         let start = self.pos - text.len()
         if __has_fraction_or_exponent(text.as_str()) {
             let value = match f64.parse(text.as_str()) {
-                Ok(value) => value,
-                Err(_) => return Err(self.fail_at("expected a number", start)),
+                Result.Ok(value) => value,
+                Result.Err(_) => return Result.Err(self.fail_at("expected a number", start)),
             }
             if !value.is_finite() {
-                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                return Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
             }
             if value.fract() != 0.0 {
-                return Err(self.fail_at("expected an integer", start))
+                return Result.Err(self.fail_at("expected an integer", start))
             }
             let low_f = low as f64
             let high_f = (high as f64) + 1.0
             if value < low_f || value >= high_f {
-                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                return Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
             }
-            Ok(value as i64)
+            Result.Ok(value as i64)
         } else {
             match i64.parse(text.as_str()) {
-                Ok(value) => {
+                Result.Ok(value) => {
                     if value < low || value > high {
-                        Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                        Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
                     } else {
-                        Ok(value)
+                        Result.Ok(value)
                     }
                 }
-                Err(_) => Err(self.fail_at(format("a number that does not fit in {width}"), start)),
+                Result.Err(_) => Result.Err(self.fail_at(format("a number that does not fit in {width}"), start)),
             }
         }
     }
@@ -686,30 +686,30 @@ Parser {
         let start = self.pos - text.len()
         if __has_fraction_or_exponent(text.as_str()) {
             let value = match f64.parse(text.as_str()) {
-                Ok(value) => value,
-                Err(_) => return Err(self.fail_at("expected a number", start)),
+                Result.Ok(value) => value,
+                Result.Err(_) => return Result.Err(self.fail_at("expected a number", start)),
             }
             if !value.is_finite() {
-                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                return Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
             }
             if value.fract() != 0.0 {
-                return Err(self.fail_at("expected an integer", start))
+                return Result.Err(self.fail_at("expected an integer", start))
             }
             let high_f = (high as f64) + 1.0
             if value < 0.0 || value >= high_f {
-                return Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                return Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
             }
-            Ok(value as u64)
+            Result.Ok(value as u64)
         } else {
             match u64.parse(text.as_str()) {
-                Ok(value) => {
+                Result.Ok(value) => {
                     if value > high {
-                        Err(self.fail_at(format("a number that does not fit in {width}"), start))
+                        Result.Err(self.fail_at(format("a number that does not fit in {width}"), start))
                     } else {
-                        Ok(value)
+                        Result.Ok(value)
                     }
                 }
-                Err(_) => Err(self.fail_at(format("a number that does not fit in {width}"), start)),
+                Result.Err(_) => Result.Err(self.fail_at(format("a number that does not fit in {width}"), start)),
             }
         }
     }
@@ -718,10 +718,10 @@ Parser {
     priv fn read_string(mut self): Result<String, DeError> {
         self.skip_ws()
         if self.pos >= self.text.len() {
-            return Err(self.fail("unexpected end of input"))
+            return Result.Err(self.fail("unexpected end of input"))
         }
         if self.peek() != 34 {
-            return Err(self.fail("expected a string"))
+            return Result.Err(self.fail("expected a string"))
         }
         self.pos = self.pos + 1
         let mut out = String.new()
@@ -732,10 +732,10 @@ Parser {
                 let piece = self.slice_text(chunk, self.pos)
                 out.push_str(piece.as_str())
                 self.pos = self.pos + 1
-                return Ok(out)
+                return Result.Ok(out)
             }
             if b < 32 {
-                return Err(self.fail("control character in a string"))
+                return Result.Err(self.fail("control character in a string"))
             }
             if b == 92 {
                 let escape_at = self.pos
@@ -743,7 +743,7 @@ Parser {
                 out.push_str(piece.as_str())
                 self.pos = self.pos + 1
                 if self.pos >= self.text.len() {
-                    return Err(self.fail("unexpected end of input"))
+                    return Result.Err(self.fail("unexpected end of input"))
                 }
                 let e = self.peek()
                 self.pos = self.pos + 1
@@ -766,19 +766,19 @@ Parser {
                 } else if e == 117 {
                     let code = self.read_unicode_escape()?
                     let decoded = match code.to_char() {
-                        Some(c) => c,
-                        None => return Err(self.fail("invalid unicode escape")),
+                        Option.Some(c) => c,
+                        Option.None => return Result.Err(self.fail("invalid unicode escape")),
                     }
                     out.push(decoded)
                 } else {
-                    return Err(self.fail_at("invalid escape", escape_at))
+                    return Result.Err(self.fail_at("invalid escape", escape_at))
                 }
                 chunk = self.pos
             } else {
                 self.pos = self.pos + 1
             }
         }
-        Err(self.fail("unterminated string"))
+        Result.Err(self.fail("unterminated string"))
     }
 
     /// Reads a `\u` escape, combining a surrogate pair into one scalar value.
@@ -787,19 +787,19 @@ Parser {
         if high >= 55296 && high <= 56319 {
             // A high surrogate: an escaped low surrogate must follow.
             if !self.starts_with_at("\\u") {
-                return Err(self.fail("invalid unicode escape"))
+                return Result.Err(self.fail("invalid unicode escape"))
             }
             self.pos = self.pos + 2
             let low = self.read_hex4()?
             if low < 56320 || low > 57343 {
-                return Err(self.fail("invalid unicode escape"))
+                return Result.Err(self.fail("invalid unicode escape"))
             }
-            return Ok(65536 + ((high - 55296) << 10) + (low - 56320))
+            return Result.Ok(65536 + ((high - 55296) << 10) + (low - 56320))
         }
         if high >= 56320 && high <= 57343 {
-            return Err(self.fail("invalid unicode escape"))
+            return Result.Err(self.fail("invalid unicode escape"))
         }
-        Ok(high)
+        Result.Ok(high)
     }
 
     /// Reads four hexadecimal digits of a `\u` escape.
@@ -808,54 +808,54 @@ Parser {
         let mut i: usize = 0
         while i < 4 {
             if self.pos >= self.text.len() {
-                return Err(self.fail("unexpected end of input"))
+                return Result.Err(self.fail("unexpected end of input"))
             }
             let digit = __hex_value(self.peek())
             if digit < 0 {
-                return Err(self.fail("invalid unicode escape"))
+                return Result.Err(self.fail("invalid unicode escape"))
             }
             value = value * 16 + (digit as u32)
             self.pos = self.pos + 1
             i = i + 1
         }
-        Ok(value)
+        Result.Ok(value)
     }
 
     /// Whether another entry follows in the innermost container, consuming the separator.
     priv fn next_entry(mut self): Result<bool, DeError> {
         if self.frames.is_empty() {
-            return Err(DeError.new("a JSON value outside a container"))
+            return Result.Err(DeError.new("a JSON value outside a container"))
         }
         let i = self.frames.len() - 1
         let close = self.frames[i].close
         let first = self.frames[i].first
         self.skip_ws()
         if self.at_end() {
-            return Err(self.fail("unexpected end of input"))
+            return Result.Err(self.fail("unexpected end of input"))
         }
         let b = self.peek()
         if b == close {
-            return Ok(false)
+            return Result.Ok(false)
         }
         if first {
             self.frames[i].first = false
-            return Ok(true)
+            return Result.Ok(true)
         }
         if b == 44 {
             self.pos = self.pos + 1
             self.skip_ws()
             if self.at_end() {
-                return Err(self.fail("unexpected end of input"))
+                return Result.Err(self.fail("unexpected end of input"))
             }
             if self.peek() == close {
-                return Err(self.fail("trailing comma"))
+                return Result.Err(self.fail("trailing comma"))
             }
-            return Ok(true)
+            return Result.Ok(true)
         }
         if close == 125 {
-            Err(self.fail("expected ',' or '}}'"))
+            Result.Err(self.fail("expected ',' or '}}'"))
         } else {
-            Err(self.fail("expected ',' or ']'"))
+            Result.Err(self.fail("expected ',' or ']'"))
         }
     }
 
@@ -867,31 +867,31 @@ Parser {
         let name = self.read_string()?
         self.expect_byte(58, "expected ':'")?
         if self.frames.is_empty() {
-            return Err(DeError.new("an object member outside an object"))
+            return Result.Err(DeError.new("an object member outside an object"))
         }
         let mut frame = match self.frames.pop() {
-            Some(frame) => frame,
-            None => return Err(DeError.new("an object member outside an object")),
+            Option.Some(frame) => frame,
+            Option.None => return Result.Err(DeError.new("an object member outside an object")),
         }
         if __has_name(frame.names, name.as_str()) {
-            return Err(self.fail_at(format("duplicate {kind} '{name}'"), start))
+            return Result.Err(self.fail_at(format("duplicate {kind} '{name}'"), start))
         }
         frame.names.push(name.clone())
         self.frames.push(frame)
-        Ok(name)
+        Result.Ok(name)
     }
 
     /// Removes the innermost container, checking that it is of `kind`.
     priv fn pop_frame(mut self, kind: i32): Result<(), DeError> {
         match self.frames.pop() {
-            Some(frame) => {
+            Option.Some(frame) => {
                 if frame.kind == kind {
-                    Ok(())
+                    Result.Ok(())
                 } else {
-                    Err(DeError.new("unbalanced JSON container"))
+                    Result.Err(DeError.new("unbalanced JSON container"))
                 }
             }
-            None => Err(DeError.new("unbalanced JSON container")),
+            Option.None => Result.Err(DeError.new("unbalanced JSON container")),
         }
     }
 }
@@ -905,28 +905,28 @@ Parser: Deserializer {
         self.skip_ws()
         if self.starts_with_at("true") {
             self.pos = self.pos + 4
-            Ok(true)
+            Result.Ok(true)
         } else if self.starts_with_at("false") {
             self.pos = self.pos + 5
-            Ok(false)
+            Result.Ok(false)
         } else {
-            Err(self.fail("expected a boolean"))
+            Result.Err(self.fail("expected a boolean"))
         }
     }
 
     fn deserialize_i8(mut self): Result<i8, DeError> {
         let value = self.read_signed(-128, 127, "i8")?
-        Ok(value as i8)
+        Result.Ok(value as i8)
     }
 
     fn deserialize_i16(mut self): Result<i16, DeError> {
         let value = self.read_signed(-32768, 32767, "i16")?
-        Ok(value as i16)
+        Result.Ok(value as i16)
     }
 
     fn deserialize_i32(mut self): Result<i32, DeError> {
         let value = self.read_signed(-2147483647 - 1, 2147483647, "i32")?
-        Ok(value as i32)
+        Result.Ok(value as i32)
     }
 
     fn deserialize_i64(mut self): Result<i64, DeError> {
@@ -935,22 +935,22 @@ Parser: Deserializer {
 
     fn deserialize_isize(mut self): Result<isize, DeError> {
         let value = self.read_signed(isize.MIN as i64, isize.MAX as i64, "isize")?
-        Ok(value as isize)
+        Result.Ok(value as isize)
     }
 
     fn deserialize_u8(mut self): Result<u8, DeError> {
         let value = self.read_unsigned(255, "u8")?
-        Ok(value as u8)
+        Result.Ok(value as u8)
     }
 
     fn deserialize_u16(mut self): Result<u16, DeError> {
         let value = self.read_unsigned(65535, "u16")?
-        Ok(value as u16)
+        Result.Ok(value as u16)
     }
 
     fn deserialize_u32(mut self): Result<u32, DeError> {
         let value = self.read_unsigned(4294967295, "u32")?
-        Ok(value as u32)
+        Result.Ok(value as u32)
     }
 
     fn deserialize_u64(mut self): Result<u64, DeError> {
@@ -959,21 +959,21 @@ Parser: Deserializer {
 
     fn deserialize_usize(mut self): Result<usize, DeError> {
         let value = self.read_unsigned(usize.MAX as u64, "usize")?
-        Ok(value as usize)
+        Result.Ok(value as usize)
     }
 
     fn deserialize_f32(mut self): Result<f32, DeError> {
         let text = self.read_number_text()?
         let start = self.pos - text.len()
         match f32.parse(text.as_str()) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_at("a number that does not fit in f32", start))
+                    Result.Err(self.fail_at("a number that does not fit in f32", start))
                 }
             }
-            Err(_) => Err(self.fail_at("expected a number", start)),
+            Result.Err(_) => Result.Err(self.fail_at("expected a number", start)),
         }
     }
 
@@ -981,14 +981,14 @@ Parser: Deserializer {
         let text = self.read_number_text()?
         let start = self.pos - text.len()
         match f64.parse(text.as_str()) {
-            Ok(value) => {
+            Result.Ok(value) => {
                 if value.is_finite() {
-                    Ok(value)
+                    Result.Ok(value)
                 } else {
-                    Err(self.fail_at("a number that does not fit in f64", start))
+                    Result.Err(self.fail_at("a number that does not fit in f64", start))
                 }
             }
-            Err(_) => Err(self.fail_at("expected a number", start)),
+            Result.Err(_) => Result.Err(self.fail_at("expected a number", start)),
         }
     }
 
@@ -1001,9 +1001,9 @@ Parser: Deserializer {
             first = c
         }
         if count != 1 {
-            return Err(self.fail("expected one character"))
+            return Result.Err(self.fail("expected one character"))
         }
-        Ok(first)
+        Result.Ok(first)
     }
 
     fn deserialize_str(mut self): Result<String, DeError> {
@@ -1022,13 +1022,13 @@ Parser: Deserializer {
             out.push(value as u8)
         }
         self.end_seq()?
-        Ok(out)
+        Result.Ok(out)
     }
 
     fn begin_seq(mut self): Result<(), DeError> {
         self.expect_byte(91, "expected an array")?
         self.frames.push(ReaderFrame { kind: 0, close: 93, first: true, names: List<String>.new() })
-        Ok(())
+        Result.Ok(())
     }
 
     fn has_next_seq_element(mut self): Result<bool, DeError> {
@@ -1043,7 +1043,7 @@ Parser: Deserializer {
     fn begin_map(mut self): Result<(), DeError> {
         self.expect_byte(123, "expected an object")?
         self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
-        Ok(())
+        Result.Ok(())
     }
 
     fn has_next_map_entry(mut self): Result<bool, DeError> {
@@ -1062,7 +1062,7 @@ Parser: Deserializer {
     fn begin_struct(mut self, name: str): Result<(), DeError> {
         self.expect_byte(123, "expected an object")?
         self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
-        Ok(())
+        Result.Ok(())
     }
 
     fn has_next_field(mut self): Result<bool, DeError> {
@@ -1089,100 +1089,100 @@ Parser: Deserializer {
                 self.enums[i].none = true
             }
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_name(mut self): Result<String, DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant outside an enum"))
+            return Result.Err(DeError.new("a variant outside an enum"))
         }
         let i = self.enums.len() - 1
         if self.enums[i].option {
             if self.enums[i].none {
-                return Ok("None".to_string())
+                return Result.Ok("None".to_string())
             }
-            return Ok("Some".to_string())
+            return Result.Ok("Some".to_string())
         }
         self.skip_ws()
         if self.at_end() {
-            return Err(self.fail("unexpected end of input"))
+            return Result.Err(self.fail("unexpected end of input"))
         }
         if self.peek() == 34 {
             self.enums[i].object = false
             return self.read_string()
         }
         if self.peek() != 123 {
-            return Err(self.fail("expected a variant name"))
+            return Result.Err(self.fail("expected a variant name"))
         }
         self.pos = self.pos + 1
         self.frames.push(ReaderFrame { kind: 1, close: 125, first: true, names: List<String>.new() })
         self.enums[i].object = true
         let name = self.read_string()?
         self.expect_byte(58, "expected ':'")?
-        Ok(name)
+        Result.Ok(name)
     }
 
     fn begin_variant_payload(mut self, arity: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         let i = self.enums.len() - 1
         self.enums[i].arity = arity
         if self.enums[i].option {
             if self.enums[i].none {
                 if arity != 0 {
-                    return Err(DeError.new("Option.None has no payload"))
+                    return Result.Err(DeError.new("Option.None has no payload"))
                 }
             } else if arity != 1 {
-                return Err(DeError.new("Option.Some has one payload value"))
+                return Result.Err(DeError.new("Option.Some has one payload value"))
             }
-            return Ok(())
+            return Result.Ok(())
         }
         if !self.enums[i].object {
             if arity != 0 {
-                return Err(DeError.new("expected a payload for a unit variant"))
+                return Result.Err(DeError.new("expected a payload for a unit variant"))
             }
-            return Ok(())
+            return Result.Ok(())
         }
         if arity == 0 {
-            return Err(DeError.new("a unit variant has no payload"))
+            return Result.Err(DeError.new("a unit variant has no payload"))
         }
         if arity > 1 {
             self.expect_byte(91, "expected an array")?
             self.frames.push(ReaderFrame { kind: 0, close: 93, first: true, names: List<String>.new() })
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn variant_payload_field(mut self, index: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Ok(())
+            return Result.Ok(())
         }
         let i = self.enums.len() - 1
         if self.enums[i].option || !self.enums[i].object {
-            return Ok(())
+            return Result.Ok(())
         }
         if self.enums[i].arity > 1 && index > 0 {
             self.expect_byte(44, "expected ','")?
         }
-        Ok(())
+        Result.Ok(())
     }
 
     fn end_variant_payload(mut self, arity: usize): Result<(), DeError> {
         if self.enums.is_empty() {
-            return Err(DeError.new("a variant payload outside an enum"))
+            return Result.Err(DeError.new("a variant payload outside an enum"))
         }
         let i = self.enums.len() - 1
         let option = self.enums[i].option
         let object = self.enums[i].object
         if option || !object {
             self.enums.pop()
-            return Ok(())
+            return Result.Ok(())
         }
         if arity > 1 {
             self.skip_ws()
             if !self.at_end() && self.peek() == 44 {
-                return Err(self.fail("too many payload values"))
+                return Result.Err(self.fail("too many payload values"))
             }
             self.expect_byte(93, "expected ']'")?
             self.pop_frame(0)?
@@ -1190,7 +1190,7 @@ Parser: Deserializer {
         self.expect_byte(125, "expected '}}'")?
         self.pop_frame(1)?
         self.enums.pop()
-        Ok(())
+        Result.Ok(())
     }
 }
 
@@ -1210,7 +1210,7 @@ Parser: Deserializer {
 fn to_string<T: Serialize>(value: T): Result<String, DeError> {
     let mut writer = Writer.new()
     value.serialize(mut writer)?
-    Ok(writer.finish())
+    Result.Ok(writer.finish())
 }
 
 /// Writes `value` as JSON with two-space indentation and a final newline.
@@ -1229,7 +1229,7 @@ fn to_string_pretty<T: Serialize>(value: T): Result<String, DeError> {
     value.serialize(mut writer)?
     let mut text = writer.finish()
     text.push('\n')
-    Ok(text)
+    Result.Ok(text)
 }
 
 /// Reads a value of type `T` from `text`. The whole text must be consumed.
@@ -1247,7 +1247,7 @@ fn from_str<T: Deserialize>(text: str): Result<T, DeError> {
     let mut parser = Parser.new(text)
     let value = T.deserialize(mut parser)?
     parser.end()?
-    Ok(value)
+    Result.Ok(value)
 }
 
 // ----- helpers -------------------------------------------------------------------------------------------------

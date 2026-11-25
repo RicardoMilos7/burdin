@@ -92,7 +92,7 @@ line is never added between two statements, except FM9 puts one between the grou
   which would otherwise continue the expression.
 - A block holds its statements one per line. A **short block** is a block of one expression statement with no comment
   in it; where a block appears inside an expression (a match arm, a closure body, an `if` that is an operand) a short
-  block stays on one line with its braces when it fits: `Some(x) => { f(x) }`. The block of a statement-level `if`,
+  block stays on one line with its braces when it fits: `Option.Some(x) => { f(x) }`. The block of a statement-level `if`,
   `while`, `for`, `loop`, `match` or function is never inline.
 - `if`/`else if`/`else` chains put `else` on the line of the closing brace, and `match` puts the arms one per line.
 - `let pattern: Type = value` keeps the type annotation when written, and breaks after `=` only when the value is a
@@ -109,6 +109,9 @@ line is never added between two statements, except FM9 puts one between the grou
 - A struct literal, an array literal, a tuple, a closure's parameter list, and the generic arguments of a type break
   like any bracketed list (FM2).
 - A string literal and an interpolation's text are never changed.
+- A leading dot is written against its name, in an expression and in a pattern: `.Circle(r)`, `.Rect { w, h }`, `.None`
+  (`target-typing.md`, TT13). The formatter keeps the author's choice between `Option.None` and `.None`; it never
+  rewrites one into the other. Tests: `fmt/inferred_variants`.
 - Parentheses written by the author are kept; the formatter does not add or remove them.
 
 ## FM8: the trailing comma

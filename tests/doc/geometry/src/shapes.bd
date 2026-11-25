@@ -47,9 +47,9 @@ Circle {
     /// Makes a circle, or says why it cannot.
     fn new(radius: f64): Result<Circle> {
         if radius < 0.0 {
-            return Err(GeometryError.NegativeRadius(radius))
+            return Result.Err(GeometryError.NegativeRadius(radius))
         }
-        Ok(Circle { radius })
+        Result.Ok(Circle { radius })
     }
 
     priv fn secret(self): f64 {

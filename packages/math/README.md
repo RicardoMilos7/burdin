@@ -13,12 +13,12 @@ The standard library already has the scalar float functions (`sqrt`, `powi`, `ln
 ## What it provides
 
 - **Integers** (`u64`): `gcd`, `lcm`, `mod_pow`, `is_prime` (exact for every `u64`), `factorial`, and `binomial`.
-  A result that does not fit in a `u64` is `None`, never a wrapped value.
+  A result that does not fit in a `u64` is `Option.None`, never a wrapped value.
 - **Scalars** (`f64`): `lerp`, `approx_eq`, `poly_eval`, `gamma`, `ln_gamma`, and the root finder `bisect` and the
   integrator `simpson`, which take a closure.
 - **Statistics** over a slice `[f64]`: `sum`, `mean`, `variance` and `sample_variance`, `std_dev` and
   `sample_std_dev`, `minimum`, `maximum`, `median`, `quantile`, `covariance`, and `correlation`. A statistic with
-  too few values is `None`.
+  too few values is `Option.None`.
 - **`Vector<N>`**: a vector of `N` components, a value like a number. `+`, `-`, unary `-`, `v[i]`, `dot`, `norm`,
   `distance`, `scale`, `normalized`, `angle`, and `cross` for `Vector<3>`.
 - **`Matrix<R, C>`**: a fixed-size matrix, stored inline with its shape in its type, so `Matrix<2, 3>` times
@@ -56,8 +56,8 @@ fn main() {
 - **Square-only operations check at run time.** `det`, `inverse`, `solve`, `trace`, and `identity` need a square
   matrix. The language cannot say "square" in a type here, so a non-square call panics with a message that names
   the operation, as an index out of range does.
-- **Absent answers are `None`; programming errors panic.** An empty statistic, a singular matrix, a zero vector's
-  direction, and an overflowing product are `None`. A shape mismatch, a zero modulus, a probability outside `[0, 1]`,
+- **Absent answers are `Option.None`; programming errors panic.** An empty statistic, a singular matrix, a zero vector's
+  direction, and an overflowing product are `Option.None`. A shape mismatch, a zero modulus, a probability outside `[0, 1]`,
   and a non-positive bisection tolerance panic.
 - **A singular matrix** is one whose pivot is exactly zero, as in LAPACK. A nearly singular matrix has a tiny pivot
   and a large inverse, as with any LU solver.

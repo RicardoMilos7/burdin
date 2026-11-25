@@ -9,22 +9,8 @@ use burdin_tir::place::place_root;
 use burdin_tir::{self as tir, LocalKind, Ty};
 
 /// The value names the compiler provides that are not declared anywhere: what a misspelled call may have meant.
-const PROVIDED: [&str; 14] = [
-    "print",
-    "println",
-    "eprint",
-    "eprintln",
-    "panic",
-    "Some",
-    "None",
-    "Ok",
-    "Err",
-    "swap",
-    "replace",
-    "format",
-    "embed",
-    "black_box",
-];
+const PROVIDED: [&str; 10] =
+    ["print", "println", "eprint", "eprintln", "panic", "swap", "replace", "format", "embed", "black_box"];
 
 /// A fix for a name that is not in scope.
 pub(super) enum NameFix {
@@ -138,7 +124,7 @@ impl FnCx<'_> {
                 names.push(candidate.clone());
             }
         }
-        names.extend(PROVIDED.iter().filter(|n| !functions || **n != "None").map(|n| n.to_string()));
+        names.extend(PROVIDED.iter().map(|n| n.to_string()));
         names.retain(|c| c != name && !c.starts_with("__") && distance(c, name) <= max);
         names.sort();
         names.dedup();

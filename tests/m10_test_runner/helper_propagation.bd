@@ -4,7 +4,7 @@
 // Asserts inside a helper propagate through the helper's Result with `?`.
 fn check_positive(n: i32): Result<(), AssertError> {
     assert(n > 0)?
-    Ok(())
+    Result.Ok(())
 }
 
 test "helper ok" {

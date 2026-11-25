@@ -157,7 +157,7 @@ fn hkdf_extract(alg: HashAlg, salt: [u8], ikm: [u8]): List<u8> {
 fn hkdf_expand(alg: HashAlg, prk: [u8], info: [u8], length: usize): Result<List<u8>, CryptoError> {
     let hash_len = alg.output_len()
     if length > 255 * hash_len {
-        return Err(CryptoError.InvalidLength { what: "HKDF output longer than 255 times the digest size".to_string() })
+        return Result.Err(CryptoError.InvalidLength { what: "HKDF output longer than 255 times the digest size".to_string() })
     }
     let (ipad, opad) = hmac_pads(alg, prk)
     let mut out = List<u8>.new()
@@ -172,7 +172,7 @@ fn hkdf_expand(alg: HashAlg, prk: [u8], info: [u8], length: usize): Result<List<
         counter = counter.wrapping_add(1)
     }
     out.truncate(length)
-    Ok(out)
+    Result.Ok(out)
 }
 
 /// HKDF (extract, then expand).
@@ -203,7 +203,7 @@ fn hkdf(alg: HashAlg, salt: [u8], ikm: [u8], info: [u8], length: usize): Result<
 /// ```
 fn pbkdf2(alg: HashAlg, password: [u8], salt: [u8], iterations: u32, length: usize): Result<List<u8>, CryptoError> {
     if iterations == 0 {
-        return Err(CryptoError.InvalidInput { what: "PBKDF2 needs at least one iteration".to_string() })
+        return Result.Err(CryptoError.InvalidInput { what: "PBKDF2 needs at least one iteration".to_string() })
     }
     let (ipad, opad) = hmac_pads(alg, password)
     let mut out = List<u8>.new()
@@ -231,5 +231,5 @@ fn pbkdf2(alg: HashAlg, password: [u8], salt: [u8], iterations: u32, length: usi
         block_index = block_index + 1
     }
     out.truncate(length)
-    Ok(out)
+    Result.Ok(out)
 }

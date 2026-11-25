@@ -6,9 +6,9 @@ fn main() {
         -1 => 4,
         3..=9 => 5,
         n @ 10..=20 => 6,
-        Some(v) if v > 0 => 7,
+        Option.Some(v) if v > 0 => 7,
         Shape.Rect { w, h: 0 } => 8,
-        Some((a, b)) => 9,
+        Option.Some((a, b)) => 9,
         _ => 10,
         else => 11,
     }

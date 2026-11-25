@@ -26,11 +26,11 @@ struct Countdown {
 Countdown: Iterator<i32> {
     fn next(mut self): Option<i32> {
         if self.from <= 0 {
-            return None
+            return Option.None
         }
         let v = self.from
         self.from = v - 1
-        Some(v)
+        Option.Some(v)
     }
 }
 
@@ -42,11 +42,11 @@ struct Rows {
 Rows: Iterator<Countdown> {
     fn next(mut self): Option<Countdown> {
         if self.next_row >= self.rows {
-            return None
+            return Option.None
         }
         let n = self.next_row
         self.next_row = n + 1
-        Some(Countdown { from: n })
+        Option.Some(Countdown { from: n })
     }
 }
 

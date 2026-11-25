@@ -264,11 +264,11 @@ Matrix<R, C> {
             panic("Matrix: the matrix is not square")
         }
         match self.to_dyn().inverse() {
-            Some(d) => {
+            Option.Some(d) => {
                 let out: Matrix<R, C> = matrix_from_dyn(d)
-                Some(out)
+                Option.Some(out)
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 
@@ -287,11 +287,11 @@ Matrix<R, C> {
             panic("Matrix: the matrix is not square")
         }
         match self.to_dyn().solve(b.to_dyn()) {
-            Some(d) => {
+            Option.Some(d) => {
                 let out: Matrix<R, K> = matrix_from_dyn(d)
-                Some(out)
+                Option.Some(out)
             }
-            None => None,
+            Option.None => Option.None,
         }
     }
 

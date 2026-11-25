@@ -16,7 +16,7 @@ struct Flaky {
 Flaky: Read {
     fn read(mut self, mut buf: List<u8>, max: usize): Result<usize, IoError> {
         if self.pos >= self.fail_after {
-            return Err(IoError.Read { path: String.from("<flaky>"), kind: IoErrorKind.NotFound, os_code: None })
+            return Result.Err(IoError.Read { path: String.from("<flaky>"), kind: IoErrorKind.NotFound, os_code: Option.None })
         }
         let mut n: usize = 0
         while n < max && self.pos < self.fail_after && self.pos < self.data.len() {
@@ -24,7 +24,7 @@ Flaky: Read {
             self.pos = self.pos + 1
             n = n + 1
         }
-        Ok(n)
+        Result.Ok(n)
     }
 }
 
@@ -36,30 +36,30 @@ fn first_two(own source: Flaky): Result<String> {
     let mut r = BufReader.with_capacity(3, source)
     let a = r.read_line().context("reading the config")?
     let b = r.read_line().context("reading the config")?
-    Ok(format("{} {}", a.unwrap(), b.unwrap()))
+    Result.Ok(format("{} {}", a.unwrap(), b.unwrap()))
 }
 
 fn typed(own source: Flaky): Result<String, IoError> {
     let mut r = BufReader.new(source)
     let line = r.read_line()?
-    Ok(line.unwrap())
+    Result.Ok(line.unwrap())
 }
 
 fn main() {
     match first_two(flaky("ok\nfine\n", 100)) {
-        Ok(_) => println("first line: ok"),
-        Err(e) => println("failed: {}", e),
+        Result.Ok(_) => println("first line: ok"),
+        Result.Err(e) => println("failed: {}", e),
     }
     match first_two(flaky("ok\nfine\n", 4)) {
-        Ok(s) => println("unexpected {}", s),
-        Err(e) => {
+        Result.Ok(s) => println("unexpected {}", s),
+        Result.Err(e) => {
             println("failed: {}", e)
             println("is io error: {}", e.is<IoError>())
         }
     }
     match typed(flaky("no newline", 3)) {
-        Ok(s) => println("unexpected {}", s),
-        Err(e) => println("typed: {}", e),
+        Result.Ok(s) => println("unexpected {}", s),
+        Result.Err(e) => println("typed: {}", e),
     }
     let mut oks = 0
     let mut errs = 0
@@ -69,8 +69,8 @@ fn main() {
             more = more + 1
         }
         match item {
-            Ok(_) => oks = oks + 1,
-            Err(_) => errs = errs + 1,
+            Result.Ok(_) => oks = oks + 1,
+            Result.Err(_) => errs = errs + 1,
         }
     }
     println("lines stop after an error: {} ok, {} err, {} more", oks, errs, more)

@@ -19,8 +19,8 @@ priv fn __sort_reversed<T>(own list: List<T>): List<T> {
     let mut out = List<T>.new()
     loop {
         match list.pop() {
-            Some(x) => out.push(x),
-            None => break,
+            Option.Some(x) => out.push(x),
+            Option.None => break,
         }
     }
     out
@@ -30,11 +30,11 @@ priv fn __sort_reversed<T>(own list: List<T>): List<T> {
 /// elements in reverse, so `last` is the front.
 priv fn __right_first<T, F: FnMut(&T, &T): bool>(left: List<T>, right: List<T>, mut less: F): bool {
     match left.last() {
-        Some(l) => match right.last() {
-            Some(r) => less(r, l),
-            None => false,
+        Option.Some(l) => match right.last() {
+            Option.Some(r) => less(r, l),
+            Option.None => false,
         },
-        None => true,
+        Option.None => true,
     }
 }
 
@@ -47,26 +47,26 @@ priv fn __merge<T, F: FnMut(&T, &T): bool>(own left: List<T>, own right: List<T>
         let take_right = __right_first(left, right, mut less)
         if take_right {
             match right.pop() {
-                Some(x) => out.push(x),
-                None => {},
+                Option.Some(x) => out.push(x),
+                Option.None => {},
             }
         } else {
             match left.pop() {
-                Some(x) => out.push(x),
-                None => {},
+                Option.Some(x) => out.push(x),
+                Option.None => {},
             }
         }
     }
     loop {
         match left.pop() {
-            Some(x) => out.push(x),
-            None => break,
+            Option.Some(x) => out.push(x),
+            Option.None => break,
         }
     }
     loop {
         match right.pop() {
-            Some(x) => out.push(x),
-            None => break,
+            Option.Some(x) => out.push(x),
+            Option.None => break,
         }
     }
     out
@@ -82,15 +82,15 @@ priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F):
     let mut left = List<T>.new()
     while left.len() < half {
         match rest.pop() {
-            Some(x) => left.push(x),
-            None => break,
+            Option.Some(x) => left.push(x),
+            Option.None => break,
         }
     }
     let mut right = List<T>.new()
     loop {
         match rest.pop() {
-            Some(x) => right.push(x),
-            None => break,
+            Option.Some(x) => right.push(x),
+            Option.None => break,
         }
     }
     let sorted_left = __merge_sort(left, mut less)

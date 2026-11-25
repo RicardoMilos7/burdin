@@ -9,12 +9,12 @@ type Outcome<T> = Result<T>
 type Done = Outcome<()>
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+    Result.Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })
 }
 
 fn main(): Done {
     println("before")
     let n = read().context("loading settings")?
     println("after {n}")
-    Ok(())
+    Result.Ok(())
 }

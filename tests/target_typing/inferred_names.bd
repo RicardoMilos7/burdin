@@ -1,0 +1,34 @@
+//@ compile-fail
+
+// A variant the type does not have is E0002, in a pattern and in an expression (spec/target-typing.md, TT13). The
+// shape of a variant is checked as it is for `Enum.Variant`.
+
+enum Shape {
+    Dot,
+    Circle(i32),
+    Rect { w: i32, h: i32 },
+}
+
+fn area(s: Shape): i32 {
+    match s {
+        .Dot => 0,
+        .Square(n) => n, //~ E0002
+        .Circle(r) => r,
+        .Rect { w, h } => w * h,
+    }
+}
+
+fn shape(o: Option<i32>): i32 {
+    match o {
+        .Some(v) => v,
+        .Nothing => 0, //~ E0002
+        .None => 0,
+    }
+}
+
+fn main() {
+    let a: Shape = .Triangle //~ E0002
+    let b: Shape = .Circle(1, 2) //~ E0004
+    let c: Shape = .Rect { w: 1, d: 2 } //~ E0002 //~ E0003
+    println("{area(a)} {area(b)} {area(c)} {shape(.Some(1))}")
+}

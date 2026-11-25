@@ -10,18 +10,18 @@
 // name `load`. Only the line and column are printed as text, because the file path is a temporary path.
 
 fn read(): Result<i32, IoError> {
-    Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: None })
+    Result.Err(IoError.Read { path: "cfg.toml".to_string(), kind: IoErrorKind.NotFound, os_code: Option.None })
 }
 
 fn load(): Result<i32> {
     let n = read().context("loading settings")?
-    Ok(n)
+    Result.Ok(n)
 }
 
 fn main() {
     match load() {
-        Ok(_) => println("ok"),
-        Err(e) => {
+        Result.Ok(_) => println("ok"),
+        Result.Err(e) => {
             println("frames {}", e.frames.len())
             for f in e.frames {
                 println("{f.func} {f.line}:{f.col}")

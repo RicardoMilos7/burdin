@@ -1,0 +1,94 @@
+//@ run
+//> 0 4 6
+//> dot circle rect
+//> 7
+//> some 5
+//> none
+//> ok 1
+//> err bad
+//> 1 2
+//> nested 9
+//> 3
+//> 2
+
+// Inferred variant patterns (spec/target-typing.md, TT13, TT14): `.Variant`, `.Variant(p)`, and `.Variant { f }` name a
+// variant of the scrutinee's enum. They work in a `match` arm, an or-pattern, `if let`, `while let`, `let ... else`,
+// a nested pattern, a generic enum, and for `Option` and `Result`.
+
+enum Shape<T> {
+    Dot,
+    Circle(T),
+    Rect { w: T, h: T },
+}
+
+enum Token {
+    Num(i32),
+    Pair(Option<i32>, Result<i32, String>),
+}
+
+fn area(s: Shape<i32>): i32 {
+    match s {
+        .Dot | .Circle(0) => 0,
+        .Circle(r) => r * r,
+        .Rect { w, h } => w * h,
+    }
+}
+
+fn kind(s: Shape<i32>): String {
+    match s {
+        .Dot => "dot".to_string(),
+        .Circle(_) => "circle".to_string(),
+        .Rect { .. } => "rect".to_string(),
+    }
+}
+
+fn describe(o: Option<i32>) {
+    match o {
+        .Some(v) => println("some {v}"),
+        .None => println("none"),
+    }
+}
+
+fn report(r: Result<i32, String>) {
+    match r {
+        .Ok(v) => println("ok {v}"),
+        .Err(e) => println("err {e}"),
+    }
+}
+
+fn deep(t: Token): i32 {
+    match t {
+        .Num(n) => n,
+        .Pair(.Some(a), .Ok(b)) => a + b,
+        .Pair(.None, _) | .Pair(_, .Err(_)) => -1,
+        .Pair(.Some(a), _) => a,
+    }
+}
+
+fn main() {
+    println("{area(.Dot)} {area(.Circle(2))} {area(Shape.Rect { w: 2, h: 3 })}")
+    println("{kind(Shape.Dot)} {kind(Shape.Circle(1))} {kind(.Rect { w: 1, h: 1 })}")
+    println("{area(.Rect { w: 7, h: 1 })}")
+    describe(Option.Some(5))
+    describe(.None)
+    report(.Ok(1))
+    report(Result.Err("bad".to_string()))
+
+    let pair: (Option<i32>, Option<i32>) = (Option.Some(1), Option.Some(2))
+    if let (.Some(a), .Some(b)) = pair {
+        println("{a} {b}")
+    }
+    println("nested {deep(Token.Pair(.Some(4), .Ok(5)))}")
+
+    let mut left: Option<i32> = .Some(3)
+    let mut count = 0
+    while let .Some(n) = left {
+        count = count + 1
+        left = if n > 1 { .Some(n - 1) } else { .None }
+    }
+    println("{count}")
+
+    let s: Shape<i32> = .Circle(2)
+    let .Circle(r) = s else { return }
+    println("{r}")
+}

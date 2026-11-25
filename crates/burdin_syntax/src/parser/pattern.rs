@@ -99,14 +99,19 @@ impl Parser<'_> {
                 let span = start.to(name.span);
                 Ok(Pattern { kind: PatternKind::Binding { name, mutable: true }, span })
             }
-            TokenKind::Ident(_) | TokenKind::SelfType => {
+            TokenKind::Ident(_) | TokenKind::SelfType | TokenKind::Dot => {
                 let mut path = if matches!(self.kind(), TokenKind::SelfType) {
                     self.bump();
                     vec![Ident { name: "Self".to_string(), span: start }]
+                } else if self.at(&TokenKind::Dot) {
+                    // `.Variant`: the enum is the scrutinee's type (spec/target-typing.md, TT13). The path's first
+                    // segment is empty and stands for the dot, so the formatter and the tools read `.Variant` back.
+                    self.bump();
+                    vec![Ident::inferred(start), self.ident("a variant name")?]
                 } else {
                     vec![self.ident("a name")?]
                 };
-                while self.at(&TokenKind::Dot) {
+                while !path[0].name.is_empty() && self.at(&TokenKind::Dot) {
                     self.bump();
                     path.push(self.ident("a name")?);
                 }

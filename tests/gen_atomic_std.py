@@ -87,9 +87,9 @@ AtomicBool {
             let n: u32 = if new { 1 } else { 0 }
             let old = __atomic_cas_u32(self.cell, c, n)
             if old == c {
-                Ok(old != 0)
+                Result.Ok(old != 0)
             } else {
-                Err(old != 0)
+                Result.Err(old != 0)
             }
         }
     }
@@ -172,9 +172,9 @@ struct {name} {
         unsafe {
             let old = __atomic_cas_{word}(self.cell, current as {word}, new as {word}) as {ty}
             if old == current {
-                Ok(old)
+                Result.Ok(old)
             } else {
-                Err(old)
+                Result.Err(old)
             }
         }
     }
@@ -222,8 +222,8 @@ struct {name} {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -236,8 +236,8 @@ struct {name} {
                 return current
             }
             match self.compare_exchange(current, value) {
-                Ok(old) => return old,
-                Err(_) => {}
+                Result.Ok(old) => return old,
+                Result.Err(_) => {}
             }
         }
     }
@@ -267,8 +267,8 @@ INT_EXAMPLES = {
     "swap": ["let x = {name}.new(1)", "assert_eq(x.swap(4), 1)", "assert_eq(x.load(), 4)"],
     "compare_exchange": [
         "let x = {name}.new(1)",
-        "assert_eq(x.compare_exchange(1, 2), Ok(1))",
-        "assert_eq(x.compare_exchange(1, 3), Err(2))",
+        "assert_eq(x.compare_exchange(1, 2), Result.Ok(1))",
+        "assert_eq(x.compare_exchange(1, 3), Result.Err(2))",
     ],
     "fetch_add": ["let x = {name}.new(5)", "assert_eq(x.fetch_add(2), 5)", "assert_eq(x.load(), 7)"],
     "fetch_sub": ["let x = {name}.new(5)", "assert_eq(x.fetch_sub(2), 5)", "assert_eq(x.load(), 3)"],
@@ -292,8 +292,8 @@ BOOL_EXAMPLES = {
     "swap": ["let flag = AtomicBool.new(false)", "assert_eq(flag.swap(true), false)", "assert(flag.load())"],
     "compare_exchange": [
         "let flag = AtomicBool.new(false)",
-        "assert_eq(flag.compare_exchange(false, true), Ok(false))",
-        "assert_eq(flag.compare_exchange(false, true), Err(true))",
+        "assert_eq(flag.compare_exchange(false, true), Result.Ok(false))",
+        "assert_eq(flag.compare_exchange(false, true), Result.Err(true))",
     ],
     "fetch_and": ["let flag = AtomicBool.new(true)", "assert_eq(flag.fetch_and(false), true)", "assert(!flag.load())"],
     "fetch_or": ["let flag = AtomicBool.new(false)", "assert_eq(flag.fetch_or(true), false)", "assert(flag.load())"],

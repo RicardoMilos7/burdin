@@ -10,7 +10,7 @@ fn main() {
     let boxed: any Iterable<i32> = list
     println(boxed.is<List<i32>>().to_string())
     match boxed.downcast<List<i32>>() {
-        Some(values) => println(values.len().to_string()),
-        None => println("none"),
+        Option.Some(values) => println(values.len().to_string()),
+        Option.None => println("none"),
     }
 }

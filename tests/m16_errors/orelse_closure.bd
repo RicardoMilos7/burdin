@@ -9,16 +9,16 @@
 // `Option` (issue #488).
 
 fn parse(n: i32): Result<i32, ParseIntError> {
-    if n > 0 { Ok(n) } else { Err(ParseIntError.Invalid) }
+    if n > 0 { Result.Ok(n) } else { Result.Err(ParseIntError.Invalid) }
 }
 
 fn main() {
     println("{parse(3) orelse |e| 0}")
     println("{parse(-1) orelse |e| 7}")
 
-    let none: Option<i32> = None
+    let none: Option<i32> = Option.None
     println("{none orelse || 9}")
-    println("{Some(4) orelse || 9}")
+    println("{Option.Some(4) orelse || 9}")
 
     let mut bonus = 10
     bonus = bonus + 1

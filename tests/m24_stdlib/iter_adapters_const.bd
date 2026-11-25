@@ -32,8 +32,8 @@ fn reversed_text(): i32 {
     }
     let mut it = "xyz".chars()
     match it.next_back() {
-        Some(c) => n = n * 100 + (c as i32 - 'a' as i32),
-        None => {}
+        Option.Some(c) => n = n * 100 + (c as i32 - 'a' as i32),
+        Option.None => {}
     }
     n
 }

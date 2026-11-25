@@ -18,7 +18,7 @@ fn show(n: i32) {
 
 // The numbers below `limit` in order, from `n`: `Some(n)` while `n` is below `limit`.
 fn below(limit: i32, n: i32): Option<i32> {
-    if n < limit { Some(n) } else { None }
+    if n < limit { Option.Some(n) } else { Option.None }
 }
 
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
     stack.push(1)
     stack.push(2)
     stack.push(3)
-    while let Some(top) = stack.pop() {
+    while let Option.Some(top) = stack.pop() {
         show(top)
     }
     println("done")
@@ -36,7 +36,7 @@ fn main() {
     // `continue`; the first pass that takes the total past 5 is the last one.
     let mut i = 0
     let mut total = 0
-    while let Some(v) = below(10, i) {
+    while let Option.Some(v) = below(10, i) {
         i = i + 1
         if v % 2 == 1 {
             continue
@@ -52,10 +52,10 @@ fn main() {
     // column past the row, and the outer loop then goes on with the next row.
     let mut row = 0
     let mut pairs = 0
-    'rows: while let Some(r) = below(4, row) {
+    'rows: while let Option.Some(r) = below(4, row) {
         row = row + 1
         let mut col = 0
-        while let Some(c) = below(4, col) {
+        while let Option.Some(c) = below(4, col) {
             col = col + 1
             if c > r {
                 continue 'rows
@@ -66,15 +66,15 @@ fn main() {
     show(pairs)
 
     // A place is a scrutinee too: the body changes it, and the next pass matches the new value.
-    let mut slot = Some(7)
-    while let Some(x) = slot {
+    let mut slot = Option.Some(7)
+    while let Option.Some(x) = slot {
         show(x)
-        slot = None
+        slot = Option.None
     }
 
     // A pattern that never matches runs no pass.
     let mut runs = 0
-    while let Some(_) = below(0, 0) {
+    while let Option.Some(_) = below(0, 0) {
         runs = runs + 1
     }
     show(runs)

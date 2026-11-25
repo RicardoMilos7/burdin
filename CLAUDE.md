@@ -70,7 +70,7 @@ not updated and may disagree with the repository.
    retries, and connection reuse (and that `https` is not supported), `spec/crypto.md` is the `crypto` package: the
    hashes, HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, AES-GCM, X25519, and Ed25519 it provides in pure Burdin, what each
    reports, and why it is an experiment, not a security claim, `spec/math.md` is the `math` package: the integer, scalar,
-   statistics, vector, and matrix functions over `f64`, and which bad inputs panic and which give `None`, `spec/tls.md` is the `tls` package: OpenSSL 3 through the
+   statistics, vector, and matrix functions over `f64`, and which bad inputs panic and which give `Option.None`, `spec/tls.md` is the `tls` package: OpenSSL 3 through the
    C bridge as the backend, the memory-BIO engine, configuration and verification, certificates and keys, the stream,
    errors, and linking (the decision, issue #322),
    `spec/toolchain.md` is the toolchain manager: `burdin

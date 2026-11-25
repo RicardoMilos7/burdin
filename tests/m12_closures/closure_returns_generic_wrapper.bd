@@ -8,18 +8,18 @@
 
 fn apply<T, U, F: FnOnce(T): Option<U>>(own o: Option<T>, own f: F): Option<U> {
     match o {
-        Some(x) => f(x),
-        None => None,
+        Option.Some(x) => f(x),
+        Option.None => Option.None,
     }
 }
 
 fn main() {
-    let a: Option<i32> = Some(3)
-    println("{apply(a, |x| Some(x * 2)):?}")
-    println("{apply(a, |x| if x > 5 { Some(x) } else { None }):?}")
+    let a: Option<i32> = Option.Some(3)
+    println("{apply(a, |x| Option.Some(x * 2)):?}")
+    println("{apply(a, |x| if x > 5 { Option.Some(x) } else { Option.None }):?}")
     let c = apply(a, |x| {
         let y = x * 2
-        Some(y)
+        Option.Some(y)
     })
     println("{c:?}")
 }

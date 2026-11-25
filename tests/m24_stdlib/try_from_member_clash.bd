@@ -15,7 +15,7 @@ Percent {
 
 Percent: TryFrom<i32> {
     fn try_from(v: i32): Result<Percent, i32> { //~ E0007
-        Ok(Percent { value: v as u8 })
+        Result.Ok(Percent { value: v as u8 })
     }
 }
 

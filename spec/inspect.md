@@ -45,7 +45,7 @@ Tests: `tests/inspect/expand_mix.bd` and the goldens in `tests/inspect/golden/ex
 ## INS2. What constants, compile-time conditions, and reflection become
 
 - A `const` initializer becomes the value it evaluated to, when the value has a literal form: a number, `bool`, `char`,
-  `str`, a `String` made from a literal, an array, a tuple, `Some`/`None`/`Ok`/`Err`, a struct or enum value of such
+  `str`, a `String` made from a literal, an array, a tuple, `Option.Some`/`Option.None`/`Result.Ok`/`Result.Err`, a struct or enum value of such
   parts, or a constant. A number whose type is not `i32` is written `(64 as usize)`, so the type survives. Inside a
   `{...}` hole of an interpolated string a number is parenthesized (`{(10)}`, which is not the positional hole `{10}`).
 - An `if` with a compile-time condition (`const-eval.md`, CE4) becomes the block of the branch it chose; the other

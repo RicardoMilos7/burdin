@@ -21,8 +21,8 @@ fn in_patterns(own p: Pair, o: Option<i32>) {
     let Pair { left, right } = p //~ L0007
     println("{}", left)
     match o {
-        Some(v) => println("one") //~ L0007
-        None => println("none")
+        Option.Some(v) => println("one") //~ L0007
+        Option.None => println("none")
     }
     for i in 0..2 { //~ L0007
         println("x")
@@ -51,7 +51,7 @@ fn closure_params() {
 fn main() {
     plain()
     assigned_only()
-    in_patterns(Pair { left: 1, right: 2 }, Some(3))
+    in_patterns(Pair { left: 1, right: 2 }, Option.Some(3))
     read_in_places(1, 2, 3)
     closure_params()
 }

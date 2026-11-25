@@ -11,16 +11,16 @@ fn main() {
     let mut m = Map<i32, i32>.new()
     m.insert(1, 10)
     match m.get_mut(1) {
-        Some(v) => {
+        Option.Some(v) => {
             *v = *v + 1
         }
-        None => {}
+        Option.None => {}
     }
     println("{:?}", m.get(1))
     println("{}", m.get_mut(2).is_none())
     println("{:?}", m.get(2))
     let r = m.get_or_insert(3, 4)
-    println("{:?}", Some(*r))
+    println("{:?}", Option.Some(*r))
     let again = m.get_or_insert(3, 99)
     *again = *again + 0
 }

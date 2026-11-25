@@ -18,8 +18,8 @@ fn main() {
     println(xs.iter().filter(|p| p.v > 1).count().to_string())
 
     match xs.iter().find(|p| p.v == 2) {
-        Some(p) => println(p.v.to_string()),
-        None => println("none"),
+        Option.Some(p) => println(p.v.to_string()),
+        Option.None => println("none"),
     }
 
     let mut kept = 0

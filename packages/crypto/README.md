@@ -117,7 +117,7 @@ constant_time_eq(a, b): bool        wipe(mut buf)        xor_bytes(a, b)        
   where that attacker matters. The hashes branch only on the message length, which is not secret in any use here.
 * **The compiler may not preserve it.** Constant-time code in a language whose optimizer is free to reorder is a
   best effort, and `wipe` can be optimized away. Nothing in Burdin promises either.
-* **Panics.** Wrong lengths, bad tags, and malformed signatures are `Err` or `false`, never panics. Integer overflow
+* **Panics.** Wrong lengths, bad tags, and malformed signatures are `Result.Err` or `false`, never panics. Integer overflow
   would panic in a checked build, so the arithmetic uses `wrapping_*` throughout.
 
 ## Performance

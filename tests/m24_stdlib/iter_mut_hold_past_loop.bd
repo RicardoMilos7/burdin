@@ -22,10 +22,10 @@ fn held_from_next() {
     let mut held = &mut zero
     let mut it = xs.iter_mut()
     match it.next() {
-        Some(x) => {
+        Option.Some(x) => {
             held = x
         }
-        None => {}
+        Option.None => {}
     }
     xs.push(2) //~ E0111
     *held = 5

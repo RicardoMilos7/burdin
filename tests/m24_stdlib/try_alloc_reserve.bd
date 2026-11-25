@@ -17,13 +17,13 @@ fn main() {
     xs.push(1)
     xs.push(2)
     match xs.try_reserve(4) {
-        Ok(_) => println("reserved"),
-        Err(e) => println("{}", e),
+        Result.Ok(_) => println("reserved"),
+        Result.Err(e) => println("{}", e),
     }
     let huge: usize = 1152921504606846976
     match xs.try_reserve(huge) {
-        Ok(_) => println("reserved"),
-        Err(e) => {
+        Result.Ok(_) => println("reserved"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
         }
@@ -34,8 +34,8 @@ fn main() {
     println(xs[0].to_string())
     let max: usize = 18446744073709551615
     match xs.try_reserve_exact(max) {
-        Ok(_) => println("reserved"),
-        Err(e) => {
+        Result.Ok(_) => println("reserved"),
+        Result.Err(e) => {
             println("{}", e)
             println("{:?}", e)
         }

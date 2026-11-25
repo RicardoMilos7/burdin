@@ -66,7 +66,7 @@ Pike {
         let mut caps = List<Option<usize>>.new()
         let mut k: usize = 0
         while k < slots {
-            caps.push(None)
+            caps.push(Option.None)
             k = k + 1
         }
         Pike { lists: lists, caps: caps, stack: List<Work>.new(), slots: slots }
@@ -75,7 +75,7 @@ Pike {
     priv fn reset_caps(mut self) {
         let mut k: usize = 0
         while k < self.slots {
-            self.caps[k] = None
+            self.caps[k] = Option.None
             k = k + 1
         }
     }
@@ -108,11 +108,11 @@ Pike {
         self.stack.push(Work.Visit(start_pc))
         loop {
             match self.stack.pop() {
-                None => break,
-                Some(Work.Restore(slot, old)) => {
+                Option.None => break,
+                Option.Some(Work.Restore(slot, old)) => {
                     self.caps[slot] = old
                 }
-                Some(Work.Visit(pc)) => {
+                Option.Some(Work.Visit(pc)) => {
                     if self.lists[which].contains(pc) {
                         continue
                     }
@@ -126,7 +126,7 @@ Pike {
                         Inst.Save(slot) => {
                             let old = self.caps[slot]
                             self.stack.push(Work.Restore(slot, old))
-                            self.caps[slot] = Some(pos)
+                            self.caps[slot] = Option.Some(pos)
                             self.stack.push(Work.Visit(pc + 1))
                         }
                         Inst.Assert(kind) => {
@@ -159,12 +159,12 @@ priv fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>,
         Assertion.TextStart => pos == 0,
         Assertion.TextEnd => next.is_none(),
         Assertion.LineStart => match prev {
-            None => true,
-            Some(c) => c == '\n',
+            Option.None => true,
+            Option.Some(c) => c == '\n',
         },
         Assertion.LineEnd => match next {
-            None => true,
-            Some(c) => c == '\n',
+            Option.None => true,
+            Option.Some(c) => c == '\n',
         },
         Assertion.WordBoundary => word_at(prev) != word_at(next),
         Assertion.NotWordBoundary => word_at(prev) == word_at(next),
@@ -173,8 +173,8 @@ priv fn assertion_holds(kind: Assertion, prev: Option<char>, next: Option<char>,
 
 priv fn word_at(c: Option<char>): bool {
     match c {
-        None => false,
-        Some(x) => is_word_char(x),
+        Option.None => false,
+        Option.Some(x) => is_word_char(x),
     }
 }
 
@@ -191,13 +191,13 @@ priv fn char_matches(c: char, want: char, fold: bool): bool {
 /// UTF-8 (RX14), so the lead byte says how many bytes follow.
 priv fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
     if pos >= bytes.len() {
-        return None
+        return Option.None
     }
     let lead = bytes[pos] as u32
     if lead < 128 {
         return match lead.to_char() {
-            Some(c) => Some((c, 1)),
-            None => None,
+            Option.Some(c) => Option.Some((c, 1)),
+            Option.None => Option.None,
         }
     }
     let mut width: usize = 2
@@ -212,29 +212,29 @@ priv fn decode_at(bytes: [u8], pos: usize): Option<(char, usize)> {
     let mut k: usize = 1
     while k < width {
         if pos + k >= bytes.len() {
-            return None
+            return Option.None
         }
         code = (code << 6) | ((bytes[pos + k] as u32) & 63)
         k = k + 1
     }
     match code.to_char() {
-        Some(c) => Some((c, width)),
-        None => None,
+        Option.Some(c) => Option.Some((c, width)),
+        Option.None => Option.None,
     }
 }
 
 /// The character that ends at byte `pos`, or None at the start of the text.
 priv fn char_before(bytes: [u8], pos: usize): Option<char> {
     if pos == 0 || pos > bytes.len() {
-        return None
+        return Option.None
     }
     let mut start = pos - 1
     while start > 0 && ((bytes[start] as u32) & 192) == 128 {
         start = start - 1
     }
     match decode_at(bytes, start) {
-        Some((c, _)) => Some(c),
-        None => None,
+        Option.Some((c, _)) => Option.Some(c),
+        Option.None => Option.None,
     }
 }
 
@@ -246,14 +246,14 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
     let size = prog.code.len()
     let mut vm = Pike.new(size, prog.slots)
     let mut cur: usize = 0
-    let mut matched: Option<List<Option<usize>>> = None
+    let mut matched: Option<List<Option<usize>>> = Option.None
     let mut pos = start
     let mut prev = char_before(bytes, start)
     loop {
         let here = decode_at(bytes, pos)
         let here_char: Option<char> = match here {
-            Some((c, _)) => Some(c),
-            None => None,
+            Option.Some((c, _)) => Option.Some(c),
+            Option.None => Option.None,
         }
         // A new thread starts at every position until one has matched, at the lowest priority.
         if matched.is_none() {
@@ -267,8 +267,8 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
             // Nothing is live at this position: move on, and forget the visits made for the old one.
             vm.lists[cur].clear()
             match here {
-                None => break,
-                Some((_, width)) => {
+                Option.None => break,
+                Option.Some((_, width)) => {
                     prev = here_char
                     pos = pos + width
                     continue
@@ -276,12 +276,12 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
             }
         }
         let next_pos = match here {
-            Some((_, width)) => pos + width,
-            None => pos,
+            Option.Some((_, width)) => pos + width,
+            Option.None => pos,
         }
         let after = match decode_at(bytes, next_pos) {
-            Some((c, _)) => Some(c),
-            None => None,
+            Option.Some((c, _)) => Option.Some(c),
+            Option.None => Option.None,
         }
         let nxt = 1 - cur
         vm.lists[nxt].clear()
@@ -292,12 +292,12 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
             match prog.code[pc] {
                 Inst.Match => {
                     if !(forbid_empty && pos == start) {
-                        matched = Some(vm.thread_slots(cur, i))
+                        matched = Option.Some(vm.thread_slots(cur, i))
                         break
                     }
                 }
                 Inst.Char(want, fold) => {
-                    if let Some(c) = here_char {
+                    if let Option.Some(c) = here_char {
                         if char_matches(c, want, fold) {
                             vm.load(cur, i)
                             vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
@@ -305,7 +305,7 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
                     }
                 }
                 Inst.Any(dotall) => {
-                    if let Some(c) = here_char {
+                    if let Option.Some(c) = here_char {
                         if dotall || c != '\n' {
                             vm.load(cur, i)
                             vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
@@ -313,7 +313,7 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
                     }
                 }
                 Inst.Class(k) => {
-                    if let Some(c) = here_char {
+                    if let Option.Some(c) = here_char {
                         if prog.classes[k].matches(c) {
                             vm.load(cur, i)
                             vm.add(prog, nxt, pc + 1, next_pos, here_char, after)
@@ -326,8 +326,8 @@ priv fn run(prog: &Program, bytes: [u8], start: usize, forbid_empty: bool): Opti
         }
         cur = nxt
         match here {
-            None => break,
-            Some((_, width)) => {
+            Option.None => break,
+            Option.Some((_, width)) => {
                 prev = here_char
                 pos = pos + width
             }

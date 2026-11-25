@@ -4,6 +4,6 @@
 true
 3.5
 (1, "two")
-Some(3)
+Option.Some(3)
 [1, 2, 3].to_list()
 :quit

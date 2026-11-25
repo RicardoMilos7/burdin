@@ -21,11 +21,11 @@ fn main() {
         })
         s.spawn(|| {
             let mut client = net.TcpStream.connect(target.clone()).unwrap()
-            client.set_read_timeout(Some(Duration.from_millis(50)))
+            client.set_read_timeout(Option.Some(Duration.from_millis(50)))
             let mut buf = List<u8>.new()
             match client.read(mut buf, 16) {
-                Ok(_) => println("the read did not time out"),
-                Err(failure) => println("read {}", match failure.kind() {
+                Result.Ok(_) => println("the read did not time out"),
+                Result.Err(failure) => println("read {}", match failure.kind() {
                     IoErrorKind.TimedOut => "timed out".to_string(),
                     _ => "failed".to_string(),
                 }),

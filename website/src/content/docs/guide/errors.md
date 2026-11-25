@@ -8,38 +8,38 @@ returns a `Result<T, E>`. The compiler makes you handle both, and a small set of
 
 ## Option: a value that may be missing
 
-`Option<T>` is either `Some(value)` or `None`:
+`Option<T>` is either `Option.Some(value)` or `Option.None`:
 
 ```burdin
 fn find_even(xs: [i32]): Option<i32> {
     for x in xs {
         if x % 2 == 0 {
-            return Some(x)
+            return Option.Some(x)
         }
     }
-    None
+    Option.None
 }
 
 fn main() {
     let xs = [1, 3, 4]
     match find_even(xs[0..3]) {
-        Some(n) => println("found {n}"),
-        None => println("no even number"),
+        Option.Some(n) => println("found {n}"),
+        Option.None => println("no even number"),
     }
 }
 ```
 
-When you want a default, write `orelse` after the expression. It gives the value inside `Some`, or the value after
-`orelse` for `None`:
+When you want a default, write `orelse` after the expression. It gives the value inside `Option.Some`, or the value after
+`orelse` for `Option.None`:
 
 ```burdin
 fn find_even(xs: [i32]): Option<i32> {
     for x in xs {
         if x % 2 == 0 {
-            return Some(x)
+            return Option.Some(x)
         }
     }
-    None
+    Option.None
 }
 
 fn main() {
@@ -49,7 +49,7 @@ fn main() {
 }
 ```
 
-`unwrap()` takes the value out of `Some` and panics on `None`. `expect("message")` does the same and prints your message.
+`unwrap()` takes the value out of `Option.Some` and panics on `Option.None`. `expect("message")` does the same and prints your message.
 Use them when a missing value is a bug, not a normal case. `is_some()` and `is_none()` ask without taking the value.
 
 `unwrap_or_default()` gives the value, or the type's default when there is none. `flatten()` turns an
@@ -57,7 +57,7 @@ Use them when a missing value is a bug, not a normal case. `is_some()` and `is_n
 
 ## Result: an operation that may fail
 
-`Result<T, E>` is `Ok(value)` or `Err(error)`. A function that can fail says so in its return type:
+`Result<T, E>` is `Result.Ok(value)` or `Result.Err(error)`. A function that can fail says so in its return type:
 
 ```burdin
 enum MathError {
@@ -66,16 +66,16 @@ enum MathError {
 
 fn divide(a: i32, b: i32): Result<i32, MathError> {
     if b == 0 {
-        Err(MathError.DivideByZero)
+        Result.Err(MathError.DivideByZero)
     } else {
-        Ok(a / b)
+        Result.Ok(a / b)
     }
 }
 
 fn main() {
     match divide(10, 0) {
-        Ok(v) => println("{v}"),
-        Err(MathError.DivideByZero) => println("cannot divide by zero"),
+        Result.Ok(v) => println("{v}"),
+        Result.Err(MathError.DivideByZero) => println("cannot divide by zero"),
     }
 }
 ```
@@ -89,13 +89,13 @@ failure from this function now; otherwise, use the value. This replaces a `match
 fn parse_pair(a: str, b: str): Result<i32, ParseIntError> {
     let x = i32.parse(a)?
     let y = i32.parse(b)?
-    Ok(x + y)
+    Result.Ok(x + y)
 }
 
 fn main() {
     match parse_pair("4", "x") {
-        Ok(sum) => println("sum {sum}"),
-        Err(e) => println("failed: {e}"),
+        Result.Ok(sum) => println("sum {sum}"),
+        Result.Err(e) => println("failed: {e}"),
     }
 }
 ```
@@ -132,18 +132,18 @@ error enum ConfigError {
 }
 
 fn read_key(own key: String): Result<String, ConfigError> {
-    Err(ConfigError.Missing(key))
+    Result.Err(ConfigError.Missing(key))
 }
 
 fn load(): Result<String> {
     let value = read_key(String.from("port")).context("loading settings")?
-    Ok(value)
+    Result.Ok(value)
 }
 
 fn main() {
     match load() {
-        Ok(v) => println("value {v}"),
-        Err(e) => println("{e}"),
+        Result.Ok(v) => println("value {v}"),
+        Result.Err(e) => println("{e}"),
     }
 }
 ```
@@ -162,9 +162,9 @@ error enum AppError {
 
 fn check(n: i32): Result<i32, AppError> {
     if n < 0 {
-        Err(AppError.Bad(String.from("negative")))
+        Result.Err(AppError.Bad(String.from("negative")))
     } else {
-        Ok(n)
+        Result.Ok(n)
     }
 }
 
@@ -173,7 +173,7 @@ fn main(): Result<()> {
     println("ok {n}")
     let m = check(-1)?
     println("not reached {m}")
-    Ok(())
+    Result.Ok(())
 }
 ```
 
@@ -186,7 +186,7 @@ type Outcome = Result<()>
 
 fn main(): Outcome {
     println("hello")
-    Ok(())
+    Result.Ok(())
 }
 ```
 
@@ -197,7 +197,7 @@ exits with a failure status. These are panics:
 
 - indexing past the end of an array or list
 - integer overflow in a debug build, and division by zero
-- `unwrap()` on `None` or on an `Err`
+- `unwrap()` on `Option.None` or on an `Result.Err`
 - an explicit `panic("message")`
 
 Use `Result` for failures you expect, such as bad input or a missing file. Use a panic when continuing would hide a bug.

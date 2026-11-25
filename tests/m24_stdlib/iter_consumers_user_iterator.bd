@@ -14,11 +14,11 @@ struct Evens {
 Evens: Iterator<i32> {
     fn next(mut self): Option<i32> {
         if self.next_value >= self.end {
-            return None
+            return Option.None
         }
         let v = self.next_value
         self.next_value = v + 2
-        Some(v)
+        Option.Some(v)
     }
 }
 

@@ -31,10 +31,10 @@ const P: Point = Point { x: 1, y: 2 }
 const COLOR: Color = Color.Green
 const R: Range<i32> = 2..5
 const RI: RangeInclusive<i32> = 1..=4
-const SOME: Option<i32> = Some(7)
-const NONE: Option<i32> = None
-const OK: Result<i32, str> = Ok(1)
-const ERR: Result<i32, str> = Err("oops")
+const SOME: Option<i32> = Option.Some(7)
+const NONE: Option<i32> = Option.None
+const OK: Result<i32, str> = Result.Ok(1)
+const ERR: Result<i32, str> = Result.Err("oops")
 const NAME: String = String.from("burdin")
 const LEN: usize = 6
 const ANSWER: (i32, i32) = (42, 0)
@@ -58,21 +58,21 @@ fn main() {
     }
     println(line)
     let s = match SOME {
-        Some(v) => v.to_string(),
-        None => String.from("None"),
+        Option.Some(v) => v.to_string(),
+        Option.None => String.from("None"),
     }
     let n = match NONE {
-        Some(v) => v.to_string(),
-        None => String.from("None"),
+        Option.Some(v) => v.to_string(),
+        Option.None => String.from("None"),
     }
     println("Some({s}) {n}")
     let o = match OK {
-        Ok(v) => v.to_string(),
-        Err(e) => String.from(e),
+        Result.Ok(v) => v.to_string(),
+        Result.Err(e) => String.from(e),
     }
     let e = match ERR {
-        Ok(v) => v.to_string(),
-        Err(e) => String.from(e),
+        Result.Ok(v) => v.to_string(),
+        Result.Err(e) => String.from(e),
     }
     println("Ok({o}) Err({e})")
     println("{NAME} {LEN}")

@@ -383,6 +383,12 @@ impl<'a> FnCx<'a> {
             let ty = self.self_ty.clone().unwrap_or(Ty::Error);
             return Some((ty, path.get(1).cloned(), self.module, path[0].clone()));
         }
+        // `.Variant`: the enum is the scrutinee's own type, so no name is looked up (TT13).
+        if path.first().is_some_and(|first| first.is_inferred()) {
+            let Ty::Enum(a) = scrutinee else { return None };
+            let type_name = ast::Ident { name: a.name.to_string(), span: path[0].span };
+            return Some((scrutinee.clone(), path.get(1).cloned(), self.module, type_name));
+        }
         for k in (0..path.len()).rev() {
             let target = if k == 0 {
                 Some(self.module)
@@ -416,9 +422,43 @@ impl<'a> FnCx<'a> {
         None
     }
 
-    /// A name that is not hidden by a local or a global: `Some`, `None`.
+    /// A name that is not hidden by a local or a global.
     pub(super) fn is_prelude(&self, name: &str) -> bool {
         self.lookup(name).is_none() && self.globals.value(self.module, name).is_none()
+    }
+
+    /// Whether `Option` or `Result` written alone means the built-in enum: nothing in scope and no type of the
+    /// program has that name.
+    pub(super) fn is_prelude_type(&self, name: &str) -> bool {
+        self.is_prelude(name) && self.globals.type_name(self.module, name).is_none()
+    }
+
+    /// `Option` or `Result` as the head of a path expression, as in `Option.Some(x)` or `Result.Ok(v)`.
+    pub(super) fn prelude_head(&self, e: &ast::Expr) -> Option<&'static str> {
+        let ast::ExprKind::Name { name, args } = &e.kind else { return None };
+        if !args.is_empty() || !self.is_prelude_type(&name.name) {
+            return None;
+        }
+        match name.name.as_str() {
+            "Option" => Some("Option"),
+            "Result" => Some("Result"),
+            _ => None,
+        }
+    }
+
+    /// Reports a bare `Some`, `None`, `Ok`, or `Err` (E0305). `Option.Some` means the same wherever the bare name
+    /// did, so the fix is safe.
+    pub(super) fn removed_prelude_name(&mut self, id: &ast::Ident) {
+        let owner = if matches!(id.name.as_str(), "Some" | "None") { "Option" } else { "Result" };
+        let d = self.diags.error(
+            Code::REMOVED_PRELUDE_NAME,
+            id.span,
+            format!(
+                "`{0}` is not a name of its own: write `{1}.{0}`, or `.{0}` where the type is known",
+                id.name, owner
+            ),
+        );
+        d.suggest_safe(id.span, format!("write `{owner}.{}`", id.name), format!("{owner}.{}", id.name));
     }
 
     fn declare(&mut self, name: &str, ty: Ty, mutable: bool, kind: LocalKind, span: Span) -> LocalId {

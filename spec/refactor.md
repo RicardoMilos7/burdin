@@ -17,7 +17,7 @@ After the pattern, an optional `where` clause constrains the placeholders' types
 $a.unwrap_or($b) where $a: Option<_>
 ```
 
-`_` covers any one type argument, or the rest of the type when it is last (`Option<_>`, `Result<_, Err>`). The type is
+`_` covers any one type argument, or the rest of the type when it is last (`Option<_>`, `Result<_, Result.Err>`). The type is
 what the checker typed the matched expression with; a placeholder whose type the checker does not have never matches a
 constraint (`crates/burdin_refactor/src/ssr.rs`).
 

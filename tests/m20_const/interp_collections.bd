@@ -32,8 +32,8 @@ fn lookups(): i32 {
     m.insert(String.from("b"), 2)
     m.insert(String.from("a"), 3)
     match m.get(String.from("a")) {
-        Some(v) => *v,
-        None => 0,
+        Option.Some(v) => *v,
+        Option.None => 0,
     }
 }
 
