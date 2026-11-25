@@ -313,7 +313,7 @@ Formatter {
             if self.has_precision && chars >= self.precision {
                 break
             }
-            bytes = bytes + __utf8_len(c)
+            bytes = bytes + utf8_len(c)
             chars = chars + 1
         }
         self.pad_text(s[0..bytes], chars, 1)
@@ -327,7 +327,7 @@ Formatter {
     /// assert_eq(f.finish(), String.from("ab"))
     /// ```
     fn pad_plain(mut self, s: str) {
-        self.pad_text(s, __char_count(s), 1)
+        self.pad_text(s, count_chars(s), 1)
     }
 
     /// Writes a number as its sign, its radix prefix, and its digits. With the `0` flag the zeros go between the
@@ -394,7 +394,7 @@ Formatter {
     }
 }
 
-priv fn __utf8_len(c: char): usize {
+priv fn utf8_len(c: char): usize {
     let v = c as u32
     if v < 128 {
         1
@@ -407,7 +407,7 @@ priv fn __utf8_len(c: char): usize {
     }
 }
 
-priv fn __char_count(s: str): usize {
+priv fn count_chars(s: str): usize {
     let mut n: usize = 0
     for c in s.chars() {
         n = n + 1
@@ -417,7 +417,7 @@ priv fn __char_count(s: str): usize {
 
 // ----- integers ---------------------------------------------------------------------------------------------
 
-priv fn __int_digits(mag: u64, radix: i32): String {
+priv fn int_digits(mag: u64, radix: i32): String {
     let upper = radix == 17
     let mut base: u64 = 10
     if radix == 17 {
@@ -450,8 +450,8 @@ priv fn __int_digits(mag: u64, radix: i32): String {
     out
 }
 
-priv fn __emit_int(negative: bool, mag: u64, mut f: Formatter) {
-    let body = __int_digits(mag, f.radix)
+priv fn emit_int(negative: bool, mag: u64, mut f: Formatter) {
+    let body = int_digits(mag, f.radix)
     let mut sign = ""
     if negative {
         sign = "-"
@@ -473,32 +473,32 @@ priv fn __emit_int(negative: bool, mag: u64, mut f: Formatter) {
 
 /// A signed integer of `bits` bits, widened to `i64`. In a radix other than ten a negative value shows its two's
 /// complement in that many bits.
-priv fn __fmt_i64(v: i64, bits: i32, mut f: Formatter) {
+priv fn fmt_i64(v: i64, bits: i32, mut f: Formatter) {
     if f.radix == 10 {
         let negative = v < 0
         let mut mag: u64 = v as u64
         if negative {
             mag = (0 - (v + 1)) as u64 + 1
         }
-        __emit_int(negative, mag, mut f)
+        emit_int(negative, mag, mut f)
     } else {
         let mut mag = v as u64
         if bits < 64 {
             let one: u64 = 1
             mag = mag & ((one << (bits as u64)) - 1)
         }
-        __emit_int(false, mag, mut f)
+        emit_int(false, mag, mut f)
     }
 }
 
-priv fn __fmt_u64(v: u64, mut f: Formatter) {
-    __emit_int(false, v, mut f)
+priv fn fmt_u64(v: u64, mut f: Formatter) {
+    emit_int(false, v, mut f)
 }
 
 // The 128-bit integers (spec/int128.md, I128-5). They have their own digits, because the 64-bit routines take a
 // 64-bit magnitude; the sign and the radix rules are the same.
 
-priv fn __int_digits128(mag: u128, radix: i32): String {
+priv fn int_digits128(mag: u128, radix: i32): String {
     let upper = radix == 17
     let mut base: u128 = 10
     if radix == 17 {
@@ -531,8 +531,8 @@ priv fn __int_digits128(mag: u128, radix: i32): String {
     out
 }
 
-priv fn __emit_int128(negative: bool, mag: u128, mut f: Formatter) {
-    let body = __int_digits128(mag, f.radix)
+priv fn emit_int128(negative: bool, mag: u128, mut f: Formatter) {
+    let body = int_digits128(mag, f.radix)
     let mut sign = ""
     if negative {
         sign = "-"
@@ -553,33 +553,33 @@ priv fn __emit_int128(negative: bool, mag: u128, mut f: Formatter) {
 }
 
 /// A signed 128-bit integer. In a radix other than ten a negative value shows its two's complement in `bits` bits.
-priv fn __fmt_i128(v: i128, bits: i32, mut f: Formatter) {
+priv fn fmt_i128(v: i128, bits: i32, mut f: Formatter) {
     if f.radix == 10 {
         let negative = v < 0
         let mut mag: u128 = v as u128
         if negative {
             mag = (0 - (v + 1)) as u128 + 1
         }
-        __emit_int128(negative, mag, mut f)
+        emit_int128(negative, mag, mut f)
     } else {
         let mut mag = v as u128
         if bits < 128 {
             let one: u128 = 1
             mag = mag & ((one << (bits as u128)) - 1)
         }
-        __emit_int128(false, mag, mut f)
+        emit_int128(false, mag, mut f)
     }
 }
 
-priv fn __fmt_u128(v: u128, mut f: Formatter) {
-    __emit_int128(false, v, mut f)
+priv fn fmt_u128(v: u128, mut f: Formatter) {
+    emit_int128(false, v, mut f)
 }
 
 // ----- floats -----------------------------------------------------------------------------------------------
 
 /// The digits of a finite, non-negative float in positional notation: the shortest text that reads back as the
 /// same number.
-priv fn __float_shortest(a: f64, single: bool): String {
+priv fn float_shortest(a: f64, single: bool): String {
     let sci = __float_str(a, -1, single)
     let mut digits = String.new()
     let mut exp: i32 = 0
@@ -627,7 +627,7 @@ priv fn __float_shortest(a: f64, single: bool): String {
     out
 }
 
-priv fn __fmt_float(v: f64, single: bool, debug: bool, mut f: Formatter) {
+priv fn fmt_float(v: f64, single: bool, debug: bool, mut f: Formatter) {
     if v != v {
         f.pad_plain("NaN")
         return
@@ -655,7 +655,7 @@ priv fn __fmt_float(v: f64, single: bool, debug: bool, mut f: Formatter) {
         }
         body = __float_str(a, p as i32, single)
     } else {
-        body = __float_shortest(a, single)
+        body = float_shortest(a, single)
         if debug && body.find('.').is_none() {
             body.push_str(".0")
         }
@@ -665,17 +665,17 @@ priv fn __fmt_float(v: f64, single: bool, debug: bool, mut f: Formatter) {
 
 // ----- text -------------------------------------------------------------------------------------------------
 
-priv fn __fmt_str(s: str, mut f: Formatter) {
+priv fn fmt_str(s: str, mut f: Formatter) {
     f.pad(s)
 }
 
-priv fn __fmt_char(c: char, mut f: Formatter) {
+priv fn fmt_char(c: char, mut f: Formatter) {
     let mut s = String.new()
     s.push(c)
     f.pad(s)
 }
 
-priv fn __fmt_bool(b: bool, mut f: Formatter) {
+priv fn fmt_bool(b: bool, mut f: Formatter) {
     if b {
         f.pad("true")
     } else {
@@ -683,7 +683,7 @@ priv fn __fmt_bool(b: bool, mut f: Formatter) {
     }
 }
 
-priv fn __escape(c: char, quote: char, mut out: String) {
+priv fn escape(c: char, quote: char, mut out: String) {
     if c == '\n' {
         out.push_str("\\n")
     } else if c == '\t' {
@@ -702,20 +702,20 @@ priv fn __escape(c: char, quote: char, mut out: String) {
     }
 }
 
-priv fn __debug_str(s: str, mut f: Formatter) {
+priv fn debug_str(s: str, mut f: Formatter) {
     let mut q = String.new()
     q.push('"')
     for c in s.chars() {
-        __escape(c, '"', mut q)
+        escape(c, '"', mut q)
     }
     q.push('"')
     f.pad_plain(q)
 }
 
-priv fn __debug_char(c: char, mut f: Formatter) {
+priv fn debug_char(c: char, mut f: Formatter) {
     let mut q = String.new()
     q.push('\'')
-    __escape(c, '\'', mut q)
+    escape(c, '\'', mut q)
     q.push('\'')
     f.pad_plain(q)
 }
@@ -726,21 +726,21 @@ priv fn __debug_char(c: char, mut f: Formatter) {
 // parameter is passed by address, as the vtable's `self` pointer is, so the entry is the instance of one of these
 // for the boxed type.
 
-priv fn __any_display<T: Display>(v: T, mut f: Formatter) {
+priv fn any_display<T: Display>(v: T, mut f: Formatter) {
     v.fmt(mut f)
 }
 
-priv fn __any_debug<T: Debug>(v: T, mut f: Formatter) {
+priv fn any_debug<T: Debug>(v: T, mut f: Formatter) {
     v.debug(mut f)
 }
 
 // ----- compound types ---------------------------------------------------------------------------------------
 
-priv fn __debug_unit(mut f: Formatter) {
+priv fn debug_unit(mut f: Formatter) {
     f.write_str("()")
 }
 
-priv fn __debug_option<T: Debug>(o: Option<T>, mut f: Formatter) {
+priv fn debug_option<T: Debug>(o: Option<T>, mut f: Formatter) {
     match o {
         Option.Some(x) => {
             f.write_str("Some(")
@@ -753,7 +753,7 @@ priv fn __debug_option<T: Debug>(o: Option<T>, mut f: Formatter) {
     }
 }
 
-priv fn __debug_result<T: Debug, E: Debug>(r: Result<T, E>, mut f: Formatter) {
+priv fn debug_result<T: Debug, E: Debug>(r: Result<T, E>, mut f: Formatter) {
     match r {
         Result.Ok(x) => {
             f.write_str("Ok(")
@@ -768,7 +768,7 @@ priv fn __debug_result<T: Debug, E: Debug>(r: Result<T, E>, mut f: Formatter) {
     }
 }
 
-priv fn __debug_list<T: Debug>(xs: List<T>, mut f: Formatter) {
+priv fn debug_list<T: Debug>(xs: List<T>, mut f: Formatter) {
     f.write_str("[")
     let mut i: usize = 0
     while i < xs.len() {
@@ -781,7 +781,7 @@ priv fn __debug_list<T: Debug>(xs: List<T>, mut f: Formatter) {
     f.write_str("]")
 }
 
-priv fn __debug_map<K: Debug, V: Debug, A: Allocator>(m: Map<K, V, A>, mut f: Formatter) {
+priv fn debug_map<K: Debug, V: Debug, A: Allocator>(m: Map<K, V, A>, mut f: Formatter) {
     f.write_str("{{")
     let mut first = true
     for (key, value) in m {
@@ -796,11 +796,11 @@ priv fn __debug_map<K: Debug, V: Debug, A: Allocator>(m: Map<K, V, A>, mut f: Fo
     f.write_str("}}")
 }
 
-priv fn __debug_heap<T: Debug>(h: Heap<T>, mut f: Formatter) {
+priv fn debug_heap<T: Debug>(h: Heap<T>, mut f: Formatter) {
     (*h).debug(mut f)
 }
 
-priv fn __debug_tuple2<A: Debug, B: Debug>(t: (A, B), mut f: Formatter) {
+priv fn debug_tuple2<A: Debug, B: Debug>(t: (A, B), mut f: Formatter) {
     f.write_str("(")
     t.0.debug(mut f)
     f.write_str(", ")
@@ -808,7 +808,7 @@ priv fn __debug_tuple2<A: Debug, B: Debug>(t: (A, B), mut f: Formatter) {
     f.write_str(")")
 }
 
-priv fn __debug_tuple3<A: Debug, B: Debug, C: Debug>(t: (A, B, C), mut f: Formatter) {
+priv fn debug_tuple3<A: Debug, B: Debug, C: Debug>(t: (A, B, C), mut f: Formatter) {
     f.write_str("(")
     t.0.debug(mut f)
     f.write_str(", ")
@@ -818,7 +818,7 @@ priv fn __debug_tuple3<A: Debug, B: Debug, C: Debug>(t: (A, B, C), mut f: Format
     f.write_str(")")
 }
 
-priv fn __debug_tuple4<A: Debug, B: Debug, C: Debug, D: Debug>(t: (A, B, C, D), mut f: Formatter) {
+priv fn debug_tuple4<A: Debug, B: Debug, C: Debug, D: Debug>(t: (A, B, C, D), mut f: Formatter) {
     f.write_str("(")
     t.0.debug(mut f)
     f.write_str(", ")

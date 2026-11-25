@@ -844,7 +844,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   `Result<T>`'s dynamic error without a block (`m16_errors/error_from_conversion.bd`, `error_missing_conversion.bd`).
   The stage 0 hand-written example remains in `m09_stdlib/question_and_from.bd`.
 - **`assert` has two modes.** In a normal build it panics; in a `burdin test` build the prelude binds
-  `__test_assert`/`__test_assert_eq`/`__test_assert_ne`, which build a typed `AssertError` carrying the call text,
+  `test_assert`/`test_assert_eq`/`test_assert_ne`, which build a typed `AssertError` carrying the call text,
   the values, the formatted message, and the location, so a failed test is reported with its message instead of
   aborting. `assert_ne` and the message forms (`assert(cond, "text {x}")`) are compiler-lowered builtins; the
   `debug_assert*` forms are dropped from a release build without evaluating their arguments. The design describes

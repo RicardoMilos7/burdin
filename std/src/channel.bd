@@ -5,10 +5,10 @@
 // out, so nothing is shared except the channel. A channel is bounded (a sender waits while it is full) or unbounded,
 // and it can be closed.
 //
-// Every channel's state is guarded by the scheduler's one lock (`__sched_lock`), which also makes a `select` over several
+// Every channel's state is guarded by the scheduler's one lock (`sched_lock`), which also makes a `select` over several
 // channels simple: looking at a channel, queueing a value, and registering to be woken are each one step under that lock.
 // A task that has to wait parks (its worker runs other tasks); any other thread blocks. The waiting itself is
-// `__waiter_block`/`__waiter_notify` in task.bd.
+// `waiter_block`/`waiter_notify` in task.bd.
 //
 // The `select` expression is rewritten by the parser into calls of the `__`-prefixed methods and functions below
 // (spec/channels.md, CH7); a program does not call them.
@@ -16,7 +16,7 @@
 use iter.{Iterable, Iterator}
 use marker.{Send, Sync}
 use option.take
-use task.{__Waiter, __sched_bump, __sched_epoch, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
+use task.{Waiter, sched_bump, sched_epoch, sched_lock, sched_unlock, waiter_block, waiter_free, waiter_new, waiter_notify}
 
 /// What `try_send` reports: the value was queued, the channel is full, or it is closed. A value that was not queued
 /// comes back in the result.
@@ -69,7 +69,7 @@ priv struct Head repr(C) {
 /// A waiter's registration with one channel: it is in the channel's list of receivers or senders while `linked` is 1.
 priv struct Link repr(C) {
     next: CPtr<Link>
-    waiter: CPtr<__Waiter>
+    waiter: CPtr<Waiter>
     head: CPtr<Head>
     send: usize
     linked: usize
@@ -80,7 +80,7 @@ priv const NODE_HEADER: usize = 8
 
 // ---- the waiter lists (the lock must be held) ----------------------------------------------------------------------
 
-priv fn __link(l: CPtr<Link>) {
+priv fn link_node(l: CPtr<Link>) {
     unsafe {
         let h = (*l).head
         if (*l).send == 1 {
@@ -94,7 +94,7 @@ priv fn __link(l: CPtr<Link>) {
     }
 }
 
-priv fn __unlink(l: CPtr<Link>) {
+priv fn unlink(l: CPtr<Link>) {
     unsafe {
         if (*l).linked == 0 {
             return
@@ -122,17 +122,17 @@ priv fn __unlink(l: CPtr<Link>) {
 }
 
 /// Wakes every waiter in a list. A waiter that is woken checks again and registers again if it still has to wait.
-priv fn __wake_links(first: CPtr<Link>) {
+priv fn wake_links(first: CPtr<Link>) {
     unsafe {
         let mut l = first
         while !l.is_null() {
-            __waiter_notify((*l).waiter)
+            waiter_notify((*l).waiter)
             l = (*l).next
         }
     }
 }
 
-priv fn __link_init(l: CPtr<Link>, waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize) {
+priv fn link_init(l: CPtr<Link>, waiter: CPtr<Waiter>, head: CPtr<Head>, send: usize) {
     unsafe {
         (*l).next = CPtr.null()
         (*l).waiter = waiter
@@ -142,10 +142,10 @@ priv fn __link_init(l: CPtr<Link>, waiter: CPtr<__Waiter>, head: CPtr<Head>, sen
     }
 }
 
-priv fn __link_new(waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize): CPtr<Link> {
+priv fn link_new(waiter: CPtr<Waiter>, head: CPtr<Head>, send: usize): CPtr<Link> {
     unsafe {
         let l = __alloc(Link.size(), 8) as CPtr<Link>
-        __link_init(l, waiter, head, send)
+        link_init(l, waiter, head, send)
         l
     }
 }
@@ -154,7 +154,7 @@ priv fn __link_new(waiter: CPtr<__Waiter>, head: CPtr<Head>, send: usize): CPtr<
 
 /// Makes the memory at `slot` a valid `None`. Assigning through a raw pointer would first drop whatever the memory
 /// held, so the bytes come from a real `None`.
-priv fn __init_none<T>(slot: CPtr<Option<T>>) {
+priv fn init_none<T>(slot: CPtr<Option<T>>) {
     unsafe {
         let empty: Option<T> = Option.None
         let src = (&empty) as CPtr<u8>
@@ -168,12 +168,12 @@ priv fn __init_none<T>(slot: CPtr<Option<T>>) {
 }
 
 /// A node holding `value`, not linked anywhere.
-priv fn __node_new<T>(own value: T): CPtr<u8> {
+priv fn node_new<T>(own value: T): CPtr<u8> {
     unsafe {
         let n = __alloc(NODE_HEADER + Option<T>.size(), 8)
         *(n as CPtr<CPtr<u8>>) = CPtr.null()
         let item = (n + NODE_HEADER) as CPtr<Option<T>>
-        __init_none(item)
+        init_none(item)
         *item = Option.Some(value)
         n
     }
@@ -181,7 +181,7 @@ priv fn __node_new<T>(own value: T): CPtr<u8> {
 
 /// Tries to queue the value in `slot`. It is done when the value was queued (the slot is left empty) and when the
 /// channel is closed (the slot keeps the value, which the caller hands back); it is not done when the channel is full.
-priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
+priv fn send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
     unsafe {
         if (*h).closed == 1 {
             return true
@@ -191,7 +191,7 @@ priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
         }
         match slot.take() {
             Option.Some(v) => {
-                let n = __node_new(v)
+                let n = node_new(v)
                 if (*h).last.is_null() {
                     (*h).first = n
                 } else {
@@ -199,8 +199,8 @@ priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
                 }
                 (*h).last = n
                 (*h).len = (*h).len + 1
-                __sched_bump()
-                __wake_links((*h).recv_links)
+                sched_bump()
+                wake_links((*h).recv_links)
             }
             Option.None => panic("channel: the value was already sent"),
         }
@@ -210,7 +210,7 @@ priv fn __send_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
 
 /// Tries to take a value into `slot`. It is done when a value was taken and when the channel is closed and empty (the
 /// slot stays `None`); it is not done when the channel is open and empty.
-priv fn __recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
+priv fn recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
     unsafe {
         if (*h).len > 0 {
             let n = (*h).first
@@ -222,8 +222,8 @@ priv fn __recv_ready<T>(h: CPtr<Head>, mut slot: Option<T>): bool {
             let item = (n + NODE_HEADER) as CPtr<Option<T>>
             slot = (*item).take()
             __dealloc(n, NODE_HEADER + Option<T>.size(), 8)
-            __sched_bump()
-            __wake_links((*h).send_links)
+            sched_bump()
+            wake_links((*h).send_links)
             return true
         }
         if (*h).closed == 1 {
@@ -254,7 +254,7 @@ unsafe Channel<T>: Send where T: Send { }
 
 unsafe Channel<T>: Sync where T: Send { }
 
-priv fn __new_head(capacity: usize): CPtr<u8> {
+priv fn new_head(capacity: usize): CPtr<u8> {
     unsafe {
         let h = __alloc(Head.size(), 8) as CPtr<Head>
         (*h).refs = 1
@@ -281,7 +281,7 @@ Channel<T> {
             panic("Channel.bounded: the capacity must be at least 1")
         }
         unsafe {
-            Channel { head: __new_head(capacity) }
+            Channel { head: new_head(capacity) }
         }
     }
 
@@ -295,7 +295,7 @@ Channel<T> {
     /// ```
     fn unbounded(): Channel<T> {
         unsafe {
-            Channel { head: __new_head(0) }
+            Channel { head: new_head(0) }
         }
     }
 
@@ -315,29 +315,29 @@ Channel<T> {
         let mut slot = Option.Some(value)
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
-            let done = __send_ready(h, mut slot)
-            __sched_unlock()
+            sched_lock()
+            let done = send_ready(h, mut slot)
+            sched_unlock()
             if done {
                 return self.__send_outcome(mut slot)
             }
-            let waiter = __waiter_new()
-            let link = __link_new(waiter, h, 1)
+            let waiter = waiter_new()
+            let link = link_new(waiter, h, 1)
             loop {
-                __sched_lock()
-                if __send_ready(h, mut slot) {
-                    __sched_unlock()
+                sched_lock()
+                if send_ready(h, mut slot) {
+                    sched_unlock()
                     break
                 }
                 (*waiter).notified = 0
-                __link(link)
-                __waiter_block(waiter)
-                __sched_lock()
-                __unlink(link)
-                __sched_unlock()
+                link_node(link)
+                waiter_block(waiter)
+                sched_lock()
+                unlink(link)
+                sched_unlock()
             }
             __dealloc(link as CPtr<u8>, Link.size(), 8)
-            __waiter_free(waiter)
+            waiter_free(waiter)
         }
         self.__send_outcome(mut slot)
     }
@@ -354,29 +354,29 @@ Channel<T> {
         let mut slot: Option<T> = Option.None
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
-            let done = __recv_ready(h, mut slot)
-            __sched_unlock()
+            sched_lock()
+            let done = recv_ready(h, mut slot)
+            sched_unlock()
             if done {
                 return slot
             }
-            let waiter = __waiter_new()
-            let link = __link_new(waiter, h, 0)
+            let waiter = waiter_new()
+            let link = link_new(waiter, h, 0)
             loop {
-                __sched_lock()
-                if __recv_ready(h, mut slot) {
-                    __sched_unlock()
+                sched_lock()
+                if recv_ready(h, mut slot) {
+                    sched_unlock()
                     break
                 }
                 (*waiter).notified = 0
-                __link(link)
-                __waiter_block(waiter)
-                __sched_lock()
-                __unlink(link)
-                __sched_unlock()
+                link_node(link)
+                waiter_block(waiter)
+                sched_lock()
+                unlink(link)
+                sched_unlock()
             }
             __dealloc(link as CPtr<u8>, Link.size(), 8)
-            __waiter_free(waiter)
+            waiter_free(waiter)
         }
         slot
     }
@@ -398,10 +398,10 @@ Channel<T> {
         let mut slot = Option.Some(value)
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             let closed = (*h).closed == 1
-            let done = __send_ready(h, mut slot)
-            __sched_unlock()
+            let done = send_ready(h, mut slot)
+            sched_unlock()
             match slot.take() {
                 Option.None => TrySend.Sent,
                 Option.Some(v) => if done && closed { TrySend.Closed(v) } else { TrySend.Full(v) },
@@ -427,9 +427,9 @@ Channel<T> {
         let mut slot: Option<T> = Option.None
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
-            let done = __recv_ready(h, mut slot)
-            __sched_unlock()
+            sched_lock()
+            let done = recv_ready(h, mut slot)
+            sched_unlock()
             match slot {
                 Option.Some(v) => TryRecv.Value(v),
                 Option.None => if done { TryRecv.Closed } else { TryRecv.Empty },
@@ -450,14 +450,14 @@ Channel<T> {
     fn close(self) {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             if (*h).closed == 0 {
                 (*h).closed = 1
-                __sched_bump()
-                __wake_links((*h).recv_links)
-                __wake_links((*h).send_links)
+                sched_bump()
+                wake_links((*h).recv_links)
+                wake_links((*h).send_links)
             }
-            __sched_unlock()
+            sched_unlock()
         }
     }
 
@@ -472,9 +472,9 @@ Channel<T> {
     fn is_closed(self): bool {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             let closed = (*h).closed == 1
-            __sched_unlock()
+            sched_unlock()
             closed
         }
     }
@@ -490,9 +490,9 @@ Channel<T> {
     fn len(self): usize {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             let n = (*h).len
-            __sched_unlock()
+            sched_unlock()
             n
         }
     }
@@ -528,9 +528,9 @@ Channel<T> {
     fn clone(self): Channel<T> {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             (*h).refs = (*h).refs + 1
-            __sched_unlock()
+            sched_unlock()
             Channel { head: self.head }
         }
     }
@@ -565,9 +565,9 @@ Channel<T> {
     fn __try_recv_slot(self, mut slot: Option<T>): bool {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
-            let done = __recv_ready(h, mut slot)
-            __sched_unlock()
+            sched_lock()
+            let done = recv_ready(h, mut slot)
+            sched_unlock()
             done
         }
     }
@@ -576,9 +576,9 @@ Channel<T> {
     fn __try_send_slot(self, mut slot: Option<T>): bool {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
-            let done = __send_ready(h, mut slot)
-            __sched_unlock()
+            sched_lock()
+            let done = send_ready(h, mut slot)
+            sched_unlock()
             done
         }
     }
@@ -588,10 +588,10 @@ Channel<T>: Drop {
     fn drop(mut self) {
         unsafe {
             let h = self.head as CPtr<Head>
-            __sched_lock()
+            sched_lock()
             (*h).refs = (*h).refs - 1
             let last = (*h).refs == 0
-            __sched_unlock()
+            sched_unlock()
             if !last {
                 return
             }
@@ -651,7 +651,7 @@ struct __Select {
 
 fn __select_new(cases: usize): __Select {
     unsafe {
-        __Select { waiter: __waiter_new() as CPtr<u8>, links: __alloc(Link.size() * cases, 8), count: 0, capacity: cases }
+        __Select { waiter: waiter_new() as CPtr<u8>, links: __alloc(Link.size() * cases, 8), count: 0, capacity: cases }
     }
 }
 
@@ -659,33 +659,33 @@ __Select {
     /// Adds a receive case on `channel`.
     fn add_recv<T>(mut self, channel: Channel<T>) {
         unsafe {
-            self.__add(channel.head as CPtr<Head>, 0)
+            self.add(channel.head as CPtr<Head>, 0)
         }
     }
 
     /// Adds a send case on `channel`.
     fn add_send<T>(mut self, channel: Channel<T>) {
         unsafe {
-            self.__add(channel.head as CPtr<Head>, 1)
+            self.add(channel.head as CPtr<Head>, 1)
         }
     }
 
-    priv fn __add(mut self, head: CPtr<Head>, send: usize) {
+    priv fn add(mut self, head: CPtr<Head>, send: usize) {
         unsafe {
             if self.count >= self.capacity {
                 panic("select: more cases than it was made for")
             }
             let slot = (self.links as CPtr<Link>) + self.count
-            __link_init(slot, self.waiter as CPtr<__Waiter>, head, send)
+            link_init(slot, self.waiter as CPtr<Waiter>, head, send)
             self.count = self.count + 1
         }
     }
 
     /// The channels' change counter. A `select` reads it before it looks at its cases and gives it to `wait`.
     fn epoch(self): usize {
-        __sched_lock()
-        let e = __sched_epoch()
-        __sched_unlock()
+        sched_lock()
+        let e = sched_epoch()
+        sched_unlock()
         e
     }
 
@@ -697,27 +697,27 @@ __Select {
             if self.count == 0 {
                 panic("select: every arm is switched off by its guard and there is no `default`")
             }
-            let w = self.waiter as CPtr<__Waiter>
+            let w = self.waiter as CPtr<Waiter>
             let links = self.links as CPtr<Link>
-            __sched_lock()
-            if __sched_epoch() != seen {
-                __sched_unlock()
+            sched_lock()
+            if sched_epoch() != seen {
+                sched_unlock()
                 return
             }
             (*w).notified = 0
             let mut i: usize = 0
             while i < self.count {
-                __link(links + i)
+                link_node(links + i)
                 i = i + 1
             }
-            __waiter_block(w)
-            __sched_lock()
+            waiter_block(w)
+            sched_lock()
             i = 0
             while i < self.count {
-                __unlink(links + i)
+                unlink(links + i)
                 i = i + 1
             }
-            __sched_unlock()
+            sched_unlock()
         }
     }
 }
@@ -726,7 +726,7 @@ __Select: Drop {
     fn drop(mut self) {
         unsafe {
             __dealloc(self.links, Link.size() * self.capacity, 8)
-            __waiter_free(self.waiter as CPtr<__Waiter>)
+            waiter_free(self.waiter as CPtr<Waiter>)
         }
     }
 }

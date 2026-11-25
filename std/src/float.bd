@@ -1,7 +1,7 @@
 // Floats: parsing text into `f64` and `f32` (issue #417), and the constants and functions the compiler does not
 // provide itself (issue #703; spec/stdlib.md, "Floats" and "Float functions").
 //
-// `f64.parse(s)` is the std function `__f64_parse` (the compiler maps `T.name` on a float type to `__T_name`, as it
+// `f64.parse(s)` is the std function `f64_parse` (the compiler maps `T.name` on a float type to `T_name`, as it
 // does for the integer types). The text is checked against the grammar below and then handed to the C library's
 // `strtod`/`strtof`, which round correctly, so `f64.parse(x.to_string()) == x` for every finite `x`: `to_string`
 // writes the shortest text that reads back as the same number (spec/format.md, FM7).
@@ -43,7 +43,7 @@ extern "C" {
 }
 
 /// Whether the text is `inf`, `infinity`, or `nan` in any letter case.
-priv fn __is_special(text: str): bool {
+priv fn is_special(text: str): bool {
     let mut lower = String.new()
     for c in text.chars() {
         lower.push(c.to_ascii_lowercase())
@@ -54,12 +54,12 @@ priv fn __is_special(text: str): bool {
 
 /// Whether the text is a decimal float: an optional sign, then digits with an optional fraction (at least one digit in
 /// all), then an optional exponent (`e` or `E`, an optional sign, digits); or one of the special words.
-priv fn __is_float_text(text: str): bool {
+priv fn is_float_text(text: str): bool {
     let mut body = text
     if text.starts_with("-") || text.starts_with("+") {
         body = text[1..text.len()]
     }
-    if __is_special(body) {
+    if is_special(body) {
         return true
     }
     let mut digits = 0
@@ -98,11 +98,11 @@ priv fn __is_float_text(text: str): bool {
 /// The number in the text. The grammar is an optional sign, then `digits`, `digits.digits`, `.digits`, or `digits.`,
 /// then an optional exponent, or `inf`, `infinity`, `nan` in any case. Anything else, including surrounding spaces
 /// and a `0x` prefix, is `Invalid`, and an empty text is `Empty`. A number too large for the type is infinity.
-fn __f64_parse(s: str): Result<f64, ParseFloatError> {
+priv fn f64_parse(s: str): Result<f64, ParseFloatError> {
     if s.len() == 0 {
         return Result.Err(ParseFloatError.Empty)
     }
-    if !__is_float_text(s) {
+    if !is_float_text(s) {
         return Result.Err(ParseFloatError.Invalid)
     }
     let text = CString.from(s)
@@ -111,11 +111,11 @@ fn __f64_parse(s: str): Result<f64, ParseFloatError> {
 }
 
 /// The `f32` form of `f64.parse`: the same grammar, rounded once to `f32`.
-fn __f32_parse(s: str): Result<f32, ParseFloatError> {
+priv fn f32_parse(s: str): Result<f32, ParseFloatError> {
     if s.len() == 0 {
         return Result.Err(ParseFloatError.Empty)
     }
-    if !__is_float_text(s) {
+    if !is_float_text(s) {
         return Result.Err(ParseFloatError.Invalid)
     }
     let text = CString.from(s)
@@ -125,63 +125,63 @@ fn __f32_parse(s: str): Result<f32, ParseFloatError> {
 
 // ---- Constants (spec/stdlib.md, "Float functions") ----
 //
-// `f64.PI` and the rest are the `__f64_<name>` and `__f32_<name>` constants: the compiler maps `T.NAME` on a float
-// type to the std constant `__T_NAME`, as it does for the integer types. Each type has the constant in its own
+// `f64.PI` and the rest are the `f64_<name>` and `f32_<name>` constants: the compiler maps `T.NAME` on a float
+// type to the std constant `T_NAME`, as it does for the integer types. Each type has the constant in its own
 // precision. A float literal must be finite, so `INFINITY` and `NAN` are written as divisions.
 
 /// The ratio of a circle's circumference to its diameter.
-const __f64_PI: f64 = 3.141592653589793
+priv const f64_PI: f64 = 3.141592653589793
 /// The base of the natural logarithm.
-const __f64_E: f64 = 2.718281828459045
+priv const f64_E: f64 = 2.718281828459045
 /// The ratio of a circle's circumference to its radius: `2 * PI`.
-const __f64_TAU: f64 = 6.283185307179586
+priv const f64_TAU: f64 = 6.283185307179586
 /// The square root of 2.
-const __f64_SQRT_2: f64 = 1.4142135623730951
+priv const f64_SQRT_2: f64 = 1.4142135623730951
 /// The natural logarithm of 2.
-const __f64_LN_2: f64 = 0.6931471805599453
+priv const f64_LN_2: f64 = 0.6931471805599453
 /// The natural logarithm of 10.
-const __f64_LN_10: f64 = 2.302585092994046
+priv const f64_LN_10: f64 = 2.302585092994046
 /// Positive infinity.
-const __f64_INFINITY: f64 = 1.0 / 0.0
+priv const f64_INFINITY: f64 = 1.0 / 0.0
 /// Negative infinity.
-const __f64_NEG_INFINITY: f64 = -1.0 / 0.0
+priv const f64_NEG_INFINITY: f64 = -1.0 / 0.0
 /// The NaN value: not a number. Which NaN payload and sign bit it has is not specified.
-const __f64_NAN: f64 = 0.0 / 0.0
+priv const f64_NAN: f64 = 0.0 / 0.0
 /// The difference between `1.0` and the next larger value: 2^-52.
-const __f64_EPSILON: f64 = 2.220446049250313e-16
+priv const f64_EPSILON: f64 = 2.220446049250313e-16
 /// The smallest finite value: the most negative one.
-const __f64_MIN: f64 = -1.7976931348623157e308
+priv const f64_MIN: f64 = -1.7976931348623157e308
 /// The largest finite value.
-const __f64_MAX: f64 = 1.7976931348623157e308
+priv const f64_MAX: f64 = 1.7976931348623157e308
 /// The smallest positive normal value: 2^-1022.
-const __f64_MIN_POSITIVE: f64 = 2.2250738585072014e-308
+priv const f64_MIN_POSITIVE: f64 = 2.2250738585072014e-308
 
 /// The ratio of a circle's circumference to its diameter.
-const __f32_PI: f32 = 3.1415927
+priv const f32_PI: f32 = 3.1415927
 /// The base of the natural logarithm.
-const __f32_E: f32 = 2.7182817
+priv const f32_E: f32 = 2.7182817
 /// The ratio of a circle's circumference to its radius: `2 * PI`.
-const __f32_TAU: f32 = 6.2831855
+priv const f32_TAU: f32 = 6.2831855
 /// The square root of 2.
-const __f32_SQRT_2: f32 = 1.4142135
+priv const f32_SQRT_2: f32 = 1.4142135
 /// The natural logarithm of 2.
-const __f32_LN_2: f32 = 0.6931472
+priv const f32_LN_2: f32 = 0.6931472
 /// The natural logarithm of 10.
-const __f32_LN_10: f32 = 2.3025851
+priv const f32_LN_10: f32 = 2.3025851
 /// Positive infinity.
-const __f32_INFINITY: f32 = 1.0 / 0.0
+priv const f32_INFINITY: f32 = 1.0 / 0.0
 /// Negative infinity.
-const __f32_NEG_INFINITY: f32 = -1.0 / 0.0
+priv const f32_NEG_INFINITY: f32 = -1.0 / 0.0
 /// The NaN value: not a number. Which NaN payload and sign bit it has is not specified.
-const __f32_NAN: f32 = 0.0 / 0.0
+priv const f32_NAN: f32 = 0.0 / 0.0
 /// The difference between `1.0` and the next larger value: 2^-23.
-const __f32_EPSILON: f32 = 1.1920929e-7
+priv const f32_EPSILON: f32 = 1.1920929e-7
 /// The smallest finite value: the most negative one.
-const __f32_MIN: f32 = -3.4028235e38
+priv const f32_MIN: f32 = -3.4028235e38
 /// The largest finite value.
-const __f32_MAX: f32 = 3.4028235e38
+priv const f32_MAX: f32 = 3.4028235e38
 /// The smallest positive normal value: 2^-126.
-const __f32_MIN_POSITIVE: f32 = 1.1754944e-38
+priv const f32_MIN_POSITIVE: f32 = 1.1754944e-38
 
 // ---- f64 ----
 

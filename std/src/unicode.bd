@@ -7,7 +7,7 @@
 // stays `ß` when it is made uppercase.
 
 /// Whether `n` is in `low..=high`.
-priv fn __in(n: u32, low: u32, high: u32): bool {
+priv fn in_range(n: u32, low: u32, high: u32): bool {
     n >= low && n <= high
 }
 
@@ -46,7 +46,7 @@ fn char.is_ascii_alphabetic(self): bool {
 /// assert(!a.is_ascii_uppercase())
 /// ```
 fn char.is_ascii_uppercase(self): bool {
-    __in(self as u32, 65, 90)
+    in_range(self as u32, 65, 90)
 }
 
 /// Whether the character is `a`-`z`.
@@ -58,7 +58,7 @@ fn char.is_ascii_uppercase(self): bool {
 /// assert(!q.is_ascii_lowercase())
 /// ```
 fn char.is_ascii_lowercase(self): bool {
-    __in(self as u32, 97, 122)
+    in_range(self as u32, 97, 122)
 }
 
 /// Whether the character is `0`-`9`.
@@ -70,7 +70,7 @@ fn char.is_ascii_lowercase(self): bool {
 /// assert(!x.is_ascii_digit())
 /// ```
 fn char.is_ascii_digit(self): bool {
-    __in(self as u32, 48, 57)
+    in_range(self as u32, 48, 57)
 }
 
 /// Whether the character is `0`-`9`, `a`-`f`, or `A`-`F`.
@@ -83,7 +83,7 @@ fn char.is_ascii_digit(self): bool {
 /// ```
 fn char.is_ascii_hexdigit(self): bool {
     let n = self as u32
-    __in(n, 48, 57) || __in(n, 65, 70) || __in(n, 97, 102)
+    in_range(n, 48, 57) || in_range(n, 65, 70) || in_range(n, 97, 102)
 }
 
 /// Whether the character is an ASCII letter or digit.
@@ -121,7 +121,7 @@ fn char.is_ascii_whitespace(self): bool {
 /// ```
 fn char.is_ascii_punctuation(self): bool {
     let n = self as u32
-    __in(n, 33, 47) || __in(n, 58, 64) || __in(n, 91, 96) || __in(n, 123, 126)
+    in_range(n, 33, 47) || in_range(n, 58, 64) || in_range(n, 91, 96) || in_range(n, 123, 126)
 }
 
 /// Whether the character is an ASCII control character (`0`-`31` and `127`).
@@ -194,32 +194,32 @@ fn char.is_alphabetic(self): bool {
         return self.is_ascii_alphabetic()
     }
     // Latin-1 (`ª`, `µ`, `º`, the letters), Latin Extended, IPA, and the spacing modifier letters.
-    if n == 170 || n == 181 || n == 186 || __in(n, 192, 214) || __in(n, 216, 246) || __in(n, 248, 705) {
+    if n == 170 || n == 181 || n == 186 || in_range(n, 192, 214) || in_range(n, 216, 246) || in_range(n, 248, 705) {
         return true
     }
     // Greek and Coptic.
-    if __in(n, 880, 883) || __in(n, 886, 887) || __in(n, 891, 893) || n == 895 || n == 902 || __in(n, 904, 906)
-        || n == 908 || __in(n, 910, 929) || __in(n, 931, 1013) {
+    if in_range(n, 880, 883) || in_range(n, 886, 887) || in_range(n, 891, 893) || n == 895 || n == 902 || in_range(n, 904, 906)
+        || n == 908 || in_range(n, 910, 929) || in_range(n, 931, 1013) {
         return true
     }
     // Greek (continued), Cyrillic, and Armenian.
-    if __in(n, 1015, 1153) || __in(n, 1162, 1327) || __in(n, 1329, 1366) || __in(n, 1377, 1415) {
+    if in_range(n, 1015, 1153) || in_range(n, 1162, 1327) || in_range(n, 1329, 1366) || in_range(n, 1377, 1415) {
         return true
     }
     // Hebrew and Arabic.
-    if __in(n, 1488, 1514) || __in(n, 1568, 1610) || __in(n, 1646, 1647) || __in(n, 1649, 1747) {
+    if in_range(n, 1488, 1514) || in_range(n, 1568, 1610) || in_range(n, 1646, 1647) || in_range(n, 1649, 1747) {
         return true
     }
     // Devanagari and Thai.
-    if __in(n, 2308, 2361) || __in(n, 3585, 3630) {
+    if in_range(n, 2308, 2361) || in_range(n, 3585, 3630) {
         return true
     }
     // Hiragana, Katakana, CJK ideographs, and Hangul syllables.
-    if __in(n, 12353, 12438) || __in(n, 12449, 12538) || __in(n, 19968, 40959) || __in(n, 44032, 55203) {
+    if in_range(n, 12353, 12438) || in_range(n, 12449, 12538) || in_range(n, 19968, 40959) || in_range(n, 44032, 55203) {
         return true
     }
     // Fullwidth Latin letters.
-    __in(n, 65313, 65338) || __in(n, 65345, 65370)
+    in_range(n, 65313, 65338) || in_range(n, 65345, 65370)
 }
 
 /// Whether the character is a decimal digit of any script.
@@ -237,8 +237,8 @@ fn char.is_numeric(self): bool {
     }
     // Superscript and fraction forms, then the decimal digit blocks of Arabic, Devanagari, Bengali, Thai, and the
     // fullwidth digits.
-    n == 178 || n == 179 || n == 185 || __in(n, 188, 190) || __in(n, 1632, 1641) || __in(n, 1776, 1785)
-        || __in(n, 2406, 2415) || __in(n, 2534, 2543) || __in(n, 3664, 3673) || __in(n, 65296, 65305)
+    n == 178 || n == 179 || n == 185 || in_range(n, 188, 190) || in_range(n, 1632, 1641) || in_range(n, 1776, 1785)
+        || in_range(n, 2406, 2415) || in_range(n, 2534, 2543) || in_range(n, 3664, 3673) || in_range(n, 65296, 65305)
 }
 
 /// Whether the character is a letter or a digit.
@@ -263,7 +263,7 @@ fn char.is_alphanumeric(self): bool {
 /// ```
 fn char.is_whitespace(self): bool {
     let n = self as u32
-    __in(n, 9, 13) || n == 32 || n == 133 || n == 160 || n == 5760 || __in(n, 8192, 8202) || n == 8232 || n == 8233
+    in_range(n, 9, 13) || n == 32 || n == 133 || n == 160 || n == 5760 || in_range(n, 8192, 8202) || n == 8232 || n == 8233
         || n == 8239 || n == 8287 || n == 12288
 }
 
@@ -277,7 +277,7 @@ fn char.is_whitespace(self): bool {
 /// ```
 fn char.is_control(self): bool {
     let n = self as u32
-    n < 32 || __in(n, 127, 159)
+    n < 32 || in_range(n, 127, 159)
 }
 
 // ---- Case ----
@@ -294,23 +294,23 @@ fn char.to_lowercase(self): char {
         return self.to_ascii_lowercase()
     }
     let mut lower = n
-    if __in(n, 192, 222) && n != 215 {
+    if in_range(n, 192, 222) && n != 215 {
         lower = n + 32
     } else if n == 376 {
         lower = 255
-    } else if __in(n, 256, 311) || __in(n, 330, 375) {
+    } else if in_range(n, 256, 311) || in_range(n, 330, 375) {
         if n % 2 == 0 && n != 304 {
             lower = n + 1
         }
-    } else if __in(n, 313, 328) || __in(n, 377, 382) {
+    } else if in_range(n, 313, 328) || in_range(n, 377, 382) {
         if n % 2 == 1 {
             lower = n + 1
         }
-    } else if __in(n, 913, 939) && n != 930 {
+    } else if in_range(n, 913, 939) && n != 930 {
         lower = n + 32
-    } else if __in(n, 1040, 1071) {
+    } else if in_range(n, 1040, 1071) {
         lower = n + 32
-    } else if __in(n, 1024, 1039) {
+    } else if in_range(n, 1024, 1039) {
         lower = n + 80
     }
     if lower == n {
@@ -331,25 +331,25 @@ fn char.to_uppercase(self): char {
         return self.to_ascii_uppercase()
     }
     let mut upper = n
-    if __in(n, 224, 254) && n != 247 {
+    if in_range(n, 224, 254) && n != 247 {
         upper = n - 32
     } else if n == 255 {
         upper = 376
-    } else if __in(n, 257, 311) || __in(n, 331, 375) {
+    } else if in_range(n, 257, 311) || in_range(n, 331, 375) {
         if n % 2 == 1 && n != 305 {
             upper = n - 1
         }
-    } else if __in(n, 314, 328) || __in(n, 378, 382) {
+    } else if in_range(n, 314, 328) || in_range(n, 378, 382) {
         if n % 2 == 0 {
             upper = n - 1
         }
     } else if n == 962 {
         upper = 931
-    } else if __in(n, 945, 969) {
+    } else if in_range(n, 945, 969) {
         upper = n - 32
-    } else if __in(n, 1072, 1103) {
+    } else if in_range(n, 1072, 1103) {
         upper = n - 32
-    } else if __in(n, 1104, 1119) {
+    } else if in_range(n, 1104, 1119) {
         upper = n - 80
     }
     if upper == n {
@@ -410,11 +410,11 @@ fn char.to_digit(self, radix: u32): Option<u32> {
     }
     let n = self as u32
     let mut value: u32 = 99
-    if __in(n, 48, 57) {
+    if in_range(n, 48, 57) {
         value = n - 48
-    } else if __in(n, 97, 122) {
+    } else if in_range(n, 97, 122) {
         value = n - 97 + 10
-    } else if __in(n, 65, 90) {
+    } else if in_range(n, 65, 90) {
         value = n - 65 + 10
     }
     if value < radix {
@@ -454,7 +454,7 @@ fn char.len_utf8(self): usize {
 /// assert_eq(surrogate.to_char(), Option.None)
 /// ```
 fn u32.to_char(self): Option<char> {
-    if self > 1114111 || __in(self, 55296, 57343) {
+    if self > 1114111 || in_range(self, 55296, 57343) {
         return Option.None
     }
     Option.Some(self as char)

@@ -14,7 +14,7 @@ use cmp.Ordering
 use mem
 
 /// The elements of `list` in the opposite order.
-priv fn __sort_reversed<T>(own list: List<T>): List<T> {
+priv fn sort_reversed<T>(own list: List<T>): List<T> {
     let mut list = list
     let mut out = List<T>.new()
     loop {
@@ -28,7 +28,7 @@ priv fn __sort_reversed<T>(own list: List<T>): List<T> {
 
 /// Whether the front of `right` must come before the front of `left`: `right` is strictly less. Each list holds its
 /// elements in reverse, so `last` is the front.
-priv fn __right_first<T, F: FnMut(&T, &T): bool>(left: List<T>, right: List<T>, mut less: F): bool {
+priv fn right_first<T, F: FnMut(&T, &T): bool>(left: List<T>, right: List<T>, mut less: F): bool {
     match left.last() {
         Option.Some(l) => match right.last() {
             Option.Some(r) => less(r, l),
@@ -39,12 +39,12 @@ priv fn __right_first<T, F: FnMut(&T, &T): bool>(left: List<T>, right: List<T>, 
 }
 
 /// Merges two sorted lists into one; an element of `left` goes first unless one of `right` is strictly less.
-priv fn __merge<T, F: FnMut(&T, &T): bool>(own left: List<T>, own right: List<T>, mut less: F): List<T> {
-    let mut left = __sort_reversed(left)
-    let mut right = __sort_reversed(right)
+priv fn merge<T, F: FnMut(&T, &T): bool>(own left: List<T>, own right: List<T>, mut less: F): List<T> {
+    let mut left = sort_reversed(left)
+    let mut right = sort_reversed(right)
     let mut out = List<T>.new()
     while left.len() > 0 && right.len() > 0 {
-        let take_right = __right_first(left, right, mut less)
+        let take_right = right_first(left, right, mut less)
         if take_right {
             match right.pop() {
                 Option.Some(x) => out.push(x),
@@ -73,12 +73,12 @@ priv fn __merge<T, F: FnMut(&T, &T): bool>(own left: List<T>, own right: List<T>
 }
 
 /// `list` sorted by `less`, which says whether its first argument is strictly less than its second.
-priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F): List<T> {
+priv fn merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F): List<T> {
     if list.len() <= 1 {
         return list
     }
     let half = list.len() / 2
-    let mut rest = __sort_reversed(list)
+    let mut rest = sort_reversed(list)
     let mut left = List<T>.new()
     while left.len() < half {
         match rest.pop() {
@@ -93,9 +93,9 @@ priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F):
             Option.None => break,
         }
     }
-    let sorted_left = __merge_sort(left, mut less)
-    let sorted_right = __merge_sort(right, mut less)
-    __merge(sorted_left, sorted_right, mut less)
+    let sorted_left = merge_sort(left, mut less)
+    let sorted_right = merge_sort(right, mut less)
+    merge(sorted_left, sorted_right, mut less)
 }
 
 /// Sorts the list with the comparator `f`, which returns how its first argument orders against its second. The sort is
@@ -113,7 +113,7 @@ priv fn __merge_sort<T, F: FnMut(&T, &T): bool>(own list: List<T>, mut less: F):
 fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
     let mut f = f
     let mut less = |a: &T, b: &T| f(a, b).is_lt()
-    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    let mut sorted = merge_sort(mem.replace(mut self, List<T>.new()), mut less)
     mem.swap(mut self, mut sorted)
 }
 
@@ -131,7 +131,7 @@ fn List<T>.sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
 fn List<T>.sort_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
     let mut key = key
     let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
-    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    let mut sorted = merge_sort(mem.replace(mut self, List<T>.new()), mut less)
     mem.swap(mut self, mut sorted)
 }
 
@@ -164,7 +164,7 @@ fn List<T>.sort_unstable_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
 fn List<T>.sort_unstable_by_key<K: Ord, F: FnMut(&T): K>(mut self, own key: F) {
     let mut key = key
     let mut less = |a: &T, b: &T| key(a).cmp(key(b)).is_lt()
-    let mut sorted = __merge_sort(mem.replace(mut self, List<T>.new()), mut less)
+    let mut sorted = merge_sort(mem.replace(mut self, List<T>.new()), mut less)
     mem.swap(mut self, mut sorted)
 }
 

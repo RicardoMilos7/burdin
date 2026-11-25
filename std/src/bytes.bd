@@ -240,13 +240,13 @@ BytesMut: IndexMut<u8> {
 
 BytesMut: Eq {
     fn eq(self, other: BytesMut): bool {
-        __same_bytes(self.as_slice(), other.as_slice())
+        same_bytes(self.as_slice(), other.as_slice())
     }
 }
 
 BytesMut: Debug {
     fn debug(self, mut f: Formatter) {
-        __debug_bytes("BytesMut", self.as_slice(), mut f)
+        debug_bytes("BytesMut", self.as_slice(), mut f)
     }
 }
 
@@ -403,17 +403,17 @@ Bytes: Index<u8> {
 
 Bytes: Eq {
     fn eq(self, other: Bytes): bool {
-        __same_bytes(self.as_slice(), other.as_slice())
+        same_bytes(self.as_slice(), other.as_slice())
     }
 }
 
 Bytes: Debug {
     fn debug(self, mut f: Formatter) {
-        __debug_bytes("Bytes", self.as_slice(), mut f)
+        debug_bytes("Bytes", self.as_slice(), mut f)
     }
 }
 
-priv fn __same_bytes(a: [u8], b: [u8]): bool {
+priv fn same_bytes(a: [u8], b: [u8]): bool {
     if a.len() != b.len() {
         return false
     }
@@ -428,7 +428,7 @@ priv fn __same_bytes(a: [u8], b: [u8]): bool {
 }
 
 /// Writes `Name[1, 2, 3]`.
-priv fn __debug_bytes(name: str, bytes: [u8], mut f: Formatter) {
+priv fn debug_bytes(name: str, bytes: [u8], mut f: Formatter) {
     f.write_str(name)
     f.write_str("[")
     let mut i: usize = 0

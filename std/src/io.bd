@@ -1,4 +1,4 @@
-use reactor.__offload
+use reactor.offload
 use std.IoError
 use rw.{BufRead, Read, Write}
 
@@ -12,7 +12,7 @@ use rw.{BufRead, Read, Write}
 /// remove_file("burdin-doc-read.txt").unwrap()
 /// ```
 fn read_to_string(path: str): Result<String, IoError> {
-    match __offload(|| __read_to_string(path)) {
+    match offload(|| __read_to_string(path)) {
         Result.Ok(text) => Result.Ok(text),
         Result.Err(code) => Result.Err(IoError.Read {
             path: path.to_string(),
@@ -30,7 +30,7 @@ fn read_to_string(path: str): Result<String, IoError> {
 /// remove_file("burdin-doc-write.txt").unwrap()
 /// ```
 fn write_file(path: str, text: str): Result<(), IoError> {
-    match __offload(|| __write_file(path, text)) {
+    match offload(|| __write_file(path, text)) {
         Result.Ok(_) => Result.Ok(()),
         Result.Err(code) => Result.Err(IoError.Write {
             path: path.to_string(),

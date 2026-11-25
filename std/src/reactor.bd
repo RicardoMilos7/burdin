@@ -7,11 +7,11 @@
 // completes the waiting task when they finish.
 //
 // The runtime primitives behind this file are `__io_*`, `__pool_submit`, and the scheduler's waiters
-// (`spec/tasks.md`, TK2; `spec/io.md`, IO2). A wait record (`__Wait`) is linked by the runtime through its first
+// (`spec/tasks.md`, TK2; `spec/io.md`, IO2). A wait record (`Wait`) is linked by the runtime through its first
 // word and carries its event kind at offset 24, so its layout is fixed.
 
 use option.take
-use task.{__Waiter, __current_worker, __sched_lock, __sched_unlock, __waiter_block, __waiter_free, __waiter_new, __waiter_notify}
+use task.{Waiter, current_worker, sched_lock, sched_unlock, waiter_block, waiter_free, waiter_new, waiter_notify}
 
 // The reactor lives as long as the process, so its record comes straight from the C allocator; timer nodes are
 // per wait and go through the program's allocator, so a test's leak check sees them.
@@ -26,9 +26,9 @@ priv const KIND_DONE: i32 = 2
 
 /// A wait: one task's registration with the reactor. The fields at offsets 0 (`next`) and 24 (`kind`) are read by
 /// the runtime, so the two pointers before `kind` and the field order must not change.
-priv struct __Wait repr(C) {
-    next: CPtr<__Wait>
-    waiter: CPtr<__Waiter>
+priv struct Wait repr(C) {
+    next: CPtr<Wait>
+    waiter: CPtr<Waiter>
     /// The descriptor being watched, or -1 for a timer or an offloaded call.
     fd: i64
     /// Written by the runtime: 1 ready, 2 completed.
@@ -40,30 +40,30 @@ priv struct __Wait repr(C) {
 }
 
 /// One pending deadline, kept in a list sorted by deadline.
-priv struct __Timer repr(C) {
+priv struct Timer repr(C) {
     deadline: u64
-    wait: CPtr<__Wait>
-    prev: CPtr<__Timer>
-    next: CPtr<__Timer>
+    wait: CPtr<Wait>
+    prev: CPtr<Timer>
+    next: CPtr<Timer>
 }
 
 /// The process-wide reactor: the runtime's event facility, the timer list, and its lock.
 priv struct Reactor repr(C) {
     io: CPtr<u8>
     lock: CPtr<u8>
-    timers: CPtr<__Timer>
+    timers: CPtr<Timer>
     started: usize
 }
 
 /// A fresh, unclaimed wait for `fd`; `events` is 1 for readable and 2 for writable, and is ignored for a timer.
-priv fn __new_wait(fd: i64): __Wait {
+priv fn new_wait(fd: i64): Wait {
     unsafe {
-        __Wait { next: CPtr.null(), waiter: __waiter_new(), fd: fd, kind: 0, timer: CPtr.null(), claimed: 0 }
+        Wait { next: CPtr.null(), waiter: waiter_new(), fd: fd, kind: 0, timer: CPtr.null(), claimed: 0 }
     }
 }
 
 /// The reactor, created and started on first use.
-priv fn __reactor(): CPtr<Reactor> {
+priv fn reactor(): CPtr<Reactor> {
     unsafe {
         let existing = __io_global_get() as CPtr<Reactor>
         if !existing.is_null() {
@@ -85,71 +85,71 @@ priv fn __reactor(): CPtr<Reactor> {
         // The thread is started outside the creation lock: it may need the scheduler's lock, which is taken under
         // this one by nothing else.
         __thread_start(|| {
-            __reactor_main(r)
+            reactor_main(r)
         })
         r
     }
 }
 
 /// The reactor thread: wait for events or the nearest deadline, claim what fired, and repeat.
-priv fn __reactor_main(r: CPtr<Reactor>) {
+priv fn reactor_main(r: CPtr<Reactor>) {
     unsafe {
         loop {
-            let timeout = __next_timeout(r)
-            let mut fired = __io_poll((*r).io, timeout) as CPtr<__Wait>
+            let timeout = next_timeout(r)
+            let mut fired = __io_poll((*r).io, timeout) as CPtr<Wait>
             while !fired.is_null() {
                 // Read the link before claiming: the task may free its record as soon as it is woken.
                 let next = (*fired).next
                 let kind = (*fired).kind
-                __claim(r, fired, kind)
+                claim(r, fired, kind)
                 fired = next
             }
-            __expire_timers(r)
+            expire_timers(r)
         }
     }
 }
 
 /// Claims `w` exactly once with `kind`, unlinks its timer, and wakes its task. A wait that another event already
 /// claimed is left alone, so a record is never woken twice.
-priv fn __claim(r: CPtr<Reactor>, w: CPtr<__Wait>, kind: i32) {
+priv fn claim(r: CPtr<Reactor>, w: CPtr<Wait>, kind: i32) {
     unsafe {
         __mutex_lock((*r).lock)
         let mut mine = false
         if (*w).claimed == 0 {
             (*w).claimed = kind
-            __timer_unlink(r, w)
+            timer_unlink(r, w)
             mine = true
         }
         __mutex_unlock((*r).lock)
         if !mine {
             return
         }
-        __sched_lock()
-        __waiter_notify((*w).waiter)
-        __sched_unlock()
+        sched_lock()
+        waiter_notify((*w).waiter)
+        sched_unlock()
     }
 }
 
 /// Waits until `fd` is ready for `events` (1 readable, 2 writable) or `timeout_nanos` passes (0 waits forever).
 /// Returns 0 when the wait is ready; 1 when it timed out; -1 when the reactor could not watch the descriptor.
 /// A descriptor of -1 waits on the timer only.
-priv fn __wait_io(fd: i64, events: i32, timeout_nanos: u64): i32 {
+priv fn wait_io(fd: i64, events: i32, timeout_nanos: u64): i32 {
     unsafe {
-        let r = __reactor()
-        let wait = __new_wait(fd)
-        __sched_lock()
+        let r = reactor()
+        let wait = new_wait(fd)
+        sched_lock()
         if timeout_nanos > 0 {
             let deadline = (__clock(1) as u64) + timeout_nanos
-            __timer_add(r, (&wait) as CPtr<__Wait>, deadline)
+            timer_add(r, (&wait) as CPtr<Wait>, deadline)
         }
         if fd >= 0 {
             let watched = __io_watch((*r).io, fd, events, (&wait) as CPtr<u8>)
             if watched != 0 {
                 __mutex_lock((*r).lock)
-                __timer_unlink(r, (&wait) as CPtr<__Wait>)
+                timer_unlink(r, (&wait) as CPtr<Wait>)
                 __mutex_unlock((*r).lock)
-                __sched_unlock()
-                __waiter_free(wait.waiter)
+                sched_unlock()
+                waiter_free(wait.waiter)
                 return -1
             }
             // The reactor may be waiting with a poll set taken before this registration. epoll and kqueue wake
@@ -157,8 +157,8 @@ priv fn __wait_io(fd: i64, events: i32, timeout_nanos: u64): i32 {
             // explicitly to take a fresh one.
             __io_wake((*r).io)
         }
-        __waiter_block(wait.waiter)
-        __waiter_free(wait.waiter)
+        waiter_block(wait.waiter)
+        waiter_free(wait.waiter)
         match wait.claimed {
             1 => 0,
             2 => 0,
@@ -169,7 +169,7 @@ priv fn __wait_io(fd: i64, events: i32, timeout_nanos: u64): i32 {
 
 /// The time until the nearest deadline, in milliseconds, or -1 with no deadline. The reactor waits at most an hour
 /// at a time, so the timeout always fits.
-priv fn __next_timeout(r: CPtr<Reactor>): i64 {
+priv fn next_timeout(r: CPtr<Reactor>): i64 {
     unsafe {
         __mutex_lock((*r).lock)
         let head = (*r).timers
@@ -195,16 +195,16 @@ priv fn __next_timeout(r: CPtr<Reactor>): i64 {
 
 /// Links a timer for `w`. The caller holds the scheduler's lock, and the reactor is woken so it recomputes its
 /// timeout.
-priv fn __timer_add(r: CPtr<Reactor>, w: CPtr<__Wait>, deadline: u64) {
+priv fn timer_add(r: CPtr<Reactor>, w: CPtr<Wait>, deadline: u64) {
     unsafe {
-        let node = __alloc(__Timer.size(), 8) as CPtr<__Timer>
+        let node = __alloc(Timer.size(), 8) as CPtr<Timer>
         (*node).deadline = deadline
         (*node).wait = w
         (*node).prev = CPtr.null()
         (*node).next = CPtr.null()
         __mutex_lock((*r).lock)
         let mut cur = (*r).timers
-        let mut prev: CPtr<__Timer> = CPtr.null()
+        let mut prev: CPtr<Timer> = CPtr.null()
         while !cur.is_null() && (*cur).deadline <= deadline {
             prev = cur
             cur = (*cur).next
@@ -226,9 +226,9 @@ priv fn __timer_add(r: CPtr<Reactor>, w: CPtr<__Wait>, deadline: u64) {
 }
 
 /// Unlinks and frees the timer of `w`, if it has one. The reactor's lock must be held.
-priv fn __timer_unlink(r: CPtr<Reactor>, w: CPtr<__Wait>) {
+priv fn timer_unlink(r: CPtr<Reactor>, w: CPtr<Wait>) {
     unsafe {
-        let node = (*w).timer as CPtr<__Timer>
+        let node = (*w).timer as CPtr<Timer>
         if node.is_null() {
             return
         }
@@ -241,16 +241,16 @@ priv fn __timer_unlink(r: CPtr<Reactor>, w: CPtr<__Wait>) {
             (*(*node).next).prev = (*node).prev
         }
         (*w).timer = CPtr.null()
-        __dealloc(node as CPtr<u8>, __Timer.size(), 8)
+        __dealloc(node as CPtr<u8>, Timer.size(), 8)
     }
 }
 
 /// Wakes every wait whose deadline has passed. A wait that a ready descriptor already claimed is left alone; its
 /// timer is unlinked, because the record is about to be freed.
-priv fn __expire_timers(r: CPtr<Reactor>) {
+priv fn expire_timers(r: CPtr<Reactor>) {
     unsafe {
         let now = __clock(1) as u64
-        let mut due: CPtr<__Wait> = CPtr.null()
+        let mut due: CPtr<Wait> = CPtr.null()
         __mutex_lock((*r).lock)
         loop {
             let head = (*r).timers
@@ -266,7 +266,7 @@ priv fn __expire_timers(r: CPtr<Reactor>) {
             }
             let w = (*head).wait
             (*w).timer = CPtr.null()
-            __dealloc(head as CPtr<u8>, __Timer.size(), 8)
+            __dealloc(head as CPtr<u8>, Timer.size(), 8)
             if (*w).claimed == 0 {
                 (*w).claimed = 3
                 (*w).next = due
@@ -279,9 +279,9 @@ priv fn __expire_timers(r: CPtr<Reactor>) {
             if (*due).fd >= 0 {
                 __io_unwatch((*r).io, (*due).fd)
             }
-            __sched_lock()
-            __waiter_notify((*due).waiter)
-            __sched_unlock()
+            sched_lock()
+            waiter_notify((*due).waiter)
+            sched_unlock()
             due = next
         }
     }
@@ -293,9 +293,9 @@ priv fn __expire_timers(r: CPtr<Reactor>) {
 /// compiler checks that what `f` borrows outlives the call, and nothing else can touch those places while `f` runs,
 /// because the call does not return before the helper is done. This is why `f` needs no `Send` bound: it is not
 /// left running after the call (`spec/io.md`, IO3).
-fn __offload<T, F: FnMut(): T>(own f: F): T {
+priv fn offload<T, F: FnMut(): T>(own f: F): T {
     unsafe {
-        let r = __reactor()
+        let r = reactor()
         let slot = __alloc(Option<T>.size(), 8) as CPtr<Option<T>>
         // The slot holds `None` before the helper writes; assigning through the raw pointer would otherwise drop
         // whatever the fresh allocation happened to hold.
@@ -307,19 +307,19 @@ fn __offload<T, F: FnMut(): T>(own f: F): T {
             *(dst + i) = *(src + i)
             i = i + 1
         }
-        let wait = __new_wait(-1)
+        let wait = new_wait(-1)
         // The closure is relabelled as an owned `FnOnce` for the helper: the caller waits for it, so what it
         // borrows outlives it (the same argument as `Scope.spawn`, `spec/tasks.md` TK7).
         let owned = __closure_own(f)
-        __sched_lock()
+        sched_lock()
         __pool_submit((*r).io, (&wait) as CPtr<u8>, || {
             unsafe {
                 let value = owned()
                 *slot = Option.Some(value)
             }
         })
-        __waiter_block(wait.waiter)
-        __waiter_free(wait.waiter)
+        waiter_block(wait.waiter)
+        waiter_free(wait.waiter)
         let value = (*slot).take()
         __dealloc(slot as CPtr<u8>, Option<T>.size(), 8)
         match value {
@@ -331,31 +331,31 @@ fn __offload<T, F: FnMut(): T>(own f: F): T {
 
 /// Runs the raw code and record of a compiler-generated thunk on a helper thread and waits for it. This is what a
 /// `blocking` extern call uses: the compiler builds the thunk and the argument block (`spec/io.md`, IO4).
-fn __offload_raw(own code: CPtr<u8>, own env: CPtr<u8>) {
+priv fn offload_raw(own code: CPtr<u8>, own env: CPtr<u8>) {
     unsafe {
-        let r = __reactor()
-        let wait = __new_wait(-1)
-        __sched_lock()
+        let r = reactor()
+        let wait = new_wait(-1)
+        sched_lock()
         __pool_submit_raw((*r).io, (&wait) as CPtr<u8>, code, env)
-        __waiter_block(wait.waiter)
-        __waiter_free(wait.waiter)
+        waiter_block(wait.waiter)
+        waiter_free(wait.waiter)
     }
 }
 
 /// Whether the calling code runs on a scheduler task, which is what decides between a park and a block.
-fn __in_task(): bool {
+priv fn in_task(): bool {
     unsafe {
-        !__current_worker().is_null()
+        !current_worker().is_null()
     }
 }
 
 /// Sleeps for `nanos` on the reactor's timer, so a task does not hold its worker while it waits. Outside a task it
 /// blocks the thread, exactly like `__sleep`.
-fn __sleep_async(nanos: u64) {
+priv fn sleep_async(nanos: u64) {
     if nanos == 0 {
         return
     }
     unsafe {
-        let _ = __wait_io(-1, 0, nanos)
+        let _ = wait_io(-1, 0, nanos)
     }
 }

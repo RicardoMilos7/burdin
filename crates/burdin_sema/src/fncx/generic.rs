@@ -245,7 +245,7 @@ impl FnCx<'_> {
         if name.name == "cmp"
             && args.len() == 1
             && self.param_has(&recv.ty, Bound::Ord)
-            && let Some(g) = self.globals.std_generic("__ord_cmp")
+            && let Some(g) = self.globals.std_generic("ord_cmp")
         {
             return self.generic_call_with_receiver(g, recv, "cmp", args, span);
         }
@@ -1156,7 +1156,7 @@ impl FnCx<'_> {
     }
 
     /// A call to a generic function whose first argument is an already-checked receiver (`xs.map(f)` calls the
-    /// eager `List` helper `__list_map(xs, f)`).
+    /// eager `List` helper `list_map(xs, f)`).
     pub(super) fn generic_call_with_receiver(
         &mut self,
         g: usize,

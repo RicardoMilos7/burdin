@@ -9,6 +9,23 @@ takes `mut` at the call site; `own` moves and takes no marker (`memory-rules.md`
 stored (not a second-class view). The one implicit conversion applies throughout: a `String` passed where a `str`
 is expected is borrowed as a `str` (IC1).
 
+## Names the standard library keeps private
+
+A standard library helper has a plain name and is `priv`: it is package-private, so a program cannot name it, and
+the documentation and completion leave it out. The compiler reaches some helpers by name: a method on a built-in type
+maps onto a helper with a plain name (`u32.from_le_bytes` is `u32_from_le_bytes`, `f64.PI` is `f64_PI`, and `{:?}` of
+a pair is `debug_tuple2`), and so do the formatters and the eager `List` methods.
+
+A name beginning with `__` is never such a helper. It is one of three things: a compiler intrinsic, the primitive a
+`std` wrapper or an `unsafe` block calls and the compiler provides (`__alloc`, `__mutex_lock`, `__io_kind`;
+`crates/burdin_sema/src/builtins.rs` lists them); a name the compiler generates for its own locals and functions
+(`__f`, `__arg`, `__burdin_test_0`); or a public member that a program's own code reaches through the compiler, which
+the documentation leaves out (DC7). The last are the `select` protocol of `std/src/channel.bd` (`__select_new`,
+`__Select`, and the methods `__empty`, `__wrap`, `__take`, `__send_outcome`, `__try_recv_slot`, `__try_send_slot`,
+spec/channels.md, CH7) and the parallel protocol methods `__par_len` and `__par_get` (spec/parallel.md, PR5). A
+member of that kind stays public because a `select` expression or an implementation of a parallel interface in another
+package must reach it.
+
 ## Output
 
 ```
@@ -254,7 +271,7 @@ an error, not `1`.
 
 `N` is the size of the type in bytes (1, 2, 4, or 8). The target is little-endian everywhere Burdin runs, so `ne` is
 `le`. The `from_*_bytes` functions are the one case of an associated function that is not `parse`: `T.name(...)` on an
-integer type looks `name` up as the std function `__T_name`, and `T.NAME` as the std constant `__T_NAME`. A name that
+integer type looks `name` up as the std function `T_name`, and `T.NAME` as the std constant `T_NAME`. A name that
 does not exist is the usual `E0002`. The floating-point functions are below.
 
 ### Floats (issue #417)
@@ -343,7 +360,7 @@ The exact semantics:
   `cosh`, and `tanh` do in LLVM 21; `cbrt` and `hypot` are direct library calls), so their last bit is the
   library's and is not promised across platforms.
 
-`f64.NAME` is the std constant `__f64_NAME` and `f32.NAME` is `__f32_NAME`, as for the integer constants. An unknown
+`f64.NAME` is the std constant `f64_NAME` and `f32.NAME` is `f32_NAME`, as for the integer constants. An unknown
 method is `E0002`, an unknown constant `E0002`, a wrong argument count `E0004`, and a wrong argument type `E0003`;
 `f64.pow` and `f64.cmp` are `E0002`, and the integer functions do not apply to floats.
 
@@ -903,7 +920,7 @@ their elements are equal in order: `[1, 2] != [2, 1]` and `[1] != [1, 1]`. Equal
 with the same `==`. Tests: `m24_stdlib/list_equality`, `list_equality_needs_eq`.
 
 The eager iteration helpers `map`, `filter`, `fold`, `any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
-(`iterators.md`, IT10); `.any` is resolved to the `std` function named `__list_any` and spelled with the reserved
+(`iterators.md`, IT10); `.any` is resolved to the `std` function named `list_any` and spelled with the reserved
 word. Every method except `new` and `with_capacity` exists for every allocator argument.
 
 The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
@@ -1744,7 +1761,7 @@ struct Reverse<T>: Copy, Clone, Eq, Debug { value: T }   // `<` is `T`'s `>`; `O
 
 `a.cmp(b): Ordering` is provided by the compiler for every type that satisfies `Ord`: the integers, `char`, `bool`,
 `str`, `String`, `()`, tuples, fixed-size arrays, and ranges of ordered parts, a struct or enum that derives `Ord`, a type parameter with
-an `Ord` bound, and `Reverse<T>`. It calls the private `std.cmp.__ord_cmp`, which is `if a < b { Less } else if b < a
+an `Ord` bound, and `Reverse<T>`. It calls the private `std.cmp.ord_cmp`, which is `if a < b { Less } else if b < a
 { Greater } else { Equal }`. `Option<T>` and `Result<T, E>` get `cmp` from extension methods in `std.cmp` (`Option.None`
 before every `Option.Some`; every `Result.Ok` before every `Result.Err`; contents compared when the kinds match): they are not `Ord`, so
 `<` still does not apply to them. Floats have `<` but no total order, so `f64.cmp` is E0002 (`total_cmp` is the float
@@ -2305,8 +2322,8 @@ panics and returns `()`. Outside `burdin test` it only formats the value. The ru
 the values nor the message are evaluated, so side effects in them never run. They are the only assertions with this
 behavior, and they keep it in a `burdin test` build (a failure is a panic, which the runner reports as a failed test).
 
-In a `burdin test` build the prelude replaces `assert`, `assert_eq`, and `assert_ne` with `__test_assert`,
-`__test_assert_eq`, and `__test_assert_ne`, which return `Result<(), AssertError>` instead of panicking: a failure is
+In a `burdin test` build the prelude replaces `assert`, `assert_eq`, and `assert_ne` with `test_assert`,
+`test_assert_eq`, and `test_assert_ne`, which return `Result<(), AssertError>` instead of panicking: a failure is
 one of `AssertError.Failed`, `FailedMsg`, `FailedEq`, `FailedEqMsg`, `FailedNe`, or `FailedNeMsg`, where `condition`
 is the call's source text, `left` and `right` are its values formatted with `Debug`, `message` is the formatted
 message (only present when the call wrote one), and `location` is its `path:line:col` (`errors.md`, ERR9). A normal

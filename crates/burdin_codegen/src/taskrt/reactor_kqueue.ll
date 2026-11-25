@@ -1,5 +1,5 @@
 ; The reactor for macOS (spec/io.md, IO2): kqueue for readiness and a `EVFILT_USER` event for wakeups, plus the
-; same helper pool as the other platforms. A wait record (`__Wait` in `std/src/reactor.bd`) is read through two
+; same helper pool as the other platforms. A wait record (`Wait` in `std/src/reactor.bd`) is read through two
 ; fixed offsets: 0 is `next` (the runtime's result chain) and 24 is `kind` (1 ready, 2 completed).
 ;
 ; A `struct kevent` on 64-bit Darwin is 32 bytes: ident (i64) at 0, filter (i16) at 8, flags (u16) at 10,

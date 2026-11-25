@@ -7,7 +7,7 @@
 use env.get
 use fmt.{Debug, Display, Formatter}
 use fs.append
-use reactor.__offload_raw
+use reactor.offload_raw
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `AnyError`.
 ///
@@ -171,26 +171,26 @@ TraceFrame: Display {
 }
 
 /// A dynamic error with no frames: what a release build records, and what an error with tracing disabled uses.
-priv fn __error_plain(own value: any Error): AnyError {
+priv fn error_plain(own value: any Error): AnyError {
     AnyError { value, frames: List<TraceFrame>.new(), context: String.new() }
 }
 
 /// A dynamic error with a creation frame (a debug build).
-priv fn __error_at(own value: any Error, func: str, file: str, line: i32, col: i32): AnyError {
+priv fn error_at(own value: any Error, func: str, file: str, line: i32, col: i32): AnyError {
     let mut frames = List<TraceFrame>.new()
     frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
     AnyError { value, frames, context: String.new() }
 }
 
 /// A dynamic error with one more propagation frame (a debug build).
-priv fn __error_frame(own e: AnyError, func: str, file: str, line: i32, col: i32): AnyError {
+priv fn error_frame(own e: AnyError, func: str, file: str, line: i32, col: i32): AnyError {
     let mut e = e
     e.frames.push(TraceFrame { func: func.to_string(), file: file.to_string(), line, col })
     e
 }
 
 /// `.context(message)`: keeps the boxed source error and its frames, and adds one more context message in front.
-priv fn __error_context(own e: AnyError, message: str): AnyError {
+priv fn error_context(own e: AnyError, message: str): AnyError {
     let context = if e.context.len() == 0 {
         message.to_string()
     } else {
@@ -421,7 +421,7 @@ fn assert_ne<T: Eq>(a: T, b: T) {
 /// argument is an inline snapshot, `assert_snapshot(value, @"...")`. `display: true` records the `Display` text
 /// instead. A missing or different snapshot fails the test; `burdin test --bless` accepts the new text
 /// (`spec/test-runner.md`, "Snapshot tests"). Outside `burdin test` the call formats the value and does nothing
-/// else. The compiler routes every call to `__snapshot_debug` or `__snapshot_display` with its location.
+/// else. The compiler routes every call to `snapshot_debug` or `snapshot_display` with its location.
 ///
 /// ```
 /// assert_snapshot(42)
@@ -429,19 +429,19 @@ fn assert_ne<T: Eq>(a: T, b: T) {
 fn assert_snapshot<T: Debug>(value: T) { }
 
 /// `assert_snapshot(value)`: the `Debug` text, recorded for the runner with the call's `path:line:col`.
-priv fn __snapshot_debug<T: Debug>(value: T, location: str, inline: bool) {
-    __snapshot_record(format("{value:?}"), location, inline)
+priv fn snapshot_debug<T: Debug>(value: T, location: str, inline: bool) {
+    snapshot_record(format("{value:?}"), location, inline)
 }
 
 /// `assert_snapshot(value, display: true)`: the `Display` text.
-priv fn __snapshot_display<T: Display>(value: T, location: str, inline: bool) {
-    __snapshot_record(format("{value}"), location, inline)
+priv fn snapshot_display<T: Display>(value: T, location: str, inline: bool) {
+    snapshot_record(format("{value}"), location, inline)
 }
 
 /// Appends one record to the file `burdin test` names in `BURDIN_SNAPSHOTS`: a header line
 /// `snapshot <inline 0|1> <byte length> <location>`, the text, and a newline. The runner compares the records
 /// after the test process ends, so a test sees no difference between a matching and a differing snapshot.
-priv fn __snapshot_record(text: String, location: str, inline: bool) {
+priv fn snapshot_record(text: String, location: str, inline: bool) {
     match get("BURDIN_SNAPSHOTS") {
         Option.Some(path) => {
             let kind = if inline { 1 } else { 0 }
@@ -493,7 +493,7 @@ fn debug_assert_ne<T: Eq>(a: T, b: T) {
 /// as failed and keeps running the others. `burdin test` binds this as `assert`; normal builds use the panicking
 /// version above. The compiler appends the message (empty when none was written), the call's source text, and
 /// the call's location at the call site (`spec/errors.md`, ERR9).
-priv fn __test_assert(cond: bool, message: str, condition: str, location: str): Result<(), AssertError> {
+priv fn test_assert(cond: bool, message: str, condition: str, location: str): Result<(), AssertError> {
     if cond {
         Result.Ok(())
     } else if message.len() == 0 {
@@ -509,7 +509,7 @@ priv fn __test_assert(cond: bool, message: str, condition: str, location: str): 
 
 /// The test-mode `assert_eq`. The compiler appends the message, the call's source text, and its location, as
 /// for `assert`.
-priv fn __test_assert_eq<T: Eq + Debug>(
+priv fn test_assert_eq<T: Eq + Debug>(
     a: T,
     b: T,
     message: str,
@@ -542,7 +542,7 @@ priv fn __test_assert_eq<T: Eq + Debug>(
 
 /// The test-mode `assert_ne`. The compiler appends the message, the call's source text, and its location, as
 /// for `assert`.
-priv fn __test_assert_ne<T: Eq + Debug>(
+priv fn test_assert_ne<T: Eq + Debug>(
     a: T,
     b: T,
     message: str,
@@ -624,9 +624,9 @@ fn unimplemented(): ! {
 /// The shim a call to a `blocking` extern goes through (`spec/io.md`, IO4). The compiler generates a thunk that
 /// performs the C call from the arguments it marshals, then calls this function with the thunk and the block. The
 /// thunk runs on the helper pool, so the calling task parks instead of holding a worker.
-fn __offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
+priv fn offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
     unsafe {
-        __offload_raw(code, env)
+        offload_raw(code, env)
     }
 }
 

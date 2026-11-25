@@ -12,16 +12,16 @@
 use fmt.{Debug, Display, Formatter}
 use int.{abs_diff, div_euclid, rem_euclid}
 use ops.{Add, Sub}
-use reactor.{__in_task, __sleep_async}
+use reactor.{in_task, sleep_async}
 
-priv const __NANOS_PER_SECOND: u64 = 1_000_000_000
-priv const __SECONDS_PER_DAY: i64 = 86_400
+priv const NANOS_PER_SECOND: u64 = 1_000_000_000
+priv const SECONDS_PER_DAY: i64 = 86_400
 /// The longest single sleep the runtime is asked for, so one call never overflows a system's sleep argument.
-priv const __SLEEP_CHUNK_NANOS: u64 = 3_600_000_000_000
+priv const SLEEP_CHUNK_NANOS: u64 = 3_600_000_000_000
 
 /// `n * factor`, panicking when the product does not fit in a `u64` in every build profile (a plain `*` wraps in a
 /// release build).
-priv fn __scale(n: u64, factor: u64): u64 {
+priv fn scale(n: u64, factor: u64): u64 {
     match n.checked_mul(factor) {
         Option.Some(product) => product,
         Option.None => panic("Duration: the value does not fit"),
@@ -65,7 +65,7 @@ Duration {
     /// assert_eq(Duration.from_micros(1500).as_nanos(), 1500000)
     /// ```
     fn from_micros(n: u64): Duration {
-        Duration { nanos: __scale(n, 1_000) }
+        Duration { nanos: scale(n, 1_000) }
     }
 
     /// A duration of `n` milliseconds. It panics when the result does not fit.
@@ -74,7 +74,7 @@ Duration {
     /// assert_eq(Duration.from_millis(1500).as_nanos(), 1500000000)
     /// ```
     fn from_millis(n: u64): Duration {
-        Duration { nanos: __scale(n, 1_000_000) }
+        Duration { nanos: scale(n, 1_000_000) }
     }
 
     /// A duration of `n` seconds. It panics when the result does not fit.
@@ -83,7 +83,7 @@ Duration {
     /// assert_eq(Duration.from_secs(2).as_millis(), 2000)
     /// ```
     fn from_secs(n: u64): Duration {
-        Duration { nanos: __scale(n, __NANOS_PER_SECOND) }
+        Duration { nanos: scale(n, NANOS_PER_SECOND) }
     }
 
     /// A duration of `secs` seconds, truncated to whole nanoseconds. It panics for a negative or NaN value and for
@@ -136,7 +136,7 @@ Duration {
     /// assert_eq(Duration.from_millis(2500).as_secs(), 2)
     /// ```
     fn as_secs(self): u64 {
-        self.nanos / __NANOS_PER_SECOND
+        self.nanos / NANOS_PER_SECOND
     }
 
     /// The length in seconds, with the fraction.
@@ -154,7 +154,7 @@ Duration {
     /// assert_eq(Duration.from_nanos(1500000000).subsec_nanos(), 500000000)
     /// ```
     fn subsec_nanos(self): u32 {
-        (self.nanos % __NANOS_PER_SECOND) as u32
+        (self.nanos % NANOS_PER_SECOND) as u32
     }
 
     /// The microseconds after the last whole second.
@@ -241,7 +241,7 @@ Duration {
     /// assert_eq(Duration.from_millis(250).times(4), Duration.from_secs(1))
     /// ```
     fn times(self, n: u64): Duration {
-        Duration { nanos: __scale(self.nanos, n) }
+        Duration { nanos: scale(self.nanos, n) }
     }
 
     /// The duration divided by `n`, truncated to whole nanoseconds. It panics when `n` is zero.
@@ -276,7 +276,7 @@ Duration: Sub {
 
 /// `value` in units of `unit` nanoseconds, with a fraction when there is one and no trailing zeros: `1.5`, `250`.
 /// `digits` is the number of decimal digits of the fraction in `unit` (9 for seconds).
-priv fn __scaled(value: u64, unit: u64, digits: u32, suffix: str): String {
+priv fn scaled(value: u64, unit: u64, digits: u32, suffix: str): String {
     let mut out = (value / unit).to_string()
     let mut fraction = value % unit
     let mut width = digits as usize
@@ -304,13 +304,13 @@ Duration: Display {
     fn fmt(self, mut f: Formatter) {
         let n = self.nanos
         if n >= 1_000_000_000 {
-            f.pad_plain(__scaled(n, 1_000_000_000, 9, "s").as_str())
+            f.pad_plain(scaled(n, 1_000_000_000, 9, "s").as_str())
         } else if n >= 1_000_000 {
-            f.pad_plain(__scaled(n, 1_000_000, 6, "ms").as_str())
+            f.pad_plain(scaled(n, 1_000_000, 6, "ms").as_str())
         } else if n >= 1_000 {
-            f.pad_plain(__scaled(n, 1_000, 3, "µs").as_str())
+            f.pad_plain(scaled(n, 1_000, 3, "µs").as_str())
         } else {
-            f.pad_plain(__scaled(n, 1, 0, "ns").as_str())
+            f.pad_plain(scaled(n, 1, 0, "ns").as_str())
         }
     }
 }
@@ -614,14 +614,14 @@ struct DateTime: Copy, Clone, Eq, Ord, Hash, Debug {
 }
 
 /// Whether `year` is a leap year.
-priv fn __is_leap(year: i64): bool {
+priv fn is_leap(year: i64): bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 /// The number of days in `month` (1 to 12) of `year`.
-priv fn __days_in_month(year: i64, month: u32): u32 {
+priv fn days_in_month(year: i64, month: u32): u32 {
     match month {
-        2 => if __is_leap(year) { 29 } else { 28 },
+        2 => if is_leap(year) { 29 } else { 28 },
         4 => 30,
         6 => 30,
         9 => 30,
@@ -631,7 +631,7 @@ priv fn __days_in_month(year: i64, month: u32): u32 {
 }
 
 /// The number of days from 1970-01-01 to the given date (negative before it).
-priv fn __days_from_civil(year: i64, month: i64, day: i64): i64 {
+priv fn days_from_civil(year: i64, month: i64, day: i64): i64 {
     let y = if month <= 2 { year - 1 } else { year }
     let era = y.div_euclid(400)
     let year_of_era = y - era * 400
@@ -642,7 +642,7 @@ priv fn __days_from_civil(year: i64, month: i64, day: i64): i64 {
 }
 
 /// The `(year, month, day)` of the day that is `days` days after 1970-01-01.
-priv fn __civil_from_days(days: i64): (i64, i64, i64) {
+priv fn civil_from_days(days: i64): (i64, i64, i64) {
     let z = days + 719468
     let era = z.div_euclid(146097)
     let day_of_era = z - era * 146097
@@ -657,7 +657,7 @@ priv fn __civil_from_days(days: i64): (i64, i64, i64) {
 }
 
 /// `n` in decimal, with a minus sign when negative, padded with zeros to at least `width` digits.
-priv fn __zero_padded(n: i64, width: usize): String {
+priv fn zero_padded(n: i64, width: usize): String {
     let mut out = String.new()
     if n < 0 {
         out.push('-')
@@ -673,7 +673,7 @@ priv fn __zero_padded(n: i64, width: usize): String {
 }
 
 /// The fraction of a second as `.` and its digits without trailing zeros, or the empty text for zero.
-priv fn __fraction(nanosecond: u32): String {
+priv fn fraction(nanosecond: u32): String {
     let mut out = String.new()
     if nanosecond == 0 {
         return out
@@ -707,7 +707,7 @@ DateTime {
         if month < 1 || month > 12 {
             return Option.None
         }
-        if day < 1 || day > __days_in_month(year as i64, month) {
+        if day < 1 || day > days_in_month(year as i64, month) {
             return Option.None
         }
         if hour > 23 || minute > 59 || second > 59 || nanosecond > 999_999_999 {
@@ -732,9 +732,9 @@ DateTime {
     /// assert_eq(dt.format("%Y-%m-%d"), String.from("1970-01-02"))
     /// ```
     fn from_unix_secs(secs: i64): DateTime {
-        let days = secs.div_euclid(__SECONDS_PER_DAY)
-        let of_day = secs.rem_euclid(__SECONDS_PER_DAY)
-        let (year, month, day) = __civil_from_days(days)
+        let days = secs.div_euclid(SECONDS_PER_DAY)
+        let of_day = secs.rem_euclid(SECONDS_PER_DAY)
+        let (year, month, day) = civil_from_days(days)
         if year > 2147483647 || year < -2147483648 {
             panic("DateTime.from_unix_secs: the year does not fit")
         }
@@ -756,8 +756,8 @@ DateTime {
     /// assert_eq(dt.to_unix_secs(), 86400)
     /// ```
     fn to_unix_secs(self): i64 {
-        let days = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
-        days * __SECONDS_PER_DAY + (self.hour as i64) * 3600 + (self.minute as i64) * 60 + (self.second as i64)
+        let days = days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        days * SECONDS_PER_DAY + (self.hour as i64) * 3600 + (self.minute as i64) * 60 + (self.second as i64)
     }
 
     /// The same moment as a `SystemTime`. It panics outside the years 1678 to 2262.
@@ -777,7 +777,7 @@ DateTime {
     /// assert(!DateTime.new(2026, 1, 1, 0, 0, 0, 0).unwrap().is_leap_year())
     /// ```
     fn is_leap_year(self): bool {
-        __is_leap(self.year as i64)
+        is_leap(self.year as i64)
     }
 
     /// The day of the year, 1 for January 1st.
@@ -787,8 +787,8 @@ DateTime {
     /// assert_eq(dt.ordinal(), 321)
     /// ```
     fn ordinal(self): u32 {
-        let first = __days_from_civil(self.year as i64, 1, 1)
-        let today = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        let first = days_from_civil(self.year as i64, 1, 1)
+        let today = days_from_civil(self.year as i64, self.month as i64, self.day as i64)
         (today - first + 1) as u32
     }
 
@@ -799,7 +799,7 @@ DateTime {
     /// assert(dt.weekday() == Weekday.Tuesday)
     /// ```
     fn weekday(self): Weekday {
-        let days = __days_from_civil(self.year as i64, self.month as i64, self.day as i64)
+        let days = days_from_civil(self.year as i64, self.month as i64, self.day as i64)
         // 1970-01-01 was a Thursday.
         match (days + 3).rem_euclid(7) {
             0 => Weekday.Monday,
@@ -836,14 +836,14 @@ DateTime {
             }
             after_percent = false
             match c {
-                'Y' => out.push_str(__zero_padded(self.year as i64, 4).as_str()),
-                'm' => out.push_str(__zero_padded(self.month as i64, 2).as_str()),
-                'd' => out.push_str(__zero_padded(self.day as i64, 2).as_str()),
-                'H' => out.push_str(__zero_padded(self.hour as i64, 2).as_str()),
-                'M' => out.push_str(__zero_padded(self.minute as i64, 2).as_str()),
-                'S' => out.push_str(__zero_padded(self.second as i64, 2).as_str()),
-                'f' => out.push_str(__zero_padded(self.nanosecond as i64, 9).as_str()),
-                'j' => out.push_str(__zero_padded(self.ordinal() as i64, 3).as_str()),
+                'Y' => out.push_str(zero_padded(self.year as i64, 4).as_str()),
+                'm' => out.push_str(zero_padded(self.month as i64, 2).as_str()),
+                'd' => out.push_str(zero_padded(self.day as i64, 2).as_str()),
+                'H' => out.push_str(zero_padded(self.hour as i64, 2).as_str()),
+                'M' => out.push_str(zero_padded(self.minute as i64, 2).as_str()),
+                'S' => out.push_str(zero_padded(self.second as i64, 2).as_str()),
+                'f' => out.push_str(zero_padded(self.nanosecond as i64, 9).as_str()),
+                'j' => out.push_str(zero_padded(self.ordinal() as i64, 3).as_str()),
                 '%' => out.push('%'),
                 _ => {
                     out.push('%')
@@ -863,7 +863,7 @@ DateTime: Display {
     /// (without trailing zeros) before the `Z` when it is not zero.
     fn fmt(self, mut f: Formatter) {
         let mut text = self.format("%Y-%m-%dT%H:%M:%S")
-        text.push_str(__fraction(self.nanosecond).as_str())
+        text.push_str(fraction(self.nanosecond).as_str())
         text.push('Z')
         f.pad_plain(text.as_str())
     }
@@ -983,14 +983,14 @@ ManualClock: Clock {
 /// assert(true)
 /// ```
 fn sleep(d: Duration) {
-    if __in_task() {
+    if in_task() {
         // A task parks on the reactor's timer instead of holding its worker (`spec/io.md`, IO7).
-        __sleep_async(d.nanos)
+        sleep_async(d.nanos)
         return
     }
     let mut remaining = d.nanos
     while remaining > 0 {
-        let chunk = remaining.min(__SLEEP_CHUNK_NANOS)
+        let chunk = remaining.min(SLEEP_CHUNK_NANOS)
         __sleep(chunk)
         remaining = remaining - chunk
     }

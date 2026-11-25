@@ -238,7 +238,7 @@ pair of different types keeps the same-type rule (OP2, OP7).
 
 - `String + str` is built in and has type `String`. The result is a new string holding the text of the left operand
   followed by the text of the right one. Both operands are borrowed (OP8), so neither is moved and both stay usable.
-  It is the standard library's `__concat` (`std/src/text.bd`), so it is an ordinary call for the checks and the code
+  It is the standard library's `concat` (`std/src/text.bd`), so it is an ordinary call for the checks and the code
   generator.
 - The comparisons `==`, `!=`, `<`, `<=`, `>`, `>=` accept a `String` on either side of a `str` (`s == "x"`,
   `"x" == s`, `s < t.as_str()`). The `String` is viewed as a `str` (`as_str`), and the comparison is the `str`

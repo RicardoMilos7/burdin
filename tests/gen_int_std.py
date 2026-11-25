@@ -26,7 +26,7 @@ HEADER = """// The integer functions of every integer type (spec/stdlib.md, "Int
 // one body for every type, so the functions exist once per integer type. They are extension methods (spec/extensions.md),
 // so the prelude makes them visible everywhere; the methods the compiler provides (`wrapping_add`, `checked_add`,
 // `min`, `max`, `abs`, `to_string`, `parse`) win. `u32.MAX`, `u32.from_le_bytes(b)`, and the other associated names
-// are the `__<type>_<name>` constants and functions below: the compiler maps `T.name` to `__T_name`.
+// are the `<type>_<name>` constants and functions below: the compiler maps `T.name` to `T_name`.
 
 use std.ParseIntError
 use unicode.to_digit
@@ -115,7 +115,7 @@ def gen(name: str, bits: int, signed: bool) -> str:
 
     def sfn(name_: str, params: str, ret: str, doc: str, body: str) -> None:
         w(f"/// {doc}")
-        w(f"fn __{t}_{name_}({params}): {ret} {{")
+        w(f"priv fn {t}_{name_}({params}): {ret} {{")
         for line in body.strip("\n").split("\n"):
             w(("    " + line) if line.strip() else "")
         w("}")
@@ -124,12 +124,12 @@ def gen(name: str, bits: int, signed: bool) -> str:
     w(f"// ---- {t} ----")
     w("")
     if signed:
-        w(f"const __{t}_MIN: {t} = -{(1 << (bits - 1)) - 1} - 1")
-        w(f"const __{t}_MAX: {t} = {(1 << (bits - 1)) - 1}")
+        w(f"priv const {t}_MIN: {t} = -{(1 << (bits - 1)) - 1} - 1")
+        w(f"priv const {t}_MAX: {t} = {(1 << (bits - 1)) - 1}")
     else:
-        w(f"const __{t}_MIN: {t} = 0")
-        w(f"const __{t}_MAX: {t} = {(1 << bits) - 1}")
-    w(f"const __{t}_BITS: u32 = {bits}")
+        w(f"priv const {t}_MIN: {t} = 0")
+        w(f"priv const {t}_MAX: {t} = {(1 << bits) - 1}")
+    w(f"priv const {t}_BITS: u32 = {bits}")
     w("")
 
     # ---- arithmetic ----
@@ -190,7 +190,7 @@ while e > 0 {{
 }}
 Option.Some(result)""")
     if signed:
-        overflow_div = f"(self == __{t}_MIN && other == -1)"
+        overflow_div = f"(self == {t}_MIN && other == -1)"
         fn(f"checked_div(self, other: {t}): Option<{t}>", "`self / other`, or `None` when `other` is 0 or the quotient overflows.", f"""
 if other == 0 || {overflow_div} {{
     return Option.None
@@ -202,7 +202,7 @@ if other == 0 || {overflow_div} {{
 }}
 Option.Some(self % other)""")
         fn(f"checked_neg(self): Option<{t}>", "`-self`, or `None` for the minimum value.", f"""
-if self == __{t}_MIN {{
+if self == {t}_MIN {{
     return Option.None
 }}
 Option.Some(0 - self)""")
@@ -244,9 +244,9 @@ match self.checked_add(other) {{
     Option.Some(v) => v,
     Option.None => {{
         if other > 0 {{
-            __{t}_MAX
+            {t}_MAX
         }} else {{
-            __{t}_MIN
+            {t}_MIN
         }}
     }}
 }}"""
@@ -255,9 +255,9 @@ match self.checked_sub(other) {{
     Option.Some(v) => v,
     Option.None => {{
         if other > 0 {{
-            __{t}_MIN
+            {t}_MIN
         }} else {{
-            __{t}_MAX
+            {t}_MAX
         }}
     }}
 }}"""
@@ -266,9 +266,9 @@ match self.checked_mul(other) {{
     Option.Some(v) => v,
     Option.None => {{
         if (self < 0) == (other < 0) {{
-            __{t}_MAX
+            {t}_MAX
         }} else {{
-            __{t}_MIN
+            {t}_MIN
         }}
     }}
 }}"""
@@ -277,9 +277,9 @@ match self.checked_pow(exp) {{
     Option.Some(v) => v,
     Option.None => {{
         if self < 0 && exp % 2 == 1 {{
-            __{t}_MIN
+            {t}_MIN
         }} else {{
-            __{t}_MAX
+            {t}_MAX
         }}
     }}
 }}"""
@@ -287,7 +287,7 @@ match self.checked_pow(exp) {{
         sat_add = f"""
 match self.checked_add(other) {{
     Option.Some(v) => v,
-    Option.None => __{t}_MAX,
+    Option.None => {t}_MAX,
 }}"""
         sat_sub = f"""
 match self.checked_sub(other) {{
@@ -298,7 +298,7 @@ match self.checked_sub(other) {{
         sat_pow = f"""
 match self.checked_pow(exp) {{
     Option.Some(v) => v,
-    Option.None => __{t}_MAX,
+    Option.None => {t}_MAX,
 }}"""
     fn(f"saturating_add(self, other: {t}): {t}", "`self + other`, clamped to the range of the type.", sat_add)
     fn(f"saturating_sub(self, other: {t}): {t}", "`self - other`, clamped to the range of the type.", sat_sub)
@@ -596,7 +596,7 @@ v{cast}""")
     sfn("from_be_bytes", f"b: [u8; {nbytes}]", t, "The value whose big-endian bytes are `b`.", f"""
 let v: {u} = {from_be}
 v{cast}""")
-    sfn("from_ne_bytes", f"b: [u8; {nbytes}]", t, "The value whose native-endian bytes are `b`.", f"__{t}_from_le_bytes(b)")
+    sfn("from_ne_bytes", f"b: [u8; {nbytes}]", t, "The value whose native-endian bytes are `b`.", f"{t}_from_le_bytes(b)")
     return "\n".join(out)
 
 

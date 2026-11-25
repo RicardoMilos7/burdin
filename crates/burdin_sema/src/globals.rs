@@ -568,7 +568,7 @@ impl Globals {
         if !matches!(name, "flatten" | "cloned" | "copied" | "cycle" | "rev") {
             return None;
         }
-        self.std_generic(&format!("__iter_{name}"))
+        self.std_generic(&format!("iter_{name}"))
     }
 
     /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.
@@ -576,7 +576,7 @@ impl Globals {
         if !matches!(name, "map" | "filter" | "fold" | "any" | "all" | "find") {
             return None;
         }
-        let name = format!("__list_{name}");
+        let name = format!("list_{name}");
         self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
             Global::Generic(g) => Some(g),
             _ => None,
@@ -589,7 +589,7 @@ impl Globals {
         if !matches!(name, "min" | "max" | "eq" | "cmp") {
             return None;
         }
-        let name = format!("__iter_{name}");
+        let name = format!("iter_{name}");
         self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
             Global::Generic(g) => Some(g),
             _ => None,

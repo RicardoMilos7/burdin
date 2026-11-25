@@ -53,9 +53,9 @@ impl Globals {
     }
 
     /// The standard library's receiver-first helper that `value.serialize(mut s)` calls for a built-in type
-    /// (`__serialize_<shape>` in `std/src/serialize.bd`).
+    /// (`serialize_value_<shape>` in `std/src/serialize.bd`).
     pub(crate) fn serialize_helper(ty: &Ty) -> Option<String> {
-        Some(format!("__serialize_{}", Self::serial_shape(ty)?))
+        Some(format!("serialize_value_{}", Self::serial_shape(ty)?))
     }
 
     /// The standard library's helper that `T.deserialize(mut d)` calls for a built-in type: the `deserialize_<shape>`

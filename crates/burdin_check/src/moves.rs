@@ -796,7 +796,7 @@ impl<'a> Checker<'a> {
                 let params = self.env.sigs[f.0].params.clone();
                 // A call the compiler generated (an interpolated string's formatter) is not source code the
                 // annotation shows; its arguments are still walked for their effects.
-                let generated = self.env.names.get(f.0).is_some_and(|name| generated_name(name));
+                let generated = self.env.internal.get(f.0).copied().unwrap_or(false);
                 for (i, a) in args.iter().enumerate() {
                     let Some(p) = params.get(i) else {
                         self.with_dest(None, Mode::Use, a);
@@ -1695,11 +1695,6 @@ fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
             }
         }
     }
-}
-
-/// Whether a function name is one the compiler generated (an interpolated string's formatter).
-fn generated_name(name: &str) -> bool {
-    name.rsplit('.').next().is_some_and(|segment| segment.starts_with("__"))
 }
 
 #[cfg(test)]

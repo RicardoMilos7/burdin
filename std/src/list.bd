@@ -10,7 +10,7 @@ use iter.Iterator
 use mem
 
 /// A list holding `list`'s elements in the opposite order.
-priv fn __reversed<T>(own list: List<T>): List<T> {
+priv fn reversed<T>(own list: List<T>): List<T> {
     let mut list = list
     let mut out = List<T>.new()
     loop {
@@ -23,7 +23,7 @@ priv fn __reversed<T>(own list: List<T>): List<T> {
 }
 
 /// Whether the last element of `list` equals `x`.
-priv fn __last_equals<T: Eq>(list: List<T>, x: T): bool {
+priv fn last_equals<T: Eq>(list: List<T>, x: T): bool {
     match list.last() {
         Option.Some(previous) => *previous == x,
         Option.None => false,
@@ -32,7 +32,7 @@ priv fn __last_equals<T: Eq>(list: List<T>, x: T): bool {
 
 /// Calls the predicate `f` on `x`. `x` is passed as a plain (borrowed) parameter, because a `&x` written in a loop
 /// body keeps its loan until the end of the iteration and would block moving `x` into the result list.
-priv fn __test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
+priv fn test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
     f(&x)
 }
 
@@ -48,11 +48,11 @@ priv fn __test<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
 /// ```
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
     let mut f = f
-    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    let mut items = reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
             Option.Some(x) => {
-                let keep = __test(mut f, x)
+                let keep = test(mut f, x)
                 if keep {
                     self.push(x)
                 }
@@ -113,7 +113,7 @@ fn List<T>.rposition<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
 /// assert_eq(l[0], 2)
 /// ```
 fn List<T>.reverse(mut self) {
-    let mut reversed = __reversed(mem.replace(mut self, List<T>.new()))
+    let mut reversed = reversed(mem.replace(mut self, List<T>.new()))
     mem.swap(mut self, mut reversed)
 }
 
@@ -128,11 +128,11 @@ fn List<T>.reverse(mut self) {
 /// assert_eq(l.len(), 2)
 /// ```
 fn List<T>.dedup(mut self) where T: Eq {
-    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    let mut items = reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
             Option.Some(x) => {
-                let same = __last_equals(self, x)
+                let same = last_equals(self, x)
                 if !same {
                     self.push(x)
                 }
@@ -144,7 +144,7 @@ fn List<T>.dedup(mut self) where T: Eq {
 
 /// Whether the last element of `list` has the same key as `x`. `K` is a parameter of the caller, which names it: the
 /// checker cannot infer it from `key`'s bound alone.
-priv fn __last_key_equals<T, K: Eq, F: FnMut(&T): K>(mut key: F, list: List<T>, x: T): bool {
+priv fn last_key_equals<T, K: Eq, F: FnMut(&T): K>(mut key: F, list: List<T>, x: T): bool {
     match list.last() {
         Option.Some(previous) => key(previous) == key(&x),
         Option.None => false,
@@ -164,11 +164,11 @@ priv fn __last_key_equals<T, K: Eq, F: FnMut(&T): K>(mut key: F, list: List<T>, 
 /// ```
 fn List<T>.dedup_by_key<K: Eq, F: FnMut(&T): K>(mut self, own key: F) {
     let mut key = key
-    let mut items = __reversed(mem.replace(mut self, List<T>.new()))
+    let mut items = reversed(mem.replace(mut self, List<T>.new()))
     loop {
         match items.pop() {
             Option.Some(x) => {
-                let same = __last_key_equals<T, K, F>(mut key, self, x)
+                let same = last_key_equals<T, K, F>(mut key, self, x)
                 if !same {
                     self.push(x)
                 }
@@ -190,7 +190,7 @@ fn List<T>.dedup_by_key<K: Eq, F: FnMut(&T): K>(mut self, own key: F) {
 /// assert_eq(a.len(), 3)
 /// ```
 fn List<T>.extend(mut self, own other: List<T>) {
-    let mut items = __reversed(other)
+    let mut items = reversed(other)
     loop {
         match items.pop() {
             Option.Some(x) => self.push(x),

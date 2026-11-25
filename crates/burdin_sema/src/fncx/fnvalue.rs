@@ -335,6 +335,7 @@ impl FnCx<'_> {
             symbolic: false,
             exported: false,
             events: Vec::new(),
+            internal: false,
         };
         let closure = tir::Closure {
             name: func.name.clone(),

@@ -410,7 +410,7 @@ impl FnCx<'_> {
     }
 
     /// `assert_snapshot(value[, @"inline"][, display: bool])` (`spec/test-runner.md`, "Snapshot tests"). The call
-    /// becomes `__snapshot_debug(value, location, inline)` or `__snapshot_display(...)`: the location is how the
+    /// becomes `snapshot_debug(value, location, inline)` or `snapshot_display(...)`: the location is how the
     /// runner finds the test, the snapshot file, and an inline snapshot's literal, which it reads from the source
     /// rather than from the program. Anything else in the argument list is E0172.
     fn snapshot_call(&mut self, id: &ast::Ident, args: &[ast::Arg], span: Span, expect: Option<&Ty>) -> tir::Expr {
@@ -535,7 +535,7 @@ impl FnCx<'_> {
             self.diags.error(
                 Code::ERROR_CONVERSION,
                 span,
-                "`.context` needs the standard library's `__error_context` helper",
+                "`.context` needs the standard library's `error_context` helper",
             );
             return self.args_then_error(args, span);
         };
@@ -1428,7 +1428,7 @@ impl FnCx<'_> {
         if name.name == "cmp"
             && args.len() == 1
             && self.globals.satisfies(&recv.ty, &crate::generics::Bound::Ord, &self.bounds)
-            && let Some(g) = self.globals.std_generic("__ord_cmp")
+            && let Some(g) = self.globals.std_generic("ord_cmp")
         {
             return self.generic_call_with_receiver(g, recv, "cmp", args, span);
         }
@@ -2368,9 +2368,9 @@ impl FnCx<'_> {
                 return self.int_try_from(*i, args, span);
             }
             // The other associated functions of an integer type (`u32.from_le_bytes(b)`) are `std` functions named
-            // `__<type>_<name>` (spec/stdlib.md, "Integer functions").
+            // `<type>_<name>` (spec/stdlib.md, "Integer functions").
             if name.name != "parse"
-                && let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", i.name(), name.name))
+                && let Some(Global::Func(f)) = self.globals.std_value(&format!("{}_{}", i.name(), name.name))
             {
                 let sig = self.globals.sigs[f.0].clone();
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
@@ -2390,7 +2390,7 @@ impl FnCx<'_> {
                 // The 128-bit types parse in `std`, in base 10 (`spec/int128.md`, I128-6): the runtime's parser
                 // reads into 64 bits.
                 if matches!(i, IntTy::I128 | IntTy::U128) {
-                    let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_parse_radix", i.name())) else {
+                    let Some(Global::Func(f)) = self.globals.std_value(&format!("{}_parse_radix", i.name())) else {
                         unreachable!("std defines the 128-bit parsers")
                     };
                     let sig = self.globals.sigs[f.0].clone();
@@ -2404,7 +2404,7 @@ impl FnCx<'_> {
             }
         }
         // `f64.parse(s)` and the other associated functions of a float type are `std` functions named
-        // `__<type>_<name>` (spec/stdlib.md, "Floats"), except `from_bits`, which is the compiler's bit cast.
+        // `<type>_<name>` (spec/stdlib.md, "Floats"), except `from_bits`, which is the compiler's bit cast.
         if let Ty::Float(ft) = ty {
             if name.name == "from_bits" {
                 let bits = match ft {
@@ -2416,7 +2416,7 @@ impl FnCx<'_> {
                 };
                 return mk(tir::ExprKind::Builtin(Builtin::FloatFromBits(*ft), checked), ty.clone(), span);
             }
-            if let Some(Global::Func(f)) = self.globals.std_value(&format!("__{}_{}", ty, name.name)) {
+            if let Some(Global::Func(f)) = self.globals.std_value(&format!("{}_{}", ty, name.name)) {
                 let sig = self.globals.sigs[f.0].clone();
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
@@ -2429,8 +2429,8 @@ impl FnCx<'_> {
             // `String.from_utf8` and `String.from_utf8_lossy` are `std` functions; the compiler only maps the
             // names (`spec/stdlib.md`, "String bytes and UTF-8 validation").
             let utf8 = match name.name.as_str() {
-                "from_utf8" => Some("__string_from_utf8"),
-                "from_utf8_lossy" => Some("__string_from_utf8_lossy"),
+                "from_utf8" => Some("string_from_utf8"),
+                "from_utf8_lossy" => Some("string_from_utf8_lossy"),
                 _ => None,
             };
             if let Some(hidden) = utf8
@@ -2473,7 +2473,7 @@ impl FnCx<'_> {
         // `str.from_utf8`: the `std` function that validates the bytes and returns a `str` view of them.
         if *ty == Ty::Str && name.name != "default" {
             if name.name == "from_utf8"
-                && let Some(Global::Func(f)) = self.globals.std_value("__str_from_utf8")
+                && let Some(Global::Func(f)) = self.globals.std_value("str_from_utf8")
             {
                 let sig = self.globals.sigs[f.0].clone();
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {

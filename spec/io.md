@@ -68,7 +68,7 @@ reactor is three things:
   reactor so it recomputes its wait: `epoll` and `kqueue` take a new set when one is added, but `WSAPoll` keeps
   waiting on the set it was given.
 
-A **wait record** (`__Wait`) is allocated on the waiting task's stack. The runtime reads two fields of it by fixed
+A **wait record** (`Wait`) is allocated on the waiting task's stack. The runtime reads two fields of it by fixed
 offset: the first word is the result-list link and the field at offset 24 is the event kind (1 ready, 2 completed).
 The standard library owns the rest: the waiter, the descriptor, the timer node, and the claimed flag. A wait is
 claimed under the reactor's lock before it is woken, so an event and a timeout that happen together wake the task
@@ -79,7 +79,7 @@ The reactor primitives are `__io_new`, `__io_watch`, `__io_unwatch`, `__io_poll`
 `__io_global_set`, `__pool_submit`, and `__pool_submit_raw` (`spec/tasks.md`, TK2; the names are
 `crates/burdin_tir/src/ops.rs`). They are linked in only when used, like the rest of the task runtime.
 
-A wait is registered under the scheduler's state lock and then parks through `__waiter_block` (`spec/channels.md`,
+A wait is registered under the scheduler's state lock and then parks through `waiter_block` (`spec/channels.md`,
 CH10), which is the same mechanism a channel uses. A notification cannot be lost: the waker takes the state lock
 before it notifies, and the waiting task holds it from registration to parking.
 
@@ -94,7 +94,7 @@ wakes the reactor; the reactor thread wakes the task.
 `std/src/reactor.bd` wraps this as one function:
 
 ```
-fn __offload<T, F: FnMut(): T>(own f: F): T
+fn offload<T, F: FnMut(): T>(own f: F): T
 ```
 
 It runs `f` on a helper thread and waits for it, parking the task or blocking the thread. `f` needs **no `Send`
@@ -108,7 +108,7 @@ The closure is relabelled as an owned `FnOnce` with the same unsafe primitive sc
 `spec/tasks.md` TK7), which is what lets a closure that borrows a `List` buffer or a `str` path cross to the helper.
 The compiler checks the loan against the call, not against the helper thread's lifetime, and the two coincide.
 
-Outside a task, `__offload` blocks the calling thread; it still uses a helper, so the same code path runs everywhere.
+Outside a task, `offload` blocks the calling thread; it still uses a helper, so the same code path runs everywhere.
 A panic in a helper aborts the process, like a panic in a task (TK8).
 
 The wrapped operations are file and directory handling: `fs.read`, `fs.write`, `fs.append`, `File.open`, `File.read`,
@@ -137,7 +137,7 @@ compiler:
 1. The call site stores every argument in an 8-byte-slot block on its stack (integers, floats, and pointers all fit).
 2. A generated thunk `void (ptr block, i1 owned)` loads the arguments, calls the C function, and stores the result in
    the slot after the arguments.
-3. The call site calls the standard library's `std.__offload_blocking(thunk, block)`, which submits the thunk to the
+3. The call site calls the standard library's `std.offload_blocking(thunk, block)`, which submits the thunk to the
    pool and waits, and then reads the result from its own block.
 
 The rules:
@@ -217,7 +217,7 @@ repeated in CI), `net_borrow_conflict` (E0111), `net_view_channel` (E0120), `net
 
 ## IO6. Name resolution (decision, issue #408)
 
-`lookup_host` runs `getaddrinfo` on the helper pool (`__offload`). The resolver may take hundreds of milliseconds or
+`lookup_host` runs `getaddrinfo` on the helper pool (`offload`). The resolver may take hundreds of milliseconds or
 block on a broken DNS server; running it on a worker would stall the pool. The primitive
 `__dns_lookup(host) -> Result<String, i32>` returns one `a.b.c.d` per line, and `std` builds the `List<SocketAddr>`
 with the caller's port. The first address is the preferred one. A failure carries the resolver's code (`EAI_*` on
@@ -241,7 +241,7 @@ Tests: `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog`.
 * **The pool and the reactor are never stopped.** They live as long as the process, like the scheduler (TK10). Their
   records come from the C allocator and are not part of any test's leak report; a task's wait records and timer nodes
   are per call and are reported if leaked.
-* **Every `blocking` call uses a helper**, even from the main thread: `__offload_raw` submits the thunk and waits.
+* **Every `blocking` call uses a helper**, even from the main thread: `offload_raw` submits the thunk and waits.
   A worker only runs tasks, so a call made on a worker is always made from a task and parks it.
 * **Cancellation does not exist.** A wait ends when the event arrives, the deadline passes, or the program ends. There
   is no way for another task to cancel a pending read.

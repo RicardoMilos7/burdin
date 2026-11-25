@@ -204,7 +204,7 @@ Command {
         entry.push_str(value)
         let mut i: usize = 0
         while i < self.environment.len() {
-            if __same_env_name(__entry_name(self.environment[i].as_str()), key) {
+            if same_env_name(entry_name(self.environment[i].as_str()), key) {
                 break
             }
             i = i + 1
@@ -238,7 +238,7 @@ Command {
     fn env_remove(mut self, key: str) {
         let mut i: usize = 0
         while i < self.environment.len()
-            && !__same_env_name(__entry_name(self.environment[i].as_str()), key)
+            && !same_env_name(entry_name(self.environment[i].as_str()), key)
         {
             i = i + 1
         }
@@ -393,7 +393,7 @@ Command {
         let stdin_mode = self.stdin_mode
         let stdout_mode = self.stdout_mode
         let stderr_mode = self.stderr_mode
-        __spawn(self, stdin_mode, stdout_mode, stderr_mode)
+        spawn_child(self, stdin_mode, stdout_mode, stderr_mode)
     }
 
     /// Starts the child with the command's streams, waits for it, and returns its exit status.
@@ -418,7 +418,7 @@ Command {
         let stdin_mode = self.stdin_mode
         let stdout_mode = self.stdout_mode
         let stderr_mode = self.stderr_mode
-        let mut child: Child = match __spawn(self, stdin_mode, stdout_mode, stderr_mode) {
+        let mut child: Child = match spawn_child(self, stdin_mode, stdout_mode, stderr_mode) {
             Result.Ok(child) => child,
             Result.Err(failure) => return Result.Err(failure),
         }
@@ -446,7 +446,7 @@ Command {
     /// assert(out.stdout.len() > 0)
     /// ```
     fn output(own self): Result<Output, IoError> {
-        let mut child: Child = match __spawn(self, Stdio.Null, Stdio.Piped, Stdio.Piped) {
+        let mut child: Child = match spawn_child(self, Stdio.Null, Stdio.Piped, Stdio.Piped) {
             Result.Ok(child) => child,
             Result.Err(failure) => return Result.Err(failure),
         }
@@ -626,7 +626,7 @@ Child {
         if raw == -1 {
             return Result.Err(IoError.Run { command: self.command.clone(), kind: IoErrorKind.Other, os_code: Option.None })
         }
-        Result.Ok(__exit_status(raw))
+        Result.Ok(exit_status(raw))
     }
 
     /// Closes the child's standard input, reads the piped standard output and standard error to the end, and waits,
@@ -687,8 +687,8 @@ Child {
                 Result.Err(code) => {
                     return Result.Err(IoError.Read {
                         path: String.from("<child>"),
-                        kind: __failure_kind(code),
-                        os_code: __failure_code(code),
+                        kind: failure_kind(code),
+                        os_code: failure_code(code),
                     })
                 }
             }
@@ -701,8 +701,8 @@ Child {
                     __pipe_close(stdout_handle)
                     return Result.Err(IoError.Read {
                         path: String.from("<stdout>"),
-                        kind: __failure_kind(code),
-                        os_code: __failure_code(code),
+                        kind: failure_kind(code),
+                        os_code: failure_code(code),
                     })
                 }
             }
@@ -716,8 +716,8 @@ Child {
                     __pipe_close(stderr_handle)
                     return Result.Err(IoError.Read {
                         path: String.from("<stderr>"),
-                        kind: __failure_kind(code),
-                        os_code: __failure_code(code),
+                        kind: failure_kind(code),
+                        os_code: failure_code(code),
                     })
                 }
             }
@@ -875,8 +875,8 @@ ChildStdout {
             Result.Ok(text) => Result.Ok(text),
             Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdout>"),
-                kind: __failure_kind(code),
-                os_code: __failure_code(code),
+                kind: failure_kind(code),
+                os_code: failure_code(code),
             }),
         }
     }
@@ -910,8 +910,8 @@ ChildStdout {
             Result.Ok(line) => Result.Ok(line),
             Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stdout>"),
-                kind: __failure_kind(code),
-                os_code: __failure_code(code),
+                kind: failure_kind(code),
+                os_code: failure_code(code),
             }),
         }
     }
@@ -986,8 +986,8 @@ ChildStderr {
             Result.Ok(text) => Result.Ok(text),
             Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stderr>"),
-                kind: __failure_kind(code),
-                os_code: __failure_code(code),
+                kind: failure_kind(code),
+                os_code: failure_code(code),
             }),
         }
     }
@@ -1020,8 +1020,8 @@ ChildStderr {
             Result.Ok(line) => Result.Ok(line),
             Result.Err(code) => Result.Err(IoError.Read {
                 path: String.from("<stderr>"),
-                kind: __failure_kind(code),
-                os_code: __failure_code(code),
+                kind: failure_kind(code),
+                os_code: failure_code(code),
             }),
         }
     }
@@ -1166,19 +1166,19 @@ struct Output {
 // ---- the spawn machinery ---------------------------------------------------------------
 
 /// Starts `command` with the given stream modes and wraps the primitive's result.
-priv fn __spawn(
+priv fn spawn_child(
     command: Command,
     stdin_mode: Stdio,
     stdout_mode: Stdio,
     stderr_mode: Stdio,
 ): Result<Child, IoError> {
-    let environment = __child_environment(command.clear_environment, command.environment, command.removals)
+    let environment = child_environment(command.clear_environment, command.environment, command.removals)
     let directory = match command.directory {
         Option.Some(path) => path.clone(),
         Option.None => String.new(),
     }
     let command_line = if os() == Os.Windows {
-        __windows_command_line(command.program.as_str(), command.arguments)
+        windows_command_line(command.program.as_str(), command.arguments)
     } else {
         String.new()
     }
@@ -1188,9 +1188,9 @@ priv fn __spawn(
         environment,
         directory.as_str(),
         command_line.as_str(),
-        __mode(stdin_mode),
-        __mode(stdout_mode),
-        __mode(stderr_mode),
+        mode(stdin_mode),
+        mode(stdout_mode),
+        mode(stderr_mode),
     ) {
         Result.Ok(parts) => {
             let (pid, process, input, output, errors) = parts
@@ -1199,32 +1199,32 @@ priv fn __spawn(
                 pid,
                 process,
                 waited: false,
-                input: __child_stdin(input),
-                output: __child_stdout(output),
-                errors: __child_stderr(errors),
+                input: child_stdin(input),
+                output: child_stdout(output),
+                errors: child_stderr(errors),
             })
         }
         Result.Err(code) => Result.Err(IoError.Run {
             command: command.program.clone(),
-            kind: __failure_kind(code),
-            os_code: __failure_code(code),
+            kind: failure_kind(code),
+            os_code: failure_code(code),
         }),
     }
 }
 
 /// The kind of a process or pipe failure. Those primitives report 0 when the runtime path has no OS code, and 0
 /// is `Other` (`spec/errors.md`, ERR10-ERR11).
-priv fn __failure_kind(code: i32): IoErrorKind {
+priv fn failure_kind(code: i32): IoErrorKind {
     if code > 0 { __io_kind(code) } else { IoErrorKind.Other }
 }
 
 /// The OS code of a process or pipe failure, when the primitive reported one.
-priv fn __failure_code(code: i32): Option<i32> {
+priv fn failure_code(code: i32): Option<i32> {
     if code > 0 { Option.Some(code) } else { Option.None }
 }
 
 /// The primitive's stream mode: 0 inherited, 1 piped, 2 null.
-priv fn __mode(mode: Stdio): i32 {
+priv fn mode(mode: Stdio): i32 {
     match mode {
         Stdio.Inherit => 0,
         Stdio.Piped => 1,
@@ -1232,7 +1232,7 @@ priv fn __mode(mode: Stdio): i32 {
     }
 }
 
-priv fn __child_stdin(handle: usize): Option<ChildStdin> {
+priv fn child_stdin(handle: usize): Option<ChildStdin> {
     if handle == 0 {
         Option.None
     } else {
@@ -1240,7 +1240,7 @@ priv fn __child_stdin(handle: usize): Option<ChildStdin> {
     }
 }
 
-priv fn __child_stdout(handle: usize): Option<ChildStdout> {
+priv fn child_stdout(handle: usize): Option<ChildStdout> {
     if handle == 0 {
         Option.None
     } else {
@@ -1248,7 +1248,7 @@ priv fn __child_stdout(handle: usize): Option<ChildStdout> {
     }
 }
 
-priv fn __child_stderr(handle: usize): Option<ChildStderr> {
+priv fn child_stderr(handle: usize): Option<ChildStderr> {
     if handle == 0 {
         Option.None
     } else {
@@ -1258,7 +1258,7 @@ priv fn __child_stderr(handle: usize): Option<ChildStderr> {
 
 /// The final environment of the child: the inherited entries that are neither removed nor overridden, then the
 /// entries `env` set.
-priv fn __child_environment(
+priv fn child_environment(
     clear: bool,
     overrides: List<String>,
     removals: List<String>,
@@ -1267,8 +1267,8 @@ priv fn __child_environment(
     if !clear {
         let inherited = __env_list()
         for entry in inherited {
-            if __listed(__entry_name(entry.as_str()), overrides)
-                || __listed(__entry_name(entry.as_str()), removals)
+            if listed(entry_name(entry.as_str()), overrides)
+                || listed(entry_name(entry.as_str()), removals)
             {
                 continue
             }
@@ -1282,9 +1282,9 @@ priv fn __child_environment(
 }
 
 /// Whether `name` names one of the `NAME=VALUE` entries.
-priv fn __listed(name: str, entries: List<String>): bool {
+priv fn listed(name: str, entries: List<String>): bool {
     for entry in entries {
-        if __same_env_name(name, __entry_name(entry.as_str())) {
+        if same_env_name(name, entry_name(entry.as_str())) {
             return true
         }
     }
@@ -1292,7 +1292,7 @@ priv fn __listed(name: str, entries: List<String>): bool {
 }
 
 /// The name part of a `NAME=VALUE` environment entry.
-priv fn __entry_name(entry: str): str {
+priv fn entry_name(entry: str): str {
     match entry.find('=') {
         Option.Some(at) => entry[0..at],
         Option.None => entry,
@@ -1300,7 +1300,7 @@ priv fn __entry_name(entry: str): str {
 }
 
 /// Whether two environment names are the same. Windows ignores case; Unix does not.
-priv fn __same_env_name(a: str, b: str): bool {
+priv fn same_env_name(a: str, b: str): bool {
     if os() == Os.Windows {
         a.to_lowercase() == b.to_lowercase()
     } else {
@@ -1310,7 +1310,7 @@ priv fn __same_env_name(a: str, b: str): bool {
 
 /// The exit status a primitive's wait result describes: 0 and up is a code, below -1 a signal, and -1 is the
 /// failure the caller reports as an error.
-priv fn __exit_status(raw: i64): ExitStatus {
+priv fn exit_status(raw: i64): ExitStatus {
     if raw >= 0 {
         ExitStatus { exit_code: Option.Some(raw as i32), term_signal: Option.None }
     } else if raw == -1 {
@@ -1322,19 +1322,19 @@ priv fn __exit_status(raw: i64): ExitStatus {
 
 /// The command line `CreateProcessW` parses, with each word quoted by the C runtime's rules. Only Windows uses it;
 /// on Unix the program and each argument are passed as separate strings.
-priv fn __windows_command_line(program: str, arguments: List<String>): String {
+priv fn windows_command_line(program: str, arguments: List<String>): String {
     let mut line = String.new()
-    __append_quoted(mut line, program)
+    append_quoted(mut line, program)
     for argument in arguments {
         line.push(' ')
-        __append_quoted(mut line, argument.as_str())
+        append_quoted(mut line, argument.as_str())
     }
     line
 }
 
 /// Appends one word, wrapped in quotes when it is empty or contains a space or a tab, and with a quote escaped by
 /// the backslashes that precede it doubled.
-priv fn __append_quoted(mut out: String, argument: str) {
+priv fn append_quoted(mut out: String, argument: str) {
     let mut quote = argument.len() == 0
     for c in argument.chars() {
         if c == ' ' || c == '\t' {
@@ -1350,23 +1350,23 @@ priv fn __append_quoted(mut out: String, argument: str) {
             backslashes = backslashes + 1
         } else {
             if c == '"' {
-                __push_backslashes(mut out, backslashes * 2 + 1)
+                push_backslashes(mut out, backslashes * 2 + 1)
             } else {
-                __push_backslashes(mut out, backslashes)
+                push_backslashes(mut out, backslashes)
             }
             backslashes = 0
             out.push(c)
         }
     }
     if quote {
-        __push_backslashes(mut out, backslashes * 2)
+        push_backslashes(mut out, backslashes * 2)
         out.push('"')
     } else {
-        __push_backslashes(mut out, backslashes)
+        push_backslashes(mut out, backslashes)
     }
 }
 
-priv fn __push_backslashes(mut out: String, count: i32) {
+priv fn push_backslashes(mut out: String, count: i32) {
     let mut i: i32 = 0
     while i < count {
         out.push('\\')

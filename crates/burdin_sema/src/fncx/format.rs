@@ -420,33 +420,33 @@ impl FnCx<'_> {
         };
         let f = f.clone();
         match e.ty.clone() {
-            Ty::Int(IntTy::I128) => self.std_call("__fmt_i128", vec![e, int(128), f], span),
-            Ty::Int(IntTy::U128) => self.std_call("__fmt_u128", vec![e, f], span),
+            Ty::Int(IntTy::I128) => self.std_call("fmt_i128", vec![e, int(128), f], span),
+            Ty::Int(IntTy::U128) => self.std_call("fmt_u128", vec![e, f], span),
             Ty::Int(i) if i.signed() => {
                 let bits = i128::from(i.bits());
-                self.std_call("__fmt_i64", vec![cast(e, IntTy::I64), int(bits), f], span)
+                self.std_call("fmt_i64", vec![cast(e, IntTy::I64), int(bits), f], span)
             }
-            Ty::Int(_) => self.std_call("__fmt_u64", vec![cast(e, IntTy::U64), f], span),
+            Ty::Int(_) => self.std_call("fmt_u64", vec![cast(e, IntTy::U64), f], span),
             Ty::Float(ft) => {
                 let single = ft == tir::FloatTy::F32;
                 let value = mk(tir::ExprKind::Cast(Box::new(e)), Ty::Float(tir::FloatTy::F64), span);
-                self.std_call("__fmt_float", vec![value, boolean(single), boolean(debug), f], span)
+                self.std_call("fmt_float", vec![value, boolean(single), boolean(debug), f], span)
             }
-            Ty::Bool => self.std_call("__fmt_bool", vec![e, f], span),
-            Ty::Char => self.std_call(if debug { "__debug_char" } else { "__fmt_char" }, vec![e, f], span),
-            Ty::Str => self.std_call(if debug { "__debug_str" } else { "__fmt_str" }, vec![e, f], span),
+            Ty::Bool => self.std_call("fmt_bool", vec![e, f], span),
+            Ty::Char => self.std_call(if debug { "debug_char" } else { "fmt_char" }, vec![e, f], span),
+            Ty::Str => self.std_call(if debug { "debug_str" } else { "fmt_str" }, vec![e, f], span),
             Ty::String => {
                 let view = mk(tir::ExprKind::StringAsStr(Box::new(e)), Ty::Str, span);
-                self.std_call(if debug { "__debug_str" } else { "__fmt_str" }, vec![view, f], span)
+                self.std_call(if debug { "debug_str" } else { "fmt_str" }, vec![view, f], span)
             }
-            Ty::Unit => self.std_call("__debug_unit", vec![f], span),
-            Ty::Option(_) => self.generic_format("__debug_option", e, f_name, span),
-            Ty::Result(..) => self.generic_format("__debug_result", e, f_name, span),
-            Ty::List(_, _) => self.generic_format("__debug_list", e, f_name, span),
-            Ty::Map(_, _, _) => self.generic_format("__debug_map", e, f_name, span),
-            Ty::Heap(_, _) => self.generic_format("__debug_heap", e, f_name, span),
+            Ty::Unit => self.std_call("debug_unit", vec![f], span),
+            Ty::Option(_) => self.generic_format("debug_option", e, f_name, span),
+            Ty::Result(..) => self.generic_format("debug_result", e, f_name, span),
+            Ty::List(_, _) => self.generic_format("debug_list", e, f_name, span),
+            Ty::Map(_, _, _) => self.generic_format("debug_map", e, f_name, span),
+            Ty::Heap(_, _) => self.generic_format("debug_heap", e, f_name, span),
             Ty::Tuple(ts) => {
-                let name = format!("__debug_tuple{}", ts.len());
+                let name = format!("debug_tuple{}", ts.len());
                 self.generic_format(&name, e, f_name, span)
             }
             _ => {
@@ -470,7 +470,7 @@ impl FnCx<'_> {
         }
     }
 
-    /// A call to one of the standard library's generic `__debug_*` helpers with the value as its first argument
+    /// A call to one of the standard library's generic `debug_*` helpers with the value as its first argument
     /// and the formatter as its second.
     fn generic_format(&mut self, name: &str, value: tir::Expr, f_name: &str, span: Span) -> tir::Expr {
         let Some(g) = self.globals.std_generic(name) else {

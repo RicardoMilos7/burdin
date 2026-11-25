@@ -12,7 +12,7 @@
 use int.rotate_left
 
 /// The next SplitMix64 output for `state`, which it advances.
-priv fn __splitmix_next(mut state: u64): u64 {
+priv fn splitmix_next(mut state: u64): u64 {
     state = state.wrapping_add(0x9E3779B97F4A7C15)
     let mut z = state
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
@@ -57,10 +57,10 @@ Random {
     /// ```
     fn seeded(seed: u64): Random {
         let mut state = seed
-        let s0 = __splitmix_next(mut state)
-        let s1 = __splitmix_next(mut state)
-        let s2 = __splitmix_next(mut state)
-        let s3 = __splitmix_next(mut state)
+        let s0 = splitmix_next(mut state)
+        let s1 = splitmix_next(mut state)
+        let s2 = splitmix_next(mut state)
+        let s3 = splitmix_next(mut state)
         Random { s0: s0, s1: s1, s2: s2, s3: s3 }
     }
 

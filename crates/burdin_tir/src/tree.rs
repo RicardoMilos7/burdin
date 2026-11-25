@@ -60,6 +60,10 @@ pub struct Function {
     /// `--explain-ownership`, the language server's ownership lens, and the REPL render these; no tool recomputes
     /// them.
     pub events: Vec<OwnershipEvent>,
+    /// A package-private function of the standard library (`priv` in `std/src`). The compiler calls some of them
+    /// itself (an interpolated string's formatter, an eager `List` method, an integer's associated function), and
+    /// the ownership events leave those calls out: the lens shows what the program wrote.
+    pub internal: bool,
 }
 
 /// A whole local whose location the debug information ends after `span`: the statement that moved it out

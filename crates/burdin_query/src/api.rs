@@ -740,7 +740,9 @@ impl Analysis {
         }
         for (id, f) in program.functions.iter().enumerate() {
             let qualified = source_text(&f.name);
+            // A package-private standard-library method is not a member a program can name.
             if let Some(method) = qualified.strip_prefix(&format!("{name}."))
+                && !f.internal
                 && program.signatures.get(id).is_some_and(|sig| sig.has_self)
             {
                 out.push(Member {

@@ -183,7 +183,7 @@ impl FnCx<'_> {
         let str_string = matches!((&l.ty, &r.ty), (Ty::Str, Ty::String));
         if string_str && matches!(op, B::Add) {
             let view = string_view(l);
-            return self.std_call("__concat", vec![view, r], span);
+            return self.std_call("concat", vec![view, r], span);
         }
         let comparison = matches!(op, B::Eq | B::Ne | B::Lt | B::Gt | B::Le | B::Ge);
         let (l, r) = if comparison && string_str {

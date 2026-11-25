@@ -29,12 +29,12 @@ extern "C" {
     priv fn _access(path: CPtr<CChar>, mode: i32): i32
 }
 
-priv fn __is_sep(c: char, windows: bool): bool {
+priv fn is_sep(c: char, windows: bool): bool {
     c == '/' || (windows && c == '\\')
 }
 
 /// The length of a Windows drive prefix (`C:`), or zero.
-priv fn __prefix_len(chars: List<char>, windows: bool): usize {
+priv fn prefix_len(chars: List<char>, windows: bool): usize {
     if windows && chars.len() >= 2 && chars[1] == ':' {
         let c = chars[0]
         if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
@@ -45,21 +45,21 @@ priv fn __prefix_len(chars: List<char>, windows: bool): usize {
 }
 
 /// Whether a separator follows the prefix.
-priv fn __is_rooted(chars: List<char>, prefix: usize, windows: bool): bool {
-    chars.len() > prefix && __is_sep(chars[prefix], windows)
+priv fn is_rooted(chars: List<char>, prefix: usize, windows: bool): bool {
+    chars.len() > prefix && is_sep(chars[prefix], windows)
 }
 
 /// Whether the text starts with two separators on Windows (a share such as `\\server\share`).
-priv fn __is_unc(chars: List<char>, windows: bool): bool {
-    windows && chars.len() >= 2 && __is_sep(chars[0], true) && __is_sep(chars[1], true)
+priv fn is_unc(chars: List<char>, windows: bool): bool {
+    windows && chars.len() >= 2 && is_sep(chars[0], true) && is_sep(chars[1], true)
 }
 
 /// Whether the last of the names is a real name, not `..`: the one a following `..` cancels.
-priv fn __ends_in_name(names: List<String>): bool {
+priv fn ends_in_name(names: List<String>): bool {
     names.len() > 0 && names[names.len() - 1].as_str() != ".."
 }
 
-priv fn __slice(chars: List<char>, from: usize, to: usize): String {
+priv fn slice(chars: List<char>, from: usize, to: usize): String {
     let mut out = String.new()
     let mut i = from
     while i < to {
@@ -70,16 +70,16 @@ priv fn __slice(chars: List<char>, from: usize, to: usize): String {
 }
 
 /// The character ranges of the components after `start`: empty pieces and `.` are skipped.
-priv fn __spans(chars: List<char>, start: usize, windows: bool): List<(usize, usize)> {
+priv fn spans(chars: List<char>, start: usize, windows: bool): List<(usize, usize)> {
     let mut out = List<(usize, usize)>.new()
     let n = chars.len()
     let mut i = start
     while i < n {
-        while i < n && __is_sep(chars[i], windows) {
+        while i < n && is_sep(chars[i], windows) {
             i = i + 1
         }
         let from = i
-        while i < n && !__is_sep(chars[i], windows) {
+        while i < n && !is_sep(chars[i], windows) {
             i = i + 1
         }
         if i > from && !(i - from == 1 && chars[from] == '.') {
@@ -91,7 +91,7 @@ priv fn __spans(chars: List<char>, start: usize, windows: bool): List<(usize, us
 
 /// The position of the dot that starts the extension of a file name, if it has one. A name that starts with a dot
 /// (`.profile`) has no extension.
-priv fn __dot(chars: List<char>): Option<usize> {
+priv fn dot(chars: List<char>): Option<usize> {
     let mut i = chars.len()
     while i > 1 {
         i = i - 1
@@ -102,18 +102,18 @@ priv fn __dot(chars: List<char>): Option<usize> {
     Option.None
 }
 
-priv fn __stem(name: str): String {
+priv fn stem(name: str): String {
     let chars = name.to_char_list()
-    match __dot(chars) {
-        Option.Some(d) => __slice(chars, 0, d),
+    match dot(chars) {
+        Option.Some(d) => slice(chars, 0, d),
         Option.None => String.from(name),
     }
 }
 
-priv fn __extension(name: str): Option<String> {
+priv fn extension(name: str): Option<String> {
     let chars = name.to_char_list()
-    match __dot(chars) {
-        Option.Some(d) => Option.Some(__slice(chars, d + 1, chars.len())),
+    match dot(chars) {
+        Option.Some(d) => Option.Some(slice(chars, d + 1, chars.len())),
         Option.None => Option.None,
     }
 }
@@ -182,13 +182,13 @@ Path {
     fn is_absolute(self): bool {
         let chars = self.text.to_char_list()
         if !self.is_windows {
-            return __is_rooted(chars, 0, false)
+            return is_rooted(chars, 0, false)
         }
-        let prefix = __prefix_len(chars, true)
+        let prefix = prefix_len(chars, true)
         if prefix > 0 {
-            return __is_rooted(chars, prefix, true)
+            return is_rooted(chars, prefix, true)
         }
-        __is_unc(chars, true)
+        is_unc(chars, true)
     }
 
     /// The opposite of `is_absolute`.
@@ -209,11 +209,11 @@ Path {
     /// ```
     fn drive(self): Option<String> {
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, self.is_windows)
+        let prefix = prefix_len(chars, self.is_windows)
         if prefix == 0 {
             return Option.None
         }
-        Option.Some(__slice(chars, 0, prefix))
+        Option.Some(slice(chars, 0, prefix))
     }
 
     /// The names in the path, in order, without separators, empty pieces, or `.`. `..` is kept.
@@ -225,12 +225,12 @@ Path {
     /// ```
     fn components(self): List<String> {
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, self.is_windows)
-        let spans = __spans(chars, prefix, self.is_windows)
+        let prefix = prefix_len(chars, self.is_windows)
+        let spans = spans(chars, prefix, self.is_windows)
         let mut out = List<String>.new()
         let mut i: usize = 0
         while i < spans.len() {
-            out.push(__slice(chars, spans[i].0, spans[i].1))
+            out.push(slice(chars, spans[i].0, spans[i].1))
             i = i + 1
         }
         out
@@ -253,13 +253,13 @@ Path {
             return given
         }
         let given_chars = other.to_char_list()
-        if __prefix_len(given_chars, w) > 0 {
+        if prefix_len(given_chars, w) > 0 {
             return given
         }
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, w)
-        if w && __is_rooted(given_chars, 0, true) {
-            let mut out = __slice(chars, 0, prefix)
+        let prefix = prefix_len(chars, w)
+        if w && is_rooted(given_chars, 0, true) {
+            let mut out = slice(chars, 0, prefix)
             out.push_str(other)
             return Path { text: out, is_windows: w }
         }
@@ -269,7 +269,7 @@ Path {
             return Path { text: out, is_windows: w }
         }
         let last = chars[chars.len() - 1]
-        if !__is_sep(last, w) && chars.len() != prefix {
+        if !is_sep(last, w) && chars.len() != prefix {
             out.push(self.separator())
         }
         out.push_str(other)
@@ -285,18 +285,18 @@ Path {
     /// ```
     fn parent(self): Option<Path> {
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, self.is_windows)
-        let spans = __spans(chars, prefix, self.is_windows)
+        let prefix = prefix_len(chars, self.is_windows)
+        let spans = spans(chars, prefix, self.is_windows)
         if spans.len() == 0 {
             return Option.None
         }
         let mut end = prefix
         if spans.len() > 1 {
             end = spans[spans.len() - 2].1
-        } else if __is_rooted(chars, prefix, self.is_windows) {
+        } else if is_rooted(chars, prefix, self.is_windows) {
             end = prefix + 1
         }
-        Option.Some(Path { text: __slice(chars, 0, end), is_windows: self.is_windows })
+        Option.Some(Path { text: slice(chars, 0, end), is_windows: self.is_windows })
     }
 
     /// The last name, unless the path ends in `..` or has no names.
@@ -307,12 +307,12 @@ Path {
     /// ```
     fn file_name(self): Option<String> {
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, self.is_windows)
-        let spans = __spans(chars, prefix, self.is_windows)
+        let prefix = prefix_len(chars, self.is_windows)
+        let spans = spans(chars, prefix, self.is_windows)
         if spans.len() == 0 {
             return Option.None
         }
-        let name = __slice(chars, spans[spans.len() - 1].0, spans[spans.len() - 1].1)
+        let name = slice(chars, spans[spans.len() - 1].0, spans[spans.len() - 1].1)
         if name.as_str() == ".." {
             return Option.None
         }
@@ -326,7 +326,7 @@ Path {
     /// ```
     fn file_stem(self): Option<String> {
         match self.file_name() {
-            Option.Some(name) => Option.Some(__stem(name.as_str())),
+            Option.Some(name) => Option.Some(stem(name.as_str())),
             Option.None => Option.None,
         }
     }
@@ -340,7 +340,7 @@ Path {
     /// ```
     fn extension(self): Option<String> {
         match self.file_name() {
-            Option.Some(name) => __extension(name.as_str()),
+            Option.Some(name) => extension(name.as_str()),
             Option.None => Option.None,
         }
     }
@@ -353,12 +353,12 @@ Path {
     /// ```
     fn with_file_name(self, name: str): Path {
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, self.is_windows)
-        let spans = __spans(chars, prefix, self.is_windows)
+        let prefix = prefix_len(chars, self.is_windows)
+        let spans = spans(chars, prefix, self.is_windows)
         if spans.len() == 0 {
             return self.join(name)
         }
-        let mut out = __slice(chars, 0, spans[spans.len() - 1].0)
+        let mut out = slice(chars, 0, spans[spans.len() - 1].0)
         out.push_str(name)
         Path { text: out, is_windows: self.is_windows }
     }
@@ -374,7 +374,7 @@ Path {
         match self.file_name() {
             Option.None => self.clone(),
             Option.Some(name) => {
-                let mut renamed = __stem(name.as_str())
+                let mut renamed = stem(name.as_str())
                 if extension.len() > 0 {
                     renamed.push('.')
                     renamed.push_str(extension)
@@ -395,26 +395,26 @@ Path {
     fn normalize(self): Path {
         let w = self.is_windows
         let chars = self.text.to_char_list()
-        let prefix = __prefix_len(chars, w)
-        let rooted = __is_rooted(chars, prefix, w)
-        let unc = __is_unc(chars, w)
-        let spans = __spans(chars, prefix, w)
+        let prefix = prefix_len(chars, w)
+        let rooted = is_rooted(chars, prefix, w)
+        let unc = is_unc(chars, w)
+        let spans = spans(chars, prefix, w)
         let mut stack = List<String>.new()
         let mut i: usize = 0
         while i < spans.len() {
             let from = spans[i].0
             let to = spans[i].1
             let is_parent = to - from == 2 && chars[from] == '.' && chars[from + 1] == '.'
-            let can_pop = __ends_in_name(stack)
+            let can_pop = ends_in_name(stack)
             if is_parent && can_pop {
                 let dropped = stack.pop()
             } else if !is_parent || !rooted {
-                stack.push(__slice(chars, from, to))
+                stack.push(slice(chars, from, to))
             }
             i = i + 1
         }
         let sep = self.separator()
-        let mut out = __slice(chars, 0, prefix)
+        let mut out = slice(chars, 0, prefix)
         if unc {
             out.push(sep)
         }

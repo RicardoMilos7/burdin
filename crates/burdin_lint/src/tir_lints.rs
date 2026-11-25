@@ -732,12 +732,15 @@ fn root_of(e: &Expr) -> Option<LocalId> {
     }
 }
 
-/// `__list_map<...>` is the eager `map`; the name of the method is what follows `__list_`.
+/// `std.iter.list_map<...>` is the eager `map`; the name of the method is what follows `list_` in the standard library.
 fn eager_name(name: &str) -> Option<&str> {
-    // The name is `std.iter.__list_map<i32, ...>`: drop the type arguments, then the module path.
+    // The name is `std.iter.list_map<i32, ...>`: drop the type arguments, then the module path.
     let path = name.split('<').next().unwrap_or(name);
+    if !path.starts_with("std.") {
+        return None;
+    }
     let last = path.rsplit('.').next().unwrap_or(path);
-    let method = last.strip_prefix("__list_")?;
+    let method = last.strip_prefix("list_")?;
     ["map", "filter", "fold", "any", "all", "find"].into_iter().find(|m| *m == method)
 }
 
