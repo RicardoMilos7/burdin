@@ -169,6 +169,10 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 ## Issue workflow
 
 - Every GitHub issue ends with a `## Verification` section. If it is missing, add it before starting.
+- **Every issue an agent creates gets labels when it is created.** Pick them from the repository's existing labels
+  (`gh label list`): a type (`bug`, `enhancement`, `documentation`, `question`, `decision`), the area it touches
+  (`compiler`, `memory-model`, `stdlib`, `tooling`, `testing`, `runtime`, `infrastructure`), and the stage when it
+  belongs to one (`stage-1`, `stage-2`, `stage-3`, `stage-0-gap`, `when-wanted`). Do not invent new labels.
 - **Every pull request states which issue it closes**, in the body, with a closing keyword and the issue number
   (`Closes #12`), one line per issue when it closes several. A PR that closes no issue says why in its body instead of
   leaving it unstated.
