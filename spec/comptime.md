@@ -106,6 +106,9 @@ Both branches are type-checked and memory-checked like an ordinary `if`, so the 
 types; the branch that is not selected is not evaluated, so a comptime expression, `comptime assert`, or panic in it
 has no effect. The kept branch has the scoping and drop rules of the branch it was: its block is still a block.
 
+`target.os()` and `target.arch()` report the platform the program is built for: the host's, or the one `--target`
+names (`spec/cross-compilation.md`, XC2). Compile-time evaluation itself still runs on the host.
+
 ## CT6. `comptime for`
 
 `comptime for pattern in iterable { body }` evaluates `iterable` at compile time and repeats the body once per

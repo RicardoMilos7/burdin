@@ -4,6 +4,23 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Cross-compilation (issue #282, 2026-11-24).** `burdin build --target <triple>` and `burdin check --target <triple>`
+build and check for any of six platforms (x86-64 and arm64 with Linux GNU, macOS, and Windows MSVC); the rules are
+`spec/cross-compilation.md` XC1-XC12 and the tests are `tests/check_cross.py` (run in CI beside the linker check) and
+the unit tests in `burdin_tir/src/target.rs`, `burdin_codegen/src/platform.rs`, and `burdin_driver/src/platform.rs`.
+The target is recorded once per command in `burdin_tir::target` (a process-global, so `target.os()`/`target.arch()`,
+`cfg(...)` tables, codegen, and the driver's file names and link all read the same value); a build script is compiled
+with it reset to the host (`build.rs`). The code generator picks its target machine from it (`target_triple` in
+`burdin_codegen/src/lib.rs`), and the runtime's host-header constants (`struct stat`, `dirent`, `addrinfo`, socket option
+numbers, `errno` codes) became per-platform tables (`SysLayout`); a unit test checks the host's table against `libc`.
+The cross link is a clang driver (`BURDIN_CC_<TRIPLE>`, `BURDIN_CC`, `clang`) with `--target`, `--sysroot` from
+`BURDIN_SYSROOT[_<TRIPLE>]`, and lld (`link_cross` in `main.rs`); no toolchain is installed or located. Verified in
+WSL by building every target's object and checking its ELF/Mach-O/COFF machine, the platform marks in the IR, and the
+link command through a stand-in driver. Not verified: running a cross-built program (no arm64 or macOS/Windows
+machine here), and the non-host `SysLayout` tables are from the C headers, not measured. Gaps: `burdin run`, `test`,
+`bench`, `fuzz`, `asm`, `bloat`, and `expand` have no `--target`; `--sanitize`, PGO, and `[rust.crates]` are refused
+with it; the toolchain manager still refuses target components (`spec/toolchain.md` TC11), which is the next step if
+cross sysroots are ever distributed; `tests/check_cross.py` skips the clang-cl stand-in on a Windows host.
 **`match` on an `any I` (issue #926 item 4, 2026-11-24).** A `match` arm may be a type pattern `name: T` or `_: T`
 (`spec/existentials.md` AN15, `spec/grammar.md` `TypePat`), on an `any I` or an `AnyError`; a final catch-all (`else`, `_`, or a
 binding that receives the whole box) is required (E0006 without one). Decision: the design said an `Error` is inspected "with

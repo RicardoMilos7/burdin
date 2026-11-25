@@ -38,6 +38,7 @@ python3 tests/check_ci.py                validate the CI workflow, its caches, a
 python3 tests/check_deps.py              audit the dependency pins and licenses (no compiler needed)
 python3 tests/check_platform.py          check the host triple and 64-bit isize/usize (needs a built driver)
 python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
+python3 tests/check_cross.py             check `--target`: the six targets' objects, the target facts, the per-platform runtime layouts, and the cross link (needs a built driver)
 python3 tests/check_docs.py              check documentation links and the driver contract (needs a built driver)
 bun run check:examples                   in website/: compile and run the website's examples and Burdin code blocks (needs Bun and a built burdin)
 bun run check:links                      in website/: check every internal link of the built site

@@ -53,7 +53,7 @@ impl EmitKind {
             EmitKind::LlvmIrOpt => ".opt.ll",
             EmitKind::LlvmBc => ".bc",
             EmitKind::Asm => ".s",
-            EmitKind::Obj if cfg!(windows) => ".obj",
+            EmitKind::Obj if crate::platform::windows() => ".obj",
             EmitKind::Obj => ".o",
             EmitKind::Deps => ".deps",
         }
@@ -84,7 +84,7 @@ impl Emit {
 
 /// See [`Emit::path`].
 pub(crate) fn artifact_path(output: &Path, kind: EmitKind) -> PathBuf {
-    let exe = std::env::consts::EXE_EXTENSION;
+    let exe = crate::platform::exe_extension();
     let base = if !exe.is_empty() && output.extension().is_some_and(|e| e == exe) {
         output.with_extension("")
     } else {

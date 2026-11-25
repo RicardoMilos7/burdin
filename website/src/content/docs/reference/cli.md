@@ -32,6 +32,27 @@ $ burdin build -o hello hello.bd
 $ burdin check .
 ```
 
+### Building for another platform
+
+`burdin build --target <triple>` builds for a platform other than the one you are on, and `burdin check --target
+<triple>` checks the program as it is there. The targets are `x86_64` or `aarch64` with `unknown-linux-gnu`,
+`apple-darwin`, or `pc-windows-msvc`. `target.os()` and `target.arch()` report the target, so a `comptime if` on them
+keeps the target's code.
+
+```console
+$ burdin build --target aarch64-unknown-linux-gnu --emit obj,asm -o hello hello.bd
+$ BURDIN_CC=clang BURDIN_SYSROOT=/opt/aarch64-sysroot \
+    burdin build --target aarch64-unknown-linux-gnu -o hello hello.bd
+```
+
+The link needs a clang driver and the target's system root, which you provide: `BURDIN_CC_<TRIPLE>` or `BURDIN_CC`
+names the driver (`<TRIPLE>` is the triple in capitals with `_` for `-`, such as `BURDIN_CC_AARCH64_UNKNOWN_LINUX_GNU`),
+and `BURDIN_SYSROOT_<TRIPLE>` or `BURDIN_SYSROOT` names the root. The linker is lld unless `BURDIN_LD` names another. A
+Windows target links with `clang-cl` and the Windows SDK. Without a cross toolchain, `--emit obj` still writes the
+object file. A program built for another platform cannot be run, tested, or benchmarked by Burdin, so `--target` is
+only for `build` and `check`; it does not combine with `--sanitize`, profile-guided optimization, or a `[rust.crates]`
+package. See `spec/cross-compilation.md` for the exact rules.
+
 ## Testing and measuring
 
 | Command | What it does |

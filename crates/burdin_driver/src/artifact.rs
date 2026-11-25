@@ -70,6 +70,12 @@ impl Plan {
         rust_libs: &[String],
         options: &CompileOptions,
     ) -> Option<Plan> {
+        // A build for another platform is not cached: its executable cannot be told from the host's by the
+        // fingerprint's inputs, and the object cache (keyed by the triple) already saves the codegen
+        // (`spec/cross-compilation.md`, XC9).
+        if burdin_tir::target::is_cross() {
+            return None;
+        }
         let package_dir = loaded.packages.get(loaded.entry_package)?.dir.as_deref();
         let emits = options.emit.is_some() || options.emit_ir.is_some();
         let kind = cached_kind(
