@@ -114,7 +114,7 @@ impl<'a> Resolver<'a> {
         if let Some(l) = self.locals.get(path) {
             return l.clone();
         }
-        let list = Rc::new(self.p.current().map(|a| a.locals(path)).unwrap_or_default());
+        let list = Rc::new(self.p.current_typed().map(|a| a.locals(path)).unwrap_or_default());
         self.locals.insert(path.to_string(), list.clone());
         list
     }
@@ -274,11 +274,11 @@ impl<'a> Resolver<'a> {
         // member `Color.Green` names (`spec/lsp.md`, LS8).
         if prev_dot && leading_dot(&ix, ti - 1) {
             let dot = ix.tokens[ti - 1].lo;
-            let ty = self.p.current().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
+            let ty = self.p.current_typed().and_then(|a| a.type_at(path, dot)).map(|t| t.ty);
             return ty.and_then(|ty| self.member(path, &ty, &name));
         }
         // The analysis's answer for an expression.
-        if let Some(analysis) = self.p.current()
+        if let Some(analysis) = self.p.current_typed()
             && let Some(r) = analysis.resolve_at(path, tok.lo)
             && r.name == name
         {
@@ -349,7 +349,7 @@ impl<'a> Resolver<'a> {
             if !receiver_is_member && let Some(ty) = self.local_type(path, &receiver) {
                 return self.member_of(path, &ix, receiver.lo, &ty, &name);
             }
-            if let Some(ty) = self.p.current().and_then(|a| a.type_at(path, receiver.lo)) {
+            if let Some(ty) = self.p.current_typed().and_then(|a| a.type_at(path, receiver.lo)) {
                 // The innermost expression at the receiver's start may be longer than the receiver (`a.b` at `a` is
                 // `a`); only one that ends at the dot is the receiver.
                 if ty.at.hi == receiver.hi || ty.at.hi == ix.tokens[ti - 1].lo {
@@ -387,7 +387,7 @@ impl<'a> Resolver<'a> {
         }
         let brace = enclosing_brace(ix, ti)?;
         let dot = ix.tokens.get(brace.checked_sub(1)?).filter(|t| t.kind == Tk::Dot)?;
-        let ty = self.p.current().and_then(|a| a.type_at(path, dot.lo)).map(|t| t.ty)?;
+        let ty = self.p.current_typed().and_then(|a| a.type_at(path, dot.lo)).map(|t| t.ty)?;
         Some(base_type(&ty))
     }
 
@@ -403,7 +403,7 @@ impl<'a> Resolver<'a> {
     /// the one that knows `sq`.
     fn local_type(&mut self, path: &str, tok: &crate::index::Tok) -> Option<String> {
         let name = tok.ident()?;
-        if let Some(analysis) = self.p.current()
+        if let Some(analysis) = self.p.current_typed()
             && let Some(r) = analysis.resolve_at(path, tok.lo)
             && r.name == name
             && matches!(r.kind, DefinitionKind::Local | DefinitionKind::Parameter)
@@ -603,7 +603,7 @@ pub fn type_definition(server: &mut Server, params: &Json) -> Reply {
     let (symbol, typed) = {
         let mut r = Resolver::new(&mut server.packages[i]);
         let symbol = r.symbol_at(&path, offset);
-        let typed = r.p.current().and_then(|a| a.type_at(&path, offset)).map(|t| t.ty);
+        let typed = r.p.current_typed().and_then(|a| a.type_at(&path, offset)).map(|t| t.ty);
         (symbol, typed)
     };
     let ty = match &symbol {

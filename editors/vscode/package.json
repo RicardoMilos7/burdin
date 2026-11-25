@@ -51,6 +51,18 @@
       {
         "command": "burdin.debug",
         "title": "Burdin: Debug"
+      },
+      {
+        "command": "burdin.searchReplace",
+        "title": "Burdin: Structural search and replace"
+      },
+      {
+        "command": "burdin.changeSignature",
+        "title": "Burdin: Change signature"
+      },
+      {
+        "command": "burdin.moveItem",
+        "title": "Burdin: Move item to module"
       }
     ],
     "configuration": {

@@ -201,18 +201,34 @@ impl Package {
             .collect()
     }
 
-    /// The analysis with a program to answer from: the latest when it has one, else the last good one, with the
-    /// texts it was computed on (`None` for the latest, whose texts are current).
+    /// The analysis to answer from: the latest when it has a typed program (a partial one beside a syntax error is
+    /// current for every statement the parser kept), else the last good one, with the texts it was computed on
+    /// (`None` for the latest, whose texts are current).
     pub fn program_analysis(&self) -> Option<(&Analysis, Option<&Texts>)> {
         match &self.analysis {
-            Some(a) if a.program.is_some() => Some((a, None)),
+            Some(a) if a.has_types() => Some((a, None)),
             _ => self.last_good.as_ref().map(|(a, texts)| (&**a, Some(texts))),
+        }
+    }
+
+    /// The last good analysis, when the latest one is partial: it still knows what a statement the parser dropped
+    /// (the one being typed) said, for the answers that map across the edit.
+    pub fn older_analysis(&self) -> Option<(&Analysis, &Texts)> {
+        match (&self.analysis, &self.last_good) {
+            (Some(a), Some((old, texts))) if a.is_partial() => Some((&**old, texts)),
+            _ => None,
         }
     }
 
     /// The analysis of the current texts with a program, if the latest one is current.
     pub fn current(&self) -> Option<&Analysis> {
         self.analysis.as_ref().filter(|a| a.program.is_some() && !self.dirty)
+    }
+
+    /// The analysis of the current texts that answers position queries (types, resolution, locals): like
+    /// [`Package::current`], but a partial program beside a syntax error counts (`spec/lsp.md`, LS21).
+    pub fn current_typed(&self) -> Option<&Analysis> {
+        self.analysis.as_ref().filter(|a| a.has_types() && !self.dirty)
     }
 
     pub fn text(&self, path: &str) -> Option<&str> {
@@ -307,8 +323,26 @@ impl Package {
 
 /// The path of a file as the databases spell it: canonical when it exists, without Windows' verbatim prefix.
 pub fn path_key(path: &Path) -> String {
-    let path = path.canonicalize().unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
-    package::source_path_text(&path)
+    package::source_path_text(&canonical_or_nearest(path))
+}
+
+/// The canonical path, or, for a path that does not exist yet (the target of a rename), the canonical form of its
+/// nearest existing ancestor with the missing names appended, so it spells the same as the paths of the files beside it.
+fn canonical_or_nearest(path: &Path) -> PathBuf {
+    if let Ok(found) = path.canonicalize() {
+        return found;
+    }
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut missing = Vec::new();
+    let mut ancestor = path.as_path();
+    while let (Some(parent), Some(name)) = (ancestor.parent(), ancestor.file_name()) {
+        missing.push(name.to_os_string());
+        if let Ok(found) = parent.canonicalize() {
+            return missing.iter().rev().fold(found, |dir, name| dir.join(name));
+        }
+        ancestor = parent;
+    }
+    path
 }
 
 /// The root a file belongs to: the nearest directory above it with a `burdin.toml`, or the file itself.

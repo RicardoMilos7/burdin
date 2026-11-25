@@ -426,6 +426,23 @@ impl Visit for Finder<'_> {
 }
 
 impl Analysis {
+    /// The program the position queries read: the checked one, or, beside a syntax error, the one checked against
+    /// the partial trees (`Analysis::partial`, `spec/query.md`, QL10).
+    pub(crate) fn typed(&self) -> Option<&Program> {
+        self.program.as_ref().or(self.partial.as_ref())
+    }
+
+    /// Whether the position queries have a typed program to read, even a partial one.
+    pub fn has_types(&self) -> bool {
+        self.typed().is_some()
+    }
+
+    /// Whether the typed program is the partial one: a file has a syntax error, and the statements and items the
+    /// parser could not read are not in it.
+    pub fn is_partial(&self) -> bool {
+        self.program.is_none() && self.partial.is_some()
+    }
+
     /// The path of every file of the program, in module order.
     pub fn file_paths(&self) -> &[String] {
         &self.files
@@ -447,14 +464,14 @@ impl Analysis {
 
     /// The innermost expression that contains a byte offset of a file, with its type.
     pub fn type_at(&self, path: &str, offset: u32) -> Option<Typed> {
-        let program = self.program.as_ref()?;
+        let program = self.typed()?;
         let (found, _) = self.found_at(program, path, offset)?;
         Some(Typed { ty: type_text(&found.ty), at: self.location(found.span) })
     }
 
     /// What the name at a byte offset of a file resolves to: a local or parameter, a function, or a constant.
     pub fn resolve_at(&self, path: &str, offset: u32) -> Option<Resolution> {
-        let program = self.program.as_ref()?;
+        let program = self.typed()?;
         let (found, _) = self.found_at(program, path, offset)?;
         let at = self.location(found.span);
         let (name, kind, definition, ty) = match &found.what {
@@ -483,7 +500,7 @@ impl Analysis {
 
     /// The signature of the function or method whose declaration contains a byte offset of a file.
     pub fn signature_of(&self, path: &str, offset: u32) -> Option<ItemSignature> {
-        let program = self.program.as_ref()?;
+        let program = self.typed()?;
         let file = self.file_id(path)?;
         // A generic function has one symbolic declaration and one function per instantiation, all sharing the
         // declaration's span; the declaration is the one that describes the item as written.
@@ -699,7 +716,7 @@ impl Analysis {
     /// completion after `.`. Methods come from the functions whose qualified name starts with the type's name.
     /// Empty for a type the program does not declare.
     pub fn members_of_type(&self, ty: &str) -> Vec<Member> {
-        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(program) = self.typed() else { return Vec::new() };
         let name = ty.split('<').next().unwrap_or(ty);
         let name = name.split('.').next_back().unwrap_or(name).trim();
         let mut out = Vec::new();

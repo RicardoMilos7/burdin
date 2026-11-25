@@ -6,6 +6,14 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #1068: language server gaps closed (children #1039, #1040, #1041, #1042, #1043, #1044, #1045, #1015).
+  Completion after arrays, slices, ranges, tuples, and built-in iterators; completion, hover, and definition keep
+  working beside a syntax error (the query library keeps a partial typed program, `spec/query.md` QL10, and the parser
+  keeps a dangling `p.` and an unclosed call). New quick fixes and actions: add the missing match arms (E0006), expand
+  a `_` arm, derive the missing interface (E0141, E0130), add the missing struct fields (E0003), create a function or
+  method, implement an interface; change signature, move item, and `burdin.searchReplace` in the editor (with VS Code
+  commands); `textDocument/typeDefinition`, `workspace/willRenameFiles`, completion and code-action resolve, and
+  on-type formatting. `spec/lsp.md` LS12, LS18, LS21-LS25 describe each and name its tests.
 - Removed `comptime` from the language; a macro system is planned to replace it. Removed: `comptime` expressions and
   blocks, `comptime` parameters and per-value specialization, `comptime if`/`for` as syntax, `comptime assert`,
   `comptime generate` (declaration generation, issue #280), the `[differential]` test attribute, and the reserved

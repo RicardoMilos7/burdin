@@ -959,7 +959,9 @@ An array `[T; N]` has the same methods through an implicit view: a method call w
 looks for a method of the array, then for a slice method or a slice extension, and takes `arr[0..N]` for that call.
 The view is a slice like any other, so it borrows the array and a mutating method needs the array binding to be
 mutable. A `List<T>` is viewed explicitly with `as_slice()` or by slicing it (`xs[a..b]`); there is no implicit
-`List`-to-slice view, so `xs.first()` is E0002 and `xs.as_slice().first()` is the spelling. That was the decision
+`List`-to-slice view: the methods `List` declares itself (`get`, `first`, `last`, `contains`, `sort`, ...) work on a
+list, and a slice-only extension such as `xs.binary_search(...)` or `xs.split_at(...)` is E0002 until the list is
+viewed, as in `xs.as_slice().binary_search(...)`. That was the decision
 the issue asked for: an explicit method for lists, an implicit view for arrays.
 
 ```

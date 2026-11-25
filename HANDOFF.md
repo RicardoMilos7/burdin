@@ -4,6 +4,12 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Language server gaps closed (2026-11-25, issue #1068).** All eight children are implemented (see `CHANGELOG.md`).
+Known limits: `p.` followed by a line that starts with an identifier still parses as a method chain, so completion uses
+the text fallbacks there; a call cut off by `}` is dropped by the parser; the editor's "add parameter" code action
+writes the placeholder `extra: i32 = 0` (the VS Code command `burdin.changeSignature` prompts instead); refactoring
+edits are one span per file.
+
 **Comptime removed (2026-11-25).** The owner did not like the `comptime` implementation, so the language surface was
 removed; a macro system will be designed later (a GitHub issue tracks it, and nothing of it is implemented). Removed:
 `comptime E` and `comptime { ... }` expressions, `comptime name: Type` parameters and per-value specialization (the

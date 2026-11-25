@@ -206,13 +206,28 @@ impl Parser<'_> {
                             let span = e.span.to(close.span);
                             e = Expr { kind: ExprKind::DynField(Box::new(e), Box::new(name)), span };
                         }
-                        _ => return Err(self.unexpected("a field name")),
+                        _ => {
+                            // A dangling dot (`p.`) keeps its receiver when the statement ends here anyway, so a
+                            // tool still sees `p` typed; anything else drops the statement as before.
+                            let reported = self.unexpected("a field name");
+                            if self.ends_statement() {
+                                break;
+                            }
+                            return Err(reported);
+                        }
                     }
                 }
                 TokenKind::LParen if !self.nl() => {
                     self.open(&TokenKind::LParen, false)?;
                     let mut args = Vec::new();
+                    // Set when the list stops at the end of a statement: the call is kept with the arguments read.
+                    let mut unclosed = false;
                     while !self.at(&TokenKind::RParen) {
+                        if self.starts_statement_only() && self.ends_line_inside_call() {
+                            unclosed = true;
+                            self.unexpected("an argument or `)`");
+                            break;
+                        }
                         let mut_span = self.at(&TokenKind::Mut).then(|| self.bump().span);
                         // `name: value` names the parameter this argument fills (spec/arguments.md, AG4).
                         // Inside an argument list, an identifier followed by `:` cannot start any other
@@ -231,8 +246,22 @@ impl Parser<'_> {
                             break;
                         }
                     }
-                    let close = self.close(&TokenKind::RParen)?;
-                    let span = e.span.to(close.span);
+                    // An unfinished call that ends its statement is kept with the arguments read (`foo(a,` and a line
+                    // break), so the callee still resolves and its signature is known.
+                    if !unclosed
+                        && !self.at(&TokenKind::RParen)
+                        && self.starts_statement_only()
+                        && self.ends_line_inside_call()
+                    {
+                        unclosed = true;
+                        self.unexpected("`)`");
+                    }
+                    let span = if unclosed {
+                        self.nl_stack.pop();
+                        e.span.to(self.prev_span())
+                    } else {
+                        e.span.to(self.close(&TokenKind::RParen)?.span)
+                    };
                     e = Expr { kind: ExprKind::Call(Box::new(e), args), span };
                 }
                 TokenKind::LBracket if !self.nl() => {
@@ -246,6 +275,12 @@ impl Parser<'_> {
             }
         }
         Ok(e)
+    }
+
+    /// Whether an unfinished argument list stops here: at the first token of a later line that is not a `}`. A `}`
+    /// ends the call's block, and that recovery (the call is dropped, the block survives) is the older, simpler one.
+    fn ends_line_inside_call(&self) -> bool {
+        self.tok().nl_before && !self.at(&TokenKind::RBrace)
     }
 
     /// Whether the current `<` (right after a member name) starts a type-argument list rather than a comparison

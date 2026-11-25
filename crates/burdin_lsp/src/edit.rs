@@ -76,7 +76,7 @@ pub fn hover(server: &mut Server, params: &Json) -> Reply {
                 }
                 (text, tok)
             }
-            None => match r.p.current().and_then(|a| a.type_at(&path, offset)) {
+            None => match r.p.current_typed().and_then(|a| a.type_at(&path, offset)) {
                 Some(typed) => (format!("```burdin\n{}\n```", typed.ty), Some(Loc::from(&typed.at))),
                 None => return Ok(Json::Null),
             },
@@ -166,11 +166,14 @@ fn common(a: &str, b: &str) -> (usize, usize) {
     (prefix, suffix)
 }
 
-/// An analysis with a program and a way to translate positions of the current text into it.
+/// An analysis with a program and a way to translate positions of the current text into it. When the current text
+/// has a syntax error, the analysis is the partial one of the current text, and `older` is the last good analysis:
+/// the statement being typed is missing from the first and is still in the second.
 pub(crate) struct Answering<'a> {
     pub(crate) analysis: &'a Analysis,
     old: Option<Rc<str>>,
     new: String,
+    older: Option<(&'a Analysis, Rc<str>)>,
 }
 
 impl Answering<'_> {
@@ -178,51 +181,76 @@ impl Answering<'_> {
         let (analysis, texts) = p.program_analysis()?;
         let new = p.text(path)?.to_string();
         let old = texts.and_then(|t| t.get(path).cloned());
-        Some(Answering { analysis, old, new })
+        let older = p.older_analysis().and_then(|(a, texts)| Some((a, texts.get(path)?.clone())));
+        Some(Answering { analysis, old, new, older })
     }
 
-    /// The offset in the analyzed text of an offset of the current text.
+    /// The analyses to ask, with the text each was computed on (`None`: the current text): the primary one, then the
+    /// last good one when the primary is partial.
+    fn sources(&self) -> impl Iterator<Item = (&Analysis, Option<&str>)> {
+        std::iter::once((self.analysis, self.old.as_deref()))
+            .chain(self.older.iter().map(|(a, text)| (*a, Some(&**text))))
+    }
+
+    /// The offset in the primary analysis's text of an offset of the current text.
     fn old_offset(&self, offset: u32) -> Option<u32> {
-        match &self.old {
-            Some(old) => map_to_old(old, &self.new, offset),
-            None => Some(offset),
-        }
+        to_old(self.old.as_deref(), &self.new, offset)
     }
 
+    /// The offset in the current text of an offset of the primary analysis's text.
     fn new_offset(&self, offset: u32) -> Option<u32> {
-        match &self.old {
-            Some(old) => map_to_new(old, &self.new, offset),
-            None => Some(offset),
-        }
+        to_new(self.old.as_deref(), &self.new, offset)
     }
 
     fn type_at(&self, path: &str, offset: u32) -> Option<String> {
-        let at = self.old_offset(offset)?;
-        self.analysis.type_at(path, at).map(|t| t.ty)
+        self.sources().find_map(|(analysis, old)| {
+            let at = to_old(old, &self.new, offset)?;
+            analysis.type_at(path, at).map(|t| t.ty)
+        })
     }
 
     /// The type of the expression that ends where the token `lo..hi` of the current text does and starts at or before
     /// it: the receiver of a member dot. The innermost expression at an offset of an older text may be an unrelated
     /// one (text typed over the start of a line maps onto what was there before), so one that ends elsewhere is not
-    /// the receiver.
+    /// the receiver. The partial analysis of the current text lacks the statement being typed (`p.`), so the last good
+    /// one is asked next.
     fn type_ending_at(&self, path: &str, lo: u32, hi: u32) -> Option<String> {
-        let at = self.old_offset(lo)?;
-        let end = self.old_offset(hi.checked_sub(1)?)? + 1;
-        let typed = self.analysis.type_at(path, at)?;
-        (typed.at.hi == end).then_some(typed.ty)
+        self.sources().find_map(|(analysis, old)| {
+            let at = to_old(old, &self.new, lo)?;
+            let end = to_old(old, &self.new, hi.checked_sub(1)?)? + 1;
+            let typed = analysis.type_at(path, at)?;
+            (typed.at.hi == end).then_some(typed.ty)
+        })
     }
 
     /// The type of the local `name` declared last before `offset` of the current text: what a name typed since the
     /// last good analysis most likely stands for.
     pub(crate) fn local_before(&self, path: &str, name: &str, offset: u32) -> Option<String> {
-        self.analysis
-            .locals(path)
-            .into_iter()
-            .filter(|l| l.name == name)
-            .filter_map(|l| Some((self.new_offset(l.at.lo)?, l.ty)))
-            .filter(|(at, _)| *at < offset)
-            .max_by_key(|(at, _)| *at)
-            .map(|(_, ty)| ty)
+        self.sources().find_map(|(analysis, old)| {
+            analysis
+                .locals(path)
+                .into_iter()
+                .filter(|l| l.name == name)
+                .filter_map(|l| Some((to_new(old, &self.new, l.at.lo)?, l.ty)))
+                .filter(|(at, _)| *at < offset)
+                .max_by_key(|(at, _)| *at)
+                .map(|(_, ty)| ty)
+        })
+    }
+}
+
+/// The offset in the text an analysis was computed on (`old`; `None` is the current text) of an offset of `new`.
+fn to_old(old: Option<&str>, new: &str, offset: u32) -> Option<u32> {
+    match old {
+        Some(old) => map_to_old(old, new, offset),
+        None => Some(offset),
+    }
+}
+
+fn to_new(old: Option<&str>, new: &str, offset: u32) -> Option<u32> {
+    match old {
+        Some(old) => map_to_new(old, new, offset),
+        None => Some(offset),
     }
 }
 
@@ -2244,7 +2272,7 @@ fn classify(p: &mut Package, path: &str) -> Vec<(u32, u32, u32, u32)> {
         }
     }
     // What the analysis resolved.
-    if let Some(analysis) = r.p.current() {
+    if let Some(analysis) = r.p.current_typed() {
         let locals = analysis.locals(path);
         let mutable: Vec<(u32, bool)> = locals.iter().map(|l| (l.at.lo, l.mutable)).collect();
         for local in &locals {

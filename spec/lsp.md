@@ -292,20 +292,25 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
 **LS21. Completion does not depend on the file being error-free** (issue #1015). An error elsewhere in the file or the
 package (an unknown name, a type mismatch, an unfinished statement, a dangling dot) never takes away what the position's
 own code resolves: members after a dot, the names in scope, struct-literal fields, and hover, definition, and signature
-help beside it. The compiler hands over a typed program only when no file has a syntax error, and the line being typed
-usually is one (`p.`), so the server types the receiver of a member dot in this order, cheapest first: the last
-analysis that had a program, trusted only for an expression that ends where the receiver does (text typed over a line
-maps onto unrelated code in an older tree); the receiver's declaration read from the text, for a file that never
-parsed since it opened (`let p: Point`, `Point { ... }`, `Point.origin()`, `make()`, an array literal, a literal alone on
-its line, and a parameter's annotation); and an analysis of a copy of the text without the dot and the member name
-being typed (`p.` becomes `p`), which types the receiver whenever the rest of the file parses. The last costs a
-check without the memo, so it runs only for a receiver that a `let` or a parameter in sight declares, or that ends in
-`)` or `]`. A local the older analysis saw still says that its name is a value, so `list.` is not the `list` module
-(`is_value`). The document's own text is put back before the answer.
+help beside it. The compiler hands over a typed program only when no file has a syntax error, but it also checks the
+partial trees of the files that have one, and the position queries read that program (`spec/query.md`, QL10): every
+statement and item the parser kept is typed, and an unfinished statement that ends its line is kept too (a dangling dot
+keeps its receiver, an unclosed call keeps its arguments). The statement being typed is often missing from it (`p.` before
+the next statement continues it), so the server types the receiver of a member dot in this order, cheapest first: the
+partial analysis of the current text; the last analysis that had a whole program, trusted only for an expression that
+ends where the receiver does (text typed over a line maps onto unrelated code in an older tree); the receiver's
+declaration read from the text, for a file that never parsed since it opened (`let p: Point`, `Point { ... }`,
+`Point.origin()`, `make()`, an array literal, a literal alone on its line, and a parameter's annotation); and an
+analysis of a copy of the text without the dot and the member name being typed (`p.` becomes `p`), which types the
+receiver whenever the rest of the file parses. The last costs a check without the memo, so it runs only for a receiver
+that a `let` or a parameter in sight declares, or that ends in `)` or `]`. A local the older analysis saw still says
+that its name is a value, so `list.` is not the `list` module (`is_value`). The document's own text is put back before the answer.
 Tests: `completion_does_not_wait_for_the_rest_of_the_file_to_be_error_free` (an unknown name, a mismatch, an unfinished
 statement, and an unfinished member on another line, in the same function and in another, and an error after the
 cursor's line), `completion_works_in_a_file_that_never_parsed` (`fixtures/partial-syntax`),
-`hover_and_definition_work_beside_an_unrelated_error` (`fixtures/partial`).
+`hover_and_definition_work_beside_an_unrelated_error` (`fixtures/partial`), and
+`types_work_beside_a_syntax_error_elsewhere` (a name typed beside a syntax error, completed and hovered from the partial
+program alone).
 
 **Snippets.** When the client advertises `textDocument.completion.completionItem.snippetSupport`, the server adds
 snippet items (kind `Snippet`, `insertTextFormat` 2, tab stops `${n:...}` and the final `$0`). A snippet replaces the
@@ -618,7 +623,10 @@ hint refresh. `tests/check_lsp.py` checks that the driver's server announces the
 
 **LS20. Editor packaging.** `editors/vscode` is a VS Code extension: it starts `burdin lsp` (the `burdin.path` setting,
 else `burdin` on `PATH`), passes the `burdin` settings, registers the `burdin` language for `.bd` files with a TextMate
-grammar and a language configuration (comments, brackets, indentation), implements the client commands of LS19, and
+grammar and a language configuration (comments, brackets, indentation), implements the client commands of LS19, implements `burdin.searchReplace`, `burdin.changeSignature`, and
+`burdin.moveItem` (LS18) as input boxes and quick picks (a pattern then a replacement; add, remove, reorder, or rename
+parameters, where adding asks for `name: Type = default`; a module picked from the package's files) that call
+`workspace/executeCommand` and apply the workspace edit the server answers, and
 registers the `burdin` debug type against `burdin dap` (`spec/debug.md`, DBG12).
 `editors/zed` is a Zed extension: it registers the `Burdin` language for `.bd` files, highlighted by the tree-sitter
 grammar in `editors/tree-sitter-burdin`, and starts `burdin lsp` (`lsp.burdin.binary.path`, else `burdin` on `PATH`)

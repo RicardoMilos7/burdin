@@ -108,11 +108,11 @@ def check_editor_files() -> None:
             "package.json: the grammar is missing",
         )
         commands = {c["command"] for c in manifest["contributes"]["commands"]}
-        check({"burdin.run", "burdin.debug"} <= commands, f"package.json: the client commands are missing: {commands}")
+        check({"burdin.run", "burdin.debug", "burdin.searchReplace", "burdin.changeSignature", "burdin.moveItem"} <= commands, f"package.json: the client commands are missing: {commands}")
         dependency = manifest.get("dependencies", {}).get("vscode-languageclient", "")
         check(re.fullmatch(r"\d+\.\d+\.\d+", dependency) is not None, f"vscode-languageclient is not pinned: {dependency!r}")
     check('args: ["lsp"]' in extension, "extension.js does not start `burdin lsp`")
-    for command in ("burdin.run", "burdin.debug"):
+    for command in ("burdin.run", "burdin.debug", "burdin.searchReplace", "burdin.changeSignature", "burdin.moveItem"):
         check(f'registerCommand("{command}"' in extension, f"extension.js does not implement `{command}`")
     spec = harness.read_text(ROOT / "spec" / "lsp.md")
     for setting in SETTINGS:

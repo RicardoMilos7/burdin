@@ -272,6 +272,18 @@ impl Parser<'_> {
         self.nl_stack.clear();
     }
 
+    /// Whether the current token can only start a statement or an item (`let`, an item keyword), never continue an
+    /// expression: an argument list that meets one is unfinished.
+    fn starts_statement_only(&self) -> bool {
+        *self.kind() == TokenKind::Let || Self::starts_item_only(self.kind())
+    }
+
+    /// Whether the current token ends a statement: a `}`, a `;`, or the first token of the next line. An
+    /// unfinished expression that stops here is kept (a dangling dot, an unclosed call) rather than dropped.
+    fn ends_statement(&self) -> bool {
+        matches!(self.kind(), TokenKind::RBrace | TokenKind::Semi) || self.tok().nl_before
+    }
+
     /// Skips to the end of the current statement: a line break or `}` at the block's own depth.
     fn recover_stmt(&mut self, block_depth: usize) {
         self.nl_stack.truncate(block_depth);
@@ -455,6 +467,51 @@ mod tests {
         assert_eq!(fn_names(&file), ["main"]);
         let Item::Fn(main) = &file.items[0] else { unreachable!() };
         assert_eq!(binding_names(&main.body), ["x", "y"]);
+    }
+
+    #[test]
+    fn a_dangling_dot_keeps_its_receiver() {
+        // The statement `p.` is reported once and kept as `p`, so the statements around it and the receiver survive.
+        let (file, out) = render(
+            "fn main() {
+    let p = 1
+    p.
+    let q = 2
+}
+",
+        );
+        assert_eq!(
+            out,
+            "t.bd:4:5: error[E0001]: expected a field name, found `let`
+"
+        );
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["p", "q"]);
+        assert_eq!(main.body.stmts.len(), 3);
+        let Stmt::Expr(kept) = &main.body.stmts[1] else { panic!("the dangling statement is an expression") };
+        assert!(matches!(kept.kind, ExprKind::Name { .. }), "the receiver `p` is kept: {:?}", kept.kind);
+    }
+
+    #[test]
+    fn an_unclosed_call_is_kept_with_the_arguments_read() {
+        let (file, out) = render(
+            "fn main() {
+    let a = 1
+    f(a,
+    let b = 2
+}
+",
+        );
+        assert_eq!(
+            out,
+            "t.bd:4:5: error[E0001]: expected an argument or `)`, found `let`
+"
+        );
+        let Item::Fn(main) = &file.items[0] else { unreachable!() };
+        assert_eq!(binding_names(&main.body), ["a", "b"]);
+        let Stmt::Expr(call) = &main.body.stmts[1] else { panic!("the call is an expression") };
+        let ExprKind::Call(_, args) = &call.kind else { panic!("the call is kept: {:?}", call.kind) };
+        assert_eq!(args.len(), 1);
     }
 
     #[test]

@@ -546,3 +546,13 @@ for byte; the domain of `str` is open, so it never makes a `match` exhaustive wi
 Name resolution, which paths are variants versus fields, whether a pattern identifier is a binding, mutability,
 conventions, exhaustiveness, and everything in `memory-rules.md` are later phases. The parser's only job is to produce a
 syntax tree that keeps spans and the line-break flags above, and to report E0001 for anything outside this grammar.
+
+**Recovery.** After E0001 the parser goes on and reports every error in the file. An item it cannot read is skipped to the
+next item keyword at the start of a line (the stretch is recorded in `File::unparsed`); a statement it cannot read is
+skipped to the end of its line or the block's `}`, and the statements around it are kept. Two unfinished expressions are
+kept rather than skipped, so the statement keeps what was read: a dot with no member name (`p.` followed by `;`, `}`, or a
+line that cannot continue it) is kept as `p`, and a call whose argument list stops at a later line that cannot start an
+expression (`f(a,` and then a `let`) is kept with the arguments read. Each is still one E0001. A call cut off by the
+block's own `}` is dropped with its statement. Tests: `a_dangling_dot_keeps_its_receiver` and
+`an_unclosed_call_is_kept_with_the_arguments_read` (`crates/burdin_syntax/src/parser/mod.rs`). The typed program of such a
+tree is never run; it only answers tool queries (`spec/query.md`, QL10).

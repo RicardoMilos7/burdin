@@ -763,6 +763,67 @@ fn hover_and_definition_work_beside_an_unrelated_error() {
     assert_eq!(s.client.shutdown(), 0);
 }
 
+/// A syntax error elsewhere does not take the typed tree away from the code the parser kept: the checker's program of
+/// the partial tree answers types, and a dangling dot keeps its receiver (issue #1015; `spec/lsp.md`, LS21;
+/// `spec/query.md`, QL10). The names typed here are new, so neither the last good analysis nor a declaration read from
+/// the text knows their types.
+#[test]
+fn types_work_beside_a_syntax_error_elsewhere() {
+    let mut s = open_partial();
+    let edited = s
+        .text
+        .replace(
+            "fn main() {",
+            "fn broken() {
+    let half = (1 +
+}
+
+fn main() {",
+        )
+        .replace(
+            "    println(\"{total}\")",
+            "    let n = total + 1
+    n.
+    println(\"{total}\")",
+        );
+    s.edit(&edited);
+    let members = s.complete(
+        "    n.
+", 6,
+    );
+    for name in ["to_string", "wrapping_add", "pow"] {
+        assert!(has(&members, name), "`n.` lacks {name}: {:?}", labels(&members));
+    }
+    // The type of an expression with no name to look up is the partial program's answer.
+    let hover = s.call("textDocument/hover", "total + 1", 8);
+    let text = hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string();
+    assert!(text.contains("i32"), "{text}");
+    // Beside the unfinished call and the dangling dot, the receiver's methods still complete.
+    let edited = edited.replace(
+        "    n.
+",
+        "    n.
+    let m = p.sum(
+    let k = 
+",
+    );
+    s.edit(&edited);
+    let members = s.complete(
+        "    n.
+", 6,
+    );
+    assert!(has(&members, "to_string"), "{:?}", labels(&members));
+    let hover = s.call(
+        "textDocument/hover",
+        "p.sum(
+",
+        2,
+    );
+    let text = hover.at(&["contents", "value"]).as_str().unwrap_or("").to_string();
+    assert!(text.contains("fn sum(self): i32"), "{text}");
+    assert_eq!(s.client.shutdown(), 0);
+}
+
 /// A file that has had a syntax error since it was opened has no typed tree at all, so the receiver of a dot is read
 /// from its declaration: a struct literal, an associated function's return type, an array literal, an annotation, a
 /// parameter's type, and a function's return type (issue #1015; `spec/lsp.md`, LS12).

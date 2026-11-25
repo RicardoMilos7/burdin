@@ -186,7 +186,7 @@ impl Analysis {
 
     /// The locals and parameters whose binding is in `path`, in source order, once each.
     pub fn locals(&self, path: &str) -> Vec<LocalInfo> {
-        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(program) = self.typed() else { return Vec::new() };
         let mut out: Vec<LocalInfo> = Vec::new();
         for function in bodies(program) {
             for local in &function.locals {
@@ -245,7 +245,7 @@ impl Analysis {
 
     /// Every function and method the program declares, once each (a generic function is listed by its declaration).
     pub fn functions(&self) -> Vec<FunctionInfo> {
-        let Some(program) = self.program.as_ref() else { return Vec::new() };
+        let Some(program) = self.typed() else { return Vec::new() };
         let mut out: Vec<(bool, FunctionInfo)> = Vec::new();
         for (index, function) in program.functions.iter().enumerate() {
             let Some(location) = self.real(function.span) else { continue };

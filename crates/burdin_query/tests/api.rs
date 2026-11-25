@@ -287,3 +287,30 @@ fn ownership_reports_a_move_out_of_a_local() {
     let consume = analysis.ownership_of("main.bd", at(text, "fn consume", 0)).expect("consume");
     assert!(consume.owned.iter().any(|l| l.name == "p" && l.is_parameter), "{:?}", consume.owned);
 }
+
+/// A syntax error in one function leaves the typed answers of the code the parser kept (`spec/query.md`, QL10): the
+/// program is not handed out, but the position queries read the one checked against the partial tree, and a dangling
+/// dot keeps its receiver.
+#[test]
+fn position_queries_answer_beside_a_syntax_error() {
+    let text = "fn broken() {\n    let half = (1 +\n}\n\nfn main() {\n    let total = 40\n    let n = total + 2\n    n.\n    let m = n\n}\n";
+    let mut db = Db::from_files(&[("main.bd", text)], Default::default()).unwrap();
+    let analysis = db.analyze().unwrap();
+    assert!(analysis.program.is_none(), "a program with a syntax error is not handed out");
+    assert!(analysis.has_types() && analysis.is_partial());
+    // The code the parser kept is typed: a local, an expression, and the receiver of the dangling dot.
+    let total = analysis.resolve_at("main.bd", at(text, "total + 2", 0)).expect("`total` resolves");
+    assert_eq!((total.kind, total.ty.as_str()), (DefinitionKind::Local, "i32"));
+    assert_eq!(analysis.type_at("main.bd", at(text, "total + 2", 6)).map(|t| t.ty), Some("i32".to_string()));
+    assert_eq!(analysis.type_at("main.bd", at(text, "n.\n", 0)).map(|t| t.ty), Some("i32".to_string()));
+    assert_eq!(analysis.locals("main.bd").iter().filter(|l| l.name == "n").count(), 1);
+    // The statement the parser could not read is not there.
+    assert_eq!(analysis.type_at("main.bd", at(text, "(1 +", 1)), None);
+    // Only the position queries use the partial program: ownership and references need a complete one.
+    assert!(analysis.ownership_events("main.bd").is_empty());
+    // Fixing the error gives a real program again.
+    let fixed = text.replace("(1 +", "(1 + 2)").replace("    n.\n", "");
+    db.set_file("main.bd", &fixed);
+    let analysis = db.analyze().unwrap();
+    assert!(analysis.program.is_some() && !analysis.is_partial(), "{}", render(&db, &analysis));
+}
