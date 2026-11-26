@@ -12,13 +12,33 @@ impl<'t> Sema<'t> {
     /// Registers the impl blocks of every module. This runs after imports, because the type and the interface it
     /// names may be imported.
     pub(crate) fn register_impls(&mut self, diags: &mut Diagnostics) {
+        // An impl whose pattern nests a generic type (`Holder<List<T>>`) needs that type's instance, which can be
+        // allocated only once the other impls exist. Such an impl is registered again after them.
+        let mut deferred: Vec<(&'t ast::ImplBlock, usize)> = Vec::new();
         for module in 0..self.module_asts.len() {
             let ast = self.module_asts[module];
             for item in &ast.items {
                 if let ast::Item::Impl(imp) = item {
-                    self.register_impl(imp, module, diags);
+                    self.impl_needs_instance = false;
+                    let mut attempt = Diagnostics::default();
+                    self.register_impl(imp, module, &mut attempt);
+                    if self.impl_needs_instance {
+                        deferred.push((imp, module));
+                    } else {
+                        diags.absorb(attempt);
+                    }
                 }
             }
+        }
+        self.impl_needs_instance = false;
+        if deferred.is_empty() {
+            return;
+        }
+        // The first attempt only queued the instances it needed; allocate them, then register the impls for real.
+        let file = self.entry_file();
+        self.drain(file, diags);
+        for (imp, module) in deferred {
+            self.register_impl(imp, module, diags);
         }
     }
 
@@ -420,6 +440,8 @@ impl<'t> Sema<'t> {
             })
             .collect();
         if written.contains(&Ty::Error) {
+            // A nested generic type whose instance is still to be allocated: try again after the other impls.
+            self.impl_needs_instance = !self.globals.requests.borrow().is_empty();
             return;
         }
         // The written arguments meet the type's bounds, as at any other use of it (E0141). A trailing default

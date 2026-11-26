@@ -164,6 +164,7 @@ impl<'t> Sema<'t> {
                     repr_c: s.repr_c,
                     derives: tir::Derives::default(),
                     drop_method: None,
+                    lang: None,
                 });
                 self.globals.struct_refs.push(adt(id));
                 self.globals.struct_pkg.push(package);

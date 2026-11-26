@@ -377,11 +377,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let usize = self.debug_usize();
                 self.debug_struct_words("String", &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
-            Ty::List(inner, burdin_tir::Alloc::Global) => {
-                let elem = self.debug_type(inner);
+            Ty::Struct(_) if matches!(self.list_info(ty), Some((_, burdin_tir::Alloc::Global))) => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                let elem = self.debug_type(&inner);
                 let ptr = self.debug_pointer("elements", elem);
                 let usize = self.debug_usize();
-                self.debug_struct_words(&Self::debug_name(ty), &[("ptr", ptr), ("len", usize), ("cap", usize)])
+                let name = format!("List<{}>", Self::debug_name(&inner));
+                self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
             // A map's buffer holds `(key, value, hash)` slots, and a zero hash marks an empty one. The slot as a
             // named struct is what lets a debugger walk the table (`spec/debug.md`, DBG5).
@@ -404,7 +406,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
             // A container with a stored allocator appends an arbitrary type after the buffer words.
-            Ty::List(..) | Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                self.debug_unspecified(&format!("List<{}>", Self::debug_name(&inner)))
+            }
+            Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Fn { .. } => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
@@ -457,11 +463,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8)])
             }
-            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIterMut(..) | Ty::MapIntoIter(..) => {
+            Ty::MapIter(..) | Ty::MapIterMut(..) | Ty::MapIntoIter(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }
-            Ty::ArrayIntoIter(..) | Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
         }
     }
 
@@ -802,7 +808,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`): a
     /// debugger shows it by its plain name, as it did when the compiler built the type in.
     fn lang_debug_name(full: &str) -> String {
-        const LANG: [&str; 4] = ["Option", "Result", "Shared", "CString"];
+        const LANG: [&str; 6] = ["Option", "Result", "Shared", "CString", "List", "ListIntoIter"];
         match full.strip_prefix("std.") {
             Some(rest) if LANG.iter().any(|n| rest.split('<').next() == Some(n)) => rest.to_string(),
             _ => full.to_string(),
@@ -826,7 +832,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
-            Ty::List(inner, _) => format!("List<{}>", Self::debug_name(inner)),
             Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
             Ty::MapEntry(k, v, _) => {
                 format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))

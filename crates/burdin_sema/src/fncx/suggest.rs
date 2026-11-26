@@ -76,7 +76,8 @@ impl FnCx<'_> {
             tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
             tir::ExprKind::PtrDeref(_) => true,
             tir::ExprKind::Index(base, _) => {
-                matches!(base.ty, Ty::Array(..) | Ty::List(_, _)) && self.mutable_with_root(base)
+                (matches!(base.ty, Ty::Array(..)) || self.globals.list_parts(&base.ty).is_some())
+                    && self.mutable_with_root(base)
             }
             _ => false,
         }

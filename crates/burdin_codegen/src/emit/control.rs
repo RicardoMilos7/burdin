@@ -453,11 +453,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         body: &'a tir::Block,
         label: Option<&str>,
     ) -> GenResult<()> {
-        let Ty::List(elem, _) = &list.ty else {
+        let Some((elem, _)) = self.list_info(&list.ty) else {
             self.expr_mode(list, Mode::Use)?;
             return Ok(());
         };
-        let elem = (**elem).clone();
+        let elem = (*elem).clone();
         let v = self.expr_mode(list, Mode::Use)?;
         // `for` borrows the list (IT1): a list that is not a place is a temporary of the statement, dropped with
         // its elements after the loop (DR5).

@@ -497,6 +497,7 @@ mod tests {
             derives: Derives::default(),
             drop_method: None,
             repr_c: false,
+            lang: None,
         };
         let structs = [def];
         let ty = Ty::Struct(adt("S", 0));

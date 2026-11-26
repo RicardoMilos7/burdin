@@ -1,0 +1,84 @@
+//@ run
+//> 3 b
+//> a b c
+//> 24 8
+//> 24 8
+
+// A growable container written over raw memory, the way `std` writes its own: `T.size()` is the layout of a type
+// parameter, `__slice_raw` makes the `[T]` view of the elements, `__read` and `__write` move an element without
+// dropping, and a view of `*(self.ptr + i)` or of `__slice_raw(self.ptr, n)` lives as long as the borrow of
+// `self`, so a method may return it.
+
+struct Raw<T> {
+    ptr: CPtr<T>
+    len: usize
+    cap: usize
+}
+
+Raw<T>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            let mut i: usize = 0
+            while i < self.len {
+                drop(__read(self.ptr + i))
+                i = i + 1
+            }
+            if self.cap > 0 {
+                __dealloc(self.ptr as CPtr<u8>, self.cap * T.size(), 8)
+            }
+        }
+    }
+}
+
+Raw<T> {
+    fn new(): Raw<T> {
+        Raw { ptr: unsafe { CPtr<T>.null() }, len: 0, cap: 0 }
+    }
+
+    fn push(mut self, own value: T) {
+        unsafe {
+            if self.len == self.cap {
+                let cap: usize = if self.cap == 0 { 2 } else { self.cap * 2 }
+                let ptr = __alloc(cap * T.size(), 8) as CPtr<T>
+                let mut i: usize = 0
+                while i < self.len {
+                    __write(ptr + i, __read(self.ptr + i))
+                    i = i + 1
+                }
+                if self.cap > 0 {
+                    __dealloc(self.ptr as CPtr<u8>, self.cap * T.size(), 8)
+                }
+                self.ptr = ptr
+                self.cap = cap
+            }
+            __write(self.ptr + self.len, value)
+            self.len = self.len + 1
+        }
+    }
+
+    fn at(self, i: usize): &T {
+        unsafe { &*(self.ptr + i) }
+    }
+
+    fn view(self): [T] {
+        unsafe { __slice_raw(self.ptr, self.len) }
+    }
+}
+
+fn main() {
+    let mut r = Raw<String>.new()
+    r.push("a".to_string())
+    r.push("b".to_string())
+    r.push("c".to_string())
+    println("{r.view().len()} {r.at(1)}")
+    let mut out = String.new()
+    for s in r.view() {
+        if out.len() > 0 {
+            out.push_str(" ")
+        }
+        out.push_str(s)
+    }
+    println("{out}")
+    println("{String.size()} {String.align()}")
+    println("{Raw<i32>.size()} {Raw<i32>.align()}")
+}

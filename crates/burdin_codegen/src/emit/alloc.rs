@@ -275,28 +275,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// Resizes a buffer like [`Codegen::realloc_in`], but a null pointer means the allocator refused and the old
-    /// buffer is still valid (`spec/allocators.md`, AL11).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn try_realloc_in(
-        &mut self,
-        alloc: &Alloc,
-        addr: Option<PointerValue<'ctx>>,
-        ptr: PointerValue<'ctx>,
-        old_size: IntValue<'ctx>,
-        new_size: IntValue<'ctx>,
-        align: u64,
-        span: Option<Span>,
-    ) -> GenResult<PointerValue<'ctx>> {
-        match alloc {
-            Alloc::Global => self.global_try_realloc(ptr, new_size, span),
-            Alloc::Value(ty) => {
-                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
-                self.stored_realloc(ty, addr, ptr, old_size, new_size, align)
-            }
-        }
-    }
-
     /// Frees a buffer with the allocator that made it.
     pub(super) fn dealloc_in(
         &mut self,

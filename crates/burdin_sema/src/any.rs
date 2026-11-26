@@ -381,7 +381,6 @@ fn ty_mentions_self(ty: &Ty) -> bool {
         Ty::Ref { inner, .. }
         | Ty::Slice(inner)
         | Ty::Array(inner, _)
-        | Ty::List(inner, _)
         | Ty::Heap(inner, _)
         | Ty::CPtr(inner)
         | Ty::Range(inner, _) => ty_mentions_self(inner),

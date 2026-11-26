@@ -4,7 +4,6 @@ use super::{Codegen, GenResult, Glue, SavedContext, llvm_err};
 use burdin_tir::Ty;
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
-use inkwell::types::BasicType;
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -77,7 +76,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 format!("({})", parts.join(","))
             }
             Ty::Array(inner, n) => format!("[{},{}]", self.structural_key_in(inner, seen), n),
-            Ty::List(inner, _) => format!("List<{}>", self.structural_key_in(inner, seen)),
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                format!("List<{}>", self.structural_key_in(&inner, seen))
+            }
+            Ty::Struct(_) if self.list_iter_info(ty).is_some() => {
+                let (inner, _) = self.list_iter_info(ty).expect("a list iterator");
+                format!("ListIntoIter<{}>", self.structural_key_in(&inner, seen))
+            }
             Ty::Map(k, v, _) => {
                 format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -88,8 +94,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::RangeIter(inner, inclusive) => {
                 format!("RangeIter<{},{inclusive}>", self.structural_key_in(inner, seen))
             }
-            Ty::ListIntoIter(inner, _) => format!("ListIntoIter<{}>", self.structural_key_in(inner, seen)),
-            Ty::ArrayIntoIter(inner, n) => format!("ArrayIntoIter<{},{}>", self.structural_key_in(inner, seen), n),
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -236,6 +240,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn drop_value(&mut self, addr: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                self.drop_sequence(addr, &elem, &alloc, "list")
+            }
+            Ty::Struct(_) if self.list_iter_info(ty).is_some() => {
+                let (elem, alloc) = self.list_iter_info(ty).expect("a list iterator");
+                self.drop_list_into_iter(addr, &elem, &alloc)
+            }
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
             // The endpoints of a range are integers, so a range owns nothing.
             Ty::Range(..) => Ok(()),
@@ -254,56 +266,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => Ok(()),
-            Ty::ListIntoIter(elem, alloc) => {
-                let elem = (**elem).clone();
-                self.drop_list_into_iter(addr, &elem, alloc)
-            }
+
             Ty::MapIntoIter(key, value, alloc) => {
                 let (key, value) = ((**key).clone(), (**value).clone());
                 self.drop_map_into_iter(addr, &key, &value, alloc)
             }
-            Ty::ArrayIntoIter(elem, n) => {
-                let (elem, n) = ((**elem).clone(), *n);
-                if n == 0 || !self.needs_drop(&elem) || self.llvm_ty(&elem).is_none() {
-                    return Ok(());
-                }
-                let index_field = self
-                    .builder
-                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 1, "iter.index")
-                    .map_err(llvm_err)?;
-                let start = self.builder.build_load(self.usize_ty, index_field, "").map_err(llvm_err)?.into_int_value();
-                let slots = self
-                    .builder
-                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 0, "iter.array")
-                    .map_err(llvm_err)?;
-                let elem_t = self.llvm_ty(&elem).expect("checked above");
-                let array_t = elem_t.array_type(n as u32);
-                let index = self.alloca(self.usize_ty.into(), "array.iter.drop.i")?;
-                self.builder.build_store(index, start).map_err(llvm_err)?;
-                let header = self.new_block("array.iter.drop.cond");
-                let body = self.new_block("array.iter.drop.body");
-                let exit = self.new_block("array.iter.drop.end");
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(header);
-                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-                let go = self
-                    .builder
-                    .build_int_compare(IntPredicate::ULT, i, self.usize_ty.const_int(n, false), "")
-                    .map_err(llvm_err)?;
-                self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
-                self.builder.position_at_end(body);
-                let zero = self.usize_ty.const_zero();
-                // SAFETY (LLVM): index <= i < n.
-                let p =
-                    unsafe { self.builder.build_in_bounds_gep(array_t, slots, &[zero, i], "") }.map_err(llvm_err)?;
-                self.drop_value(p, &elem)?;
-                let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-                self.builder.build_store(index, next).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(exit);
-                Ok(())
-            }
-            // A map entry owns the key it would insert; an entry dropped without inserting drops that key.
             Ty::MapEntry(key, _, _) => {
                 let key = (**key).clone();
                 if !self.needs_drop(&key) || self.llvm_ty(&key).is_none() {
@@ -408,10 +375,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
                 }
                 self.drop_enum_fields(addr, id)
-            }
-            Ty::List(elem, alloc) => {
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                self.drop_sequence(addr, &elem, &alloc, "list")
             }
             Ty::Map(key, value, alloc) => {
                 let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
@@ -587,6 +550,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(dst_ptr, newp).map_err(llvm_err)?;
                 Ok(())
             }
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                self.clone_sequence(dst, src, &elem, &alloc)
+            }
             Ty::Struct(_) | Ty::Tuple(_) => {
                 let st = self.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
                 for (i, fty) in self.field_tys(ty).iter().enumerate() {
@@ -600,10 +567,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(())
             }
             Ty::Enum(a) => self.clone_enum_fields(dst, src, a.id),
-            Ty::List(elem, alloc) => {
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                self.clone_sequence(dst, src, &elem, &alloc)
-            }
             Ty::Map(key, value, alloc) => {
                 let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
                 self.clone_map(dst, src, &key, &value, &alloc)

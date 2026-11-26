@@ -553,7 +553,29 @@ impl Globals {
             resolved.push(ty.clone());
             env.push((info.params[i].clone(), ty));
         }
-        if !self.check_adt_bounds(g, &resolved, span, diags) {
+        // A list holds its elements until it is dropped, so they must own their storage, and its allocator must be
+        // one. These are checked where the type is written, as for the other containers.
+        if Some(g) == self.lang_list || Some(g) == self.lang_list_into_iter {
+            if let (Some(elem), Some(arg)) = (resolved.first(), args.first())
+                && elem.is_second_class()
+            {
+                check_storable(elem, arg.span, "a `List` element", diags);
+                return Ty::Error;
+            }
+            if let (Some(alloc), Some(arg)) = (resolved.get(1), args.get(1))
+                && *alloc != Ty::Error
+                && !self.ty_has_param(alloc)
+                && !self.is_allocator(alloc, &[])
+            {
+                diags.error(
+                    Code::NOT_AN_ALLOCATOR,
+                    arg.span,
+                    format!("`{alloc}` does not implement `Allocator`, so it cannot be a container's allocator"),
+                );
+                return Ty::Error;
+            }
+        }
+        if !self.check_adt_bounds_upto(g, &resolved, args.len(), span, diags) {
             return Ty::Error;
         }
         // A channel holds the values sent through it until they are received, so they must own their storage. `T`
@@ -643,6 +665,10 @@ impl Globals {
                 let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
                 Ty::MapIntoIter(Box::new(key), Box::new(value), alloc)
             }
+            // The mutable iterator `list.iter_mut()` returns; `std` names it to write `List.iter_mut`.
+            ("IterMut", 1) => {
+                Ty::IterMut(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
+            }
             ("CPtr", 1) => {
                 Ty::CPtr(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
             }
@@ -657,12 +683,6 @@ impl Globals {
                     return Some(Ty::Error);
                 }
                 Ty::Range(Box::new(inner), name == "RangeInclusive")
-            }
-            ("List", 1) | ("List", 2) => {
-                let elem = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                check_storable(&elem, args[0].span, "a `List` element", diags);
-                let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
-                Ty::List(Box::new(elem), alloc)
             }
             ("Map", 2) | ("Map", 3) => {
                 let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
@@ -746,8 +766,11 @@ impl Globals {
     }
 
     fn hand_written_eq_hashes(&self, ty: &Ty) -> bool {
+        if let Some((t, _)) = self.list_parts(ty) {
+            return self.hand_written_eq_hashes(&t);
+        }
         match ty {
-            Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => self.hand_written_eq_hashes(t),
+            Ty::Range(t, _) | Ty::Array(t, _) => self.hand_written_eq_hashes(t),
             Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
             Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
             Ty::Struct(a) => {
@@ -767,6 +790,10 @@ impl Globals {
     /// Whether `==` and `!=` apply to values of `ty`, with the bounds of the type parameters in scope. A derived
     /// `Eq` on `Wrapper<T>` holds when the fields do, which is what a `T: Eq` bound provides (issue #69).
     pub(crate) fn has_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
+        // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
+        if let Some((elem, _)) = self.list_parts(ty) {
+            return self.has_eq_in(&elem, env);
+        }
         match ty {
             Ty::Const(_) | Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
@@ -778,8 +805,6 @@ impl Globals {
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
-            // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
-            Ty::List(t, _) => self.has_eq_in(t, env),
             // A derived `Eq` or a hand-written `Eq` implementation: a derive is the type's own implementation of the
             // interface (`spec/derives.md`, issue #918).
             Ty::Struct(_) | Ty::Enum(_) => {
@@ -790,8 +815,6 @@ impl Globals {
             | Ty::MapEntry(..)
             | Ty::Chars
             | Ty::Fn { .. }
-            | Ty::ListIntoIter(..)
-            | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)

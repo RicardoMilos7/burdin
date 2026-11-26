@@ -233,7 +233,11 @@ impl FnCx<'_> {
                     match &ty {
                         // A derive is the type's own comparison; when it does not hold, a field is the reason and
                         // the stage 0 diagnostic (E0003) stays (`spec/derives.md`).
-                        Ty::Struct(_) | Ty::Enum(_) if self.derives_comparison(&ty, op) => {
+                        // A list compares through its element, so a list of a type without the operator has none
+                        // either: the same stage 0 diagnostic as the built-in sequence it replaced.
+                        Ty::Struct(_) | Ty::Enum(_)
+                            if self.globals.list_parts(&ty).is_some() || self.derives_comparison(&ty, op) =>
+                        {
                             self.diags.error(
                                 Code::TYPE_MISMATCH,
                                 span,

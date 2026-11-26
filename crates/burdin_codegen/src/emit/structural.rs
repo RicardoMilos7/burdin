@@ -18,6 +18,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The hand-written `eq` (or, with `ordering`, `lt`) of a struct or enum that implements the interface instead
     /// of deriving it.
     fn user_comparison(&self, ty: &Ty, ordering: bool) -> Option<inkwell::values::FunctionValue<'ctx>> {
+        // A list compares through the compiler's own code (`list_eq`).
+        if self.list_info(ty).is_some() {
+            return None;
+        }
         let derives = match ty {
             Ty::Struct(a) => &self.program.structs[a.id].derives,
             Ty::Enum(a) => &self.program.enums[a.id].derives,
@@ -59,6 +63,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let b = self.builder.build_load(t, r, "").map_err(llvm_err)?.into_float_value();
                 self.builder.build_float_compare(FloatPredicate::OEQ, a, b, "").map_err(llvm_err)
             }
+            // A list compares by length and then its elements in order (`spec/stdlib.md`, "List").
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                self.list_eq(l, r, &elem, &alloc)
+            }
             Ty::Tuple(_) | Ty::Struct(_) => {
                 let st = t.into_struct_type();
                 let mut acc = yes;
@@ -98,8 +107,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 result.add_incoming(&[(&yes, head), (&bool_ty.const_zero(), body_end)]);
                 Ok(result.as_basic_value().into_int_value())
             }
-            // A list compares by length and then its elements in order (`spec/stdlib.md`, "List").
-            Ty::List(elem, alloc) => self.list_eq(l, r, elem, alloc),
             // A map compares by its entries, whatever the iteration order (`spec/stdlib.md`, "Map").
             Ty::Map(key, value, alloc) => self.map_eq(l, r, key, value, alloc),
             Ty::Range(inner, _) => {
@@ -418,6 +425,44 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 Ok(call.try_as_basic_value().basic().expect("`str_hash` returns a hash").into_int_value())
             }
+            // A list hashes its length and then its elements in order, so equal lists hash alike whatever their
+            // capacity (`spec/derives.md`, `Hash`).
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                let (elem, alloc) = (&elem, &alloc);
+                let seq = self.seq_load_at(ptr, alloc)?;
+                let len =
+                    self.builder.build_int_z_extend_or_bit_cast(seq.len, self.cx.i64_type(), "").map_err(llvm_err)?;
+                let with_len = self.hash_mix(acc, len)?;
+                if self.llvm_ty(elem).is_none() {
+                    return Ok(with_len);
+                }
+                let index = self.alloca(self.usize_ty.into(), "hash.list.i")?;
+                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
+                let running = self.alloca(self.cx.i64_type().into(), "hash.list.acc")?;
+                self.builder.build_store(running, with_len).map_err(llvm_err)?;
+                let header = self.new_block("hash.list.cond");
+                let body = self.new_block("hash.list.body");
+                let end = self.new_block("hash.list.end");
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(header);
+                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                let more = self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?;
+                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
+                self.builder.position_at_end(body);
+                let element = self
+                    .elem_ptr_at(seq.data, elem, i)
+                    .ok_or_else(|| "a list element has no runtime type".to_string())?;
+                let current =
+                    self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value();
+                let mixed = self.hash_at(element, elem, current)?;
+                self.builder.build_store(running, mixed).map_err(llvm_err)?;
+                let next_i = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                self.builder.build_store(index, next_i).map_err(llvm_err)?;
+                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                self.builder.position_at_end(end);
+                Ok(self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value())
+            }
             Ty::Tuple(_) | Ty::Struct(_) => {
                 let st = t.into_struct_type();
                 let mut acc = acc;
@@ -463,42 +508,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     acc = self.hash_at(f, inner, acc)?;
                 }
                 Ok(acc)
-            }
-            // A list hashes its length and then its elements in order, so equal lists hash alike whatever their
-            // capacity (`spec/derives.md`, `Hash`).
-            Ty::List(elem, alloc) => {
-                let seq = self.seq_load_at(ptr, alloc)?;
-                let len =
-                    self.builder.build_int_z_extend_or_bit_cast(seq.len, self.cx.i64_type(), "").map_err(llvm_err)?;
-                let with_len = self.hash_mix(acc, len)?;
-                if self.llvm_ty(elem).is_none() {
-                    return Ok(with_len);
-                }
-                let index = self.alloca(self.usize_ty.into(), "hash.list.i")?;
-                self.builder.build_store(index, self.usize_ty.const_zero()).map_err(llvm_err)?;
-                let running = self.alloca(self.cx.i64_type().into(), "hash.list.acc")?;
-                self.builder.build_store(running, with_len).map_err(llvm_err)?;
-                let header = self.new_block("hash.list.cond");
-                let body = self.new_block("hash.list.body");
-                let end = self.new_block("hash.list.end");
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(header);
-                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-                let more = self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?;
-                self.builder.build_conditional_branch(more, body, end).map_err(llvm_err)?;
-                self.builder.position_at_end(body);
-                let element = self
-                    .elem_ptr_at(seq.data, elem, i)
-                    .ok_or_else(|| "a list element has no runtime type".to_string())?;
-                let current =
-                    self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value();
-                let mixed = self.hash_at(element, elem, current)?;
-                self.builder.build_store(running, mixed).map_err(llvm_err)?;
-                let next_i = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-                self.builder.build_store(index, next_i).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(end);
-                Ok(self.builder.build_load(self.cx.i64_type(), running, "").map_err(llvm_err)?.into_int_value())
             }
             // A map hashes each entry from a fixed start and combines the results with `xor`, so two maps with the
             // same entries hash alike whatever their iteration order: `Eq` and `Hash` must agree.

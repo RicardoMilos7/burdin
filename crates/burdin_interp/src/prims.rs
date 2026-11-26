@@ -6,7 +6,8 @@ use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, key_ty, rang
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
-    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, UnOp,
+    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, TypeDefs,
+    UnOp,
 };
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -183,6 +184,11 @@ pub(crate) fn value_eq(a: &Value, b: &Value) -> bool {
 
 /// Structural ordering, typed: the derived `Ord`, and `str` byte order. The type says how to read each value,
 /// because a `u128` bit pattern above `i128::MAX` is not in order as a signed number (`spec/int128.md`, I128-1).
+/// The element type of a `List` (the compiler's list struct in `std`), `None` for any other type.
+pub(crate) fn list_elem(p: &Program, ty: &Ty) -> Option<Ty> {
+    TypeDefs { structs: &p.structs, enums: &p.enums }.list_parts(ty).map(|(t, _)| t.clone())
+}
+
 pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering {
     let (a, b) = (shallow(a), shallow(b));
     match (a, b) {
@@ -205,11 +211,11 @@ pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering 
         }
         (Value::Array(_) | Value::List(_) | Value::Slice(..), Value::Array(_) | Value::List(_) | Value::Slice(..)) => {
             let elem = match ty {
-                Ty::Array(t, _) | Ty::List(t, _) => Some(&**t),
-                _ => None,
+                Ty::Array(t, _) => Some((**t).clone()),
+                _ => list_elem(p, ty),
             };
             match elem {
-                Some(t) => seq_cmp(p, a.elems(), b.elems(), std::iter::repeat(t)),
+                Some(t) => seq_cmp(p, a.elems(), b.elems(), std::iter::repeat(&t)),
                 None => Ordering::Equal,
             }
         }
@@ -271,6 +277,11 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             Value::Tuple(fs) => fs.iter().zip(ts).fold(acc, |h, (f, t)| hash(p, f, t, h)),
             _ => acc,
         },
+        Ty::Struct(_) if list_elem(p, ty).is_some() => {
+            let t = list_elem(p, ty).expect("a list");
+            let with_len = mix(acc, v.elems().len() as u64);
+            v.elems().iter().fold(with_len, |h, x| hash(p, x, &t, h))
+        }
         Ty::Struct(a) => match v {
             Value::Tuple(fs) => fs.iter().zip(&p.structs[a.id].fields).fold(acc, |h, (f, d)| hash(p, f, &d.ty, h)),
             _ => acc,
@@ -289,10 +300,6 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
         },
         Ty::Array(t, _) => v.elems().iter().fold(acc, |h, x| hash(p, x, t, h)),
         // A list hashes its length and then its elements in order, exactly as `hash_at` does.
-        Ty::List(t, _) => {
-            let with_len = mix(acc, v.elems().len() as u64);
-            v.elems().iter().fold(with_len, |h, x| hash(p, x, t, h))
-        }
         // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
         Ty::Map(k, vty, _) => match v {
             Value::Map(entries) => {
@@ -346,7 +353,6 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         // A chunks or windows iterator keeps the slice view and two indices.
         Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
         // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
-        Ty::List(_, a) => container(p, (24, 8), a),
         Ty::Map(_, _, a) => container(p, (24, 8), a),
         Ty::Heap(_, a) => container(p, (8, 8), a),
         Ty::CPtr(_) | Ty::Ref { .. } => (8, 8),
@@ -358,12 +364,11 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::Struct(a) => product(&p.structs[a.id].fields.iter().map(|f| member(p, &f.ty)).collect::<Vec<_>>()),
         Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
         Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
-        Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
+        Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
         Ty::IterMut(_) => (16, 8),
         // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
         Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
-        Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
         Ty::Enum(a) => {
             let mut size = 0;
             let mut align = 1;
@@ -411,9 +416,9 @@ pub(crate) fn zero_value(p: &Program, ty: &Ty) -> Value {
         Ty::Float(_) => Value::Float(0.0),
         Ty::Str => Value::str(""),
         Ty::String => Value::String(Vec::new()),
-        Ty::List(_, _) => Value::List(Vec::new()),
         Ty::Map(..) => Value::Map(Vec::new()),
         Ty::Tuple(ts) => Value::Tuple(ts.iter().map(|t| zero_value(p, t)).collect()),
+        Ty::Struct(_) if list_elem(p, ty).is_some() => Value::List(Vec::new()),
         Ty::Struct(a) => Value::Tuple(p.structs[a.id].fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
         Ty::Enum(a) => match p.enums[a.id].variants.first() {
             Some(v) => Value::Variant(0, v.fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
@@ -857,7 +862,16 @@ impl<'p> Interp<'p, '_> {
                 *self.place_mut(&a, span)? = vb;
                 Value::Unit
             }
-            Builtin::RawRead | Builtin::RawWrite => return Err(impure("reading or writing raw memory", span)),
+            Builtin::RawRead | Builtin::RawWrite | Builtin::SliceRaw | Builtin::IterMutRaw => {
+                return Err(impure("reading or writing raw memory", span));
+            }
+            Builtin::RangeStart | Builtin::RangeEnd => {
+                let range = self.eval(&args[0], Mode::Use)?;
+                let Value::Tuple(ends) = range else {
+                    return Err(impure("a range that is not a pair of endpoints", span));
+                };
+                ends.into_iter().nth(usize::from(b == Builtin::RangeEnd)).unwrap_or(Value::Unit)
+            }
             Builtin::Replace => {
                 let place = self.eval_place(&args[0])?;
                 let v = self.eval(&args[1], Mode::Move)?;
@@ -1066,10 +1080,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::ListTruncate => {
                 let index = self.eval(&args[1], Mode::Use)?.int();
-                let elem = match &recv.ty {
-                    Ty::List(t, _) => (**t).clone(),
-                    _ => Ty::Unit,
-                };
+                let elem = list_elem(self.p, &recv.ty).unwrap_or(Ty::Unit);
                 let place = self.eval_place(recv)?;
                 let removed = {
                     let list = list_mut(self.place_mut(&place, span)?, span)?;
@@ -1173,9 +1184,8 @@ impl<'p> Interp<'p, '_> {
             Method::ListSort => {
                 let place = self.eval_place(recv)?;
                 let p = self.p;
-                let elem = match &recv.ty {
-                    Ty::List(t, _) => (**t).clone(),
-                    other => return Err(internal(format!("sorting `{other}`"), span)),
+                let Some(elem) = list_elem(p, &recv.ty) else {
+                    return Err(internal(format!("sorting `{}`", recv.ty), span));
                 };
                 let list = list_mut(self.place_mut(&place, span)?, span)?;
                 list.sort_by(|x, y| value_cmp(p, x, y, &elem));
@@ -1461,7 +1471,7 @@ impl<'p> Interp<'p, '_> {
         let v = self.eval(recv, if into { Mode::Move } else { Mode::Use })?.deref();
         Ok(match (&recv.ty, v) {
             (Ty::Slice(_) | Ty::Chars, v) => v,
-            (Ty::Array(..) | Ty::List(_, _), Value::Array(xs) | Value::List(xs)) => {
+            (Ty::Array(..) | Ty::Struct(_), Value::Array(xs) | Value::List(xs)) => {
                 if into {
                     Value::Items(VecDeque::from(xs))
                 } else {

@@ -334,17 +334,12 @@ impl FnCx<'_> {
         let iterable = self.open_opaque_for_loop(iterable);
         // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
         // `Iterable` through `iter()` (spec/iterators.md, IT4).
-        let builtin = matches!(
-            iterable.ty,
-            Ty::Array(..)
-                | Ty::Slice(_)
-                | Ty::List(_, _)
-                | Ty::Map(..)
-                | Ty::Chars
-                | Ty::Range(..)
-                | Ty::Error
-                | Ty::Never
-        );
+        let list_elem = self.globals.list_parts(&iterable.ty).map(|(elem, _)| elem);
+        let builtin = list_elem.is_some()
+            || matches!(
+                iterable.ty,
+                Ty::Array(..) | Ty::Slice(_) | Ty::Map(..) | Ty::Chars | Ty::Range(..) | Ty::Error | Ty::Never
+            );
         if !builtin {
             // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
             // through `iter()`, not consumed as an iterator value.
@@ -381,9 +376,9 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let (elem, kind) = match &iterable.ty {
+            _ if list_elem.is_some() => (list_elem.clone().expect("checked above"), ForKind::List),
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
-            Ty::List(t, _) => ((**t).clone(), ForKind::List),
             Ty::Map(k, v, _) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
             Ty::Chars => (Ty::Char, ForKind::Chars),

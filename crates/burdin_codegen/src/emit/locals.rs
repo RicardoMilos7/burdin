@@ -46,6 +46,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let mut i = 0;
         while i < path.len() {
             match &ty {
+                _ if self.list_info(&ty).is_some() => {
+                    let (elem, alloc) = self.list_info(&ty).expect("checked by the guard");
+                    let (elem, alloc) = (&elem, &alloc);
+                    let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
+                    let seq_ty = self.seq_ty(alloc);
+                    let data_field = self.builder.build_struct_gep(seq_ty, ptr, 0, "list.ptr").map_err(llvm_err)?;
+                    let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
+                    let Some(elem_t) = self.llvm_ty(elem) else { return Ok(None) };
+                    let index = self.usize_ty.const_int(path[i] as u64, false);
+                    // SAFETY (LLVM): the move checker only records constant, non-negative indices.
+                    ptr = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[index], "") }.map_err(llvm_err)?;
+                    ty = (**elem).clone();
+                    i += 1;
+                }
                 Ty::Struct(_) | Ty::Tuple(_) => {
                     let t = self.llvm_ty(&ty).expect("an aggregate has a type").into_struct_type();
                     let index = path[i];
@@ -71,18 +85,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     // SAFETY (LLVM): the move checker only records constant, non-negative indices.
                     ptr = unsafe { self.builder.build_in_bounds_gep(array_t, ptr, &[zero, index], "") }
                         .map_err(llvm_err)?;
-                    ty = (**elem).clone();
-                    i += 1;
-                }
-                Ty::List(elem, alloc) => {
-                    let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-                    let seq_ty = self.seq_ty(alloc);
-                    let data_field = self.builder.build_struct_gep(seq_ty, ptr, 0, "list.ptr").map_err(llvm_err)?;
-                    let data = self.builder.build_load(ptr_ty, data_field, "").map_err(llvm_err)?.into_pointer_value();
-                    let Some(elem_t) = self.llvm_ty(elem) else { return Ok(None) };
-                    let index = self.usize_ty.const_int(path[i] as u64, false);
-                    // SAFETY (LLVM): the move checker only records constant, non-negative indices.
-                    ptr = unsafe { self.builder.build_in_bounds_gep(elem_t, data, &[index], "") }.map_err(llvm_err)?;
                     ty = (**elem).clone();
                     i += 1;
                 }
@@ -114,15 +116,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Local(id) => Some((*id, Vec::new())),
             K::Field(base, i) => {
                 let (root, mut path) = self.place_path(base)?;
-                if is_tracked_place(base) {
+                if is_tracked_place(&self.defs(), base) {
                     path.push(*i);
                 }
                 Some((root, path))
             }
             K::Index(base, index) => {
                 let (root, mut path) = self.place_path(base)?;
-                if is_tracked_place(base)
-                    && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+                if is_tracked_place(&self.defs(), base)
+                    && (matches!(base.ty, Ty::Array(..)) || self.list_info(&base.ty).is_some())
                     && let Some(index) = constant_index(index)
                 {
                     path.push(index);
@@ -131,7 +133,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::Deref(base) => {
                 let (root, mut path) = self.place_path(base)?;
-                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)) {
+                if is_tracked_place(&self.defs(), base) && matches!(base.ty, Ty::Heap(_, _)) {
                     path.push(tir::MOVED_DEREF);
                 }
                 Some((root, path))

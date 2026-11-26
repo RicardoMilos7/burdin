@@ -415,6 +415,14 @@ impl An<'_> {
             }
             K::Call(fid, args) => {
                 self.call(e, *fid, args, receiver_of_eager);
+                // `List.iter` and `List.into_iter` are methods of `std` now, not compiler methods.
+                let name = &self.program.functions[fid.0].name;
+                if name.starts_with("std.List<")
+                    && (name.ends_with(".iter") || name.ends_with(".into_iter"))
+                    && let Some(recv) = args.first()
+                {
+                    self.check_to_list(recv, "iterated right away");
+                }
             }
             K::ExternCall(_, args) => self.each(args),
             K::Builtin(_, args) => {
@@ -647,7 +655,7 @@ impl An<'_> {
         if local.mutable || local.name.starts_with('_') || !self.cx.in_package(init.span) {
             return;
         }
-        if !matches!(init.ty, Ty::String | Ty::List(..) | Ty::Map(..) | Ty::Heap(..)) {
+        if !(matches!(init.ty, Ty::String | Ty::Map(..) | Ty::Heap(..)) || self.defs.list_parts(&init.ty).is_some()) {
             return;
         }
         let mut allocates = false;
@@ -767,6 +775,9 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
     }
     let d = depth + 1;
     match ty {
+        Ty::Struct(_) if defs.list_parts(ty).is_some() => {
+            has_user_drop(defs.list_parts(ty).expect("a list").0, defs, d)
+        }
         Ty::Struct(a) => {
             let s = &defs.structs[a.id];
             s.drop_method.is_some() || s.fields.iter().any(|f| has_user_drop(&f.ty, defs, d))
@@ -775,7 +786,7 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
             let e = &defs.enums[a.id];
             e.drop_method.is_some() || e.variants.iter().any(|v| v.fields.iter().any(|f| has_user_drop(&f.ty, defs, d)))
         }
-        Ty::List(t, _) | Ty::Heap(t, _) | Ty::Array(t, _) => has_user_drop(t, defs, d),
+        Ty::Heap(t, _) | Ty::Array(t, _) => has_user_drop(t, defs, d),
         Ty::Map(a, b, _) => has_user_drop(a, defs, d) || has_user_drop(b, defs, d),
         Ty::Tuple(ts) => ts.iter().any(|t| has_user_drop(t, defs, d)),
         Ty::Any(_) | Ty::Fn { .. } => true,

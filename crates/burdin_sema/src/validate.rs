@@ -133,6 +133,11 @@ pub(crate) fn check_public_signatures(
         if item.decl.is_priv {
             continue;
         }
+        // An instance of a generic function has the type arguments of its caller, which may be package-private
+        // (`drop` of a `Frame`); the check belongs to the declaration, whose signature names only parameters.
+        if !item.symbolic && !item.subst.is_empty() {
+            continue;
+        }
         // A method or associated function of a package-private type is unreachable from another package: that
         // package cannot name the type, so nothing in its signature can leak. This is what makes an impl on a
         // `priv` type (the standard library's `ContextError: Display`, or a `priv error enum`) legal.

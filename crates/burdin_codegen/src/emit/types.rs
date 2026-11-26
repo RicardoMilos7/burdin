@@ -53,7 +53,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A list and a map have the same three-word shape as a `String`: pointer, length, capacity. A stored
             // allocator value follows them (`spec/allocators.md`, AL3), and the default one stores nothing.
             Ty::String => self.string_ty.into(),
-            Ty::List(_, alloc) | Ty::Map(_, _, alloc) => self.seq_ty(alloc).into(),
+            Ty::Map(_, _, alloc) => self.seq_ty(alloc).into(),
             // A map entry is the map's address, the key it owns, the key's hash, the probe slot, and whether the
             // key was found.
             Ty::MapEntry(key, _, _) => self.map_entry_value_ty(key).into(),
@@ -68,12 +68,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A range is two copied endpoints.
             Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
-            Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
+            Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
             Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
             // A mutable list or array iterator is the next element's address and the number left, like a slice.
             Ty::IterMut(_) => self.str_ty.into(),
-            // The array owns its elements inline; the index says which one comes next.
-            Ty::ArrayIntoIter(inner, n) => self.iter_array_ty(inner, *n).into(),
             // The range iterator keeps both endpoints and whether the range is exhausted.
             Ty::RangeIter(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone(), Ty::Bool]).into(),
             // The chunks and windows iterators keep the slice view (pointer and length), the chunk or window
@@ -230,7 +228,26 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.defs().result_parts(ty).map(|(ok, err)| (ok.clone(), err.clone()))
     }
 
-    fn defs(&self) -> TypeDefs<'a> {
+    /// The element type and allocator of a `List` (the compiler's list struct in `std`), `None` for any other type.
+    /// The element is boxed so a caller can bind it the way the old `Ty::List` pattern did.
+    pub(super) fn list_info(&self, ty: &Ty) -> Option<(Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().list_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
+    }
+
+    /// The same for a `ListIntoIter`.
+    pub(super) fn list_iter_info(&self, ty: &Ty) -> Option<(Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().list_into_iter_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
+    }
+
+    /// Whether `ty` is a `List`, a `ListIntoIter`, or an `ArrayIntoIter`: types whose values the compiler also builds
+    /// in a plain layout of its own (the `{ ptr, len, cap }` words of the runtime helpers, or an array and an index).
+    pub(super) fn is_seq_struct(&self, ty: &Ty) -> bool {
+        self.list_info(ty).is_some()
+            || self.list_iter_info(ty).is_some()
+            || self.defs().array_into_iter_elem(ty).is_some()
+    }
+
+    pub(super) fn defs(&self) -> TypeDefs<'a> {
         TypeDefs { structs: &self.program.structs, enums: &self.program.enums }
     }
 

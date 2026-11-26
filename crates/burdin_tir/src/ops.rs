@@ -242,6 +242,15 @@ pub enum Builtin {
     RawRead,
     /// `__write(p, value)`: moves `value` into the memory `p` points at without dropping what was there.
     RawWrite,
+    /// `__slice_raw(p, n)`: the `[T]` view of the `n` elements at `p`. It borrows from nothing the checker can see;
+    /// `unsafe` is the promise that the memory outlives the view.
+    SliceRaw,
+    /// `__iter_mut_raw(p, n)`: the `IterMut<T>` over the `n` elements at `p` (`unsafe`).
+    IterMutRaw,
+    /// `__range_start(r)` and `__range_end(r)`: the endpoints of a `Range<T>` or `RangeInclusive<T>` value, so a
+    /// library function can read the bounds it was given.
+    RangeStart,
+    RangeEnd,
     /// `target.os()`'s primitive: `"linux"`, `"macos"`, or `"windows"`, the system the program is compiled for.
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.

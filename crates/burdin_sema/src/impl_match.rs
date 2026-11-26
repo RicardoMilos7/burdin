@@ -20,7 +20,6 @@ fn shape(globals: &Globals, ty: &Ty) -> Option<(String, Vec<Ty>)> {
     Some(match ty {
         Ty::Ref { mutable, inner } => (format!("ref{mutable}"), vec![(**inner).clone()]),
         Ty::Slice(t) => ("slice".into(), vec![(**t).clone()]),
-        Ty::List(t, _) => ("list".into(), vec![(**t).clone()]),
         Ty::Heap(t, _) => ("heap".into(), vec![(**t).clone()]),
         Ty::CPtr(t) => ("cptr".into(), vec![(**t).clone()]),
         Ty::Range(t, inclusive) => (format!("range{inclusive}"), vec![(**t).clone()]),
@@ -175,7 +174,7 @@ mod tests {
     }
 
     fn list(ty: Ty) -> Ty {
-        Ty::List(Box::new(ty), burdin_tir::Alloc::Global)
+        Ty::Heap(Box::new(ty), burdin_tir::Alloc::Global)
     }
 
     fn names(list: &[&str]) -> Vec<String> {

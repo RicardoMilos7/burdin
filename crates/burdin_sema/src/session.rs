@@ -175,6 +175,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) traces: bool,
     /// Whether the generic-instance limit was already reported, so the passes after it do not repeat the error.
     pub(crate) instance_limit_reported: bool,
+    /// Set while impl blocks are registered, when one names a generic type whose instance does not exist yet.
+    pub(crate) impl_needs_instance: bool,
     /// Where the paths, lines, and columns of trace frames come from.
     pub(crate) sources: &'t SourceMap,
 }
@@ -259,6 +261,7 @@ impl<'t> Sema<'t> {
             fuzzes: Vec::new(),
             traces,
             instance_limit_reported: false,
+            impl_needs_instance: false,
             sources,
         }
     }

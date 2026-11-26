@@ -42,7 +42,14 @@ impl Globals {
     /// Why `ty` is not `Send` (or, with `sync`, not `Sync`), or `None` when it is. The text names the offending part
     /// the way the diagnostic shows it: the field, then what is wrong with its type.
     pub(crate) fn marker_violation(&self, ty: &Ty, sync: bool, env: &Env) -> Option<String> {
-        self.marker_why(ty, sync, env, &mut Vec::new())
+        let entry = (ty.clone(), sync);
+        if self.marker_active.borrow().contains(&entry) {
+            return None;
+        }
+        self.marker_active.borrow_mut().push(entry);
+        let why = self.marker_why(ty, sync, env, &mut Vec::new());
+        self.marker_active.borrow_mut().pop();
+        why
     }
 
     fn marker_why(&self, ty: &Ty, sync: bool, env: &Env, seen: &mut Vec<(Ty, bool)>) -> Option<String> {
@@ -109,10 +116,10 @@ impl Globals {
                         .or_else(|| self.part_why("the element", t, true, env, seen))
                 }
             }
-            Ty::Array(t, _) | Ty::Range(t, _) | Ty::RangeIter(t, _) | Ty::ArrayIntoIter(t, _) => {
+            Ty::Array(t, _) | Ty::Range(t, _) | Ty::RangeIter(t, _) => {
                 self.part_why("the element", t, sync, env, seen)
             }
-            Ty::List(t, a) | Ty::Heap(t, a) | Ty::ListIntoIter(t, a) => {
+            Ty::Heap(t, a) => {
                 self.part_why("the element", t, sync, env, seen).or_else(|| self.alloc_why(a, sync, env, seen))
             }
             Ty::Map(k, v, a) | Ty::MapIntoIter(k, v, a) => self

@@ -68,7 +68,7 @@ impl FnCx<'_> {
             return Some(self.iterator_sum(recv, &item, name.name == "product", span));
         }
         // The eager `List` methods are generic functions in `std`; the receiver is their first argument.
-        if let Ty::List(_, _) = &recv_ty
+        if self.globals.list_parts(&recv_ty).is_some()
             && let Some(g) = self.globals.eager_list_fn(&name.name)
         {
             return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
@@ -187,8 +187,8 @@ impl FnCx<'_> {
             return None;
         }
         let std_name = match (ty, from_array) {
-            (Ty::List(..), false) => "list_from_iter",
-            (Ty::List(..), true) => "list_from",
+            (t, false) if self.globals.list_parts(t).is_some() => "list_from_iter",
+            (t, true) if self.globals.list_parts(t).is_some() => "list_from",
             (Ty::Map(..), false) => "map_from_iter",
             (Ty::Map(..), true) => "map_from",
             (t, false) if self.globals.option_payload(t).is_some() => "option_from_iter",
@@ -196,7 +196,12 @@ impl FnCx<'_> {
             (Ty::String, false) => "",
             _ => return None,
         };
-        if let Ty::List(_, alloc) | Ty::Map(_, _, alloc) = ty
+        let stored = match (self.globals.list_parts(ty), ty) {
+            (Some((_, alloc)), _) => Some(alloc),
+            (None, Ty::Map(_, _, alloc)) => Some(alloc.clone()),
+            _ => None,
+        };
+        if let Some(alloc) = stored
             && !alloc.is_global()
         {
             self.diags.error(
@@ -228,8 +233,10 @@ impl FnCx<'_> {
 
     /// The element type hint for the array `List<T>.from` and `Map<K, V>.from` take: an array of `T`, or of `(K, V)`.
     fn array_hint(&self, ty: &Ty) -> Option<Ty> {
+        if let Some((elem, _)) = self.globals.list_parts(ty) {
+            return Some(Ty::Array(Box::new(elem), 0));
+        }
         match ty {
-            Ty::List(elem, _) => Some(Ty::Array(elem.clone(), 0)),
             Ty::Map(key, value, _) => Some(Ty::Array(Box::new(Ty::Tuple(vec![(**key).clone(), (**value).clone()])), 0)),
             _ => None,
         }
@@ -264,7 +271,10 @@ impl FnCx<'_> {
             check_storable(value, span, "a `Map` value", self.diags);
         }
         let std_name = if collection == "List" { "list_from" } else { "map_from" };
-        let ty = expect.filter(|ty| matches!((collection, ty), ("List", Ty::List(..)) | ("Map", Ty::Map(..))));
+        let ty = expect.filter(|ty| {
+            (collection == "List" && self.globals.list_parts(ty).is_some())
+                || matches!((collection, ty), ("Map", Ty::Map(..)))
+        });
         let Some(g) = self.globals.std_generic(std_name) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{collection}.from` needs the standard library"));
             return error_expr(span);

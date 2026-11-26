@@ -446,7 +446,6 @@ impl FnCx<'_> {
             Ty::Unit => self.std_call("debug_unit", vec![f], span),
             // A value of type `!` never exists, so there is nothing to write; the expression itself diverges.
             Ty::Never => e,
-            Ty::List(_, _) => self.generic_format("debug_list", e, f_name, span),
             Ty::Map(_, _, _) => self.generic_format("debug_map", e, f_name, span),
             Ty::Heap(_, _) => self.generic_format("debug_heap", e, f_name, span),
             Ty::Tuple(ts) => {

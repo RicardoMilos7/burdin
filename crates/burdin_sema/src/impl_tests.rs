@@ -81,7 +81,7 @@ struct Pair<A, B> {
 }
 
 struct Stack<T> {
-    items: List<T>
+    items: [T; 4]
 }
 ";
 

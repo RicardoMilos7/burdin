@@ -17,7 +17,7 @@
 
 use crate::Env;
 use burdin_diag::{Code, Diagnostic, Diagnostics, Span};
-use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty};
+use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty, TypeDefs};
 use std::collections::HashMap;
 
 /// The one-line pointer every memory diagnostic carries to its step-by-step explanation (`spec/check.md`, CK11;
@@ -320,15 +320,15 @@ impl<'a> Checker<'a> {
             tir::ExprKind::Local(id) => Some((*id, Vec::new())),
             tir::ExprKind::Field(base, i) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base) {
+                if is_tracked_place(&self.env.defs, base) {
                     path.push(*i);
                 }
                 Some((root, path))
             }
             tir::ExprKind::Index(base, index) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base)
-                    && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+                if is_tracked_place(&self.env.defs, base)
+                    && is_indexed_place(&self.env.defs, &base.ty)
                     && let Some(index) = constant_index(index)
                 {
                     path.push(index);
@@ -337,7 +337,7 @@ impl<'a> Checker<'a> {
             }
             tir::ExprKind::Deref(base) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)) {
+                if is_tracked_place(&self.env.defs, base) && matches!(base.ty, Ty::Heap(_, _)) {
                     path.push(tir::MOVED_DEREF);
                 }
                 Some((root, path))
@@ -468,6 +468,13 @@ impl<'a> Checker<'a> {
         if path.is_empty() {
             return;
         }
+        if let Some((elem, _)) = self.env.defs.list_parts(ty) {
+            // A constant `List` index selects one element.
+            let elem = elem.clone();
+            let (_, rest) = path.split_first().expect("path is not empty");
+            self.check_partial_move(&elem, rest, span);
+            return;
+        }
         if self.env.defs.has_drop_impl(ty) {
             self.error(Code::PARTIAL_MOVE_FROM_DROP, span, "cannot move a field out of a type that implements `Drop`")
                 .help(TRACE_HELP);
@@ -487,8 +494,8 @@ impl<'a> Checker<'a> {
                     self.check_partial_move(&t, rest, span);
                 }
             }
-            // A constant array or `List` index selects one element.
-            Ty::Array(elem, _) | Ty::List(elem, _) => {
+            // A constant array index selects one element.
+            Ty::Array(elem, _) => {
                 let elem = (**elem).clone();
                 self.check_partial_move(&elem, rest, span);
             }
@@ -693,10 +700,7 @@ impl<'a> Checker<'a> {
                 let entry = self.states.clone();
                 self.open_loop(label);
                 self.scopes.push(Vec::new());
-                let elem = match &list.ty {
-                    Ty::List(elem, _) => (**elem).clone(),
-                    _ => Ty::Error,
-                };
+                let elem = self.env.defs.list_parts(&list.ty).map_or(Ty::Error, |(elem, _)| elem.clone());
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
                 let body_falls = self.block(body, Mode::Use);
                 self.end_scope(body.close, body_falls);
@@ -994,7 +998,7 @@ impl<'a> Checker<'a> {
                 let root = self.place_of(scrutinee);
                 // A pattern can move parts of a tracked place: fields, constant array or `List` indices, and the
                 // fields of a `Heap` pointee. A runtime index or a slice element is not tracked.
-                let crossing = root.is_some() && !is_tracked_place(scrutinee);
+                let crossing = root.is_some() && !is_tracked_place(&self.env.defs, scrutinee);
                 let mut reported = false;
                 let mut result: Option<Vec<LocalState>> = None;
                 for arm in arms {
@@ -1083,7 +1087,7 @@ impl<'a> Checker<'a> {
                 self.with_dest(dest, Mode::Move, value);
                 if let Some((root, path)) = self.place_of(place) {
                     self.place_subexpr(place);
-                    if is_tracked_place(place) {
+                    if is_tracked_place(&self.env.defs, place) {
                         // Assigning to a field uses the values above it, but not its sibling fields (MV5).
                         self.read_ancestors(root, &path, place.span);
                         // The old value is dropped before the new one is stored (DR4).
@@ -1152,7 +1156,7 @@ impl<'a> Checker<'a> {
         let ty = e.ty.clone();
         if mode == Mode::Move && !self.is_copy(&ty) {
             // A move is tracked through fields, constant array and `List` indices, and `Heap` pointee fields.
-            if !is_tracked_place(e) {
+            if !is_tracked_place(&self.env.defs, e) {
                 if is_view_place(e) {
                     self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content").help(TRACE_HELP);
                 } else {
@@ -1304,7 +1308,11 @@ impl<'a> Checker<'a> {
                     // A destructuring `let` of a tracked place takes its parts the way `match` does (MV8): the place
                     // is read, and only the non-Copy parts the pattern binds move out of it. The rest stays in the
                     // place (`spec/rest-patterns.md`, RP2; `spec/struct-update.md`, SU4).
-                    let root = if destructures(pat) && is_tracked_place(init) { self.place_of(init) } else { None };
+                    let root = if destructures(pat) && is_tracked_place(&self.env.defs, init) {
+                        self.place_of(init)
+                    } else {
+                        None
+                    };
                     match &root {
                         Some(_) => self.expr(init, Mode::Use),
                         None => {
@@ -1550,18 +1558,21 @@ impl<'a> Checker<'a> {
     }
 }
 
+/// An array or a `List`: a constant index into one selects an element of the tracked path.
+fn is_indexed_place(defs: &TypeDefs, ty: &Ty) -> bool {
+    matches!(ty, Ty::Array(..)) || defs.list_parts(ty).is_some()
+}
+
 /// A place the analysis can follow as a path in the local's type: a local, its fields, constant array and
 /// `List` indices, and the fields of a `Heap` pointee.
-fn is_tracked_place(e: &tir::Expr) -> bool {
+fn is_tracked_place(defs: &TypeDefs, e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) => is_tracked_place(base),
+        tir::ExprKind::Field(base, _) => is_tracked_place(defs, base),
         tir::ExprKind::Index(base, index) => {
-            is_tracked_place(base)
-                && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
-                && constant_index(index).is_some()
+            is_tracked_place(defs, base) && is_indexed_place(defs, &base.ty) && constant_index(index).is_some()
         }
-        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)),
+        tir::ExprKind::Deref(base) => is_tracked_place(defs, base) && matches!(base.ty, Ty::Heap(_, _)),
         _ => false,
     }
 }

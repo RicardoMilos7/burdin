@@ -190,6 +190,19 @@ impl Globals {
     /// Returns `false` when a `Send` or `Sync` bound is not met, so the caller does not create an instance whose
     /// methods would report the same failure again from inside the standard library.
     pub(crate) fn check_adt_bounds(&self, template: usize, args: &[Ty], span: Span, diags: &mut Diagnostics) -> bool {
+        self.check_adt_bounds_upto(template, args, args.len(), span, diags)
+    }
+
+    /// `check_adt_bounds`, but only the first `checked` arguments meet their bounds. A trailing default is left to
+    /// the use site: while impl headers are declared, `Global: Allocator` may not exist yet.
+    pub(crate) fn check_adt_bounds_upto(
+        &self,
+        template: usize,
+        args: &[Ty],
+        checked: usize,
+        span: Span,
+        diags: &mut Diagnostics,
+    ) -> bool {
         let mut ok = true;
         let info = &self.generic_adts[template];
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
@@ -200,7 +213,7 @@ impl Globals {
                 crate::types::check_storable(arg, span, &format!("an element of a `{}`", info.name), diags);
             }
         }
-        for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args) {
+        for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args).take(checked) {
             if self.ty_has_param(arg) {
                 continue;
             }
@@ -243,6 +256,45 @@ impl Globals {
             Some(template) => self.adt_instance_ty(template, vec![t]),
             None => Ty::Error,
         }
+    }
+
+    /// `List<elem, alloc>`, the instance of `std`'s struct. `Ty::Error` while the instance is not allocated yet.
+    pub(crate) fn list_ty(&self, elem: Ty, alloc: tir::Alloc) -> Ty {
+        let Some(template) = self.lang_list else { return Ty::Error };
+        let alloc_ty = match alloc {
+            tir::Alloc::Global => match &self.global_alloc_ty {
+                Some(global) => global.clone(),
+                None => return Ty::Error,
+            },
+            tir::Alloc::Value(t) => *t,
+        };
+        self.adt_instance_ty(template, vec![elem, alloc_ty])
+    }
+
+    /// `List<elem>` with the default allocator.
+    pub(crate) fn list_of(&self, elem: Ty) -> Ty {
+        self.list_ty(elem, tir::Alloc::Global)
+    }
+
+    /// `ArrayIntoIter<elem, n>`, the owning iterator of an array.
+    pub(crate) fn array_into_iter_ty(&self, elem: Ty, n: u64) -> Ty {
+        let Some(template) = self.lang_array_into_iter else { return Ty::Error };
+        // A length written with a const parameter is an interned expression; as an argument it is the expression.
+        let len = if n >= crate::consteval::SYM_LEN {
+            match self.len_expr(n) {
+                Some(expr) => self.const_ty(expr),
+                None => return Ty::Error,
+            }
+        } else {
+            Ty::Const(i128::from(n))
+        };
+        self.adt_instance_ty(template, vec![elem, len])
+    }
+
+    /// The element type and allocator of a `List` instance, `None` when `ty` is not one.
+    pub(crate) fn list_parts(&self, ty: &Ty) -> Option<(Ty, tir::Alloc)> {
+        let (template, args) = self.origin_of(ty)?;
+        (Some(*template) == self.lang_list).then(|| (args[0].clone(), self.alloc_of(args[1].clone())))
     }
 
     /// `Result<ok, err>`, the instance of `std`'s enum.
@@ -299,9 +351,6 @@ impl Globals {
             Ty::Heap(inner, alloc) => {
                 self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
             }
-            Ty::List(inner, alloc) => {
-                self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
-            }
             Ty::Map(k, v, alloc) | Ty::MapEntry(k, v, alloc) => {
                 self.ty_has_param(k)
                     || self.ty_has_param(v)
@@ -333,10 +382,6 @@ impl Globals {
             | (Ty::CPtr(p), Ty::CPtr(a))
             | (Ty::Range(p, _), Ty::Range(a, _)) => self.unify(p, a, bindings),
             (Ty::Heap(p, pa), Ty::Heap(a, aa)) => {
-                self.unify(p, a, bindings);
-                self.unify_alloc(pa, aa, bindings);
-            }
-            (Ty::List(p, pa), Ty::List(a, aa)) => {
                 self.unify(p, a, bindings);
                 self.unify_alloc(pa, aa, bindings);
             }
@@ -410,7 +455,6 @@ impl Globals {
             },
             Ty::Array(t, n) => Ty::Array(go(t), *n),
             Ty::Const(v) if *v >= crate::consteval::SYM_CONST => self.subst_const(*v, env),
-            Ty::List(t, a) => Ty::List(go(t), self.subst_alloc(a, env)),
             Ty::Map(k, v, a) => Ty::Map(go(k), go(v), self.subst_alloc(a, env)),
             Ty::MapEntry(k, v, a) => Ty::MapEntry(go(k), go(v), self.subst_alloc(a, env)),
             Ty::Heap(t, a) => Ty::Heap(go(t), self.subst_alloc(a, env)),
@@ -1149,7 +1193,7 @@ impl Globals {
             Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
-            Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
+            Ty::Heap(t, _) => debug && part(t),
             Ty::Map(k, v, _) => debug && part(k) && part(v),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
@@ -1230,14 +1274,16 @@ impl Globals {
 
     /// `has_hash` with the bounds of the type parameters in scope (issue #69).
     pub(crate) fn has_hash_in(&self, ty: &Ty, env: &Env) -> bool {
+        // A list hashes its elements in order (`spec/stdlib.md`, "Interface coverage").
+        if let Some((t, _)) = self.list_parts(ty) {
+            return self.has_hash_in(&t, env);
+        }
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             // Text hashes its bytes (`spec/derives.md`, `Hash`).
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Hash, env),
-            // A list hashes its elements in order and a map its entries in any order
-            // (`spec/stdlib.md`, "Interface coverage").
-            Ty::List(t, _) => self.has_hash_in(t, env),
+            // A map hashes its entries in any order (`spec/stdlib.md`, "Interface coverage").
             Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
@@ -1272,6 +1318,10 @@ impl Globals {
 
     /// Whether `Type.default()` applies.
     pub(crate) fn has_default(&self, ty: &Ty) -> bool {
+        // The default list is empty and belongs to the default allocator, like the default map.
+        if let Some((_, alloc)) = self.list_parts(ty) {
+            return alloc.is_global();
+        }
         // `Option<T>` defaults to `None`, whatever `T` is.
         if self.option_payload(ty).is_some() {
             return true;
@@ -1286,8 +1336,6 @@ impl Globals {
             | Ty::String
             | Ty::Error
             | Ty::Never => true,
-            // The default list is empty and belongs to the default allocator, like the default map.
-            Ty::List(_, alloc) => alloc.is_global(),
             // The default map is empty and belongs to the default allocator: a stored allocator has no value to
             // build its default from.
             Ty::Map(_, _, alloc) => alloc.is_global(),
@@ -1466,8 +1514,8 @@ mod tests {
                 vec![("T".into(), i32_()), ("E".into(), bool_())],
             ),
             (
-                Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global),
-                Ty::List(Box::new(bool_()), burdin_tir::Alloc::Global),
+                Ty::Heap(Box::new(param("T")), burdin_tir::Alloc::Global),
+                Ty::Heap(Box::new(bool_()), burdin_tir::Alloc::Global),
                 vec![("T".into(), bool_())],
             ),
             (
@@ -1528,11 +1576,11 @@ mod tests {
     fn mismatched_shapes_bind_nothing() {
         let mut g = lang_globals();
         let option = g.test_option(param("T"));
-        assert!(bindings_in(&g, &option, &Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global)).is_empty());
+        assert!(bindings_in(&g, &option, &Ty::Heap(Box::new(i32_()), burdin_tir::Alloc::Global)).is_empty());
         assert!(bindings(&Ty::Tuple(vec![param("T")]), &Ty::Tuple(vec![i32_(), bool_()])).is_empty());
         assert!(
             bindings(
-                &Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global),
+                &Ty::Heap(Box::new(param("T")), burdin_tir::Alloc::Global),
                 &Ty::Map(Box::new(i32_()), Box::new(i32_()), burdin_tir::Alloc::Global)
             )
             .is_empty()
@@ -1597,7 +1645,7 @@ mod tests {
         let option_i32 = g.test_option(i32_());
         assert!(g.ty_has_param(&param("T")));
         assert!(g.ty_has_param(&option_t));
-        assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global)])));
+        assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::Heap(Box::new(param("T")), burdin_tir::Alloc::Global)])));
         assert!(!g.ty_has_param(&option_i32));
         assert!(!g.ty_has_param(&Ty::Str));
 
@@ -1655,30 +1703,22 @@ mod tests {
     #[test]
     fn interface_queries_cover_std_types() {
         let mut g = lang_globals();
-        let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
         let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), burdin_tir::Alloc::Global);
-        let floats = Ty::List(Box::new(Ty::Float(burdin_tir::FloatTy::F64)), burdin_tir::Alloc::Global);
 
         // `Hash` covers text, lists, and maps, and requires the element types (issue #716).
         assert!(g.has_hash(&Ty::String));
         assert!(g.has_hash(&Ty::Str));
-        assert!(g.has_hash(&list));
         assert!(g.has_hash(&map));
         assert!(!g.has_hash(&Ty::Float(burdin_tir::FloatTy::F64)), "a float has no Hash");
-        assert!(!g.has_hash(&floats), "a list of floats has no Hash");
 
         // `Default` is the empty container, and only for the default allocator.
-        assert!(g.has_default(&list));
         assert!(g.has_default(&map));
-        let stored = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Value(Box::new(Ty::String)));
-        assert!(!g.has_default(&stored), "a stored allocator has no default");
 
         // `Ord` covers `Option` and `Result` (issue #716).
         let option = g.test_option(i32_());
         let result = g.test_result(i32_(), i32_());
         assert!(g.has_ord(&option));
         assert!(g.has_ord(&result));
-        assert!(!g.has_ord(&list), "a list has no Ord");
     }
 
     #[test]

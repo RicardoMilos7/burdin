@@ -36,7 +36,7 @@ method of their own:
 | `Chars` | itself | `char` | `Chars` |
 | `Range<T>` | `RangeIter<T>` | `T` | `RangeIter<T>` |
 
-`ArrayIntoIter`, `ListIntoIter`, `MapIntoIter`, `MapIter`, and `RangeIter` are compiler-known iterator types. The
+`ArrayIntoIter`, `MapIntoIter`, `MapIter`, and `RangeIter` are compiler-known iterator types. `ListIntoIter` is an ordinary struct of `std` (`std/src/std.bd`) that implements `Iterator<T>`; the compiler knows it only as a lang item (`spec/stdlib.md`, "Compiler-known types"). The
 owning ones (`ArrayIntoIter`, `ListIntoIter`, `MapIntoIter`) drop the items they have not yielded; `MapIntoIter`
 also clears each entry it moves out, so the map's storage is never dropped twice. `MapIter` and `RangeIter` only
 read their source and have no drop glue. `Chars.next` decodes one scalar value with the same UTF-8 decoder as

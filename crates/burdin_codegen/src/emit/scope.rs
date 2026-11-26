@@ -163,6 +163,70 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         };
         let emit = |cg: &mut Self| -> GenResult<()> {
             match ty {
+                _ if cg.list_info(ty).is_some() => {
+                    let (elem, _) = cg.list_info(ty).expect("checked by the guard");
+                    let elem = (*elem).clone();
+                    let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
+                    let ptr_field = cg.builder.build_struct_gep(cg.string_ty, addr, 0, "").map_err(llvm_err)?;
+                    let len_field = cg.builder.build_struct_gep(cg.string_ty, addr, 1, "").map_err(llvm_err)?;
+                    let data = cg.builder.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
+                    let len = cg.builder.build_load(cg.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
+                    if let Some(elem_t) = cg.llvm_ty(&elem) {
+                        // The indices whose elements have a drop flag or a flagged field: the other elements
+                        // are still wholly initialized and drop unconditionally.
+                        let mut flagged: Vec<usize> = cg
+                            .flags
+                            .iter()
+                            .filter(|(p, _)| p.local == id && p.path.len() > path.len() && p.path.starts_with(path))
+                            .filter_map(|(p, _)| p.path.get(path.len()).copied())
+                            .filter(|step| *step != tir::MOVED_DEREF)
+                            .collect();
+                        flagged.sort_unstable();
+                        flagged.dedup();
+                        let index = cg.alloca(cg.usize_ty.into(), "drop.i")?;
+                        cg.builder.build_store(index, cg.usize_ty.const_zero()).map_err(llvm_err)?;
+                        let header = cg.new_block("list.drop.cond");
+                        let body = cg.new_block("list.drop.body");
+                        let latch = cg.new_block("list.drop.next");
+                        let end = cg.new_block("list.drop.end");
+                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                        cg.builder.position_at_end(header);
+                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                        let go = cg.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
+                        cg.builder.build_conditional_branch(go, body, end).map_err(llvm_err)?;
+                        cg.builder.position_at_end(body);
+                        // SAFETY (LLVM): i < len.
+                        let p = unsafe { cg.builder.build_in_bounds_gep(elem_t, data, &[i], "") }.map_err(llvm_err)?;
+                        // Keep index order: one branch per statically flagged element inside the loop.
+                        let done = cg.new_block("list.drop.done");
+                        for step in &flagged {
+                            let hit = cg.new_block("list.drop.moved");
+                            let next = cg.new_block("list.drop.check");
+                            let want = cg.usize_ty.const_int(*step as u64, false);
+                            let is = cg.builder.build_int_compare(IntPredicate::EQ, i, want, "").map_err(llvm_err)?;
+                            cg.builder.build_conditional_branch(is, hit, next).map_err(llvm_err)?;
+                            cg.builder.position_at_end(hit);
+                            let mut child = path.to_vec();
+                            child.push(*step);
+                            cg.drop_at(id, &child, &elem)?;
+                            cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                            cg.builder.position_at_end(next);
+                        }
+                        cg.drop_value(p, &elem)?;
+                        cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
+                        cg.builder.position_at_end(done);
+                        cg.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
+                        cg.builder.position_at_end(latch);
+                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
+                        let next =
+                            cg.builder.build_int_add(i, cg.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
+                        cg.builder.build_store(index, next).map_err(llvm_err)?;
+                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
+                        cg.builder.position_at_end(end);
+                    }
+                    cg.builder.build_call(cg.rt.free, &[data.into()], "").map_err(llvm_err)?;
+                    Ok(())
+                }
                 Ty::Struct(_) | Ty::Tuple(_) => {
                     let t = cg.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
                     for (i, fty) in cg.field_tys(ty).iter().enumerate() {
@@ -225,69 +289,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                             cg.drop_at_address(id, &child, &elem, p)?;
                         }
                     }
-                    Ok(())
-                }
-                Ty::List(elem, _) => {
-                    let elem = (**elem).clone();
-                    let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
-                    let ptr_field = cg.builder.build_struct_gep(cg.string_ty, addr, 0, "").map_err(llvm_err)?;
-                    let len_field = cg.builder.build_struct_gep(cg.string_ty, addr, 1, "").map_err(llvm_err)?;
-                    let data = cg.builder.build_load(ptr_ty, ptr_field, "").map_err(llvm_err)?.into_pointer_value();
-                    let len = cg.builder.build_load(cg.usize_ty, len_field, "").map_err(llvm_err)?.into_int_value();
-                    if let Some(elem_t) = cg.llvm_ty(&elem) {
-                        // The indices whose elements have a drop flag or a flagged field: the other elements
-                        // are still wholly initialized and drop unconditionally.
-                        let mut flagged: Vec<usize> = cg
-                            .flags
-                            .iter()
-                            .filter(|(p, _)| p.local == id && p.path.len() > path.len() && p.path.starts_with(path))
-                            .filter_map(|(p, _)| p.path.get(path.len()).copied())
-                            .filter(|step| *step != tir::MOVED_DEREF)
-                            .collect();
-                        flagged.sort_unstable();
-                        flagged.dedup();
-                        let index = cg.alloca(cg.usize_ty.into(), "drop.i")?;
-                        cg.builder.build_store(index, cg.usize_ty.const_zero()).map_err(llvm_err)?;
-                        let header = cg.new_block("list.drop.cond");
-                        let body = cg.new_block("list.drop.body");
-                        let latch = cg.new_block("list.drop.next");
-                        let end = cg.new_block("list.drop.end");
-                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                        cg.builder.position_at_end(header);
-                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-                        let go = cg.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
-                        cg.builder.build_conditional_branch(go, body, end).map_err(llvm_err)?;
-                        cg.builder.position_at_end(body);
-                        // SAFETY (LLVM): i < len.
-                        let p = unsafe { cg.builder.build_in_bounds_gep(elem_t, data, &[i], "") }.map_err(llvm_err)?;
-                        // Keep index order: one branch per statically flagged element inside the loop.
-                        let done = cg.new_block("list.drop.done");
-                        for step in &flagged {
-                            let hit = cg.new_block("list.drop.moved");
-                            let next = cg.new_block("list.drop.check");
-                            let want = cg.usize_ty.const_int(*step as u64, false);
-                            let is = cg.builder.build_int_compare(IntPredicate::EQ, i, want, "").map_err(llvm_err)?;
-                            cg.builder.build_conditional_branch(is, hit, next).map_err(llvm_err)?;
-                            cg.builder.position_at_end(hit);
-                            let mut child = path.to_vec();
-                            child.push(*step);
-                            cg.drop_at(id, &child, &elem)?;
-                            cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
-                            cg.builder.position_at_end(next);
-                        }
-                        cg.drop_value(p, &elem)?;
-                        cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
-                        cg.builder.position_at_end(done);
-                        cg.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
-                        cg.builder.position_at_end(latch);
-                        let i = cg.builder.build_load(cg.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-                        let next =
-                            cg.builder.build_int_add(i, cg.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-                        cg.builder.build_store(index, next).map_err(llvm_err)?;
-                        cg.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                        cg.builder.position_at_end(end);
-                    }
-                    cg.builder.build_call(cg.rt.free, &[data.into()], "").map_err(llvm_err)?;
                     Ok(())
                 }
                 Ty::Heap(inner, alloc) => {

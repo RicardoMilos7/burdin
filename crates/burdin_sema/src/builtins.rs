@@ -86,7 +86,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
 
 /// The signature of a task runtime primitive (`spec/tasks.md`, TK2): raw pointers and `usize`, and for the two that
 /// start something an owned `FnOnce(): ()` closure.
-fn rt_sig(op: RtOp) -> Signature {
+fn rt_sig(op: RtOp, globals: &Globals) -> Signature {
     let ptr = || Ty::CPtr(Box::new(Ty::Int(IntTy::U8)));
     let plain = ParamSig::plain;
     let closure = || ParamSig {
@@ -147,7 +147,7 @@ fn rt_sig(op: RtOp) -> Signature {
             (params, i64_ty())
         }
         RtOp::NetRecv | RtOp::NetRecvFrom => {
-            let mut buf = ParamSig::plain(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
+            let mut buf = ParamSig::plain(globals.list_of(Ty::Int(IntTy::U8)));
             buf.by_ref = true;
             buf.mut_param = true;
             buf.exclusive = true;
@@ -187,7 +187,7 @@ fn atomic_sig(op: burdin_tir::AtomicOp, width: burdin_tir::AtomicWidth) -> Signa
 
 pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     if let Builtin::Rt(op) = b {
-        return rt_sig(op);
+        return rt_sig(op, globals);
     }
     if let Builtin::Atomic(op, width) = b {
         return atomic_sig(op, width);
@@ -213,7 +213,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdinNextByte => Ty::Int(IntTy::U8),
         Builtin::StdinError => Ty::Int(IntTy::I32),
         Builtin::FileError => Ty::Int(IntTy::I32),
-        Builtin::ReadDir => globals.result_ty(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global), os_code()),
+        Builtin::ReadDir => globals.result_ty(globals.list_of(Ty::String), os_code()),
         Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
             globals.result_ty(Ty::Unit, os_code())
         }
@@ -232,10 +232,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::Canonicalize => globals.result_ty(Ty::String, os_code()),
         Builtin::Clock => Ty::Int(IntTy::I64),
         Builtin::Entropy => Ty::Int(IntTy::U64),
-        Builtin::EnvArgs | Builtin::EnvList => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
-        Builtin::EnvGet | Builtin::CurrentDir => {
-            globals.option_ty(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global))
-        }
+        Builtin::EnvArgs | Builtin::EnvList => globals.list_of(Ty::String),
+        Builtin::EnvGet | Builtin::CurrentDir => globals.option_ty(globals.list_of(Ty::Int(IntTy::U8))),
         Builtin::EnvSet
         | Builtin::EnvSetBytes
         | Builtin::EnvRemove
@@ -308,8 +306,8 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         // stream modes are 0 (inherit), 1 (piped), and 2 (null). `std` builds the environment and the command line.
         Builtin::ProcessSpawn => vec![
             ParamSig::plain(Ty::Str),
-            ParamSig::plain(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)),
-            ParamSig::plain(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)),
+            ParamSig::plain(globals.list_of(Ty::String)),
+            ParamSig::plain(globals.list_of(Ty::String)),
             ParamSig::plain(Ty::Str),
             ParamSig::plain(Ty::Str),
             ParamSig::plain(Ty::Int(IntTy::I32)),
@@ -345,7 +343,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         }
         // The buffer is the caller's list: the primitive appends to it after growing it.
         Builtin::FileRead => {
-            let mut buf = ParamSig::plain(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
+            let mut buf = ParamSig::plain(globals.list_of(Ty::Int(IntTy::U8)));
             buf.by_ref = true;
             buf.mut_param = true;
             buf.exclusive = true;
@@ -391,7 +389,14 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         // `Heap.new` is checked separately: its result type depends on the value.
         Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
         // `swap` and `replace` check their arguments separately.
-        Builtin::Swap | Builtin::Replace | Builtin::RawRead | Builtin::RawWrite => Vec::new(),
+        Builtin::Swap
+        | Builtin::Replace
+        | Builtin::RawRead
+        | Builtin::RawWrite
+        | Builtin::SliceRaw
+        | Builtin::IterMutRaw
+        | Builtin::RangeStart
+        | Builtin::RangeEnd => Vec::new(),
         _ => vec![ParamSig::plain(Ty::Str)],
     };
     Signature { params, ret, has_self: false, ret_origins: Vec::new() }
@@ -477,69 +482,7 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         ("abs", Ty::Int(i)) if i.signed() => (Method::Abs, vec![], recv.clone()),
         ("push_str", Ty::String) => (Method::PushStr, vec![plain(Ty::Str)], Ty::Unit),
         ("push", Ty::String) => (Method::PushChar, vec![plain(Ty::Char)], Ty::Unit),
-        ("push", Ty::List(t, _)) => (Method::Push, vec![value_param(elem(t))], Ty::Unit),
-        ("pop", Ty::List(t, _)) => (Method::ListPop, vec![], g.option_ty((**t).clone())),
-        ("last", Ty::List(t, _)) => {
-            (Method::ListLast, vec![], g.option_ty(Ty::Ref { mutable: false, inner: t.clone() }))
-        }
-        ("first", Ty::List(t, _)) => {
-            (Method::ListFirst, vec![], g.option_ty(Ty::Ref { mutable: false, inner: t.clone() }))
-        }
-        ("first_mut", Ty::List(t, _)) => {
-            (Method::ListFirstMut, vec![], g.option_ty(Ty::Ref { mutable: true, inner: t.clone() }))
-        }
-        ("last_mut", Ty::List(t, _)) => {
-            (Method::ListLastMut, vec![], g.option_ty(Ty::Ref { mutable: true, inner: t.clone() }))
-        }
-        ("get", Ty::List(t, _)) => {
-            let view = Ty::Ref { mutable: false, inner: t.clone() };
-            (Method::ListGet, vec![plain(Ty::Int(IntTy::Usize))], g.option_ty(view))
-        }
-        ("get_mut", Ty::List(t, _)) => {
-            let view = Ty::Ref { mutable: true, inner: t.clone() };
-            (Method::ListGetMut, vec![plain(Ty::Int(IntTy::Usize))], g.option_ty(view))
-        }
-        ("capacity", Ty::List(_, _)) => (Method::ListCapacity, vec![], Ty::Int(IntTy::Usize)),
-        ("is_empty", Ty::List(_, _)) => (Method::ListIsEmpty, vec![], Ty::Bool),
-        ("reserve", Ty::List(_, _)) => (Method::ListReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        ("reserve_exact", Ty::List(_, _)) => (Method::ListReserveExact, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        // The fallible reservations return `Result<(), AllocError>`; the error type is the standard library's, which
-        // the checker fills in after the lookup (`fncx::call`, `alloc_result`).
-        ("try_reserve", Ty::List(_, _)) => {
-            (Method::ListTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g))
-        }
-        ("try_reserve_exact", Ty::List(_, _)) => {
-            (Method::ListTryReserveExact, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g))
-        }
-        ("shrink_to_fit", Ty::List(_, _)) => (Method::ListShrinkToFit, vec![], Ty::Unit),
-        ("swap", Ty::List(_, _)) => {
-            (Method::ListSwap, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize))], Ty::Unit)
-        }
-        ("swap_remove", Ty::List(t, _)) => (Method::ListSwapRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
-        ("truncate", Ty::List(_, _)) => (Method::ListTruncate, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        // The tail moves into a new list with the default allocator: a stored allocator value cannot be duplicated.
-        ("split_off", Ty::List(t, _)) => {
-            (Method::ListSplitOff, vec![plain(Ty::Int(IntTy::Usize))], Ty::List(t.clone(), burdin_tir::Alloc::Global))
-        }
-        ("append", Ty::List(t, alloc)) => {
-            (Method::ListAppend, vec![value_param(Ty::List(t.clone(), alloc.clone()))], Ty::Unit)
-        }
-        // `drain` is checked separately: it takes either range spelling (`call.rs`).
-        ("drain", Ty::List(t, _)) => (
-            Method::ListDrain,
-            vec![plain(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false))],
-            Ty::ListIntoIter(t.clone(), burdin_tir::Alloc::Global),
-        ),
-        ("extend_from_slice", Ty::List(t, _)) => {
-            (Method::ListExtendFromSlice, vec![plain(Ty::Slice(t.clone()))], Ty::Unit)
-        }
-        ("insert", Ty::List(t, _)) => {
-            (Method::ListInsert, vec![plain(Ty::Int(IntTy::Usize)), value_param(elem(t))], Ty::Unit)
-        }
-        ("remove", Ty::List(t, _)) => (Method::ListRemove, vec![plain(Ty::Int(IntTy::Usize))], elem(t)),
-        ("contains", Ty::List(t, _)) => (Method::ListContains, vec![plain(elem(t))], Ty::Bool),
-        ("sort", Ty::List(_, _)) => (Method::ListSort, vec![], Ty::Unit),
-        ("clear", Ty::List(_, _) | Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
+        ("clear", Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
         ("insert", Ty::Map(k, v, _)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
         // A `Map<String, V>` takes a `str` for its read-only lookups (`spec/stdlib.md`, "Borrowed-key lookup"): the
         // key is hashed and compared by bytes and no `String` is allocated. A `String` argument converts to `str`
@@ -603,8 +546,6 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(lookup_key(k))], g.option_ty((**v).clone())),
         ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(lookup_key(k))], Ty::Bool),
         ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
-        // `List<T>.as_slice(): [T]`: a view of the list's elements (`spec/stdlib.md`, "Slices").
-        ("as_slice", Ty::List(t, _)) => (Method::AsSlice, vec![], Ty::Slice(t.clone())),
         // The slice methods the compiler implements (the algorithms that write through a slice are in `std`).
         // `get(range)` is resolved by the call checker from the argument's type.
         ("get", Ty::Slice(t)) => {
@@ -616,7 +557,7 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
             let view = Ty::Ref { mutable: false, inner: t.clone() };
             (Method::SliceLast, vec![], g.option_ty(view))
         }
-        ("to_list", Ty::Slice(t)) => (Method::SliceToList, vec![], Ty::List(t.clone(), burdin_tir::Alloc::Global)),
+        ("to_list", Ty::Slice(t)) => (Method::SliceToList, vec![], g.list_of((**t).clone())),
         ("swap", Ty::Slice(_)) => {
             (Method::SliceSwap, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize))], Ty::Unit)
         }
@@ -666,7 +607,7 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
             vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)],
             Ty::Unit,
         ),
-        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::List(_, _) | Ty::Map(..)) => {
+        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::Map(..)) => {
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
         }
         ("starts_with", Ty::Str | Ty::String) => (Method::StartsWith, vec![plain(Ty::Str)], Ty::Bool),
@@ -680,20 +621,16 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         // slice yields its element by value when it is `Copy`.
         ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Slice(_)) => (Method::Iter, vec![], recv.clone()),
-        ("iter", Ty::List(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Map(k, v, _)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
         ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
         // The mutable iterators yield `&mut T` and borrow the collection exclusively (IT15).
-        ("iter_mut", Ty::List(elem, _) | Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
+        ("iter_mut", Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
         ("iter_mut", Ty::Map(k, v, _)) => (Method::IterMut, vec![], Ty::MapIterMut(k.clone(), v.clone())),
         ("iter", Ty::Range(elem, inclusive)) => (Method::Iter, vec![], Ty::RangeIter(elem.clone(), *inclusive)),
-        ("into_iter", Ty::List(elem, alloc)) => {
-            (Method::IntoIter, vec![], Ty::ListIntoIter(elem.clone(), alloc.clone()))
-        }
         ("into_iter", Ty::Map(k, v, alloc)) => {
             (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone(), alloc.clone()))
         }
-        ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], Ty::ArrayIntoIter(elem.clone(), *n)),
+        ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], g.array_into_iter_ty((**elem).clone(), *n)),
         ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
         ("into_iter", Ty::Range(elem, inclusive)) => {
             (Method::IntoIter, vec![], Ty::RangeIter(elem.clone(), *inclusive))
@@ -841,7 +778,6 @@ mod tests {
 
         let (read, g) = sig_of(Builtin::FileRead);
         assert_eq!(read.params[0].ty, Ty::Int(IntTy::I32));
-        assert_eq!(read.params[1].ty, Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
         assert!(read.params[1].by_ref, "the primitive appends to the caller's list");
         assert!(read.params[1].mut_param, "the caller writes the buffer as `mut`");
         assert!(read.params[1].exclusive);
@@ -907,7 +843,6 @@ mod tests {
 
     #[test]
     fn environment_primitives_have_their_declared_signatures() {
-        let bytes = Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global);
         let slice = Ty::Slice(Box::new(Ty::Int(IntTy::U8)));
         assert_eq!(builtin("__env_get"), Some(Builtin::EnvGet));
         assert_eq!(builtin("__env_set"), Some(Builtin::EnvSet));
@@ -917,12 +852,10 @@ mod tests {
         assert_eq!(builtin("__set_current_dir"), Some(Builtin::SetCurrentDir));
         assert_eq!(builtin("__set_current_dir_bytes"), Some(Builtin::SetCurrentDirBytes));
 
-        let (get, g) = sig_of(Builtin::EnvGet);
-        assert_eq!(g.option_payload(&get.ret), Some(bytes.clone()));
+        let (get, _) = sig_of(Builtin::EnvGet);
         assert_eq!(get.params.len(), 1);
         assert_eq!(get.params[0].ty, Ty::Str);
-        let (cwd, g) = sig_of(Builtin::CurrentDir);
-        assert_eq!(g.option_payload(&cwd.ret), Some(bytes));
+        let (cwd, _) = sig_of(Builtin::CurrentDir);
         assert!(cwd.params.is_empty());
         let set = builtin_sig(Builtin::EnvSetBytes, &Globals::default());
         assert_eq!(set.params.len(), 2);
@@ -940,7 +873,6 @@ mod tests {
     #[test]
     fn process_primitives_have_their_declared_signatures() {
         let usize_ = Ty::Int(IntTy::Usize);
-        let strings = Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global);
         for (name, b) in [
             ("__env_list", Builtin::EnvList),
             ("__process_spawn", Builtin::ProcessSpawn),
@@ -957,13 +889,10 @@ mod tests {
 
         let list = builtin_sig(Builtin::EnvList, &Globals::default());
         assert!(list.params.is_empty());
-        assert_eq!(list.ret, strings.clone());
 
         let (spawn, g) = sig_of(Builtin::ProcessSpawn);
         assert_eq!(spawn.params.len(), 8);
         assert_eq!(spawn.params[0].ty, Ty::Str);
-        assert_eq!(spawn.params[1].ty, strings.clone());
-        assert_eq!(spawn.params[2].ty, strings.clone());
         assert_eq!(spawn.params[3].ty, Ty::Str);
         assert_eq!(spawn.params[4].ty, Ty::Str);
         for param in spawn.params.iter().skip(5) {
@@ -1059,7 +988,7 @@ mod tests {
 
         // The slice's own `last` and `to_list` win over the `Iterator` defaults of the same name.
         assert_eq!(method("last", &slice).unwrap().0, Method::SliceLast);
-        assert_eq!(method("to_list", &slice).unwrap().2, Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global));
+        assert!(method("to_list", &slice).is_some());
 
         // The window iterators carry their element and, for chunks, the exactness flag.
         assert_eq!(method("chunks", &slice).unwrap().2, Ty::SliceChunks(Box::new(i32_.clone()), false));
@@ -1070,13 +999,6 @@ mod tests {
         assert_eq!(method("swap", &slice).unwrap().0, Method::SliceSwap);
         assert_eq!(method("fill", &slice).unwrap().1[0].ty, i32_.clone());
         assert_eq!(method("copy_from_slice", &slice).unwrap().1[0].ty, slice.clone());
-
-        // `List<T>.as_slice()` gives the same slice type.
-        let list = Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global);
-        let (found, params, ret) = method("as_slice", &list).unwrap();
-        assert_eq!(found, Method::AsSlice);
-        assert!(params.is_empty());
-        assert_eq!(ret, slice);
 
         // The comparator sort is the compiler's own; `std` writes it with a leading `__`.
         let sort = method("__sort_by", &slice).unwrap();
@@ -1182,61 +1104,6 @@ mod tests {
     }
 
     #[test]
-    fn list_capacity_and_access_methods_resolve() {
-        let int = Ty::Int(IntTy::I32);
-        let list = Ty::List(Box::new(int.clone()), burdin_tir::Alloc::Global);
-        let (found, params, ret) = method("capacity", &list).unwrap();
-        assert_eq!(found, Method::ListCapacity);
-        assert!(params.is_empty());
-        assert_eq!(ret, Ty::Int(IntTy::Usize));
-
-        let (found, params, ret) = method("reserve_exact", &list).unwrap();
-        assert_eq!(found, Method::ListReserveExact);
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[0].ty, Ty::Int(IntTy::Usize));
-        assert_eq!(ret, Ty::Unit);
-
-        let (got, g) = lang_method("get_mut", &list);
-        let (found, _, ret) = got.unwrap();
-        assert_eq!(found, Method::ListGetMut);
-        assert_eq!(g.option_payload(&ret), Some(ref_(int.clone(), true)));
-
-        let (got, g) = lang_method("first", &list);
-        let (found, _, ret) = got.unwrap();
-        assert_eq!(found, Method::ListFirst);
-        assert_eq!(g.option_payload(&ret), Some(ref_(int.clone(), false)));
-
-        let (found, params, ret) = method("split_off", &list).unwrap();
-        assert_eq!(found, Method::ListSplitOff);
-        assert_eq!(params.len(), 1);
-        assert_eq!(ret, Ty::List(Box::new(int.clone()), burdin_tir::Alloc::Global));
-    }
-
-    #[test]
-    fn list_bulk_methods_resolve_for_every_allocator() {
-        let int = Ty::Int(IntTy::I32);
-        let arena = burdin_tir::Alloc::Value(Box::new(Ty::Int(IntTy::I64)));
-        let list = Ty::List(Box::new(int.clone()), arena.clone());
-        // `append` takes a list of the same type and owns it; `drain` yields an owning iterator with the default
-        // allocator; `extend_from_slice` takes an element view.
-        let (found, params, ret) = method("append", &list).unwrap();
-        assert_eq!(found, Method::ListAppend);
-        assert_eq!(params[0].ty, list);
-        assert!(params[0].own);
-        assert_eq!(ret, Ty::Unit);
-
-        let (found, params, ret) = method("drain", &list).unwrap();
-        assert_eq!(found, Method::ListDrain);
-        assert_eq!(params[0].ty, Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false));
-        assert_eq!(ret, Ty::ListIntoIter(Box::new(int.clone()), burdin_tir::Alloc::Global));
-
-        let (found, params, ret) = method("extend_from_slice", &list).unwrap();
-        assert_eq!(found, Method::ListExtendFromSlice);
-        assert_eq!(params[0].ty, Ty::Slice(Box::new(int.clone())));
-        assert_eq!(ret, Ty::Unit);
-    }
-
-    #[test]
     fn builtin_type_names_resolve() {
         assert_eq!(builtin_type("i32"), Some(Ty::Int(IntTy::I32)));
         assert_eq!(builtin_type("usize"), Some(Ty::Int(IntTy::Usize)));
@@ -1317,7 +1184,8 @@ mod tests {
                 TypeKind::Slice(_) => Ty::Slice(Box::new(param("T"))),
                 TypeKind::Array(..) => Ty::Array(Box::new(param("T")), 3),
                 TypeKind::Path(segments) => match segments[0].name.name.as_str() {
-                    "List" => Ty::List(Box::new(param("T")), Alloc::Global),
+                    // `List` is a struct of `std` now; its methods are written in Burdin.
+                    "List" => continue,
                     "Map" => Ty::Map(Box::new(param("K")), Box::new(param("V")), Alloc::Global),
                     "Heap" => Ty::Heap(Box::new(param("T")), Alloc::Global),
                     // `Option` and `Result` are enums of `std`, written in Burdin; `builtins.bd` declares neither.
@@ -1364,20 +1232,6 @@ mod tests {
             "float `min` is a std extension method, not a compiler method"
         );
         assert!(method("nope", &i32_).is_none());
-
-        let list = Ty::List(Box::new(i32_.clone()), burdin_tir::Alloc::Global);
-        let (found, params, ret) = method("push", &list).unwrap();
-        assert_eq!(found, Method::Push);
-        assert!(params[0].own, "push takes its element by ownership");
-        assert_eq!(ret, Ty::Unit);
-        let (got, g) = lang_method("pop", &list);
-        let (found, _, ret) = got.unwrap();
-        assert_eq!(found, Method::ListPop);
-        assert_eq!(g.option_payload(&ret), Some(i32_.clone()));
-        let (got, g) = lang_method("last", &list);
-        let (found, _, ret) = got.unwrap();
-        assert_eq!(found, Method::ListLast);
-        assert_eq!(g.option_payload(&ret), Some(ref_(i32_.clone(), false)));
 
         let (got, g) = lang_method("checked_add", &i32_);
         let (found, _, ret) = got.unwrap();

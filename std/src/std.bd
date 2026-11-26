@@ -1,13 +1,13 @@
-// The stage 0 standard library, written in Burdin. The compiler provides the primitives that reach the operating
-// system or raw memory (file I/O, processes, the arguments, the environment, the working directory, and the memory
-// helpers); everything a Burdin program can express is here.
-
+// The stage 0 standard library, written in Burdin; the compiler provides only the primitives that reach the system.
+use alloc.{Allocator, Global}
 use env.get
 use fmt.{Debug, Display, Formatter}
 use fs.append
+use iter.Iterator
 use marker.{Send, Sync}
 use mem.drop
 use reactor.offload_raw
+use slice.{contains, sort}
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `AnyError`.
 ///
@@ -815,3 +815,440 @@ CString: Drop {
         }
     }
 }
+
+/// A growable, owned array. `A` is where its buffer comes from (`Global` unless it was made with `new_in`).
+struct List<T, A: Allocator = Global> {
+    ptr: CPtr<T>
+    len: usize
+    cap: usize
+    alloc: A
+}
+
+List<T, A>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            let mut i: usize = 0
+            while i < self.len {
+                drop(__read(self.ptr + i))
+                i = i + 1
+            }
+            if self.cap > 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, list_bytes(self.cap, T.size()), 8)
+            }
+        }
+    }
+}
+
+priv fn list_bytes(n: usize, size: usize): usize {
+    let bytes = n * size
+    if bytes == 0 { 1 } else { bytes }
+}
+
+priv fn list_oob(index: usize, len: usize) {
+    panic(format("index out of bounds: the index is {} and the length is {}", index, len))
+}
+
+List<T> {
+    /// An empty list.
+    fn new(): List<T> {
+        List { ptr: unsafe { CPtr<T>.null() }, len: 0, cap: 0, alloc: Global { } }
+    }
+
+    /// An empty list with room for `n` elements.
+    fn with_capacity(n: usize): List<T> {
+        let mut out = List<T>.new()
+        out.reserve_exact(n)
+        out
+    }
+
+    /// `Ok` with room for `n` elements, or the reason there is none.
+    fn try_with_capacity(n: usize): Result<List<T>, AllocError> {
+        let mut out = List<T>.new()
+        out.try_reserve_exact(n)?
+        Result.Ok(out)
+    }
+}
+
+List<T, A> {
+    fn new_in(own alloc: A): List<T, A> {
+        List { ptr: unsafe { CPtr<T>.null() }, len: 0, cap: 0, alloc: alloc }
+    }
+
+    fn with_capacity_in(n: usize, own alloc: A): List<T, A> {
+        let mut out = List<T, A>.new_in(alloc)
+        out.reserve_exact(n)
+        out
+    }
+
+    fn try_with_capacity_in(n: usize, own alloc: A): Result<List<T, A>, AllocError> {
+        let mut out = List<T, A>.new_in(alloc)
+        out.try_reserve_exact(n)?
+        Result.Ok(out)
+    }
+
+    fn len(self): usize { self.len }
+    fn capacity(self): usize { self.cap }
+    fn is_empty(self): bool { self.len == 0 }
+
+    /// Moves the buffer to `cap` elements (`cap >= len`); `Err` leaves the list unchanged.
+    priv fn set_capacity(mut self, cap: usize): Result<(), AllocError> {
+        if cap == self.cap { return Result.Ok(()) }
+        if T.size() > 0 && cap > 18446744073709551615 / T.size() { return Result.Err(AllocError.CapacityOverflow) }
+        unsafe {
+            if cap == 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, list_bytes(self.cap, T.size()), 8)
+                self.ptr = CPtr<T>.null()
+                self.cap = 0
+                return Result.Ok(())
+            }
+            let block = if self.cap == 0 {
+                self.alloc.allocate(list_bytes(cap, T.size()), 8)
+            } else {
+                self.alloc.reallocate(self.ptr as CPtr<u8>, list_bytes(self.cap, T.size()), list_bytes(cap, T.size()), 8)
+            }
+            if block.is_null() { return Result.Err(AllocError.OutOfMemory) }
+            self.ptr = block as CPtr<T>
+            self.cap = cap
+        }
+        Result.Ok(())
+    }
+
+    priv fn want(self, additional: usize): Result<usize, AllocError> {
+        if additional > 18446744073709551615 - self.len { return Result.Err(AllocError.CapacityOverflow) }
+        Result.Ok(self.len + additional)
+    }
+
+    fn try_reserve(mut self, additional: usize): Result<(), AllocError> {
+        let want = self.want(additional)?
+        if want <= self.cap { return Result.Ok(()) }
+        let doubled = self.cap * 2
+        self.set_capacity(if doubled < want { want } else { doubled })
+    }
+
+    fn try_reserve_exact(mut self, additional: usize): Result<(), AllocError> {
+        let want = self.want(additional)?
+        if want <= self.cap { return Result.Ok(()) }
+        self.set_capacity(want)
+    }
+
+    fn reserve(mut self, additional: usize) {
+        match self.try_reserve(additional) {
+            Result.Ok(_) => { },
+            Result.Err(e) => panic(match e {
+                AllocError.CapacityOverflow => "reserve: capacity overflow",
+                AllocError.OutOfMemory => "out of memory",
+            }),
+        }
+    }
+
+    fn reserve_exact(mut self, additional: usize) {
+        match self.try_reserve_exact(additional) {
+            Result.Ok(_) => { },
+            Result.Err(e) => panic(match e {
+                AllocError.CapacityOverflow => "reserve: capacity overflow",
+                AllocError.OutOfMemory => "out of memory",
+            }),
+        }
+    }
+
+    fn shrink_to_fit(mut self) {
+        let n = self.len
+        let _ = self.set_capacity(n)
+    }
+
+    fn push(mut self, own value: T) {
+        if self.len == self.cap {
+            let doubled = self.cap * 2
+            match self.set_capacity(if doubled < 4 { 4 } else { doubled }) {
+                Result.Ok(_) => { },
+                Result.Err(_) => panic("out of memory"),
+            }
+        }
+        unsafe { __write(self.ptr + self.len, value) }
+        self.len = self.len + 1
+    }
+
+    fn pop(mut self): Option<T> {
+        if self.len == 0 { return Option.None }
+        self.len = self.len - 1
+        Option.Some(unsafe { __read(self.ptr + self.len) })
+    }
+
+    fn as_slice(self): [T] { unsafe { __slice_raw(self.ptr, self.len) } }
+    fn iter(self): [T] { unsafe { __slice_raw(self.ptr, self.len) } }
+
+    fn get(self, index: usize): Option<&T> {
+        if index < self.len { Option.Some(unsafe { &*(self.ptr + index) }) } else { Option.None }
+    }
+    fn get_mut(mut self, index: usize): Option<&mut T> {
+        if index < self.len { Option.Some(unsafe { &mut *(self.ptr + index) }) } else { Option.None }
+    }
+    fn first(self): Option<&T> { self.get(0) }
+    fn first_mut(mut self): Option<&mut T> { self.get_mut(0) }
+    fn last(self): Option<&T> { if self.len == 0 { Option.None } else { self.get(self.len - 1) } }
+    fn last_mut(mut self): Option<&mut T> {
+        if self.len == 0 { return Option.None }
+        let i = self.len - 1
+        self.get_mut(i)
+    }
+
+    fn clear(mut self) { self.truncate(0) }
+
+    fn truncate(mut self, len: usize) {
+        if len >= self.len { return }
+        let old = self.len
+        self.len = len
+        let mut i = len
+        while i < old {
+            unsafe { drop(__read(self.ptr + i)) }
+            i = i + 1
+        }
+    }
+
+    fn insert(mut self, index: usize, own value: T) {
+        if index > self.len { list_oob(index, self.len) }
+        if self.len == self.cap {
+            let doubled = self.cap * 2
+            match self.set_capacity(if doubled < 4 { 4 } else { doubled }) {
+                Result.Ok(_) => { },
+                Result.Err(_) => panic("out of memory"),
+            }
+        }
+        unsafe {
+            let mut i = self.len
+            while i > index {
+                __write(self.ptr + i, __read(self.ptr + (i - 1)))
+                i = i - 1
+            }
+            __write(self.ptr + index, value)
+        }
+        self.len = self.len + 1
+    }
+
+    fn remove(mut self, index: usize): T {
+        if index >= self.len { list_oob(index, self.len) }
+        unsafe {
+            let out = __read(self.ptr + index)
+            let mut i = index
+            while i + 1 < self.len {
+                __write(self.ptr + i, __read(self.ptr + (i + 1)))
+                i = i + 1
+            }
+            self.len = self.len - 1
+            out
+        }
+    }
+
+    fn swap(mut self, a: usize, b: usize) {
+        if a >= self.len || b >= self.len { panic("swap: index out of bounds") }
+        if a == b { return }
+        unsafe {
+            let x = __read(self.ptr + a)
+            __write(self.ptr + a, __read(self.ptr + b))
+            __write(self.ptr + b, x)
+        }
+    }
+
+    fn swap_remove(mut self, index: usize): T {
+        if index >= self.len { panic("swap_remove: index out of bounds") }
+        unsafe {
+            let out = __read(self.ptr + index)
+            self.len = self.len - 1
+            if index != self.len { __write(self.ptr + index, __read(self.ptr + self.len)) }
+            out
+        }
+    }
+
+    fn append(mut self, own other: List<T, A>) {
+        let mut other = other
+        self.reserve(other.len)
+        unsafe {
+            let mut i: usize = 0
+            while i < other.len {
+                __write(self.ptr + (self.len + i), __read(other.ptr + i))
+                i = i + 1
+            }
+        }
+        self.len = self.len + other.len
+        other.len = 0
+    }
+
+    fn iter_mut(mut self): IterMut<T> { unsafe { __iter_mut_raw(self.ptr, self.len) } }
+
+    /// Moves the elements from `at` on into a new list with the default allocator.
+    fn split_off(mut self, at: usize): List<T> {
+        if at > self.len { panic("split_off: index out of bounds") }
+        let mut out = List<T>.with_capacity(self.len - at)
+        unsafe {
+            let mut i = at
+            while i < self.len {
+                __write(out.ptr + (i - at), __read(self.ptr + i))
+                i = i + 1
+            }
+        }
+        out.len = self.len - at
+        self.len = at
+        out
+    }
+
+    /// Removes `lo..hi` and returns the removed elements as an owning iterator.
+    fn drain(mut self, range: Range<usize>): ListIntoIter<T> {
+        self.drain_range(__range_start(range), __range_end(range))
+    }
+
+    /// `drain(lo..=hi)`.
+    fn drain_inclusive(mut self, range: RangeInclusive<usize>): ListIntoIter<T> {
+        let hi = __range_end(range)
+        if hi >= self.len { panic("drain: range out of bounds") }
+        self.drain_range(__range_start(range), hi + 1)
+    }
+
+    priv fn drain_range(mut self, lo: usize, hi: usize): ListIntoIter<T> {
+        if lo > hi || hi > self.len { panic("drain: range out of bounds") }
+        let mut out = List<T>.with_capacity(hi - lo)
+        unsafe {
+            let mut i = lo
+            while i < hi {
+                __write(out.ptr + (i - lo), __read(self.ptr + i))
+                i = i + 1
+            }
+            out.len = hi - lo
+            let mut j = hi
+            while j < self.len {
+                __write(self.ptr + (j - (hi - lo)), __read(self.ptr + j))
+                j = j + 1
+            }
+        }
+        self.len = self.len - (hi - lo)
+        out.into_iter()
+    }
+
+    fn into_iter(own self): ListIntoIter<T, A> {
+        let mut me = self
+        let it = unsafe { ListIntoIter { ptr: me.ptr, len: me.len, cap: me.cap, pos: 0, alloc: __read(&me.alloc as CPtr<A>) } }
+        // The iterator now owns the buffer and the allocator. Moving `me` over its own storage ends its life
+        // without running its drop, so the allocator is dropped once (by the iterator), not twice.
+        unsafe { __write(&me as CPtr<List<T, A>>, me) }
+        it
+    }
+}
+
+/// The owning iterator of a `List`: it yields the elements and drops the ones it did not yield.
+struct ListIntoIter<T, A: Allocator = Global> {
+    ptr: CPtr<T>
+    len: usize
+    cap: usize
+    pos: usize
+    alloc: A
+}
+
+ListIntoIter<T, A>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            while self.pos < self.len {
+                drop(__read(self.ptr + self.pos))
+                self.pos = self.pos + 1
+            }
+            if self.cap > 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, list_bytes(self.cap, T.size()), 8)
+            }
+        }
+    }
+}
+
+ListIntoIter<T, A>: Iterator<T> {
+    fn next(mut self): Option<T> {
+        if self.pos >= self.len { return Option.None }
+        let at = self.pos
+        self.pos = at + 1
+        Option.Some(unsafe { __read(self.ptr + at) })
+    }
+}
+
+/// A value that drop glue never drops: whoever holds one decides what becomes of the value inside, by reading it out
+/// with `__read` or dropping it by hand.
+struct ManuallyDrop<T> {
+    value: T
+}
+
+/// The owning iterator of an array: it yields the elements in order and drops the ones it did not yield.
+struct ArrayIntoIter<T, const N: usize> {
+    data: ManuallyDrop<[T; N]>
+    pos: usize
+}
+
+ArrayIntoIter<T, N>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            let base = &self.data.value as CPtr<[T; N]> as CPtr<T>
+            while self.pos < N {
+                drop(__read(base + self.pos))
+                self.pos = self.pos + 1
+            }
+        }
+    }
+}
+
+ArrayIntoIter<T, N>: Iterator<T> {
+    fn next(mut self): Option<T> {
+        if self.pos >= N { return Option.None }
+        let at = self.pos
+        self.pos = at + 1
+        let base = unsafe { &self.data.value as CPtr<[T; N]> as CPtr<T> }
+        Option.Some(unsafe { __read(base + at) })
+    }
+}
+
+List<T, A> where T: Clone, A: Allocator {
+    fn extend_from_slice(mut self, values: [T]) {
+        for x in values {
+            self.push(x.clone())
+        }
+    }
+}
+
+List<T, A> where T: Eq, A: Allocator {
+    fn contains(self, value: T): bool {
+        self.as_slice().contains(value)
+    }
+}
+
+List<T, A> where T: Ord, A: Allocator {
+    fn sort(mut self) {
+        let mut view = self.as_slice()
+        view.sort()
+    }
+}
+
+List<T, A>: Debug where T: Debug, A: Allocator {
+    fn debug(self, mut f: Formatter) {
+        f.write_str("[")
+        let mut first = true
+        for x in self.iter() {
+            if !first { f.write_str(", ") }
+            first = false
+            x.debug(mut f)
+        }
+        f.write_str("]")
+    }
+}
+
+List<T, A>: Eq where T: Eq, A: Allocator {
+    fn eq(self, other: List<T, A>): bool {
+        if self.len != other.len { return false }
+        let mine = self.as_slice()
+        let theirs = other.as_slice()
+        let mut i: usize = 0
+        while i < self.len {
+            if mine[i] != theirs[i] { return false }
+            i = i + 1
+        }
+        true
+    }
+}
+
+unsafe List<T, A>: Send where T: Send, A: Send { }
+unsafe List<T, A>: Sync where T: Sync, A: Sync { }
+
+unsafe ListIntoIter<T, A>: Send where T: Send, A: Send { }
+unsafe ListIntoIter<T, A>: Sync where T: Sync, A: Sync { }

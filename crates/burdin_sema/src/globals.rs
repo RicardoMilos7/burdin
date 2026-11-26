@@ -295,6 +295,12 @@ pub(crate) struct Globals {
     pub(crate) error_ty: Option<Ty>,
     /// The templates of `std`'s `Option` and `Result` enums, which the language itself knows (`tir::LangItem`).
     pub(crate) lang_option: Option<usize>,
+    /// `std`'s `List` and its owning iterator: templates the compiler knows by name (issue #1017).
+    pub(crate) lang_list: Option<usize>,
+    pub(crate) lang_list_into_iter: Option<usize>,
+    /// `std`'s `ManuallyDrop`: a wrapper whose value is never dropped by glue.
+    pub(crate) lang_manually_drop: Option<usize>,
+    pub(crate) lang_array_into_iter: Option<usize>,
     pub(crate) lang_result: Option<usize>,
     /// The standard library's dynamic-error constructors (`spec/errors.md`, ERR4 and ERR7).
     pub(crate) error_plain: Option<FuncId>,
@@ -337,6 +343,9 @@ pub(crate) struct Globals {
     /// The concrete allocator types a container in the program stores (`spec/allocators.md`, AL4), collected as
     /// types are resolved; `finish` turns them into `Program::allocator_fns`.
     pub(crate) allocator_requests: RefCell<Vec<Ty>>,
+    /// The types whose `Send`/`Sync` is being decided right now. A recursive type reached again through an impl
+    /// block's `where` clause (`List<Value>: Send where Value: Send`) is assumed to hold, as in the field walk.
+    pub(crate) marker_active: RefCell<Vec<(Ty, bool)>>,
     /// Set while a body is checked when it reads a file from disk (`embed`): the body's result depends on a file
     /// the body cache cannot see change, so it is not cached (`crate::cache`).
     pub(crate) impure: std::cell::Cell<bool>,
@@ -458,6 +467,10 @@ impl Globals {
         match name {
             "Option" => self.lang_option.map(TypeName::GenericAdt),
             "Result" => self.lang_result.map(TypeName::GenericAdt),
+            "List" => self.lang_list.map(TypeName::GenericAdt),
+            "ListIntoIter" => self.lang_list_into_iter.map(TypeName::GenericAdt),
+            "ManuallyDrop" => self.lang_manually_drop.map(TypeName::GenericAdt),
+            "ArrayIntoIter" => self.lang_array_into_iter.map(TypeName::GenericAdt),
             _ => None,
         }
     }
@@ -640,8 +653,7 @@ impl Globals {
             | Ty::Array(inner, _)
             | Ty::Heap(inner, _)
             | Ty::CPtr(inner)
-            | Ty::Range(inner, _)
-            | Ty::List(inner, _) => self.private_adt(inner),
+            | Ty::Range(inner, _) => self.private_adt(inner),
             Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))

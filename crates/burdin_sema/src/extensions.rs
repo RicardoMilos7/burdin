@@ -238,7 +238,7 @@ impl<'t> Sema<'t> {
         {
             return true;
         }
-        if matches!(recv, Ty::List(_, _)) && self.globals.eager_list_fn(name).is_some() {
+        if self.globals.list_parts(recv).is_some() && self.globals.eager_list_fn(name).is_some() {
             return true;
         }
         if self.globals.iterable_item(recv, &[]).is_some()
@@ -431,10 +431,7 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (Ty::Param(_), Ty::Param(_)) => true,
         (Ty::Ref { mutable: m, inner: i }, Ty::Ref { mutable: n, inner: j }) => m == n && pair(i, j),
-        (Ty::Slice(i), Ty::Slice(j))
-        | (Ty::Heap(i, _), Ty::Heap(j, _))
-        | (Ty::CPtr(i), Ty::CPtr(j))
-        | (Ty::List(i, _), Ty::List(j, _)) => pair(i, j),
+        (Ty::Slice(i), Ty::Slice(j)) | (Ty::Heap(i, _), Ty::Heap(j, _)) | (Ty::CPtr(i), Ty::CPtr(j)) => pair(i, j),
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
         (Ty::Range(i, m), Ty::Range(j, n)) => m == n && pair(i, j),
         (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) | (Ty::MapEntry(ik, iv, _), Ty::MapEntry(jk, jv, _)) => {
@@ -475,11 +472,11 @@ mod tests {
     #[test]
     fn an_extension_applies_only_to_its_receiver_shape() {
         let globals = Globals::default();
-        let generic = extension(Ty::List(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global), &["T"], &["T"]);
+        let generic = extension(Ty::Heap(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global), &["T"], &["T"]);
         assert!(extension_applies(
             &globals,
             &generic,
-            &Ty::List(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
+            &Ty::Heap(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
         ));
         assert!(!extension_applies(
             &globals,
@@ -507,15 +504,15 @@ mod tests {
     #[test]
     fn receiver_shapes_ignore_parameter_names() {
         let globals = Globals::default();
-        let left = Ty::List(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global);
-        let right = Ty::List(Box::new(Ty::Param("U".into())), burdin_tir::Alloc::Global);
+        let left = Ty::Heap(Box::new(Ty::Param("T".into())), burdin_tir::Alloc::Global);
+        let right = Ty::Heap(Box::new(Ty::Param("U".into())), burdin_tir::Alloc::Global);
         assert!(same_receiver_shape(&globals, &left, &right));
         assert!(same_receiver_shape(&globals, &Ty::Int(IntTy::I32), &Ty::Int(IntTy::I32)));
         assert!(!same_receiver_shape(&globals, &Ty::Int(IntTy::I32), &Ty::Int(IntTy::I64)));
         assert!(!same_receiver_shape(
             &globals,
-            &Ty::List(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global),
-            &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)
+            &Ty::Heap(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global),
+            &Ty::Heap(Box::new(Ty::String), burdin_tir::Alloc::Global)
         ));
     }
 }

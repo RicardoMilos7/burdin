@@ -186,8 +186,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     None => None,
                 }
             }
-            K::Builtin(b, args) => self.builtin(*b, args, &e.ty, e.span)?,
-            K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
+            K::Builtin(b, args) => {
+                let v = self.builtin(*b, args, &e.ty, e.span)?;
+                self.conform_opt(v, &e.ty)?
+            }
+            K::Method(m, args) => {
+                let v = self.method(*m, args, &e.ty, e.span)?;
+                self.conform_opt(v, &e.ty)?
+            }
             K::Closure { closure, captures } => self.closure_value(*closure, captures, e.span)?,
             K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind)?,
             K::BoxAny { value, vtable } => self.box_any(value, *vtable)?,

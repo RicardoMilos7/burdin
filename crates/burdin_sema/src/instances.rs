@@ -23,7 +23,13 @@ impl<'t> Sema<'t> {
         };
         let symbolic = args.iter().any(|a| self.globals.ty_has_param(a));
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
-        let name = Globals::instance_name(&gname, &args);
+        // A list with the default allocator is named `List<i32>`, the way it is written, not `List<i32, Global>`.
+        let is_list = Some(template) == self.globals.lang_list || Some(template) == self.globals.lang_list_into_iter;
+        let shown = match (&args[..], &self.globals.global_alloc_ty) {
+            ([elem, alloc], Some(global)) if is_list && alloc == global => std::slice::from_ref(elem),
+            _ => &args[..],
+        };
+        let name = Globals::instance_name(&gname, shown);
         let name = self.globals.unique_instance_name(name);
         let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
         // The bounds the instance's type parameters keep, with the instance's arguments substituted: a field may
@@ -70,6 +76,17 @@ impl<'t> Sema<'t> {
                 repr_c,
                 derives: tir::Derives::default(),
                 drop_method: None,
+                lang: if Some(template) == self.globals.lang_list {
+                    Some(tir::LangItem::List)
+                } else if Some(template) == self.globals.lang_list_into_iter {
+                    Some(tir::LangItem::ListIntoIter)
+                } else if Some(template) == self.globals.lang_manually_drop {
+                    Some(tir::LangItem::ManuallyDrop)
+                } else if Some(template) == self.globals.lang_array_into_iter {
+                    Some(tir::LangItem::ArrayIntoIter)
+                } else {
+                    None
+                },
             });
             let r = adt_ref(id);
             self.globals.struct_refs.push(r.clone());

@@ -61,14 +61,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burdin_interp"
-version = "0.1.3"
-dependencies = [
- "burdin_diag",
- "burdin_tir",
-]
-
-[[package]]
 name = "burdin_dap"
 version = "0.1.3"
 dependencies = [
@@ -93,12 +85,12 @@ version = "0.1.3"
 dependencies = [
  "burdin_bindgen",
  "burdin_codegen",
- "burdin_interp",
  "burdin_dap",
  "burdin_diag",
  "burdin_doc",
  "burdin_fmt",
  "burdin_inspect",
+ "burdin_interp",
  "burdin_lint",
  "burdin_lsp",
  "burdin_pkg",
@@ -135,6 +127,14 @@ version = "0.1.3"
 dependencies = [
  "burdin_diag",
  "burdin_syntax",
+ "burdin_tir",
+]
+
+[[package]]
+name = "burdin_interp"
+version = "0.1.3"
+dependencies = [
+ "burdin_diag",
  "burdin_tir",
 ]
 
@@ -178,8 +178,8 @@ name = "burdin_query"
 version = "0.1.3"
 dependencies = [
  "burdin_check",
- "burdin_interp",
  "burdin_diag",
+ "burdin_interp",
  "burdin_sema",
  "burdin_syntax",
  "burdin_tir",
@@ -198,8 +198,8 @@ dependencies = [
 name = "burdin_repl"
 version = "0.1.3"
 dependencies = [
- "burdin_interp",
  "burdin_diag",
+ "burdin_interp",
  "burdin_query",
  "burdin_syntax",
  "libc",

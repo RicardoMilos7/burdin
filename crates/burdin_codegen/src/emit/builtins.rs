@@ -189,32 +189,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(ptr_field, ptr).map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(heap_ty, slot, "").map_err(llvm_err)?));
             }
-            // `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for
-            // `n` elements. A stored allocator value is placed in the list's own field before the buffer is
-            // allocated through it.
-            Builtin::ListWithCapacity | Builtin::ListWithCapacityIn => {
-                let n = self.expr_mode(&args[0], Mode::Use)?;
-                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::List(elem, alloc) = ty else { return Err("`with_capacity` on a non-list type".into()) };
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                if b == Builtin::ListWithCapacityIn {
-                    let alloc_value = self.expr_mode(&args[1], Mode::Move)?;
-                    if !alloc.is_global() {
-                        let seq_ty = self.seq_ty(&alloc);
-                        let slot = self.alloca(seq_ty.into(), "list.capacity")?;
-                        let alloc_field =
-                            self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
-                        let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                        self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
-                        let value = self.list_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
-                        self.builder.build_store(slot, value).map_err(llvm_err)?;
-                        return Ok(Some(self.builder.build_load(seq_ty, slot, "").map_err(llvm_err)?));
-                    }
-                }
-                let value = self.list_with_capacity(n, &elem, &alloc, None, span)?;
-                return Ok(Some(value.into()));
-            }
-            Builtin::ListNew | Builtin::MapNew => {
+            Builtin::MapNew => {
                 return Ok(Some(self.string_ty.const_zero().into()));
             }
             // `Map<K, V>.with_capacity(n)`: an empty map whose table holds `n` entries without growing.
@@ -256,32 +231,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
                 self.builder.position_at_end(done);
                 return Ok(Some(self.builder.build_load(string_t, slot, "").map_err(llvm_err)?));
-            }
-            // `List<T>.try_with_capacity(n)` and `try_with_capacity_in(n, alloc)`: `with_capacity` that returns
-            // `Err(AllocError)` instead of panicking (`spec/allocators.md`, AL11).
-            Builtin::ListTryWithCapacity | Builtin::ListTryWithCapacityIn => {
-                let n = self.expr_mode(&args[0], Mode::Use)?;
-                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Some((list_ty, _)) = self.result_payload_tys(ty) else {
-                    return Err("`try_with_capacity` returns a Result".into());
-                };
-                let Ty::List(elem, alloc) = &list_ty else {
-                    return Err("`try_with_capacity` on a non-list type".into());
-                };
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                let alloc_value =
-                    if b == Builtin::ListTryWithCapacityIn { self.expr_mode(&args[1], Mode::Move)? } else { None };
-                if b == Builtin::ListTryWithCapacityIn && !alloc.is_global() {
-                    let seq_ty = self.seq_ty(&alloc);
-                    let slot = self.alloca(seq_ty.into(), "list.try.capacity")?;
-                    let alloc_field = self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
-                    let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                    self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
-                    let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
-                    return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
-                }
-                let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, None, span)?;
-                return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
             }
             // `Map<K, V>.try_with_capacity(n)`: the empty map that `try_reserve(n)` makes.
             Builtin::MapTryWithCapacity => {
@@ -340,7 +289,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 return Ok(Some(self.try_result(st, Some(value), ty)?));
             }
             // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
-            Builtin::ListNewIn | Builtin::MapNewIn => {
+            Builtin::MapNewIn => {
                 let alloc_ty = args[0].ty.clone();
                 let alloc_value = self.expr_mode(&args[0], Mode::Move)?;
                 let global = self.is_global_allocator(&alloc_ty);
@@ -420,6 +369,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let p = self.need(p, &args[0].ty).into_pointer_value();
                 let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
                 return Ok(Some(self.builder.build_load(t, p, "raw.read").map_err(llvm_err)?));
+            }
+            Builtin::RangeStart | Builtin::RangeEnd => {
+                let r = self.expr_mode(&args[0], Mode::Use)?;
+                let r = self.need(r, &args[0].ty).into_struct_value();
+                let index = u32::from(b == Builtin::RangeEnd);
+                return Ok(Some(self.builder.build_extract_value(r, index, "range.end").map_err(llvm_err)?));
+            }
+            Builtin::SliceRaw | Builtin::IterMutRaw => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let n = self.usize_value(&args[1])?;
+                return Ok(Some(self.make_str(p.into(), n.into())?.into()));
             }
             Builtin::RawWrite => {
                 let p = self.expr_mode(&args[0], Mode::Use)?;
@@ -1276,6 +1237,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
                 self.builder.position_at_end(good);
                 let list = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let list = self.conform(list, ok_ty)?;
                 let mut value = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
@@ -1286,7 +1248,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 // The runtime leaves an empty list behind, so dropping it is safe and frees nothing.
-                self.drop_value(out, &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global))?;
+                self.drop_value(out, ok_ty)?;
                 let mut failure = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
@@ -1463,7 +1425,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_int_compare(IntPredicate::NE, found, self.cx.i32_type().const_zero(), "")
                     .map_err(llvm_err)?;
                 let list = self.builder.build_load(self.string_ty, out, "env.bytes").map_err(llvm_err)?;
-                let inner = Ty::List(Box::new(Ty::Int(burdin_tir::IntTy::U8)), burdin_tir::Alloc::Global);
+                let Some(inner) = self.option_payload_ty(ty) else {
+                    return Err("`env` bytes return an `Option`".into());
+                };
+                let list = self.conform(list, &inner)?;
                 let opt_ty = self.option_ty(&inner);
                 let agg = self
                     .builder
@@ -1823,7 +1788,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }
-                Ty::List(_, _) | Ty::Map(..) => {
+                Ty::Map(..) => {
+                    let (_, len) = self.view_parts(&args[0])?;
+                    len
+                }
+                _ if self.list_info(&recv_ty).is_some() => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }

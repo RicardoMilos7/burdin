@@ -6,7 +6,8 @@ use crate::memory::Memory;
 use crate::value::{Place, Root, Step, Value};
 use burdin_diag::Span;
 use burdin_tir::{
-    self as tir, BindMode, Block, Expr, ExprKind as K, FuncId, Local, LocalKind, Pat, Program, Stmt, Ty, TypeDefs,
+    self as tir, BindMode, Block, Builtin, Expr, ExprKind as K, FuncId, Local, LocalKind, Method, Pat, Program, Stmt,
+    Ty, TypeDefs,
 };
 use std::collections::HashMap;
 
@@ -130,6 +131,8 @@ pub(crate) struct Interp<'p, 'c> {
     pub(crate) raw_memory: bool,
     /// The standard-library functions the interpreter runs natively, by function index (`shared_model`).
     models: HashMap<usize, Option<SharedOp>>,
+    /// The same for the methods of `std`'s `List<T>` and `ListIntoIter<T>`.
+    list_models: HashMap<usize, Option<ListModel>>,
 }
 
 /// The operations of `std`'s `Shared<T>` the interpreter models instead of running: the type is a handle to a cell in
@@ -144,7 +147,89 @@ enum SharedOp {
     Drop,
 }
 
+/// A method or constructor of `std`'s `List<T>` or `ListIntoIter<T>` the interpreter runs natively on a
+/// [`Value::List`] or [`Value::Items`]: the types are raw buffers in `std`, and the model keeps the elements
+/// themselves, so every strict check of an element still applies.
+#[derive(Clone, Copy)]
+pub(crate) enum ListModel {
+    Builtin(Builtin),
+    Method(Method),
+}
+
 impl<'p, 'c> Interp<'p, 'c> {
+    /// Which native operation a function of `std`'s `List<T>` or `ListIntoIter<T>` is, if it is one.
+    fn list_model(&mut self, f: FuncId) -> Option<ListModel> {
+        if let Some(op) = self.list_models.get(&f.0) {
+            return *op;
+        }
+        let name = &self.p.functions[f.0].name;
+        let method = name.rsplit(">.").next().unwrap_or("");
+        let op = if name.starts_with("std.List<") {
+            Some(match method {
+                "new" => ListModel::Builtin(Builtin::ListNew),
+                "with_capacity" => ListModel::Builtin(Builtin::ListWithCapacity),
+                "try_with_capacity" => ListModel::Builtin(Builtin::ListTryWithCapacity),
+                "new_in" => ListModel::Builtin(Builtin::ListNewIn),
+                "with_capacity_in" => ListModel::Builtin(Builtin::ListWithCapacityIn),
+                "try_with_capacity_in" => ListModel::Builtin(Builtin::ListTryWithCapacityIn),
+                "len" => ListModel::Method(Method::Len),
+                "capacity" => ListModel::Method(Method::ListCapacity),
+                "is_empty" => ListModel::Method(Method::ListIsEmpty),
+                "reserve" => ListModel::Method(Method::ListReserve),
+                "reserve_exact" => ListModel::Method(Method::ListReserveExact),
+                "try_reserve" => ListModel::Method(Method::ListTryReserve),
+                "try_reserve_exact" => ListModel::Method(Method::ListTryReserveExact),
+                "shrink_to_fit" => ListModel::Method(Method::ListShrinkToFit),
+                "push" => ListModel::Method(Method::Push),
+                "pop" => ListModel::Method(Method::ListPop),
+                "as_slice" => ListModel::Method(Method::AsSlice),
+                "iter" => ListModel::Method(Method::Iter),
+                "iter_mut" => ListModel::Method(Method::IterMut),
+                "into_iter" => ListModel::Method(Method::IntoIter),
+                "get" => ListModel::Method(Method::ListGet),
+                "get_mut" => ListModel::Method(Method::ListGetMut),
+                "first" => ListModel::Method(Method::ListFirst),
+                "first_mut" => ListModel::Method(Method::ListFirstMut),
+                "last" => ListModel::Method(Method::ListLast),
+                "last_mut" => ListModel::Method(Method::ListLastMut),
+                "clear" => ListModel::Method(Method::Clear),
+                "truncate" => ListModel::Method(Method::ListTruncate),
+                "insert" => ListModel::Method(Method::ListInsert),
+                "remove" => ListModel::Method(Method::ListRemove),
+                "swap" => ListModel::Method(Method::ListSwap),
+                "swap_remove" => ListModel::Method(Method::ListSwapRemove),
+                "append" => ListModel::Method(Method::ListAppend),
+                "split_off" => ListModel::Method(Method::ListSplitOff),
+                "drain" => ListModel::Method(Method::ListDrain),
+                "extend_from_slice" => ListModel::Method(Method::ListExtendFromSlice),
+                "contains" => ListModel::Method(Method::ListContains),
+                "sort" => ListModel::Method(Method::ListSort),
+                _ => return self.no_list_model(f),
+            })
+        } else if (name.starts_with("std.ListIntoIter<") || name.starts_with("std.ArrayIntoIter<")) && method == "next"
+        {
+            Some(ListModel::Method(Method::IterNext))
+        } else {
+            None
+        };
+        self.list_models.insert(f.0, op);
+        op
+    }
+
+    /// The element type of a `List`, a `ListIntoIter`, or an `ArrayIntoIter`, `None` for any other type.
+    fn seq_elem(&self, ty: &Ty) -> Option<Ty> {
+        let defs = self.defs();
+        defs.list_parts(ty)
+            .or_else(|| defs.list_into_iter_parts(ty))
+            .map(|(t, _)| t.clone())
+            .or_else(|| defs.array_into_iter_elem(ty).cloned())
+    }
+
+    fn no_list_model(&mut self, f: FuncId) -> Option<ListModel> {
+        self.list_models.insert(f.0, None);
+        None
+    }
+
     pub(crate) fn new(
         p: &'p Program,
         consts: &'c mut Vec<ConstState>,
@@ -176,6 +261,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             mem: Memory::default(),
             raw_memory: false,
             models: HashMap::new(),
+            list_models: HashMap::new(),
         }
     }
 
@@ -961,6 +1047,16 @@ impl<'p, 'c> Interp<'p, 'c> {
         if func.symbolic {
             return Err(Fault::Internal(format!("`{}` has no body", func.name), span).into());
         }
+        if recv.is_none()
+            && let Some(op) = self.list_model(f)
+        {
+            let ret = &self.p.functions[f.0].ret;
+            return match op {
+                ListModel::Builtin(b) => self.builtin(b, args, ret, span),
+                ListModel::Method(m) => self.method(m, args, ret, span),
+            };
+        }
+        let func = &self.p.functions[f.0];
         let mut slots: Vec<Slot> = func.locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
         let mut params = func.params.iter();
         if let Some(recv) = recv {
@@ -1138,7 +1234,10 @@ impl<'p, 'c> Interp<'p, 'c> {
             return known;
         }
         self.drop_cache.insert(ty.clone(), false);
+        let seq = self.seq_elem(ty);
         let result = match ty {
+            Ty::Struct(a) if self.p.structs[a.id].lang == Some(burdin_tir::LangItem::ManuallyDrop) => false,
+            Ty::Struct(_) if seq.is_some() => self.has_user_drop(&seq.expect("a list")),
             Ty::Struct(a) => {
                 let s = &self.p.structs[a.id];
                 s.drop_method.is_some() || s.fields.iter().any(|f| self.has_user_drop(&f.ty))
@@ -1148,9 +1247,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                 e.drop_method.is_some() || e.variants.iter().any(|v| v.fields.iter().any(|f| self.has_user_drop(&f.ty)))
             }
             Ty::Tuple(ts) => ts.iter().any(|t| self.has_user_drop(t)),
-            Ty::Array(t, _) | Ty::List(t, _) | Ty::Heap(t, _) | Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) => {
-                self.has_user_drop(t)
-            }
+            Ty::Array(t, _) | Ty::Heap(t, _) => self.has_user_drop(t),
             Ty::Map(a, b, _) | Ty::MapIntoIter(a, b, _) => self.has_user_drop(a) || self.has_user_drop(b),
             Ty::Any(_) | Ty::Fn { .. } => true,
             _ => false,
@@ -1164,7 +1261,22 @@ impl<'p, 'c> Interp<'p, 'c> {
         if v.is_moved() || !self.has_user_drop(ty) {
             return Ok(());
         }
+        let seq = self.seq_elem(ty);
+        if let Some(t) = seq {
+            if let Value::List(vs) = v {
+                for fv in vs {
+                    self.drop_value(fv, &t, span)?;
+                }
+            } else if let Value::Items(vs) = v {
+                for fv in vs {
+                    self.drop_value(fv, &t, span)?;
+                }
+            }
+            return Ok(());
+        }
         match (ty, v) {
+            // Drop glue never drops the value of a `ManuallyDrop`.
+            (Ty::Struct(a), _) if self.p.structs[a.id].lang == Some(burdin_tir::LangItem::ManuallyDrop) => {}
             (Ty::Struct(a), v) => {
                 let mut v = v;
                 if let Some(f) = self.p.structs[a.id].drop_method {
@@ -1194,12 +1306,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                     self.drop_value(fv, ft, span)?;
                 }
             }
-            (Ty::Array(t, _) | Ty::List(t, _), Value::Array(vs) | Value::List(vs)) => {
-                for fv in vs {
-                    self.drop_value(fv, t, span)?;
-                }
-            }
-            (Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _), Value::Items(vs)) => {
+            (Ty::Array(t, _), Value::Array(vs)) => {
                 for fv in vs {
                     self.drop_value(fv, t, span)?;
                 }

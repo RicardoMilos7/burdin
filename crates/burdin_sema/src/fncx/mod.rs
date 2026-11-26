@@ -508,7 +508,8 @@ impl<'a> FnCx<'a> {
             tir::ExprKind::PtrDeref(_) => true,
             // Elements of an array or a list place are mutable with it; elements of a slice view are read-only.
             tir::ExprKind::Index(base, _) => {
-                matches!(base.ty, Ty::Array(..) | Ty::List(_, _)) && self.place_mutable(base)
+                (matches!(base.ty, Ty::Array(..)) || self.globals.list_parts(&base.ty).is_some())
+                    && self.place_mutable(base)
             }
             _ => false,
         }

@@ -429,6 +429,11 @@ impl<'a> Analyzer<'a> {
             // handle is borrowed; `unsafe` is the promise that the pointee lives that long. A pointer held in a
             // local or a temporary gives a local or temporary origin, which cannot be returned (RT2).
             K::PtrDeref(base) => self.place_origin(base),
+            // An element offset of a raw pointer points into the same allocation, so it keeps the pointer's origin.
+            K::Binary(tir::BinOp::Add | tir::BinOp::Sub, base, offset) if matches!(base.ty, tir::Ty::CPtr(_)) => {
+                self.expr(offset);
+                self.place_origin(base)
+            }
             K::DerefRef(base) => self.expr(base),
             _ => {
                 self.expr(e);
@@ -607,6 +612,8 @@ impl<'a> Analyzer<'a> {
                     tir::Builtin::Replace => origins.into_iter().next().unwrap_or_default(),
                     // The text views the bytes it was made from.
                     tir::Builtin::ViewAsText => origins.into_iter().next().unwrap_or_default(),
+                    // The view derives from the storage that holds the pointer, like a dereference of it.
+                    tir::Builtin::SliceRaw | tir::Builtin::IterMutRaw => self.place_origin(&args[0]),
                     // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
                     // a container with a stored allocator.
                     tir::Builtin::ListNew

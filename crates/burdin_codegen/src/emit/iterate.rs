@@ -3,7 +3,7 @@
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_tir::Ty;
 use inkwell::IntPredicate;
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -15,6 +15,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let recv = &args[0];
         let recv_ty = recv.ty.clone();
+        let seq_alloc = match &recv_ty {
+            Ty::Map(_, _, alloc) => Some(alloc.clone()),
+            other => self.list_info(other).map(|(_, alloc)| alloc),
+        };
         match (&recv_ty, into) {
             // A slice view is its own iterator; `Chars` is a `str` view.
             (Ty::Slice(_) | Ty::Chars, _) => self.expr_mode(recv, Mode::Use),
@@ -40,10 +44,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_struct_value();
                 Ok(Some(agg.into()))
             }
-            (Ty::List(_, alloc), _) | (Ty::Map(_, _, alloc), _) => {
+            (_, _) if seq_alloc.is_some() => {
                 // `into_iter` takes the collection, so the collection (and a stored allocator) is moved and its
                 // drop flag cleared; `iter` only borrows it.
-                let alloc = alloc.clone();
+                let alloc = seq_alloc.clone().expect("checked by the guard");
                 let v = self.expr_mode(recv, if into { Mode::Move } else { Mode::Use })?;
                 let st = self.llvm_ty(&recv_ty).expect("a container has a type").into_struct_type();
                 let s = self.need(v, &recv_ty).into_struct_value();
@@ -115,6 +119,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let item = item.clone();
         let recv_ty = args[0].ty.clone();
         match &recv_ty {
+            _ if self.list_iter_info(&recv_ty).is_some() => {
+                let (elem, alloc) = self.list_iter_info(&recv_ty).expect("checked by the guard");
+                self.next_list_into(&args[0], &elem, &alloc, ty)
+            }
             Ty::Slice(elem) => {
                 let elem = (**elem).clone();
                 self.next_slice(&args[0], &elem, &item, ty)
@@ -126,14 +134,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.next_slice(&args[0], &elem, &item, ty)
             }
             Ty::Chars => self.next_chars(&args[0], ty),
-            Ty::ListIntoIter(elem, alloc) => {
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                self.next_list_into(&args[0], &elem, &alloc, ty)
-            }
-            Ty::ArrayIntoIter(elem, n) => {
-                let elem = (**elem).clone();
-                self.next_array_into(&args[0], &elem, *n, ty)
-            }
             Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
                 let (k, v) = ((**k).clone(), (**v).clone());
                 self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
@@ -541,59 +541,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Some(t) => {
                 // SAFETY (LLVM): index < len.
                 let p = unsafe { self.builder.build_in_bounds_gep(t, base, &[index], "item") }.map_err(llvm_err)?;
-                Some(self.builder.build_load(t, p, "item.value").map_err(llvm_err)?)
-            }
-            None => None,
-        };
-        let next = self.builder.build_int_add(index, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-        self.builder.build_store(index_ptr, next).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            let some = self.some_value(elem, value);
-            self.builder.build_store(out, some).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(end);
-        self.load_option(out, ty)
-    }
-
-    /// `ArrayIntoIter<T, N>.next()`: moves the element at the cursor out of the inline array.
-    fn next_array_into(
-        &mut self,
-        recv: &'a burdin_tir::Expr,
-        elem: &Ty,
-        n: u64,
-        ty: &Ty,
-    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Some(slot) = self.place_ptr(recv)? else {
-            self.expr_mode(recv, Mode::Use)?;
-            return Ok(None);
-        };
-        let tt = self.iter_array_ty(elem, n);
-        let index_ptr = self.builder.build_struct_gep(tt, slot, 1, "iter.index").map_err(llvm_err)?;
-        let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
-        let out = self.option_slot(ty, "next.out")?;
-        let done = self
-            .builder
-            .build_int_compare(IntPredicate::UGE, index, self.usize_ty.const_int(n, false), "")
-            .map_err(llvm_err)?;
-        let none_bb = self.new_block("next.none");
-        let some_bb = self.new_block("next.some");
-        let end = self.new_block("next.end");
-        self.builder.build_conditional_branch(done, none_bb, some_bb).map_err(llvm_err)?;
-        self.builder.position_at_end(none_bb);
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(some_bb);
-        let value = match self.llvm_ty(elem) {
-            Some(t) => {
-                let array_ptr = self.builder.build_struct_gep(tt, slot, 0, "iter.array").map_err(llvm_err)?;
-                let array_t = t.array_type(n as u32);
-                let zero = self.usize_ty.const_zero();
-                // SAFETY (LLVM): index < n.
-                let p = unsafe { self.builder.build_in_bounds_gep(array_t, array_ptr, &[zero, index], "item") }
-                    .map_err(llvm_err)?;
                 Some(self.builder.build_load(t, p, "item.value").map_err(llvm_err)?)
             }
             None => None,

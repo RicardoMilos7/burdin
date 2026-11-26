@@ -46,15 +46,12 @@ impl Globals {
             Ty::Fn { .. }
             | Ty::Ref { .. }
             | Ty::Slice(_)
-            | Ty::List(_, _)
             | Ty::Map(..)
             | Ty::MapEntry(..)
             | Ty::Chars
             | Ty::Heap(_, _)
             | Ty::Any(_)
             | Ty::CPtr(_)
-            | Ty::ListIntoIter(..)
-            | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
@@ -132,11 +129,10 @@ mod tests {
     fn heap_values_and_views_are_not() {
         let mut g = crate::testutil::lang_globals();
         let i = Ty::Int(IntTy::I32);
-        assert!(!g.materializable(&Ty::List(Box::new(i.clone()), burdin_tir::Alloc::Global)));
         assert!(!g.materializable(&Ty::Heap(Box::new(i.clone()), burdin_tir::Alloc::Global)));
         assert!(!g.materializable(&Ty::Slice(Box::new(i.clone()))));
         assert!(!g.materializable(&Ty::Ref { mutable: false, inner: Box::new(i.clone()) }));
-        let option = g.test_option(Ty::List(Box::new(i), burdin_tir::Alloc::Global));
+        let option = g.test_option(Ty::Heap(Box::new(i), burdin_tir::Alloc::Global));
         assert!(!g.materializable(&option));
     }
 }

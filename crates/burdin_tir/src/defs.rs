@@ -51,6 +51,8 @@ pub struct StructDef {
     pub derives: Derives,
     /// The `Drop::drop` method of `Type: Drop { ... }`, called by the drop glue.
     pub drop_method: Option<FuncId>,
+    /// Which language-known struct this instance is (`std`'s `List` or its owning iterator), if either.
+    pub lang: Option<LangItem>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +69,14 @@ pub enum LangItem {
     Option,
     /// `Result<T, E>`: the variants `Ok(T)` and `Err(E)`, in that order.
     Result,
+    /// `List<T, A>`: the fields `ptr`, `len`, `cap`, and `alloc`, in that order.
+    List,
+    /// `ListIntoIter<T, A>`: the fields `ptr`, `len`, `cap`, `pos`, and `alloc`, in that order.
+    ListIntoIter,
+    /// `ManuallyDrop<T>`: the one field `value`, which drop glue never drops.
+    ManuallyDrop,
+    /// `ArrayIntoIter<T, N>`: the fields `data` (a `ManuallyDrop<[T; N]>`) and `pos`, in that order.
+    ArrayIntoIter,
 }
 
 #[derive(Debug)]

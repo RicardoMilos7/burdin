@@ -122,9 +122,18 @@ pub fn is_instance(name: &str) -> bool {
 }
 
 fn is_lang_type(name: &str) -> bool {
-    ["std.Option<", "std.Result<", "std.Shared<", "std.SharedCell<", "std.option.ext.Option<", "std.option.ext.Result<"]
-        .iter()
-        .any(|p| name.starts_with(p))
+    [
+        "std.Option<",
+        "std.Result<",
+        "std.Shared<",
+        "std.SharedCell<",
+        "std.List<",
+        "std.ListIntoIter<",
+        "std.option.ext.Option<",
+        "std.option.ext.Result<",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
 }
 
 /// The ADT names a type mentions, in the order of their first appearance.
@@ -145,12 +154,11 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
         | Ty::Array(inner, _)
         | Ty::CPtr(inner)
         | Ty::Range(inner, _)
-        | Ty::ArrayIntoIter(inner, _)
         | Ty::IterMut(inner)
         | Ty::RangeIter(inner, _)
         | Ty::SliceChunks(inner, _)
         | Ty::SliceWindows(inner) => adts_in(inner, out),
-        Ty::List(t, a) | Ty::Heap(t, a) | Ty::ListIntoIter(t, a) => {
+        Ty::Heap(t, a) => {
             adts_in(t, out);
             alloc(a, out);
         }

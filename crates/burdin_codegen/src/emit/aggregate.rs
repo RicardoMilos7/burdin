@@ -37,6 +37,30 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_load(array_t, slot, "").map_err(llvm_err)
     }
 
+    /// A value the runtime helpers built as the `{ ptr, len, cap }` words of a list, brought to the LLVM type of
+    /// the `List` struct in `std` (which also has the allocator after the words). The bytes are the same.
+    pub(super) fn conform(&mut self, v: BasicValueEnum<'ctx>, ty: &Ty) -> GenResult<BasicValueEnum<'ctx>> {
+        let Some(t) = self.llvm_ty(ty) else { return Ok(v) };
+        if v.get_type() == t {
+            return Ok(v);
+        }
+        let slot = self.alloca(t, "conform")?;
+        self.builder.build_store(slot, t.const_zero()).map_err(llvm_err)?;
+        self.builder.build_store(slot, v).map_err(llvm_err)?;
+        self.builder.build_load(t, slot, "").map_err(llvm_err)
+    }
+
+    pub(super) fn conform_opt(
+        &mut self,
+        v: Option<BasicValueEnum<'ctx>>,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        match v {
+            Some(v) if self.is_seq_struct(ty) => Ok(Some(self.conform(v, ty)?)),
+            other => Ok(other),
+        }
+    }
+
     /// Stores a value in a fresh stack slot and returns its address (`None` for types without a value).
     pub(super) fn spill(&mut self, v: Option<BasicValueEnum<'ctx>>, ty: &Ty) -> GenResult<Option<PointerValue<'ctx>>> {
         let Some(t) = self.llvm_ty(ty) else { return Ok(None) };

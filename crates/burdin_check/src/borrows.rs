@@ -230,7 +230,9 @@ impl<'a> Checker<'a> {
             K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
             K::Call(f, args) => {
                 let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
-                if !sig.ret.is_second_class() {
+                // A chainable view (`xs.iter()`, `xs.as_slice()`) takes its loan where its receiver is a place, and
+                // `mut self` on it must not borrow the view's source exclusively.
+                if !sig.ret.is_second_class() || matches!(sig.ret, Ty::Slice(_) | Ty::Str | Ty::Chars) {
                     return Vec::new();
                 }
                 // A result that derives from several arguments (a struct holding views of two sources) borrows

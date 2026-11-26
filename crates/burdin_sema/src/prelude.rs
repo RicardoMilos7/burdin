@@ -24,6 +24,10 @@ impl Sema<'_> {
         };
         self.globals.lang_option = find(&self.globals, "Option");
         self.globals.lang_result = find(&self.globals, "Result");
+        self.globals.lang_list = find(&self.globals, "List");
+        self.globals.lang_list_into_iter = find(&self.globals, "ListIntoIter");
+        self.globals.lang_manually_drop = find(&self.globals, "ManuallyDrop");
+        self.globals.lang_array_into_iter = find(&self.globals, "ArrayIntoIter");
     }
 
     pub(crate) fn install_prelude(&mut self) {
