@@ -159,7 +159,25 @@ jobs:
               }
           }
           EOF2
-          for f in a b c d e; do
+          cat > f.bd <<'EOF2'
+          fn work() {
+              let mut file = fs.File.create("f.txt").unwrap()
+              let data = "0123456789".to_utf8()
+              file.write_all(data[0..data.len()]).unwrap()
+              match fs.remove_file("f.txt") {
+                  Result.Ok(_) => println("F: removed in task"),
+                  Result.Err(e) => println("F: failed in task {e:?}"),
+              }
+          }
+          fn main() {
+              let h = task.spawn(|| work())
+              h.join()
+          }
+          EOF2
+          echo "== stress_files with the OLD compiler"
+          "$GITHUB_WORKSPACE/old-target/debug/burdin" run "$GITHUB_WORKSPACE/tests/s2_io/stress_files.bd" 2>&1 | head -5
+          echo "OLD stress exit code: ${PIPESTATUS[0]}"
+          for f in f; do
             "$GITHUB_WORKSPACE/target/debug/burdin" run $f.bd
             echo "NEW exit code: $?"
             "$GITHUB_WORKSPACE/old-target/debug/burdin" run $f.bd
