@@ -4,7 +4,7 @@
 
 // Add one to a word's count. The word is passed by value (own), so the map can keep it.
 fn bump(mut counts: Map<String, i32>, own word: String) {
-    let current = match counts.get(word.as_str()) {
+    let current = match counts.get(word.clone()) {
         Option.Some(n) => *n,
         Option.None => 0,
     }
@@ -47,7 +47,7 @@ fn main() {
     }
     words.sort()
     for word in words {
-        let n = match counts.get(word.as_str()) {
+        let n = match counts.get(word.clone()) {
             Option.Some(n) => *n,
             Option.None => 0,
         }

@@ -390,7 +390,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Struct(_) if matches!(self.map_info(ty), Some((_, _, burdin_tir::Alloc::Global))) => {
                 let (key, value, _) = self.map_info(ty).expect("a map");
                 let (key, value) = (&key, &value);
-                let name = Self::debug_name(ty);
+                let name = format!("Map<{}, {}>", Self::debug_name(key), Self::debug_name(value));
                 let slot_name = format!("{name}.slot");
                 let slot = {
                     let hash = self.debug_basic("u64", 64, DW_ATE_UNSIGNED);
@@ -412,7 +412,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (inner, _) = self.list_info(ty).expect("a list");
                 self.debug_unspecified(&format!("List<{}>", Self::debug_name(&inner)))
             }
-            Ty::Struct(_) if self.map_info(ty).is_some() => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, _) = self.map_info(ty).expect("a map");
+                self.debug_unspecified(&format!("Map<{}, {}>", Self::debug_name(&key), Self::debug_name(&value)))
+            }
             Ty::Fn { .. } => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
@@ -792,16 +795,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// A readable name for a `Ty` that has no source spelling.
-    /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`): a
+    /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`, `List`, `Map`, `Range`, and their iterators): a
     /// debugger shows it by its plain name, as it did when the compiler built the type in.
     fn lang_debug_name(full: &str) -> String {
-        const LANG: [&str; 10] = [
+        const LANG: [&str; 12] = [
             "Option",
             "Result",
             "Shared",
             "CString",
             "List",
             "ListIntoIter",
+            "Map",
+            "MapIntoIter",
             "Range",
             "RangeInclusive",
             "RangeIter",

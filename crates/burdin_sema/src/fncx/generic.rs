@@ -934,6 +934,18 @@ impl FnCx<'_> {
             let parts = vec![(0, null), (1, zero(&fields[1].ty)), (2, zero(&fields[2].ty)), (3, alloc_value)];
             return mk(K::Struct(parts), ty.clone(), span);
         }
+        // The default map is empty too: a null table, no entries, no slots, and the zero-sized default allocator.
+        if let Some((_, _, alloc)) = self.globals.map_parts(ty)
+            && alloc.is_global()
+            && let Ty::Struct(a) = ty
+        {
+            let fields = &self.globals.structs[a.id].fields;
+            let null = mk(K::Builtin(Builtin::CPtrNull, Vec::new()), fields[0].ty.clone(), span);
+            let zero = |ty: &Ty| mk(K::Int(0), ty.clone(), span);
+            let alloc_value = mk(K::Struct(Vec::new()), fields[3].ty.clone(), span);
+            let parts = vec![(0, null), (1, zero(&fields[1].ty)), (2, zero(&fields[2].ty)), (3, alloc_value)];
+            return mk(K::Struct(parts), ty.clone(), span);
+        }
         let kind = match ty {
             Ty::Unit => K::Unit,
             Ty::Bool => K::Bool(false),

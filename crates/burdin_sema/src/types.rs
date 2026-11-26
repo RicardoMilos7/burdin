@@ -28,6 +28,11 @@ pub(crate) fn generic_args_missing<S: AsRef<str>>(
     diags: &mut Diagnostics,
 ) {
     let join = |names: &[S]| names.iter().map(AsRef::as_ref).collect::<Vec<&str>>().join(", ");
+    // A type of the std root (`Map`, `List`, ...) is written by its plain name, not as `std.Map`.
+    let name = match name.strip_prefix("std.") {
+        Some(rest) if !rest.contains('.') => rest,
+        _ => name,
+    };
     diags.error(
         Code::TYPE_MISMATCH,
         span,

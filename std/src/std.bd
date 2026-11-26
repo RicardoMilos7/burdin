@@ -673,6 +673,12 @@ enum Result<T, E = AnyError>: Copy, Clone, Eq, Ord, Hash, Debug {
 }
 
 /// The cell a `Shared<T>` points at: the number of live handles, then the value.
+///
+/// ```
+/// let a = Shared.new(5)
+/// let b = a.clone()
+/// assert_eq(*b.get(), 5)
+/// ```
 struct SharedCell<T> {
     strong: usize
     value: T
@@ -774,6 +780,11 @@ struct CString {
 
 CString {
     /// Copies the bytes of `s` and appends a NUL.
+    ///
+    /// ```
+    /// let c = CString.from("hello")
+    /// assert(!unsafe { c.as_ptr().is_null() })
+    /// ```
     fn from(s: str): CString {
         let bytes = s.as_bytes()
         let n = bytes.len()
@@ -790,11 +801,22 @@ CString {
     }
 
     /// The address of the NUL-terminated bytes; the `CString` must outlive its use.
+    ///
+    /// ```
+    /// let c = CString.from("hello")
+    /// assert(!unsafe { c.as_ptr().is_null() })
+    /// ```
     fn as_ptr(self): CPtr<CChar> {
         unsafe { self.ptr }
     }
 
     /// A deep copy of the NUL-terminated buffer.
+    ///
+    /// ```
+    /// let c = CString.from("hello")
+    /// let d = c.clone()
+    /// assert(!unsafe { d.as_ptr().is_null() })
+    /// ```
     fn clone(self): CString {
         unsafe {
             let ptr = __alloc(self.len + 1, 1) as CPtr<CChar>
@@ -817,6 +839,12 @@ CString: Drop {
 }
 
 /// A growable, owned array. `A` is where its buffer comes from (`Global` unless it was made with `new_in`).
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// assert_eq(l.len(), 1)
+/// ```
 struct List<T, A: Allocator = Global> {
     ptr: CPtr<T>
     len: usize
@@ -850,11 +878,21 @@ priv fn list_oob(index: usize, len: usize) {
 
 List<T> {
     /// An empty list.
+    ///
+    /// ```
+    /// let l = List<i32>.new()
+    /// assert_eq(l.len(), 0)
+    /// ```
     fn new(): List<T> {
         List { ptr: unsafe { CPtr<T>.null() }, len: 0, cap: 0, alloc: Global { } }
     }
 
     /// An empty list with room for `n` elements.
+    ///
+    /// ```
+    /// let l = List<i32>.with_capacity(10)
+    /// assert_eq(l.len(), 0)
+    /// ```
     fn with_capacity(n: usize): List<T> {
         let mut out = List<T>.new()
         out.reserve_exact(n)
@@ -862,6 +900,13 @@ List<T> {
     }
 
     /// `Ok` with room for `n` elements, or the reason there is none.
+    ///
+    /// ```
+    /// match List<i32>.try_with_capacity(4) {
+    ///     Result.Ok(l) => assert_eq(l.len(), 0),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_with_capacity(n: usize): Result<List<T>, AllocError> {
         let mut out = List<T>.new()
         out.try_reserve_exact(n)?
@@ -870,24 +915,65 @@ List<T> {
 }
 
 List<T, A> {
+    /// An empty list that takes its buffer from `alloc`.
+    ///
+    /// ```
+    /// let l = List<i32, Global>.new_in(Global { })
+    /// assert_eq(l.len(), 0)
+    /// ```
     fn new_in(own alloc: A): List<T, A> {
         List { ptr: unsafe { CPtr<T>.null() }, len: 0, cap: 0, alloc: alloc }
     }
 
+    /// An empty list with room for `n` elements, taken from `alloc`.
+    ///
+    /// ```
+    /// let l = List<i32, Global>.with_capacity_in(8, Global { })
+    /// assert(l.capacity() >= 8)
+    /// ```
     fn with_capacity_in(n: usize, own alloc: A): List<T, A> {
         let mut out = List<T, A>.new_in(alloc)
         out.reserve_exact(n)
         out
     }
 
+    /// `Ok` with room for `n` elements taken from `alloc`, or the reason there is none.
+    ///
+    /// ```
+    /// match List<i32, Global>.try_with_capacity_in(8, Global { }) {
+    ///     Result.Ok(l) => assert_eq(l.len(), 0),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_with_capacity_in(n: usize, own alloc: A): Result<List<T, A>, AllocError> {
         let mut out = List<T, A>.new_in(alloc)
         out.try_reserve_exact(n)?
         Result.Ok(out)
     }
 
+    /// The number of elements.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn len(self): usize { self.len }
+    /// The number of elements the buffer holds before it grows.
+    ///
+    /// ```
+    /// let l = List<i32>.with_capacity(10)
+    /// assert(l.capacity() >= 10)
+    /// ```
     fn capacity(self): usize { self.cap }
+    /// Whether the list has no elements.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// assert(l.is_empty())
+    /// l.push(1)
+    /// assert(!l.is_empty())
+    /// ```
     fn is_empty(self): bool { self.len == 0 }
 
     /// Moves the buffer to `cap` elements (`cap >= len`); `Err` leaves the list unchanged.
@@ -918,6 +1004,15 @@ List<T, A> {
         Result.Ok(self.len + additional)
     }
 
+    /// Makes room for `additional` more elements; `Err` leaves the list as it was.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// match l.try_reserve(10) {
+    ///     Result.Ok(_) => assert(l.capacity() >= 10),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_reserve(mut self, additional: usize): Result<(), AllocError> {
         let want = self.want(additional)?
         if want <= self.cap { return Result.Ok(()) }
@@ -925,12 +1020,28 @@ List<T, A> {
         self.set_capacity(if doubled < want { want } else { doubled })
     }
 
+    /// Like `try_reserve`, without growing past what is asked for.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// match l.try_reserve_exact(10) {
+    ///     Result.Ok(_) => assert(l.capacity() >= 10),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_reserve_exact(mut self, additional: usize): Result<(), AllocError> {
         let want = self.want(additional)?
         if want <= self.cap { return Result.Ok(()) }
         self.set_capacity(want)
     }
 
+    /// Makes room for `additional` more elements; panics when it cannot.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.reserve(10)
+    /// assert(l.capacity() >= 10)
+    /// ```
     fn reserve(mut self, additional: usize) {
         match self.try_reserve(additional) {
             Result.Ok(_) => { },
@@ -941,6 +1052,13 @@ List<T, A> {
         }
     }
 
+    /// Like `reserve`, without growing past what is asked for.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.reserve_exact(10)
+    /// assert(l.capacity() >= 10)
+    /// ```
     fn reserve_exact(mut self, additional: usize) {
         match self.try_reserve_exact(additional) {
             Result.Ok(_) => { },
@@ -951,11 +1069,26 @@ List<T, A> {
         }
     }
 
+    ///
+    /// ```
+    /// let mut l = List<i32>.with_capacity(100)
+    /// l.push(1)
+    /// l.shrink_to_fit()
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn shrink_to_fit(mut self) {
         let n = self.len
         let _ = self.set_capacity(n)
     }
 
+    /// Appends `value`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// assert_eq(l.len(), 2)
+    /// ```
     fn push(mut self, own value: T) {
         if self.len == self.cap {
             let doubled = self.cap * 2
@@ -968,32 +1101,132 @@ List<T, A> {
         self.len = self.len + 1
     }
 
+    /// Removes and returns the last element, or `None` when the list is empty.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// assert_eq(l.pop(), Option.Some(1))
+    /// assert_eq(l.pop(), Option.None)
+    /// ```
     fn pop(mut self): Option<T> {
         if self.len == 0 { return Option.None }
         self.len = self.len - 1
         Option.Some(unsafe { __read(self.ptr + self.len) })
     }
 
+    /// The elements as a slice.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// assert_eq(l.as_slice().len(), 1)
+    /// ```
     fn as_slice(self): [T] { unsafe { __slice_raw(self.ptr, self.len) } }
+    /// A view of the elements, to walk in order.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// let mut n = 0
+    /// for x in l.iter() {
+    ///     n = n + x
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn iter(self): [T] { unsafe { __slice_raw(self.ptr, self.len) } }
 
+    /// A reference to the element at `index`, or `None` past the end.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(5)
+    /// assert_eq(*l.get(0).unwrap(), 5)
+    /// assert(l.get(1).is_none())
+    /// ```
     fn get(self, index: usize): Option<&T> {
         if index < self.len { Option.Some(unsafe { &*(self.ptr + index) }) } else { Option.None }
     }
+    /// A mutable reference to the element at `index`, or `None` past the end.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(5)
+    /// match l.get_mut(0) {
+    ///     Option.Some(x) => *x = 6,
+    ///     Option.None => { },
+    /// }
+    /// assert_eq(l[0], 6)
+    /// ```
     fn get_mut(mut self, index: usize): Option<&mut T> {
         if index < self.len { Option.Some(unsafe { &mut *(self.ptr + index) }) } else { Option.None }
     }
+    /// A reference to the first element, or `None` when the list is empty.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// assert_eq(*l.first().unwrap(), 1)
+    /// ```
     fn first(self): Option<&T> { self.get(0) }
+    /// A mutable reference to the first element, or `None` when the list is empty.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// match l.first_mut() {
+    ///     Option.Some(x) => *x = 7,
+    ///     Option.None => { },
+    /// }
+    /// assert_eq(l[0], 7)
+    /// ```
     fn first_mut(mut self): Option<&mut T> { self.get_mut(0) }
+    /// A reference to the last element, or `None` when the list is empty.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// assert_eq(*l.last().unwrap(), 2)
+    /// ```
     fn last(self): Option<&T> { if self.len == 0 { Option.None } else { self.get(self.len - 1) } }
+    /// A mutable reference to the last element, or `None` when the list is empty.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// match l.last_mut() {
+    ///     Option.Some(x) => *x = 7,
+    ///     Option.None => { },
+    /// }
+    /// assert_eq(l[0], 7)
+    /// ```
     fn last_mut(mut self): Option<&mut T> {
         if self.len == 0 { return Option.None }
         let i = self.len - 1
         self.get_mut(i)
     }
 
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.clear()
+    /// assert_eq(l.len(), 0)
+    /// ```
     fn clear(mut self) { self.truncate(0) }
 
+    /// Keeps the first `len` elements and drops the rest.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.truncate(1)
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn truncate(mut self, len: usize) {
         if len >= self.len { return }
         let old = self.len
@@ -1005,6 +1238,16 @@ List<T, A> {
         }
     }
 
+    /// Inserts `value` at `index`, moving the elements after it up. Panics when `index` is past the end.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(3)
+    /// l.insert(1, 2)
+    /// assert_eq(l[1], 2)
+    /// assert_eq(l.len(), 3)
+    /// ```
     fn insert(mut self, index: usize, own value: T) {
         if index > self.len { list_oob(index, self.len) }
         if self.len == self.cap {
@@ -1025,6 +1268,15 @@ List<T, A> {
         self.len = self.len + 1
     }
 
+    /// Removes and returns the element at `index`, moving the ones after it down. Panics when `index` is out of range.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// assert_eq(l.remove(0), 1)
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn remove(mut self, index: usize): T {
         if index >= self.len { list_oob(index, self.len) }
         unsafe {
@@ -1039,6 +1291,15 @@ List<T, A> {
         }
     }
 
+    /// Exchanges the elements at `a` and `b`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.swap(0, 1)
+    /// assert_eq(l[0], 2)
+    /// ```
     fn swap(mut self, a: usize, b: usize) {
         if a >= self.len || b >= self.len { panic("swap: index out of bounds") }
         if a == b { return }
@@ -1049,6 +1310,16 @@ List<T, A> {
         }
     }
 
+    /// Removes and returns the element at `index`, filling its place with the last element.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.push(3)
+    /// assert_eq(l.swap_remove(0), 1)
+    /// assert_eq(l[0], 3)
+    /// ```
     fn swap_remove(mut self, index: usize): T {
         if index >= self.len { panic("swap_remove: index out of bounds") }
         unsafe {
@@ -1059,6 +1330,16 @@ List<T, A> {
         }
     }
 
+    /// Moves every element of `other` to the end of this list.
+    ///
+    /// ```
+    /// let mut a = List<i32>.new()
+    /// a.push(1)
+    /// let mut b = List<i32>.new()
+    /// b.push(2)
+    /// a.append(b)
+    /// assert_eq(a.len(), 2)
+    /// ```
     fn append(mut self, own other: List<T, A>) {
         let mut other = other
         self.reserve(other.len)
@@ -1073,9 +1354,29 @@ List<T, A> {
         other.len = 0
     }
 
+    /// An iterator over mutable references to the elements.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// for x in l.iter_mut() {
+    ///     *x = *x + 1
+    /// }
+    /// assert_eq(l[0], 2)
+    /// ```
     fn iter_mut(mut self): IterMut<T> { unsafe { __iter_mut_raw(self.ptr, self.len) } }
 
     /// Moves the elements from `at` on into a new list with the default allocator.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.push(3)
+    /// let tail = l.split_off(1)
+    /// assert_eq(l.len(), 1)
+    /// assert_eq(tail.len(), 2)
+    /// ```
     fn split_off(mut self, at: usize): List<T> {
         if at > self.len { panic("split_off: index out of bounds") }
         let mut out = List<T>.with_capacity(self.len - at)
@@ -1092,11 +1393,37 @@ List<T, A> {
     }
 
     /// Removes `lo..hi` and returns the removed elements as an owning iterator.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.push(3)
+    /// let mut n = 0
+    /// for x in l.drain(0..2) {
+    ///     n = n + x
+    /// }
+    /// assert_eq(n, 3)
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn drain(mut self, range: Range<usize>): ListIntoIter<T> {
         self.drain_range(range.start, range.end)
     }
 
     /// `drain(lo..=hi)`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// l.push(3)
+    /// let mut n = 0
+    /// for x in l.drain_inclusive(0..=1) {
+    ///     n = n + x
+    /// }
+    /// assert_eq(n, 3)
+    /// assert_eq(l.len(), 1)
+    /// ```
     fn drain_inclusive(mut self, range: RangeInclusive<usize>): ListIntoIter<T> {
         let hi = range.end
         if hi >= self.len { panic("drain: range out of bounds") }
@@ -1123,6 +1450,18 @@ List<T, A> {
         out.into_iter()
     }
 
+    /// Consumes the list, yielding its elements in order.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// l.push(2)
+    /// let mut n = 0
+    /// for x in l.into_iter() {
+    ///     n = n + x
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn into_iter(own self): ListIntoIter<T, A> {
         let mut me = self
         let it = unsafe { ListIntoIter { ptr: me.ptr, len: me.len, cap: me.cap, pos: 0, alloc: __read(&me.alloc as CPtr<A>) } }
@@ -1135,6 +1474,12 @@ List<T, A> {
 
 /// A hash map. The compiler keeps its table: `ptr` holds `cap` slots of `(key, value, hash)` (a zero hash marks an
 /// empty slot), `len` counts the live entries, and `alloc` is where the table comes from.
+///
+/// ```
+/// let mut m = Map<String, i32>.new()
+/// m.insert("a".to_string(), 1)
+/// assert_eq(*m.get("a".to_string()).unwrap(), 1)
+/// ```
 struct Map<K, V, A: Allocator = Global> {
     ptr: CPtr<(K, V, u64)>
     len: usize
@@ -1144,6 +1489,14 @@ struct Map<K, V, A: Allocator = Global> {
 
 /// The owning iterator of a `Map`: it yields the entries and drops the ones it did not yield. `pos` is the next slot
 /// to examine; `len` counts the live entries it has not yielded.
+///
+/// ```
+/// let mut m = Map<String, i32>.new()
+/// m.insert("a".to_string(), 1)
+/// let mut it = m.into_iter()
+/// assert_eq(it.next(), Option.Some(("a".to_string(), 1)))
+/// assert_eq(it.next(), Option.None)
+/// ```
 struct MapIntoIter<K, V, A: Allocator = Global> {
     ptr: CPtr<(K, V, u64)>
     len: usize
@@ -1186,6 +1539,11 @@ MapIntoIter<K, V, A>: Iterator<(K, V)> {
 }
 
 /// One slot of a map's table: the key, the value, and the key's hash (zero marks an empty slot).
+///
+/// ```
+/// let slot: MapSlot<i32, i32> = (1, 2, 3)
+/// assert_eq(slot.0, 1)
+/// ```
 type MapSlot<K, V> = (K, V, u64)
 
 priv fn map_table_bytes<K, V>(cap: usize): usize {
@@ -1211,11 +1569,21 @@ priv fn map_hash<K>(key: &K): u64 {
 
 Map<K, V> {
     /// An empty map.
+    ///
+    /// ```
+    /// let m = Map<String, i32>.new()
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn new(): Map<K, V> {
         Map { ptr: unsafe { CPtr<MapSlot<K, V>>.null() }, len: 0, cap: 0, alloc: Global { } }
     }
 
     /// An empty map with room for `n` entries.
+    ///
+    /// ```
+    /// let m = Map<String, i32>.with_capacity(10)
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn with_capacity(n: usize): Map<K, V> {
         let mut out = Map<K, V>.new()
         out.reserve(n)
@@ -1223,6 +1591,13 @@ Map<K, V> {
     }
 
     /// `Ok` with room for `n` entries, or the reason there is none.
+    ///
+    /// ```
+    /// match Map<String, i32>.try_with_capacity(4) {
+    ///     Result.Ok(m) => assert_eq(m.len(), 0),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_with_capacity(n: usize): Result<Map<K, V>, AllocError> {
         let mut out = Map<K, V>.new()
         out.try_reserve(n)?
@@ -1232,13 +1607,35 @@ Map<K, V> {
 
 Map<K, V, A> {
     /// An empty map that takes its table from `alloc`.
+    ///
+    /// ```
+    /// let m = Map<String, i32, Global>.new_in(Global { })
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn new_in(own alloc: A): Map<K, V, A> {
         Map { ptr: unsafe { CPtr<MapSlot<K, V>>.null() }, len: 0, cap: 0, alloc: alloc }
     }
 
+    /// The number of entries.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// assert_eq(m.len(), 1)
+    /// ```
     fn len(self): usize { self.len }
 
     /// Consumes the map: the iterator yields the entries `(key, value)` and drops the ones it did not yield.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// let mut total = 0
+    /// for (_, v) in m.into_iter() {
+    ///     total = total + v
+    /// }
+    /// assert_eq(total, 1)
+    /// ```
     fn into_iter(own self): MapIntoIter<K, V, A> {
         let mut me = self
         let it = unsafe {
@@ -1264,6 +1661,13 @@ Map<K, V, A> {
     }
 
     /// Removes every entry and frees the table.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// m.clear()
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn clear(mut self) {
         self.drop_entries()
         unsafe {
@@ -1310,6 +1714,15 @@ Map<K, V, A> {
         Result.Ok(())
     }
 
+    /// Makes room for `additional` more entries; `Err` leaves the map as it was.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// match m.try_reserve(10) {
+    ///     Result.Ok(_) => assert_eq(m.len(), 0),
+    ///     Result.Err(_) => panic("no memory"),
+    /// }
+    /// ```
     fn try_reserve(mut self, additional: usize): Result<(), AllocError> {
         if additional > usize.MAX - self.len { return Result.Err(AllocError.CapacityOverflow) }
         let cap = map_capacity_for(self.len + additional)?
@@ -1317,6 +1730,13 @@ Map<K, V, A> {
         Result.Ok(())
     }
 
+    /// Makes room for `additional` more entries; panics when it cannot.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.reserve(10)
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn reserve(mut self, additional: usize) {
         match self.try_reserve(additional) {
             Result.Ok(_) => { },
@@ -1328,6 +1748,13 @@ Map<K, V, A> {
     }
 
     /// Rehashes into the smallest table that holds the entries, and frees the table of an empty map.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.with_capacity(100)
+    /// m.insert("a".to_string(), 1)
+    /// m.shrink_to_fit()
+    /// assert_eq(m.len(), 1)
+    /// ```
     fn shrink_to_fit(mut self) {
         if self.len == 0 {
             if self.cap > 0 {
@@ -1373,6 +1800,15 @@ Map<K, V, A> {
     }
 
     /// Keeps the entries `keep` accepts; the rest are dropped.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// m.insert("b".to_string(), 2)
+    /// m.retain(|k, v| *v > 1)
+    /// assert_eq(m.len(), 1)
+    /// assert(m.contains_key("b".to_string()))
+    /// ```
     fn retain<F: FnMut(&K, &V): bool>(mut self, own keep: F) {
         let mut keep = keep
         let mut i: usize = 0
@@ -1447,23 +1883,50 @@ Map<K, V, A> where K: Eq, A: Allocator {
     }
 
     /// Inserts the entry, replacing the value of an existing key.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// m.insert("a".to_string(), 2)
+    /// assert_eq(*m.get("a".to_string()).unwrap(), 2)
+    /// ```
     fn insert(mut self, own key: K, own value: V) {
         let _ = self.put(key, value, true)
     }
 
     /// The value stored under `key`; when the key is absent, `value` is stored first. A value that is already there
     /// is kept, and the incoming key and value are dropped.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// *m.get_or_insert("a".to_string(), 1) = 5
+    /// assert_eq(*m.get("a".to_string()).unwrap(), 5)
+    /// ```
     fn get_or_insert(mut self, own key: K, own value: V): &mut V {
         let at = self.put(key, value, false)
         unsafe { &mut (*(self.ptr + at)).1 }
     }
 
     /// Like `get_or_insert`, with a shared view of the value.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// assert_eq(*m.get_or("a".to_string(), 1), 1)
+    /// assert_eq(*m.get_or("a".to_string(), 9), 1)
+    /// ```
     fn get_or(mut self, own key: K, own value: V): &V {
         let at = self.put(key, value, false)
         unsafe { &(*(self.ptr + at)).1 }
     }
 
+    /// A reference to the value stored under `key`, or `None`.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// assert_eq(*m.get("a".to_string()).unwrap(), 1)
+    /// assert(m.get("b".to_string()).is_none())
+    /// ```
     fn get(self, key: K): Option<&V> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
@@ -1471,6 +1934,17 @@ Map<K, V, A> where K: Eq, A: Allocator {
         if found { Option.Some(unsafe { &(*(self.ptr + at)).1 }) } else { Option.None }
     }
 
+    /// A mutable reference to the value stored under `key`, or `None`.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// match m.get_mut("a".to_string()) {
+    ///     Option.Some(v) => *v = 2,
+    ///     Option.None => { },
+    /// }
+    /// assert_eq(*m.get("a".to_string()).unwrap(), 2)
+    /// ```
     fn get_mut(mut self, key: K): Option<&mut V> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
@@ -1478,6 +1952,14 @@ Map<K, V, A> where K: Eq, A: Allocator {
         if found { Option.Some(unsafe { &mut (*(self.ptr + at)).1 }) } else { Option.None }
     }
 
+    /// Whether the map has an entry for `key`.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// assert(m.contains_key("a".to_string()))
+    /// assert(!m.contains_key("b".to_string()))
+    /// ```
     fn contains_key(self, key: K): bool {
         if self.cap == 0 { return false }
         let hash = map_hash(&key)
@@ -1486,6 +1968,13 @@ Map<K, V, A> where K: Eq, A: Allocator {
     }
 
     /// Removes the key and returns the stored key and value.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// assert_eq(m.remove_entry("a".to_string()), Option.Some(("a".to_string(), 1)))
+    /// assert_eq(m.len(), 0)
+    /// ```
     fn remove_entry(mut self, key: K): Option<(K, V)> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
@@ -1498,6 +1987,13 @@ Map<K, V, A> where K: Eq, A: Allocator {
     }
 
     /// Removes the key and returns its value; the stored key is dropped.
+    ///
+    /// ```
+    /// let mut m = Map<String, i32>.new()
+    /// m.insert("a".to_string(), 1)
+    /// assert_eq(m.remove("a".to_string()), Option.Some(1))
+    /// assert_eq(m.remove("a".to_string()), Option.None)
+    /// ```
     fn remove(mut self, key: K): Option<V> {
         match self.remove_entry(key) {
             Option.Some((_, v)) => Option.Some(v),
@@ -1507,6 +2003,14 @@ Map<K, V, A> where K: Eq, A: Allocator {
 }
 
 /// The owning iterator of a `List`: it yields the elements and drops the ones it did not yield.
+///
+/// ```
+/// let mut l = List<i32>.new()
+/// l.push(1)
+/// let mut it = l.into_iter()
+/// assert_eq(it.next(), Option.Some(1))
+/// assert_eq(it.next(), Option.None)
+/// ```
 struct ListIntoIter<T, A: Allocator = Global> {
     ptr: CPtr<T>
     len: usize
@@ -1540,18 +2044,37 @@ ListIntoIter<T, A>: Iterator<T> {
 
 /// The values from `start` up to, but not including, `end`: `start..end`. It is a value of its own, not an iterator;
 /// `iter()` and `for` walk it.
+///
+/// ```
+/// let r = 1..4
+/// assert_eq(r.start, 1)
+/// assert_eq(r.end, 4)
+/// ```
 struct Range<T>: Copy, Clone, Eq, Ord, Hash {
     start: T
     end: T
 }
 
 /// The values from `start` up to and including `end`: `start..=end`.
+///
+/// ```
+/// let r = 1..=4
+/// assert_eq(r.start, 1)
+/// assert_eq(r.end, 4)
+/// ```
 struct RangeInclusive<T>: Copy, Clone, Eq, Ord, Hash {
     start: T
     end: T
 }
 
 /// The iterator of a `Range`: the next value, the end, and whether the walk is over.
+///
+/// ```
+/// let mut it = (0..2).iter()
+/// assert_eq(it.next(), Option.Some(0))
+/// assert_eq(it.next(), Option.Some(1))
+/// assert_eq(it.next(), Option.None)
+/// ```
 struct RangeIter<T>: Clone {
     cur: T
     end: T
@@ -1559,6 +2082,13 @@ struct RangeIter<T>: Clone {
 }
 
 /// The iterator of a `RangeInclusive`.
+///
+/// ```
+/// let mut it = (0..=1).iter()
+/// assert_eq(it.next(), Option.Some(0))
+/// assert_eq(it.next(), Option.Some(1))
+/// assert_eq(it.next(), Option.None)
+/// ```
 struct RangeIterInclusive<T>: Clone {
     cur: T
     end: T
@@ -1566,20 +2096,56 @@ struct RangeIterInclusive<T>: Clone {
 }
 
 Range<T> {
+    /// An iterator over the values of the range.
+    ///
+    /// ```
+    /// let mut n = 0
+    /// for i in (0..3).iter() {
+    ///     n = n + i
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn iter(self): RangeIter<T> {
         RangeIter { cur: self.start, end: self.end, done: false }
     }
 
+    /// Consumes the range, yielding its values.
+    ///
+    /// ```
+    /// let mut n = 0
+    /// for i in (0..3).into_iter() {
+    ///     n = n + i
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn into_iter(own self): RangeIter<T> {
         RangeIter { cur: self.start, end: self.end, done: false }
     }
 }
 
 RangeInclusive<T> {
+    /// An iterator over the values of the range, including the end.
+    ///
+    /// ```
+    /// let mut n = 0
+    /// for i in (0..=2).iter() {
+    ///     n = n + i
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn iter(self): RangeIterInclusive<T> {
         RangeIterInclusive { cur: self.start, end: self.end, done: false }
     }
 
+    /// Consumes the range, yielding its values, including the end.
+    ///
+    /// ```
+    /// let mut n = 0
+    /// for i in (0..=2).into_iter() {
+    ///     n = n + i
+    /// }
+    /// assert_eq(n, 3)
+    /// ```
     fn into_iter(own self): RangeIterInclusive<T> {
         RangeIterInclusive { cur: self.start, end: self.end, done: false }
     }
@@ -1642,11 +2208,21 @@ RangeIterInclusive<T>: DoubleEndedIterator<T> where T: Ord {
 
 /// A value that drop glue never drops: whoever holds one decides what becomes of the value inside, by reading it out
 /// with `__read` or dropping it by hand.
+///
+/// ```
+/// let m = ManuallyDrop { value: 5 }
+/// assert_eq(m.value, 5)
+/// ```
 struct ManuallyDrop<T> {
     value: T
 }
 
 /// The owning iterator of an array: it yields the elements in order and drops the ones it did not yield.
+///
+/// ```
+/// let mut it = [1, 2, 3].into_iter()
+/// assert_eq(it.next(), Option.Some(1))
+/// ```
 struct ArrayIntoIter<T, const N: usize> {
     data: ManuallyDrop<[T; N]>
     pos: usize
@@ -1675,6 +2251,14 @@ ArrayIntoIter<T, N>: Iterator<T> {
 }
 
 List<T, A> where T: Clone, A: Allocator {
+    /// Appends a clone of every element of `values`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// let a = [1, 2]
+    /// l.extend_from_slice(a[0..2])
+    /// assert_eq(l.len(), 2)
+    /// ```
     fn extend_from_slice(mut self, values: [T]) {
         for x in values {
             self.push(x.clone())
@@ -1683,12 +2267,29 @@ List<T, A> where T: Clone, A: Allocator {
 }
 
 List<T, A> where T: Eq, A: Allocator {
+    /// Whether some element equals `value`.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(1)
+    /// assert(l.contains(1))
+    /// assert(!l.contains(2))
+    /// ```
     fn contains(self, value: T): bool {
         self.as_slice().contains(value)
     }
 }
 
 List<T, A> where T: Ord, A: Allocator {
+    /// Sorts the elements in ascending order.
+    ///
+    /// ```
+    /// let mut l = List<i32>.new()
+    /// l.push(2)
+    /// l.push(1)
+    /// l.sort()
+    /// assert_eq(l[0], 1)
+    /// ```
     fn sort(mut self) {
         let mut view = self.as_slice()
         view.sort()
