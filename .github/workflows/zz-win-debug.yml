@@ -174,10 +174,41 @@ jobs:
               h.join()
           }
           EOF2
+          cat > g.bd <<'EOF2'
+          fn work(index: usize) {
+              let mut name = "stress-".to_string()
+              name.push_str(index.to_string().as_str())
+              name.push_str(".txt")
+              let mut file = fs.File.create(name.as_str()).unwrap()
+              let data = "0123456789".to_utf8()
+              file.write_all(data[0..data.len()]).unwrap()
+              let mut read = fs.File.open(name.as_str()).unwrap()
+              let mut buf = List<u8>.new()
+              let n = read.read(mut buf, 64).unwrap()
+              if n != 10 {
+                  panic("short")
+              }
+              let mut options = fs.OpenOptions.new()
+              options.write(true)
+              options.truncate(true)
+              let mut again = options.open(name.as_str()).unwrap()
+              again.write_all(data[0..data.len()]).unwrap()
+              match fs.remove_file(name.as_str()) {
+                  Result.Ok(_) => println("G{index}: removed"),
+                  Result.Err(e) => println("G{index}: failed {e:?}"),
+              }
+          }
+          fn main() {
+              work(100)
+              task.set_workers(4)
+              let h = task.spawn(|| work(7))
+              h.join()
+          }
+          EOF2
           echo "== stress_files with the OLD compiler"
           "$GITHUB_WORKSPACE/old-target/debug/burdin" run "$GITHUB_WORKSPACE/tests/s2_io/stress_files.bd" 2>&1 | head -5
           echo "OLD stress exit code: ${PIPESTATUS[0]}"
-          for f in f; do
+          for f in f g; do
             "$GITHUB_WORKSPACE/target/debug/burdin" run $f.bd
             echo "NEW exit code: $?"
             "$GITHUB_WORKSPACE/old-target/debug/burdin" run $f.bd
