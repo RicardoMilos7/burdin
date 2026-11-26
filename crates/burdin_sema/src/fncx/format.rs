@@ -403,6 +403,10 @@ impl FnCx<'_> {
         span: Span,
     ) -> tir::Expr {
         let e = self.auto_deref(e);
+        // An instance that is not allocated yet is `Ty::Error`; the body is checked again once it is.
+        if e.ty == Ty::Error {
+            return error_expr(span);
+        }
         if !self.formattable(&e.ty, debug) {
             let (interface, spec) = if debug { ("Debug", "{:?}") } else { ("Display", "{}") };
             let mut message = format!("`{}` does not implement `{interface}`, which `{spec}` needs", e.ty);
@@ -440,8 +444,8 @@ impl FnCx<'_> {
                 self.std_call(if debug { "debug_str" } else { "fmt_str" }, vec![view, f], span)
             }
             Ty::Unit => self.std_call("debug_unit", vec![f], span),
-            Ty::Option(_) => self.generic_format("debug_option", e, f_name, span),
-            Ty::Result(..) => self.generic_format("debug_result", e, f_name, span),
+            // A value of type `!` never exists, so there is nothing to write; the expression itself diverges.
+            Ty::Never => e,
             Ty::List(_, _) => self.generic_format("debug_list", e, f_name, span),
             Ty::Map(_, _, _) => self.generic_format("debug_map", e, f_name, span),
             Ty::Heap(_, _) => self.generic_format("debug_heap", e, f_name, span),

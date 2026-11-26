@@ -315,22 +315,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// The cell pointer of a `Shared<T>` receiver, read from its place or spilled to a temporary.
-    pub(super) fn shared_pointer(&mut self, recv: &'a burdin_tir::Expr) -> GenResult<PointerValue<'ctx>> {
-        let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-        let storage = match self.direct_place_ptr(recv)? {
-            Some(p) => p,
-            None => {
-                let v = self.expr_mode(recv, super::Mode::Use)?;
-                let slot = self.alloca(ptr_ty.into(), "shared")?;
-                let v = self.need(v, &recv.ty);
-                self.builder.build_store(slot, v).map_err(llvm_err)?;
-                slot
-            }
-        };
-        Ok(self.builder.build_load(ptr_ty, storage, "shared.ptr").map_err(llvm_err)?.into_pointer_value())
-    }
-
     /// `ptr + offset` bytes.
     pub(super) fn offset_ptr(
         &mut self,

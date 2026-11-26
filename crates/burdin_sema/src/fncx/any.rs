@@ -285,7 +285,7 @@ impl FnCx<'_> {
         if name.name == "is" {
             return mk(tir::ExprKind::AnyIs { value: Box::new(recv), target, type_id }, Ty::Bool, span);
         }
-        let ty = Ty::Option(Box::new(target.clone()));
+        let ty = self.globals.option_ty(target.clone());
         mk(tir::ExprKind::AnyDowncast { value: Box::new(recv), target, type_id }, ty, span)
     }
 }

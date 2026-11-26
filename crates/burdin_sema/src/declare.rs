@@ -179,6 +179,7 @@ impl<'t> Sema<'t> {
                 let id = self.globals.enums.len();
                 self.globals.modules[module].types.insert(name.name.clone(), TypeName::Enum(id));
                 self.globals.enums.push(tir::EnumDef {
+                    lang: None,
                     name: full.clone(),
                     variants: Vec::new(),
                     derives: tir::Derives::default(),

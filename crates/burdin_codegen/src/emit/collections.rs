@@ -271,10 +271,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let some_bb = self.new_block("pop.some");
                 let end = self.new_block("pop.end");
                 self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
-                let slot = match self.llvm_ty(ty) {
-                    Some(t) => Some(self.alloca(t, "pop.out")?),
-                    None => None,
-                };
+                let slot = self.option_slot(ty, "pop.out")?;
                 self.builder.position_at_end(none_bb);
                 if let (Some(slot), Some(_)) = (slot, self.llvm_ty(ty)) {
                     let none = self.option_ty(&elem).const_zero();
@@ -299,10 +296,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(match (slot, self.llvm_ty(ty)) {
-                    (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-                    _ => None,
-                })
+                self.load_option(slot, ty)
             }
             (Ty::List(elem, _), Method::ListLast) => {
                 let elem = (**elem).clone();
@@ -316,10 +310,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let end = self.new_block("last.end");
                 self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
                 let view = Ty::Ref { mutable: false, inner: Box::new(elem.clone()) };
-                let slot = match self.llvm_ty(ty) {
-                    Some(t) => Some(self.alloca(t, "last.out")?),
-                    None => None,
-                };
+                let slot = self.option_slot(ty, "last.out")?;
                 self.builder.position_at_end(none_bb);
                 if let (Some(slot), Some(_)) = (slot, self.llvm_ty(ty)) {
                     let none = self.option_ty(&view).const_zero();
@@ -336,10 +327,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(match (slot, self.llvm_ty(ty)) {
-                    (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-                    _ => None,
-                })
+                self.load_option(slot, ty)
             }
             (Ty::List(elem, _), Method::ListInsert) => {
                 let elem = (**elem).clone();
@@ -859,10 +847,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
                 let k_slot = self.place_ptr(&args[1])?;
                 let view = Ty::Ref { mutable: m == Method::MapGetMut, inner: Box::new(value_ty.clone()) };
-                let slot = match self.llvm_ty(ty) {
-                    Some(t) => Some(self.alloca(t, "get.out")?),
-                    None => None,
-                };
+                let slot = self.option_slot(ty, "get.out")?;
                 let found_bb = self.new_block("map.get.found");
                 let none_bb = self.new_block("map.get.none");
                 let probe_bb = self.new_block("map.get.probe");
@@ -892,20 +877,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(match (slot, self.llvm_ty(ty)) {
-                    (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-                    _ => None,
-                })
+                self.load_option(slot, ty)
             }
             (Ty::Map(key, value, _), Method::MapRemove) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
                 let k_slot = self.place_ptr(&args[1])?;
-                let slot = match self.llvm_ty(ty) {
-                    Some(t) => Some(self.alloca(t, "remove.out")?),
-                    None => None,
-                };
+                let slot = self.option_slot(ty, "remove.out")?;
                 let found_bb = self.new_block("map.remove.found");
                 let none_bb = self.new_block("map.remove.none");
                 let probe_bb = self.new_block("map.remove.probe");
@@ -945,10 +924,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(match (slot, self.llvm_ty(ty)) {
-                    (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-                    _ => None,
-                })
+                self.load_option(slot, ty)
             }
             (Ty::Map(key, value, _), Method::MapContainsKey) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
@@ -979,10 +955,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
                 let k_slot = self.place_ptr(&args[1])?;
-                let slot = match self.llvm_ty(ty) {
-                    Some(t) => Some(self.alloca(t, "remove_entry.out")?),
-                    None => None,
-                };
+                let slot = self.option_slot(ty, "remove_entry.out")?;
                 let found_bb = self.new_block("remove_entry.found");
                 let none_bb = self.new_block("remove_entry.none");
                 let probe_bb = self.new_block("remove_entry.probe");
@@ -1036,10 +1009,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 }
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                Ok(match (slot, self.llvm_ty(ty)) {
-                    (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-                    _ => None,
-                })
+                self.load_option(slot, ty)
             }
             // `retain(f)`: walk the slots and drop every entry `f` rejects. A removal shifts the rest of the
             // probe cluster back, so the same slot is examined again.
@@ -1521,10 +1491,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         index: Option<IntValue<'ctx>>,
         ty: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let slot = match self.llvm_ty(ty) {
-            Some(t) => Some(self.alloca(t, "element.out")?),
-            None => None,
-        };
+        let slot = self.option_slot(ty, "element.out")?;
         let (at, valid) = match index {
             Some(i) => (i, self.builder.build_int_compare(IntPredicate::ULT, i, seq.len, "").map_err(llvm_err)?),
             None => {
@@ -1554,10 +1521,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);
-        Ok(match (slot, self.llvm_ty(ty)) {
-            (Some(slot), Some(t)) => Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?),
-            _ => None,
-        })
+        self.load_option(slot, ty)
     }
 
     /// Grows the buffer to hold at least `want` elements, doubling the capacity when that is enough, through the

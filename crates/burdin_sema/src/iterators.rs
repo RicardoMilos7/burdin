@@ -104,15 +104,21 @@ impl Globals {
                 Ty::Ref { inner, .. } => matches!(**inner, Ty::String | Ty::Str),
                 _ => false,
             },
-            Ty::Option(target) => match item {
-                Ty::Option(inner) => from_items(target, (**inner).clone()),
-                _ => false,
-            },
-            Ty::Result(target, error) => match item {
-                Ty::Result(inner, item_error) => **error == **item_error && from_items(target, (**inner).clone()),
-                _ => false,
-            },
-            _ => return None,
+            _ => {
+                if let Some(target) = self.option_payload(ty) {
+                    match self.option_payload(item) {
+                        Some(inner) => from_items(&target, inner),
+                        None => false,
+                    }
+                } else if let Some((target, error)) = self.result_parts(ty) {
+                    match self.result_parts(item) {
+                        Some((inner, item_error)) => error == item_error && from_items(&target, inner),
+                        None => false,
+                    }
+                } else {
+                    return None;
+                }
+            }
         })
     }
 
@@ -274,15 +280,18 @@ mod tests {
 
     #[test]
     fn option_and_result_collect_through_their_payload() {
-        let g = globals_with_from_iterator();
+        let mut g = globals_with_from_iterator();
+        g.lang_option = Some(0);
+        g.lang_result = Some(1);
         let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
-        let option = Ty::Option(Box::new(list.clone()));
-        assert_eq!(g.builtin_from_iterator(&option, &[Ty::Option(Box::new(i32_()))], &[]), Some(true));
+        let option = g.test_option(list.clone());
+        let option_item = g.test_option(i32_());
+        assert_eq!(g.builtin_from_iterator(&option, &[option_item], &[]), Some(true));
         assert_eq!(g.builtin_from_iterator(&option, &[i32_()], &[]), Some(false));
-        let result = Ty::Result(Box::new(list), Box::new(Ty::String));
-        let ok_item = Ty::Result(Box::new(i32_()), Box::new(Ty::String));
+        let result = g.test_result(list, Ty::String);
+        let ok_item = g.test_result(i32_(), Ty::String);
         assert_eq!(g.builtin_from_iterator(&result, &[ok_item], &[]), Some(true));
-        let other_error = Ty::Result(Box::new(i32_()), Box::new(Ty::Bool));
+        let other_error = g.test_result(i32_(), Ty::Bool);
         assert_eq!(g.builtin_from_iterator(&result, &[other_error], &[]), Some(false), "the errors must agree");
         // A struct or an enum answers through its impl blocks, so the built-in check has no opinion.
         assert_eq!(g.builtin_from_iterator(&i32_(), &[i32_()], &[]), None);

@@ -11,7 +11,7 @@ use std::rc::Rc;
 /// allocator a container takes after them may be left out, so it is not listed. `None` for any other name.
 pub(crate) fn builtin_generic_params(name: &str) -> Option<&'static [&'static str]> {
     Some(match name {
-        "Option" | "Result" | "Heap" | "Shared" | "List" | "CPtr" | "Range" | "RangeInclusive" => &["T"],
+        "Option" | "Result" | "Heap" | "List" | "CPtr" | "Range" | "RangeInclusive" => &["T"],
         "Map" => &["K", "V"],
         _ => return None,
     })
@@ -535,8 +535,8 @@ impl Globals {
         }
         let mut resolved: Vec<Ty> = args
             .iter()
-            .zip(&info.bounds)
-            .map(|(a, param_bounds)| match Globals::const_param_ty(param_bounds) {
+            .enumerate()
+            .map(|(i, a)| match info.bounds.get(i).and_then(|pb| Globals::const_param_ty(pb)) {
                 Some(declared) => self.eval_const_arg(a, declared, subst, module, diags),
                 None => self.resolve_type_bounded(a, self_ty, subst, bounds, module, diags),
             })
@@ -623,28 +623,11 @@ impl Globals {
         diags: &mut Diagnostics,
     ) -> Option<Ty> {
         Some(match (name, args.len()) {
-            ("Option", 1) => {
-                Ty::Option(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
-            }
-            ("Result", 2) => Ty::Result(
-                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
-                Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
-            ),
-            // `Result<T>` is the default-error form: `Result<T, AnyError>` (`spec/errors.md`, ERR5).
-            ("Result", 1) => Ty::Result(
-                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
-                Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),
-            ),
             ("Heap", 1) | ("Heap", 2) => {
                 let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);
                 let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
                 Ty::Heap(Box::new(inner), alloc)
-            }
-            ("Shared", 1) => {
-                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                check_storable(&inner, args[0].span, "a `Shared` value", diags);
-                Ty::Shared(Box::new(inner))
             }
             // The iterator `map.iter()` returns, which yields `(&K, &V)`. `std` needs its name to write the
             // iterator of a type built on a map (`Set`); `MapIter` itself is the standard library's adapter.
@@ -764,8 +747,8 @@ impl Globals {
 
     fn hand_written_eq_hashes(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Option(t) | Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => self.hand_written_eq_hashes(t),
-            Ty::Result(a, b) | Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
+            Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => self.hand_written_eq_hashes(t),
+            Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
             Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -789,11 +772,9 @@ impl Globals {
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &crate::generics::Bound::Eq, env),
-            Ty::Option(t) => self.has_eq_in(t, env),
             // A map compares by its entries, whatever the iteration order.
             Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
             Ty::Range(t, _) => self.has_eq_in(t, env),
-            Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
@@ -806,9 +787,7 @@ impl Globals {
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)
-            | Ty::CString
             | Ty::MapEntry(..)
-            | Ty::Shared(_)
             | Ty::Chars
             | Ty::Fn { .. }
             | Ty::ListIntoIter(..)

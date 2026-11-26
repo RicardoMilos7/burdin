@@ -821,41 +821,8 @@ fn Map<K, V>.iter_mut(mut self): MapIterMut<K, V>
 /// Consumes the map, yielding `(K, V)`.
 fn Map<K, V>.into_iter(own self): MapIntoIter<K, V>
 
-/// `Some(T)` or `None`.
-enum Option<T> {
-    Some(T)
-    None
-}
-
-/// The value; panics on `None`.
-fn Option<T>.unwrap(own self): T
-
-/// The value; panics with `msg` on `None`.
-fn Option<T>.expect(own self, msg: str): T
-
-/// Whether there is a value.
-fn Option<T>.is_some(self): bool
-
-/// Whether there is no value.
-fn Option<T>.is_none(self): bool
-
-/// `Ok(T)` or `Err(E)`; `Result<T>` means `Result<T, AnyError>`.
-enum Result<T, E> {
-    Ok(T)
-    Err(E)
-}
-
-/// The value; panics on `Err`.
-fn Result<T, E>.unwrap(own self): T
-
-/// The value; panics with `msg` on `Err`.
-fn Result<T, E>.expect(own self, msg: str): T
-
-/// Whether it is `Ok`.
-fn Result<T, E>.is_ok(self): bool
-
-/// Whether it is `Err`.
-fn Result<T, E>.is_err(self): bool
+// `Option` and `Result` are ordinary enums of `std/src/std.bd`, and their methods are written in Burdin in
+// `std/src/option.bd`. `context` is the one method of them the compiler provides (`spec/errors.md`, ERR6).
 
 /// Prefixes a context message to the error.
 fn Result<T, E>.context(own self, message: str): Result<T, AnyError>

@@ -7,7 +7,7 @@
 # `burdin debug` and `burdin dap` write the embedded copy beside the session and import it for you. The formats
 # match `debuggers/gdb/burdin_printers.py`; both read the compiler's debug types by member name, and the layout
 # facts the DWARF cannot carry are the ones in `spec/debug.md`, DBG5 (a `Map`'s `(key, value, hash)` slots with a
-# zero hash for an empty one, a `Shared` cell of `{ count, value }`, and the `any` vtable header).
+# zero hash for an empty one, a `Shared` cell of `{ strong, value }`, and the `any` vtable header).
 
 import re
 
@@ -151,22 +151,29 @@ def map_summary(valobj, internal_dict):
         return None
 
 
-def option_summary(valobj, internal_dict):
+def _lang_enum_summary(valobj):
+    """`Option` and `Result` are enums of `std` (`{ tag, payload }`), shown as `Some(5)` and `Ok(7)`."""
     try:
-        if _int(valobj, "is_some"):
-            return f"Some({_render(_member(valobj, 'value'))})"
-        return "None"
+        payload = _member(valobj, "payload")
+        variants = _fields(payload.GetType())
+        tag = _int(valobj, "tag")
+        if tag < 0 or tag >= len(variants):
+            return f"<variant {tag}>"
+        member = payload.GetChildMemberWithName(variants[tag])
+        fields = _fields(member.GetType())
+        if not fields:
+            return variants[tag]
+        return f"{variants[tag]}({_render(member.GetChildMemberWithName(fields[0]))})"
     except Exception:
         return None
+
+
+def option_summary(valobj, internal_dict):
+    return _lang_enum_summary(valobj)
 
 
 def result_summary(valobj, internal_dict):
-    try:
-        if _int(valobj, "is_ok"):
-            return f"Ok({_render(_member(valobj, 'ok'))})"
-        return f"Err({_render(_member(valobj, 'err'))})"
-    except Exception:
-        return None
+    return _lang_enum_summary(valobj)
 
 
 def enum_summary(valobj, internal_dict):
@@ -213,7 +220,7 @@ def shared_summary(valobj, internal_dict):
         if not cell.IsValid():
             return "Shared(null)"
         cell = cell.Dereference()
-        return f"Shared({_render(_member(cell, 'value'))}) (strong {_int(cell, 'count')})"
+        return f"Shared({_render(_member(cell, 'value'))}) (strong {_int(cell, 'strong')})"
     except Exception:
         return None
 
@@ -378,8 +385,8 @@ _SUMMARIES = [
     (r"^str$", "burdin_formatters.string_summary"),
     (r"^List<.*>$", "burdin_formatters.list_summary"),
     (r"^Map<.*>$", "burdin_formatters.map_summary"),
-    (r"^Option<.*>$", "burdin_formatters.option_summary"),
-    (r"^Result<.*>$", "burdin_formatters.result_summary"),
+    (r"^(std\.)?Option<.*>$", "burdin_formatters.option_summary"),
+    (r"^(std\.)?Result<.*>$", "burdin_formatters.result_summary"),
     (r"^Heap<.*>$", "burdin_formatters.heap_summary"),
     (r"^Shared<.*>$", "burdin_formatters.shared_summary"),
     (r"^any .*$", "burdin_formatters.any_summary"),

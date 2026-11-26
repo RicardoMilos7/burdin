@@ -65,7 +65,12 @@ impl Origin {
 }
 
 /// Computes every signature's return origin and reports E0121, E0122, and E0123.
-pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], diags: &mut Diagnostics) {
+pub(crate) fn check(
+    sigs: &mut [Signature],
+    functions: &mut [tir::Function],
+    enums: &[tir::EnumDef],
+    diags: &mut Diagnostics,
+) {
     // The summary of one function can feed the next, so iterate until nothing changes.
     for _ in 0..=functions.len() {
         let mut changed = false;
@@ -98,7 +103,13 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
         functions[i].ret_origins = sigs[i].ret_origins.clone();
         // A result that is itself a view derives from exactly one parameter (RT3); a struct, enum, or tuple of
         // views may derive from several, and its holder keeps every one of them borrowed (RT3a).
-        let aggregate = matches!(functions[i].ret, tir::Ty::Struct(_) | tir::Ty::Enum(_) | tir::Ty::Tuple(_));
+        // `Option` and `Result` are enums of `std`, but a view inside one is the result itself, not an aggregate
+        // of views.
+        let aggregate = match &functions[i].ret {
+            tir::Ty::Enum(a) => enums[a.id].lang.is_none(),
+            tir::Ty::Struct(_) | tir::Ty::Tuple(_) => true,
+            _ => false,
+        };
         if functions[i].ret.is_second_class() && !aggregate && origin.params.len() > 1 {
             let f = &functions[i];
             let names: Vec<String> = origin.params.iter().map(|p| f.locals[f.params[*p].0].name.clone()).collect();
@@ -332,7 +343,7 @@ impl<'a> Analyzer<'a> {
 
     fn bind_pattern(&mut self, pat: &Pat, origin: &Origin, allow_temp: bool, span: Span) {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
             Pat::Binding(id, mode) => self.set_binding(*id, *mode, origin, allow_temp, span),
             Pat::At(id, mode, inner) => {
                 self.set_binding(*id, *mode, origin, allow_temp, span);
@@ -343,8 +354,6 @@ impl<'a> Analyzer<'a> {
                     self.bind_pattern(first, origin, allow_temp, span);
                 }
             }
-            Pat::Some(inner) => self.bind_pattern(inner, origin, allow_temp, span),
-            Pat::Ok(inner) | Pat::Err(inner) => self.bind_pattern(inner, origin, allow_temp, span),
             Pat::Product(subs) | Pat::Variant(_, subs) => {
                 for sub in subs {
                     self.bind_pattern(sub, origin, allow_temp, span);
@@ -437,6 +446,12 @@ impl<'a> Analyzer<'a> {
     }
 
     fn expr(&mut self, e: &tir::Expr) -> Origin {
+        let origin = self.expr_origin(e);
+        // An expression that never produces a value (a call to `panic`) hands out no view.
+        if e.ty == tir::Ty::Never { Origin::default() } else { origin }
+    }
+
+    fn expr_origin(&mut self, e: &tir::Expr) -> Origin {
         use tir::ExprKind as K;
         match &e.kind {
             K::Unit
@@ -448,7 +463,6 @@ impl<'a> Analyzer<'a> {
             | K::Bytes(_)
             | K::Const(_)
             | K::Static(_)
-            | K::None
             | K::LayoutOf { .. } => Origin::default(),
             // A plain value carries no view, even when its storage is a parameter's.
             K::Local(id) => {
@@ -513,12 +527,7 @@ impl<'a> Analyzer<'a> {
                 }
                 Origin::default()
             }
-            K::Some(inner)
-            | K::Ok(inner)
-            | K::Err(inner)
-            | K::ArrayRepeat(inner, _)
-            | K::Unary(_, inner)
-            | K::Cast(inner) => self.expr(inner),
+            K::ArrayRepeat(inner, _) | K::Unary(_, inner) | K::Cast(inner) => self.expr(inner),
             K::Array(elems) | K::Tuple(elems) => {
                 let mut origin = Origin::default();
                 for x in elems {
@@ -599,13 +608,12 @@ impl<'a> Analyzer<'a> {
                     // The text views the bytes it was made from.
                     tir::Builtin::ViewAsText => origins.into_iter().next().unwrap_or_default(),
                     // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
-                    // a container with a stored allocator and for a `Shared` cell.
+                    // a container with a stored allocator.
                     tir::Builtin::ListNew
                     | tir::Builtin::MapNew
                     | tir::Builtin::ListNewIn
                     | tir::Builtin::MapNewIn
-                    | tir::Builtin::HeapNewIn
-                    | tir::Builtin::SharedNew => Origin::default(),
+                    | tir::Builtin::HeapNewIn => Origin::default(),
                     _ => Origin::temp(),
                 }
             }
@@ -635,15 +643,12 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::MapEntry
                         | tir::Method::MapEntryOrInsert
                         | tir::Method::MapEntryOrInsertWith
-                        | tir::Method::SharedGet
                         | tir::Method::Chars
                         | tir::Method::AsBytes
                         | tir::Method::Iter
                         | tir::Method::IterMut
                         | tir::Method::IterNext
                         | tir::Method::IterNextBack
-                        | tir::Method::Unwrap
-                        | tir::Method::Expect
                 );
                 let mut origins = Vec::with_capacity(args.len());
                 for (i, arg) in args.iter().enumerate() {
@@ -672,17 +677,13 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::MapEntry
                     | tir::Method::MapEntryOrInsert
                     | tir::Method::MapEntryOrInsertWith
-                    | tir::Method::SharedGet
                     | tir::Method::Chars
                     | tir::Method::AsBytes
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter
                     | tir::Method::IterMut
                     | tir::Method::IterNext
-                    | tir::Method::IterNextBack
-                    // Unwrapping an `Option<&T>` hands out the view inside it.
-                    | tir::Method::Unwrap
-                    | tir::Method::Expect => origins.into_iter().next().unwrap_or_default(),
+                    | tir::Method::IterNextBack => origins.into_iter().next().unwrap_or_default(),
                     _ => Origin::temp(),
                 }
             }

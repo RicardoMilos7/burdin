@@ -27,6 +27,9 @@ pub struct Derives {
     /// of the type) call them (`spec/derives.md`, issue #918). Filled in when the program is finished.
     pub eq_method: Option<FuncId>,
     pub lt_method: Option<FuncId>,
+    /// The `clone(self): Self` method a `std` type writes by hand instead of deriving `Clone` (`Shared`, `CString`):
+    /// the type is `Clone` and the clone glue calls it.
+    pub clone_method: Option<FuncId>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +60,15 @@ pub enum VariantShape {
     Struct,
 }
 
+/// The enums the language itself knows, declared in `std` (`spec/stdlib.md`, "Compiler-known types").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LangItem {
+    /// `Option<T>`: the variants `None` and `Some(T)`, in that order.
+    Option,
+    /// `Result<T, E>`: the variants `Ok(T)` and `Err(E)`, in that order.
+    Result,
+}
+
 #[derive(Debug)]
 pub struct VariantDef {
     pub name: String,
@@ -72,4 +84,6 @@ pub struct EnumDef {
     pub derives: Derives,
     /// The `Drop::drop` method of `Type: Drop { ... }`, called by the drop glue.
     pub drop_method: Option<FuncId>,
+    /// Which language-known enum this instance is (`std`'s `Option` or `Result`), if either.
+    pub lang: Option<LangItem>,
 }

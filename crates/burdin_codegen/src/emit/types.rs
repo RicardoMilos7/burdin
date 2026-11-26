@@ -57,17 +57,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A map entry is the map's address, the key it owns, the key's hash, the probe slot, and whether the
             // key was found.
             Ty::MapEntry(key, _, _) => self.map_entry_value_ty(key).into(),
-            Ty::Result(ok, err) => self.result_ty(ok, err).into(),
-            // A `CString` is the address of its NUL-terminated buffer; a `CPtr` is a raw address.
-            Ty::CString | Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
-            // A `Shared<T>` value is the address of its reference-counted cell.
-            Ty::Shared(_) => self.cx.ptr_type(AddressSpace::default()).into(),
+            // A `CPtr` is a raw address.
+            Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Heap(_, alloc) => self.heap_ty(alloc),
             // A reference is the address of the referent; a slice is a pointer and a length, like a `str`.
             Ty::Ref { .. } => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Slice(_) => self.str_ty.into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
-            Ty::Option(inner) => self.option_ty(inner).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
             // A range is two copied endpoints.
             Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
@@ -190,6 +186,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             align = align.max(self.target_data.get_abi_alignment(&vt));
         }
         if size == 0 {
+            // A variant whose fields all have no value (`Ok(())`) still has a payload slot, so the code that
+            // addresses the payload of a variant need not know that.
+            let has_fields = self.program.enums[enum_id].variants.iter().any(|v| !v.fields.is_empty());
+            if has_fields {
+                return self.cx.struct_type(&[tag, self.cx.i8_type().array_type(0).into()], false);
+            }
             return self.cx.struct_type(&[tag], false);
         }
         let align = align.min(8);
@@ -203,6 +205,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.cx.struct_type(&[tag, unit.array_type(count as u32).into()], false)
     }
 
+    /// The scratch layout a runtime operation fills in for an `Option<inner>`: `{ i1 is_some, T }`. It is not the
+    /// layout of the type (that is `std`'s enum, `enum_ty`): [`Codegen::option_from_scratch`] converts a finished one.
     pub(super) fn option_ty(&self, inner: &Ty) -> StructType<'ctx> {
         match self.llvm_ty(inner) {
             Some(t) => self.cx.struct_type(&[self.cx.bool_type().into(), t], false),
@@ -210,9 +214,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// `Result<T, E>`: a tag and both payloads. The inactive payload is undefined and never dropped.
+    /// The scratch layout of a `Result<ok, err>` an operation fills in: `{ i1 is_ok, T, E }`, converted by
+    /// [`Codegen::result_from_scratch`].
     pub(super) fn result_ty(&self, ok: &Ty, err: &Ty) -> StructType<'ctx> {
         self.cx.struct_type(&[self.cx.bool_type().into(), self.storage_ty(ok), self.storage_ty(err)], false)
+    }
+
+    /// The payload type of an `Option` instance (`std`'s enum), `None` for any other type.
+    pub(super) fn option_payload_ty(&self, ty: &Ty) -> Option<Ty> {
+        self.defs().option_payload(ty).cloned()
+    }
+
+    /// The `Ok` and `Err` types of a `Result` instance (`std`'s enum), `None` for any other type.
+    pub(super) fn result_payload_tys(&self, ty: &Ty) -> Option<(Ty, Ty)> {
+        self.defs().result_parts(ty).map(|(ok, err)| (ok.clone(), err.clone()))
     }
 
     fn defs(&self) -> TypeDefs<'a> {

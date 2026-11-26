@@ -51,14 +51,6 @@ pub(crate) fn reify(p: &Program, v: &Value, ty: &Ty, span: Span) -> Result<Expr,
             }
             mk(K::Array(out))
         }
-        (Ty::Option(t), Value::Opt(x)) => match x {
-            Some(x) => mk(K::Some(Box::new(reify(p, x, t, span)?))),
-            None => mk(K::None),
-        },
-        (Ty::Result(t, e), Value::Res(x)) => match x {
-            Ok(x) => mk(K::Ok(Box::new(reify(p, x, t, span)?))),
-            Err(x) => mk(K::Err(Box::new(reify(p, x, e, span)?))),
-        },
         (Ty::Range(t, inclusive), Value::Tuple(ends)) if ends.len() == 2 => mk(K::Range {
             lo: Box::new(reify(p, &ends[0], t, span)?),
             hi: Box::new(reify(p, &ends[1], t, span)?),

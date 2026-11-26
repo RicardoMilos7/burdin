@@ -112,9 +112,6 @@ impl FnCx<'_> {
 
     /// `Color.Red`: a unit variant of an enum type.
     pub(super) fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
-        if matches!(ty, Ty::Option(_)) && name.name == "None" {
-            return mk(tir::ExprKind::None, ty, span);
-        }
         // `u32.MAX`: an integer type's constants are `std` constants named `<type>_<name>`.
         if let Ty::Int(i) = &ty
             && let Some(Global::Const(c)) = self.globals.std_value(&format!("{}_{}", i.name(), name.name))

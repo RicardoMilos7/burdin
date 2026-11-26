@@ -360,22 +360,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let ptr = self.debug_pointer("Heap<T>.ptr", pointee);
                 self.debug_struct_words(&Self::debug_name(ty), &[("value", ptr)])
             }
-            // `Shared<T>` points at a cell `{ count: usize, value }`: the value first in the printer, the strong
-            // count next to it.
-            Ty::Shared(inner) => {
-                let cell_name = format!("{}.cell", Self::debug_name(ty));
-                let cell = {
-                    let count = self.debug_basic("usize", 64, DW_ATE_UNSIGNED);
-                    let (size, align) = self.debug_sizes(inner);
-                    let members = vec![
-                        ("count".to_string(), count, 8u64, 8u32),
-                        ("value".to_string(), self.debug_type(inner), size, align.max(1)),
-                    ];
-                    self.debug_struct_typed(&cell_name, &members)
-                };
-                let ptr = self.debug_pointer("Shared<T>.cell_ptr", cell);
-                self.debug_struct_words(&Self::debug_name(ty), &[("cell", ptr)])
-            }
             Ty::Str | Ty::Slice(_) => {
                 let name = Self::debug_name(ty);
                 let elem = match ty {
@@ -429,11 +413,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("data", 8), ("vtable", 8)])
             }
-            Ty::CString => {
-                let char_ty = self.debug_basic("u8", 8, DW_ATE_UNSIGNED);
-                let db = self.debug.as_ref().expect("debug info is on");
-                db.builder.create_pointer_type("CString", char_ty, 64, 64, inkwell::AddressSpace::default()).as_type()
-            }
             Ty::Array(inner, len) => {
                 let inner = self.debug_type(inner);
                 let (size, align) = self.debug_sizes(ty);
@@ -454,7 +433,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .iter()
                     .map(|field| (field.name.clone(), field.ty.clone()))
                     .collect();
-                let name = adt.name.to_string();
+                let name = Self::lang_debug_name(&adt.name);
                 self.debug_product(&name, &members)
             }
             // An enum is `{ tag: i32, payload }`, where the payload is a union with one member per variant, so a
@@ -483,20 +462,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }
             Ty::ArrayIntoIter(..) | Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
-            Ty::Option(inner) => {
-                let members = vec![("is_some".to_string(), Ty::Bool), ("value".to_string(), (**inner).clone())];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
-            Ty::Result(ok, err) => {
-                let members = vec![
-                    ("is_ok".to_string(), Ty::Bool),
-                    ("ok".to_string(), (**ok).clone()),
-                    ("err".to_string(), (**err).clone()),
-                ];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
         }
     }
 
@@ -515,7 +480,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn debug_enum(&mut self, adt: &burdin_tir::AdtRef) -> DIType<'ctx> {
         let scope = self.debug_unit_scope();
         let file = self.debug_file_current();
-        let name = adt.name.to_string();
+        let name = Self::lang_debug_name(&adt.name);
         let variants: Vec<(String, Vec<(String, Ty)>)> = self.program.enums[adt.id]
             .variants
             .iter()
@@ -834,6 +799,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// A readable name for a `Ty` that has no source spelling.
+    /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`): a
+    /// debugger shows it by its plain name, as it did when the compiler built the type in.
+    fn lang_debug_name(full: &str) -> String {
+        const LANG: [&str; 4] = ["Option", "Result", "Shared", "CString"];
+        match full.strip_prefix("std.") {
+            Some(rest) if LANG.iter().any(|n| rest.split('<').next() == Some(n)) => rest.to_string(),
+            _ => full.to_string(),
+        }
+    }
+
     fn debug_name(ty: &Ty) -> String {
         match ty {
             Ty::Unit => "()".to_string(),
@@ -851,15 +826,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
-            Ty::Option(inner) => format!("Option<{}>", Self::debug_name(inner)),
-            Ty::Result(ok, err) => format!("Result<{}, {}>", Self::debug_name(ok), Self::debug_name(err)),
             Ty::List(inner, _) => format!("List<{}>", Self::debug_name(inner)),
             Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
             Ty::MapEntry(k, v, _) => {
                 format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))
             }
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
-            Ty::Shared(inner) => format!("Shared<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),
             Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),

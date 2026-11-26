@@ -20,12 +20,10 @@ fn shape(globals: &Globals, ty: &Ty) -> Option<(String, Vec<Ty>)> {
     Some(match ty {
         Ty::Ref { mutable, inner } => (format!("ref{mutable}"), vec![(**inner).clone()]),
         Ty::Slice(t) => ("slice".into(), vec![(**t).clone()]),
-        Ty::Option(t) => ("option".into(), vec![(**t).clone()]),
         Ty::List(t, _) => ("list".into(), vec![(**t).clone()]),
         Ty::Heap(t, _) => ("heap".into(), vec![(**t).clone()]),
         Ty::CPtr(t) => ("cptr".into(), vec![(**t).clone()]),
         Ty::Range(t, inclusive) => (format!("range{inclusive}"), vec![(**t).clone()]),
-        Ty::Result(t, e) => ("result".into(), vec![(**t).clone(), (**e).clone()]),
         Ty::Map(k, v, _) => ("map".into(), vec![(**k).clone(), (**v).clone()]),
         Ty::MapEntry(k, v, _) => ("map_entry".into(), vec![(**k).clone(), (**v).clone()]),
         Ty::Tuple(ts) => (format!("tuple{}", ts.len()), ts.clone()),
@@ -194,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_name_matches_anything_and_nested_names_bind() {
-        let g = Globals::default();
+        let mut g = crate::testutil::lang_globals();
         assert_eq!(
             g.match_impl_args(&names(&["T"]), &[param("T")], &[Ty::Bool]),
             Some(vec![("T".to_string(), Ty::Bool)])
@@ -203,7 +201,8 @@ mod tests {
             g.match_impl_args(&names(&["T"]), &[list(param("T"))], &[list(i32_())]),
             Some(vec![("T".to_string(), i32_())])
         );
-        assert_eq!(g.match_impl_args(&names(&["T"]), &[list(param("T"))], &[Ty::Option(Box::new(i32_()))]), None);
+        let option = g.test_option(i32_());
+        assert_eq!(g.match_impl_args(&names(&["T"]), &[list(param("T"))], &[option]), None);
     }
 
     #[test]
@@ -235,13 +234,14 @@ mod tests {
 
     #[test]
     fn patterns_overlap_when_one_instance_matches_both() {
-        let g = Globals::default();
+        let mut g = crate::testutil::lang_globals();
         // `Pair<i32, B>` and `Pair<A, i32>` both apply to `Pair<i32, i32>`.
         assert!(g.impl_patterns_overlap(&[i32_(), param("B")], &[param("A"), i32_()]));
         // A name overlaps everything, a concrete type only itself.
         assert!(g.impl_patterns_overlap(&[param("T")], &[i32_()]));
         assert!(!g.impl_patterns_overlap(&[i32_()], &[Ty::Bool]));
-        assert!(!g.impl_patterns_overlap(&[list(param("T"))], &[Ty::Option(Box::new(param("T")))]));
+        let option = g.test_option(param("T"));
+        assert!(!g.impl_patterns_overlap(&[list(param("T"))], &[option]));
         assert!(g.impl_patterns_overlap(&[list(param("T"))], &[list(i32_())]));
     }
 

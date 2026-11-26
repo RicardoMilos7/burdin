@@ -128,6 +128,20 @@ pub(crate) struct Interp<'p, 'c> {
     /// builtins stay impure, because constant evaluation is pure (CE6).
     pub(crate) mem: Memory,
     pub(crate) raw_memory: bool,
+    /// The standard-library functions the interpreter runs natively, by function index (`shared_model`).
+    models: HashMap<usize, Option<SharedOp>>,
+}
+
+/// The operations of `std`'s `Shared<T>` the interpreter models instead of running: the type is a handle to a cell in
+/// the C heap, and the model keeps the value itself (`spec/allocators.md`, AL10). `Shared<T>` is then a
+/// [`Value::Heap`] holding the value, which is read-only, so a clone is a copy and the count is always one.
+#[derive(Clone, Copy)]
+enum SharedOp {
+    New,
+    Get,
+    StrongCount,
+    Clone,
+    Drop,
 }
 
 impl<'p, 'c> Interp<'p, 'c> {
@@ -161,10 +175,29 @@ impl<'p, 'c> Interp<'p, 'c> {
             drop_cache: HashMap::new(),
             mem: Memory::default(),
             raw_memory: false,
+            models: HashMap::new(),
         }
     }
 
-    fn defs(&self) -> TypeDefs<'p> {
+    /// Which `Shared<T>` operation a function is, if it is one: the methods of `std`'s `Shared<T>`.
+    fn shared_model(&mut self, f: FuncId) -> Option<SharedOp> {
+        if let Some(op) = self.models.get(&f.0) {
+            return *op;
+        }
+        let name = &self.p.functions[f.0].name;
+        let op = name.strip_prefix("std.Shared<").and_then(|rest| match rest.rsplit(">.").next()? {
+            "new" => Some(SharedOp::New),
+            "get" => Some(SharedOp::Get),
+            "strong_count" => Some(SharedOp::StrongCount),
+            "clone" => Some(SharedOp::Clone),
+            "drop" => Some(SharedOp::Drop),
+            _ => None,
+        });
+        self.models.insert(f.0, op);
+        op
+    }
+
+    pub(crate) fn defs(&self) -> TypeDefs<'p> {
         TypeDefs { structs: &self.p.structs, enums: &self.p.enums }
     }
 
@@ -414,10 +447,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 _ => return Err(Fault::Internal("`is` on a value that is not boxed".into(), span).into()),
             },
             K::AnyDowncast { value, type_id, .. } => match self.eval(value, Mode::Move)? {
-                Value::Any(vt, inner) if self.p.any_vtables[vt].type_id == *type_id => Value::Opt(Some(inner)),
+                Value::Any(vt, inner) if self.p.any_vtables[vt].type_id == *type_id => Value::some(*inner),
                 other => {
                     self.drop_value(other, &value.ty, span)?;
-                    Value::Opt(None)
+                    Value::none()
                 }
             },
             K::StringAsStr(inner) => {
@@ -563,10 +596,6 @@ impl<'p, 'c> Interp<'p, 'c> {
                 }
                 Value::Variant(*v, out)
             }
-            K::Some(x) => Value::Opt(Some(Box::new(self.eval(x, Mode::Move)?))),
-            K::None => Value::Opt(None),
-            K::Ok(x) => Value::Res(Ok(Box::new(self.eval(x, Mode::Move)?))),
-            K::Err(x) => Value::Res(Err(Box::new(self.eval(x, Mode::Move)?))),
             K::ConstCond(x) => self.eval(x, mode)?,
         })
     }
@@ -831,7 +860,7 @@ impl<'p, 'c> Interp<'p, 'c> {
     /// the place; otherwise every binding copies.
     fn bind(&mut self, pat: &'p Pat, p: &Place, take: bool, span: Span) -> R<()> {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => Ok(()),
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => Ok(()),
             Pat::Binding(id, mode) => {
                 let v = self.read_place(p, take && *mode == BindMode::Move, span)?;
                 self.frame().slots[id.0] = Slot::Val(v);
@@ -851,11 +880,6 @@ impl<'p, 'c> Interp<'p, 'c> {
                     Some(a) => self.bind(a, p, take, span),
                     None => Ok(()),
                 }
-            }
-            Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => {
-                let mut q = p.clone();
-                q.path.push(Step::Payload);
-                self.bind(inner, &q, take, span)
             }
             Pat::Product(subs) | Pat::Variant(_, subs) => {
                 for (i, sub) in subs.iter().enumerate() {
@@ -955,6 +979,26 @@ impl<'p, 'c> Interp<'p, 'c> {
                 let v = self.eval(arg, Mode::Move)?;
                 Slot::Val(v)
             };
+        }
+        if let Some(op) = self.shared_model(f) {
+            let first = match func.params.first().map(|p| &slots[p.0]) {
+                Some(Slot::Val(v)) => v.clone(),
+                Some(Slot::Alias(p)) => {
+                    let p = p.clone();
+                    self.place_mut(&p, span)?.clone()
+                }
+                None => Value::Unit,
+            };
+            return Ok(match op {
+                SharedOp::New => Value::Heap(Box::new(first)),
+                SharedOp::Get => match first.deref() {
+                    Value::Heap(inner) => Value::Borrow(inner),
+                    other => Value::Borrow(Box::new(other)),
+                },
+                SharedOp::StrongCount => Value::Int(1),
+                SharedOp::Clone => first.deref(),
+                SharedOp::Drop => Value::Unit,
+            });
         }
         let (v, mut slots) = self.run(func.locals.as_slice(), &func.body, slots, span)?;
         // An argument passed by address that was a temporary belongs to the caller's statement (DR5).
@@ -1104,15 +1148,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 e.drop_method.is_some() || e.variants.iter().any(|v| v.fields.iter().any(|f| self.has_user_drop(&f.ty)))
             }
             Ty::Tuple(ts) => ts.iter().any(|t| self.has_user_drop(t)),
-            Ty::Array(t, _)
-            | Ty::List(t, _)
-            | Ty::Option(t)
-            | Ty::Heap(t, _)
-            | Ty::ListIntoIter(t, _)
-            | Ty::ArrayIntoIter(t, _) => self.has_user_drop(t),
-            Ty::Result(a, b) | Ty::Map(a, b, _) | Ty::MapIntoIter(a, b, _) => {
-                self.has_user_drop(a) || self.has_user_drop(b)
+            Ty::Array(t, _) | Ty::List(t, _) | Ty::Heap(t, _) | Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) => {
+                self.has_user_drop(t)
             }
+            Ty::Map(a, b, _) | Ty::MapIntoIter(a, b, _) => self.has_user_drop(a) || self.has_user_drop(b),
             Ty::Any(_) | Ty::Fn { .. } => true,
             _ => false,
         };
@@ -1165,10 +1204,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                     self.drop_value(fv, t, span)?;
                 }
             }
-            (Ty::Option(t) | Ty::Heap(t, _), Value::Opt(Some(b)) | Value::Heap(b)) => self.drop_value(*b, t, span)?,
-            (Ty::Result(t, _), Value::Res(Ok(b))) | (Ty::Result(_, t), Value::Res(Err(b))) => {
-                self.drop_value(*b, t, span)?
-            }
+            (Ty::Heap(t, _), Value::Heap(b)) => self.drop_value(*b, t, span)?,
             (Ty::Map(k, val, _), Value::Map(pairs)) => {
                 for (kv, vv) in pairs {
                     self.drop_value(kv, k, span)?;
@@ -1205,6 +1241,9 @@ impl<'p, 'c> Interp<'p, 'c> {
 
     /// Runs a `Drop` implementation on `v` and returns what is left of it for the field drops.
     fn call_drop(&mut self, f: FuncId, v: Value, span: Span) -> R<Value> {
+        if matches!(self.shared_model(f), Some(SharedOp::Drop)) {
+            return Ok(Value::Moved);
+        }
         let func = &self.p.functions[f.0];
         let mut slots: Vec<Slot> = func.locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
         let this = func.params[0].0;
@@ -1229,7 +1268,6 @@ fn step_mut(v: &mut Value, step: Step, span: Span) -> R<&mut Value> {
         (Step::Index(_), Value::Array(xs) | Value::List(xs)) => Some(xs.len()),
         (Step::Index(_), Value::Slice(_, lo, hi)) => Some(hi - lo),
         (Step::Deref, Value::Heap(_) | Value::Any(..)) => None,
-        (Step::Payload, Value::Opt(Some(_)) | Value::Res(_)) => None,
         (Step::Env(i), Value::Closure(_, env)) if i < env.len() => None,
         (step, v) => return Err(Fault::Internal(format!("cannot follow {step:?} into {v:?}"), span).into()),
     };
@@ -1246,7 +1284,6 @@ fn step_mut(v: &mut Value, step: Step, span: Span) -> R<&mut Value> {
             &mut std::rc::Rc::make_mut(xs)[at]
         }
         (Step::Deref, Value::Heap(b) | Value::Any(_, b)) => &mut **b,
-        (Step::Payload, Value::Opt(Some(b)) | Value::Res(Ok(b) | Err(b))) => &mut **b,
         (Step::Env(i), Value::Closure(_, env)) => &mut env[i],
         _ => unreachable!("checked above"),
     })
@@ -1346,10 +1383,6 @@ pub(crate) fn pattern_matches(pat: &Pat, v: &Value) -> bool {
             *lo <= x && x <= *hi
         }
         Pat::Or(alts) => alts.iter().any(|a| pattern_matches(a, v)),
-        Pat::Some(inner) => matches!(v, Value::Opt(Some(x)) if pattern_matches(inner, x)),
-        Pat::None => matches!(v, Value::Opt(None)),
-        Pat::Ok(inner) => matches!(v, Value::Res(Ok(x)) if pattern_matches(inner, x)),
-        Pat::Err(inner) => matches!(v, Value::Res(Err(x)) if pattern_matches(inner, x)),
         Pat::Product(subs) => match v {
             Value::Tuple(fs) => subs.iter().zip(fs).all(|(p, f)| pattern_matches(p, f)),
             _ => false,

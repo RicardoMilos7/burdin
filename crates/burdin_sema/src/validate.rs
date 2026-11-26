@@ -151,7 +151,8 @@ pub(crate) fn check_public_signatures(
         }
     }
     for (id, s) in globals.structs.iter().enumerate() {
-        if globals.adt_priv.get(&(false, id)).copied().unwrap_or(false) {
+        if globals.adt_priv.get(&(false, id)).copied().unwrap_or(false) || globals.adt_origin.contains_key(&(false, id))
+        {
             continue;
         }
         for f in &s.fields {
@@ -164,7 +165,7 @@ pub(crate) fn check_public_signatures(
         }
     }
     for (id, e) in globals.enums.iter().enumerate() {
-        if globals.adt_priv.get(&(true, id)).copied().unwrap_or(false) {
+        if globals.adt_priv.get(&(true, id)).copied().unwrap_or(false) || globals.adt_origin.contains_key(&(true, id)) {
             continue;
         }
         for v in &e.variants {
@@ -190,7 +191,7 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
         match ty {
             Ty::Struct(a) => out.push((false, a.id)),
             Ty::Enum(a) => out.push((true, a.id)),
-            Ty::Array(t, _) | Ty::Option(t) => contained(t, out),
+            Ty::Array(t, _) => contained(t, out),
             Ty::Tuple(ts) => ts.iter().for_each(|t| contained(t, out)),
             _ => {}
         }

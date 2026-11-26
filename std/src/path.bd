@@ -8,6 +8,7 @@
 
 use fmt.{Debug, Display, Formatter}
 use target.{Os, os}
+use std.CString
 use text.to_char_list
 
 /// A file system path and the rules it follows.

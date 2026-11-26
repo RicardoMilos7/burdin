@@ -11,6 +11,76 @@ use burdin_syntax::ast;
 use burdin_tir::{self as tir, ParamSig, Signature, Ty};
 
 impl Sema<'_> {
+    /// Resolves the bounds of generic functions, extensions, and methods again: a bound that names an instance of
+    /// a generic type in its arguments (`I: Iterator<Option<T>>`) held `Error` before the instance existed, and
+    /// inference reads those arguments. Errors were reported by the first resolution.
+    fn refresh_generic_bounds(&mut self) {
+        let mut quiet = Diagnostics::default();
+        for g in 0..self.globals.generic_fns.len() {
+            let info = &self.globals.generic_fns[g];
+            let (decl, module, identity) = (self.tpl.fns[info.decl], info.module, info.identity);
+            let params = info.params.clone();
+            let bounds = if info.recv.is_none() {
+                crate::declare::fn_bounds(decl, &self.globals, module, &mut quiet)
+            } else {
+                let Some(ext) = self.globals.extensions.iter().position(|e| e.generic == Some(g)) else { continue };
+                let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+                let bounds =
+                    crate::extensions::extension_bounds(decl, &params, &subst, module, &self.globals, &mut quiet);
+                self.globals.extensions[ext].bounds = bounds.clone();
+                bounds
+            };
+            self.fn_items[identity.0].bounds = params.iter().cloned().zip(bounds.iter().cloned()).collect();
+            self.globals.generic_fns[g].bounds = bounds;
+        }
+        for t in 0..self.tpl.methods.len() {
+            let template = &self.tpl.methods[t];
+            let bounds = crate::declare::method_bounds(
+                template.decl,
+                &template.base_subst,
+                &self.globals,
+                template.module,
+                &mut quiet,
+            );
+            let Some((identity, entry)) =
+                self.globals.method_templates.iter_mut().find(|(_, m)| m.template == t).map(|(k, m)| (*k, m))
+            else {
+                continue;
+            };
+            entry.bounds = bounds.clone();
+            let template = &mut self.tpl.methods[t];
+            let mut env: Vec<(String, Vec<Bound>)> =
+                template.params.iter().cloned().zip(bounds.iter().cloned()).collect();
+            env.extend(template.base_bounds.iter().cloned());
+            template.bounds = bounds;
+            self.fn_items[identity.0].bounds = env;
+        }
+    }
+
+    /// Resolves the `Fn(...)` bounds that named an instance of a generic type again (`F: FnOnce(T): Option<U>`):
+    /// they resolved to `Error` before the instance existed. Errors were reported by the first resolution.
+    fn refresh_fn_bounds(&mut self) {
+        let mut quiet = Diagnostics::default();
+        let pending = std::mem::take(&mut *self.globals.fn_bound_srcs.borrow_mut());
+        let mut still = Vec::new();
+        for (index, ty, subst, module) in pending {
+            let ast::TypeKind::Fn { params, ret, .. } = &ty.kind else { continue };
+            let params: Vec<Ty> =
+                params.iter().map(|p| self.globals.resolve_type_in(p, None, &subst, module, &mut quiet)).collect();
+            let ret = ret
+                .as_ref()
+                .map(|r| self.globals.resolve_type_in(r, None, &subst, module, &mut quiet))
+                .unwrap_or(Ty::Unit);
+            let sig = tir::FnSig { params, ret: Box::new(ret) };
+            let unresolved = format!("{sig:?}").contains("Error");
+            self.globals.fn_bounds.borrow_mut()[index] = sig;
+            if unresolved {
+                still.push((index, ty, subst, module));
+            }
+        }
+        self.globals.fn_bound_srcs.borrow_mut().extend(still);
+    }
+
     /// Resolves every written type: aliases, fields, variants, signatures, extern declarations, and constants. It
     /// runs again after each round of instances, because a type that mentioned an instance that did not exist yet
     /// resolved to `Error`.
@@ -25,6 +95,8 @@ impl Sema<'_> {
         // An extension's receiver may name a generic type, whose instance appears only after the previous pass's
         // requests were allocated; resolve it before the signatures that use it (`spec/extensions.md`).
         self.refresh_extensions(diags);
+        self.refresh_fn_bounds();
+        self.refresh_generic_bounds();
         for id in 0..self.globals.structs.len() {
             // An `impl Interface` wrapper has no declaration: its field is set when its concrete type is known.
             let Some(entry) = &self.src.structs[id] else { continue };
@@ -47,7 +119,10 @@ impl Sema<'_> {
             let derives = parse_derives(&entry.decl.derives);
             let s = &mut self.globals.structs[id];
             s.fields = fields;
+            // A hand-written `clone` is registered with the type's methods, not read from the declaration.
+            let clone_method = s.derives.clone_method;
             s.derives = derives;
+            s.derives.clone_method = clone_method;
         }
         for id in 0..self.globals.enums.len() {
             let entry = &self.src.enums[id];
@@ -104,7 +179,9 @@ impl Sema<'_> {
             let derives = parse_derives(&entry.decl.derives);
             let e = &mut self.globals.enums[id];
             e.variants = variants;
+            let clone_method = e.derives.clone_method;
             e.derives = derives;
+            e.derives.clone_method = clone_method;
         }
         check_infinite_size(&self.globals, &self.src, diags);
         for i in 0..self.globals.interfaces.len() {
@@ -149,6 +226,9 @@ impl Sema<'_> {
                     }
                 }
                 self.globals.interfaces[i].methods[k].sig = sig;
+                let mut quiet = Diagnostics::default();
+                let refreshed = crate::declare::method_bounds(decl, &subst, &self.globals, module, &mut quiet);
+                self.globals.interfaces[i].methods[k].bounds = refreshed;
             }
         }
         for (i, item) in self.fn_items.iter().enumerate() {
@@ -248,8 +328,18 @@ impl Sema<'_> {
                 };
                 resolved.push((name.clone(), ty));
             }
+            let iface_args = p.iface.map(|(i, seg)| {
+                let mut quiet = Diagnostics::default();
+                self.resolve_iface_args(i, seg, &p.subst, &p.bounds, p.module, p.decl.span, &mut quiet)
+            });
             if let Some(info) = self.globals.impls.get_mut(p.index) {
                 info.assoc = resolved;
+                if let Some(args) = &iface_args {
+                    info.iface_args = args.clone();
+                }
+            }
+            if let (Some(args), Some(t)) = (iface_args, p.template) {
+                self.tpl.impls[t].iface_args = args;
             }
         }
     }
@@ -552,7 +642,7 @@ fn check_conversion_signatures(globals: &Globals, diags: &mut Diagnostics) {
             }
             let returns_target = match method {
                 "from" => sig.ret == conv.target,
-                _ => matches!(&sig.ret, Ty::Result(ok, _) if **ok == conv.target),
+                _ => globals.result_parts(&sig.ret).is_some_and(|(ok, _)| ok == conv.target),
             };
             if !returns_target && sig.ret != Ty::Error {
                 let expected =

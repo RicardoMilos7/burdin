@@ -430,7 +430,11 @@ impl<'a> FnCx<'a> {
     /// Whether `Option` or `Result` written alone means the built-in enum: nothing in scope and no type of the
     /// program has that name.
     pub(super) fn is_prelude_type(&self, name: &str) -> bool {
-        self.is_prelude(name) && self.globals.type_name(self.module, name).is_none()
+        self.is_prelude(name)
+            && matches!(
+                (self.globals.type_name(self.module, name), self.globals.lang_type_name(name)),
+                (Some(a), Some(b)) if a == b
+            )
     }
 
     /// `Option` or `Result` as the head of a path expression, as in `Option.Some(x)` or `Result.Ok(v)`.

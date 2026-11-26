@@ -50,7 +50,7 @@ pub fn interpret_test(program: &Program, func: FuncId, opts: Options) -> Interpr
     let span = program.functions[func.0].span;
     match it.call(func, None, &[], span) {
         // The wrapper returns `Result<(), AssertError>`; `Err` is a failed assertion.
-        Ok(Value::Res(Err(_))) => return Interpreted::Failed("the test returned an error".to_string(), span),
+        Ok(Value::Variant(1, _)) => return Interpreted::Failed("the test returned an error".to_string(), span),
         Ok(_) => {}
         Err(interp::Unwind::Fault(f)) => {
             let message = f.message().to_string();

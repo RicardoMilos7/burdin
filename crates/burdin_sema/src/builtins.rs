@@ -200,46 +200,41 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
         Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
         Builtin::ViewAsText => Ty::Str,
-        Builtin::CStringFrom => Ty::CString,
-        Builtin::ReadToString | Builtin::DnsLookup => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
-        Builtin::WriteFile => Ty::Result(Box::new(Ty::Unit), Box::new(os_code())),
-        Builtin::FileOpen => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(os_code())),
-        Builtin::FileRead | Builtin::FileWrite => Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(os_code())),
-        Builtin::FileSeek => Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(os_code())),
-        Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => {
-            Ty::Result(Box::new(Ty::Unit), Box::new(os_code()))
-        }
-        Builtin::StdinReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(os_code())),
-        Builtin::StdinReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
+        Builtin::ReadToString | Builtin::DnsLookup => globals.result_ty(Ty::String, os_code()),
+        Builtin::WriteFile => globals.result_ty(Ty::Unit, os_code()),
+        Builtin::FileOpen => globals.result_ty(Ty::Int(IntTy::I32), os_code()),
+        Builtin::FileRead | Builtin::FileWrite => globals.result_ty(Ty::Int(IntTy::Usize), os_code()),
+        Builtin::FileSeek => globals.result_ty(Ty::Int(IntTy::I64), os_code()),
+        Builtin::FileSync | Builtin::FileSetLen | Builtin::FileClose => globals.result_ty(Ty::Unit, os_code()),
+        Builtin::StdinReadLine => globals.result_ty(globals.option_ty(Ty::String), os_code()),
+        Builtin::StdinReadToString => globals.result_ty(Ty::String, os_code()),
         Builtin::IsTerminal => Ty::Bool,
         Builtin::StdinAvail => Ty::Int(IntTy::Isize),
         Builtin::StdinNextByte => Ty::Int(IntTy::U8),
         Builtin::StdinError => Ty::Int(IntTy::I32),
         Builtin::FileError => Ty::Int(IntTy::I32),
-        Builtin::ReadDir => {
-            Ty::Result(Box::new(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global)), Box::new(os_code()))
-        }
+        Builtin::ReadDir => globals.result_ty(Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global), os_code()),
         Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
-            Ty::Result(Box::new(Ty::Unit), Box::new(os_code()))
+            globals.result_ty(Ty::Unit, os_code())
         }
         // `(size: u64, mode: u64, modified: i64, accessed: i64, flags: u64)`: the raw `stat` fields, which
         // `std` turns into `Metadata`.
-        Builtin::Metadata => Ty::Result(
-            Box::new(Ty::Tuple(vec![
+        Builtin::Metadata => globals.result_ty(
+            Ty::Tuple(vec![
                 Ty::Int(IntTy::U64),
                 Ty::Int(IntTy::U64),
                 Ty::Int(IntTy::I64),
                 Ty::Int(IntTy::I64),
                 Ty::Int(IntTy::U64),
-            ])),
-            Box::new(os_code()),
+            ]),
+            os_code(),
         ),
-        Builtin::Canonicalize => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
+        Builtin::Canonicalize => globals.result_ty(Ty::String, os_code()),
         Builtin::Clock => Ty::Int(IntTy::I64),
         Builtin::Entropy => Ty::Int(IntTy::U64),
         Builtin::EnvArgs | Builtin::EnvList => Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global),
         Builtin::EnvGet | Builtin::CurrentDir => {
-            Ty::Option(Box::new(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global)))
+            globals.option_ty(Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global))
         }
         Builtin::EnvSet
         | Builtin::EnvSetBytes
@@ -250,22 +245,22 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::ProcessWait => Ty::Int(IntTy::I64),
         // `(pid: i32, process: usize, stdin: usize, stdout: usize, stderr: usize)`: the child's identity and the
         // pipe ends `std` wraps. `process` is the Windows process handle and 0 on Unix.
-        Builtin::ProcessSpawn => Ty::Result(
-            Box::new(Ty::Tuple(vec![
+        Builtin::ProcessSpawn => globals.result_ty(
+            Ty::Tuple(vec![
                 Ty::Int(IntTy::I32),
                 Ty::Int(IntTy::Usize),
                 Ty::Int(IntTy::Usize),
                 Ty::Int(IntTy::Usize),
                 Ty::Int(IntTy::Usize),
-            ])),
-            Box::new(os_code()),
+            ]),
+            os_code(),
         ),
         // The process and pipe primitives report 0 when their runtime path has no OS code to give; the `std`
         // wrappers turn 0 into the `Other` kind and `os_code() == None` (`spec/errors.md`, ERR10).
-        Builtin::PipeReadToString => Ty::Result(Box::new(Ty::String), Box::new(os_code())),
-        Builtin::PipeReadLine => Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(os_code())),
-        Builtin::PipeReadBoth => Ty::Result(Box::new(Ty::Tuple(vec![Ty::String, Ty::String])), Box::new(os_code())),
-        Builtin::RunCommand => Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(os_code())),
+        Builtin::PipeReadToString => globals.result_ty(Ty::String, os_code()),
+        Builtin::PipeReadLine => globals.result_ty(globals.option_ty(Ty::String), os_code()),
+        Builtin::PipeReadBoth => globals.result_ty(Ty::Tuple(vec![Ty::String, Ty::String]), os_code()),
+        Builtin::RunCommand => globals.result_ty(Ty::Int(IntTy::I32), os_code()),
         // `IoErrorKind` is the enum the standard library declares; a standard library without that enum (or
         // with a struct of the same name) leaves the builtin untyped, and a caller then fails to type-check
         // instead of the code generator meeting an unexpected type.
@@ -280,7 +275,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StringWithCapacity => Ty::String,
         // `String.try_with_capacity(n)` (`spec/allocators.md`, AL11): the error is the standard library's `AllocError`.
         Builtin::StringTryWithCapacity => {
-            Ty::Result(Box::new(Ty::String), Box::new(globals.alloc_error_ty.clone().unwrap_or(Ty::Error)))
+            globals.result_ty(Ty::String, globals.alloc_error_ty.clone().unwrap_or(Ty::Error))
         }
         _ => Ty::Unit,
     };
@@ -337,7 +332,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
         }
         Builtin::SetCurrentDirBytes => vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))],
-        Builtin::StringFrom | Builtin::CStringFrom => vec![ParamSig::plain(Ty::Str)],
+        Builtin::StringFrom => vec![ParamSig::plain(Ty::Str)],
         Builtin::StringWithCapacity | Builtin::StringTryWithCapacity => vec![ParamSig::plain(Ty::Int(IntTy::Usize))],
         Builtin::CStrToString => vec![ParamSig::plain(Ty::CPtr(Box::new(Ty::Int(IntTy::I8))))],
         Builtin::WriteFile => vec![ParamSig::plain(Ty::Str), ParamSig::plain(Ty::Str)],
@@ -396,7 +391,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         // `Heap.new` is checked separately: its result type depends on the value.
         Builtin::HeapNew => vec![ParamSig::plain(Ty::Error)],
         // `swap` and `replace` check their arguments separately.
-        Builtin::Swap | Builtin::Replace => Vec::new(),
+        Builtin::Swap | Builtin::Replace | Builtin::RawRead | Builtin::RawWrite => Vec::new(),
         _ => vec![ParamSig::plain(Ty::Str)],
     };
     Signature { params, ret, has_self: false, ret_origins: Vec::new() }
@@ -434,7 +429,6 @@ pub(crate) fn builtin_type(name: &str) -> Option<Ty> {
         "String" => Ty::String,
         // The C bridge. `CChar` is a signed byte and `CSize` is `size_t`; `CVoid` only appears as the pointee
         // of a `CPtr`, where it has no value of its own.
-        "CString" => Ty::CString,
         "CChar" => Ty::Int(IntTy::I8),
         "CSize" => Ty::Int(IntTy::Usize),
         "CVoid" => Ty::Unit,
@@ -455,15 +449,14 @@ fn lookup_key(k: &Ty) -> Ty {
     if *k == Ty::String { Ty::Str } else { k.clone() }
 }
 
-/// The result type of a fallible method before the checker knows the standard library's error type. The method
-/// table cannot reach `Globals`, so `fncx::call` replaces the error with [`Globals::alloc_error_ty`].
-pub(crate) fn alloc_result_placeholder() -> Ty {
-    Ty::Result(Box::new(Ty::Unit), Box::new(Ty::Error))
+/// `Result<(), AllocError>`, what a fallible reservation returns (`spec/allocators.md`, AL11).
+fn alloc_result(g: &Globals) -> Ty {
+    g.result_ty(Ty::Unit, g.alloc_error_ty.clone().unwrap_or(Ty::Error))
 }
 
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
 /// receiver, and its result. `None` when `recv` has no such method.
-pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
+pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
     // The floating-point functions the compiler provides (`spec/stdlib.md`, "Float functions"). The rest of the
     // float surface is an extension method in `std`.
     if matches!(recv, Ty::Float(_)) {
@@ -476,41 +469,35 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         ("wrapping_add", Ty::Int(_)) => (Method::WrappingAdd, vec![plain(recv.clone())], recv.clone()),
         ("wrapping_sub", Ty::Int(_)) => (Method::WrappingSub, vec![plain(recv.clone())], recv.clone()),
         ("wrapping_mul", Ty::Int(_)) => (Method::WrappingMul, vec![plain(recv.clone())], recv.clone()),
-        ("checked_add", Ty::Int(_)) => {
-            (Method::CheckedAdd, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
-        }
-        ("checked_sub", Ty::Int(_)) => {
-            (Method::CheckedSub, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
-        }
-        ("checked_mul", Ty::Int(_)) => {
-            (Method::CheckedMul, vec![plain(recv.clone())], Ty::Option(Box::new(recv.clone())))
-        }
+        ("checked_add", Ty::Int(_)) => (Method::CheckedAdd, vec![plain(recv.clone())], g.option_ty(recv.clone())),
+        ("checked_sub", Ty::Int(_)) => (Method::CheckedSub, vec![plain(recv.clone())], g.option_ty(recv.clone())),
+        ("checked_mul", Ty::Int(_)) => (Method::CheckedMul, vec![plain(recv.clone())], g.option_ty(recv.clone())),
         ("min", Ty::Int(_)) => (Method::Min, vec![plain(recv.clone())], recv.clone()),
         ("max", Ty::Int(_)) => (Method::Max, vec![plain(recv.clone())], recv.clone()),
         ("abs", Ty::Int(i)) if i.signed() => (Method::Abs, vec![], recv.clone()),
         ("push_str", Ty::String) => (Method::PushStr, vec![plain(Ty::Str)], Ty::Unit),
         ("push", Ty::String) => (Method::PushChar, vec![plain(Ty::Char)], Ty::Unit),
         ("push", Ty::List(t, _)) => (Method::Push, vec![value_param(elem(t))], Ty::Unit),
-        ("pop", Ty::List(t, _)) => (Method::ListPop, vec![], Ty::Option(t.clone())),
+        ("pop", Ty::List(t, _)) => (Method::ListPop, vec![], g.option_ty((**t).clone())),
         ("last", Ty::List(t, _)) => {
-            (Method::ListLast, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
+            (Method::ListLast, vec![], g.option_ty(Ty::Ref { mutable: false, inner: t.clone() }))
         }
         ("first", Ty::List(t, _)) => {
-            (Method::ListFirst, vec![], Ty::Option(Box::new(Ty::Ref { mutable: false, inner: t.clone() })))
+            (Method::ListFirst, vec![], g.option_ty(Ty::Ref { mutable: false, inner: t.clone() }))
         }
         ("first_mut", Ty::List(t, _)) => {
-            (Method::ListFirstMut, vec![], Ty::Option(Box::new(Ty::Ref { mutable: true, inner: t.clone() })))
+            (Method::ListFirstMut, vec![], g.option_ty(Ty::Ref { mutable: true, inner: t.clone() }))
         }
         ("last_mut", Ty::List(t, _)) => {
-            (Method::ListLastMut, vec![], Ty::Option(Box::new(Ty::Ref { mutable: true, inner: t.clone() })))
+            (Method::ListLastMut, vec![], g.option_ty(Ty::Ref { mutable: true, inner: t.clone() }))
         }
         ("get", Ty::List(t, _)) => {
             let view = Ty::Ref { mutable: false, inner: t.clone() };
-            (Method::ListGet, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+            (Method::ListGet, vec![plain(Ty::Int(IntTy::Usize))], g.option_ty(view))
         }
         ("get_mut", Ty::List(t, _)) => {
             let view = Ty::Ref { mutable: true, inner: t.clone() };
-            (Method::ListGetMut, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+            (Method::ListGetMut, vec![plain(Ty::Int(IntTy::Usize))], g.option_ty(view))
         }
         ("capacity", Ty::List(_, _)) => (Method::ListCapacity, vec![], Ty::Int(IntTy::Usize)),
         ("is_empty", Ty::List(_, _)) => (Method::ListIsEmpty, vec![], Ty::Bool),
@@ -519,10 +506,10 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         // The fallible reservations return `Result<(), AllocError>`; the error type is the standard library's, which
         // the checker fills in after the lookup (`fncx::call`, `alloc_result`).
         ("try_reserve", Ty::List(_, _)) => {
-            (Method::ListTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+            (Method::ListTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g))
         }
         ("try_reserve_exact", Ty::List(_, _)) => {
-            (Method::ListTryReserveExact, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
+            (Method::ListTryReserveExact, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g))
         }
         ("shrink_to_fit", Ty::List(_, _)) => (Method::ListShrinkToFit, vec![], Ty::Unit),
         ("swap", Ty::List(_, _)) => {
@@ -559,7 +546,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         // through the one implicit conversion (IC1).
         ("get", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: false, inner: v.clone() };
-            (Method::MapGet, vec![plain(lookup_key(k))], Ty::Option(Box::new(view)))
+            (Method::MapGet, vec![plain(lookup_key(k))], g.option_ty(view))
         }
         ("get_or_insert", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: true, inner: v.clone() };
@@ -571,11 +558,11 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         }
         ("get_mut", Ty::Map(k, v, _)) => {
             let view = Ty::Ref { mutable: true, inner: v.clone() };
-            (Method::MapGetMut, vec![plain(lookup_key(k))], Ty::Option(Box::new(view)))
+            (Method::MapGetMut, vec![plain(lookup_key(k))], g.option_ty(view))
         }
         ("remove_entry", Ty::Map(k, v, _)) => {
             let pair = Ty::Tuple(vec![(**k).clone(), (**v).clone()]);
-            (Method::MapRemoveEntry, vec![plain(lookup_key(k))], Ty::Option(Box::new(pair)))
+            (Method::MapRemoveEntry, vec![plain(lookup_key(k))], g.option_ty(pair))
         }
         ("retain", Ty::Map(k, v, _)) => {
             let keep = Ty::Fn {
@@ -593,9 +580,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
         }
         ("reserve", Ty::Map(..)) => (Method::MapReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        ("try_reserve", Ty::Map(..)) => {
-            (Method::MapTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
-        }
+        ("try_reserve", Ty::Map(..)) => (Method::MapTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g)),
         ("shrink_to_fit", Ty::Map(..)) => (Method::MapShrinkToFit, vec![], Ty::Unit),
         // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
         ("entry", Ty::Map(k, v, alloc)) => {
@@ -615,16 +600,8 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             };
             (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
         }
-        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(lookup_key(k))], Ty::Option(v.clone())),
+        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(lookup_key(k))], g.option_ty((**v).clone())),
         ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(lookup_key(k))], Ty::Bool),
-        ("unwrap", Ty::Option(t)) => (Method::Unwrap, vec![], elem(t)),
-        ("unwrap", Ty::Result(t, _)) => (Method::Unwrap, vec![], elem(t)),
-        ("expect", Ty::Option(t)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
-        ("expect", Ty::Result(t, _)) => (Method::Expect, vec![plain(Ty::Str)], elem(t)),
-        ("is_some", Ty::Option(_)) => (Method::IsSome, vec![], Ty::Bool),
-        ("is_none", Ty::Option(_)) => (Method::IsNone, vec![], Ty::Bool),
-        ("is_ok", Ty::Result(..)) => (Method::IsOk, vec![], Ty::Bool),
-        ("is_err", Ty::Result(..)) => (Method::IsErr, vec![], Ty::Bool),
         ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
         // `List<T>.as_slice(): [T]`: a view of the list's elements (`spec/stdlib.md`, "Slices").
         ("as_slice", Ty::List(t, _)) => (Method::AsSlice, vec![], Ty::Slice(t.clone())),
@@ -632,12 +609,12 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         // `get(range)` is resolved by the call checker from the argument's type.
         ("get", Ty::Slice(t)) => {
             let view = Ty::Ref { mutable: false, inner: t.clone() };
-            (Method::SliceGet, vec![plain(Ty::Int(IntTy::Usize))], Ty::Option(Box::new(view)))
+            (Method::SliceGet, vec![plain(Ty::Int(IntTy::Usize))], g.option_ty(view))
         }
         // The slice's own `last` and `to_list`: they win over the `Iterator` defaults of the same name.
         ("last", Ty::Slice(t)) => {
             let view = Ty::Ref { mutable: false, inner: t.clone() };
-            (Method::SliceLast, vec![], Ty::Option(Box::new(view)))
+            (Method::SliceLast, vec![], g.option_ty(view))
         }
         ("to_list", Ty::Slice(t)) => (Method::SliceToList, vec![], Ty::List(t.clone(), burdin_tir::Alloc::Global)),
         ("swap", Ty::Slice(_)) => {
@@ -679,9 +656,7 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
         // The buffer operations of `String` (`spec/stdlib.md`, "String capacity and editing").
         ("capacity", Ty::String) => (Method::StringCapacity, vec![], Ty::Int(IntTy::Usize)),
         ("reserve", Ty::String) => (Method::StringReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        ("try_reserve", Ty::String) => {
-            (Method::StringTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result_placeholder())
-        }
+        ("try_reserve", Ty::String) => (Method::StringTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g)),
         ("shrink_to_fit", Ty::String) => (Method::StringShrinkToFit, vec![], Ty::Unit),
         ("insert_str", Ty::String) => {
             (Method::StringInsertStr, vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)], Ty::Unit)
@@ -695,18 +670,12 @@ pub(crate) fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty
             (Method::Len, vec![], Ty::Int(IntTy::Usize))
         }
         ("starts_with", Ty::Str | Ty::String) => (Method::StartsWith, vec![plain(Ty::Str)], Ty::Bool),
-        ("find", Ty::Str | Ty::String) => {
-            (Method::Find, vec![plain(Ty::Char)], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))
-        }
+        ("find", Ty::Str | Ty::String) => (Method::Find, vec![plain(Ty::Char)], g.option_ty(Ty::Int(IntTy::Usize))),
         ("find_str", Ty::Str | Ty::String) => {
-            (Method::FindStr, vec![plain(Ty::Str)], Ty::Option(Box::new(Ty::Int(IntTy::Usize))))
+            (Method::FindStr, vec![plain(Ty::Str)], g.option_ty(Ty::Int(IntTy::Usize)))
         }
         ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
-        ("as_ptr", Ty::CString) => (Method::AsPtr, vec![], Ty::CPtr(Box::new(Ty::Int(IntTy::I8)))),
         ("is_null", Ty::CPtr(_)) => (Method::IsNull, vec![], Ty::Bool),
-        // `Shared<T>` (`spec/allocators.md`, AL8).
-        ("get", Ty::Shared(t)) => (Method::SharedGet, vec![], Ty::Ref { mutable: false, inner: t.clone() }),
-        ("strong_count", Ty::Shared(_)) => (Method::SharedStrongCount, vec![], Ty::Int(IntTy::Usize)),
         // The iteration protocol's entry points (spec/iterators.md). `next` is checked separately because a
         // slice yields its element by value when it is `Copy`.
         ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
@@ -789,23 +758,50 @@ mod tests {
     use super::*;
     use crate::globals::Globals;
 
+    use crate::testutil::{lang_globals, settled};
+
+    /// `builtin_sig(b)` with `Option` and `Result` settled, and the `Globals` that name its types.
+    fn sig_of(b: Builtin) -> (Signature, Globals) {
+        // An instance whose argument is another instance needs a second round, as the allocator's passes do.
+        let mut g = lang_globals();
+        for _ in 0..3 {
+            builtin_sig(b, &g);
+            g = settled(g);
+        }
+        (builtin_sig(b, &g), g)
+    }
+
+    /// `method(name, recv)` with `Option` and `Result` settled, and the `Globals` that name its types.
+    fn lang_method(name: &str, recv: &Ty) -> (Option<(Method, Vec<ParamSig>, Ty)>, Globals) {
+        let mut g = lang_globals();
+        for _ in 0..3 {
+            super::method(&g, name, recv);
+            g = settled(g);
+        }
+        (super::method(&g, name, recv), g)
+    }
+
+    /// `method` for a receiver that needs no `Option` or `Result`.
+    fn method(name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
+        super::method(&Globals::default(), name, recv)
+    }
+
+    fn ref_(inner: Ty, mutable: bool) -> Ty {
+        Ty::Ref { mutable, inner: Box::new(inner) }
+    }
+
     #[test]
     fn io_primitive_signatures_use_the_operating_system_code() {
         // The primitives report the OS code itself; `std` maps it with `__io_kind` (spec/errors.md, ERR10-ERR11).
         let code = Ty::Int(IntTy::I32);
-        let globals = Globals::default();
-        assert_eq!(
-            builtin_sig(Builtin::ReadToString, &globals).ret,
-            Ty::Result(Box::new(Ty::String), Box::new(code.clone()))
-        );
-        assert_eq!(
-            builtin_sig(Builtin::WriteFile, &globals).ret,
-            Ty::Result(Box::new(Ty::Unit), Box::new(code.clone()))
-        );
-        assert_eq!(
-            builtin_sig(Builtin::RunCommand, &globals).ret,
-            Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(code.clone()))
-        );
+        for (b, ok) in [
+            (Builtin::ReadToString, Ty::String),
+            (Builtin::WriteFile, Ty::Unit),
+            (Builtin::RunCommand, Ty::Int(IntTy::I32)),
+        ] {
+            let (sig, g) = sig_of(b);
+            assert_eq!(g.result_parts(&sig.ret), Some((ok, code.clone())));
+        }
         // Without a standard library `__io_kind` has no result type to name.
         assert_eq!(builtin_sig(Builtin::IoErrorKind, &Globals::default()).ret, Ty::Unit);
         let kind = Ty::Enum(burdin_tir::AdtRef { id: 0, name: "IoErrorKind".into(), second_class: false });
@@ -837,33 +833,34 @@ mod tests {
             assert_eq!(builtin(name), Some(found));
         }
 
-        let open = builtin_sig(Builtin::FileOpen, &globals);
+        let (open, g) = sig_of(Builtin::FileOpen);
         assert_eq!(open.params[0].ty, Ty::Str);
         assert_eq!(open.params.len(), 7);
         assert!(open.params[1..].iter().all(|p| p.ty == Ty::Bool));
-        assert_eq!(open.ret, Ty::Result(Box::new(Ty::Int(IntTy::I32)), Box::new(error.clone())));
+        assert_eq!(g.result_parts(&open.ret), Some((Ty::Int(IntTy::I32), error.clone())));
 
-        let read = builtin_sig(Builtin::FileRead, &globals);
+        let (read, g) = sig_of(Builtin::FileRead);
         assert_eq!(read.params[0].ty, Ty::Int(IntTy::I32));
         assert_eq!(read.params[1].ty, Ty::List(Box::new(Ty::Int(IntTy::U8)), burdin_tir::Alloc::Global));
         assert!(read.params[1].by_ref, "the primitive appends to the caller's list");
         assert!(read.params[1].mut_param, "the caller writes the buffer as `mut`");
         assert!(read.params[1].exclusive);
         assert_eq!(read.params[2].ty, Ty::Int(IntTy::Usize));
-        assert_eq!(read.ret, Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(error.clone())));
+        assert_eq!(g.result_parts(&read.ret), Some((Ty::Int(IntTy::Usize), error.clone())));
 
-        let write = builtin_sig(Builtin::FileWrite, &globals);
+        let (write, g) = sig_of(Builtin::FileWrite);
         assert_eq!(write.params[0].ty, Ty::Int(IntTy::I32));
         assert_eq!(write.params[1].ty, Ty::Slice(Box::new(Ty::Int(IntTy::U8))));
-        assert_eq!(write.ret, Ty::Result(Box::new(Ty::Int(IntTy::Usize)), Box::new(error.clone())));
+        assert_eq!(g.result_parts(&write.ret), Some((Ty::Int(IntTy::Usize), error.clone())));
 
-        let seek = builtin_sig(Builtin::FileSeek, &globals);
+        let (seek, g) = sig_of(Builtin::FileSeek);
         assert_eq!(seek.params.len(), 3);
         assert_eq!(seek.params[1].ty, Ty::Int(IntTy::I64));
-        assert_eq!(seek.ret, Ty::Result(Box::new(Ty::Int(IntTy::I64)), Box::new(error.clone())));
+        assert_eq!(g.result_parts(&seek.ret), Some((Ty::Int(IntTy::I64), error.clone())));
 
         for b in [Builtin::FileSync, Builtin::FileSetLen, Builtin::FileClose] {
-            assert_eq!(builtin_sig(b, &globals).ret, Ty::Result(Box::new(Ty::Unit), Box::new(error.clone())));
+            let (sig, g) = sig_of(b);
+            assert_eq!(g.result_parts(&sig.ret), Some((Ty::Unit, error.clone())));
         }
         assert_eq!(builtin_sig(Builtin::FileError, &globals).ret, error);
         assert!(builtin_sig(Builtin::FileError, &globals).params.is_empty());
@@ -920,12 +917,12 @@ mod tests {
         assert_eq!(builtin("__set_current_dir"), Some(Builtin::SetCurrentDir));
         assert_eq!(builtin("__set_current_dir_bytes"), Some(Builtin::SetCurrentDirBytes));
 
-        let get = builtin_sig(Builtin::EnvGet, &Globals::default());
-        assert_eq!(get.ret, Ty::Option(Box::new(bytes.clone())));
+        let (get, g) = sig_of(Builtin::EnvGet);
+        assert_eq!(g.option_payload(&get.ret), Some(bytes.clone()));
         assert_eq!(get.params.len(), 1);
         assert_eq!(get.params[0].ty, Ty::Str);
-        let cwd = builtin_sig(Builtin::CurrentDir, &Globals::default());
-        assert_eq!(cwd.ret, Ty::Option(Box::new(bytes)));
+        let (cwd, g) = sig_of(Builtin::CurrentDir);
+        assert_eq!(g.option_payload(&cwd.ret), Some(bytes));
         assert!(cwd.params.is_empty());
         let set = builtin_sig(Builtin::EnvSetBytes, &Globals::default());
         assert_eq!(set.params.len(), 2);
@@ -962,7 +959,7 @@ mod tests {
         assert!(list.params.is_empty());
         assert_eq!(list.ret, strings.clone());
 
-        let spawn = builtin_sig(Builtin::ProcessSpawn, &Globals::default());
+        let (spawn, g) = sig_of(Builtin::ProcessSpawn);
         assert_eq!(spawn.params.len(), 8);
         assert_eq!(spawn.params[0].ty, Ty::Str);
         assert_eq!(spawn.params[1].ty, strings.clone());
@@ -972,7 +969,7 @@ mod tests {
         for param in spawn.params.iter().skip(5) {
             assert_eq!(param.ty, Ty::Int(IntTy::I32));
         }
-        assert!(matches!(&spawn.ret, Ty::Result(..)));
+        assert!(g.result_parts(&spawn.ret).is_some());
 
         let wait = builtin_sig(Builtin::ProcessWait, &Globals::default());
         assert_eq!(wait.params.len(), 2);
@@ -985,10 +982,10 @@ mod tests {
         assert_eq!(close.params[0].ty, usize_.clone());
         assert_eq!(close.ret, Ty::Unit);
 
-        let line = builtin_sig(Builtin::PipeReadLine, &Globals::default());
+        let (line, g) = sig_of(Builtin::PipeReadLine);
         assert_eq!(line.params.len(), 1);
         assert_eq!(line.params[0].ty, usize_.clone());
-        assert!(matches!(&line.ret, Ty::Result(..)));
+        assert!(g.result_parts(&line.ret).is_some());
 
         let both = builtin_sig(Builtin::PipeReadBoth, &Globals::default());
         assert_eq!(both.params.len(), 2);
@@ -1011,12 +1008,14 @@ mod tests {
         assert_eq!(builtin("__stdout_flush"), Some(Builtin::StdoutFlush));
         assert_eq!(builtin("__is_terminal"), Some(Builtin::IsTerminal));
 
-        let line = builtin_sig(Builtin::StdinReadLine, &globals);
+        let (line, g) = sig_of(Builtin::StdinReadLine);
         assert!(line.params.is_empty());
-        assert_eq!(line.ret, Ty::Result(Box::new(Ty::Option(Box::new(Ty::String))), Box::new(error.clone())));
-        let all = builtin_sig(Builtin::StdinReadToString, &globals);
+        let (ok, err) = g.result_parts(&line.ret).expect("`read_line` returns a `Result`");
+        assert_eq!(g.option_payload(&ok), Some(Ty::String));
+        assert_eq!(err, error);
+        let (all, g) = sig_of(Builtin::StdinReadToString);
         assert!(all.params.is_empty());
-        assert_eq!(all.ret, Ty::Result(Box::new(Ty::String), Box::new(error)));
+        assert_eq!(g.result_parts(&all.ret), Some((Ty::String, error)));
 
         let write = builtin_sig(Builtin::StdoutWrite, &globals);
         assert_eq!(write.params.len(), 1);
@@ -1051,11 +1050,12 @@ mod tests {
         let slice = Ty::Slice(Box::new(i32_.clone()));
 
         // `get` is the checked element view; the range form is resolved by the call checker.
-        let (found, params, ret) = method("get", &slice).unwrap();
+        let (got, g) = lang_method("get", &slice);
+        let (found, params, ret) = got.unwrap();
         assert_eq!(found, Method::SliceGet);
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].ty, Ty::Int(IntTy::Usize));
-        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) })));
+        assert_eq!(g.option_payload(&ret), Some(ref_(i32_.clone(), false)));
 
         // The slice's own `last` and `to_list` win over the `Iterator` defaults of the same name.
         assert_eq!(method("last", &slice).unwrap().0, Method::SliceLast);
@@ -1196,13 +1196,15 @@ mod tests {
         assert_eq!(params[0].ty, Ty::Int(IntTy::Usize));
         assert_eq!(ret, Ty::Unit);
 
-        let (found, _, ret) = method("get_mut", &list).unwrap();
+        let (got, g) = lang_method("get_mut", &list);
+        let (found, _, ret) = got.unwrap();
         assert_eq!(found, Method::ListGetMut);
-        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: true, inner: Box::new(int.clone()) })));
+        assert_eq!(g.option_payload(&ret), Some(ref_(int.clone(), true)));
 
-        let (found, _, ret) = method("first", &list).unwrap();
+        let (got, g) = lang_method("first", &list);
+        let (found, _, ret) = got.unwrap();
         assert_eq!(found, Method::ListFirst);
-        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(int.clone()) })));
+        assert_eq!(g.option_payload(&ret), Some(ref_(int.clone(), false)));
 
         let (found, params, ret) = method("split_off", &list).unwrap();
         assert_eq!(found, Method::ListSplitOff);
@@ -1242,7 +1244,6 @@ mod tests {
         assert_eq!(builtin_type("bool"), Some(Ty::Bool));
         assert_eq!(builtin_type("char"), Some(Ty::Char));
         assert_eq!(builtin_type("String"), Some(Ty::String));
-        assert_eq!(builtin_type("CString"), Some(Ty::CString));
         assert_eq!(builtin_type("CChar"), Some(Ty::Int(IntTy::I8)));
         assert_eq!(builtin_type("CSize"), Some(Ty::Int(IntTy::Usize)));
         assert_eq!(builtin_type("CVoid"), Some(Ty::Unit));
@@ -1279,10 +1280,11 @@ mod tests {
         assert_eq!(ret, Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) });
         assert!(found.mutates_receiver() && found.result_borrows_receiver());
 
-        let (found, params, ret) = method("remove_entry", &m).unwrap();
+        let (got, g) = lang_method("remove_entry", &m);
+        let (found, params, ret) = got.unwrap();
         assert_eq!(found, Method::MapRemoveEntry);
         assert!(!params[0].own);
-        assert_eq!(ret, Ty::Option(Box::new(Ty::Tuple(vec![i32_.clone(), i32_.clone()]))));
+        assert_eq!(g.option_payload(&ret), Some(Ty::Tuple(vec![i32_.clone(), i32_.clone()])));
 
         let (found, params, _) = method("retain", &m).unwrap();
         assert_eq!(found, Method::MapRetain);
@@ -1318,8 +1320,8 @@ mod tests {
                     "List" => Ty::List(Box::new(param("T")), Alloc::Global),
                     "Map" => Ty::Map(Box::new(param("K")), Box::new(param("V")), Alloc::Global),
                     "Heap" => Ty::Heap(Box::new(param("T")), Alloc::Global),
-                    "Option" => Ty::Option(Box::new(param("T"))),
-                    "Result" => Ty::Result(Box::new(param("T")), Box::new(param("E"))),
+                    // `Option` and `Result` are enums of `std`, written in Burdin; `builtins.bd` declares neither.
+                    "Option" | "Result" => continue,
                     other => match builtin_type(other) {
                         Some(ty) => ty,
                         None => continue,
@@ -1368,18 +1370,21 @@ mod tests {
         assert_eq!(found, Method::Push);
         assert!(params[0].own, "push takes its element by ownership");
         assert_eq!(ret, Ty::Unit);
-        let (found, _, ret) = method("pop", &list).unwrap();
+        let (got, g) = lang_method("pop", &list);
+        let (found, _, ret) = got.unwrap();
         assert_eq!(found, Method::ListPop);
-        assert_eq!(ret, Ty::Option(Box::new(i32_.clone())));
-        let (found, _, ret) = method("last", &list).unwrap();
+        assert_eq!(g.option_payload(&ret), Some(i32_.clone()));
+        let (got, g) = lang_method("last", &list);
+        let (found, _, ret) = got.unwrap();
         assert_eq!(found, Method::ListLast);
-        assert_eq!(ret, Ty::Option(Box::new(Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) })));
+        assert_eq!(g.option_payload(&ret), Some(ref_(i32_.clone(), false)));
 
-        let (found, _, ret) = method("checked_add", &i32_).unwrap();
+        let (got, g) = lang_method("checked_add", &i32_);
+        let (found, _, ret) = got.unwrap();
         assert_eq!(found, Method::CheckedAdd);
-        assert_eq!(ret, Ty::Option(Box::new(i32_.clone())));
-        let (found, _, ret) = method("unwrap", &Ty::Option(Box::new(i32_.clone()))).unwrap();
-        assert_eq!(found, Method::Unwrap);
-        assert_eq!(ret, i32_);
+        assert_eq!(g.option_payload(&ret), Some(i32_.clone()));
+        // `unwrap` is not a compiler method: `std` writes it in Burdin, as an extension of `Option`.
+        let (got, _) = lang_method("unwrap", &g.option_ty(i32_.clone()));
+        assert!(got.is_none());
     }
 }

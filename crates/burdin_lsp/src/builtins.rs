@@ -81,6 +81,8 @@ mod tests {
         // Arrays and slices: `[T]` has the compiler's methods, and only an array has `iter_mut`.
         assert!(b.find("[T]", "swap").is_some());
         assert!(b.find("[T]", "iter_mut").is_none() && b.find("[T; N]", "iter_mut").is_some());
-        assert!(b.index.items.iter().any(|i| i.name == "Option" && i.kind == Kind::Enum));
+        // `Option` and `Result` moved to `std` (issue #1017), so the file no longer declares them.
+        assert!(b.index.items.iter().any(|i| i.name == "String" && i.kind == Kind::Struct));
+        assert!(!b.index.items.iter().any(|i| i.name == "Option" || i.name == "Result"));
     }
 }

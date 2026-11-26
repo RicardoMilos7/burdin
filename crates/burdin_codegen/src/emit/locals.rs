@@ -63,12 +63,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     ty = self.variant_tys(a.id, vi)[fi].clone();
                     i += 2;
                 }
-                Ty::Option(inner) => {
-                    let ot = self.option_ty(inner);
-                    ptr = self.builder.build_struct_gep(ot, ptr, 1, "").map_err(llvm_err)?;
-                    ty = (**inner).clone();
-                    i += 1;
-                }
                 Ty::Array(elem, _) => {
                     let array_t = self.llvm_ty(&ty).expect("an array has a type");
                     let index = path[i];

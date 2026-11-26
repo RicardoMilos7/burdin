@@ -42,6 +42,8 @@ mod prelude;
 mod resolve;
 mod serial;
 mod session;
+#[cfg(test)]
+mod testutil;
 mod types;
 mod user_derives;
 mod validate;
@@ -180,6 +182,7 @@ pub fn check_cached<'a>(
     cache.begin(declarations);
     let mut sema = Sema::new(packages, entry_package, entry_module, mode, traces, sources);
     sema.declare_types(diags);
+    sema.find_lang_items();
     sema.declare_values(diags);
     sema.resolve_imports(diags);
     sema.import_module_extensions(diags);

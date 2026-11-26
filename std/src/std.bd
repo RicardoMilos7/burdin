@@ -1,12 +1,12 @@
-// The stage 0 standard library, written in Burdin.
-//
-// The compiler provides the primitives that need to reach the operating system or raw memory (file I/O,
-// process control, the arguments, the environment, the working directory, and the memory helpers); everything a
-// Burdin program can express is here.
+// The stage 0 standard library, written in Burdin. The compiler provides the primitives that reach the operating
+// system or raw memory (file I/O, processes, the arguments, the environment, the working directory, and the memory
+// helpers); everything a Burdin program can express is here.
 
 use env.get
 use fmt.{Debug, Display, Formatter}
 use fs.append
+use marker.{Send, Sync}
+use mem.drop
 use reactor.offload_raw
 
 /// A type that is an error: `Display` is required, and a value of the type converts into the dynamic `AnyError`.
@@ -641,4 +641,177 @@ priv fn offload_blocking(own code: CPtr<u8>, own env: CPtr<u8>) {
 error enum AllocError: Eq, Debug {
     CapacityOverflow "capacity overflow"
     OutOfMemory "out of memory"
+}
+
+/// A value that may be absent: `Some(T)` holds one, `None` holds nothing. The compiler knows this enum by name
+/// (`?`, `orelse`, and the methods of the built-in types return it); the variants are `Option.None` and
+/// `Option.Some(value)`, and `None` takes its type from the context.
+///
+/// ```
+/// let a: Option<i32> = Option.Some(2)
+/// let b: Option<i32> = Option.None
+/// assert(a.is_some())
+/// assert(b.is_none())
+/// ```
+enum Option<T>: Copy, Clone, Eq, Ord, Hash, Debug {
+    None
+    Some(T)
+}
+
+/// The outcome of an operation that can fail: `Ok(T)` holds the value, `Err(E)` the error. `Result<T>` with one
+/// argument means `Result<T, AnyError>`. The compiler knows this enum by name, for `?`, `orelse`, and `context`.
+///
+/// ```
+/// let a: Result<i32, String> = Result.Ok(2)
+/// let b: Result<i32, String> = Result.Err(String.from("no"))
+/// assert(a.is_ok())
+/// assert(b.is_err())
+/// ```
+enum Result<T, E = AnyError>: Copy, Clone, Eq, Ord, Hash, Debug {
+    Ok(T)
+    Err(E)
+}
+
+/// The cell a `Shared<T>` points at: the number of live handles, then the value.
+struct SharedCell<T> {
+    strong: usize
+    value: T
+}
+
+/// A reference-counted owner: a handle to a heap cell that holds a value and the number of handles. `clone` shares the
+/// cell, and the last handle to drop drops the value and frees the cell (`spec/allocators.md`, AL8; `spec/shared.md`).
+///
+/// ```
+/// let a = Shared.new(String.from("hi"))
+/// let b = a.clone()
+/// assert_eq(a.strong_count(), 2)
+/// assert_eq(b.get().len(), 2)
+/// ```
+struct Shared<T> {
+    cell: CPtr<SharedCell<T>>
+}
+
+Shared<T> {
+    /// Moves `value` into a new cell whose count is one.
+    ///
+    /// ```
+    /// let s = Shared.new(5)
+    /// assert_eq(*s.get(), 5)
+    /// ```
+    fn new(own value: T): Shared<T> {
+        unsafe {
+            let cell = __alloc(SharedCell<T>.size(), 8) as CPtr<SharedCell<T>>
+            (*cell).strong = 1
+            __write(&(*cell).value as CPtr<T>, value)
+            Shared { cell: cell }
+        }
+    }
+
+    /// Borrows the value.
+    ///
+    /// ```
+    /// let s = Shared.new(String.from("abc"))
+    /// assert_eq(s.get().len(), 3)
+    /// ```
+    fn get(self): &T {
+        unsafe { &(*self.cell).value }
+    }
+
+    /// The number of live handles.
+    ///
+    /// ```
+    /// let s = Shared.new(1)
+    /// let t = s.clone()
+    /// assert_eq(t.strong_count(), 2)
+    /// ```
+    fn strong_count(self): usize {
+        unsafe { __atomic_load_u64(&(*self.cell).strong as CPtr<u64>) as usize }
+    }
+
+    /// Another handle to the same cell: the count goes up and no value is copied, so `T` need not be `Clone`.
+    ///
+    /// ```
+    /// let s = Shared.new(1)
+    /// let t = s.clone()
+    /// assert_eq(*t.get(), 1)
+    /// ```
+    fn clone(self): Shared<T> {
+        unsafe {
+            __atomic_add_u64(&(*self.cell).strong as CPtr<u64>, 1)
+            Shared { cell: self.cell }
+        }
+    }
+}
+
+Shared<T>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            if __atomic_sub_u64(&(*self.cell).strong as CPtr<u64>, 1) == 1 {
+                drop(__read(&(*self.cell).value as CPtr<T>))
+                __dealloc(self.cell as CPtr<u8>, SharedCell<T>.size(), 8)
+            }
+        }
+    }
+}
+
+unsafe Shared<T>: Send where T: Send + Sync { }
+
+unsafe Shared<T>: Sync where T: Send + Sync { }
+
+/// An owned, NUL-terminated copy of some bytes in the C heap, for passing text to C. It frees the buffer when dropped,
+/// and `clone` copies it.
+///
+/// ```
+/// let owned = CString.from("hi")
+/// let copy = owned.clone()
+/// let text = unsafe { CStr.to_string(copy.as_ptr()) }
+/// assert_eq(text, String.from("hi"))
+/// ```
+struct CString {
+    ptr: CPtr<CChar>
+    len: usize
+}
+
+CString {
+    /// Copies the bytes of `s` and appends a NUL.
+    fn from(s: str): CString {
+        let bytes = s.as_bytes()
+        let n = bytes.len()
+        unsafe {
+            let ptr = __alloc(n + 1, 1) as CPtr<CChar>
+            let mut i: usize = 0
+            while i < n {
+                *(ptr + i) = bytes[i] as CChar
+                i = i + 1
+            }
+            *(ptr + n) = 0
+            CString { ptr: ptr, len: n }
+        }
+    }
+
+    /// The address of the NUL-terminated bytes; the `CString` must outlive its use.
+    fn as_ptr(self): CPtr<CChar> {
+        unsafe { self.ptr }
+    }
+
+    /// A deep copy of the NUL-terminated buffer.
+    fn clone(self): CString {
+        unsafe {
+            let ptr = __alloc(self.len + 1, 1) as CPtr<CChar>
+            let mut i: usize = 0
+            while i <= self.len {
+                *(ptr + i) = *(self.ptr + i)
+                i = i + 1
+            }
+            CString { ptr: ptr, len: self.len }
+        }
+    }
+}
+
+CString: Drop {
+    fn drop(mut self) {
+        unsafe {
+            __dealloc(self.ptr as CPtr<u8>, self.len + 1, 1)
+        }
+    }
 }

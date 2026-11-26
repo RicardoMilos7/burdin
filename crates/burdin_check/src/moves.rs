@@ -295,8 +295,12 @@ impl<'a> Checker<'a> {
     /// Whether `ty`'s `Clone` is the compiler's derived member (`spec/derives.md`).
     fn derived_clone(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Struct(a) => self.env.defs.structs.get(a.id).is_some_and(|d| d.derives.clone),
-            Ty::Enum(a) => self.env.defs.enums.get(a.id).is_some_and(|d| d.derives.clone),
+            Ty::Struct(a) => {
+                self.env.defs.structs.get(a.id).is_some_and(|d| d.derives.clone || d.derives.clone_method.is_some())
+            }
+            Ty::Enum(a) => {
+                self.env.defs.enums.get(a.id).is_some_and(|d| d.derives.clone || d.derives.clone_method.is_some())
+            }
             _ => false,
         }
     }
@@ -496,16 +500,6 @@ impl<'a> Checker<'a> {
             }
             // `[0]` is the payload of an `Option`; `[variant, field]` selects an enum field. The variant selector
             // itself is not a value, but the field's type can still implement `Drop`.
-            Ty::Option(inner) => {
-                if *first == 0 {
-                    let inner = (**inner).clone();
-                    self.check_partial_move(&inner, rest, span);
-                }
-            }
-            Ty::Result(ok, err) => {
-                let payload = if *first == 0 { (**ok).clone() } else { (**err).clone() };
-                self.check_partial_move(&payload, rest, span);
-            }
             Ty::Enum(a) => {
                 let Some((field, rest)) = rest.split_first() else { return };
                 if let Some(f) = self.env.defs.enums[a.id].variants.get(*first).and_then(|v| v.fields.get(*field)) {
@@ -529,30 +523,6 @@ impl<'a> Checker<'a> {
             Pat::Or(alts) => {
                 if let Some(first) = alts.first() {
                     self.check_pattern_drop_moves(first, root_ty, ty, path, span);
-                }
-            }
-            Pat::Some(inner) => {
-                if let Ty::Option(inner_ty) = ty {
-                    let inner_ty = (**inner_ty).clone();
-                    path.push(0);
-                    self.check_pattern_drop_moves(inner, root_ty, &inner_ty, path, span);
-                    path.pop();
-                }
-            }
-            Pat::Ok(inner) => {
-                if let Ty::Result(ok, _) = ty {
-                    let ok = (**ok).clone();
-                    path.push(0);
-                    self.check_pattern_drop_moves(inner, root_ty, &ok, path, span);
-                    path.pop();
-                }
-            }
-            Pat::Err(inner) => {
-                if let Ty::Result(_, err) = ty {
-                    let err = (**err).clone();
-                    path.push(1);
-                    self.check_pattern_drop_moves(inner, root_ty, &err, path, span);
-                    path.pop();
                 }
             }
             Pat::Slice { prefix, rest, suffix } => {
@@ -763,15 +733,7 @@ impl<'a> Checker<'a> {
     fn expr(&mut self, e: &tir::Expr, mode: Mode) {
         use tir::ExprKind as K;
         match &e.kind {
-            K::Unit
-            | K::Bool(_)
-            | K::Int(_)
-            | K::Float(_)
-            | K::Char(_)
-            | K::Str(_)
-            | K::Bytes(_)
-            | K::None
-            | K::Const(_) => {}
+            K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bytes(_) | K::Const(_) => {}
             K::LayoutOf { .. } => {}
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
             // A static is storage the whole program shares, so a non-Copy value cannot leave it (spec/globals.md, GL3).
@@ -829,7 +791,7 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
                 // The barrier takes the value and hands it back (`spec/bench.md`, BN9).
                 tir::Builtin::BlackBox => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
@@ -850,6 +812,10 @@ impl<'a> Checker<'a> {
                     }
                 }
                 tir::Builtin::Replace => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
+                }
+                tir::Builtin::RawWrite => {
                     self.expr(&args[0], Mode::Use);
                     self.expr(&args[1], Mode::Move);
                 }
@@ -1164,7 +1130,6 @@ impl<'a> Checker<'a> {
                     self.with_dest(None, Mode::Move, v);
                 }
             }
-            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.with_dest(None, Mode::Move, inner),
         }
     }
 
@@ -1416,7 +1381,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
             Pat::Binding(id, mode) => {
                 self.init_binding(*id, *mode, path, root, span);
             }
@@ -1428,24 +1393,6 @@ impl<'a> Checker<'a> {
                 if let Some(first) = alts.first() {
                     self.bind_pattern(first, ty, path, root, span);
                 }
-            }
-            Pat::Some(inner) => {
-                let Ty::Option(inner_ty) = ty else { return };
-                path.push(0);
-                self.bind_pattern(inner, inner_ty, path, root, span);
-                path.pop();
-            }
-            Pat::Ok(inner) => {
-                let Ty::Result(ok, _) = ty else { return };
-                path.push(0);
-                self.bind_pattern(inner, ok, path, root, span);
-                path.pop();
-            }
-            Pat::Err(inner) => {
-                let Ty::Result(_, err) = ty else { return };
-                path.push(1);
-                self.bind_pattern(inner, err, path, root, span);
-                path.pop();
             }
             Pat::Slice { prefix, rest, suffix } => {
                 self.bind_slice(prefix, rest.as_deref(), suffix, ty, path, root, span);
@@ -1659,8 +1606,6 @@ fn pattern_moves(pat: &Pat) -> bool {
         Pat::At(_, BindMode::Move, _) => true,
         Pat::At(_, _, inner) => pattern_moves(inner),
         Pat::Or(alts) => alts.iter().any(pattern_moves),
-        Pat::Some(inner) => pattern_moves(inner),
-        Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         Pat::Slice { prefix, rest, suffix } => prefix.iter().chain(rest.as_deref()).chain(suffix).any(pattern_moves),
         _ => false,
@@ -1679,15 +1624,13 @@ fn single_binding(pat: &Pat, locals: &[tir::Local]) -> Option<String> {
 
 fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
         Pat::Binding(id, _) => out.push(*id),
         Pat::At(id, _, inner) => {
             out.push(*id);
             collect_bindings(inner, out);
         }
         Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
-        Pat::Some(inner) => collect_bindings(inner, out),
-        Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
         Pat::Slice { prefix, rest, suffix } => {
             for s in prefix.iter().chain(rest.as_deref()).chain(suffix) {

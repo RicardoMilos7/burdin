@@ -25,7 +25,10 @@ impl FnCx<'_> {
         // An `unsafe` block is checked with the depth raised; the block itself is the boundary and its result
         // may be a raw pointer.
         let boundary = matches!(e.kind, ast::ExprKind::UnsafeBlock(_));
-        if !boundary && self.unsafe_depth == 0 && matches!(checked.ty, Ty::CPtr(_)) {
+        // The methods of `Option` and `Result` only move their payload, which may be a raw pointer, so
+        // `option.bd` is exempt: the pointer is not dereferenced there.
+        let moves_only = self.globals.modules[self.module].path == ["option"];
+        if !boundary && !moves_only && self.unsafe_depth == 0 && matches!(checked.ty, Ty::CPtr(_)) {
             self.diags.error(Code::UNSAFE_REQUIRED, checked.span, "using a raw C pointer requires an `unsafe` block");
         }
         checked

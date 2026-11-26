@@ -9,6 +9,23 @@ use crate::globals::{Global, OpIfaces, TypeName};
 use crate::session::Sema;
 
 impl Sema<'_> {
+    /// Finds `std`'s `Option` and `Result` enums, which the language itself knows, as soon as the types are declared:
+    /// signatures are resolved before the prelude is installed and write both names.
+    pub(crate) fn find_lang_items(&mut self) {
+        let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std" && !p.is_root) else { return };
+        let Some(root) = (0..self.globals.modules.len())
+            .find(|&m| self.globals.modules[m].package == std_id && self.globals.modules[m].path == ["std"])
+        else {
+            return;
+        };
+        let find = |globals: &crate::globals::Globals, name: &str| match globals.modules[root].types.get(name) {
+            Some(TypeName::GenericAdt(g)) => Some(*g),
+            _ => None,
+        };
+        self.globals.lang_option = find(&self.globals, "Option");
+        self.globals.lang_result = find(&self.globals, "Result");
+    }
+
     pub(crate) fn install_prelude(&mut self) {
         let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std" && !p.is_root) else { return };
         let std_modules: Vec<usize> =
@@ -142,6 +159,23 @@ impl Sema<'_> {
                 .filter_map(|name| self.globals.exported_extension(src, name).map(|e| (name.clone(), e)))
                 .collect();
             exports.push((values, types, ifaces, extensions));
+        }
+        // The methods of `Option` and `Result` (`option.bd`) are extensions, and the standard library's own modules
+        // call them without a `use`, so every std module sees that module's extensions.
+        let option_module = std_modules.iter().position(|&m| self.globals.modules[m].path == ["option"]);
+        if let Some(i) = option_module {
+            let src = std_modules[i];
+            for module in 0..self.globals.modules.len() {
+                if module == src || self.globals.modules[module].package != std_id {
+                    continue;
+                }
+                for (name, exts) in &exports[i].3 {
+                    if self.globals.modules[module].extensions.contains_key(name) {
+                        continue;
+                    }
+                    self.globals.modules[module].extensions.insert(name.clone(), exts.clone());
+                }
+            }
         }
         for module in 0..self.globals.modules.len() {
             if self.globals.modules[module].package == std_id {

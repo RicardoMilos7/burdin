@@ -197,7 +197,7 @@ impl<'t> Sema<'t> {
         {
             return true;
         }
-        if builtin_method(name, recv).is_some() {
+        if builtin_method(&self.globals, name, recv).is_some() {
             return true;
         }
         match name {
@@ -360,7 +360,7 @@ fn receiver_param(globals: &Globals, module: usize, arg: &ast::Type) -> Option<S
 
 /// The bounds of every parameter of an extension, in the order of `params`: the method's own inline bounds, and
 /// each `where` predicate on one of the parameters (`where T: Ord`).
-fn extension_bounds(
+pub(crate) fn extension_bounds(
     f: &ast::FnDecl,
     params: &[String],
     subst: &[(String, Ty)],
@@ -432,13 +432,11 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
         (Ty::Param(_), Ty::Param(_)) => true,
         (Ty::Ref { mutable: m, inner: i }, Ty::Ref { mutable: n, inner: j }) => m == n && pair(i, j),
         (Ty::Slice(i), Ty::Slice(j))
-        | (Ty::Option(i), Ty::Option(j))
         | (Ty::Heap(i, _), Ty::Heap(j, _))
         | (Ty::CPtr(i), Ty::CPtr(j))
         | (Ty::List(i, _), Ty::List(j, _)) => pair(i, j),
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
         (Ty::Range(i, m), Ty::Range(j, n)) => m == n && pair(i, j),
-        (Ty::Result(io, ie), Ty::Result(jo, je)) => pair(io, jo) && pair(ie, je),
         (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) | (Ty::MapEntry(ik, iv, _), Ty::MapEntry(jk, jv, _)) => {
             pair(ik, jk) && pair(iv, jv)
         }
@@ -493,14 +491,13 @@ mod tests {
         // A concrete part of the pattern must match too.
         let string = Ty::String;
         let i32_ty = Ty::Int(IntTy::I32);
-        let result_pat =
-            extension(Ty::Result(Box::new(Ty::Param("T".into())), Box::new(i32_ty.clone())), &["T"], &["T"]);
-        assert!(extension_applies(
-            &globals,
-            &result_pat,
-            &Ty::Result(Box::new(string.clone()), Box::new(i32_ty.clone()))
-        ));
-        assert!(!extension_applies(&globals, &result_pat, &Ty::Result(Box::new(string.clone()), Box::new(string))));
+        let mut globals = crate::testutil::lang_globals();
+        let pattern = globals.test_result(Ty::Param("T".into()), i32_ty.clone());
+        let ok_string = globals.test_result(string.clone(), i32_ty.clone());
+        let err_string = globals.test_result(string.clone(), string);
+        let result_pat = extension(pattern, &["T"], &["T"]);
+        assert!(extension_applies(&globals, &result_pat, &ok_string));
+        assert!(!extension_applies(&globals, &result_pat, &err_string));
 
         let concrete = extension(Ty::String, &[], &[]);
         assert!(extension_applies(&globals, &concrete, &Ty::String));

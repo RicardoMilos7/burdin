@@ -259,10 +259,6 @@ pub enum Ty {
     /// `[T]`: a slice view, a pointer and a length.
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
-    /// The prelude's `Option<T>`.
-    Option(Box<Ty>),
-    /// The prelude's `Result<T, E>`: `Ok(T)` or `Err(E)`.
-    Result(Box<Ty>, Box<Ty>),
     /// `List<T>`: a growable, owned array in the C heap. The allocator is `Global` unless the list was made with
     /// `new_in` (`spec/allocators.md`).
     List(Box<Ty>, Alloc),
@@ -275,14 +271,10 @@ pub enum Ty {
     Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
     Heap(Box<Ty>, Alloc),
-    /// `Shared<T>`: a non-atomic, reference-counted owner of one heap value (`spec/allocators.md`, AL8).
-    Shared(Box<Ty>),
     /// `any I`: an owned value boxed behind the interface's vtable (spec/existentials.md, AN1).
     Any(AnyRef),
     /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
     CPtr(Box<Ty>),
-    /// `CString`: an owned, NUL-terminated C string in the C heap.
-    CString,
     /// `Range<T>` (exclusive) or `RangeInclusive<T>` (inclusive): the two integer endpoints. The flag is true for
     /// the inclusive form.
     Range(Box<Ty>, bool),
@@ -370,7 +362,7 @@ impl Ty {
             Ty::Str | Ty::Slice(_) | Ty::Ref { .. } => true,
             // A closure with borrow captures points at the storage it captured (CL3).
             Ty::Fn { borrowed, .. } => *borrowed,
-            Ty::Array(t, _) | Ty::Option(t) | Ty::List(t, _) => t.is_second_class(),
+            Ty::Array(t, _) | Ty::List(t, _) => t.is_second_class(),
             // An owning iterator holds its elements; a borrowing one points at its source.
             Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => true,
             // An entry points at its map, so it is a view of that map's storage (SC2).
@@ -378,10 +370,8 @@ impl Ty {
             // A chunks or windows iterator views the slice it was made from.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => true,
             Ty::ListIntoIter(t, _) | Ty::ArrayIntoIter(t, _) | Ty::RangeIter(t, _) => t.is_second_class(),
-            Ty::Result(t, e) => t.is_second_class() || e.is_second_class(),
             Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
             // A `Shared<T>` owns its heaped value, like a `Heap`.
-            Ty::Shared(_) => false,
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
             // A box owns its heaped value; an `any I` type argument is never a view of the box (AN1, AN3).
@@ -417,8 +407,6 @@ impl fmt::Display for Ty {
             Ty::Slice(t) => write!(f, "[{t}]"),
             Ty::Array(t, n) if *n >= 1 << 62 => write!(f, "[{t}; _]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
-            Ty::Option(t) => write!(f, "Option<{t}>"),
-            Ty::Result(t, e) => write!(f, "Result<{t}, {e}>"),
             Ty::List(t, Alloc::Global) => write!(f, "List<{t}>"),
             Ty::List(t, a) => write!(f, "List<{t}, {a}>"),
             Ty::Map(k, v, Alloc::Global) => write!(f, "Map<{k}, {v}>"),
@@ -428,10 +416,8 @@ impl fmt::Display for Ty {
             Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t, Alloc::Global) => write!(f, "Heap<{t}>"),
             Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
-            Ty::Shared(t) => write!(f, "Shared<{t}>"),
             Ty::Any(a) => write!(f, "any {}", a.name),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
-            Ty::CString => f.write_str("CString"),
             Ty::Range(t, false) => write!(f, "Range<{t}>"),
             Ty::Range(t, true) => write!(f, "RangeInclusive<{t}>"),
             Ty::ListIntoIter(t, Alloc::Global) => write!(f, "ListIntoIter<{t}>"),
@@ -528,16 +514,13 @@ mod tests {
         assert!(Ty::Slice(Box::new(i32_.clone())).is_second_class());
         assert!(Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }.is_second_class());
         assert!(Ty::Tuple(vec![i32_.clone(), Ty::Str]).is_second_class());
-        assert!(Ty::Option(Box::new(Ty::Str)).is_second_class());
         assert!(Ty::Array(Box::new(Ty::Str), 2).is_second_class());
-        assert!(Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Str)).is_second_class());
         assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool), Alloc::Global).is_second_class());
         assert!(Ty::MapEntry(Box::new(i32_.clone()), Box::new(i32_.clone()), Alloc::Global).is_second_class());
         // Owned types are not views.
         assert!(!Ty::String.is_second_class());
         assert!(!Ty::Heap(Box::new(i32_.clone()), Alloc::Global).is_second_class());
         assert!(!Ty::List(Box::new(i32_.clone()), Alloc::Global).is_second_class());
-        assert!(!Ty::Shared(Box::new(i32_.clone())).is_second_class());
         assert!(!i32_.is_second_class());
     }
 
@@ -590,8 +573,6 @@ mod tests {
             (Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }, "&mut i32"),
             (Ty::Slice(Box::new(i32_.clone())), "[i32]"),
             (Ty::Array(Box::new(i32_.clone()), 4), "[i32; 4]"),
-            (Ty::Option(Box::new(i32_.clone())), "Option<i32>"),
-            (Ty::Result(Box::new(i32_.clone()), Box::new(Ty::Str)), "Result<i32, str>"),
             (Ty::List(Box::new(i32_.clone()), Alloc::Global), "List<i32>"),
             (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "Map<str, i32>"),
             (Ty::MapEntry(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "MapEntry<str, i32>"),
@@ -605,7 +586,6 @@ mod tests {
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "Heap<i32, Arena>"),
             (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
-            (Ty::CString, "CString"),
             (Ty::Range(Box::new(i32_.clone()), false), "Range<i32>"),
             (Ty::Range(Box::new(i32_.clone()), true), "RangeInclusive<i32>"),
             (Ty::Tuple(vec![i32_.clone()]), "(i32,)"),

@@ -56,7 +56,6 @@ impl Globals {
             | Ty::Float(_)
             | Ty::Str
             | Ty::String
-            | Ty::CString
             | Ty::Chars
             | Ty::Never
             | Ty::Const(_)
@@ -110,7 +109,7 @@ impl Globals {
                         .or_else(|| self.part_why("the element", t, true, env, seen))
                 }
             }
-            Ty::Array(t, _) | Ty::Option(t) | Ty::Range(t, _) | Ty::RangeIter(t, _) | Ty::ArrayIntoIter(t, _) => {
+            Ty::Array(t, _) | Ty::Range(t, _) | Ty::RangeIter(t, _) | Ty::ArrayIntoIter(t, _) => {
                 self.part_why("the element", t, sync, env, seen)
             }
             Ty::List(t, a) | Ty::Heap(t, a) | Ty::ListIntoIter(t, a) => {
@@ -120,9 +119,6 @@ impl Globals {
                 .part_why("the key", k, sync, env, seen)
                 .or_else(|| self.part_why("the value", v, sync, env, seen))
                 .or_else(|| self.alloc_why(a, sync, env, seen)),
-            Ty::Result(t, e) => self
-                .part_why("the `Ok` type", t, sync, env, seen)
-                .or_else(|| self.part_why("the `Err` type", e, sync, env, seen)),
             Ty::Tuple(ts) => ts.iter().find_map(|t| self.part_why("an element", t, sync, env, seen)),
             // These point into another collection, so they behave like the shared or exclusive views they hold.
             Ty::MapEntry(k, v, _) | Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
@@ -131,11 +127,6 @@ impl Globals {
             Ty::IterMut(t) | Ty::SliceChunks(t, _) | Ty::SliceWindows(t) => {
                 self.part_why("the element", t, sync, env, seen)
             }
-            // A handle to a cell several handles share: it moves when the value may move and be used from another
-            // task, and it is shared when the value may be both.
-            Ty::Shared(t) => self
-                .part_why("the shared value", t, false, env, seen)
-                .or_else(|| self.part_why("the shared value", t, true, env, seen)),
             Ty::Struct(_) | Ty::Enum(_) => self.adt_why(ty, iface, sync, env, seen),
         }
     }

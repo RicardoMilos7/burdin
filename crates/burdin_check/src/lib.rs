@@ -29,7 +29,7 @@ pub fn check(program: &mut Program, diags: &mut Diagnostics) {
     let Program { functions, structs, enums, signatures, any_ifaces, .. } = program;
 
     // The return origin of a signature is inferred from the body (RT): first to a fixpoint, then reported.
-    origins::check(signatures, functions, diags);
+    origins::check(signatures, functions, enums, diags);
 
     let scoped_spawns: Vec<bool> = functions.iter().map(|f| is_scope_spawn(&f.name)).collect();
     let internal: Vec<bool> = functions.iter().map(|f| f.internal).collect();

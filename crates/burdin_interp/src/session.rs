@@ -112,7 +112,6 @@ fn pattern_ids(pat: &Pat, out: &mut Vec<LocalId>) {
             out.push(*id);
             pattern_ids(inner, out);
         }
-        Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pattern_ids(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => {
             for sub in subs {
                 pattern_ids(sub, out);
@@ -128,7 +127,7 @@ fn pattern_ids(pat: &Pat, out: &mut Vec<LocalId>) {
                 pattern_ids(alt, out);
             }
         }
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
     }
 }
 
@@ -266,17 +265,16 @@ mod tests {
         pattern_ids(
             &Pat::Product(vec![
                 Pat::Binding(LocalId(1), BindMode::Copy),
-                Pat::Ok(Box::new(Pat::At(
-                    LocalId(2),
-                    BindMode::Move,
-                    Box::new(Pat::Binding(LocalId(3), BindMode::Move)),
-                ))),
+                Pat::Variant(
+                    0,
+                    vec![Pat::At(LocalId(2), BindMode::Move, Box::new(Pat::Binding(LocalId(3), BindMode::Move)))],
+                ),
             ]),
             &mut ids,
         );
         assert_eq!(ids, [LocalId(1), LocalId(2), LocalId(3)]);
         let mut ids = Vec::new();
-        pattern_ids(&Pat::None, &mut ids);
+        pattern_ids(&Pat::Variant(0, Vec::new()), &mut ids);
         pattern_ids(&Pat::Range(0, 1), &mut ids);
         assert!(ids.is_empty());
     }

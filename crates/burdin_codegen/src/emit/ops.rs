@@ -42,8 +42,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     | Ty::Array(..)
                     | Ty::Struct(_)
                     | Ty::Enum(_)
-                    | Ty::Option(_)
-                    | Ty::Result(..)
                     | Ty::Range(..)
                     | Ty::Map(..)
                     | Ty::List(..)
@@ -76,8 +74,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     | Ty::Array(..)
                     | Ty::Struct(_)
                     | Ty::Enum(_)
-                    | Ty::Option(_)
-                    | Ty::Result(..)
                     | Ty::Str
                     | Ty::String
                     | Ty::Range(..)

@@ -190,6 +190,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         value: &'a tir::Expr,
         target: &Ty,
         type_id: usize,
+        ty: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let iface = any_iface(&value.ty);
         let v = self.expr_mode(value, Mode::Move)?;
@@ -232,7 +233,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
 
         self.builder.position_at_end(end);
-        Ok(Some(self.builder.build_load(opt_ty, out, "downcast").map_err(llvm_err)?))
+        self.finish_option(opt_ty, out, ty)
     }
 }
 

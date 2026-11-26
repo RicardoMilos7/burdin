@@ -114,9 +114,17 @@ pub fn generic_name(name: &str) -> String {
     out
 }
 
-/// Whether a function or type name is an instance of a generic.
+/// Whether a function or type name is an instance of a generic. The types of `std` that the language treats as its
+/// own (`Option`, `Result`, `Shared`) are written in `std` but were compiler built-ins, so they are not reported as
+/// generic instances: the reports keep to the generics a program or a library declares.
 pub fn is_instance(name: &str) -> bool {
-    name.contains('<')
+    name.contains('<') && !is_lang_type(name)
+}
+
+fn is_lang_type(name: &str) -> bool {
+    ["std.Option<", "std.Result<", "std.Shared<", "std.SharedCell<", "std.option.ext.Option<", "std.option.ext.Result<"]
+        .iter()
+        .any(|p| name.starts_with(p))
 }
 
 /// The ADT names a type mentions, in the order of their first appearance.
@@ -135,8 +143,6 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
         Ty::Ref { inner, .. }
         | Ty::Slice(inner)
         | Ty::Array(inner, _)
-        | Ty::Option(inner)
-        | Ty::Shared(inner)
         | Ty::CPtr(inner)
         | Ty::Range(inner, _)
         | Ty::ArrayIntoIter(inner, _)
@@ -148,7 +154,7 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
             adts_in(t, out);
             alloc(a, out);
         }
-        Ty::Result(a, b) | Ty::MapIter(a, b) | Ty::MapIterMut(a, b) => {
+        Ty::MapIter(a, b) | Ty::MapIterMut(a, b) => {
             adts_in(a, out);
             adts_in(b, out);
         }
@@ -220,6 +226,10 @@ pub fn build(program: &Program, sources: &SourceMap, is_std: &dyn Fn(FileId) -> 
                 break;
             }
             at = caller;
+        }
+        // A generic that only the language's own `std` types call (`mem.drop` in `Shared`'s drop) is part of them.
+        if required_by.last().is_some_and(|step| is_lang_type(&step.function)) {
+            continue;
         }
         let instance = FnInstance {
             name: f.name.clone(),

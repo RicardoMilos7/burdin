@@ -47,7 +47,6 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
-        | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
         K::Break { value, .. } => {
@@ -79,9 +78,6 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         | K::PtrDeref(inner)
         | K::DerefRef(inner)
         | K::Field(inner, _)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::ConstCond(inner) => v.expr(inner),
@@ -190,7 +186,6 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::Static(_)
         | K::Closure { .. }
         | K::Continue(_)
-        | K::None
         | K::Return(None)
         | K::LayoutOf { .. } => {}
         K::Break { value, .. } => {
@@ -222,9 +217,6 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::PtrDeref(inner)
         | K::DerefRef(inner)
         | K::Field(inner, _)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::ConstCond(inner) => v.expr(inner),
@@ -289,7 +281,6 @@ pub fn pat_locals(p: &Pat, out: &mut Vec<crate::LocalId>) {
             out.push(*id);
             pat_locals(inner, out);
         }
-        Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pat_locals(inner, out),
         Pat::Or(ps) | Pat::Product(ps) | Pat::Variant(_, ps) => ps.iter().for_each(|q| pat_locals(q, out)),
         Pat::Slice { prefix, rest, suffix } => {
             prefix.iter().for_each(|q| pat_locals(q, out));
@@ -298,7 +289,7 @@ pub fn pat_locals(p: &Pat, out: &mut Vec<crate::LocalId>) {
             }
             suffix.iter().for_each(|q| pat_locals(q, out));
         }
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
     }
 }
 
@@ -359,7 +350,7 @@ mod tests {
     #[test]
     fn a_match_binding_is_not_free() {
         let arm = Arm {
-            pat: Pat::Some(Box::new(Pat::Binding(LocalId(3), BindMode::Copy))),
+            pat: Pat::Variant(1, vec![Pat::Binding(LocalId(3), BindMode::Copy)]),
             guard: None,
             body: e(ExprKind::Local(LocalId(3))),
         };

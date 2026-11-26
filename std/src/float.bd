@@ -14,7 +14,7 @@
 
 use cmp.Ordering
 use fmt.{Debug, Display, Formatter}
-use std.Error
+use std.{CString, Error}
 use unicode.{is_ascii_digit, to_ascii_lowercase}
 
 /// What went wrong while parsing a float.

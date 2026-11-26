@@ -157,6 +157,8 @@ impl<'t> Sema<'t> {
                         subst: Vec::new(),
                         bounds: Vec::new(),
                         module,
+                        iface: Some((i, iface_seg)),
+                        template: None,
                     });
                 } else {
                     // An inherent impl has no interface to bind associated types for.
@@ -326,7 +328,7 @@ impl<'t> Sema<'t> {
     /// Resolves a generic interface's type arguments for an impl (`Type: Iterator<i32>`), checks their number and
     /// the interface's bounds on its parameters, and returns them. `env` holds the impl's `where` bounds.
     #[allow(clippy::too_many_arguments)]
-    fn resolve_iface_args(
+    pub(crate) fn resolve_iface_args(
         &self,
         iface: usize,
         seg: Option<&ast::PathSegment>,
@@ -377,7 +379,7 @@ impl<'t> Sema<'t> {
         g: usize,
         seg: &ast::PathSegment,
         kind: ImplKind,
-        iface_seg: Option<&ast::PathSegment>,
+        iface_seg: Option<&'t ast::PathSegment>,
         diags: &mut Diagnostics,
     ) {
         // The names the impl gives the type's arguments: every name in them that is not a type. `Stack<T>` has
@@ -520,6 +522,8 @@ impl<'t> Sema<'t> {
                     subst: subst.clone(),
                     bounds: assoc_bounds.clone(),
                     module,
+                    iface: Some((i, iface_seg)),
+                    template: Some(self.tpl.impls.len()),
                 });
                 args
             }
@@ -1081,6 +1085,20 @@ impl<'t> Sema<'t> {
         }
         let label = format!("{self_ty}.{}", decl.name.name);
         let id = self.push_method(self_ty, decl, module, scope, label, diags);
+        // A `std` type may write `clone(self): Self` by hand: it is then `Clone`, and the clone glue calls it. Only the
+        // standard library does this, for the types whose copy is not a field-by-field one (`Shared`, `CString`).
+        if has_self && decl.name.name == "clone" && decl.params.len() == 1 {
+            let pkg = &self.globals.packages[self.globals.package_of(module)];
+            let named = ["CString", "Shared", "List", "Map", "Heap"]
+                .iter()
+                .any(|n| self_ty.to_string().strip_prefix("std.").is_some_and(|s| s.split('<').next() == Some(n)));
+            if pkg.name == "std" && !pkg.is_root && named {
+                match key.0 {
+                    false => self.globals.structs[key.1].derives.clone_method = Some(id),
+                    true => self.globals.enums[key.1].derives.clone_method = Some(id),
+                }
+            }
+        }
         self.globals.methods.insert(method_key.clone(), id);
         self.globals.method_priv.insert(method_key.clone(), decl.is_priv);
         self.globals.method_spans.insert(method_key.clone(), decl.name.span);

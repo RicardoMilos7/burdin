@@ -193,6 +193,13 @@ impl Globals {
         let mut ok = true;
         let info = &self.generic_adts[template];
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
+        // A `std` container owns what it holds, so a view cannot be its element (E0120, `spec/memory-rules.md`, SC2).
+        let pkg = &self.packages[self.package_of(info.module)];
+        if pkg.name == "std" && !pkg.is_root && matches!(info.name.rsplit('.').next(), Some("Shared")) {
+            for arg in args.iter().take(1) {
+                crate::types::check_storable(arg, span, &format!("an element of a `{}`", info.name), diags);
+            }
+        }
         for ((pname, bounds), arg) in info.params.iter().zip(&info.bounds).zip(args) {
             if self.ty_has_param(arg) {
                 continue;
@@ -229,6 +236,50 @@ impl Globals {
         }
     }
 
+    /// `Option<t>`, the instance of `std`'s enum. `Ty::Error` while the instance is not allocated yet or `std` does
+    /// not declare one.
+    pub(crate) fn option_ty(&self, t: Ty) -> Ty {
+        match self.lang_option {
+            Some(template) => self.adt_instance_ty(template, vec![t]),
+            None => Ty::Error,
+        }
+    }
+
+    /// `Result<ok, err>`, the instance of `std`'s enum.
+    pub(crate) fn result_ty(&self, ok: Ty, err: Ty) -> Ty {
+        match self.lang_result {
+            Some(template) => self.adt_instance_ty(template, vec![ok, err]),
+            None => Ty::Error,
+        }
+    }
+
+    /// `Some(v)` of type `ty`, an `Option` instance: variant 1, field 0.
+    pub(crate) fn mk_some(v: tir::Expr, ty: Ty, span: Span) -> tir::Expr {
+        tir::Expr { kind: tir::ExprKind::Variant(1, vec![(0, v)]), ty, span }
+    }
+
+    /// `None` of type `ty`, an `Option` instance: variant 0.
+    pub(crate) fn mk_none(ty: Ty, span: Span) -> tir::Expr {
+        tir::Expr { kind: tir::ExprKind::Variant(0, Vec::new()), ty, span }
+    }
+
+    /// `Ok(v)` (variant 0) or `Err(v)` (variant 1) of type `ty`, a `Result` instance.
+    pub(crate) fn mk_result(ok: bool, v: tir::Expr, ty: Ty, span: Span) -> tir::Expr {
+        tir::Expr { kind: tir::ExprKind::Variant(usize::from(!ok), vec![(0, v)]), ty, span }
+    }
+
+    /// The payload of an `Option` instance.
+    pub(crate) fn option_payload(&self, ty: &Ty) -> Option<Ty> {
+        let (template, args) = self.origin_of(ty)?;
+        (Some(*template) == self.lang_option).then(|| args[0].clone())
+    }
+
+    /// The `Ok` and `Err` types of a `Result` instance.
+    pub(crate) fn result_parts(&self, ty: &Ty) -> Option<(Ty, Ty)> {
+        let (template, args) = self.origin_of(ty)?;
+        (Some(*template) == self.lang_result).then(|| (args[0].clone(), args[1].clone()))
+    }
+
     /// The generic type and arguments a struct or enum instance came from.
     pub(crate) fn origin_of(&self, ty: &Ty) -> Option<&(usize, Vec<Ty>)> {
         self.adt_origin.get(&adt_key(ty)?)
@@ -242,19 +293,15 @@ impl Globals {
             Ty::Projection { .. } | Ty::TryFromError { .. } => true,
             Ty::Const(v) => *v >= crate::consteval::SYM_CONST,
             Ty::Array(inner, n) => *n >= crate::consteval::SYM_LEN || self.ty_has_param(inner),
-            Ty::Ref { inner, .. }
-            | Ty::Slice(inner)
-            | Ty::Option(inner)
-            | Ty::CPtr(inner)
-            | Ty::Range(inner, _)
-            | Ty::Shared(inner) => self.ty_has_param(inner),
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::CPtr(inner) | Ty::Range(inner, _) => {
+                self.ty_has_param(inner)
+            }
             Ty::Heap(inner, alloc) => {
                 self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
             }
             Ty::List(inner, alloc) => {
                 self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
             }
-            Ty::Result(ok, err) => self.ty_has_param(ok) || self.ty_has_param(err),
             Ty::Map(k, v, alloc) | Ty::MapEntry(k, v, alloc) => {
                 self.ty_has_param(k)
                     || self.ty_has_param(v)
@@ -283,8 +330,6 @@ impl Globals {
             }
             (Ty::Ref { inner: p, .. }, Ty::Ref { inner: a, .. })
             | (Ty::Slice(p), Ty::Slice(a))
-            | (Ty::Option(p), Ty::Option(a))
-            | (Ty::Shared(p), Ty::Shared(a))
             | (Ty::CPtr(p), Ty::CPtr(a))
             | (Ty::Range(p, _), Ty::Range(a, _)) => self.unify(p, a, bindings),
             (Ty::Heap(p, pa), Ty::Heap(a, aa)) => {
@@ -298,10 +343,6 @@ impl Globals {
             (Ty::Array(p, pn), Ty::Array(a, an)) => {
                 self.unify(p, a, bindings);
                 self.unify_len(*pn, *an, bindings);
-            }
-            (Ty::Result(po, pe), Ty::Result(ao, ae)) => {
-                self.unify(po, ao, bindings);
-                self.unify(pe, ae, bindings);
             }
             (Ty::Map(pk, pv, pa), Ty::Map(ak, av, aa)) | (Ty::MapEntry(pk, pv, pa), Ty::MapEntry(ak, av, aa)) => {
                 self.unify(pk, ak, bindings);
@@ -369,13 +410,10 @@ impl Globals {
             },
             Ty::Array(t, n) => Ty::Array(go(t), *n),
             Ty::Const(v) if *v >= crate::consteval::SYM_CONST => self.subst_const(*v, env),
-            Ty::Option(t) => Ty::Option(go(t)),
-            Ty::Result(t, e) => Ty::Result(go(t), go(e)),
             Ty::List(t, a) => Ty::List(go(t), self.subst_alloc(a, env)),
             Ty::Map(k, v, a) => Ty::Map(go(k), go(v), self.subst_alloc(a, env)),
             Ty::MapEntry(k, v, a) => Ty::MapEntry(go(k), go(v), self.subst_alloc(a, env)),
             Ty::Heap(t, a) => Ty::Heap(go(t), self.subst_alloc(a, env)),
-            Ty::Shared(t) => Ty::Shared(go(t)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
             Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
             Ty::Fn { sig, kind, borrowed, send } => Ty::Fn {
@@ -594,6 +632,14 @@ impl Globals {
             let ret = ret.as_ref().map(|r| self.resolve_type_in(r, None, subst, module, diags)).unwrap_or(Ty::Unit);
             let sig = FnSig { params, ret: Box::new(ret) };
             let mut bounds = self.fn_bounds.borrow_mut();
+            // A signature that names an instance of a generic type that does not exist yet holds `Error`; it is
+            // resolved again once the instance does (`Sema::refresh_fn_bounds`), so it gets an entry of its own.
+            if format!("{sig:?}").contains("Error") {
+                bounds.push(sig);
+                let index = bounds.len() - 1;
+                self.fn_bound_srcs.borrow_mut().push((index, ty.clone(), subst.to_vec(), module));
+                return Some(Bound::Fn(index, ast_kind(*kind)));
+            }
             let index = bounds.iter().position(|b| *b == sig).unwrap_or_else(|| {
                 bounds.push(sig);
                 bounds.len() - 1
@@ -856,10 +902,7 @@ impl Globals {
             return self.try_from_int_error_ty.clone();
         }
         let block = self.conversions_into(to, "try_from").into_iter().find(|c| c.source == *source)?;
-        match &self.sigs[block.func.0].ret {
-            Ty::Result(_, err) => Some((**err).clone()),
-            _ => None,
-        }
+        self.result_parts(&self.sigs[block.func.0].ret).map(|(_, err)| err)
     }
 
     pub(crate) fn satisfies_with(&self, ty: &Ty, bound: &Bound, env: &Env, subst: &[(String, Ty)]) -> bool {
@@ -1106,9 +1149,8 @@ impl Globals {
             Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char | Ty::Str | Ty::String | Ty::Error | Ty::Never => true,
             Ty::Ref { inner, .. } => part(inner),
             Ty::Unit => debug,
-            Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
+            Ty::List(t, _) | Ty::Heap(t, _) => debug && part(t),
             Ty::Map(k, v, _) => debug && part(k) && part(v),
-            Ty::Result(t, e) => debug && part(t) && part(e),
             Ty::Tuple(ts) => debug && (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
             _ => false,
@@ -1126,10 +1168,6 @@ impl Globals {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Error | Ty::Never => true,
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Ord, env),
-            // `None < Some(_)`, and `Ok(_) < Err(_)`; two of a kind compare their payloads
-            // (`spec/stdlib.md`, "Interface coverage").
-            Ty::Option(t) => self.has_ord_in(t, env),
-            Ty::Result(t, e) => self.has_ord_in(t, env) && self.has_ord_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
@@ -1197,13 +1235,11 @@ impl Globals {
             // Text hashes its bytes (`spec/derives.md`, `Hash`).
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Hash, env),
-            Ty::Option(t) => self.has_hash_in(t, env),
             // A list hashes its elements in order and a map its entries in any order
             // (`spec/stdlib.md`, "Interface coverage").
             Ty::List(t, _) => self.has_hash_in(t, env),
             Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
             Ty::Range(t, _) => self.has_hash_in(t, env),
-            Ty::Result(t, e) => self.has_hash_in(t, env) && self.has_hash_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
             // A fixed-size array hashes its elements in order.
             Ty::Array(t, _) => self.has_hash_in(t, env),
@@ -1236,6 +1272,10 @@ impl Globals {
 
     /// Whether `Type.default()` applies.
     pub(crate) fn has_default(&self, ty: &Ty) -> bool {
+        // `Option<T>` defaults to `None`, whatever `T` is.
+        if self.option_payload(ty).is_some() {
+            return true;
+        }
         match ty {
             Ty::Unit
             | Ty::Bool
@@ -1244,7 +1284,6 @@ impl Globals {
             | Ty::Float(_)
             | Ty::Str
             | Ty::String
-            | Ty::Option(_)
             | Ty::Error
             | Ty::Never => true,
             // The default list is empty and belongs to the default allocator, like the default map.
@@ -1368,15 +1407,17 @@ mod tests {
         Ty::Bool
     }
 
-    fn opt(ty: Ty) -> Ty {
-        Ty::Option(Box::new(ty))
+    fn bindings(pat: &Ty, act: &Ty) -> Vec<(String, Ty)> {
+        bindings_in(&Globals::default(), pat, act)
     }
 
-    fn bindings(pat: &Ty, act: &Ty) -> Vec<(String, Ty)> {
+    fn bindings_in(g: &Globals, pat: &Ty, act: &Ty) -> Vec<(String, Ty)> {
         let mut out = Vec::new();
-        Globals::default().unify(pat, act, &mut out);
+        g.unify(pat, act, &mut out);
         out
     }
+
+    use crate::testutil::lang_globals;
 
     fn closure_ty(kind: FnKind, ret: Ty) -> Ty {
         Ty::Fn {
@@ -1416,11 +1457,12 @@ mod tests {
 
     #[test]
     fn binds_parameters_in_nested_positions() {
+        let mut g = lang_globals();
         let cases: Vec<Case> = vec![
-            (opt(param("T")), opt(i32_()), vec![("T".into(), i32_())]),
+            (g.test_option(param("T")), g.test_option(i32_()), vec![("T".into(), i32_())]),
             (
-                Ty::Result(Box::new(param("T")), Box::new(param("E"))),
-                Ty::Result(Box::new(i32_()), Box::new(bool_())),
+                g.test_result(param("T"), param("E")),
+                g.test_result(i32_(), bool_()),
                 vec![("T".into(), i32_()), ("E".into(), bool_())],
             ),
             (
@@ -1453,7 +1495,7 @@ mod tests {
             ),
         ];
         for (pat, act, want) in cases {
-            assert_eq!(bindings(&pat, &act), want, "unifying {pat} with {act}");
+            assert_eq!(bindings_in(&g, &pat, &act), want, "unifying {pat} with {act}");
         }
     }
 
@@ -1468,19 +1510,25 @@ mod tests {
 
     #[test]
     fn error_and_never_actuals_bind_nothing() {
+        let mut g = lang_globals();
+        let pattern = g.test_option(param("T"));
         for actual in [Ty::Error, Ty::Never] {
             let mut out = Vec::new();
-            Globals::default().unify(&param("T"), &actual, &mut out);
+            g.unify(&param("T"), &actual, &mut out);
             assert!(out.is_empty(), "{actual}");
+            // `Option<Error>` is `Error`, and `Option<!>` is an instance whose argument binds nothing.
+            let wrapped = g.test_option(actual);
             let mut out = Vec::new();
-            Globals::default().unify(&opt(param("T")), &opt(actual), &mut out);
+            g.unify(&pattern, &wrapped, &mut out);
             assert!(out.is_empty());
         }
     }
 
     #[test]
     fn mismatched_shapes_bind_nothing() {
-        assert!(bindings(&opt(param("T")), &Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global)).is_empty());
+        let mut g = lang_globals();
+        let option = g.test_option(param("T"));
+        assert!(bindings_in(&g, &option, &Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global)).is_empty());
         assert!(bindings(&Ty::Tuple(vec![param("T")]), &Ty::Tuple(vec![i32_(), bool_()])).is_empty());
         assert!(
             bindings(
@@ -1520,20 +1568,22 @@ mod tests {
 
     #[test]
     fn subst_replaces_parameters_deeply() {
-        let g = Globals::default();
+        let mut g = lang_globals();
         let env = vec![("T".to_string(), i32_()), ("E".to_string(), bool_())];
+        let result_pattern = g.test_result(param("T"), param("E"));
+        let result_actual = g.test_result(i32_(), bool_());
         assert_eq!(g.subst_ty(&param("T"), &env), i32_());
         // A parameter that is not in the environment stays as it is.
         assert_eq!(g.subst_ty(&param("U"), &env), param("U"));
         let ty = Ty::Tuple(vec![
             param("T"),
-            Ty::Result(Box::new(param("T")), Box::new(param("E"))),
+            result_pattern,
             Ty::Map(Box::new(param("E")), Box::new(param("T")), burdin_tir::Alloc::Global),
             Ty::Ref { mutable: false, inner: Box::new(param("T")) },
         ]);
         let want = Ty::Tuple(vec![
             i32_(),
-            Ty::Result(Box::new(i32_()), Box::new(bool_())),
+            result_actual,
             Ty::Map(Box::new(bool_()), Box::new(i32_()), burdin_tir::Alloc::Global),
             Ty::Ref { mutable: false, inner: Box::new(i32_()) },
         ]);
@@ -1542,11 +1592,13 @@ mod tests {
 
     #[test]
     fn ty_has_param_sees_through_constructors() {
-        let mut g = Globals::default();
+        let mut g = lang_globals();
+        let option_t = g.test_option(param("T"));
+        let option_i32 = g.test_option(i32_());
         assert!(g.ty_has_param(&param("T")));
-        assert!(g.ty_has_param(&opt(param("T"))));
+        assert!(g.ty_has_param(&option_t));
         assert!(g.ty_has_param(&Ty::Tuple(vec![i32_(), Ty::List(Box::new(param("T")), burdin_tir::Alloc::Global)])));
-        assert!(!g.ty_has_param(&opt(i32_())));
+        assert!(!g.ty_has_param(&option_i32));
         assert!(!g.ty_has_param(&Ty::Str));
 
         let instance = Ty::Struct(AdtRef { id: 0, name: Rc::from("Box<T>"), second_class: false });
@@ -1602,7 +1654,7 @@ mod tests {
 
     #[test]
     fn interface_queries_cover_std_types() {
-        let g = Globals::default();
+        let mut g = lang_globals();
         let list = Ty::List(Box::new(i32_()), burdin_tir::Alloc::Global);
         let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), burdin_tir::Alloc::Global);
         let floats = Ty::List(Box::new(Ty::Float(burdin_tir::FloatTy::F64)), burdin_tir::Alloc::Global);
@@ -1622,8 +1674,10 @@ mod tests {
         assert!(!g.has_default(&stored), "a stored allocator has no default");
 
         // `Ord` covers `Option` and `Result` (issue #716).
-        assert!(g.has_ord(&opt(i32_())));
-        assert!(g.has_ord(&Ty::Result(Box::new(i32_()), Box::new(i32_()))));
+        let option = g.test_option(i32_());
+        let result = g.test_result(i32_(), i32_());
+        assert!(g.has_ord(&option));
+        assert!(g.has_ord(&result));
         assert!(!g.has_ord(&list), "a list has no Ord");
     }
 
@@ -1672,7 +1726,7 @@ mod tests {
 
     #[test]
     fn satisfies_reads_the_bounds_of_a_type_parameter() {
-        let g = Globals::default();
+        let mut g = lang_globals();
         let env: &[(String, Vec<Bound>)] = &[("T".to_string(), vec![Bound::Ord])];
         assert!(g.satisfies(&param("T"), &Bound::Ord, env));
         assert!(g.satisfies(&param("T"), &Bound::Eq, env), "Ord implies Eq");
@@ -1681,7 +1735,8 @@ mod tests {
 
         // Concrete types answer from their own rules; `Error` and `Never` satisfy everything.
         assert!(g.satisfies(&i32_(), &Bound::Copy, &[]));
-        assert!(g.satisfies(&opt(i32_()), &Bound::Hash, &[]));
+        let option = g.test_option(i32_());
+        assert!(g.satisfies(&option, &Bound::Hash, &[]));
         assert!(!g.satisfies(&Ty::String, &Bound::Copy, &[]));
         assert!(g.satisfies(&Ty::Error, &Bound::Hash, &[]));
         assert!(g.satisfies(&Ty::Never, &Bound::Copy, &[]));

@@ -415,12 +415,6 @@ pub enum ExprKind {
     Struct(Vec<(usize, Expr)>),
     /// A variant of this expression's enum type, with field indices and values in source order.
     Variant(usize, Vec<(usize, Expr)>),
-    Some(Box<Expr>),
-    None,
-    /// `Ok(value)` of a `Result<T, E>`.
-    Ok(Box<Expr>),
-    /// `Err(value)` of a `Result<T, E>`.
-    Err(Box<Expr>),
     /// Field `n` of a struct or tuple.
     Field(Box<Expr>, usize),
     /// The condition of an `if` that is a compile-time condition (`spec/const-eval.md`, CE4): evaluated while
@@ -461,12 +455,6 @@ pub enum Pat {
     /// An inclusive range of integers or characters (as their code points).
     Range(i128, i128),
     Or(Vec<Pat>),
-    Some(Box<Pat>),
-    None,
-    /// `Ok(pattern)` of a `Result`.
-    Ok(Box<Pat>),
-    /// `Err(pattern)` of a `Result`.
-    Err(Box<Pat>),
     /// A tuple or struct: one pattern per field, in declaration order.
     Product(Vec<Pat>),
     /// A variant of an enum: its index and one pattern per field, in declaration order.

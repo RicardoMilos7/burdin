@@ -9,7 +9,7 @@
 
     * a `Map` buffer holds `cap` (a power of two) slots of `(key, value, u64 hash)`; a zero hash is an empty slot,
       and there are no tombstones;
-    * a `Shared` cell is `{ count: usize, value }` and the `Shared<T>` value points at it;
+    * a `Shared` cell is `{ strong: usize, value }` and the `Shared<T>` value points at it;
     * an `any I` box is `{ data, vtable }`, and the vtable is
       `{ i64 type_id, ptr drop, ptr name, usize name_len, ptr method_0, ... }`.
 
@@ -57,18 +57,18 @@
     </Expand>
   </Type>
   <Type Name="Option&lt;*&gt;">
-    <DisplayString Condition="is_some">Some({value})</DisplayString>
-    <DisplayString Condition="!is_some">None</DisplayString>
+    <DisplayString Condition="tag == 1">Some({payload.Some})</DisplayString>
+    <DisplayString Condition="tag != 1">None</DisplayString>
     <Expand>
-      <Item Condition="is_some" Name="[value]">value</Item>
+      <Item Condition="tag == 1" Name="[value]">payload.Some</Item>
     </Expand>
   </Type>
   <Type Name="Result&lt;*&gt;">
-    <DisplayString Condition="is_ok">Ok({ok})</DisplayString>
-    <DisplayString Condition="!is_ok">Err({err})</DisplayString>
+    <DisplayString Condition="tag == 0">Ok({payload.Ok})</DisplayString>
+    <DisplayString Condition="tag != 0">Err({payload.Err})</DisplayString>
     <Expand>
-      <Item Condition="is_ok" Name="[ok]">ok</Item>
-      <Item Condition="!is_ok" Name="[err]">err</Item>
+      <Item Condition="tag == 0" Name="[ok]">payload.Ok</Item>
+      <Item Condition="tag != 0" Name="[err]">payload.Err</Item>
     </Expand>
   </Type>
   <Type Name="Heap&lt;*&gt;">
@@ -80,9 +80,9 @@
   </Type>
   <Type Name="Shared&lt;*&gt;">
     <DisplayString Condition="cell == 0">Shared(null)</DisplayString>
-    <DisplayString>Shared({cell-&gt;value}) (strong {cell-&gt;count})</DisplayString>
+    <DisplayString>Shared({cell-&gt;value}) (strong {cell-&gt;strong})</DisplayString>
     <Expand>
-      <Item Condition="cell != 0" Name="[strong count]">cell-&gt;count</Item>
+      <Item Condition="cell != 0" Name="[strong count]">cell-&gt;strong</Item>
       <Item Condition="cell != 0" Name="[value]">cell-&gt;value</Item>
     </Expand>
   </Type>

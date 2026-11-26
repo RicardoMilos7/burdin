@@ -180,7 +180,7 @@ impl Walker<'_> {
                     let s = &self.program.structs[a.id];
                     (&s.derives, s.fields.iter().map(|f| &f.ty).collect())
                 };
-                self.out.extend([derives.eq_method, derives.lt_method].into_iter().flatten());
+                self.out.extend([derives.eq_method, derives.lt_method, derives.clone_method].into_iter().flatten());
                 for f in fields {
                     self.note_ty(f);
                 }
@@ -188,12 +188,10 @@ impl Walker<'_> {
             Ty::Ref { inner: t, .. }
             | Ty::Slice(t)
             | Ty::Array(t, _)
-            | Ty::Option(t)
             | Ty::List(t, _)
             | Ty::Heap(t, _)
-            | Ty::Shared(t)
             | Ty::Range(t, _) => self.note_ty(t),
-            Ty::Result(a, b) | Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
+            Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
                 self.note_ty(a);
                 self.note_ty(b);
             }
@@ -278,10 +276,7 @@ impl Walker<'_> {
             | K::Deref(inner)
             | K::PtrDeref(inner)
             | K::DerefRef(inner)
-            | K::Field(inner, _)
-            | K::Some(inner)
-            | K::Ok(inner)
-            | K::Err(inner) => self.expr(inner),
+            | K::Field(inner, _) => self.expr(inner),
             K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
                 self.expr(a);
                 self.expr(b);
@@ -314,7 +309,6 @@ impl Walker<'_> {
             | K::Const(_)
             | K::Static(_)
             | K::Continue(_)
-            | K::None
             | K::Return(None)
             | K::LayoutOf { .. } => {}
             K::Break { value, .. } => {

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 /// The most functions and types a program may have, instances included. It stops a generic that instantiates
 /// itself with ever larger types.
-const MAX_ITEMS: usize = 4000;
+const MAX_ITEMS: usize = 6000;
 
 impl<'t> Sema<'t> {
     /// Makes the struct or enum for a generic type and these arguments, and registers the methods of its impl blocks.
@@ -42,6 +42,13 @@ impl<'t> Sema<'t> {
                 variants: Vec::new(),
                 derives: tir::Derives::default(),
                 drop_method: None,
+                lang: if Some(template) == self.globals.lang_option {
+                    Some(tir::LangItem::Option)
+                } else if Some(template) == self.globals.lang_result {
+                    Some(tir::LangItem::Result)
+                } else {
+                    None
+                },
             });
             let r = adt_ref(id);
             self.globals.enum_refs.push(r.clone());

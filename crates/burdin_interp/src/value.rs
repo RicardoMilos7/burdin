@@ -29,8 +29,6 @@ pub enum Value {
     List(Vec<Value>),
     /// A `Map`, in insertion order (`spec/const-eval.md`, CE6).
     Map(Vec<(Value, Value)>),
-    Opt(Option<Box<Value>>),
-    Res(Result<Box<Value>, Box<Value>>),
     Heap(Box<Value>),
     /// `&mut T`, or a shared reference that had to keep its place.
     Ref(Place),
@@ -74,13 +72,36 @@ pub enum Step {
     Index(usize),
     /// The pointee of a `Heap`, or the value in an `any` box.
     Deref,
-    /// The payload of `Some`, `Ok`, or `Err`.
-    Payload,
     /// Entry `n` of a closure's capture record.
     Env(usize),
 }
 
 impl Value {
+    /// `Option.Some(v)`: variant 1 of std's `Option`.
+    pub fn some(v: Value) -> Value {
+        Value::Variant(1, vec![v])
+    }
+
+    /// `Option.None`: variant 0.
+    pub fn none() -> Value {
+        Value::Variant(0, Vec::new())
+    }
+
+    /// An `Option` from a Rust `Option`.
+    pub fn opt(v: Option<Value>) -> Value {
+        v.map_or_else(Value::none, Value::some)
+    }
+
+    /// `Result.Ok(v)`: variant 0 of std's `Result`.
+    pub fn ok(v: Value) -> Value {
+        Value::Variant(0, vec![v])
+    }
+
+    /// `Result.Err(v)`: variant 1.
+    pub fn err(v: Value) -> Value {
+        Value::Variant(1, vec![v])
+    }
+
     pub fn str(s: &str) -> Value {
         Value::Str(Rc::from(s.as_bytes()))
     }

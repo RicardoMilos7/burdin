@@ -27,7 +27,7 @@ impl FnCx<'_> {
         let recv_ty = recv.ty.clone();
         // A method of the receiver type's own table wins over an `Iterator` default of the same name
         // (`spec/extensions.md`, EX3): `[T].last()` and `[T].to_list()` are the slice's own methods.
-        if crate::builtins::method(&name.name, &recv_ty).is_some() {
+        if crate::builtins::method(self.globals, &name.name, &recv_ty).is_some() {
             return None;
         }
         let builtin_item = self.globals.builtin_iterator_item(&recv_ty, &self.bounds);
@@ -42,7 +42,7 @@ impl FnCx<'_> {
                     format!("`next` changes its receiver, but `{whose}` is not mutable"),
                 );
             }
-            return Some(mk(tir::ExprKind::Method(Method::IterNext, vec![recv]), Ty::Option(Box::new(item)), span));
+            return Some(mk(tir::ExprKind::Method(Method::IterNext, vec![recv]), self.globals.option_ty(item), span));
         }
         if name.name == "next_back" && args.is_empty() {
             let item = self.globals.builtin_double_ended_item(&recv_ty, &self.bounds)?;
@@ -55,7 +55,11 @@ impl FnCx<'_> {
                     format!("`next_back` changes its receiver, but `{whose}` is not mutable"),
                 );
             }
-            return Some(mk(tir::ExprKind::Method(Method::IterNextBack, vec![recv]), Ty::Option(Box::new(item)), span));
+            return Some(mk(
+                tir::ExprKind::Method(Method::IterNextBack, vec![recv]),
+                self.globals.option_ty(item),
+                span,
+            ));
         }
         if (name.name == "sum" || name.name == "product")
             && args.is_empty()
@@ -158,7 +162,7 @@ impl FnCx<'_> {
         while let Ty::Ref { inner, .. } = base {
             base = inner;
         }
-        if matches!(base, Ty::Any(_) | Ty::Error) || crate::builtins::method(name, base).is_some() {
+        if matches!(base, Ty::Any(_) | Ty::Error) || crate::builtins::method(self.globals, name, base).is_some() {
             return false;
         }
         if adt_key(base).is_some_and(|key| self.globals.methods.contains_key(&(key, name.to_string()))) {
@@ -187,8 +191,8 @@ impl FnCx<'_> {
             (Ty::List(..), true) => "list_from",
             (Ty::Map(..), false) => "map_from_iter",
             (Ty::Map(..), true) => "map_from",
-            (Ty::Option(_), false) => "option_from_iter",
-            (Ty::Result(..), false) => "result_from_iter",
+            (t, false) if self.globals.option_payload(t).is_some() => "option_from_iter",
+            (t, false) if self.globals.result_parts(t).is_some() => "result_from_iter",
             (Ty::String, false) => "",
             _ => return None,
         };
@@ -362,9 +366,9 @@ impl FnCx<'_> {
             span,
         );
         let arms = vec![
-            tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(x, mode))), guard: None, body },
+            tir::Arm { pat: Pat::Variant(1, vec![Pat::Binding(x, mode)]), guard: None, body },
             tir::Arm {
-                pat: Pat::None,
+                pat: Pat::Variant(0, Vec::new()),
                 guard: None,
                 body: mk(tir::ExprKind::Break { label: None, value: None }, Ty::Never, span),
             },
@@ -401,7 +405,7 @@ impl FnCx<'_> {
     /// `it.next()` for an iterator value: the built-in method, the user's `next`, or a symbolic call when the
     /// receiver is a type parameter.
     pub(super) fn iterator_next_call(&mut self, it: tir::Expr, item: &Ty, span: Span) -> tir::Expr {
-        let ret = Ty::Option(Box::new(item.clone()));
+        let ret = self.globals.option_ty(item.clone());
         if self.globals.builtin_iterator_item(&it.ty, &self.bounds).is_some() && adt_key(&it.ty).is_none() {
             return mk(tir::ExprKind::Method(Method::IterNext, vec![it]), ret, span);
         }
@@ -451,12 +455,12 @@ impl FnCx<'_> {
         let next = self.iterator_next_call(mk(tir::ExprKind::Local(it), iter_ty.clone(), span), &item, span);
         let arms = vec![
             tir::Arm {
-                pat: Pat::Some(Box::new(pat)),
+                pat: Pat::Variant(1, vec![pat]),
                 guard: None,
                 body: mk(tir::ExprKind::Block(body), Ty::Unit, span),
             },
             tir::Arm {
-                pat: Pat::None,
+                pat: Pat::Variant(0, Vec::new()),
                 guard: None,
                 body: mk(tir::ExprKind::Break { label: None, value: None }, Ty::Never, span),
             },

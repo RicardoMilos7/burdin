@@ -8,6 +8,18 @@ close-out checklist in `AGENTS.md`).
 
 - Issue #1017 (decision step): which compiler-known types move into `std`. `spec/stdlib.md`, "Compiler-known types", lists every `Ty` variant as stays, moves, or blocked, with the reason and the issue, and records the size of the three `builtins.rs` tables before the work. The moves are #1073 (lang-item registry and intrinsic markers), #1074 (structs that hold views), #1075 (owning and range iterators), #1076 (`Option` and `Result`), and #1077 (`List`, `Map`, `Heap`, `Shared`, `CString`, and deleting the LSP method table). `tests/check_docs.py` fails when a `Ty` variant has no row. The compiler's built-in functions, types, and methods are declared once, without bodies, in `std/src/builtins.bd` (a function or extension method may omit its body; in a program that is E0001), and the language server reads that file instead of the hand-written table in `crates/burdin_lsp/src/builtins.rs`. The types themselves still live in the compiler.
 
+- Issue #1017 (`Option` and `Result`): `Ty::Option` and `Ty::Result` are gone. `enum Option<T>` and
+  `enum Result<T, E = AnyError>` are ordinary enums in `std/src/std.bd`, and `unwrap`, `expect`, `is_some`, `is_none`,
+  `is_ok`, and `is_err` are written in Burdin in `std/src/option.bd` with `panic` (a panic location now points into
+  `std`). The compiler finds the two enums by name (`Globals::lang_option`, `lang_result`, `EnumDef::lang`) for `?`,
+  `orelse`, `context`, the built-ins that return them, `Option<T>: Default`, and exhaustiveness. The checker, the
+  interpreter, and the code generator read them as enums: `Value::Variant`, one tag word, and `results.rs` is deleted.
+  Instances of a generic type that a signature, a `Fn(...)` bound, or an interface argument names are now resolved
+  again once they exist, so a bound like `F: FnOnce(T): Option<U>` infers `U`. A `Result<(), E>` and an enum whose
+  variants carry only values with no layout keep a payload slot, so a pattern on them has an address to read.
+
+- Issue #1017 (`CString`): `Ty::CString` and `Builtin::CStringFrom` are gone. `struct CString` is an ordinary `std` struct over `__alloc`/`__dealloc` with `from`, `as_ptr`, `clone`, and `Drop` written in Burdin; the runtime's `cstring_from` and `cstring_clone` helpers are deleted.
+- Issue #1017 (`Shared`): `Ty::Shared` and the `Shared` built-ins are gone. `struct Shared<T>` is an ordinary `std` struct over a heap `SharedCell<T>` with atomic counting (`__atomic_add_u64`, `__atomic_sub_u64`), written in Burdin, with `Send`/`Sync` where `T: Send + Sync`. New unsafe intrinsics `__read` and `__write` move a value out of, and store one into, raw memory without dropping. A `std` type may define `clone` by hand (`Derives.clone_method`), and the interpreter models `Shared` natively so `const` evaluation still works.
 - Issue #1018: the standard library's helpers have plain names. The `__` prefix is gone from the 385 helpers in
   `std/src`, which are package-private (`priv`): `__split` is `split_text`, `__f64_parse` is `f64_parse`,
   `__serialize_i8` is `serialize_value_i8`, and the compiler's name maps follow (`u32.from_le_bytes`, `f64.PI`, the

@@ -108,8 +108,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         args: &'a [burdin_tir::Expr],
         ty: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Ty::Option(item) = ty else { return Err("an iterator's `next` returns an `Option`".into()) };
-        let item = item.as_ref().clone();
+        let Some(item) = self.option_payload_ty(ty) else {
+            return Err("an iterator's `next` returns an `Option`".into());
+        };
+        let item = &item;
+        let item = item.clone();
         let recv_ty = args[0].ty.clone();
         match &recv_ty {
             Ty::Slice(elem) => {
@@ -161,8 +164,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         args: &'a [burdin_tir::Expr],
         ty: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Ty::Option(item) = ty else { return Err("an iterator's `next_back` returns an `Option`".into()) };
-        let item = item.as_ref().clone();
+        let Some(item) = self.option_payload_ty(ty) else {
+            return Err("an iterator's `next_back` returns an `Option`".into());
+        };
+        let item = &item;
+        let item = item.clone();
         let recv_ty = args[0].ty.clone();
         match &recv_ty {
             Ty::Slice(elem) => {
@@ -178,19 +184,22 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// The `Option<Item>` slot a `next` implementation fills in its branches.
-    fn option_slot(&mut self, ty: &Ty, name: &str) -> GenResult<Option<PointerValue<'ctx>>> {
-        Ok(match self.llvm_ty(ty) {
-            Some(t) => Some(self.alloca(t, name)?),
-            None => None,
-        })
+    /// The scratch slot (`option_ty`) a `next` implementation fills in its branches; `load_option` converts it.
+    pub(super) fn option_slot(&mut self, ty: &Ty, name: &str) -> GenResult<Option<PointerValue<'ctx>>> {
+        let inner = self.option_payload_ty(ty).ok_or("an iterator's `next` returns an `Option`")?;
+        let scratch = self.option_ty(&inner);
+        Ok(Some(self.alloca(scratch.into(), name)?))
     }
 
-    fn load_option(&mut self, slot: Option<PointerValue<'ctx>>, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        match (slot, self.llvm_ty(ty)) {
-            (Some(slot), Some(t)) => Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?)),
-            _ => Ok(None),
-        }
+    pub(super) fn load_option(
+        &mut self,
+        slot: Option<PointerValue<'ctx>>,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(slot) = slot else { return Ok(None) };
+        let inner = self.option_payload_ty(ty).ok_or("an iterator's `next` returns an `Option`")?;
+        let scratch = self.option_ty(&inner);
+        self.finish_option(scratch, slot, ty)
     }
 
     /// `[T].next()`: yields the first element (a copy for a `Copy` element, a view otherwise) and advances.
@@ -840,8 +849,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let size = self.builder.build_load(self.usize_ty, size_field, "").map_err(llvm_err)?.into_int_value();
         let index_ptr = self.builder.build_struct_gep(tt, slot, 3, "windows.index").map_err(llvm_err)?;
         let index = self.builder.build_load(self.usize_ty, index_ptr, "").map_err(llvm_err)?.into_int_value();
-        let Ty::Option(item) = ty else { return Err("an iterator's `next` returns an `Option`".into()) };
-        let item = item.as_ref().clone();
+        let Some(item) = self.option_payload_ty(ty) else {
+            return Err("an iterator's `next` returns an `Option`".into());
+        };
+        let item = &item;
+        let item = item.clone();
         let out = self.option_slot(ty, "windows.out")?;
         // `index` never passes `len`: a chunk advances by what it yielded, and a window stops before the end.
         let remaining = self.builder.build_int_sub(len, index, "").map_err(llvm_err)?;

@@ -39,8 +39,10 @@ impl FnCx<'_> {
             }
             Pat::Wild
         };
+        let option_inner = self.globals.option_payload(ty);
+        let result_inner = self.globals.result_parts(ty);
         if let Some(path) = inferred_path(&p.kind)
-            && !matches!(ty, Ty::Enum(_) | Ty::Option(_) | Ty::Result(..) | Ty::Error)
+            && !matches!(ty, Ty::Enum(_) | Ty::Error)
         {
             self.diags.error(
                 Code::TYPE_MISMATCH,
@@ -109,12 +111,15 @@ impl FnCx<'_> {
                 Pat::Wild
             }
             P::Path(path) if self.prelude_variant(path, ty) == Some("None") => match ty {
-                Ty::Option(_) | Ty::Error => Pat::None,
+                _ if option_inner.is_some() => Pat::Variant(0, Vec::new()),
+                Ty::Error => Pat::Variant(0, Vec::new()),
                 _ => pat_mismatch(self, "`Option.None`"),
             },
             P::TupleStruct(path, elems) if self.prelude_variant(path, ty) == Some("Some") => match ty {
-                Ty::Option(inner) => match self.rest_positions(elems, 1) {
-                    Some(positions) => Pat::Some(Box::new(self.sub_pattern(positions[0], inner, owned))),
+                _ if option_inner.is_some() => match self.rest_positions(elems, 1) {
+                    Some(positions) => {
+                        Pat::Variant(1, vec![self.sub_pattern(positions[0], option_inner.as_ref().unwrap(), owned)])
+                    }
                     None => {
                         self.diags.error(Code::ARG_COUNT, p.span, "`Some` takes one pattern");
                         Pat::Wild
@@ -131,11 +136,12 @@ impl FnCx<'_> {
             P::TupleStruct(path, elems) if matches!(self.prelude_variant(path, ty), Some("Ok" | "Err")) => {
                 let ok = self.prelude_variant(path, ty) == Some("Ok");
                 match ty {
-                    Ty::Result(t, e) => match self.rest_positions(elems, 1) {
+                    _ if result_inner.is_some() => match self.rest_positions(elems, 1) {
                         Some(positions) => {
-                            let payload = if ok { (**t).clone() } else { (**e).clone() };
+                            let (t, e) = result_inner.clone().unwrap();
+                            let payload = if ok { t } else { e };
                             let inner = self.sub_pattern(positions[0], &payload, owned);
-                            if ok { Pat::Ok(Box::new(inner)) } else { Pat::Err(Box::new(inner)) }
+                            Pat::Variant(usize::from(!ok), vec![inner])
                         }
                         None => {
                             let name = if ok { "Ok" } else { "Err" };
@@ -472,10 +478,12 @@ impl FnCx<'_> {
     pub(super) fn prelude_variant<'a>(&self, path: &'a [ast::Ident], ty: &Ty) -> Option<&'a str> {
         let [head, variant] = path else { return None };
         let owner = if head.is_inferred() {
-            match ty {
-                Ty::Option(_) => "Option",
-                Ty::Result(..) => "Result",
-                _ => return None,
+            if self.globals.option_payload(ty).is_some() {
+                "Option"
+            } else if self.globals.result_parts(ty).is_some() {
+                "Result"
+            } else {
+                return None;
             }
         } else if (head.name == "Option" || head.name == "Result") && self.is_prelude_type(&head.name) {
             head.name.as_str()

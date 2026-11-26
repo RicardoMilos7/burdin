@@ -355,7 +355,6 @@ impl<'a> Checker<'a> {
             | K::Bytes(_)
             | K::Const(_)
             | K::Static(_)
-            | K::None
             | K::Continue(_)
             | K::LayoutOf { .. } => {}
             K::Break { value, .. } => {
@@ -425,7 +424,7 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
                 // `with_capacity_in(n, alloc)` stores the allocator value.
                 tir::Builtin::ListWithCapacityIn | tir::Builtin::ListTryWithCapacityIn => {
@@ -449,6 +448,10 @@ impl<'a> Checker<'a> {
                     self.add_exclusive_access(&args[1]);
                     self.access_place(&args[0], Access::BorrowMut);
                     self.access_place(&args[1], Access::BorrowMut);
+                }
+                tir::Builtin::RawWrite => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
                 }
                 tir::Builtin::Replace => {
                     self.add_exclusive_access(&args[0]);
@@ -678,7 +681,6 @@ impl<'a> Checker<'a> {
                     self.expr(v, Mode::Move);
                 }
             }
-            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.expr(inner, Mode::Move),
         }
     }
 
@@ -788,7 +790,7 @@ enum Mode {
 /// second-class type (which are copies of a reference).
 fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
         Pat::Binding(id, mode) => {
             if *mode == BindMode::View || locals[id.0].ty.is_second_class() {
                 out.push(*id);
@@ -805,8 +807,6 @@ fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
                 view_bindings(first, locals, out);
             }
         }
-        Pat::Some(inner) => view_bindings(inner, locals, out),
-        Pat::Ok(inner) | Pat::Err(inner) => view_bindings(inner, locals, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => {
             for sub in subs {
                 view_bindings(sub, locals, out);
@@ -834,7 +834,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
@@ -860,9 +859,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(hi, out);
         }
         K::StringAsStr(inner)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::BoxAny { value: inner, .. }
@@ -973,7 +969,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
@@ -999,9 +994,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(hi, stmt, last);
         }
         K::StringAsStr(inner)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::BoxAny { value: inner, .. }

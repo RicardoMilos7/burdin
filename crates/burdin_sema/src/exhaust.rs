@@ -45,10 +45,6 @@ fn lower(p: &Pat) -> P {
         Pat::Str(s) => P::Ctor(Ctor::Str(s.clone()), Vec::new()),
         Pat::Range(lo, hi) => P::Ctor(Ctor::Range(*lo, *hi), Vec::new()),
         Pat::Or(alts) => P::Or(alts.iter().map(lower).collect()),
-        Pat::None => P::Ctor(Ctor::Variant(0), Vec::new()),
-        Pat::Some(inner) => P::Ctor(Ctor::Variant(1), vec![lower(inner)]),
-        Pat::Ok(inner) => P::Ctor(Ctor::Variant(0), vec![lower(inner)]),
-        Pat::Err(inner) => P::Ctor(Ctor::Variant(1), vec![lower(inner)]),
         Pat::Product(fields) => P::Ctor(Ctor::Single, fields.iter().map(lower).collect()),
         Pat::Variant(i, fields) => P::Ctor(Ctor::Variant(*i), fields.iter().map(lower).collect()),
         Pat::Slice { prefix, rest, suffix } => P::Seq {
@@ -132,7 +128,6 @@ fn finite_ctors(ty: &Ty, adts: &TypeDefs) -> Option<Vec<Ctor>> {
         Ty::Unit | Ty::Tuple(_) | Ty::Struct(_) => Some(vec![Ctor::Single]),
         Ty::Never | Ty::Error => Some(Vec::new()),
         Ty::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
-        Ty::Option(_) | Ty::Result(..) => Some(vec![Ctor::Variant(0), Ctor::Variant(1)]),
         Ty::Enum(a) => Some((0..adts.enums[a.id].variants.len()).map(Ctor::Variant).collect()),
         _ => None,
     }
@@ -148,10 +143,6 @@ fn pattern_name(name: &str) -> &str {
 fn apply(ty: &Ty, c: &Ctor, args: &[String], adts: &TypeDefs) -> String {
     match (ty, c) {
         (Ty::Bool, Ctor::Bool(b)) => b.to_string(),
-        (Ty::Option(_), Ctor::Variant(0)) => "Option.None".to_string(),
-        (Ty::Option(_), Ctor::Variant(_)) => format!("Option.Some({})", args[0]),
-        (Ty::Result(..), Ctor::Variant(0)) => format!("Result.Ok({})", args[0]),
-        (Ty::Result(..), Ctor::Variant(_)) => format!("Result.Err({})", args[0]),
         (Ty::Tuple(_), Ctor::Single) => format!("({})", args.join(", ")),
         (Ty::Unit, Ctor::Single) => "()".to_string(),
         (Ty::Struct(a), Ctor::Single) => {
@@ -306,9 +297,6 @@ fn specialize(rows: &[Vec<P>], c: Ctor, arity: usize) -> Vec<Vec<P>> {
 /// The types of the fields of constructor `c` of `ty`.
 fn sub_tys(ty: &Ty, c: Ctor, adts: &TypeDefs) -> Vec<Ty> {
     match (ty, c) {
-        (Ty::Option(inner), Ctor::Variant(1)) => vec![(**inner).clone()],
-        (Ty::Result(ok, _), Ctor::Variant(0)) => vec![(**ok).clone()],
-        (Ty::Result(_, err), Ctor::Variant(1)) => vec![(**err).clone()],
         (Ty::Tuple(elems), Ctor::Single) => elems.clone(),
         (Ty::Struct(a), Ctor::Single) => adts.structs[a.id].fields.iter().map(|f| f.ty.clone()).collect(),
         (Ty::Array(t, _) | Ty::Slice(t), Ctor::Slice(len)) => vec![(**t).clone(); len],
@@ -327,12 +315,6 @@ fn complete_ctors(ty: &Ty, heads: &[Ctor], adts: &TypeDefs) -> Option<Vec<Ctor>>
         Ty::Never | Ty::Error => Some(Vec::new()),
         Ty::Bool => {
             (has(Ctor::Bool(false)) && has(Ctor::Bool(true))).then(|| vec![Ctor::Bool(false), Ctor::Bool(true)])
-        }
-        Ty::Option(_) => {
-            (has(Ctor::Variant(0)) && has(Ctor::Variant(1))).then(|| vec![Ctor::Variant(0), Ctor::Variant(1)])
-        }
-        Ty::Result(..) => {
-            (has(Ctor::Variant(0)) && has(Ctor::Variant(1))).then(|| vec![Ctor::Variant(0), Ctor::Variant(1)])
         }
         Ty::Enum(a) => {
             let n = adts.enums[a.id].variants.len();
@@ -399,7 +381,7 @@ mod tests {
     }
 
     fn enum_def(name: &str, variants: Vec<VariantDef>) -> EnumDef {
-        EnumDef { name: name.into(), variants, derives: Derives::default(), drop_method: None }
+        EnumDef { name: name.into(), variants, derives: Derives::default(), drop_method: None, lang: None }
     }
 
     fn adt(name: &str, id: usize) -> AdtRef {
@@ -421,35 +403,6 @@ mod tests {
         assert!(!exhaustive_with(&Ty::Bool, &[Pat::Bool(false)]));
         assert!(exhaustive_with(&Ty::Bool, &[Pat::Bool(true), Pat::Bool(false)]));
         assert!(exhaustive_with(&Ty::Bool, &[Pat::Wild]));
-    }
-
-    #[test]
-    fn option_needs_none_and_some() {
-        let opt_bool = Ty::Option(Box::new(Ty::Bool));
-        assert!(!exhaustive_with(&opt_bool, &[Pat::Some(Box::new(Pat::Wild))]));
-        assert!(!exhaustive_with(&opt_bool, &[Pat::None]));
-        assert!(exhaustive_with(&opt_bool, &[Pat::None, Pat::Some(Box::new(Pat::Wild))]));
-    }
-
-    #[test]
-    fn nested_option_payloads_are_checked_too() {
-        let opt_opt = Ty::Option(Box::new(Ty::Option(Box::new(Ty::Bool))));
-        let some_some = || Pat::Some(Box::new(Pat::Some(Box::new(Pat::Wild))));
-        // `Some(Some(_))` leaves `Some(None)` out.
-        assert!(!exhaustive_with(&opt_opt, &[Pat::None, some_some()]));
-        assert!(exhaustive_with(&opt_opt, &[Pat::None, Pat::Some(Box::new(Pat::None)), some_some()]));
-    }
-
-    #[test]
-    fn result_needs_ok_and_err_with_every_payload() {
-        let result = Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Int(IntTy::I32)));
-        assert!(!exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Wild))]));
-        assert!(exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Wild)), Pat::Err(Box::new(Pat::Wild))]));
-        assert!(!exhaustive_with(&result, &[Pat::Ok(Box::new(Pat::Bool(true))), Pat::Err(Box::new(Pat::Wild))]));
-        assert!(exhaustive_with(
-            &result,
-            &[Pat::Ok(Box::new(Pat::Bool(true))), Pat::Ok(Box::new(Pat::Bool(false))), Pat::Err(Box::new(Pat::Wild))]
-        ));
     }
 
     #[test]
@@ -668,15 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_patterns_of_options_results_and_tuples() {
+    fn missing_patterns_of_tuples() {
         let defs = TypeDefs { structs: &[], enums: &[] };
-        let opt = Ty::Option(Box::new(Ty::Bool));
-        assert_eq!(missing_patterns(&opt, &[&Pat::None], &defs), ["Option.Some(_)"]);
-        let some_true = Pat::Some(Box::new(Pat::Bool(true)));
-        assert_eq!(missing_patterns(&opt, &[&some_true, &Pat::None], &defs), ["Option.Some(false)"]);
-        let res = Ty::Result(Box::new(Ty::Bool), Box::new(Ty::Bool));
-        let ok = Pat::Ok(Box::new(Pat::Wild));
-        assert_eq!(missing_patterns(&res, &[&ok], &defs), ["Result.Err(_)"]);
         let pair = Ty::Tuple(vec![Ty::Bool, Ty::Bool]);
         let tt = Pat::Product(vec![Pat::Bool(true), Pat::Bool(true)]);
         assert_eq!(missing_patterns(&pair, &[&tt], &defs), ["(false, _)", "(true, false)"]);

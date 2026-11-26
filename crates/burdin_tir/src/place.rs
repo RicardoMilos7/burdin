@@ -80,7 +80,6 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Break { .. }
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
@@ -110,9 +109,6 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(hi, out);
         }
         K::StringAsStr(inner)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::Cast(inner)
         | K::BoxAny { value: inner, .. }

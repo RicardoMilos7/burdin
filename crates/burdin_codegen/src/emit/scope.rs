@@ -209,53 +209,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     cg.builder.position_at_end(end);
                     Ok(())
                 }
-                Ty::Option(inner_ty) => {
-                    let ot = cg.option_ty(inner_ty);
-                    let tag_ptr = cg.builder.build_struct_gep(ot, addr, 0, "").map_err(llvm_err)?;
-                    let tag = cg
-                        .builder
-                        .build_load(cg.cx.bool_type(), tag_ptr, "is_some")
-                        .map_err(llvm_err)?
-                        .into_int_value();
-                    cg.if_then(tag, "option.drop", |cg| {
-                        if cg.llvm_ty(inner_ty).is_some() {
-                            let payload = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(0);
-                            cg.drop_at_address(id, &child, inner_ty, payload)?;
-                        }
-                        Ok(())
-                    })
-                }
-                Ty::Result(ok, err) => {
-                    let (ok, err) = ((**ok).clone(), (**err).clone());
-                    let rt = cg.result_ty(&ok, &err);
-                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
-                    let tag =
-                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
-                    cg.if_then(tag, "result.drop.ok", |cg| {
-                        if cg.llvm_ty(&ok).is_some() {
-                            let payload = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(0);
-                            cg.drop_at_address(id, &child, &ok, payload)?;
-                        }
-                        Ok(())
-                    })?;
-                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
-                    let tag =
-                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
-                    let is_err = cg.builder.build_not(tag, "").map_err(llvm_err)?;
-                    cg.if_then(is_err, "result.drop.err", |cg| {
-                        if cg.llvm_ty(&err).is_some() {
-                            let payload = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(1);
-                            cg.drop_at_address(id, &child, &err, payload)?;
-                        }
-                        Ok(())
-                    })
-                }
                 Ty::Array(elem, n) => {
                     let n = *n;
                     let elem = (**elem).clone();
