@@ -152,7 +152,7 @@ fn Map<K, V, A>.values(self): MapValues<MapEntries<K, V>, K, V> {
 /// }
 /// assert_eq(total, 7)
 /// ```
-fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> {
+fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoIter<K, V, A>, K, V> {
     MapIntoKeys { inner: self.into_iter() }
 }
 
@@ -167,7 +167,7 @@ fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> 
 /// }
 /// assert_eq(total, 20)
 /// ```
-fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoEntries<K, V, A>, K, V> {
+fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoIter<K, V, A>, K, V> {
     MapIntoValues { inner: self.into_iter() }
 }
 
@@ -194,7 +194,7 @@ fn Map<K, V, A>.is_empty(self): bool {
 /// assert_eq(total, 3)
 /// assert(m.is_empty())
 /// ```
-fn Map<K, V>.drain(mut self): MapIntoEntries<K, V> {
+fn Map<K, V>.drain(mut self): MapIntoIter<K, V> {
     mem.replace(mut self, Map<K, V>.new()).into_iter()
 }
 

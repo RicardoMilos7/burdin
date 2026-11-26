@@ -299,6 +299,7 @@ pub(crate) struct Globals {
     pub(crate) lang_list: Option<usize>,
     pub(crate) lang_list_into_iter: Option<usize>,
     pub(crate) lang_map: Option<usize>,
+    pub(crate) lang_map_into_iter: Option<usize>,
     /// `std`'s `ManuallyDrop`: a wrapper whose value is never dropped by glue.
     pub(crate) lang_manually_drop: Option<usize>,
     pub(crate) lang_array_into_iter: Option<usize>,
@@ -473,6 +474,7 @@ impl Globals {
             "List" => self.lang_list.map(TypeName::GenericAdt),
             "ListIntoIter" => self.lang_list_into_iter.map(TypeName::GenericAdt),
             "Map" => self.lang_map.map(TypeName::GenericAdt),
+            "MapIntoIter" => self.lang_map_into_iter.map(TypeName::GenericAdt),
             "ManuallyDrop" => self.lang_manually_drop.map(TypeName::GenericAdt),
             "ArrayIntoIter" => self.lang_array_into_iter.map(TypeName::GenericAdt),
             "Range" => self.lang_range[0].map(TypeName::GenericAdt),

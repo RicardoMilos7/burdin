@@ -1142,6 +1142,370 @@ struct Map<K, V, A: Allocator = Global> {
     alloc: A
 }
 
+/// The owning iterator of a `Map`: it yields the entries and drops the ones it did not yield. `pos` is the next slot
+/// to examine; `len` counts the live entries it has not yielded.
+struct MapIntoIter<K, V, A: Allocator = Global> {
+    ptr: CPtr<(K, V, u64)>
+    len: usize
+    cap: usize
+    pos: usize
+    alloc: A
+}
+
+MapIntoIter<K, V, A>: Drop {
+    fn drop(mut self) {
+        unsafe {
+            while self.pos < self.cap {
+                if (*(self.ptr + self.pos)).2 != 0 {
+                    drop(__read(self.ptr + self.pos))
+                }
+                self.pos = self.pos + 1
+            }
+            if self.cap > 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, map_table_bytes<K, V>(self.cap), 8)
+            }
+        }
+    }
+}
+
+MapIntoIter<K, V, A>: Iterator<(K, V)> {
+    fn next(mut self): Option<(K, V)> {
+        unsafe {
+            while self.pos < self.cap {
+                let at = self.pos
+                self.pos = at + 1
+                if (*(self.ptr + at)).2 != 0 {
+                    let (k, v, _) = __read(self.ptr + at)
+                    self.len = self.len - 1
+                    return Option.Some((k, v))
+                }
+            }
+        }
+        Option.None
+    }
+}
+
+/// One slot of a map's table: the key, the value, and the key's hash (zero marks an empty slot).
+type MapSlot<K, V> = (K, V, u64)
+
+priv fn map_table_bytes<K, V>(cap: usize): usize {
+    cap * MapSlot<K, V>.size()
+}
+
+/// The smallest power-of-two slot count (at least eight) that holds `needed` entries without passing the 3/4 load
+/// factor; `Err` past the limit of 2^62 entries.
+priv fn map_capacity_for(needed: usize): Result<usize, AllocError> {
+    if needed > 4611686018427387904 { return Result.Err(AllocError.CapacityOverflow) }
+    let mut cap: usize = 8
+    while needed > cap - cap / 4 {
+        cap = cap * 2
+    }
+    Result.Ok(cap)
+}
+
+/// The hash a map stores for a key: the structural hash, with zero (the empty-slot mark) moved to one.
+priv fn map_hash<K>(key: &K): u64 {
+    let h = unsafe { __hash_key(key) }
+    if h == 0 { 1 } else { h }
+}
+
+Map<K, V> {
+    /// An empty map.
+    fn new(): Map<K, V> {
+        Map { ptr: unsafe { CPtr<MapSlot<K, V>>.null() }, len: 0, cap: 0, alloc: Global { } }
+    }
+
+    /// An empty map with room for `n` entries.
+    fn with_capacity(n: usize): Map<K, V> {
+        let mut out = Map<K, V>.new()
+        out.reserve(n)
+        out
+    }
+
+    /// `Ok` with room for `n` entries, or the reason there is none.
+    fn try_with_capacity(n: usize): Result<Map<K, V>, AllocError> {
+        let mut out = Map<K, V>.new()
+        out.try_reserve(n)?
+        Result.Ok(out)
+    }
+}
+
+Map<K, V, A> {
+    /// An empty map that takes its table from `alloc`.
+    fn new_in(own alloc: A): Map<K, V, A> {
+        Map { ptr: unsafe { CPtr<MapSlot<K, V>>.null() }, len: 0, cap: 0, alloc: alloc }
+    }
+
+    fn len(self): usize { self.len }
+
+    /// Consumes the map: the iterator yields the entries `(key, value)` and drops the ones it did not yield.
+    fn into_iter(own self): MapIntoIter<K, V, A> {
+        let mut me = self
+        let it = unsafe {
+            MapIntoIter { ptr: me.ptr, len: me.len, cap: me.cap, pos: 0, alloc: __read(&me.alloc as CPtr<A>) }
+        }
+        // The iterator now owns the table and the allocator. Moving `me` over its own storage ends its life
+        // without running its drop, so the allocator is dropped once (by the iterator), not twice.
+        unsafe { __write(&me as CPtr<Map<K, V, A>>, me) }
+        it
+    }
+
+    /// Drops every live entry; the table is not freed.
+    priv fn drop_entries(mut self) {
+        unsafe {
+            let mut i: usize = 0
+            while i < self.cap {
+                if (*(self.ptr + i)).2 != 0 {
+                    drop(__read(self.ptr + i))
+                }
+                i = i + 1
+            }
+        }
+    }
+
+    /// Removes every entry and frees the table.
+    fn clear(mut self) {
+        self.drop_entries()
+        unsafe {
+            if self.cap > 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, map_table_bytes<K, V>(self.cap), 8)
+            }
+            self.ptr = CPtr<MapSlot<K, V>>.null()
+        }
+        self.len = 0
+        self.cap = 0
+    }
+
+    /// Moves the live entries into a fresh table of `new_cap` slots (a power of two); `Err` leaves the map as it was.
+    priv fn rehash(mut self, new_cap: usize): Result<(), AllocError> {
+        if new_cap > usize.MAX / MapSlot<K, V>.size() { return Result.Err(AllocError.CapacityOverflow) }
+        unsafe {
+            let block = self.alloc.allocate(map_table_bytes<K, V>(new_cap), 8)
+            if block.is_null() { return Result.Err(AllocError.OutOfMemory) }
+            let base = block as CPtr<MapSlot<K, V>>
+            let mut i: usize = 0
+            while i < new_cap {
+                (*(base + i)).2 = 0
+                i = i + 1
+            }
+            let mask = new_cap - 1
+            let mut j: usize = 0
+            while j < self.cap {
+                let h = (*(self.ptr + j)).2
+                if h != 0 {
+                    let mut d = (h as usize) & mask
+                    while (*(base + d)).2 != 0 {
+                        d = (d + 1) & mask
+                    }
+                    __write(base + d, __read(self.ptr + j))
+                }
+                j = j + 1
+            }
+            if self.cap > 0 {
+                self.alloc.deallocate(self.ptr as CPtr<u8>, map_table_bytes<K, V>(self.cap), 8)
+            }
+            self.ptr = base
+            self.cap = new_cap
+        }
+        Result.Ok(())
+    }
+
+    fn try_reserve(mut self, additional: usize): Result<(), AllocError> {
+        if additional > usize.MAX - self.len { return Result.Err(AllocError.CapacityOverflow) }
+        let cap = map_capacity_for(self.len + additional)?
+        if cap > self.cap { return self.rehash(cap) }
+        Result.Ok(())
+    }
+
+    fn reserve(mut self, additional: usize) {
+        match self.try_reserve(additional) {
+            Result.Ok(_) => { },
+            Result.Err(e) => panic(match e {
+                AllocError.CapacityOverflow => "Map reserve: capacity overflow",
+                AllocError.OutOfMemory => "out of memory",
+            }),
+        }
+    }
+
+    /// Rehashes into the smallest table that holds the entries, and frees the table of an empty map.
+    fn shrink_to_fit(mut self) {
+        if self.len == 0 {
+            if self.cap > 0 {
+                unsafe {
+                    self.alloc.deallocate(self.ptr as CPtr<u8>, map_table_bytes<K, V>(self.cap), 8)
+                    self.ptr = CPtr<MapSlot<K, V>>.null()
+                }
+                self.cap = 0
+            }
+            return
+        }
+        match map_capacity_for(self.len) {
+            Result.Ok(cap) => {
+                if cap < self.cap {
+                    let _ = self.rehash(cap)
+                }
+            }
+            Result.Err(_) => { },
+        }
+    }
+
+    /// Removes the entry at slot `hole`, shifting the rest of its probe cluster back so every remaining key stays
+    /// reachable (linear probing without tombstones). The slot's contents must already have been moved out.
+    priv fn shift_delete(mut self, hole: usize) {
+        let mask = self.cap - 1
+        let mut hole = hole
+        let mut j = (hole + 1) & mask
+        unsafe {
+            loop {
+                let h = (*(self.ptr + j)).2
+                if h == 0 { break }
+                let home = (h as usize) & mask
+                // The entry stays when its home is in the cyclic interval (hole, j]; otherwise the hole moved past it.
+                let stays = if hole < j { home > hole && home <= j } else { home > hole || home <= j }
+                if !stays {
+                    __write(self.ptr + hole, __read(self.ptr + j))
+                    hole = j
+                }
+                j = (j + 1) & mask
+            }
+            (*(self.ptr + hole)).2 = 0
+        }
+    }
+
+    /// Keeps the entries `keep` accepts; the rest are dropped.
+    fn retain<F: FnMut(&K, &V): bool>(mut self, own keep: F) {
+        let mut keep = keep
+        let mut i: usize = 0
+        while i < self.cap {
+            let h = unsafe { (*(self.ptr + i)).2 }
+            if h == 0 {
+                i = i + 1
+            } else {
+                let accepted = unsafe { keep(&(*(self.ptr + i)).0, &(*(self.ptr + i)).1) }
+                if accepted {
+                    i = i + 1
+                } else {
+                    // The entry shifted into this slot (if any) is examined next, at the same index.
+                    let entry = unsafe { __read(self.ptr + i) }
+                    self.shift_delete(i)
+                    self.len = self.len - 1
+                    drop(entry)
+                }
+            }
+        }
+    }
+}
+
+Map<K, V, A> where K: Eq, A: Allocator {
+    /// The slot holding `key` (and `true`), or the empty slot where it belongs (and `false`). The table must have
+    /// slots.
+    priv fn find(self, key: K, hash: u64): (bool, usize) {
+        let mask = self.cap - 1
+        let mut i = (hash as usize) & mask
+        loop {
+            let h = unsafe { (*(self.ptr + i)).2 }
+            if h == 0 { return (false, i) }
+            if h == hash && unsafe { (*(self.ptr + i)).0 == key } { return (true, i) }
+            i = (i + 1) & mask
+        }
+    }
+
+    /// Makes room for one more entry: the table keeps a 3/4 load factor, and an empty map gets eight slots.
+    priv fn make_room(mut self) {
+        if self.cap == 0 || (self.len + 1) * 4 > self.cap * 3 {
+            let cap: usize = if self.cap == 0 { 8 } else { self.cap * 2 }
+            match self.rehash(cap) {
+                Result.Ok(_) => { },
+                Result.Err(e) => panic(match e {
+                    AllocError.CapacityOverflow => "Map capacity overflow",
+                    AllocError.OutOfMemory => "out of memory",
+                }),
+            }
+        }
+    }
+
+    /// Stores `value` under `key` and returns the slot. A key that is already there keeps its slot: its value is
+    /// replaced when `replace` is set and the incoming value is dropped otherwise, and the incoming key is dropped.
+    priv fn put(mut self, own key: K, own value: V, replace: bool): usize {
+        self.make_room()
+        let hash = map_hash(&key)
+        let (found, at) = self.find(key, hash)
+        unsafe {
+            if found {
+                if replace {
+                    let place = &mut (*(self.ptr + at)).1 as CPtr<V>
+                    let old = __read(place)
+                    __write(place, value)
+                    drop(old)
+                }
+            } else {
+                __write(self.ptr + at, (key, value, hash))
+                self.len = self.len + 1
+            }
+        }
+        at
+    }
+
+    /// Inserts the entry, replacing the value of an existing key.
+    fn insert(mut self, own key: K, own value: V) {
+        let _ = self.put(key, value, true)
+    }
+
+    /// The value stored under `key`; when the key is absent, `value` is stored first. A value that is already there
+    /// is kept, and the incoming key and value are dropped.
+    fn get_or_insert(mut self, own key: K, own value: V): &mut V {
+        let at = self.put(key, value, false)
+        unsafe { &mut (*(self.ptr + at)).1 }
+    }
+
+    /// Like `get_or_insert`, with a shared view of the value.
+    fn get_or(mut self, own key: K, own value: V): &V {
+        let at = self.put(key, value, false)
+        unsafe { &(*(self.ptr + at)).1 }
+    }
+
+    fn get(self, key: K): Option<&V> {
+        if self.cap == 0 { return Option.None }
+        let hash = map_hash(&key)
+        let (found, at) = self.find(key, hash)
+        if found { Option.Some(unsafe { &(*(self.ptr + at)).1 }) } else { Option.None }
+    }
+
+    fn get_mut(mut self, key: K): Option<&mut V> {
+        if self.cap == 0 { return Option.None }
+        let hash = map_hash(&key)
+        let (found, at) = self.find(key, hash)
+        if found { Option.Some(unsafe { &mut (*(self.ptr + at)).1 }) } else { Option.None }
+    }
+
+    fn contains_key(self, key: K): bool {
+        if self.cap == 0 { return false }
+        let hash = map_hash(&key)
+        let (found, _) = self.find(key, hash)
+        found
+    }
+
+    /// Removes the key and returns the stored key and value.
+    fn remove_entry(mut self, key: K): Option<(K, V)> {
+        if self.cap == 0 { return Option.None }
+        let hash = map_hash(&key)
+        let (found, at) = self.find(key, hash)
+        if !found { return Option.None }
+        let (k, v, _) = unsafe { __read(self.ptr + at) }
+        self.shift_delete(at)
+        self.len = self.len - 1
+        Option.Some((k, v))
+    }
+
+    /// Removes the key and returns its value; the stored key is dropped.
+    fn remove(mut self, key: K): Option<V> {
+        match self.remove_entry(key) {
+            Option.Some((_, v)) => Option.Some(v),
+            Option.None => Option.None,
+        }
+    }
+}
+
 /// The owning iterator of a `List`: it yields the elements and drops the ones it did not yield.
 struct ListIntoIter<T, A: Allocator = Global> {
     ptr: CPtr<T>
@@ -1357,6 +1721,12 @@ List<T, A>: Eq where T: Eq, A: Allocator {
         true
     }
 }
+
+unsafe Map<K, V, A>: Send where K: Send, V: Send, A: Send { }
+unsafe Map<K, V, A>: Sync where K: Sync, V: Sync, A: Sync { }
+
+unsafe MapIntoIter<K, V, A>: Send where K: Send, V: Send, A: Send { }
+unsafe MapIntoIter<K, V, A>: Sync where K: Sync, V: Sync, A: Sync { }
 
 unsafe List<T, A>: Send where T: Send, A: Send { }
 unsafe List<T, A>: Sync where T: Sync, A: Sync { }

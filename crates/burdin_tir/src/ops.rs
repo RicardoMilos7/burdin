@@ -250,6 +250,9 @@ pub enum Builtin {
     /// `__int_step(x, delta)`: the integer `x` moved by `delta` (1 or -1), wrapping. `std`'s range iterators step
     /// with it, since `T` has no arithmetic of its own.
     IntStep,
+    /// `__hash_key(&k)`: the structural hash of the value `k` references, the fold `Map` stores for its keys
+    /// (`spec/stdlib.md`, "Map": FNV-1a from the offset basis). `std`'s `Map` hashes through it.
+    HashKey,
     /// `target.os()`'s primitive: `"linux"`, `"macos"`, or `"windows"`, the system the program is compiled for.
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.

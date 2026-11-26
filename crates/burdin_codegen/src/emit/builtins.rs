@@ -189,25 +189,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(ptr_field, ptr).map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(heap_ty, slot, "").map_err(llvm_err)?));
             }
-            Builtin::MapNew => {
-                return Ok(Some(self.string_ty.const_zero().into()));
-            }
-            // `Map<K, V>.with_capacity(n)`: an empty map whose table holds `n` entries without growing.
-            Builtin::MapWithCapacity => {
-                let capacity = self.expr_mode(&args[0], Mode::Use)?;
-                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Some((key, value, _)) = self.map_info(ty) else { return Ok(None) };
-                let (key, value) = ((*key).clone(), (*value).clone());
-                let cap = self.map_capacity_for(capacity, span)?;
-                let map_ty = self.llvm_ty(ty).expect("a map has a type");
-                let slot = self.alloca(map_ty, "map.with_capacity")?;
-                self.builder.build_store(slot, map_ty.const_zero()).map_err(llvm_err)?;
-                let mut seq = self.seq_load_at(slot, &burdin_tir::Alloc::Global)?;
-                self.map_rehash_to(&mut seq, &key, &value, cap, span)?;
-                self.seq_store(&seq)?;
-                return Ok(Some(self.builder.build_load(map_ty, slot, "").map_err(llvm_err)?));
-            }
-
             // `String.with_capacity(n)`: an empty string with a buffer of `n` bytes.
             Builtin::StringWithCapacity => {
                 let capacity = self.expr_mode(&args[0], Mode::Use)?;
@@ -231,25 +212,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
                 self.builder.position_at_end(done);
                 return Ok(Some(self.builder.build_load(string_t, slot, "").map_err(llvm_err)?));
-            }
-            // `Map<K, V>.try_with_capacity(n)`: the empty map that `try_reserve(n)` makes.
-            Builtin::MapTryWithCapacity => {
-                let capacity = self.expr_mode(&args[0], Mode::Use)?;
-                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Some((map_ty, _)) = self.result_payload_tys(ty) else {
-                    return Err("`try_with_capacity` returns a Result".into());
-                };
-                let map_ty = &map_ty;
-                let Some((key, value, _)) = self.map_info(map_ty) else {
-                    return Err("`Map.try_with_capacity` on a non-map type".into());
-                };
-                let (key, value) = ((*key).clone(), (*value).clone());
-                let map_t = self.llvm_ty(map_ty).expect("a map has a type");
-                let slot = self.alloca(map_t, "map.try.with_capacity")?;
-                self.builder.build_store(slot, map_t.const_zero()).map_err(llvm_err)?;
-                let status = self.map_try_reserve_at(slot, &burdin_tir::Alloc::Global, &key, &value, capacity, span)?;
-                let map = self.builder.build_load(map_t, slot, "").map_err(llvm_err)?;
-                return Ok(Some(self.try_result(status, Some(map), ty)?));
             }
             // `String.try_with_capacity(n)`: `with_capacity` that reports a failed allocation.
             Builtin::StringTryWithCapacity => {
@@ -287,24 +249,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let st = self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value();
                 let value = self.builder.build_load(string_t, slot, "").map_err(llvm_err)?;
                 return Ok(Some(self.try_result(st, Some(value), ty)?));
-            }
-            // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
-            Builtin::MapNewIn => {
-                let alloc_ty = args[0].ty.clone();
-                let alloc_value = self.expr_mode(&args[0], Mode::Move)?;
-                let global = self.is_global_allocator(&alloc_ty);
-                let alloc =
-                    if global { burdin_tir::Alloc::Global } else { burdin_tir::Alloc::Value(Box::new(alloc_ty)) };
-                let seq_ty = self.seq_ty(&alloc);
-                let agg = seq_ty.const_zero();
-                if global {
-                    let _ = alloc_value;
-                    return Ok(Some(agg.into()));
-                }
-                let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                let agg =
-                    self.builder.build_insert_value(agg, alloc_value, 3, "").map_err(llvm_err)?.into_struct_value();
-                return Ok(Some(agg.into()));
             }
             // The `Global` allocator's primitives. The site is the call's span, which points into the allocator's
             // implementation, so a leak of a container's buffer names the code that allocated it.
@@ -369,6 +313,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let p = self.need(p, &args[0].ty).into_pointer_value();
                 let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
                 return Ok(Some(self.builder.build_load(t, p, "raw.read").map_err(llvm_err)?));
+            }
+            Builtin::HashKey => {
+                let Ty::Ref { inner, .. } = &args[0].ty else {
+                    return Err("internal error: `__hash_key` lost its reference".into());
+                };
+                let inner = (**inner).clone();
+                let r = self.expr_mode(&args[0], Mode::Use)?;
+                let acc = self.cx.i64_type().const_int(0xcbf2_9ce4_8422_2325, false);
+                let hash = if self.llvm_ty(&inner).is_some() {
+                    let p = self.need(r, &args[0].ty).into_pointer_value();
+                    self.hash_at(p, &inner, acc)?
+                } else {
+                    acc
+                };
+                return Ok(Some(hash.into()));
             }
             Builtin::IntStep => {
                 let x = self.expr_mode(&args[0], Mode::Use)?;
@@ -1707,50 +1666,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         if matches!(
             m,
-            Method::Push
-                | Method::ListPop
-                | Method::ListLast
-                | Method::ListFirst
-                | Method::ListFirstMut
-                | Method::ListLastMut
-                | Method::ListGet
-                | Method::ListGetMut
-                | Method::ListCapacity
-                | Method::ListIsEmpty
-                | Method::ListReserve
-                | Method::ListReserveExact
-                | Method::ListTryReserve
-                | Method::ListTryReserveExact
-                | Method::ListShrinkToFit
-                | Method::ListSwap
-                | Method::ListSwapRemove
-                | Method::ListTruncate
-                | Method::ListSplitOff
-                | Method::ListAppend
-                | Method::ListDrain
-                | Method::ListExtendFromSlice
-                | Method::ListInsert
-                | Method::ListRemove
-                | Method::ListContains
-                | Method::ListSort
-                | Method::Clear
-                | Method::MapInsert
-                | Method::MapGetOrInsert
-                | Method::MapGetOr
-                | Method::MapGet
-                | Method::MapGetMut
-                | Method::MapRemove
-                | Method::MapRemoveEntry
-                | Method::MapRetain
-                | Method::MapReserve
-                | Method::MapTryReserve
-                | Method::MapShrinkToFit
-                | Method::MapContainsKey
-        ) {
-            return self.collection_method(m, args, ty, span);
-        }
-        if matches!(
-            m,
             Method::StringCapacity
                 | Method::StringReserve
                 | Method::StringTryReserve
@@ -1784,10 +1699,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.usize_ty.const_int(*n, false).into()
                 }
                 Ty::Str | Ty::String | Ty::Slice(_) => {
-                    let (_, len) = self.view_parts(&args[0])?;
-                    len
-                }
-                _ if self.map_info(&recv_ty).is_some() => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }

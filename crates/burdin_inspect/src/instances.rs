@@ -164,11 +164,6 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
             adts_in(a, out);
             adts_in(b, out);
         }
-        Ty::MapIntoIter(k, v, a) => {
-            adts_in(k, out);
-            adts_in(v, out);
-            alloc(a, out);
-        }
         Ty::Any(a) => a.args.iter().for_each(|t| adts_in(t, out)),
         Ty::Tuple(items) => items.iter().for_each(|t| adts_in(t, out)),
         _ => {}

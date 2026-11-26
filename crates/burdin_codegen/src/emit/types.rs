@@ -62,7 +62,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
-            Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
             Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
             // A mutable list or array iterator is the next element's address and the number left, like a slice.
             Ty::IterMut(_) => self.str_ty.into(),

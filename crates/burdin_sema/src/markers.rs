@@ -122,10 +122,6 @@ impl Globals {
             Ty::Heap(t, a) => {
                 self.part_why("the element", t, sync, env, seen).or_else(|| self.alloc_why(a, sync, env, seen))
             }
-            Ty::MapIntoIter(k, v, a) => self
-                .part_why("the key", k, sync, env, seen)
-                .or_else(|| self.part_why("the value", v, sync, env, seen))
-                .or_else(|| self.alloc_why(a, sync, env, seen)),
             Ty::Tuple(ts) => ts.iter().find_map(|t| self.part_why("an element", t, sync, env, seen)),
             // These point into another collection, so they behave like the shared or exclusive views they hold.
             Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {

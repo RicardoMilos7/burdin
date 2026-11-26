@@ -53,7 +53,6 @@ impl Globals {
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::MapIntoIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::Param(_)

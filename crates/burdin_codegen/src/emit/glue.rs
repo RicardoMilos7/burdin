@@ -96,9 +96,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIterMut(k, v) => {
                 format!("MapIterMut<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
-            Ty::MapIntoIter(k, v, _) => {
-                format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
-            }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
             }
@@ -262,10 +259,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => Ok(()),
 
-            Ty::MapIntoIter(key, value, alloc) => {
-                let (key, value) = ((**key).clone(), (**value).clone());
-                self.drop_map_into_iter(addr, &key, &value, alloc)
-            }
             // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
             Ty::Fn { .. } => {
                 let v =

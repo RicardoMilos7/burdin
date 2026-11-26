@@ -364,7 +364,6 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         }
         Ty::Tuple(ts) => product(&ts.iter().map(|t| member(p, t)).collect::<Vec<_>>()),
         Ty::Struct(a) => product(&p.structs[a.id].fields.iter().map(|f| member(p, &f.ty)).collect::<Vec<_>>()),
-        Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
         Ty::IterMut(_) => (16, 8),
         Ty::Enum(a) => {
@@ -861,6 +860,9 @@ impl<'p> Interp<'p, '_> {
             }
             Builtin::RawRead | Builtin::RawWrite | Builtin::SliceRaw | Builtin::IterMutRaw => {
                 return Err(impure("reading or writing raw memory", span));
+            }
+            Builtin::HashKey => {
+                return Err(impure("hashing a key through `__hash_key`", span));
             }
             Builtin::IntStep => {
                 let (Value::Int(x), Value::Int(d)) = (self.eval(&args[0], Mode::Use)?, self.eval(&args[1], Mode::Use)?)

@@ -278,8 +278,6 @@ pub enum Ty {
     /// A borrowing iterator over a `Map<K, V>`: a copy of the map's three words and the next slot. It yields
     /// `(&K, &V)` and holds a loan on the map for its whole life.
     MapIter(Box<Ty>, Box<Ty>),
-    /// The owning iterator of a `Map<K, V>`: the map's buffer, moved entry by entry, and the map's allocator.
-    MapIntoIter(Box<Ty>, Box<Ty>, Alloc),
     /// A mutable iterator over the elements of a `List<T>` or an array `[T; N]` (`iter_mut()`): the address of the
     /// next element and the number left, like a slice. It yields `&mut T` and holds an exclusive loan on the
     /// collection for its whole life (spec/iterators.md, IT15).
@@ -356,7 +354,6 @@ impl Ty {
             Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => true,
             // A chunks or windows iterator views the slice it was made from.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => true,
-            Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
             // A `Shared<T>` owns its heaped value, like a `Heap`.
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
@@ -401,8 +398,6 @@ impl fmt::Display for Ty {
             Ty::MapIter(k, v) => write!(f, "MapIter<{k}, {v}>"),
             Ty::IterMut(t) => write!(f, "IterMut<{t}>"),
             Ty::MapIterMut(k, v) => write!(f, "MapIterMut<{k}, {v}>"),
-            Ty::MapIntoIter(k, v, Alloc::Global) => write!(f, "MapIntoIter<{k}, {v}>"),
-            Ty::MapIntoIter(k, v, a) => write!(f, "MapIntoIter<{k}, {v}, {a}>"),
             Ty::SliceChunks(t, false) => write!(f, "Chunks<{t}>"),
             Ty::SliceChunks(t, true) => write!(f, "ChunksExact<{t}>"),
             Ty::SliceWindows(t) => write!(f, "Windows<{t}>"),

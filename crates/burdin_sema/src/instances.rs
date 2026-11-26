@@ -25,7 +25,7 @@ impl<'t> Sema<'t> {
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
         // A list with the default allocator is named `List<i32>`, the way it is written, not `List<i32, Global>`.
         let is_list = Some(template) == self.globals.lang_list || Some(template) == self.globals.lang_list_into_iter;
-        let is_map = Some(template) == self.globals.lang_map;
+        let is_map = Some(template) == self.globals.lang_map || Some(template) == self.globals.lang_map_into_iter;
         let shown = match (&args[..], &self.globals.global_alloc_ty) {
             ([elem, alloc], Some(global)) if is_list && alloc == global => std::slice::from_ref(elem),
             ([_, _, alloc], Some(global)) if is_map && alloc == global => &args[..2],
@@ -84,6 +84,8 @@ impl<'t> Sema<'t> {
                     Some(tir::LangItem::ListIntoIter)
                 } else if Some(template) == self.globals.lang_map {
                     Some(tir::LangItem::Map)
+                } else if Some(template) == self.globals.lang_map_into_iter {
+                    Some(tir::LangItem::MapIntoIter)
                 } else if Some(template) == self.globals.lang_manually_drop {
                     Some(tir::LangItem::ManuallyDrop)
                 } else if Some(template) == self.globals.lang_array_into_iter {

@@ -47,12 +47,12 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::Option`, `Ty::Result` | moved | Done in #1017: `enum Option<T>` and `enum Result<T, E = AnyError>` are ordinary enums in `std/src/std.bd`, and their methods are written in Burdin in `std/src/option.bd` (`unwrap` and `expect` call `panic`, so a panic location points into `std`). The compiler finds them by name (`Globals::lang_option`, `lang_result`, and `EnumDef::lang`) for `?`, `orelse`, `context`, the built-ins that return them, and exhaustiveness. `Ty` has no variant for either. |
 | `Ty::CString` | moved | Done in #1017: `struct CString { ptr, len }` is an ordinary `std` struct in `std/src/std.bd` over `__alloc`/`__dealloc`, with `from`, `as_ptr`, `clone`, and `Drop` written in Burdin. `Ty` has no variant for it. |
 | `Ty::List`, `Ty::ListIntoIter` | moved | Done in #1017: `struct List<T, A: Allocator = Global> { ptr, len, cap, alloc }` and `struct ListIntoIter<T, A>` are ordinary generic `std` structs in `std/src/std.bd` over `CPtr<T>`, `__read`/`__write`, `__slice_raw`, and the allocator interface, with `Drop`, `Eq`, `Debug`, `Clone`, `Hash`, `Default`, and `Iterator<T>` written in Burdin. The compiler finds them by name (`Globals::lang_list`, `lang_list_into_iter`, and `StructDef::lang`) for array and list literals, `collect`, `for` loops, `==`, and the layout; its code generation keeps the faithful `{ptr, len, cap, alloc}` layout so the runtime's helpers still read it. `Ty` has no variant for either; the interpreter runs their methods on its native sequences so `const` evaluation still works. |
-| `Ty::Map` | moved | Done in #1017 (representation): `struct Map<K, V, A: Allocator = Global> { ptr: CPtr<(K, V, u64)>, len, cap, alloc }` is an ordinary `std` struct in `std/src/std.bd` (lang item `LangItem::Map`, found through `Globals::lang_map`); `Ty` has no variant for it. Its table keeps the layout the runtime's helpers read (slots of `(key, value, hash)`, a zero hash marks an empty slot). Its methods, drop, clone, `==`, hash, and `{:?}` are still the compiler's, dispatched on the lang struct; they move to Burdin next. |
+| `Ty::Map` | moved | Done in #1017: `struct Map<K, V, A: Allocator = Global> { ptr: CPtr<(K, V, u64)>, len, cap, alloc }` is an ordinary `std` struct in `std/src/std.bd` (lang item `LangItem::Map`, found through `Globals::lang_map`); `Ty` has no variant for it. Its methods (`new`, `new_in`, `with_capacity`, `try_with_capacity`, `insert`, `get`, `get_mut`, `get_or`, `get_or_insert`, `remove`, `remove_entry`, `contains_key`, `retain`, `clear`, `reserve`, `try_reserve`, `shrink_to_fit`, `len`) are written in Burdin over `CPtr`, `__read`/`__write`, the allocator interface, and the `__hash_key` intrinsic (the structural hash glue). The table keeps the layout the runtime's helpers read (slots of `(key, value, hash)`, a zero hash marks an empty slot, FNV-1a with zero moved to one, linear probing, backward-shift deletion, a power-of-two size of at least eight, a 3/4 load factor), so iteration order is unchanged. Like `List`, drop, clone, `==`, hash, `{:?}`, and the three iterators (`iter`, `iter_mut`, `into_iter`) stay compiler glue over that layout; the interpreter runs the methods natively on its `Value::Map`. |
 | `Ty::MapEntry` | removed | The entry API (`Map.entry`, `MapEntry`, `or_insert`, `or_insert_with`) is gone by decision: `get_or_insert`, `get_or_insert_with`, `update`, and `upsert` cover it. |
 | `Ty::Heap` | moves | `*h` is a place with partial-move and drop-flag rules (MV6); moving the type needs a decision on how `*h` lowers for a `std` struct. The work is #1077. |
 | `Ty::ArrayIntoIter` | moved | Done in #1017: `struct ArrayIntoIter<T, const N: usize> { data: ManuallyDrop<[T; N]>, pos }` is an ordinary `std` struct in `std/src/std.bd` with `Drop` and `Iterator<T>` written in Burdin. `ManuallyDrop<T>` is a lang item (`LangItem::ManuallyDrop`): drop glue never drops its value, so the iterator drops only the elements it did not yield. `array.into_iter()` stays a compiler method (an array cannot be an extension receiver) that returns this struct. |
 | `Ty::RangeIter`, `Ty::Range` | moved | Done in #1017: `Range<T>`, `RangeInclusive<T>`, `RangeIter<T>`, and `RangeIterInclusive<T>` are ordinary `std` structs (lang items `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`). A range literal builds the struct; the iterators step with the `__int_step(x, delta)` intrinsic, so they stop after the last value without overflowing; `for` over a range with a plain binding still lowers to a counted loop. |
-| `Ty::MapIntoIter` | moves | It owns what it walks and holds no view, so it is a plain struct implementing `Iterator<T>`. Needs #1079 and #1073; the work is #1075. |
+| `Ty::MapIntoIter` | moved | `struct MapIntoIter<K, V, A> { ptr, len, cap, pos, alloc }` in `std` (lang item `MapIntoIter`), a plain struct implementing `Iterator<(K, V)>` and `Drop`; `Map.into_iter`, `into_keys`, `into_values`, and `drain` produce it. |
 | `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. |
 
 Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
@@ -1140,8 +1140,8 @@ probe cluster back instead of leaving tombstones. Keys are hashed structurally â
 ### Map in-place operations (issues #482, #1017)
 
 ```
-fn get_mut(mut self, key: K): Option<&mut V>        // built in: a mutable view of the value, or None
-fn get_or_insert(mut self, key: K, value: V): &mut V    // built in
+fn get_mut(mut self, key: K): Option<&mut V>        // a mutable view of the value, or None
+fn get_or_insert(mut self, key: K, value: V): &mut V
 fn get_or_insert_with<F: FnOnce(): V>(mut self, key: K, make: F): &mut V
 fn update<F: FnOnce(&mut V)>(mut self, key: K, change: F): bool
 fn upsert<F: FnOnce(&mut V)>(mut self, key: K, value: V, change: F)
@@ -1169,17 +1169,17 @@ fn into_keys(own self): MapIntoKeys<...>       // consumes the map; yields K
 fn into_values(own self): MapIntoValues<...>   // consumes the map; yields V
 
 // in-place updates
-fn get_mut(mut self, key: K): Option<&mut V>                         // built in
-fn get_or(mut self, key: K, default: V): &V                          // built in
-fn remove_entry(mut self, key: K): Option<(K, V)>                    // built in
-fn retain<F: FnMut(&K, &V): bool>(mut self, f: F)                    // built in
-fn drain(mut self): MapIntoEntries<K, V>                             // default allocator only
+fn get_mut(mut self, key: K): Option<&mut V>
+fn get_or(mut self, key: K, default: V): &V
+fn remove_entry(mut self, key: K): Option<(K, V)>
+fn retain<F: FnMut(&K, &V): bool>(mut self, f: F)
+fn drain(mut self): MapIntoIter<K, V>                             // default allocator only
 fn extend<I: Iterator<(K, V)>>(mut self, items: I) where K: Eq
 
 // capacity: the table keeps a power-of-two slot count and the 3/4 load factor
 fn with_capacity(capacity: usize): Map<K, V>       // associated function; default allocator only
-fn reserve(mut self, additional: usize)            // built in
-fn shrink_to_fit(mut self)                         // built in
+fn reserve(mut self, additional: usize)
+fn shrink_to_fit(mut self)
 ```
 
 `keys` and `values` borrow the map for the iterator's whole life and yield views, so the map cannot be changed
@@ -1210,17 +1210,15 @@ smallest table that holds the entries (and frees the buffer of an empty map). A 
 order), and `Default` (an empty map; only for the default allocator). A struct that holds a `Map` derives each of
 these when its key and value types allow it.
 
-### Borrowed-key lookup (issue #712)
+### Lookups take the key type (issue #1017)
 
-A `Map<String, V>` takes a `str` for its read-only lookups: `get`, `get_mut`, `contains_key`, `remove`, and
-`remove_entry`. The key is hashed and compared by bytes, so `map.get("x")` allocates nothing; the stored key
-stays a `String`. A `String` argument still works, because `String` converts to `str` through the one implicit
-conversion (IC1), and the argument is borrowed for the call. Every other key type is taken exactly as written.
-`insert`, `get_or_insert`, and `get_or` take the key by ownership, because they store it; they need the
-key's own type.
+Every lookup takes the map's own key type: `get`, `get_mut`, `contains_key`, `remove`, and `remove_entry` on a
+`Map<String, V>` take a `String`, so `map.get("x".to_string())`. There is no borrowed-key lookup (`Map<String, V>.get`
+taking a `str`): a method has one signature and the language has no specialization, so the map is written in Burdin
+with `key: K` throughout (decided in #1017; it replaced the `str` lookups of #712).
 
 Tests: `m24_stdlib/map_views`, `map_in_place`, `map_capacity_interfaces`, `map_views_allocator`,
-`map_borrowed_key`, and the compile-fail cases `map_borrowed_key_type` (E0003), `map_get_or_needs_eq` (E0141), and
+and the compile-fail case `map_get_or_needs_eq` (E0141), and
 `map_with_capacity_allocator` (E0272).
 
 ## `Set<T>` (issue #190)

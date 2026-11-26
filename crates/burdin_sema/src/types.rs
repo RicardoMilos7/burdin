@@ -555,7 +555,7 @@ impl Globals {
         }
         // A list holds its elements until it is dropped, so they must own their storage, and its allocator must be
         // one. These are checked where the type is written, as for the other containers.
-        if Some(g) == self.lang_map {
+        if Some(g) == self.lang_map || Some(g) == self.lang_map_into_iter {
             for (i, what) in [(0, "a `Map` key"), (1, "a `Map` value")] {
                 if let (Some(ty), Some(arg)) = (resolved.get(i), args.get(i))
                     && ty.is_second_class()
@@ -679,14 +679,6 @@ impl Globals {
                 Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
                 Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
             ),
-            // The owning iterator `map.into_iter()` returns, which yields `(K, V)`. `std` names it for the
-            // `into_keys` and `into_values` views of issue #712.
-            ("MapIntoEntries", 2) | ("MapIntoEntries", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::MapIntoIter(Box::new(key), Box::new(value), alloc)
-            }
             // The mutable iterator `list.iter_mut()` returns; `std` names it to write `List.iter_mut`.
             ("IterMut", 1) => {
                 Ty::IterMut(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
@@ -812,7 +804,6 @@ impl Globals {
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::MapIntoIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::TryFromError { .. }

@@ -132,6 +132,7 @@ impl FnCx<'_> {
                     None if id.name == "__slice_raw" => return self.slice_raw_call(args, span, false),
                     None if id.name == "__iter_mut_raw" => return self.slice_raw_call(args, span, true),
                     None if id.name == "__int_step" => return self.int_step_call(args, span),
+                    None if id.name == "__hash_key" => return self.hash_key_call(args, span),
                     None if id.name == "__closure_own" => return self.closure_own_call(args, span),
                     None if id.name == "embed" => return self.embed_call(args, span, expect),
                     None if id.name == "format" && self.lookup("format").is_none() => {
@@ -844,6 +845,29 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(op, vec![p, n]), ty, span)
     }
 
+    /// `__hash_key(&k)`: the structural hash of the value `k` references (`std`'s `Map`).
+    fn hash_key_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__hash_key", args);
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__hash_key` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let key = self.expr(&args[0].expr, None);
+        if !matches!(key.ty, Ty::Ref { .. } | Ty::Error) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                key.span,
+                format!("`__hash_key` needs a reference, found `{}`", key.ty),
+            );
+            return error_expr(span);
+        }
+        mk(tir::ExprKind::Builtin(Builtin::HashKey, vec![key]), Ty::Int(IntTy::U64), span)
+    }
+
     /// `__int_step(x, delta)`: the integer `x` moved by `delta`, wrapping (`std`'s range iterators).
     fn int_step_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
         self.reject_named_args("__int_step", args);
@@ -1460,6 +1484,23 @@ impl FnCx<'_> {
         if self.globals.opaque_of(&recv.ty).is_some() {
             return self.opaque_method_call(recv, explicit, name, args, span, expect);
         }
+        // The map operations that look a key up or store one need a key with `==` (and a hash that agrees with it):
+        // without it the call is a missing bound, not a missing method.
+        if matches!(
+            name.name.as_str(),
+            "insert" | "get" | "get_mut" | "get_or" | "get_or_insert" | "remove" | "remove_entry" | "contains_key"
+        ) && let Some((key, _, _)) = self.globals.map_parts(&recv.ty)
+            && !self.globals.has_key_eq_in(&key, &self.bounds)
+        {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!(
+                    "cannot use `{key}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
+                ),
+            );
+            return self.args_then_error(args, span);
+        }
         // `xs.drain(lo..=hi)` on a `List` is the inclusive form, a separate method of `std`'s `List`.
         if name.name == "drain"
             && args.len() == 1
@@ -1648,28 +1689,7 @@ impl FnCx<'_> {
                 Self::attach_mut_fix(fix, d);
             }
         }
-        let map_key = self.globals.map_parts(&recv.ty).map(|(k, _, _)| k);
         match (&m, &recv.ty) {
-            (
-                Method::MapGet
-                | Method::MapGetMut
-                | Method::MapGetOrInsert
-                | Method::MapGetOr
-                | Method::MapRemove
-                | Method::MapRemoveEntry
-                | Method::MapContainsKey
-                | Method::MapInsert,
-                _,
-            ) if map_key.as_ref().is_some_and(|k| !self.globals.has_key_eq_in(k, &self.bounds)) => {
-                let k = map_key.expect("checked above");
-                self.diags.error(
-                    Code::BOUND_NOT_SATISFIED,
-                    span,
-                    format!(
-                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
-                    ),
-                );
-            }
             // The slice operations that clone their elements need `Clone`, and `copy_from_slice` needs `Copy`
             // (`spec/stdlib.md`, "Slices").
             (Method::SliceFill | Method::SliceCloneFromSlice | Method::SliceToList, Ty::Slice(elem))
@@ -2020,64 +2040,6 @@ impl FnCx<'_> {
         true
     }
 
-    /// The single allocator argument of `List.new_in` or `Map.new_in`, checked and moved into the container.
-    fn new_in_allocator(&mut self, what: &str, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
-        self.reject_named_args(what, args);
-        if args.len() != 1 {
-            for a in args {
-                self.expr(&a.expr, None);
-            }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{what}` takes 1 argument, but {} were given", args.len()),
-            );
-            return None;
-        }
-        let value = self.expr(&args[0].expr, None);
-        if value.ty == Ty::Error {
-            return None;
-        }
-        if !self.allocator_value_ok(&value.ty, value.span) {
-            return None;
-        }
-        Some(value)
-    }
-
-    /// `Result<ok, AllocError>`: the type a fallible allocation returns (`spec/allocators.md`, AL11). `AllocError`
-    /// is the standard library's error enum; without it the error is `Ty::Error`, which suppresses later errors.
-    pub(super) fn alloc_result_ty(&self, ok: Ty) -> Ty {
-        self.globals.result_ty(ok, self.globals.alloc_error_ty.clone().unwrap_or(Ty::Error))
-    }
-
-    /// `Map<K, V>.new_in(alloc)`.
-    pub(super) fn map_new_in(
-        &mut self,
-        key: &Ty,
-        value_ty: &Ty,
-        written: &burdin_tir::Alloc,
-        args: &[ast::Arg],
-        span: Span,
-    ) -> tir::Expr {
-        let Some(value) = self.new_in_allocator("Map.new_in", args, span) else {
-            return error_expr(span);
-        };
-        let alloc = self.globals.alloc_of(value.ty.clone());
-        if let burdin_tir::Alloc::Value(want) = written
-            && let burdin_tir::Alloc::Value(got) = &alloc
-            && want != got
-        {
-            self.diags.error(
-                Code::TYPE_MISMATCH,
-                value.span,
-                format!("this map stores a `{want}` allocator, but the argument is `{got}`"),
-            );
-            return error_expr(span);
-        }
-        let ty = self.globals.map_ty(key.clone(), value_ty.clone(), alloc);
-        mk(tir::ExprKind::Builtin(Builtin::MapNewIn, vec![value]), ty, span)
-    }
-
     /// The constructors of a `List` that depend on the allocator (`spec/allocators.md`, AL5): `new_in` and its
     /// siblings take the allocator type from the value even when `List<T>` was written with the default one, and
     /// `new`, `with_capacity`, and `try_with_capacity` exist for the default allocator only (E0272). `None` leaves
@@ -2119,6 +2081,57 @@ impl FnCx<'_> {
                     return None;
                 }
                 let target = self.globals.list_ty(elem.clone(), alloc);
+                if target == Ty::Error {
+                    return Some(error_expr(span));
+                }
+                Some(self.assoc_call(&target, name, &[], args, span, None))
+            }
+            _ => None,
+        }
+    }
+
+    /// The constructors of a `Map` that depend on the allocator (`spec/allocators.md`, AL5): `new_in` takes the
+    /// allocator type from the value even when `Map<K, V>` was written with the default one, and `new`,
+    /// `with_capacity`, and `try_with_capacity` exist for the default allocator only (E0272). `None` leaves the call
+    /// to the ordinary associated-function lookup.
+    #[allow(clippy::too_many_arguments)]
+    fn map_constructor(
+        &mut self,
+        ty: &Ty,
+        key: &Ty,
+        value: &Ty,
+        written: &burdin_tir::Alloc,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<tir::Expr> {
+        match name.name.as_str() {
+            "new" | "with_capacity" | "try_with_capacity" if !written.is_global() => {
+                let then = match name.name.as_str() {
+                    "new" => "",
+                    "with_capacity" => " and `reserve`",
+                    _ => " and `try_reserve`",
+                };
+                self.diags.error(
+                    Code::MISSING_ALLOCATOR,
+                    span,
+                    format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)`{then}"),
+                );
+                Some(self.args_then_error(args, span))
+            }
+            "new_in" if written.is_global() => {
+                if args.is_empty() {
+                    return None;
+                }
+                let value_arg = self.expr(&args[0].expr, None);
+                if value_arg.ty == Ty::Error || !self.allocator_value_ok(&value_arg.ty, value_arg.span) {
+                    return Some(error_expr(span));
+                }
+                let alloc = self.globals.alloc_of(value_arg.ty.clone());
+                if alloc.is_global() {
+                    return None;
+                }
+                let target = self.globals.map_ty(key.clone(), value.clone(), alloc);
                 if target == Ty::Error {
                     return Some(error_expr(span));
                 }
@@ -2328,48 +2341,6 @@ impl FnCx<'_> {
             }
             return self.no_assoc_function(ty, name, format!("`CPtr` has no function `{}`", name.name), args, span);
         }
-        // `List<T>.new()`, `with_capacity`, and `try_with_capacity` exist for the default allocator only.
-        if let Some((key, value, written_alloc)) = self.globals.map_parts(ty) {
-            if name.name == "new" {
-                if !args.is_empty() {
-                    self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
-                    return self.args_then_error(args, span);
-                }
-                if !written_alloc.is_global() {
-                    self.diags.error(
-                        Code::MISSING_ALLOCATOR,
-                        span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)`"),
-                    );
-                    return error_expr(span);
-                }
-                return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
-            }
-            if name.name == "new_in" {
-                return self.map_new_in(&key, &value, &written_alloc, args, span);
-            }
-            if name.name == "with_capacity" || name.name == "try_with_capacity" {
-                let fallible = name.name == "try_with_capacity";
-                let reserve = if fallible { "try_reserve" } else { "reserve" };
-                if !written_alloc.is_global() {
-                    self.diags.error(
-                        Code::MISSING_ALLOCATOR,
-                        span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `{reserve}`"),
-                    );
-                    return error_expr(span);
-                }
-                let params = [ParamSig::plain(Ty::Int(IntTy::Usize))];
-                let Some(checked) = self.args(&name.name, &params, args, None, span) else {
-                    return error_expr(span);
-                };
-                if fallible {
-                    let result = self.alloc_result_ty(ty.clone());
-                    return mk(tir::ExprKind::Builtin(Builtin::MapTryWithCapacity, checked), result, span);
-                }
-                return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
-            }
-        }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
             if name.name == "try_from" {
@@ -2515,6 +2486,11 @@ impl FnCx<'_> {
         }
         if let Some((elem, written)) = self.globals.list_parts(ty)
             && let Some(call) = self.list_constructor(ty, &elem, &written, name, args, span)
+        {
+            return call;
+        }
+        if let Some((key, value, written)) = self.globals.map_parts(ty)
+            && let Some(call) = self.map_constructor(ty, &key, &value, &written, name, args, span)
         {
             return call;
         }

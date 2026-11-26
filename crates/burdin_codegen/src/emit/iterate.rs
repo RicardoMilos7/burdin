@@ -121,10 +121,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (k, v) = ((**k).clone(), (**v).clone());
                 self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
             }
-            Ty::MapIntoIter(k, v, alloc) => {
-                let (k, v, alloc) = ((**k).clone(), (**v).clone(), alloc.clone());
-                self.next_map(&args[0], &k, &v, &item, ty, true, &alloc)
-            }
             Ty::SliceChunks(elem, exact) => {
                 let (elem, exact) = ((**elem).clone(), *exact);
                 self.next_chunks(&args[0], &elem, exact, false, ty)

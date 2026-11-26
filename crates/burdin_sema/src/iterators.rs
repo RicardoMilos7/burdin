@@ -25,7 +25,6 @@ impl Globals {
             // A mutable iterator yields a writable view of each element; a map's keys stay read-only (IT15).
             Ty::IterMut(elem) => Self::mutable_view(elem),
             Ty::MapIterMut(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::mutable_view(value)]),
-            Ty::MapIntoIter(key, value, _) => Ty::Tuple(vec![(**key).clone(), (**value).clone()]),
             _ => return None,
         })
     }

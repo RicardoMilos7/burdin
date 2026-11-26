@@ -653,65 +653,14 @@ struct char {}
 /// The character as a one-character `String`.
 fn char.to_string(self): String
 
-/// A hash map from keys to values.
-struct Map<K, V> {}
-
-/// An empty map.
-fn Map<K, V>.new(): Map<K, V>
-
-/// An empty map with room for `n` entries.
-fn Map<K, V>.with_capacity(n: usize): Map<K, V>
-
-/// An empty map that stores the allocator.
-fn Map<K, V>.new_in(alloc: A): Map<K, V, A>
-
-/// Inserts the entry, replacing an existing key's value.
-fn Map<K, V>.insert(mut self, key: K, value: V)
-
-/// The value of the key.
-fn Map<K, V>.get(self, key: K): Option<&V>
-
-/// The value of the key, to change.
-fn Map<K, V>.get_mut(mut self, key: K): Option<&mut V>
-
-/// The value of the key, or `fallback`.
-fn Map<K, V>.get_or(self, key: K, fallback: V): &V
-
-/// The value of the key, inserted when missing.
-fn Map<K, V>.get_or_insert(mut self, key: K, value: V): &mut V
-
-/// Removes the key and returns its value.
-fn Map<K, V>.remove(mut self, key: K): Option<V>
-
-/// Removes the key and returns the entry.
-fn Map<K, V>.remove_entry(mut self, key: K): Option<(K, V)>
-
-/// Whether the key is in the map.
-fn Map<K, V>.contains_key(self, key: K): bool
-
-/// Keeps the entries `keep` accepts.
-fn Map<K, V>.retain(mut self, keep: FnMut(&K, &V): bool)
-
-/// Room for `additional` more entries.
-fn Map<K, V>.reserve(mut self, additional: usize)
-
-/// Shrinks the table to the entries.
-fn Map<K, V>.shrink_to_fit(mut self)
-
-/// Removes every entry.
-fn Map<K, V>.clear(mut self)
-
-/// The number of entries.
-fn Map<K, V>.len(self): usize
+// `Map<K, V>` is an ordinary struct of `std/src/std.bd`, and its methods are written in Burdin there. Its three
+// iterators are the compiler's: the views read the table in place.
 
 /// Iterates over the entries as `(&K, &V)`.
 fn Map<K, V>.iter(self): MapIter<K, V>
 
 /// Iterates over the entries, to change the values.
 fn Map<K, V>.iter_mut(mut self): MapIterMut<K, V>
-
-/// Consumes the map, yielding `(K, V)`.
-fn Map<K, V>.into_iter(own self): MapIntoIter<K, V>
 
 // `Option` and `Result` are ordinary enums of `std/src/std.bd`, and their methods are written in Burdin in
 // `std/src/option.bd`. `context` is the one method of them the compiler provides (`spec/errors.md`, ERR6).

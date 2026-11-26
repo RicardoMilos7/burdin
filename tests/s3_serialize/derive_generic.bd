@@ -42,7 +42,7 @@ fn main() {
     println(collection_text)
     let collection_read: Result<Collection, DeError> = from_text(collection_text)
     let back = collection_read.unwrap()
-    println("{} {} {}", back.values.len(), back.values[1], *back.counts.get("a").unwrap())
+    println("{} {} {}", back.values.len(), back.values[1], *back.counts.get("a".to_string()).unwrap())
 
     let mut blob = List<u8>.new()
     blob.push(1)

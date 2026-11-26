@@ -205,25 +205,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// Allocates `size` bytes like [`Codegen::alloc_in`], but a null pointer means the allocator had no block to give
-    /// and the caller decides what that means (`spec/allocators.md`, AL11).
-    pub(super) fn try_alloc_in(
-        &mut self,
-        alloc: &Alloc,
-        addr: Option<PointerValue<'ctx>>,
-        size: IntValue<'ctx>,
-        align: u64,
-        span: Option<Span>,
-    ) -> GenResult<PointerValue<'ctx>> {
-        match alloc {
-            Alloc::Global => self.global_try_alloc(size, span),
-            Alloc::Value(ty) => {
-                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
-                self.stored_alloc(ty, addr, size, align)
-            }
-        }
-    }
-
     /// Panics with the out-of-memory message unless `p` is a block. An allocator that returns null has refused the
     /// request, and an infallible container operation cannot go on without the block.
     fn check_allocated(&mut self, p: PointerValue<'ctx>, span: Option<Span>) -> GenResult<()> {

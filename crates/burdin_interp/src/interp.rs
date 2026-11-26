@@ -131,7 +131,7 @@ pub(crate) struct Interp<'p, 'c> {
     pub(crate) raw_memory: bool,
     /// The standard-library functions the interpreter runs natively, by function index (`shared_model`).
     models: HashMap<usize, Option<SharedOp>>,
-    /// The same for the methods of `std`'s `List<T>` and `ListIntoIter<T>`.
+    /// The same for the methods of `std`'s `List<T>`, `Map<K, V>`, and `ListIntoIter<T>`.
     list_models: HashMap<usize, Option<ListModel>>,
 }
 
@@ -164,7 +164,31 @@ impl<'p, 'c> Interp<'p, 'c> {
         }
         let name = &self.p.functions[f.0].name;
         let method = name.rsplit(">.").next().unwrap_or("");
-        let op = if name.starts_with("std.List<") {
+        let method = method.split('<').next().unwrap_or(method);
+        let op = if name.starts_with("std.Map<") {
+            Some(match method {
+                "new" => ListModel::Builtin(Builtin::MapNew),
+                "with_capacity" => ListModel::Builtin(Builtin::MapWithCapacity),
+                "try_with_capacity" => ListModel::Builtin(Builtin::MapTryWithCapacity),
+                "new_in" => ListModel::Builtin(Builtin::MapNewIn),
+                "len" => ListModel::Method(Method::Len),
+                "into_iter" => ListModel::Method(Method::IntoIter),
+                "insert" => ListModel::Method(Method::MapInsert),
+                "get" => ListModel::Method(Method::MapGet),
+                "get_mut" => ListModel::Method(Method::MapGetMut),
+                "get_or" => ListModel::Method(Method::MapGetOr),
+                "get_or_insert" => ListModel::Method(Method::MapGetOrInsert),
+                "remove" => ListModel::Method(Method::MapRemove),
+                "remove_entry" => ListModel::Method(Method::MapRemoveEntry),
+                "contains_key" => ListModel::Method(Method::MapContainsKey),
+                "retain" => ListModel::Method(Method::MapRetain),
+                "reserve" => ListModel::Method(Method::MapReserve),
+                "try_reserve" => ListModel::Method(Method::MapTryReserve),
+                "shrink_to_fit" => ListModel::Method(Method::MapShrinkToFit),
+                "clear" => ListModel::Method(Method::Clear),
+                _ => return self.no_list_model(f),
+            })
+        } else if name.starts_with("std.List<") {
             Some(match method {
                 "new" => ListModel::Builtin(Builtin::ListNew),
                 "with_capacity" => ListModel::Builtin(Builtin::ListWithCapacity),
@@ -206,7 +230,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 "sort" => ListModel::Method(Method::ListSort),
                 _ => return self.no_list_model(f),
             })
-        } else if (name.starts_with("std.ListIntoIter<") || name.starts_with("std.ArrayIntoIter<")) && method == "next"
+        } else if (name.starts_with("std.ListIntoIter<")
+            || name.starts_with("std.ArrayIntoIter<")
+            || name.starts_with("std.MapIntoIter<"))
+            && method == "next"
         {
             Some(ListModel::Method(Method::IterNext))
         } else {
@@ -223,6 +250,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             .or_else(|| defs.list_into_iter_parts(ty))
             .map(|(t, _)| t.clone())
             .or_else(|| defs.array_into_iter_elem(ty).cloned())
+            .or_else(|| defs.map_into_iter_parts(ty).map(|(k, v, _)| Ty::Tuple(vec![k.clone(), v.clone()])))
     }
 
     fn no_list_model(&mut self, f: FuncId) -> Option<ListModel> {
@@ -1253,7 +1281,6 @@ impl<'p, 'c> Interp<'p, 'c> {
             }
             Ty::Tuple(ts) => ts.iter().any(|t| self.has_user_drop(t)),
             Ty::Array(t, _) | Ty::Heap(t, _) => self.has_user_drop(t),
-            Ty::MapIntoIter(a, b, _) => self.has_user_drop(a) || self.has_user_drop(b),
             Ty::Any(_) | Ty::Fn { .. } => true,
             _ => false,
         };
@@ -1324,16 +1351,6 @@ impl<'p, 'c> Interp<'p, 'c> {
                 }
             }
             (Ty::Heap(t, _), Value::Heap(b)) => self.drop_value(*b, t, span)?,
-            (Ty::MapIntoIter(k, val, _), Value::Items(pairs)) => {
-                for pair in pairs {
-                    if let Value::Tuple(mut kv) = pair {
-                        let vv = kv.pop().unwrap_or(Value::Moved);
-                        let key = kv.pop().unwrap_or(Value::Moved);
-                        self.drop_value(key, k, span)?;
-                        self.drop_value(vv, val, span)?;
-                    }
-                }
-            }
             (Ty::Any(_), Value::Any(vt, inner)) => {
                 let concrete = self.p.any_vtables[vt].concrete.clone();
                 self.drop_value(*inner, &concrete, span)?;

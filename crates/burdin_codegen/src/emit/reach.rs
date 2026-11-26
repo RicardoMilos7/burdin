@@ -115,9 +115,9 @@ impl Codegen<'_, '_> {
     }
 }
 
-/// Whether the struct is a `std.List` or `std.ListIntoIter` instance.
+/// Whether the struct is a `std.List`, `std.ListIntoIter`, or `std.MapIntoIter` instance.
 fn is_list_struct(s: &tir::StructDef) -> bool {
-    matches!(s.lang, Some(tir::LangItem::List | tir::LangItem::ListIntoIter))
+    matches!(s.lang, Some(tir::LangItem::List | tir::LangItem::ListIntoIter | tir::LangItem::MapIntoIter))
 }
 
 fn mark(id: tir::FuncId, reachable: &mut [bool], pending: &mut Vec<usize>) {

@@ -67,6 +67,22 @@ impl TypeDefs<'_> {
         (def.lang == Some(LangItem::ListIntoIter)).then(|| Self::seq_parts(def, def.fields.len() - 1))
     }
 
+    /// The key type, value type, and allocator of a `MapIntoIter` instance, `None` when `ty` is not one.
+    pub fn map_into_iter_parts(&self, ty: &Ty) -> Option<(&Ty, &Ty, Alloc)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        if def.lang != Some(LangItem::MapIntoIter) {
+            return None;
+        }
+        let Ty::CPtr(entry) = &def.fields[0].ty else {
+            unreachable!("a map iterator's first field is its buffer pointer")
+        };
+        let Ty::Tuple(parts) = &**entry else {
+            unreachable!("a map iterator's buffer holds (key, value, hash) entries")
+        };
+        Some((&parts[0], &parts[1], Alloc::of_field(&def.fields[def.fields.len() - 1].ty)))
+    }
+
     /// The endpoint type and whether the range is inclusive, when `ty` is a `Range` or a `RangeInclusive` instance.
     pub fn range_parts(&self, ty: &Ty) -> Option<(&Ty, bool)> {
         let Ty::Struct(a) = ty else { return None };
@@ -146,12 +162,7 @@ impl TypeDefs<'_> {
             Ty::CPtr(_) => true,
             // An iterator advances through its state, so it is never copied or cloned. A map entry owns its key
             // and views its map, so it is moved into the operation that consumes it.
-            Ty::MapIter(..)
-            | Ty::IterMut(_)
-            | Ty::MapIterMut(..)
-            | Ty::MapIntoIter(..)
-            | Ty::SliceChunks(..)
-            | Ty::SliceWindows(..) => false,
+            Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String => prop == Property::Clone,
@@ -180,7 +191,7 @@ impl TypeDefs<'_> {
                         && self.holds(v, prop, seen)
                         && alloc.allocator_ty().is_none_or(|a| self.holds(a, prop, seen));
                 }
-                if def.lang == Some(LangItem::ListIntoIter) {
+                if matches!(def.lang, Some(LangItem::ListIntoIter | LangItem::MapIntoIter)) {
                     return false;
                 }
                 self.derived_from_fields(false, a.id, prop, &def.derives, seen, || {
@@ -232,7 +243,7 @@ impl TypeDefs<'_> {
             // A box owns its heap allocation and the value inside it (AN1/AN7).
             Ty::Any(_) => true,
             // An owning iterator frees its buffer (or drops the elements it has not handed out).
-            Ty::String | Ty::Heap(..) | Ty::MapIntoIter(..) => true,
+            Ty::String | Ty::Heap(..) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
             Ty::Tuple(ts) => ts.iter().any(|t| self.needs_drop_seen(t, seen)),
             Ty::Struct(a) => {
