@@ -1054,7 +1054,7 @@ linter is the new crate `burdin_lint`, a side branch of the pipeline: it reads t
 compiler built, never changes them, and the driver (`crates/burdin_driver/src/lint.rs`) is the only caller. Syntax-tree
 lints (names, imports, unused variables and parameters, unreachable code, dead `priv` items, `else` over a local enum)
 and typed-tree lints (eager chains, redundant clones, `mut` never written, large `Copy` in a loop, borrow parameters
-every caller consumes, allocation in a loop, `to_list()` iterated at once) are `L0001`-`L0016`; `L0000` is an unknown
+every caller consumes, allocation in a loop, `to_list()` iterated at once) are `L0001`-`L0016` (and the style lints `L0018`-`L0023`, issue #779); `L0000` is an unknown
 lint name. Generic functions are checked per instance and a finding is kept only when every instance agrees; generated
 code (single-token spans) is skipped. Closure capture modes in the typed tree are unreliable (an `IndexMut` write leaves
 a capture as a borrow), so `unused_mut` analyzes closure bodies to a fixed point. `--fix` applies rounds of

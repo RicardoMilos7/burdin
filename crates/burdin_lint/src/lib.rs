@@ -16,6 +16,7 @@ mod missing_docs;
 mod naming;
 mod registry;
 mod scopes;
+mod style;
 mod suppress;
 mod tir_lints;
 mod unreachable;
@@ -128,6 +129,16 @@ pub fn run(input: &Input) -> Diagnostics {
     }
     if on(&[Lint::MissingDocs]) {
         missing_docs::check(&cx, &mut findings);
+    }
+    if on(&[
+        Lint::NeedlessReturn,
+        Lint::BoolComparison,
+        Lint::NeedlessBool,
+        Lint::EmptyElse,
+        Lint::RedundantParens,
+        Lint::LetAndReturn,
+    ]) {
+        style::check(&cx, &mut findings);
     }
     if on(&[Lint::UnreachableCode]) {
         unreachable::check(&cx, &mut findings);

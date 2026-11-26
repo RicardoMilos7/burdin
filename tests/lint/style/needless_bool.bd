@@ -1,0 +1,47 @@
+// An `if` that only produces `true` or `false` (spec/lint.md LN36).
+
+fn is_big(x: i32): bool {
+    if x > 100 { //~ L0020
+        true
+    } else {
+        false
+    }
+}
+
+fn is_small(x: i32): bool {
+    if x > 100 { //~ L0020
+        return false //~ L0018
+    } else {
+        return true //~ L0018
+    }
+}
+
+fn negated_call(x: i32): bool {
+    if is_big(x) { false } else { true } //~ L0020
+}
+
+// Not reported: the two branches are not opposite booleans, or do something else too.
+fn same(x: i32): bool {
+    if x > 1 { true } else { true }
+}
+
+fn does_more(x: i32): bool {
+    if x > 1 {
+        println("big")
+        true
+    } else {
+        false
+    }
+}
+
+fn mixed(x: i32): bool {
+    if x > 1 {
+        return true //~ L0018
+    } else {
+        false
+    }
+}
+
+fn main() {
+    println("{} {} {} {} {} {}", is_big(1), is_small(1), negated_call(1), same(1), does_more(1), mixed(1))
+}
