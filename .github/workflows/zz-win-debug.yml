@@ -1,0 +1,109 @@
+name: zz-win-debug
+on:
+  pull_request:
+jobs:
+  win:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      LLVM_SYS_211_PREFIX: C:/llvm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Git for Windows ships a coreutils `link.exe` in `usr/bin`. On the current runner image rustc can pick it
+      # up instead of MSVC's linker, which fails with "extra operand" while linking build scripts. Name the
+      # MSVC linker for the target explicitly so the choice does not depend on PATH order.
+      - name: Configure the MSVC linker
+        run: |
+          linker="${VCToolsInstallDir}bin\\HostX64\\x64\\link.exe"
+          test -x "$(cygpath -u "$linker")"
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> "$GITHUB_ENV"
+
+      # The cache key is the pinned toolchain plus Cargo.lock, so a toolchain bump or a
+      # dependency change starts a fresh cache instead of reusing stale artifacts (issue #46).
+      # Every part restores the same cache; the first part to finish uploads the full debug build.
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          # A dependency change starts a new key; this still restores the last target directory, so cargo
+          # rebuilds only what changed instead of all fourteen parts starting cold.
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      # The official Windows release archive is the only LLVM 21 distribution that ships llvm-config.exe
+      # (llvm-sys needs it) and the LLVM-C import library. It is ~900 MB, so the archive is cached and the job
+      # only downloads it on the first run; the unpacked tree is four times larger and not worth caching (#46).
+      - name: Cache LLVM 21
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: C:/llvm-cache/llvm.tar.xz
+          key: ${{ runner.os }}-llvm-21
+
+      - name: Install LLVM 21
+        run: |
+          archive=/c/llvm-cache/llvm.tar.xz
+          if [ "${{ steps.cache-llvm.outputs.cache-hit }}" != "true" ]; then
+            mkdir -p /c/llvm-cache
+            curl -fsSL -o "$archive" \
+              "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          fi
+          mkdir -p /c/llvm
+          tar -xJf "$archive" -C /c/llvm --strip-components=1
+
+      # `C:/llvm/bin` goes on PATH so LLVM-C.dll is found when the compiler or a program built with
+      # `--link-lib LLVM-C` runs. The checks run on both a cache hit and a miss.
+      - name: Verify LLVM 21
+        run: |
+          test -x "C:/llvm/bin/llvm-config.exe"
+          test -f "C:/llvm/lib/LLVM-C.lib"
+          echo 'C:\llvm\bin' >> "$GITHUB_PATH"
+
+
+      - name: Install Rust (pinned in rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - name: Build the driver
+        run: cargo build -p burdin_driver
+
+      - name: Run the failing test
+        run: |
+          set +e
+          for i in 1 2 3; do
+            target/debug/burdin run tests/s2_io/stress_files.bd
+            echo "exit code: $?"
+          done
+          mkdir -p /tmp/dbg && cd /tmp/dbg
+          cat > one.bd <<'EOF2'
+          fn main() {
+              let mut file = fs.File.create("one.txt").unwrap()
+              let data = "0123456789".to_utf8()
+              file.write_all(data[0..data.len()]).unwrap()
+              let mut read = fs.File.open("one.txt").unwrap()
+              let mut buf = List<u8>.new()
+              let n = read.read(mut buf, 64).unwrap()
+              println("read {n}")
+              let mut options = fs.OpenOptions.new()
+              options.write(true)
+              options.truncate(true)
+              let mut again = options.open("one.txt").unwrap()
+              again.write_all(data[0..data.len()]).unwrap()
+              println("again ok")
+              fs.remove_file("one.txt").unwrap()
+              println("removed")
+          }
+          EOF2
+          "$GITHUB_WORKSPACE/target/debug/burdin" run one.bd
+          echo "exit code: $?"
