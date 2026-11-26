@@ -1133,6 +1133,15 @@ List<T, A> {
     }
 }
 
+/// A hash map. The compiler keeps its table: `ptr` holds `cap` slots of `(key, value, hash)` (a zero hash marks an
+/// empty slot), `len` counts the live entries, and `alloc` is where the table comes from.
+struct Map<K, V, A: Allocator = Global> {
+    ptr: CPtr<(K, V, u64)>
+    len: usize
+    cap: usize
+    alloc: A
+}
+
 /// The owning iterator of a `List`: it yields the elements and drops the ones it did not yield.
 struct ListIntoIter<T, A: Allocator = Global> {
     ptr: CPtr<T>

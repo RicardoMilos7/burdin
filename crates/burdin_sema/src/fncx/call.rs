@@ -1648,7 +1648,28 @@ impl FnCx<'_> {
                 Self::attach_mut_fix(fix, d);
             }
         }
+        let map_key = self.globals.map_parts(&recv.ty).map(|(k, _, _)| k);
         match (&m, &recv.ty) {
+            (
+                Method::MapGet
+                | Method::MapGetMut
+                | Method::MapGetOrInsert
+                | Method::MapGetOr
+                | Method::MapRemove
+                | Method::MapRemoveEntry
+                | Method::MapContainsKey
+                | Method::MapInsert,
+                _,
+            ) if map_key.as_ref().is_some_and(|k| !self.globals.has_key_eq_in(k, &self.bounds)) => {
+                let k = map_key.expect("checked above");
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!(
+                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
+                    ),
+                );
+            }
             // The slice operations that clone their elements need `Clone`, and `copy_from_slice` needs `Copy`
             // (`spec/stdlib.md`, "Slices").
             (Method::SliceFill | Method::SliceCloneFromSlice | Method::SliceToList, Ty::Slice(elem))
@@ -1667,26 +1688,6 @@ impl FnCx<'_> {
                     Code::BOUND_NOT_SATISFIED,
                     span,
                     format!("`copy_from_slice` needs `Copy`, but `{elem}` does not implement it"),
-                );
-            }
-            (
-                Method::MapGet
-                | Method::MapGetMut
-                | Method::MapGetOrInsert
-                | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapRemove
-                | Method::MapRemoveEntry
-                | Method::MapContainsKey
-                | Method::MapInsert,
-                Ty::Map(k, _, _),
-            ) if !self.globals.has_key_eq_in(k, &self.bounds) => {
-                self.diags.error(
-                    Code::BOUND_NOT_SATISFIED,
-                    span,
-                    format!(
-                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
-                    ),
                 );
             }
             _ => {}
@@ -2073,7 +2074,7 @@ impl FnCx<'_> {
             );
             return error_expr(span);
         }
-        let ty = Ty::Map(Box::new(key.clone()), Box::new(value_ty.clone()), alloc);
+        let ty = self.globals.map_ty(key.clone(), value_ty.clone(), alloc);
         mk(tir::ExprKind::Builtin(Builtin::MapNewIn, vec![value]), ty, span)
     }
 
@@ -2328,7 +2329,7 @@ impl FnCx<'_> {
             return self.no_assoc_function(ty, name, format!("`CPtr` has no function `{}`", name.name), args, span);
         }
         // `List<T>.new()`, `with_capacity`, and `try_with_capacity` exist for the default allocator only.
-        if let Ty::Map(key, value, written_alloc) = ty {
+        if let Some((key, value, written_alloc)) = self.globals.map_parts(ty) {
             if name.name == "new" {
                 if !args.is_empty() {
                     self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
@@ -2345,8 +2346,7 @@ impl FnCx<'_> {
                 return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
             }
             if name.name == "new_in" {
-                let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
-                return self.map_new_in(&key, &value, &written, args, span);
+                return self.map_new_in(&key, &value, &written_alloc, args, span);
             }
             if name.name == "with_capacity" || name.name == "try_with_capacity" {
                 let fallible = name.name == "try_with_capacity";

@@ -189,6 +189,11 @@ pub(crate) fn list_elem(p: &Program, ty: &Ty) -> Option<Ty> {
     TypeDefs { structs: &p.structs, enums: &p.enums }.list_parts(ty).map(|(t, _)| t.clone())
 }
 
+/// The key and value types of a `Map` (the compiler's map struct in `std`), `None` for any other type.
+pub(crate) fn map_parts(p: &Program, ty: &Ty) -> Option<(Ty, Ty)> {
+    TypeDefs { structs: &p.structs, enums: &p.enums }.map_parts(ty).map(|(k, v, _)| (k.clone(), v.clone()))
+}
+
 pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering {
     let (a, b) = (shallow(a), shallow(b));
     match (a, b) {
@@ -282,6 +287,21 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             let with_len = mix(acc, v.elems().len() as u64);
             v.elems().iter().fold(with_len, |h, x| hash(p, x, &t, h))
         }
+        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
+        Ty::Struct(_) if map_parts(p, ty).is_some() => {
+            let (k, vty) = map_parts(p, ty).expect("a map");
+            match v {
+                Value::Map(entries) => {
+                    let mut h = mix(acc, entries.len() as u64);
+                    for (key, value) in entries {
+                        let entry = hash(p, value, &vty, hash(p, key, &k, FNV_OFFSET));
+                        h ^= entry;
+                    }
+                    h
+                }
+                _ => acc,
+            }
+        }
         Ty::Struct(a) => match v {
             Value::Tuple(fs) => fs.iter().zip(&p.structs[a.id].fields).fold(acc, |h, (f, d)| hash(p, f, &d.ty, h)),
             _ => acc,
@@ -295,18 +315,6 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
         },
         Ty::Array(t, _) => v.elems().iter().fold(acc, |h, x| hash(p, x, t, h)),
         // A list hashes its length and then its elements in order, exactly as `hash_at` does.
-        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
-        Ty::Map(k, vty, _) => match v {
-            Value::Map(entries) => {
-                let mut h = mix(acc, entries.len() as u64);
-                for (key, value) in entries {
-                    let entry = hash(p, value, vty, hash(p, key, k, FNV_OFFSET));
-                    h ^= entry;
-                }
-                h
-            }
-            _ => acc,
-        },
         _ => acc,
     }
 }
@@ -348,7 +356,6 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         // A chunks or windows iterator keeps the slice view and two indices.
         Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
         // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
-        Ty::Map(_, _, a) => container(p, (24, 8), a),
         Ty::Heap(_, a) => container(p, (8, 8), a),
         Ty::CPtr(_) | Ty::Ref { .. } => (8, 8),
         Ty::Array(elem, n) => {
@@ -360,8 +367,6 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
         Ty::IterMut(_) => (16, 8),
-        // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
-        Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
         Ty::Enum(a) => {
             let mut size = 0;
             let mut align = 1;
@@ -409,9 +414,9 @@ pub(crate) fn zero_value(p: &Program, ty: &Ty) -> Value {
         Ty::Float(_) => Value::Float(0.0),
         Ty::Str => Value::str(""),
         Ty::String => Value::String(Vec::new()),
-        Ty::Map(..) => Value::Map(Vec::new()),
         Ty::Tuple(ts) => Value::Tuple(ts.iter().map(|t| zero_value(p, t)).collect()),
         Ty::Struct(_) if list_elem(p, ty).is_some() => Value::List(Vec::new()),
+        Ty::Struct(_) if map_parts(p, ty).is_some() => Value::Map(Vec::new()),
         Ty::Struct(a) => Value::Tuple(p.structs[a.id].fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
         Ty::Enum(a) => match p.enums[a.id].variants.first() {
             Some(v) => Value::Variant(0, v.fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
@@ -1204,10 +1209,8 @@ impl<'p> Interp<'p, '_> {
                 let k = self.eval(&args[1], Mode::Move)?;
                 let v = self.eval(&args[2], Mode::Move)?;
                 self.charge(1, span)?;
-                let (kt, vt) = match &recv.ty {
-                    Ty::Map(k, v, _) => ((**k).clone(), (**v).clone()),
-                    _ => (Ty::Unit, Ty::Unit),
-                };
+                let (kt, vt) = map_parts(self.p, &recv.ty).unwrap_or((Ty::Unit, Ty::Unit));
+                let _ = &kt;
                 let map = map_mut(self.place_mut(&place, span)?, span)?;
                 match map.iter_mut().find(|(key, _)| value_eq(key, &k)) {
                     Some((_, slot)) => {
@@ -1239,9 +1242,6 @@ impl<'p> Interp<'p, '_> {
                 let _ = self.eval(&args[1], Mode::Use)?.int();
                 Value::ok(Value::Unit)
             }
-            Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
-                return Err(impure("an entry into a map value", span));
-            }
             Method::MapContainsKey => {
                 let k = self.eval(&args[1], Mode::Use)?;
                 Value::Bool(self.peek(recv, |v| match v {
@@ -1256,8 +1256,7 @@ impl<'p> Interp<'p, '_> {
                 match map.iter().position(|(key, _)| value_eq(key, &k)) {
                     Some(i) => {
                         let (key, v) = map.remove(i);
-                        if let Ty::Map(kt, _, _) = &recv.ty {
-                            let kt = (**kt).clone();
+                        if let Some((kt, _)) = map_parts(self.p, &recv.ty) {
                             self.drop_value(key, &kt, span)?;
                         }
                         Value::some(v)
@@ -1474,7 +1473,7 @@ impl<'p> Interp<'p, '_> {
                     Value::Slice(Rc::new(xs), 0, n)
                 }
             }
-            (Ty::Map(..), Value::Map(pairs)) => Value::Items(
+            (t, Value::Map(pairs)) if map_parts(self.p, t).is_some() => Value::Items(
                 pairs
                     .into_iter()
                     .map(|(k, v)| {

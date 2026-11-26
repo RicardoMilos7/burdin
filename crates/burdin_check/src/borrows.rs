@@ -247,20 +247,6 @@ impl<'a> Checker<'a> {
                 }
                 places
             }
-            // The entry operations hand out the map's storage from a temporary entry value, so a loan taken on
-            // the entry belongs to the map the entry borrows. Other chainable views take their loan where their
-            // receiver is a place, so they need no origin here (and `mut self` on a view must not borrow the
-            // view's source exclusively).
-            K::Method(
-                tir::Method::MapEntry | tir::Method::MapEntryOrInsert | tir::Method::MapEntryOrInsertWith,
-                args,
-            ) => {
-                let Some(arg) = args.first() else { return Vec::new() };
-                match burdin_tir::place::tir_place(arg) {
-                    Some((root, path, _)) => vec![(root, path)],
-                    None => self.reference_origin(arg),
-                }
-            }
             _ => Vec::new(),
         }
     }
@@ -515,7 +501,6 @@ impl<'a> Checker<'a> {
                         tir::Method::MapGetMut
                             | tir::Method::MapGetOrInsert
                             | tir::Method::MapGetOr
-                            | tir::Method::MapEntry
                             | tir::Method::IterMut
                             | tir::Method::ListGetMut
                             | tir::Method::ListFirstMut

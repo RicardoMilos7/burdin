@@ -555,6 +555,28 @@ impl Globals {
         }
         // A list holds its elements until it is dropped, so they must own their storage, and its allocator must be
         // one. These are checked where the type is written, as for the other containers.
+        if Some(g) == self.lang_map {
+            for (i, what) in [(0, "a `Map` key"), (1, "a `Map` value")] {
+                if let (Some(ty), Some(arg)) = (resolved.get(i), args.get(i))
+                    && ty.is_second_class()
+                {
+                    check_storable(ty, arg.span, what, diags);
+                    return Ty::Error;
+                }
+            }
+            if let (Some(alloc), Some(arg)) = (resolved.get(2), args.get(2))
+                && *alloc != Ty::Error
+                && !self.ty_has_param(alloc)
+                && !self.is_allocator(alloc, &[])
+            {
+                diags.error(
+                    Code::NOT_AN_ALLOCATOR,
+                    arg.span,
+                    format!("`{alloc}` does not implement `Allocator`, so it cannot be a container's allocator"),
+                );
+                return Ty::Error;
+            }
+        }
         if Some(g) == self.lang_list || Some(g) == self.lang_list_into_iter {
             if let (Some(elem), Some(arg)) = (resolved.first(), args.first())
                 && elem.is_second_class()
@@ -672,24 +694,6 @@ impl Globals {
             ("CPtr", 1) => {
                 Ty::CPtr(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
             }
-            ("Map", 2) | ("Map", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                check_storable(&key, args[0].span, "a `Map` key", diags);
-                check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::Map(Box::new(key), Box::new(value), alloc)
-            }
-            // The type `map.entry(key)` returns (`spec/stdlib.md`, "Map entry operations"). The entry itself is
-            // second-class; its key and value are the map's, so they must be storable.
-            ("MapEntry", 2) | ("MapEntry", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                check_storable(&key, args[0].span, "a `Map` key", diags);
-                check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::MapEntry(Box::new(key), Box::new(value), alloc)
-            }
             _ => return None,
         })
     }
@@ -757,9 +761,11 @@ impl Globals {
         if let Some((t, _)) = self.list_parts(ty) {
             return self.hand_written_eq_hashes(&t);
         }
+        if let Some((k, v, _)) = self.map_parts(ty) {
+            return self.hand_written_eq_hashes(&k) && self.hand_written_eq_hashes(&v);
+        }
         match ty {
             Ty::Array(t, _) => self.hand_written_eq_hashes(t),
-            Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
             Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -782,13 +788,15 @@ impl Globals {
         if let Some((elem, _)) = self.list_parts(ty) {
             return self.has_eq_in(&elem, env);
         }
+        // A map compares by its entries, whatever the iteration order.
+        if let Some((k, v, _)) = self.map_parts(ty) {
+            return self.has_eq_in(&k, env) && self.has_eq_in(&v, env);
+        }
         match ty {
             Ty::Const(_) | Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &crate::generics::Bound::Eq, env),
-            // A map compares by its entries, whatever the iteration order.
-            Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
@@ -799,7 +807,6 @@ impl Globals {
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)
-            | Ty::MapEntry(..)
             | Ty::Chars
             | Ty::Fn { .. }
             | Ty::MapIter(..)

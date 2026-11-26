@@ -196,8 +196,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Builtin::MapWithCapacity => {
                 let capacity = self.expr_mode(&args[0], Mode::Use)?;
                 let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::Map(key, value, _) = ty else { return Ok(None) };
-                let (key, value) = ((**key).clone(), (**value).clone());
+                let Some((key, value, _)) = self.map_info(ty) else { return Ok(None) };
+                let (key, value) = ((*key).clone(), (*value).clone());
                 let cap = self.map_capacity_for(capacity, span)?;
                 let map_ty = self.llvm_ty(ty).expect("a map has a type");
                 let slot = self.alloca(map_ty, "map.with_capacity")?;
@@ -240,10 +240,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     return Err("`try_with_capacity` returns a Result".into());
                 };
                 let map_ty = &map_ty;
-                let Ty::Map(key, value, _) = map_ty else {
+                let Some((key, value, _)) = self.map_info(map_ty) else {
                     return Err("`Map.try_with_capacity` on a non-map type".into());
                 };
-                let (key, value) = ((**key).clone(), (**value).clone());
+                let (key, value) = ((*key).clone(), (*value).clone());
                 let map_t = self.llvm_ty(map_ty).expect("a map has a type");
                 let slot = self.alloca(map_t, "map.try.with_capacity")?;
                 self.builder.build_store(slot, map_t.const_zero()).map_err(llvm_err)?;
@@ -1737,9 +1737,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::MapInsert
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapEntryOrInsert
-                | Method::MapEntryOrInsertWith
                 | Method::MapGet
                 | Method::MapGetMut
                 | Method::MapRemove
@@ -1790,7 +1787,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }
-                Ty::Map(..) => {
+                _ if self.map_info(&recv_ty).is_some() => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }

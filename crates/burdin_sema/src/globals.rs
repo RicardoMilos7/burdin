@@ -298,6 +298,7 @@ pub(crate) struct Globals {
     /// `std`'s `List` and its owning iterator: templates the compiler knows by name (issue #1017).
     pub(crate) lang_list: Option<usize>,
     pub(crate) lang_list_into_iter: Option<usize>,
+    pub(crate) lang_map: Option<usize>,
     /// `std`'s `ManuallyDrop`: a wrapper whose value is never dropped by glue.
     pub(crate) lang_manually_drop: Option<usize>,
     pub(crate) lang_array_into_iter: Option<usize>,
@@ -471,6 +472,7 @@ impl Globals {
             "Result" => self.lang_result.map(TypeName::GenericAdt),
             "List" => self.lang_list.map(TypeName::GenericAdt),
             "ListIntoIter" => self.lang_list_into_iter.map(TypeName::GenericAdt),
+            "Map" => self.lang_map.map(TypeName::GenericAdt),
             "ManuallyDrop" => self.lang_manually_drop.map(TypeName::GenericAdt),
             "ArrayIntoIter" => self.lang_array_into_iter.map(TypeName::GenericAdt),
             "Range" => self.lang_range[0].map(TypeName::GenericAdt),
@@ -657,7 +659,6 @@ impl Globals {
             Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array(inner, _) | Ty::Heap(inner, _) | Ty::CPtr(inner) => {
                 self.private_adt(inner)
             }
-            Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))
             }

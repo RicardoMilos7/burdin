@@ -24,12 +24,14 @@ impl Globals {
         if let Some((t, alloc)) = self.list_parts(ty) {
             return Some(alloc.is_global() && part(&t));
         }
+        if let Some((k, v, alloc)) = self.map_parts(ty) {
+            return Some(alloc.is_global() && k == Ty::String && part(&v));
+        }
         Some(match ty {
             Ty::Error | Ty::Never => true,
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::String => true,
             // `str` is written but never read: a reader returns an owned `String` (SER11).
             Ty::Str => !deserialize,
-            Ty::Map(k, v, alloc) => alloc.is_global() && **k == Ty::String && part(v),
             Ty::Tuple(ts) => (2..=4).contains(&ts.len()) && ts.iter().all(part),
             Ty::Struct(_) | Ty::Enum(_) => return None,
             _ => false,
@@ -48,6 +50,9 @@ impl Globals {
         if let Some((t, _)) = self.list_parts(ty) {
             return Some(if t == Ty::Int(IntTy::U8) { "bytes" } else { "list" }.to_string());
         }
+        if self.map_parts(ty).is_some() {
+            return Some("map".to_string());
+        }
         Some(match ty {
             Ty::Unit => "unit".to_string(),
             Ty::Bool => "bool".to_string(),
@@ -57,7 +62,6 @@ impl Globals {
             Ty::Float(FloatTy::F64) => "f64".to_string(),
             Ty::String => "string".to_string(),
             Ty::Str => "str".to_string(),
-            Ty::Map(..) => "map".to_string(),
             Ty::Tuple(ts) if (2..=4).contains(&ts.len()) => format!("tuple{}", ts.len()),
             _ => return None,
         })

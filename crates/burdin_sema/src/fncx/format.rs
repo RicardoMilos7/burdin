@@ -423,6 +423,9 @@ impl FnCx<'_> {
             mk(tir::ExprKind::Cast(Box::new(e)), Ty::Int(to), span)
         };
         let f = f.clone();
+        if self.globals.map_parts(&e.ty).is_some() {
+            return self.generic_format("debug_map", e, f_name, span);
+        }
         match e.ty.clone() {
             Ty::Int(IntTy::I128) => self.std_call("fmt_i128", vec![e, int(128), f], span),
             Ty::Int(IntTy::U128) => self.std_call("fmt_u128", vec![e, f], span),
@@ -446,7 +449,6 @@ impl FnCx<'_> {
             Ty::Unit => self.std_call("debug_unit", vec![f], span),
             // A value of type `!` never exists, so there is nothing to write; the expression itself diverges.
             Ty::Never => e,
-            Ty::Map(_, _, _) => self.generic_format("debug_map", e, f_name, span),
             Ty::Heap(_, _) => self.generic_format("debug_heap", e, f_name, span),
             Ty::Tuple(ts) => {
                 let name = format!("debug_tuple{}", ts.len());

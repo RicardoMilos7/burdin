@@ -267,11 +267,6 @@ pub enum Ty {
     /// `[T]`: a slice view, a pointer and a length.
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
-    /// `Map<K, V>`: an owned collection of key/value pairs.
-    Map(Box<Ty>, Box<Ty>, Alloc),
-    /// `Map<K, V>.entry(key)`: a pending lookup that owns the key and borrows the map exclusively
-    /// (`spec/stdlib.md`, "Map entry operations"). It is second-class: it views the map, so it cannot be stored.
-    MapEntry(Box<Ty>, Box<Ty>, Alloc),
     /// The iterator `str.chars()` returns, only usable in a `for` loop.
     Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
@@ -359,11 +354,9 @@ impl Ty {
             Ty::Array(t, _) => t.is_second_class(),
             // An owning iterator holds its elements; a borrowing one points at its source.
             Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) => true,
-            // An entry points at its map, so it is a view of that map's storage (SC2).
-            Ty::MapEntry(..) => true,
             // A chunks or windows iterator views the slice it was made from.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => true,
-            Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
+            Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
             // A `Shared<T>` owns its heaped value, like a `Heap`.
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
             Ty::Struct(a) | Ty::Enum(a) => a.second_class,
@@ -400,10 +393,6 @@ impl fmt::Display for Ty {
             Ty::Slice(t) => write!(f, "[{t}]"),
             Ty::Array(t, n) if *n >= 1 << 62 => write!(f, "[{t}; _]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
-            Ty::Map(k, v, Alloc::Global) => write!(f, "Map<{k}, {v}>"),
-            Ty::Map(k, v, a) => write!(f, "Map<{k}, {v}, {a}>"),
-            Ty::MapEntry(k, v, Alloc::Global) => write!(f, "MapEntry<{k}, {v}>"),
-            Ty::MapEntry(k, v, a) => write!(f, "MapEntry<{k}, {v}, {a}>"),
             Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t, Alloc::Global) => write!(f, "Heap<{t}>"),
             Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
@@ -499,8 +488,6 @@ mod tests {
         assert!(Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }.is_second_class());
         assert!(Ty::Tuple(vec![i32_.clone(), Ty::Str]).is_second_class());
         assert!(Ty::Array(Box::new(Ty::Str), 2).is_second_class());
-        assert!(Ty::Map(Box::new(Ty::Str), Box::new(Ty::Bool), Alloc::Global).is_second_class());
-        assert!(Ty::MapEntry(Box::new(i32_.clone()), Box::new(i32_.clone()), Alloc::Global).is_second_class());
         // Owned types are not views.
         assert!(!Ty::String.is_second_class());
         assert!(!Ty::Heap(Box::new(i32_.clone()), Alloc::Global).is_second_class());
@@ -556,14 +543,8 @@ mod tests {
             (Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }, "&mut i32"),
             (Ty::Slice(Box::new(i32_.clone())), "[i32]"),
             (Ty::Array(Box::new(i32_.clone()), 4), "[i32; 4]"),
-            (Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "Map<str, i32>"),
-            (Ty::MapEntry(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Global), "MapEntry<str, i32>"),
             (Ty::Chars, "Chars"),
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Global), "Heap<i32>"),
-            (
-                Ty::Map(Box::new(Ty::Str), Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))),
-                "Map<str, i32, Arena>",
-            ),
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "Heap<i32, Arena>"),
             (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),

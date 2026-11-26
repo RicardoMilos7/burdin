@@ -433,9 +433,6 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
         (Ty::Ref { mutable: m, inner: i }, Ty::Ref { mutable: n, inner: j }) => m == n && pair(i, j),
         (Ty::Slice(i), Ty::Slice(j)) | (Ty::Heap(i, _), Ty::Heap(j, _)) | (Ty::CPtr(i), Ty::CPtr(j)) => pair(i, j),
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
-        (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) | (Ty::MapEntry(ik, iv, _), Ty::MapEntry(jk, jv, _)) => {
-            pair(ik, jk) && pair(iv, jv)
-        }
         (Ty::Tuple(i), Ty::Tuple(j)) => i.len() == j.len() && i.iter().zip(j).all(|(x, y)| pair(x, y)),
         (Ty::Struct(_), Ty::Struct(_)) | (Ty::Enum(_), Ty::Enum(_)) => {
             match (globals.origin_of(a), globals.origin_of(b)) {
@@ -477,11 +474,7 @@ mod tests {
             &generic,
             &Ty::Heap(Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
         ));
-        assert!(!extension_applies(
-            &globals,
-            &generic,
-            &Ty::Map(Box::new(Ty::Int(IntTy::I32)), Box::new(Ty::Int(IntTy::I32)), burdin_tir::Alloc::Global)
-        ));
+        assert!(!extension_applies(&globals, &generic, &Ty::CPtr(Box::new(Ty::Int(IntTy::I32)))));
         assert!(!extension_applies(&globals, &generic, &Ty::Error));
 
         // A concrete part of the pattern must match too.

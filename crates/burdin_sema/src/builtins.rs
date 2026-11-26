@@ -458,6 +458,73 @@ fn alloc_result(g: &Globals) -> Ty {
     g.result_ty(Ty::Unit, g.alloc_error_ty.clone().unwrap_or(Ty::Error))
 }
 
+/// The built-in methods of a `Map<K, V, A>` (`recv`): the table and the key and value it holds.
+fn map_method(
+    g: &Globals,
+    name: &str,
+    recv: &Ty,
+    k: &Ty,
+    v: &Ty,
+    alloc: &burdin_tir::Alloc,
+) -> Option<(Method, Vec<ParamSig>, Ty)> {
+    let plain = |ty: Ty| ParamSig::plain(ty);
+    let elem = |t: &Ty| t.clone();
+    let _ = recv;
+    let (k, v) = (&Box::new(k.clone()), &Box::new(v.clone()));
+    Some(match (name, ()) {
+        ("clear", ()) => (Method::Clear, vec![], Ty::Unit),
+        ("insert", ()) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
+        // A `Map<String, V>` takes a `str` for its read-only lookups (`spec/stdlib.md`, "Borrowed-key lookup"): the
+        // key is hashed and compared by bytes and no `String` is allocated. A `String` argument converts to `str`
+        // through the one implicit conversion (IC1).
+        ("get", ()) => {
+            let view = Ty::Ref { mutable: false, inner: v.clone() };
+            (Method::MapGet, vec![plain(lookup_key(k))], g.option_ty(view))
+        }
+        ("get_or_insert", ()) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapGetOrInsert, vec![value_param(elem(k)), value_param(elem(v))], view)
+        }
+        ("get_or", ()) => {
+            let view = Ty::Ref { mutable: false, inner: v.clone() };
+            (Method::MapGetOr, vec![value_param(elem(k)), value_param(elem(v))], view)
+        }
+        ("get_mut", ()) => {
+            let view = Ty::Ref { mutable: true, inner: v.clone() };
+            (Method::MapGetMut, vec![plain(lookup_key(k))], g.option_ty(view))
+        }
+        ("remove_entry", ()) => {
+            let pair = Ty::Tuple(vec![(**k).clone(), (**v).clone()]);
+            (Method::MapRemoveEntry, vec![plain(lookup_key(k))], g.option_ty(pair))
+        }
+        ("retain", ()) => {
+            let keep = Ty::Fn {
+                sig: Rc::new(FnSig {
+                    params: vec![
+                        Ty::Ref { mutable: false, inner: k.clone() },
+                        Ty::Ref { mutable: false, inner: v.clone() },
+                    ],
+                    ret: Box::new(Ty::Bool),
+                }),
+                kind: FnKind::FnMut,
+                borrowed: false,
+                send: burdin_tir::FnSend::unknown(),
+            };
+            (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
+        }
+        ("reserve", ()) => (Method::MapReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
+        ("try_reserve", ()) => (Method::MapTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g)),
+        ("shrink_to_fit", ()) => (Method::MapShrinkToFit, vec![], Ty::Unit),
+        ("remove", ()) => (Method::MapRemove, vec![plain(lookup_key(k))], g.option_ty((**v).clone())),
+        ("contains_key", ()) => (Method::MapContainsKey, vec![plain(lookup_key(k))], Ty::Bool),
+        ("len", ()) => (Method::Len, vec![], Ty::Int(IntTy::Usize)),
+        ("iter", ()) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
+        ("iter_mut", ()) => (Method::IterMut, vec![], Ty::MapIterMut(k.clone(), v.clone())),
+        ("into_iter", ()) => (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone(), alloc.clone())),
+        _ => return None,
+    })
+}
+
 /// The built-in method `name` on a receiver of type `recv`: which method it is, its parameters after the
 /// receiver, and its result. `None` when `recv` has no such method.
 pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<ParamSig>, Ty)> {
@@ -465,6 +532,9 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
     // float surface is an extension method in `std`.
     if matches!(recv, Ty::Float(_)) {
         return float_method(name, recv);
+    }
+    if let Some((k, v, alloc)) = g.map_parts(recv) {
+        return map_method(g, name, recv, &k, &v, &alloc);
     }
     let plain = |ty: Ty| ParamSig::plain(ty);
     let elem = |t: &Ty| t.clone();
@@ -481,69 +551,6 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         ("abs", Ty::Int(i)) if i.signed() => (Method::Abs, vec![], recv.clone()),
         ("push_str", Ty::String) => (Method::PushStr, vec![plain(Ty::Str)], Ty::Unit),
         ("push", Ty::String) => (Method::PushChar, vec![plain(Ty::Char)], Ty::Unit),
-        ("clear", Ty::Map(..)) => (Method::Clear, vec![], Ty::Unit),
-        ("insert", Ty::Map(k, v, _)) => (Method::MapInsert, vec![value_param(elem(k)), value_param(elem(v))], Ty::Unit),
-        // A `Map<String, V>` takes a `str` for its read-only lookups (`spec/stdlib.md`, "Borrowed-key lookup"): the
-        // key is hashed and compared by bytes and no `String` is allocated. A `String` argument converts to `str`
-        // through the one implicit conversion (IC1).
-        ("get", Ty::Map(k, v, _)) => {
-            let view = Ty::Ref { mutable: false, inner: v.clone() };
-            (Method::MapGet, vec![plain(lookup_key(k))], g.option_ty(view))
-        }
-        ("get_or_insert", Ty::Map(k, v, _)) => {
-            let view = Ty::Ref { mutable: true, inner: v.clone() };
-            (Method::MapGetOrInsert, vec![value_param(elem(k)), value_param(elem(v))], view)
-        }
-        ("get_or", Ty::Map(k, v, _)) => {
-            let view = Ty::Ref { mutable: false, inner: v.clone() };
-            (Method::MapGetOr, vec![value_param(elem(k)), value_param(elem(v))], view)
-        }
-        ("get_mut", Ty::Map(k, v, _)) => {
-            let view = Ty::Ref { mutable: true, inner: v.clone() };
-            (Method::MapGetMut, vec![plain(lookup_key(k))], g.option_ty(view))
-        }
-        ("remove_entry", Ty::Map(k, v, _)) => {
-            let pair = Ty::Tuple(vec![(**k).clone(), (**v).clone()]);
-            (Method::MapRemoveEntry, vec![plain(lookup_key(k))], g.option_ty(pair))
-        }
-        ("retain", Ty::Map(k, v, _)) => {
-            let keep = Ty::Fn {
-                sig: Rc::new(FnSig {
-                    params: vec![
-                        Ty::Ref { mutable: false, inner: k.clone() },
-                        Ty::Ref { mutable: false, inner: v.clone() },
-                    ],
-                    ret: Box::new(Ty::Bool),
-                }),
-                kind: FnKind::FnMut,
-                borrowed: false,
-                send: burdin_tir::FnSend::unknown(),
-            };
-            (Method::MapRetain, vec![value_param(keep)], Ty::Unit)
-        }
-        ("reserve", Ty::Map(..)) => (Method::MapReserve, vec![plain(Ty::Int(IntTy::Usize))], Ty::Unit),
-        ("try_reserve", Ty::Map(..)) => (Method::MapTryReserve, vec![plain(Ty::Int(IntTy::Usize))], alloc_result(g)),
-        ("shrink_to_fit", Ty::Map(..)) => (Method::MapShrinkToFit, vec![], Ty::Unit),
-        // The entry-style API (`spec/stdlib.md`, "Map entry operations"): one probe, then insert or not.
-        ("entry", Ty::Map(k, v, alloc)) => {
-            (Method::MapEntry, vec![value_param(elem(k))], Ty::MapEntry(k.clone(), v.clone(), alloc.clone()))
-        }
-        ("or_insert", Ty::MapEntry(_, v, _)) => {
-            let view = Ty::Ref { mutable: true, inner: v.clone() };
-            (Method::MapEntryOrInsert, vec![value_param(elem(v))], view)
-        }
-        ("or_insert_with", Ty::MapEntry(_, v, _)) => {
-            let view = Ty::Ref { mutable: true, inner: v.clone() };
-            let make = Ty::Fn {
-                sig: Rc::new(FnSig { params: Vec::new(), ret: v.clone() }),
-                kind: FnKind::FnOnce,
-                borrowed: false,
-                send: burdin_tir::FnSend::unknown(),
-            };
-            (Method::MapEntryOrInsertWith, vec![value_param(make)], view)
-        }
-        ("remove", Ty::Map(k, v, _)) => (Method::MapRemove, vec![plain(lookup_key(k))], g.option_ty((**v).clone())),
-        ("contains_key", Ty::Map(k, _, _)) => (Method::MapContainsKey, vec![plain(lookup_key(k))], Ty::Bool),
         ("as_str", Ty::String | Ty::Str) => (Method::AsStr, vec![], Ty::Str),
         // The slice methods the compiler implements (the algorithms that write through a slice are in `std`).
         // `get(range)` is resolved by the call checker from the argument's type.
@@ -606,9 +613,7 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
             vec![plain(Ty::Int(IntTy::Usize)), plain(Ty::Int(IntTy::Usize)), plain(Ty::Str)],
             Ty::Unit,
         ),
-        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _) | Ty::Map(..)) => {
-            (Method::Len, vec![], Ty::Int(IntTy::Usize))
-        }
+        ("len", Ty::Str | Ty::String | Ty::Slice(_) | Ty::Array(_, _)) => (Method::Len, vec![], Ty::Int(IntTy::Usize)),
         ("starts_with", Ty::Str | Ty::String) => (Method::StartsWith, vec![plain(Ty::Str)], Ty::Bool),
         ("find", Ty::Str | Ty::String) => (Method::Find, vec![plain(Ty::Char)], g.option_ty(Ty::Int(IntTy::Usize))),
         ("find_str", Ty::Str | Ty::String) => {
@@ -620,14 +625,9 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         // slice yields its element by value when it is `Copy`.
         ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Slice(_)) => (Method::Iter, vec![], recv.clone()),
-        ("iter", Ty::Map(k, v, _)) => (Method::Iter, vec![], Ty::MapIter(k.clone(), v.clone())),
         ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
         // The mutable iterators yield `&mut T` and borrow the collection exclusively (IT15).
         ("iter_mut", Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
-        ("iter_mut", Ty::Map(k, v, _)) => (Method::IterMut, vec![], Ty::MapIterMut(k.clone(), v.clone())),
-        ("into_iter", Ty::Map(k, v, alloc)) => {
-            (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone(), alloc.clone()))
-        }
         ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], g.array_into_iter_ty((**elem).clone(), *n)),
         ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
         _ => return None,
@@ -1115,7 +1115,10 @@ mod tests {
     #[test]
     fn map_lookups_take_a_str_for_a_string_key() {
         let i32_ = Ty::Int(IntTy::I32);
-        let m = Ty::Map(Box::new(Ty::String), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        let mut g = lang_globals();
+        let m = g.test_map(Ty::String, i32_.clone());
+        let plain = g.test_map(i32_.clone(), i32_.clone());
+        let method = |name: &str, recv: &Ty| super::method(&g, name, recv);
         for name in ["get", "get_mut", "contains_key", "remove", "remove_entry"] {
             let (_, params, _) = method(name, &m).unwrap_or_else(|| panic!("{name}"));
             assert_eq!(params[0].ty, Ty::Str, "{name} takes a borrowed key");
@@ -1127,7 +1130,6 @@ mod tests {
             assert_eq!(params[0].ty, Ty::String, "{name} takes the stored key type");
             assert!(params[0].own, "{name} owns the key it stores");
         }
-        let plain = Ty::Map(Box::new(i32_.clone()), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
         let (_, params, _) = method("get", &plain).unwrap();
         assert_eq!(params[0].ty, i32_);
     }
@@ -1135,18 +1137,27 @@ mod tests {
     #[test]
     fn map_updates_and_capacity_are_built_in() {
         let i32_ = Ty::Int(IntTy::I32);
-        let m = Ty::Map(Box::new(i32_.clone()), Box::new(i32_.clone()), burdin_tir::Alloc::Global);
+        let mut g = lang_globals();
+        let m = g.test_map(i32_.clone(), i32_.clone());
+        let method = |name: &str, recv: &Ty| super::method(&g, name, recv);
         let (found, params, ret) = method("get_or", &m).unwrap();
         assert_eq!(found, Method::MapGetOr);
         assert!(params[0].own && params[1].own);
         assert_eq!(ret, Ty::Ref { mutable: false, inner: Box::new(i32_.clone()) });
         assert!(found.mutates_receiver() && found.result_borrows_receiver());
 
-        let (got, g) = lang_method("remove_entry", &m);
+        let mut g = g;
+        let mut got = None;
+        for _ in 0..3 {
+            got = super::method(&g, "remove_entry", &m);
+            g = settled(g);
+        }
+        let got = super::method(&g, "remove_entry", &m).or(got);
         let (found, params, ret) = got.unwrap();
         assert_eq!(found, Method::MapRemoveEntry);
         assert!(!params[0].own);
         assert_eq!(g.option_payload(&ret), Some(Ty::Tuple(vec![i32_.clone(), i32_.clone()])));
+        let method = |name: &str, recv: &Ty| super::method(&g, name, recv);
 
         let (found, params, _) = method("retain", &m).unwrap();
         assert_eq!(found, Method::MapRetain);
@@ -1170,6 +1181,7 @@ mod tests {
         let param = |n: &str| Ty::Param(n.into());
         let mut checked = 0;
         let mut problems = Vec::new();
+        let mut g = lang_globals();
         for item in &ast.items {
             let Item::Extension(x) = item else { continue };
             if !x.func.params.iter().any(|p| matches!(p.kind, ParamKind::SelfParam)) {
@@ -1181,7 +1193,7 @@ mod tests {
                 TypeKind::Path(segments) => match segments[0].name.name.as_str() {
                     // `List` is a struct of `std` now; its methods are written in Burdin.
                     "List" => continue,
-                    "Map" => Ty::Map(Box::new(param("K")), Box::new(param("V")), Alloc::Global),
+                    "Map" => g.test_map(param("K"), param("V")),
                     "Heap" => Ty::Heap(Box::new(param("T")), Alloc::Global),
                     // `Option` and `Result` are enums of `std`, written in Burdin; `builtins.bd` declares neither.
                     "Option" | "Result" => continue,
@@ -1200,7 +1212,7 @@ mod tests {
             }
             let declared = x.func.params.len() - 1;
             checked += 1;
-            match method(name, &recv) {
+            match super::method(&g, name, &recv) {
                 None => problems.push(format!("{recv}.{name}: declared in builtins.bd, not provided by the compiler")),
                 Some((_, params, _)) if params.len() != declared => problems.push(format!(
                     "{recv}.{name}: builtins.bd declares {declared} parameters, the compiler takes {}",

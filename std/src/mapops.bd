@@ -1,12 +1,9 @@
-// The rest of `Map<K, V>` (spec/stdlib.md, "Map": the entry operations of issue #482, the views and construction of
-// issue #712).
+// The rest of `Map<K, V>` (spec/stdlib.md, "Map": the views and construction of issue #712).
 //
-//     let count = counts.entry(word).or_insert(0)
-//     *count = *count + 1
 //     for key in counts.keys() { ... }
 //
 // The compiler provides the operations that reach the table itself (`insert`, `get`, `get_mut`, `get_or_insert`,
-// `entry`, `remove`, `remove_entry`, `retain`, `reserve`, `shrink_to_fit`, and the iterators); the views, the
+// `remove`, `remove_entry`, `retain`, `reserve`, `shrink_to_fit`, and the iterators); the views, the
 // constructors, and the helpers built on them are written here.
 
 use alloc.Allocator
@@ -213,8 +210,8 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
     self.extend_iter(items)
 }
 
-/// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
-/// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
+/// The value for `key`, storing the result of `make` first when there is none. `make` runs only when the key is
+/// absent, so it may be expensive. The returned reference keeps the map
 /// exclusively borrowed until its last use.
 ///
 /// ```
@@ -227,7 +224,14 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
 /// }
 /// ```
 fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: F): &mut V where K: Eq {
-    self.entry(key).or_insert_with(make)
+    if self.contains_key(key) {
+        match self.get_mut(key) {
+            Option.Some(value) => return value,
+            Option.None => panic("`contains_key` found a key that `get_mut` cannot"),
+        }
+    }
+    let value = make()
+    self.get_or_insert(key, value)
 }
 
 /// Runs `change` on the value for `key` and returns `true`, or returns `false` without calling it when the key is

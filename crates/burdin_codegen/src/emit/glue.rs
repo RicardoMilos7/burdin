@@ -84,8 +84,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (inner, _) = self.list_iter_info(ty).expect("a list iterator");
                 format!("ListIntoIter<{}>", self.structural_key_in(&inner, seen))
             }
-            Ty::Map(k, v, _) => {
-                format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (k, v, _) = self.map_info(ty).expect("a map");
+                format!("Map<{},{}>", self.structural_key_in(&k, seen), self.structural_key_in(&v, seen))
             }
             Ty::Heap(inner, _) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
             Ty::MapIter(k, v) => {
@@ -97,9 +98,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             Ty::MapIntoIter(k, v, _) => {
                 format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
-            }
-            Ty::MapEntry(k, v, _) => {
-                format!("MapEntry<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
@@ -234,6 +232,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn drop_value(&mut self, addr: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, alloc) = self.map_info(ty).expect("a map");
+                let (key, value, alloc) = (&key, &value, &alloc);
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.drop_map(addr, &key, &value, &alloc)
+            }
             Ty::Struct(_) if self.list_info(ty).is_some() => {
                 let (elem, alloc) = self.list_info(ty).expect("a list");
                 self.drop_sequence(addr, &elem, &alloc, "list")
@@ -261,15 +265,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIntoIter(key, value, alloc) => {
                 let (key, value) = ((**key).clone(), (**value).clone());
                 self.drop_map_into_iter(addr, &key, &value, alloc)
-            }
-            Ty::MapEntry(key, _, _) => {
-                let key = (**key).clone();
-                if !self.needs_drop(&key) || self.llvm_ty(&key).is_none() {
-                    return Ok(());
-                }
-                let entry_ty = self.map_entry_value_ty(&key);
-                let key_field = self.builder.build_struct_gep(entry_ty, addr, 1, "entry.key").map_err(llvm_err)?;
-                self.drop_value(key_field, &key)
             }
             // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
             Ty::Fn { .. } => {
@@ -366,10 +361,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
                 }
                 self.drop_enum_fields(addr, id)
-            }
-            Ty::Map(key, value, alloc) => {
-                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
-                self.drop_map(addr, &key, &value, &alloc)
             }
             Ty::Array(elem, n) => {
                 let n = *n;
@@ -539,6 +530,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(dst_ptr, newp).map_err(llvm_err)?;
                 Ok(())
             }
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, alloc) = self.map_info(ty).expect("a map");
+                let (key, value, alloc) = (&key, &value, &alloc);
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.clone_map(dst, src, &key, &value, &alloc)
+            }
             Ty::Struct(_) if self.list_info(ty).is_some() => {
                 let (elem, alloc) = self.list_info(ty).expect("a list");
                 self.clone_sequence(dst, src, &elem, &alloc)
@@ -556,10 +553,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(())
             }
             Ty::Enum(a) => self.clone_enum_fields(dst, src, a.id),
-            Ty::Map(key, value, alloc) => {
-                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
-                self.clone_map(dst, src, &key, &value, &alloc)
-            }
             Ty::Chars => self.copy_bits(dst, src, ty),
             // A closure is not `Clone` (CL10); this is unreachable in a checked program.
             Ty::Fn { .. } => Ok(()),

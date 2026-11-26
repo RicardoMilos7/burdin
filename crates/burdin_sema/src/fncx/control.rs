@@ -333,9 +333,11 @@ impl FnCx<'_> {
         // `Iterable` through `iter()` (spec/iterators.md, IT4).
         let list_elem = self.globals.list_parts(&iterable.ty).map(|(elem, _)| elem);
         let range_elem = self.globals.range_parts(&iterable.ty);
+        let map_parts = self.globals.map_parts(&iterable.ty);
         let builtin = list_elem.is_some()
+            || map_parts.is_some()
             || range_elem.is_some()
-            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Map(..) | Ty::Chars | Ty::Error | Ty::Never);
+            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Chars | Ty::Error | Ty::Never);
         if !builtin {
             // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
             // through `iter()`, not consumed as an iterator value.
@@ -373,10 +375,13 @@ impl FnCx<'_> {
         }
         let (elem, kind) = match &iterable.ty {
             _ if list_elem.is_some() => (list_elem.clone().expect("checked above"), ForKind::List),
+            _ if map_parts.is_some() => {
+                let (k, v, _) = map_parts.clone().expect("checked above");
+                (Ty::Tuple(vec![k, v]), ForKind::Map)
+            }
             _ if range_elem.is_some() => (range_elem.clone().expect("checked above").0, ForKind::Range),
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
-            Ty::Map(k, v, _) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
             Ty::Chars => (Ty::Char, ForKind::Chars),
             other => {

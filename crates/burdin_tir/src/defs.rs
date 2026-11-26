@@ -77,6 +77,8 @@ pub enum LangItem {
     ManuallyDrop,
     /// `ArrayIntoIter<T, N>`: the fields `data` (a `ManuallyDrop<[T; N]>`) and `pos`, in that order.
     ArrayIntoIter,
+    /// `Map<K, V, A>`: the fields `ptr` (a `CPtr<(K, V, u64)>`), `len`, `cap`, and `alloc`, in that order.
+    Map,
     /// `Range<T>`: the fields `start` and `end`.
     Range,
     /// `RangeInclusive<T>`: the fields `start` and `end`.

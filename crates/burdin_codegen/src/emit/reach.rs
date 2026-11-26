@@ -207,10 +207,6 @@ impl Walker<'_> {
                 }
             }
             Ty::Ref { inner: t, .. } | Ty::Slice(t) | Ty::Array(t, _) | Ty::CPtr(t) | Ty::Heap(t, _) => self.note_ty(t),
-            Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
-                self.note_ty(a);
-                self.note_ty(b);
-            }
             Ty::Tuple(ts) => {
                 for t in ts {
                     self.note_ty(t);

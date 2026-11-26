@@ -53,10 +53,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A list and a map have the same three-word shape as a `String`: pointer, length, capacity. A stored
             // allocator value follows them (`spec/allocators.md`, AL3), and the default one stores nothing.
             Ty::String => self.string_ty.into(),
-            Ty::Map(_, _, alloc) => self.seq_ty(alloc).into(),
-            // A map entry is the map's address, the key it owns, the key's hash, the probe slot, and whether the
-            // key was found.
-            Ty::MapEntry(key, _, _) => self.map_entry_value_ty(key).into(),
             // A `CPtr` is a raw address.
             Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Heap(_, alloc) => self.heap_ty(alloc),
@@ -80,23 +76,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The type of a member of an aggregate: like `llvm_ty`, but a value-less type is an empty struct.
     pub(super) fn storage_ty(&self, ty: &Ty) -> BasicTypeEnum<'ctx> {
         self.llvm_ty(ty).unwrap_or_else(|| self.cx.struct_type(&[], false).into())
-    }
-
-    /// The layout of a pending map lookup: `{ ptr map, K key, u64 hash, usize slot, bool found }`. The key is owned
-    /// by the entry until `or_insert` stores it or drops it. The value does not store the map's allocator: the entry
-    /// reaches it through the map it points at, which the entry type names.
-    pub(super) fn map_entry_value_ty(&self, key: &Ty) -> StructType<'ctx> {
-        let ptr = self.cx.ptr_type(AddressSpace::default());
-        self.cx.struct_type(
-            &[
-                ptr.into(),
-                self.storage_ty(key),
-                self.cx.i64_type().into(),
-                self.usize_ty.into(),
-                self.cx.bool_type().into(),
-            ],
-            false,
-        )
     }
 
     /// The `{ ptr, len, cap }` layout of a list or map, with its stored allocator value appended.
@@ -230,6 +209,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.defs().list_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
     }
 
+    /// The key type, value type, and allocator of a `Map` (the compiler's map struct in `std`), `None` for any
+    /// other type.
+    pub(super) fn map_info(&self, ty: &Ty) -> Option<(Box<Ty>, Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().map_parts(ty).map(|(k, v, a)| (Box::new(k.clone()), Box::new(v.clone()), a))
+    }
+
     /// The same for a `ListIntoIter`.
     pub(super) fn list_iter_info(&self, ty: &Ty) -> Option<(Box<Ty>, burdin_tir::Alloc)> {
         self.defs().list_into_iter_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
@@ -239,6 +224,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// in a plain layout of its own (the `{ ptr, len, cap }` words of the runtime helpers, or an array and an index).
     pub(super) fn is_seq_struct(&self, ty: &Ty) -> bool {
         self.list_info(ty).is_some()
+            || self.map_info(ty).is_some()
             || self.list_iter_info(ty).is_some()
             || self.defs().array_into_iter_elem(ty).is_some()
     }

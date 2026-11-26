@@ -3,12 +3,12 @@
 use crate::generics::Request;
 use crate::globals::Globals;
 use burdin_diag::{FileId, Span};
-use burdin_tir::{AdtRef, Derives, EnumDef, FieldDef, LangItem, Ty, VariantDef, VariantShape};
+use burdin_tir::{AdtRef, Derives, EnumDef, FieldDef, IntTy, LangItem, StructDef, Ty, VariantDef, VariantShape};
 
 /// A `Globals` where `Option` (template 0) and `Result` (template 1) are the language's enums. Their instances
 /// come from [`settled`] or [`Globals::test_option`] and [`Globals::test_result`].
 pub(crate) fn lang_globals() -> Globals {
-    Globals { lang_option: Some(0), lang_result: Some(1), ..Globals::default() }
+    Globals { lang_option: Some(0), lang_result: Some(1), lang_map: Some(2), ..Globals::default() }
 }
 
 /// Makes an instance for every request `g` holds, as `Sema::allocate_adt` would have.
@@ -61,6 +61,50 @@ impl Globals {
         self.adt_instances.insert((template, args.clone()), (true, id));
         self.adt_origin.insert((true, id), (template, args));
         Ty::Enum(adt)
+    }
+
+    /// `Map<key, value>` with the default allocator for a test, made if it does not exist (template 2 is `Map`).
+    pub(crate) fn test_map(&mut self, key: Ty, value: Ty) -> Ty {
+        let span = Span::new(FileId(0), 0, 0);
+        let field = |name: &str, ty: Ty| FieldDef { name: name.into(), ty, span, is_priv: false };
+        let plain_struct = |name: &str, fields: Vec<FieldDef>, lang: Option<LangItem>| StructDef {
+            name: name.into(),
+            fields,
+            repr_c: false,
+            derives: Derives::default(),
+            drop_method: None,
+            lang,
+        };
+        let global = match self.global_alloc_ty.clone() {
+            Some(global) => global,
+            None => {
+                let id = self.structs.len();
+                self.structs.push(plain_struct("Global", Vec::new(), None));
+                let adt = AdtRef { id, name: "Global".into(), second_class: false };
+                self.struct_refs.push(adt.clone());
+                self.global_alloc_ty = Some(Ty::Struct(adt));
+                self.global_alloc_ty.clone().expect("just set")
+            }
+        };
+        let args = vec![key.clone(), value.clone(), global.clone()];
+        if let Some(&(_, id)) = self.adt_instances.get(&(2, args.clone())) {
+            return Ty::Struct(self.struct_refs[id].clone());
+        }
+        let entry = Ty::Tuple(vec![key, value, Ty::Int(IntTy::U64)]);
+        let fields = vec![
+            field("ptr", Ty::CPtr(Box::new(entry))),
+            field("len", Ty::Int(IntTy::Usize)),
+            field("cap", Ty::Int(IntTy::Usize)),
+            field("alloc", global),
+        ];
+        let id = self.structs.len();
+        let name = Globals::instance_name("Map", &args[..2]);
+        self.structs.push(plain_struct(&name, fields, Some(LangItem::Map)));
+        let adt = AdtRef { id, name: name.as_str().into(), second_class: false };
+        self.struct_refs.push(adt.clone());
+        self.adt_instances.insert((2, args.clone()), (false, id));
+        self.adt_origin.insert((false, id), (2, args));
+        Ty::Struct(adt)
     }
 
     /// `Option<t>` for a test, made if it does not exist.

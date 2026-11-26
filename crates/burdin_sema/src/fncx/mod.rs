@@ -580,7 +580,7 @@ impl<'a> FnCx<'a> {
     }
 
     /// Whether `found` is a type parameter whose closure bound provides `want`: `F: FnOnce(): V` passed where a
-    /// built-in method takes the closure type `FnOnce(): V` (`MapEntry::or_insert_with`). Each concrete instance
+    /// built-in method takes the closure type `FnOnce(): V`. Each concrete instance
     /// checks its body again with `F` substituted, so a closure the bound does not allow is still rejected there.
     fn param_meets_fn(&self, found: &Ty, want: &Ty) -> bool {
         let Ty::Param(_) = found else { return false };

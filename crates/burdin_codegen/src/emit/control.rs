@@ -510,10 +510,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         body: &'a tir::Block,
         label: Option<&str>,
     ) -> GenResult<()> {
-        let Ty::Map(key, value, _) = &map.ty else {
+        let Some((key, value, _)) = self.map_info(&map.ty) else {
             self.expr_mode(map, Mode::Use)?;
             return Ok(());
         };
+        let (key, value) = (&key, &value);
         let pair = Ty::Tuple(vec![(**key).clone(), (**value).clone()]);
         let entry = Self::map_entry_ty(key, value);
         let entry_t = self.llvm_ty(&entry).expect("a map entry has a type").into_struct_type();

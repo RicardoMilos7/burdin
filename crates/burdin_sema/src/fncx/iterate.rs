@@ -189,16 +189,16 @@ impl FnCx<'_> {
         let std_name = match (ty, from_array) {
             (t, false) if self.globals.list_parts(t).is_some() => "list_from_iter",
             (t, true) if self.globals.list_parts(t).is_some() => "list_from",
-            (Ty::Map(..), false) => "map_from_iter",
-            (Ty::Map(..), true) => "map_from",
+            (t, false) if self.globals.map_parts(t).is_some() => "map_from_iter",
+            (t, true) if self.globals.map_parts(t).is_some() => "map_from",
             (t, false) if self.globals.option_payload(t).is_some() => "option_from_iter",
             (t, false) if self.globals.result_parts(t).is_some() => "result_from_iter",
             (Ty::String, false) => "",
             _ => return None,
         };
-        let stored = match (self.globals.list_parts(ty), ty) {
+        let stored = match (self.globals.list_parts(ty), self.globals.map_parts(ty)) {
             (Some((_, alloc)), _) => Some(alloc),
-            (None, Ty::Map(_, _, alloc)) => Some(alloc.clone()),
+            (None, Some((_, _, alloc))) => Some(alloc),
             _ => None,
         };
         if let Some(alloc) = stored
@@ -222,9 +222,9 @@ impl FnCx<'_> {
             );
             return Some(self.args_then_error(args, span));
         }
-        if let Ty::Map(key, value, _) = ty {
-            check_storable(key, span, "a `Map` key", self.diags);
-            check_storable(value, span, "a `Map` value", self.diags);
+        if let Some((key, value, _)) = self.globals.map_parts(ty) {
+            check_storable(&key, span, "a `Map` key", self.diags);
+            check_storable(&value, span, "a `Map` value", self.diags);
         }
         let hint = if from_array { self.array_hint(ty) } else { None };
         let arg = self.expr(&args[0].expr, hint.as_ref());
@@ -236,10 +236,7 @@ impl FnCx<'_> {
         if let Some((elem, _)) = self.globals.list_parts(ty) {
             return Some(Ty::Array(Box::new(elem), 0));
         }
-        match ty {
-            Ty::Map(key, value, _) => Some(Ty::Array(Box::new(Ty::Tuple(vec![(**key).clone(), (**value).clone()])), 0)),
-            _ => None,
-        }
+        self.globals.map_parts(ty).map(|(key, value, _)| Ty::Array(Box::new(Ty::Tuple(vec![key, value])), 0))
     }
 
     /// `List.from(array)` and `Map.from(array)` written without type arguments: the types come from the array and
@@ -273,7 +270,7 @@ impl FnCx<'_> {
         let std_name = if collection == "List" { "list_from" } else { "map_from" };
         let ty = expect.filter(|ty| {
             (collection == "List" && self.globals.list_parts(ty).is_some())
-                || matches!((collection, ty), ("Map", Ty::Map(..)))
+                || (collection == "Map" && self.globals.map_parts(ty).is_some())
         });
         let Some(g) = self.globals.std_generic(std_name) else {
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("`{collection}.from` needs the standard library"));

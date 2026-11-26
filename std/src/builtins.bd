@@ -689,9 +689,6 @@ fn Map<K, V>.remove_entry(mut self, key: K): Option<(K, V)>
 /// Whether the key is in the map.
 fn Map<K, V>.contains_key(self, key: K): bool
 
-/// The key's entry, to insert or update in one probe.
-fn Map<K, V>.entry(mut self, key: K): MapEntry<K, V>
-
 /// Keeps the entries `keep` accepts.
 fn Map<K, V>.retain(mut self, keep: FnMut(&K, &V): bool)
 

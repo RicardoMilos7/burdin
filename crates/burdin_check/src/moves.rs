@@ -711,9 +711,9 @@ impl<'a> Checker<'a> {
                 let entry = self.states.clone();
                 self.open_loop(label);
                 self.scopes.push(Vec::new());
-                let pair = match &map.ty {
-                    Ty::Map(k, v, _) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
-                    _ => Ty::Error,
+                let pair = match self.env.defs.map_parts(&map.ty) {
+                    Some((k, v, _)) => Ty::Tuple(vec![k.clone(), v.clone()]),
+                    None => Ty::Error,
                 };
                 self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
                 let body_falls = self.block(body, Mode::Use);

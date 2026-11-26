@@ -45,9 +45,11 @@ impl Globals {
         if let Some((elem, _)) = self.list_parts(ty) {
             return Some(Self::element_item(&elem, env, self));
         }
+        if let Some((key, value, _)) = self.map_parts(ty) {
+            return Some(Ty::Tuple(vec![Self::shared_view(&key), Self::shared_view(&value)]));
+        }
         Some(match ty {
             Ty::Array(elem, _) | Ty::Slice(elem) => Self::element_item(elem, env, self),
-            Ty::Map(key, value, _) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
             Ty::Chars => Ty::Char,
             _ => return None,
         })
@@ -95,14 +97,16 @@ impl Globals {
         if let Some((elem, alloc)) = self.list_parts(ty) {
             return Some(alloc.is_global() && elem == *item && !elem.is_second_class());
         }
-        Some(match ty {
-            Ty::Map(key, value, alloc) => {
+        if let Some((key, value, alloc)) = self.map_parts(ty) {
+            return Some(
                 alloc.is_global()
-                    && *item == Ty::Tuple(vec![(**key).clone(), (**value).clone()])
+                    && *item == Ty::Tuple(vec![key.clone(), value.clone()])
                     && !key.is_second_class()
                     && !value.is_second_class()
-                    && self.has_key_eq_in(key, env)
-            }
+                    && self.has_key_eq_in(&key, env),
+            );
+        }
+        Some(match ty {
             Ty::String => match item {
                 Ty::Char | Ty::Str | Ty::String => true,
                 Ty::Ref { inner, .. } => matches!(**inner, Ty::String | Ty::Str),
@@ -207,8 +211,8 @@ mod tests {
 
     #[test]
     fn builtin_collections_have_an_item_type() {
-        let g = Globals::default();
-        let map = Ty::Map(Box::new(Ty::Str), Box::new(i32_()), burdin_tir::Alloc::Global);
+        let mut g = crate::testutil::lang_globals();
+        let map = g.test_map(Ty::Str, i32_());
         let item = g.builtin_iterable_item(&map, &[]).expect("a map iterates");
         assert_eq!(
             item,
@@ -245,10 +249,10 @@ mod tests {
 
     #[test]
     fn builtin_collections_are_built_from_their_items() {
-        let g = globals_with_from_iterator();
-        let global = burdin_tir::Alloc::Global;
+        let mut g = globals_with_from_iterator();
+        g.lang_map = Some(2);
         let pair = Ty::Tuple(vec![Ty::String, i32_()]);
-        let map = Ty::Map(Box::new(Ty::String), Box::new(i32_()), global);
+        let map = g.test_map(Ty::String, i32_());
         assert_eq!(g.builtin_from_iterator(&map, &[pair], &[]), Some(true));
         assert_eq!(g.builtin_from_iterator(&map, &[Ty::String], &[]), Some(false), "a map is built from pairs");
     }

@@ -642,15 +642,6 @@ pub enum Method {
     MapTryReserve,
     /// `Map<K, V>.shrink_to_fit()`: shrinks the slot table to the smallest one that holds the entries.
     MapShrinkToFit,
-    /// `Map<K, V>.entry(key): MapEntry<K, V>`: a pending lookup that owns `key` and borrows the map exclusively.
-    /// The probe happens once, here; the entry operations insert into the slot it found.
-    MapEntry,
-    /// `MapEntry<K, V>.or_insert(value): &mut V`: the value stored under the entry's key, inserting `key` and
-    /// `value` first when the key is absent. An existing value is kept and the incoming value is dropped.
-    MapEntryOrInsert,
-    /// `MapEntry<K, V>.or_insert_with(make): &mut V`: like `or_insert`, but the value comes from calling `make`,
-    /// which runs only when the key is absent. The closure is consumed either way.
-    MapEntryOrInsertWith,
     /// `Map<K, V>.remove(key): Option<V>`.
     MapRemove,
     /// `Map<K, V>.contains_key(key): bool`.
@@ -739,10 +730,6 @@ impl Method {
             Method::MapInsert | Method::MapGetOrInsert | Method::MapGetOr => index == 1 || index == 2,
             // `retain` consumes the closure it is given.
             Method::MapRetain => index == 1,
-            // `entry` takes the key it will insert. The entry operations consume the entry and the value (or the
-            // closure) they are given.
-            Method::MapEntry => index == 1,
-            Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => index == 0 || index == 1,
             // The slice sort consumes its comparator.
             Method::SliceSortBy => index == 1,
             // `into_iter` takes the collection, the array, the map, or the range by value.
@@ -786,7 +773,6 @@ impl Method {
                 | Method::MapInsert
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::MapRemoveEntry
@@ -819,9 +805,6 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapEntryOrInsert
-                | Method::MapEntryOrInsertWith
                 | Method::Chars
                 | Method::AsBytes
                 | Method::Iter
@@ -876,13 +859,6 @@ mod tests {
         assert!(Method::MapGetOr.owns_argument(2));
         assert!(Method::MapRetain.owns_argument(1));
         assert!(!Method::MapRemoveEntry.owns_argument(1));
-        // `entry` moves its key into the entry; the entry operations consume the entry and their value.
-        assert!(Method::MapEntry.owns_argument(1));
-        assert!(!Method::MapEntry.owns_argument(0));
-        for method in [Method::MapEntryOrInsert, Method::MapEntryOrInsertWith] {
-            assert!(method.owns_argument(0), "{method:?}");
-            assert!(method.owns_argument(1), "{method:?}");
-        }
         // `append` takes the other list by ownership; the capacity operations take only a count.
         assert!(Method::ListAppend.owns_argument(1));
         assert!(!Method::ListAppend.owns_argument(0));
@@ -940,7 +916,6 @@ mod tests {
             Method::MapInsert,
             Method::MapGetOrInsert,
             Method::MapGetOr,
-            Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
             Method::MapRemoveEntry,
@@ -973,9 +948,6 @@ mod tests {
             Method::ListGet,
             Method::ListGetMut,
             Method::MapGet,
-            Method::MapEntry,
-            Method::MapEntryOrInsert,
-            Method::MapEntryOrInsertWith,
             Method::Chars,
             Method::IterMut,
         ] {

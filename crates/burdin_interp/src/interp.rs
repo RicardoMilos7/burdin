@@ -1239,6 +1239,10 @@ impl<'p, 'c> Interp<'p, 'c> {
         let result = match ty {
             Ty::Struct(a) if self.p.structs[a.id].lang == Some(burdin_tir::LangItem::ManuallyDrop) => false,
             Ty::Struct(_) if seq.is_some() => self.has_user_drop(&seq.expect("a list")),
+            Ty::Struct(_) if self.defs().map_parts(ty).is_some() => {
+                let (k, v, _) = self.defs().map_parts(ty).map(|(k, v, a)| (k.clone(), v.clone(), a)).expect("a map");
+                self.has_user_drop(&k) || self.has_user_drop(&v)
+            }
             Ty::Struct(a) => {
                 let s = &self.p.structs[a.id];
                 s.drop_method.is_some() || s.fields.iter().any(|f| self.has_user_drop(&f.ty))
@@ -1249,7 +1253,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             }
             Ty::Tuple(ts) => ts.iter().any(|t| self.has_user_drop(t)),
             Ty::Array(t, _) | Ty::Heap(t, _) => self.has_user_drop(t),
-            Ty::Map(a, b, _) | Ty::MapIntoIter(a, b, _) => self.has_user_drop(a) || self.has_user_drop(b),
+            Ty::MapIntoIter(a, b, _) => self.has_user_drop(a) || self.has_user_drop(b),
             Ty::Any(_) | Ty::Fn { .. } => true,
             _ => false,
         };
@@ -1276,6 +1280,13 @@ impl<'p, 'c> Interp<'p, 'c> {
             return Ok(());
         }
         match (ty, v) {
+            (Ty::Struct(_), Value::Map(pairs)) if self.defs().map_parts(ty).is_some() => {
+                let (k, val) = self.defs().map_parts(ty).map(|(k, v, _)| (k.clone(), v.clone())).expect("a map");
+                for (kv, vv) in pairs {
+                    self.drop_value(kv, &k, span)?;
+                    self.drop_value(vv, &val, span)?;
+                }
+            }
             // Drop glue never drops the value of a `ManuallyDrop`.
             (Ty::Struct(a), _) if self.p.structs[a.id].lang == Some(burdin_tir::LangItem::ManuallyDrop) => {}
             (Ty::Struct(a), v) => {
@@ -1313,12 +1324,6 @@ impl<'p, 'c> Interp<'p, 'c> {
                 }
             }
             (Ty::Heap(t, _), Value::Heap(b)) => self.drop_value(*b, t, span)?,
-            (Ty::Map(k, val, _), Value::Map(pairs)) => {
-                for (kv, vv) in pairs {
-                    self.drop_value(kv, k, span)?;
-                    self.drop_value(vv, val, span)?;
-                }
-            }
             (Ty::MapIntoIter(k, val, _), Value::Items(pairs)) => {
                 for pair in pairs {
                     if let Value::Tuple(mut kv) = pair {

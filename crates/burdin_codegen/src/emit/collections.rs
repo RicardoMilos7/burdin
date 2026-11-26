@@ -43,9 +43,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// The allocator of a container value, from its type.
-    fn seq_alloc(ty: &Ty) -> burdin_tir::Alloc {
+    fn seq_alloc(&self, ty: &Ty) -> burdin_tir::Alloc {
+        if let Some((_, _, alloc)) = self.map_info(ty) {
+            return alloc;
+        }
         match ty {
-            Ty::Map(_, _, alloc) | Ty::MapIntoIter(_, _, alloc) => alloc.clone(),
+            Ty::MapIntoIter(_, _, alloc) => alloc.clone(),
             _ => burdin_tir::Alloc::Global,
         }
     }
@@ -53,7 +56,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The `{ ptr, len, cap }` words of a list or map place.
     fn seq_load(&mut self, e: &'a tir::Expr) -> GenResult<Option<Seq<'ctx>>> {
         let Some(addr) = self.place_ptr(e)? else { return Ok(None) };
-        let alloc = Self::seq_alloc(&e.ty);
+        let alloc = self.seq_alloc(&e.ty);
         self.seq_load_at(addr, &alloc).map(Some)
     }
 
@@ -243,8 +246,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        match (&args[0].ty, m) {
-            (Ty::Map(key, value, _), Method::MapInsert | Method::MapGetOrInsert | Method::MapGetOr) => {
+        let map = self.map_info(&args[0].ty);
+        match (&args[0].ty, &map, m) {
+            (_, Some((key, value, _)), Method::MapInsert | Method::MapGetOrInsert | Method::MapGetOr) => {
                 // `get_or_insert` and `get_or` keep an existing value (dropping the incoming key and value) and
                 // yield a view of the value either way.
                 let keep_existing = m != Method::MapInsert;
@@ -346,7 +350,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 at_value.add_incoming(&[(&old, found_end), (&vf, insert_end)]);
                 Ok(Some(at_value.as_basic_value()))
             }
-            (Ty::Map(key, value, _), Method::MapGet | Method::MapGetMut) => {
+            (_, Some((key, value, _)), Method::MapGet | Method::MapGetMut) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -384,7 +388,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 self.load_option(slot, ty)
             }
-            (Ty::Map(key, value, _), Method::MapRemove) => {
+            (_, Some((key, value, _)), Method::MapRemove) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -431,7 +435,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 self.load_option(slot, ty)
             }
-            (Ty::Map(key, value, _), Method::MapContainsKey) => {
+            (_, Some((key, value, _)), Method::MapContainsKey) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -455,7 +459,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(Some(self.builder.build_load(self.cx.bool_type(), result, "").map_err(llvm_err)?))
             }
             // `remove_entry(key)` moves the stored key and value out and shifts the probe cluster back.
-            (Ty::Map(key, value, _), Method::MapRemoveEntry) => {
+            (_, Some((key, value, _)), Method::MapRemoveEntry) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -518,7 +522,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // `retain(f)`: walk the slots and drop every entry `f` rejects. A removal shifts the rest of the
             // probe cluster back, so the same slot is examined again.
-            (Ty::Map(key, value, _), Method::MapRetain) => {
+            (_, Some((key, value, _)), Method::MapRetain) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let entry = Self::map_entry_ty(&key_ty, &value_ty);
@@ -590,7 +594,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // `reserve(additional)`: grow the slot table so it holds the entries plus `additional` more without
             // passing the 3/4 load factor.
-            (Ty::Map(key, value, _), Method::MapReserve) => {
+            (_, Some((key, value, _)), Method::MapReserve) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let additional = self.expr_mode(&args[1], Mode::Use)?;
@@ -617,7 +621,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // `shrink_to_fit()`: rehash into the smallest table that holds the entries, and free the buffer of an
             // empty map.
             // `try_reserve(additional)`: the fallible `reserve`, which leaves the map unchanged on failure.
-            (Ty::Map(key, value, alloc), Method::MapTryReserve) => {
+            (_, Some((key, value, alloc)), Method::MapTryReserve) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let alloc = alloc.clone();
                 let Some(addr) = self.place_ptr(&args[0])? else { return Ok(None) };
@@ -626,7 +630,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let status = self.map_try_reserve_at(addr, &alloc, &key_ty, &value_ty, additional, span)?;
                 Ok(Some(self.try_result(status, None, ty)?))
             }
-            (Ty::Map(key, value, _), Method::MapShrinkToFit) => {
+            (_, Some((key, value, _)), Method::MapShrinkToFit) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 let empty = self
@@ -669,7 +673,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let _ = before;
                 Ok(None)
             }
-            (Ty::Map(key, value, _), Method::Clear) => {
+            (_, Some((key, value, _)), Method::Clear) => {
                 let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
                 let Some(mut seq) = self.seq_load(&args[0])? else { return Ok(None) };
                 self.map_drop_entries(&seq, &key_ty, &value_ty)?;
@@ -679,168 +683,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 seq.cap = self.usize_zero();
                 self.seq_store(&seq)?;
                 Ok(None)
-            }
-            // `map.entry(key)` probes once and keeps the slot; the entry operations insert into it. The probe is
-            // recorded here so a fill does not look the key up a second time.
-            (Ty::Map(key, value, _), Method::MapEntry) => {
-                let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
-                let Some(seq) = self.seq_load(&args[0])? else { return Ok(None) };
-                let map_addr = seq.addr;
-                let k = self.expr_mode(&args[1], Mode::Move)?;
-                let k_slot = self.spill(k, &key_ty)?;
-                let hash = self.map_key_hash(k_slot, &key_ty)?;
-                let entry_t = self.map_entry_value_ty(&key_ty);
-                let out = self.alloca(entry_t.into(), "entry")?;
-                let f = self.map_field(entry_t, out, 0, "entry.map")?;
-                self.builder.build_store(f, map_addr).map_err(llvm_err)?;
-                if let Some(k_slot) = k_slot {
-                    let kt = self.llvm_ty(&key_ty).unwrap_or_else(|| self.cx.bool_type().into());
-                    let kv = self.builder.build_load(kt, k_slot, "").map_err(llvm_err)?;
-                    let f = self.map_field(entry_t, out, 1, "entry.key")?;
-                    self.builder.build_store(f, kv).map_err(llvm_err)?;
-                }
-                let f = self.map_field(entry_t, out, 2, "entry.hash")?;
-                self.builder.build_store(f, hash).map_err(llvm_err)?;
-                let f = self.map_field(entry_t, out, 3, "entry.slot")?;
-                self.builder.build_store(f, self.usize_zero()).map_err(llvm_err)?;
-                let f = self.map_field(entry_t, out, 4, "entry.found")?;
-                self.builder.build_store(f, self.cx.bool_type().const_zero()).map_err(llvm_err)?;
-                let probe_bb = self.new_block("entry.probe");
-                let end = self.new_block("entry.end");
-                let no_table = self
-                    .builder
-                    .build_int_compare(IntPredicate::EQ, seq.cap, self.usize_zero(), "")
-                    .map_err(llvm_err)?;
-                self.builder.build_conditional_branch(no_table, end, probe_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(probe_bb);
-                let slot_ty = Self::map_entry_ty(&key_ty, &value_ty);
-                let (found, at) = self.map_probe(&seq, &slot_ty, &key_ty, &key_ty, hash, k_slot)?;
-                let f = self.map_field(entry_t, out, 3, "entry.slot")?;
-                self.builder.build_store(f, at).map_err(llvm_err)?;
-                let f = self.map_field(entry_t, out, 4, "entry.found")?;
-                self.builder.build_store(f, found).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-                self.builder.position_at_end(end);
-                Ok(Some(self.builder.build_load(entry_t, out, "entry.value").map_err(llvm_err)?))
-            }
-            (Ty::MapEntry(key, value, alloc), Method::MapEntryOrInsert | Method::MapEntryOrInsertWith) => {
-                let with_make = m == Method::MapEntryOrInsertWith;
-                let (key_ty, value_ty) = ((**key).clone(), (**value).clone());
-                let entry_ty = args[0].ty.clone();
-                let entry_t = self.llvm_ty(&entry_ty).expect("an entry has a type").into_struct_type();
-                let entry_v = self.expr_mode(&args[0], Mode::Move)?;
-                let Some(entry_slot) = self.spill(entry_v, &entry_ty)? else { return Ok(None) };
-                // Arguments are evaluated before the operation, whatever branch it takes.
-                let arg_v = self.expr_mode(&args[1], Mode::Move)?;
-                let arg_slot = self.spill(arg_v, &args[1].ty)?;
-                let f = self.map_field(entry_t, entry_slot, 0, "entry.map")?;
-                let map_addr = self.builder.build_load(self.ptr_ty(), f, "").map_err(llvm_err)?.into_pointer_value();
-                let f = self.map_field(entry_t, entry_slot, 2, "entry.hash")?;
-                let hash = self.builder.build_load(self.cx.i64_type(), f, "").map_err(llvm_err)?.into_int_value();
-                let f = self.map_field(entry_t, entry_slot, 3, "entry.slot")?;
-                let at = self.builder.build_load(self.usize_ty, f, "").map_err(llvm_err)?.into_int_value();
-                let f = self.map_field(entry_t, entry_slot, 4, "entry.found")?;
-                let found = self.builder.build_load(self.cx.bool_type(), f, "").map_err(llvm_err)?.into_int_value();
-                let key_ptr = match self.llvm_ty(&key_ty) {
-                    Some(_) => Some(self.map_field(entry_t, entry_slot, 1, "entry.key")?),
-                    None => None,
-                };
-                let mut seq = self.seq_load_at(map_addr, alloc)?;
-                let slot_ty = Self::map_entry_ty(&key_ty, &value_ty);
-                let slot_t = self.llvm_ty(&slot_ty).expect("a map entry has a type").into_struct_type();
-                let result = self.alloca(self.ptr_ty().into(), "entry.result")?;
-                let found_bb = self.new_block("entry.found");
-                let vacant_bb = self.new_block("entry.vacant");
-                let end = self.new_block("entry.done");
-                self.builder.build_conditional_branch(found, found_bb, vacant_bb).map_err(llvm_err)?;
-
-                // The key is already there: keep its value, drop the incoming one, and drop the entry's key.
-                self.builder.position_at_end(found_bb);
-                if let Some(arg_slot) = arg_slot {
-                    self.drop_value(arg_slot, &args[1].ty)?;
-                }
-                if let Some(key_ptr) = key_ptr {
-                    self.drop_value(key_ptr, &key_ty)?;
-                }
-                let old = self.map_slot(&seq, &slot_ty, at)?;
-                let value_ptr = self.map_field(slot_t, old, 1, "map.value")?;
-                self.builder.build_store(result, value_ptr).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-
-                // The key is absent: make room first (growing moves every slot, so the recorded one is redone),
-                // then store the key, the value, and the hash.
-                self.builder.position_at_end(vacant_bb);
-                let next_len =
-                    self.builder.build_int_add(seq.len, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-                let needed =
-                    self.builder.build_int_mul(next_len, self.usize_ty.const_int(4, false), "").map_err(llvm_err)?;
-                let room =
-                    self.builder.build_int_mul(seq.cap, self.usize_ty.const_int(3, false), "").map_err(llvm_err)?;
-                let over = self.builder.build_int_compare(IntPredicate::UGT, needed, room, "").map_err(llvm_err)?;
-                let no_table = self
-                    .builder
-                    .build_int_compare(IntPredicate::EQ, seq.cap, self.usize_zero(), "")
-                    .map_err(llvm_err)?;
-                let grow = self.builder.build_or(over, no_table, "").map_err(llvm_err)?;
-                let grow_bb = self.new_block("entry.grow");
-                let slot_bb = self.new_block("entry.slot");
-                let fill_bb = self.new_block("entry.fill");
-                let (old_data, old_cap) = (seq.data, seq.cap);
-                self.builder.build_conditional_branch(grow, grow_bb, slot_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(grow_bb);
-                self.map_grow(&mut seq, &key_ty, &value_ty, span)?;
-                let (_, grown_at) = self.map_probe(&seq, &slot_ty, &key_ty, &key_ty, hash, key_ptr)?;
-                let grown_end = self.builder.get_insert_block().expect("positioned");
-                let (new_data, new_cap) = (seq.data, seq.cap);
-                self.builder.build_unconditional_branch(fill_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(slot_bb);
-                self.builder.build_unconditional_branch(fill_bb).map_err(llvm_err)?;
-                self.builder.position_at_end(fill_bb);
-                let data_phi = self.builder.build_phi(self.ptr_ty(), "entry.data").map_err(llvm_err)?;
-                data_phi.add_incoming(&[(&old_data, slot_bb), (&new_data, grown_end)]);
-                let cap_phi = self.builder.build_phi(self.usize_ty, "entry.cap").map_err(llvm_err)?;
-                cap_phi.add_incoming(&[(&old_cap, slot_bb), (&new_cap, grown_end)]);
-                let at_phi = self.builder.build_phi(self.usize_ty, "entry.at").map_err(llvm_err)?;
-                at_phi.add_incoming(&[(&at, slot_bb), (&grown_at, grown_end)]);
-                seq.data = data_phi.as_basic_value().into_pointer_value();
-                seq.cap = cap_phi.as_basic_value().into_int_value();
-                let at = at_phi.as_basic_value().into_int_value();
-                let value = if with_make {
-                    let Some(arg_slot) = arg_slot else {
-                        return Err("internal error: `or_insert_with` lost its closure".into());
-                    };
-                    let closure =
-                        self.builder.build_load(self.closure_ty, arg_slot, "").map_err(llvm_err)?.into_struct_value();
-                    self.call_closure_value(closure, &args[1].ty, FnKind::FnOnce, &[])?
-                } else {
-                    match (arg_slot, self.llvm_ty(&value_ty)) {
-                        (Some(arg_slot), Some(vt)) => {
-                            Some(self.builder.build_load(vt, arg_slot, "").map_err(llvm_err)?)
-                        }
-                        _ => None,
-                    }
-                };
-                let slot = self.map_slot(&seq, &slot_ty, at)?;
-                if let Some(key_ptr) = key_ptr {
-                    let kt = self.llvm_ty(&key_ty).expect("checked above");
-                    let kv = self.builder.build_load(kt, key_ptr, "").map_err(llvm_err)?;
-                    let key_field = self.map_field(slot_t, slot, 0, "map.key")?;
-                    self.builder.build_store(key_field, kv).map_err(llvm_err)?;
-                }
-                if let Some(value) = value {
-                    let value_field = self.map_field(slot_t, slot, 1, "map.value")?;
-                    self.builder.build_store(value_field, value).map_err(llvm_err)?;
-                }
-                let hash_field = self.map_field(slot_t, slot, 2, "map.hash")?;
-                self.builder.build_store(hash_field, hash).map_err(llvm_err)?;
-                seq.len = next_len;
-                self.seq_store(&seq)?;
-                let value_ptr = self.map_field(slot_t, slot, 1, "map.value")?;
-                self.builder.build_store(result, value_ptr).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-
-                self.builder.position_at_end(end);
-                Ok(Some(self.builder.build_load(self.ptr_ty(), result, "").map_err(llvm_err)?))
             }
             _ => Err(format!("unsupported collection method {m:?} on `{}`", args[0].ty)),
         }

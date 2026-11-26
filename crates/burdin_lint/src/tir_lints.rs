@@ -655,7 +655,10 @@ impl An<'_> {
         if local.mutable || local.name.starts_with('_') || !self.cx.in_package(init.span) {
             return;
         }
-        if !(matches!(init.ty, Ty::String | Ty::Map(..) | Ty::Heap(..)) || self.defs.list_parts(&init.ty).is_some()) {
+        if !(matches!(init.ty, Ty::String | Ty::Heap(..))
+            || self.defs.list_parts(&init.ty).is_some()
+            || self.defs.map_parts(&init.ty).is_some())
+        {
             return;
         }
         let mut allocates = false;
@@ -778,6 +781,10 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
         Ty::Struct(_) if defs.list_parts(ty).is_some() => {
             has_user_drop(defs.list_parts(ty).expect("a list").0, defs, d)
         }
+        Ty::Struct(_) if defs.map_parts(ty).is_some() => {
+            let (k, v, _) = defs.map_parts(ty).expect("a map");
+            has_user_drop(k, defs, d) || has_user_drop(v, defs, d)
+        }
         Ty::Struct(a) => {
             let s = &defs.structs[a.id];
             s.drop_method.is_some() || s.fields.iter().any(|f| has_user_drop(&f.ty, defs, d))
@@ -787,7 +794,6 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
             e.drop_method.is_some() || e.variants.iter().any(|v| v.fields.iter().any(|f| has_user_drop(&f.ty, defs, d)))
         }
         Ty::Heap(t, _) | Ty::Array(t, _) => has_user_drop(t, defs, d),
-        Ty::Map(a, b, _) => has_user_drop(a, defs, d) || has_user_drop(b, defs, d),
         Ty::Tuple(ts) => ts.iter().any(|t| has_user_drop(t, defs, d)),
         Ty::Any(_) | Ty::Fn { .. } => true,
         _ => false,

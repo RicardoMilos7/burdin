@@ -164,7 +164,7 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
             adts_in(a, out);
             adts_in(b, out);
         }
-        Ty::Map(k, v, a) | Ty::MapEntry(k, v, a) | Ty::MapIntoIter(k, v, a) => {
+        Ty::MapIntoIter(k, v, a) => {
             adts_in(k, out);
             adts_in(v, out);
             alloc(a, out);

@@ -14,9 +14,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let recv = &args[0];
         let recv_ty = recv.ty.clone();
-        let seq_alloc = match &recv_ty {
-            Ty::Map(_, _, alloc) => Some(alloc.clone()),
-            other => self.list_info(other).map(|(_, alloc)| alloc),
+        let seq_alloc = match self.map_info(&recv_ty) {
+            Some((_, _, alloc)) => Some(alloc),
+            None => self.list_info(&recv_ty).map(|(_, alloc)| alloc),
         };
         match (&recv_ty, into) {
             // A slice view is its own iterator; `Chars` is a `str` view.
@@ -61,7 +61,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         fields.push((4, a));
                     }
                     Ok(Some(self.seq_value(&alloc, &fields)?.into()))
-                } else if matches!(recv_ty, Ty::Map(..)) {
+                } else if self.map_info(&recv_ty).is_some() {
                     let cap = self.builder.build_extract_value(s, 2, "iter.cap").map_err(llvm_err)?;
                     let zero = self.usize_ty.const_zero().into();
                     Ok(Some(

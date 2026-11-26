@@ -387,7 +387,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // A map's buffer holds `(key, value, hash)` slots, and a zero hash marks an empty one. The slot as a
             // named struct is what lets a debugger walk the table (`spec/debug.md`, DBG5).
-            Ty::Map(key, value, burdin_tir::Alloc::Global) => {
+            Ty::Struct(_) if matches!(self.map_info(ty), Some((_, _, burdin_tir::Alloc::Global))) => {
+                let (key, value, _) = self.map_info(ty).expect("a map");
+                let (key, value) = (&key, &value);
                 let name = Self::debug_name(ty);
                 let slot_name = format!("{name}.slot");
                 let slot = {
@@ -410,7 +412,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (inner, _) = self.list_info(ty).expect("a list");
                 self.debug_unspecified(&format!("List<{}>", Self::debug_name(&inner)))
             }
-            Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::Struct(_) if self.map_info(ty).is_some() => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Fn { .. } => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
@@ -453,7 +455,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
             }
-            Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
         }
     }
 
@@ -829,10 +830,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
-            Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
-            Ty::MapEntry(k, v, _) => {
-                format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))
-            }
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),

@@ -26,6 +26,7 @@ impl Sema<'_> {
         self.globals.lang_result = find(&self.globals, "Result");
         self.globals.lang_list = find(&self.globals, "List");
         self.globals.lang_list_into_iter = find(&self.globals, "ListIntoIter");
+        self.globals.lang_map = find(&self.globals, "Map");
         self.globals.lang_manually_drop = find(&self.globals, "ManuallyDrop");
         self.globals.lang_array_into_iter = find(&self.globals, "ArrayIntoIter");
         for (slot, name) in ["Range", "RangeInclusive", "RangeIter", "RangeIterInclusive"].into_iter().enumerate() {
