@@ -81,29 +81,40 @@ jobs:
       - name: Run the failing test
         run: |
           set +e
-          for i in 1 2 3; do
-            target/debug/burdin run tests/s2_io/stress_files.bd
-            echo "exit code: $?"
-          done
           mkdir -p /tmp/dbg && cd /tmp/dbg
-          cat > one.bd <<'EOF2'
+          cat > a.bd <<'EOF2'
           fn main() {
-              let mut file = fs.File.create("one.txt").unwrap()
+              let mut file = fs.File.create("a.txt").unwrap()
               let data = "0123456789".to_utf8()
               file.write_all(data[0..data.len()]).unwrap()
-              let mut read = fs.File.open("one.txt").unwrap()
-              let mut buf = List<u8>.new()
-              let n = read.read(mut buf, 64).unwrap()
-              println("read {n}")
-              let mut options = fs.OpenOptions.new()
-              options.write(true)
-              options.truncate(true)
-              let mut again = options.open("one.txt").unwrap()
-              again.write_all(data[0..data.len()]).unwrap()
-              println("again ok")
-              fs.remove_file("one.txt").unwrap()
-              println("removed")
+              match fs.remove_file("a.txt") {
+                  Result.Ok(_) => println("A: removed while open"),
+                  Result.Err(e) => println("A: failed {e:?}"),
+              }
           }
           EOF2
-          "$GITHUB_WORKSPACE/target/debug/burdin" run one.bd
-          echo "exit code: $?"
+          cat > b.bd <<'EOF2'
+          fn main() {
+              let mut file = fs.File.create("b.txt").unwrap()
+              let data = "0123456789".to_utf8()
+              file.write_all(data[0..data.len()]).unwrap()
+              drop(file)
+              match fs.remove_file("b.txt") {
+                  Result.Ok(_) => println("B: removed after drop"),
+                  Result.Err(e) => println("B: failed {e:?}"),
+              }
+          }
+          EOF2
+          cat > c.bd <<'EOF2'
+          fn main() {
+              fs.write("c.txt", "x".as_bytes()).unwrap()
+              match fs.remove_file("c.txt") {
+                  Result.Ok(_) => println("C: removed"),
+                  Result.Err(e) => println("C: failed {e:?}"),
+              }
+          }
+          EOF2
+          for f in a b c; do
+            "$GITHUB_WORKSPACE/target/debug/burdin" run $f.bd
+            echo "exit code: $?"
+          done
