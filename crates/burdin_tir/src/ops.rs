@@ -247,10 +247,9 @@ pub enum Builtin {
     SliceRaw,
     /// `__iter_mut_raw(p, n)`: the `IterMut<T>` over the `n` elements at `p` (`unsafe`).
     IterMutRaw,
-    /// `__range_start(r)` and `__range_end(r)`: the endpoints of a `Range<T>` or `RangeInclusive<T>` value, so a
-    /// library function can read the bounds it was given.
-    RangeStart,
-    RangeEnd,
+    /// `__int_step(x, delta)`: the integer `x` moved by `delta` (1 or -1), wrapping. `std`'s range iterators step
+    /// with it, since `T` has no arithmetic of its own.
+    IntStep,
     /// `target.os()`'s primitive: `"linux"`, `"macos"`, or `"windows"`, the system the program is compiled for.
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.

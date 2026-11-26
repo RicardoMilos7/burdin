@@ -143,7 +143,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let range = self.need(range, &range_ty).into_struct_value();
         let lo = self.builder.build_extract_value(range, 0, "range.lo").map_err(llvm_err)?.into_int_value();
         let hi = self.builder.build_extract_value(range, 1, "range.hi").map_err(llvm_err)?.into_int_value();
-        let inclusive = matches!(range_ty, Ty::Range(_, true));
+        let inclusive = self.defs().range_parts(&range_ty).is_some_and(|(_, inclusive)| inclusive);
         let Some(inner) = self.option_payload_ty(ty) else { return Err("`get` returns an `Option`".into()) };
         let inner = &inner;
         let item = inner.clone();

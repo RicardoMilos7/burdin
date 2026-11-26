@@ -291,6 +291,21 @@ impl Globals {
         self.adt_instance_ty(template, vec![elem, len])
     }
 
+    /// `Range<inner>` or `RangeInclusive<inner>`.
+    pub(crate) fn range_ty(&self, inner: Ty, inclusive: bool) -> Ty {
+        match self.lang_range[usize::from(inclusive)] {
+            Some(template) => self.adt_instance_ty(template, vec![inner]),
+            None => Ty::Error,
+        }
+    }
+
+    /// The endpoint type and inclusiveness of a range instance, `None` when `ty` is not one.
+    pub(crate) fn range_parts(&self, ty: &Ty) -> Option<(Ty, bool)> {
+        let (template, args) = self.origin_of(ty)?;
+        let slot = self.lang_range[..2].iter().position(|t| *t == Some(*template))?;
+        Some((args[0].clone(), slot == 1))
+    }
+
     /// The element type and allocator of a `List` instance, `None` when `ty` is not one.
     pub(crate) fn list_parts(&self, ty: &Ty) -> Option<(Ty, tir::Alloc)> {
         let (template, args) = self.origin_of(ty)?;
@@ -345,9 +360,7 @@ impl Globals {
             Ty::Projection { .. } | Ty::TryFromError { .. } => true,
             Ty::Const(v) => *v >= crate::consteval::SYM_CONST,
             Ty::Array(inner, n) => *n >= crate::consteval::SYM_LEN || self.ty_has_param(inner),
-            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::CPtr(inner) | Ty::Range(inner, _) => {
-                self.ty_has_param(inner)
-            }
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::CPtr(inner) => self.ty_has_param(inner),
             Ty::Heap(inner, alloc) => {
                 self.ty_has_param(inner) || alloc.allocator_ty().is_some_and(|a| self.ty_has_param(a))
             }
@@ -379,8 +392,7 @@ impl Globals {
             }
             (Ty::Ref { inner: p, .. }, Ty::Ref { inner: a, .. })
             | (Ty::Slice(p), Ty::Slice(a))
-            | (Ty::CPtr(p), Ty::CPtr(a))
-            | (Ty::Range(p, _), Ty::Range(a, _)) => self.unify(p, a, bindings),
+            | (Ty::CPtr(p), Ty::CPtr(a)) => self.unify(p, a, bindings),
             (Ty::Heap(p, pa), Ty::Heap(a, aa)) => {
                 self.unify(p, a, bindings);
                 self.unify_alloc(pa, aa, bindings);
@@ -459,7 +471,6 @@ impl Globals {
             Ty::MapEntry(k, v, a) => Ty::MapEntry(go(k), go(v), self.subst_alloc(a, env)),
             Ty::Heap(t, a) => Ty::Heap(go(t), self.subst_alloc(a, env)),
             Ty::CPtr(t) => Ty::CPtr(go(t)),
-            Ty::Range(t, inclusive) => Ty::Range(go(t), *inclusive),
             Ty::Fn { sig, kind, borrowed, send } => Ty::Fn {
                 sig: Rc::new(FnSig {
                     params: sig.params.iter().map(|t| self.subst_ty(t, env)).collect(),
@@ -1215,7 +1226,6 @@ impl Globals {
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_ord_in(t, env)),
             // A fixed-size array orders lexicographically.
             Ty::Array(t, _) => self.has_ord_in(t, env),
-            Ty::Range(t, _) => self.has_ord_in(t, env),
             // A derived `Ord`, or a hand-written `Ord` implementation (whose `==` is `eq_from_order` unless it has its own).
             Ty::Struct(_) | Ty::Enum(_) => self.has_derived_ord_in(ty, env) || self.implements_ord_iface(ty, env),
             _ => false,
@@ -1285,7 +1295,6 @@ impl Globals {
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &Bound::Hash, env),
             // A map hashes its entries in any order (`spec/stdlib.md`, "Interface coverage").
             Ty::Map(k, v, _) => self.has_hash_in(k, env) && self.has_hash_in(v, env),
-            Ty::Range(t, _) => self.has_hash_in(t, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_hash_in(t, env)),
             // A fixed-size array hashes its elements in order.
             Ty::Array(t, _) => self.has_hash_in(t, env),

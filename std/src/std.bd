@@ -3,7 +3,7 @@ use alloc.{Allocator, Global}
 use env.get
 use fmt.{Debug, Display, Formatter}
 use fs.append
-use iter.Iterator
+use iter.{DoubleEndedIterator, Iterator}
 use marker.{Send, Sync}
 use mem.drop
 use reactor.offload_raw
@@ -1093,14 +1093,14 @@ List<T, A> {
 
     /// Removes `lo..hi` and returns the removed elements as an owning iterator.
     fn drain(mut self, range: Range<usize>): ListIntoIter<T> {
-        self.drain_range(__range_start(range), __range_end(range))
+        self.drain_range(range.start, range.end)
     }
 
     /// `drain(lo..=hi)`.
     fn drain_inclusive(mut self, range: RangeInclusive<usize>): ListIntoIter<T> {
-        let hi = __range_end(range)
+        let hi = range.end
         if hi >= self.len { panic("drain: range out of bounds") }
-        self.drain_range(__range_start(range), hi + 1)
+        self.drain_range(range.start, hi + 1)
     }
 
     priv fn drain_range(mut self, lo: usize, hi: usize): ListIntoIter<T> {
@@ -1162,6 +1162,108 @@ ListIntoIter<T, A>: Iterator<T> {
         let at = self.pos
         self.pos = at + 1
         Option.Some(unsafe { __read(self.ptr + at) })
+    }
+}
+
+/// The values from `start` up to, but not including, `end`: `start..end`. It is a value of its own, not an iterator;
+/// `iter()` and `for` walk it.
+struct Range<T>: Copy, Clone, Eq, Ord, Hash {
+    start: T
+    end: T
+}
+
+/// The values from `start` up to and including `end`: `start..=end`.
+struct RangeInclusive<T>: Copy, Clone, Eq, Ord, Hash {
+    start: T
+    end: T
+}
+
+/// The iterator of a `Range`: the next value, the end, and whether the walk is over.
+struct RangeIter<T>: Clone {
+    cur: T
+    end: T
+    done: bool
+}
+
+/// The iterator of a `RangeInclusive`.
+struct RangeIterInclusive<T>: Clone {
+    cur: T
+    end: T
+    done: bool
+}
+
+Range<T> {
+    fn iter(self): RangeIter<T> {
+        RangeIter { cur: self.start, end: self.end, done: false }
+    }
+
+    fn into_iter(own self): RangeIter<T> {
+        RangeIter { cur: self.start, end: self.end, done: false }
+    }
+}
+
+RangeInclusive<T> {
+    fn iter(self): RangeIterInclusive<T> {
+        RangeIterInclusive { cur: self.start, end: self.end, done: false }
+    }
+
+    fn into_iter(own self): RangeIterInclusive<T> {
+        RangeIterInclusive { cur: self.start, end: self.end, done: false }
+    }
+}
+
+RangeIter<T>: Iterator<T> where T: Ord {
+    fn next(mut self): Option<T> {
+        if self.done || self.cur >= self.end {
+            self.done = true
+            return Option.None
+        }
+        let value = self.cur
+        self.cur = __int_step(value, 1)
+        Option.Some(value)
+    }
+}
+
+RangeIter<T>: DoubleEndedIterator<T> where T: Ord {
+    fn next_back(mut self): Option<T> {
+        if self.done || self.cur >= self.end {
+            self.done = true
+            return Option.None
+        }
+        self.end = __int_step(self.end, -1)
+        Option.Some(self.end)
+    }
+}
+
+RangeIterInclusive<T>: Iterator<T> where T: Ord {
+    fn next(mut self): Option<T> {
+        if self.done || self.cur > self.end {
+            self.done = true
+            return Option.None
+        }
+        let value = self.cur
+        if value == self.end {
+            self.done = true
+        } else {
+            self.cur = __int_step(value, 1)
+        }
+        Option.Some(value)
+    }
+}
+
+RangeIterInclusive<T>: DoubleEndedIterator<T> where T: Ord {
+    fn next_back(mut self): Option<T> {
+        if self.done || self.cur > self.end {
+            self.done = true
+            return Option.None
+        }
+        let value = self.end
+        if value == self.cur {
+            self.done = true
+        } else {
+            self.end = __int_step(value, -1)
+        }
+        Option.Some(value)
     }
 }
 

@@ -327,7 +327,7 @@ class RangePrinter:
 
     def to_string(self):
         op = "..=" if self.inclusive else ".."
-        return f"{_render(self.val['lo'])}{op}{_render(self.val['hi'])}"
+        return f"{_render(self.val['start'])}{op}{_render(self.val['end'])}"
 
 
 _ENUM_FIELDS = ["tag", "payload"]

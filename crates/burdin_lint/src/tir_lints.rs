@@ -837,10 +837,6 @@ fn size_of(ty: &Ty, defs: &TypeDefs, depth: u32) -> (u64, u64) {
             }
             ((size + align).next_multiple_of(align), align)
         }
-        Ty::Range(t, _) => {
-            let (s, a) = size_of(t, defs, d);
-            ((2 * s).next_multiple_of(a), a)
-        }
         _ => (8, 8),
     }
 }

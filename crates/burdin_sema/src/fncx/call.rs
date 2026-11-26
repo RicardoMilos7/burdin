@@ -131,8 +131,7 @@ impl FnCx<'_> {
                     None if id.name == "__write" => return self.raw_write_call(args, span),
                     None if id.name == "__slice_raw" => return self.slice_raw_call(args, span, false),
                     None if id.name == "__iter_mut_raw" => return self.slice_raw_call(args, span, true),
-                    None if id.name == "__range_start" => return self.range_end_call(args, span, false),
-                    None if id.name == "__range_end" => return self.range_end_call(args, span, true),
+                    None if id.name == "__int_step" => return self.int_step_call(args, span),
                     None if id.name == "__closure_own" => return self.closure_own_call(args, span),
                     None if id.name == "embed" => return self.embed_call(args, span, expect),
                     None if id.name == "format" && self.lookup("format").is_none() => {
@@ -845,28 +844,27 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(op, vec![p, n]), ty, span)
     }
 
-    /// `__range_start(r)` and `__range_end(r)`: an endpoint of a range value.
-    fn range_end_call(&mut self, args: &[ast::Arg], span: Span, end: bool) -> tir::Expr {
-        let name = if end { "__range_end" } else { "__range_start" };
-        self.reject_named_args(name, args);
-        if args.len() != 1 {
+    /// `__int_step(x, delta)`: the integer `x` moved by `delta`, wrapping (`std`'s range iterators).
+    fn int_step_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__int_step", args);
+        if args.len() != 2 {
             self.diags.error(
                 Code::ARG_COUNT,
                 span,
-                format!("`{name}` takes 1 argument, but {} were given", args.len()),
+                format!("`__int_step` takes 2 arguments, but {} were given", args.len()),
             );
             return self.args_then_error(args, span);
         }
-        let r = self.expr(&args[0].expr, None);
-        let Ty::Range(inner, _) = &r.ty else {
-            if r.ty != Ty::Error {
-                self.diags.error(Code::TYPE_MISMATCH, r.span, format!("`{name}` needs a range, found `{}`", r.ty));
-            }
+        let x = self.expr(&args[0].expr, None);
+        let delta = self.expr(&args[1].expr, Some(&Ty::Int(IntTy::I64)));
+        let delta = self.coerce_arg(delta, &Ty::Int(IntTy::I64));
+        // A generic body is checked once with the parameter itself; each instance is checked with its integer.
+        if !matches!(x.ty, Ty::Int(_) | Ty::Param(_) | Ty::Error) {
+            self.diags.error(Code::TYPE_MISMATCH, x.span, format!("`__int_step` needs an integer, found `{}`", x.ty));
             return error_expr(span);
-        };
-        let ty = (**inner).clone();
-        let op = if end { Builtin::RangeEnd } else { Builtin::RangeStart };
-        mk(tir::ExprKind::Builtin(op, vec![r]), ty, span)
+        }
+        let ty = x.ty.clone();
+        mk(tir::ExprKind::Builtin(Builtin::IntStep, vec![x, delta]), ty, span)
     }
 
     /// `replace(mut place, value)`: stores `value` and returns what `place` held.
@@ -1363,14 +1361,14 @@ impl FnCx<'_> {
     /// range. `None` for any other expression, which `get` treats as an index.
     fn range_argument(&self, e: &ast::Expr) -> Option<Ty> {
         match &e.kind {
-            ast::ExprKind::Range { inclusive, .. } => Some(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), *inclusive)),
+            ast::ExprKind::Range { inclusive, .. } => Some(self.globals.range_ty(Ty::Int(IntTy::Usize), *inclusive)),
             ast::ExprKind::Name { name, args } if args.is_empty() => {
                 let local = self.lookup(&name.name)?;
                 let ty = self.locals[local.0].ty.clone();
                 // A stored range is a slice range only when its endpoints are `usize`; there is no implicit
                 // conversion, so `Range<i32>` is an ordinary type error at the index form.
-                let Ty::Range(end, _) = &ty else { return None };
-                (**end == Ty::Int(IntTy::Usize)).then_some(ty)
+                let (end, _) = self.globals.range_parts(&ty)?;
+                (end == Ty::Int(IntTy::Usize)).then_some(ty)
             }
             _ => None,
         }
@@ -1735,10 +1733,10 @@ impl FnCx<'_> {
             self.diags.error(Code::ARG_COUNT, span, format!("`drain` takes 1 argument, but {} were given", args.len()));
             return None;
         }
-        let hint = Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false);
+        let hint = self.globals.range_ty(Ty::Int(IntTy::Usize), false);
         let arg = self.expr(&args[0].expr, Some(&hint));
         match &arg.ty {
-            Ty::Range(t, _) if **t == Ty::Int(IntTy::Usize) => {}
+            t if self.globals.range_parts(t).is_some_and(|(e, _)| e == Ty::Int(IntTy::Usize)) => {}
             Ty::Error => return None,
             other => {
                 self.diags.error(

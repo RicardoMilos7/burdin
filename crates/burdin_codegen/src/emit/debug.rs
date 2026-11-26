@@ -445,20 +445,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // An enum is `{ tag: i32, payload }`, where the payload is a union with one member per variant, so a
             // debugger and the printers can name the active variant from the tag (`spec/debug.md`, DBG5).
             Ty::Enum(adt) => self.debug_enum(adt),
-            Ty::Range(inner, _) => {
-                let members = vec![("lo".to_string(), (**inner).clone()), ("hi".to_string(), (**inner).clone())];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
-            Ty::RangeIter(inner, _) => {
-                let members = vec![
-                    ("lo".to_string(), (**inner).clone()),
-                    ("hi".to_string(), (**inner).clone()),
-                    ("done".to_string(), Ty::Bool),
-                ];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
             Ty::IterMut(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8)])
@@ -808,7 +794,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`): a
     /// debugger shows it by its plain name, as it did when the compiler built the type in.
     fn lang_debug_name(full: &str) -> String {
-        const LANG: [&str; 6] = ["Option", "Result", "Shared", "CString", "List", "ListIntoIter"];
+        const LANG: [&str; 10] = [
+            "Option",
+            "Result",
+            "Shared",
+            "CString",
+            "List",
+            "ListIntoIter",
+            "Range",
+            "RangeInclusive",
+            "RangeIter",
+            "RangeIterInclusive",
+        ];
         match full.strip_prefix("std.") {
             Some(rest) if LANG.iter().any(|n| rest.split('<').next() == Some(n)) => rest.to_string(),
             _ => full.to_string(),
@@ -839,8 +836,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),
-            Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
-            Ty::Range(inner, true) => format!("RangeInclusive<{}>", Self::debug_name(inner)),
             Ty::Tuple(fields) => {
                 format!("({})", fields.iter().map(Self::debug_name).collect::<Vec<_>>().join(", "))
             }

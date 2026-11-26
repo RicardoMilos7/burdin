@@ -276,7 +276,7 @@ def range_summary(valobj, internal_dict):
     try:
         name = _name(valobj)
         op = "..=" if "RangeInclusive" in name else ".."
-        return f"{_render(_member(valobj, 'lo'))}{op}{_render(_member(valobj, 'hi'))}"
+        return f"{_render(_member(valobj, 'start'))}{op}{_render(_member(valobj, 'end'))}"
     except Exception:
         return None
 

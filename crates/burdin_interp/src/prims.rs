@@ -2,7 +2,7 @@
 //! (equality, ordering, hashing, layout) that compiled code answers with generated glue. Each one follows the code
 //! generator's behavior so a constant's value is the value the compiled program would compute (CE1).
 
-use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, key_ty, range_bounds, to_key};
+use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
@@ -286,11 +286,6 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             Value::Tuple(fs) => fs.iter().zip(&p.structs[a.id].fields).fold(acc, |h, (f, d)| hash(p, f, &d.ty, h)),
             _ => acc,
         },
-        Ty::Range(inner, _) => {
-            let (lo, hi) = range_bounds(v);
-            let h = hash(p, &Value::Int(lo), inner, acc);
-            hash(p, &Value::Int(hi), inner, h)
-        }
         Ty::Enum(a) => match v {
             Value::Variant(i, fs) => {
                 let h = mix(acc, *i as u64);
@@ -362,8 +357,6 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         }
         Ty::Tuple(ts) => product(&ts.iter().map(|t| member(p, t)).collect::<Vec<_>>()),
         Ty::Struct(a) => product(&p.structs[a.id].fields.iter().map(|f| member(p, &f.ty)).collect::<Vec<_>>()),
-        Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
-        Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
         Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
         Ty::IterMut(_) => (16, 8),
@@ -425,7 +418,6 @@ pub(crate) fn zero_value(p: &Program, ty: &Ty) -> Value {
             None => Value::Unit,
         },
         Ty::Array(t, n) => Value::Array(vec![zero_value(p, t); *n as usize]),
-        Ty::Range(..) => Value::Tuple(vec![Value::Int(0), Value::Int(0)]),
         _ => Value::Unit,
     }
 }
@@ -865,12 +857,15 @@ impl<'p> Interp<'p, '_> {
             Builtin::RawRead | Builtin::RawWrite | Builtin::SliceRaw | Builtin::IterMutRaw => {
                 return Err(impure("reading or writing raw memory", span));
             }
-            Builtin::RangeStart | Builtin::RangeEnd => {
-                let range = self.eval(&args[0], Mode::Use)?;
-                let Value::Tuple(ends) = range else {
-                    return Err(impure("a range that is not a pair of endpoints", span));
+            Builtin::IntStep => {
+                let (Value::Int(x), Value::Int(d)) = (self.eval(&args[0], Mode::Use)?, self.eval(&args[1], Mode::Use)?)
+                else {
+                    return Err(impure("stepping a value that is not an integer", span));
                 };
-                ends.into_iter().nth(usize::from(b == Builtin::RangeEnd)).unwrap_or(Value::Unit)
+                let Ty::Int(ity) = &args[0].ty else {
+                    return Err(impure("stepping a value that is not an integer", span));
+                };
+                Value::Int(wrap(x.wrapping_add(d), *ity))
             }
             Builtin::Replace => {
                 let place = self.eval_place(&args[0])?;
@@ -1122,7 +1117,7 @@ impl<'p> Interp<'p, '_> {
                 let place = self.eval_place(recv)?;
                 let range = self.eval(&args[1], Mode::Use)?;
                 let (lo, hi) = range_bounds(&range);
-                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let inclusive = self.defs().range_parts(&args[1].ty).is_some_and(|(_, i)| i);
                 let len = self.peek(recv, |v| v.elems().len())?;
                 let lo = usize::try_from(lo).unwrap_or(usize::MAX);
                 let hi = usize::try_from(hi).unwrap_or(usize::MAX);
@@ -1378,7 +1373,7 @@ impl<'p> Interp<'p, '_> {
                 let v = self.eval(recv, Mode::Use)?.deref();
                 let range = self.eval(&args[1], Mode::Use)?.deref();
                 let (lo, hi) = range_bounds(&range);
-                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let inclusive = self.defs().range_parts(&args[1].ty).is_some_and(|(_, i)| i);
                 match &v {
                     Value::Slice(xs, base, end) => {
                         let len = (end - base) as i128;
@@ -1491,18 +1486,12 @@ impl<'p> Interp<'p, '_> {
                     })
                     .collect(),
             ),
-            (Ty::Range(inner, _), v) => {
-                let ity = key_ty(inner);
-                let (lo, hi) = range_bounds(&v);
-                Value::RangeIter(to_key(ity, lo), to_key(ity, hi), false)
-            }
             (ty, v) => return Err(internal(format!("an iterator over `{ty}` from {v:?}"), span)),
         })
     }
 
     fn iter_next(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
         let item_is_view = matches!(self.defs().option_payload(ty), Some(Ty::Ref { .. }));
-        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
         let place = self.eval_place(recv)?;
         let it = self.place_mut(&place, span)?;
         let it = match it {
@@ -1527,19 +1516,6 @@ impl<'p> Interp<'p, '_> {
                 None => None,
             },
             Value::Items(items) => items.pop_front(),
-            Value::RangeIter(next, hi, done) => {
-                if *done || (inclusive && *next > *hi) || (!inclusive && *next >= *hi) {
-                    None
-                } else {
-                    let v = *next;
-                    if inclusive && v == *hi {
-                        *done = true;
-                    } else {
-                        *next += 1;
-                    }
-                    Some(Value::Int(to_key(key_ty(&recv.ty), v)))
-                }
-            }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
         };
         Ok(Value::opt(next))
@@ -1548,7 +1524,6 @@ impl<'p> Interp<'p, '_> {
     /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
     fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
         let item_is_view = matches!(self.defs().option_payload(ty), Some(Ty::Ref { .. }));
-        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
         let place = self.eval_place(recv)?;
         let it = self.place_mut(&place, span)?;
         let it = match it {
@@ -1578,23 +1553,6 @@ impl<'p> Interp<'p, '_> {
                     let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
                     *bytes = kept;
                     c.map(Value::Char)
-                }
-            }
-            Value::RangeIter(lo, hi, done) => {
-                let ity = key_ty(&recv.ty);
-                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
-                    None
-                } else if inclusive {
-                    let v = *hi;
-                    if *lo == *hi {
-                        *done = true;
-                    } else {
-                        *hi -= 1;
-                    }
-                    Some(Value::Int(to_key(ity, v)))
-                } else {
-                    *hi -= 1;
-                    Some(Value::Int(to_key(ity, *hi)))
                 }
             }
             other => return Err(internal(format!("`next_back` on {other:?}"), span)),

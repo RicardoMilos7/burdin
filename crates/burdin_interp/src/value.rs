@@ -44,8 +44,6 @@ pub enum Value {
     /// The owning iterators of a `List`, an array, or a `Map` (its pairs as tuples), and the borrowing iterator of
     /// a `Map`: the remaining items in order.
     Items(std::collections::VecDeque<Value>),
-    /// The iterator of a range: the next value, the end, and whether it is exhausted.
-    RangeIter(i128, i128, bool),
     /// A slot whose value was moved out, or that was never initialized.
     Moved,
 }

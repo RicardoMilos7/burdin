@@ -28,6 +28,9 @@ impl Sema<'_> {
         self.globals.lang_list_into_iter = find(&self.globals, "ListIntoIter");
         self.globals.lang_manually_drop = find(&self.globals, "ManuallyDrop");
         self.globals.lang_array_into_iter = find(&self.globals, "ArrayIntoIter");
+        for (slot, name) in ["Range", "RangeInclusive", "RangeIter", "RangeIterInclusive"].into_iter().enumerate() {
+            self.globals.lang_range[slot] = find(&self.globals, name);
+        }
     }
 
     pub(crate) fn install_prelude(&mut self) {

@@ -35,10 +35,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return self.pointer_binary(op, lv, rv, l, r);
         }
         if matches!(op, BinOp::Eq | BinOp::Ne)
-            && matches!(
-                operand_ty,
-                Ty::Unit | Ty::Tuple(_) | Ty::Array(..) | Ty::Struct(_) | Ty::Enum(_) | Ty::Range(..) | Ty::Map(..)
-            )
+            && matches!(operand_ty, Ty::Unit | Ty::Tuple(_) | Ty::Array(..) | Ty::Struct(_) | Ty::Enum(_) | Ty::Map(..))
         {
             let lp = self.spill(lv, operand_ty)?;
             let rp = self.spill(rv, operand_ty)?;
@@ -62,14 +59,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge)
             && matches!(
                 operand_ty,
-                Ty::Unit
-                    | Ty::Tuple(_)
-                    | Ty::Array(..)
-                    | Ty::Struct(_)
-                    | Ty::Enum(_)
-                    | Ty::Str
-                    | Ty::String
-                    | Ty::Range(..)
+                Ty::Unit | Ty::Tuple(_) | Ty::Array(..) | Ty::Struct(_) | Ty::Enum(_) | Ty::Str | Ty::String
             )
         {
             let lp = self.spill(lv, operand_ty)?;

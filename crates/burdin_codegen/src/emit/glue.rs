@@ -88,12 +88,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
             Ty::Heap(inner, _) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
-            Ty::Range(inner, inclusive) => {
-                format!("Range<{},{inclusive}>", self.structural_key_in(inner, seen))
-            }
-            Ty::RangeIter(inner, inclusive) => {
-                format!("RangeIter<{},{inclusive}>", self.structural_key_in(inner, seen))
-            }
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -249,8 +243,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.drop_list_into_iter(addr, &elem, &alloc)
             }
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
-            // The endpoints of a range are integers, so a range owns nothing.
-            Ty::Range(..) => Ok(()),
             // A projection is resolved before code generation and owns nothing on its own.
             Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
@@ -263,7 +255,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => Ok(()),
 
@@ -519,8 +510,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return Ok(());
         }
         match ty {
-            // A range iterator is plain integers and a flag.
-            Ty::RangeIter(..) => self.copy_bits(dst, src, ty),
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
                 Ok(())

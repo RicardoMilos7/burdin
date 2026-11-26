@@ -433,7 +433,6 @@ fn same_receiver_shape(globals: &Globals, a: &Ty, b: &Ty) -> bool {
         (Ty::Ref { mutable: m, inner: i }, Ty::Ref { mutable: n, inner: j }) => m == n && pair(i, j),
         (Ty::Slice(i), Ty::Slice(j)) | (Ty::Heap(i, _), Ty::Heap(j, _)) | (Ty::CPtr(i), Ty::CPtr(j)) => pair(i, j),
         (Ty::Array(i, m), Ty::Array(j, n)) => m == n && pair(i, j),
-        (Ty::Range(i, m), Ty::Range(j, n)) => m == n && pair(i, j),
         (Ty::Map(ik, iv, _), Ty::Map(jk, jv, _)) | (Ty::MapEntry(ik, iv, _), Ty::MapEntry(jk, jv, _)) => {
             pair(ik, jk) && pair(iv, jv)
         }

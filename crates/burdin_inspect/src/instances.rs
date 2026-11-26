@@ -153,9 +153,7 @@ fn adts_in(ty: &Ty, out: &mut Vec<String>) {
         | Ty::Slice(inner)
         | Ty::Array(inner, _)
         | Ty::CPtr(inner)
-        | Ty::Range(inner, _)
         | Ty::IterMut(inner)
-        | Ty::RangeIter(inner, _)
         | Ty::SliceChunks(inner, _)
         | Ty::SliceWindows(inner) => adts_in(inner, out),
         Ty::Heap(t, a) => {

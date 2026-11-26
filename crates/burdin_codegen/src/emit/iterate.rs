@@ -3,7 +3,6 @@
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_tir::Ty;
 use inkwell::IntPredicate;
-use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -73,22 +72,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Ok(Some(self.make_str(base, len)?.into()))
                 }
             }
-            (Ty::Range(elem, _), _) => {
-                let v = self.expr_mode(recv, Mode::Use)?;
-                let s = self.need(v, &recv_ty).into_struct_value();
-                let lo = self.builder.build_extract_value(s, 0, "range.lo").map_err(llvm_err)?;
-                let hi = self.builder.build_extract_value(s, 1, "range.hi").map_err(llvm_err)?;
-                let tt = self.product_ty(&[elem.as_ref().clone(), elem.as_ref().clone(), Ty::Bool]);
-                let mut agg = undef(tt.into()).into_struct_value();
-                agg = self.builder.build_insert_value(agg, lo, 0, "").map_err(llvm_err)?.into_struct_value();
-                agg = self.builder.build_insert_value(agg, hi, 1, "").map_err(llvm_err)?.into_struct_value();
-                agg = self
-                    .builder
-                    .build_insert_value(agg, self.cx.bool_type().const_zero(), 2, "")
-                    .map_err(llvm_err)?
-                    .into_struct_value();
-                Ok(Some(agg.into()))
-            }
             (other, _) => Err(format!("unsupported iterator source `{other}`")),
         }
     }
@@ -142,10 +125,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let (k, v, alloc) = ((**k).clone(), (**v).clone(), alloc.clone());
                 self.next_map(&args[0], &k, &v, &item, ty, true, &alloc)
             }
-            Ty::RangeIter(elem, inclusive) => {
-                let elem = (**elem).clone();
-                self.next_range(&args[0], &elem, *inclusive, ty)
-            }
             Ty::SliceChunks(elem, exact) => {
                 let (elem, exact) = ((**elem).clone(), *exact);
                 self.next_chunks(&args[0], &elem, exact, false, ty)
@@ -176,10 +155,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.next_back_slice(&args[0], &elem, &item, ty)
             }
             Ty::Chars => self.next_back_chars(&args[0], ty),
-            Ty::RangeIter(elem, inclusive) => {
-                let elem = (**elem).clone();
-                self.next_back_range(&args[0], &elem, *inclusive, ty)
-            }
             other => Err(format!("`next_back` on `{other}` has no built-in implementation")),
         }
     }
@@ -636,137 +611,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.position_at_end(none_bb);
         if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
             self.builder.build_store(out, self.option_ty(item).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(end);
-        self.load_option(out, ty)
-    }
-
-    /// `RangeIter.next_back()`: yields the endpoints from the top down. An inclusive range yields its upper
-    /// endpoint first and stops after the lower one without overflowing its type.
-    fn next_back_range(
-        &mut self,
-        recv: &'a burdin_tir::Expr,
-        elem: &Ty,
-        inclusive: bool,
-        ty: &Ty,
-    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Some(slot) = self.place_ptr(recv)? else {
-            self.expr_mode(recv, Mode::Use)?;
-            return Ok(None);
-        };
-        let tt = self.product_ty(&[elem.clone(), elem.clone(), Ty::Bool]);
-        let lo_ptr = self.builder.build_struct_gep(tt, slot, 0, "range.lo").map_err(llvm_err)?;
-        let hi_ptr = self.builder.build_struct_gep(tt, slot, 1, "range.hi").map_err(llvm_err)?;
-        let done_ptr = self.builder.build_struct_gep(tt, slot, 2, "range.done").map_err(llvm_err)?;
-        let Ty::Int(ity) = elem else { return Err("a range iterator needs an integer element".into()) };
-        let int_t = self.int_ty(*ity);
-        let t: BasicTypeEnum<'ctx> = int_t.into();
-        let lo = self.builder.build_load(t, lo_ptr, "lo").map_err(llvm_err)?.into_int_value();
-        let hi = self.builder.build_load(t, hi_ptr, "hi").map_err(llvm_err)?.into_int_value();
-        let done = self.builder.build_load(self.cx.bool_type(), done_ptr, "done").map_err(llvm_err)?.into_int_value();
-        let out = self.option_slot(ty, "next.out")?;
-        let signed = ity.signed();
-        let valid_pred = match (inclusive, signed) {
-            (true, true) => IntPredicate::SLE,
-            (true, false) => IntPredicate::ULE,
-            (false, true) => IntPredicate::SLT,
-            (false, false) => IntPredicate::ULT,
-        };
-        let in_range = self.builder.build_int_compare(valid_pred, lo, hi, "").map_err(llvm_err)?;
-        let not_done = self.builder.build_not(done, "").map_err(llvm_err)?;
-        let valid = self.builder.build_and(not_done, in_range, "").map_err(llvm_err)?;
-        let none_bb = self.new_block("range.none");
-        let some_bb = self.new_block("range.some");
-        let end = self.new_block("range.end");
-        self.builder.build_conditional_branch(valid, some_bb, none_bb).map_err(llvm_err)?;
-        self.builder.position_at_end(none_bb);
-        self.builder.build_store(done_ptr, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(some_bb);
-        let one = int_t.const_int(1, false);
-        let below = self.builder.build_int_sub(hi, one, "").map_err(llvm_err)?;
-        let (yielded, next_hi, last) = if inclusive {
-            // The upper endpoint is yielded; after the lower one nothing is left.
-            let last = self.builder.build_int_compare(IntPredicate::EQ, lo, hi, "").map_err(llvm_err)?;
-            let next_hi = self.builder.build_select(last, hi, below, "").map_err(llvm_err)?.into_int_value();
-            (hi, next_hi, last)
-        } else {
-            // `lo < hi`, so `hi - 1` does not underflow and is the last endpoint.
-            (below, below, self.cx.bool_type().const_zero())
-        };
-        self.builder.build_store(hi_ptr, next_hi).map_err(llvm_err)?;
-        self.builder.build_store(done_ptr, last).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            let some = self.some_value(elem, Some(yielded.into()));
-            self.builder.build_store(out, some).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(end);
-        self.load_option(out, ty)
-    }
-
-    /// `RangeIter.next()`: yields the endpoints in order and stops after the inclusive last value without
-    /// overflowing its type.
-    fn next_range(
-        &mut self,
-        recv: &'a burdin_tir::Expr,
-        elem: &Ty,
-        inclusive: bool,
-        ty: &Ty,
-    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Some(slot) = self.place_ptr(recv)? else {
-            self.expr_mode(recv, Mode::Use)?;
-            return Ok(None);
-        };
-        let tt = self.product_ty(&[elem.clone(), elem.clone(), Ty::Bool]);
-        let lo_ptr = self.builder.build_struct_gep(tt, slot, 0, "range.lo").map_err(llvm_err)?;
-        let hi_ptr = self.builder.build_struct_gep(tt, slot, 1, "range.hi").map_err(llvm_err)?;
-        let done_ptr = self.builder.build_struct_gep(tt, slot, 2, "range.done").map_err(llvm_err)?;
-        let Ty::Int(ity) = elem else { return Err("a range iterator needs an integer element".into()) };
-        let int_t = self.int_ty(*ity);
-        let t: BasicTypeEnum<'ctx> = int_t.into();
-        let lo = self.builder.build_load(t, lo_ptr, "lo").map_err(llvm_err)?.into_int_value();
-        let hi = self.builder.build_load(t, hi_ptr, "hi").map_err(llvm_err)?.into_int_value();
-        let done = self.builder.build_load(self.cx.bool_type(), done_ptr, "done").map_err(llvm_err)?.into_int_value();
-        let out = self.option_slot(ty, "next.out")?;
-        let signed = ity.signed();
-        let valid_pred = match (inclusive, signed) {
-            (true, true) => IntPredicate::SLE,
-            (true, false) => IntPredicate::ULE,
-            (false, true) => IntPredicate::SLT,
-            (false, false) => IntPredicate::ULT,
-        };
-        let in_range = self.builder.build_int_compare(valid_pred, lo, hi, "").map_err(llvm_err)?;
-        let not_done = self.builder.build_not(done, "").map_err(llvm_err)?;
-        let valid = self.builder.build_and(not_done, in_range, "").map_err(llvm_err)?;
-        let none_bb = self.new_block("range.none");
-        let some_bb = self.new_block("range.some");
-        let end = self.new_block("range.end");
-        self.builder.build_conditional_branch(valid, some_bb, none_bb).map_err(llvm_err)?;
-        self.builder.position_at_end(none_bb);
-        self.builder.build_store(done_ptr, self.cx.bool_type().const_int(1, false)).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            self.builder.build_store(out, self.option_ty(elem).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(some_bb);
-        let last = if inclusive {
-            self.builder.build_int_compare(IntPredicate::EQ, lo, hi, "").map_err(llvm_err)?
-        } else {
-            self.cx.bool_type().const_zero()
-        };
-        let one = int_t.const_int(1, false);
-        let advanced = self.builder.build_int_add(lo, one, "").map_err(llvm_err)?;
-        let next_lo = self.builder.build_select(last, lo, advanced, "").map_err(llvm_err)?.into_int_value();
-        self.builder.build_store(lo_ptr, next_lo).map_err(llvm_err)?;
-        self.builder.build_store(done_ptr, last).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            let some = self.some_value(elem, Some(lo.into()));
-            self.builder.build_store(out, some).map_err(llvm_err)?;
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);

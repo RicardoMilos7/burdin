@@ -301,6 +301,8 @@ pub(crate) struct Globals {
     /// `std`'s `ManuallyDrop`: a wrapper whose value is never dropped by glue.
     pub(crate) lang_manually_drop: Option<usize>,
     pub(crate) lang_array_into_iter: Option<usize>,
+    /// `std`'s ranges and their iterators, by `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`.
+    pub(crate) lang_range: [Option<usize>; 4],
     pub(crate) lang_result: Option<usize>,
     /// The standard library's dynamic-error constructors (`spec/errors.md`, ERR4 and ERR7).
     pub(crate) error_plain: Option<FuncId>,
@@ -471,6 +473,10 @@ impl Globals {
             "ListIntoIter" => self.lang_list_into_iter.map(TypeName::GenericAdt),
             "ManuallyDrop" => self.lang_manually_drop.map(TypeName::GenericAdt),
             "ArrayIntoIter" => self.lang_array_into_iter.map(TypeName::GenericAdt),
+            "Range" => self.lang_range[0].map(TypeName::GenericAdt),
+            "RangeInclusive" => self.lang_range[1].map(TypeName::GenericAdt),
+            "RangeIter" => self.lang_range[2].map(TypeName::GenericAdt),
+            "RangeIterInclusive" => self.lang_range[3].map(TypeName::GenericAdt),
             _ => None,
         }
     }
@@ -648,12 +654,9 @@ impl Globals {
                     self.origin_of(ty).and_then(|(_, args)| args.iter().find_map(|t| self.private_adt(t)))
                 }
             }
-            Ty::Ref { inner, .. }
-            | Ty::Slice(inner)
-            | Ty::Array(inner, _)
-            | Ty::Heap(inner, _)
-            | Ty::CPtr(inner)
-            | Ty::Range(inner, _) => self.private_adt(inner),
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array(inner, _) | Ty::Heap(inner, _) | Ty::CPtr(inner) => {
+                self.private_adt(inner)
+            }
             Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))

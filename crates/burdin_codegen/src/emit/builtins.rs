@@ -370,11 +370,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
                 return Ok(Some(self.builder.build_load(t, p, "raw.read").map_err(llvm_err)?));
             }
-            Builtin::RangeStart | Builtin::RangeEnd => {
-                let r = self.expr_mode(&args[0], Mode::Use)?;
-                let r = self.need(r, &args[0].ty).into_struct_value();
-                let index = u32::from(b == Builtin::RangeEnd);
-                return Ok(Some(self.builder.build_extract_value(r, index, "range.end").map_err(llvm_err)?));
+            Builtin::IntStep => {
+                let x = self.expr_mode(&args[0], Mode::Use)?;
+                let x = self.need_int(x, &args[0].ty);
+                let d = self.expr_mode(&args[1], Mode::Use)?;
+                let d = self.need_int(d, &args[1].ty);
+                let d = self.builder.build_int_s_extend_or_bit_cast(d, x.get_type(), "").map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_int_add(x, d, "step").map_err(llvm_err)?.into()));
             }
             Builtin::SliceRaw | Builtin::IterMutRaw => {
                 let p = self.expr_mode(&args[0], Mode::Use)?;

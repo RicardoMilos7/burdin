@@ -116,7 +116,7 @@ impl Globals {
                         .or_else(|| self.part_why("the element", t, true, env, seen))
                 }
             }
-            Ty::Array(t, _) | Ty::Range(t, _) | Ty::RangeIter(t, _) => {
+            Ty::Array(t, _) => {
                 self.part_why("the element", t, sync, env, seen)
             }
             Ty::Heap(t, a) => {

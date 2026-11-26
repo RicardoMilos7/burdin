@@ -672,18 +672,6 @@ impl Globals {
             ("CPtr", 1) => {
                 Ty::CPtr(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
             }
-            ("Range", 1) | ("RangeInclusive", 1) => {
-                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                if !matches!(inner, Ty::Int(_) | Ty::Error) {
-                    diags.error(
-                        Code::TYPE_MISMATCH,
-                        args[0].span,
-                        format!("a range's endpoints must be integers, so `{inner}` cannot be a range element"),
-                    );
-                    return Some(Ty::Error);
-                }
-                Ty::Range(Box::new(inner), name == "RangeInclusive")
-            }
             ("Map", 2) | ("Map", 3) => {
                 let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
@@ -770,7 +758,7 @@ impl Globals {
             return self.hand_written_eq_hashes(&t);
         }
         match ty {
-            Ty::Range(t, _) | Ty::Array(t, _) => self.hand_written_eq_hashes(t),
+            Ty::Array(t, _) => self.hand_written_eq_hashes(t),
             Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
             Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
             Ty::Struct(a) => {
@@ -801,7 +789,6 @@ impl Globals {
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &crate::generics::Bound::Eq, env),
             // A map compares by its entries, whatever the iteration order.
             Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
-            Ty::Range(t, _) => self.has_eq_in(t, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
@@ -819,7 +806,6 @@ impl Globals {
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
             | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::TryFromError { .. }

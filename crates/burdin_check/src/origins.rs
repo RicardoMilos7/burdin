@@ -616,6 +616,8 @@ impl<'a> Analyzer<'a> {
                     tir::Builtin::SliceRaw | tir::Builtin::IterMutRaw => self.place_origin(&args[0]),
                     // An empty container owns its (empty) buffer; storing it borrows nothing. The same holds for
                     // a container with a stored allocator.
+                    // A value read out of raw memory is whatever was stored there; unsafe code answers for it.
+                    tir::Builtin::RawRead => Origin::default(),
                     tir::Builtin::ListNew
                     | tir::Builtin::MapNew
                     | tir::Builtin::ListNewIn

@@ -395,8 +395,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         | Builtin::RawWrite
         | Builtin::SliceRaw
         | Builtin::IterMutRaw
-        | Builtin::RangeStart
-        | Builtin::RangeEnd => Vec::new(),
+        | Builtin::IntStep => Vec::new(),
         _ => vec![ParamSig::plain(Ty::Str)],
     };
     Signature { params, ret, has_self: false, ret_origins: Vec::new() }
@@ -626,15 +625,11 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         // The mutable iterators yield `&mut T` and borrow the collection exclusively (IT15).
         ("iter_mut", Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
         ("iter_mut", Ty::Map(k, v, _)) => (Method::IterMut, vec![], Ty::MapIterMut(k.clone(), v.clone())),
-        ("iter", Ty::Range(elem, inclusive)) => (Method::Iter, vec![], Ty::RangeIter(elem.clone(), *inclusive)),
         ("into_iter", Ty::Map(k, v, alloc)) => {
             (Method::IntoIter, vec![], Ty::MapIntoIter(k.clone(), v.clone(), alloc.clone()))
         }
         ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], g.array_into_iter_ty((**elem).clone(), *n)),
         ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
-        ("into_iter", Ty::Range(elem, inclusive)) => {
-            (Method::IntoIter, vec![], Ty::RangeIter(elem.clone(), *inclusive))
-        }
         _ => return None,
     })
 }

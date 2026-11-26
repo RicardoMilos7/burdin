@@ -280,9 +280,6 @@ pub enum Ty {
     Any(AnyRef),
     /// `CPtr<T>`: a raw C pointer. It has no destructor and is copied like a number.
     CPtr(Box<Ty>),
-    /// `Range<T>` (exclusive) or `RangeInclusive<T>` (inclusive): the two integer endpoints. The flag is true for
-    /// the inclusive form.
-    Range(Box<Ty>, bool),
     /// A borrowing iterator over a `Map<K, V>`: a copy of the map's three words and the next slot. It yields
     /// `(&K, &V)` and holds a loan on the map for its whole life.
     MapIter(Box<Ty>, Box<Ty>),
@@ -295,9 +292,6 @@ pub enum Ty {
     /// A mutable iterator over a `Map<K, V>` (`iter_mut()`): the same state as [`Ty::MapIter`]. It yields
     /// `(&K, &mut V)` and holds an exclusive loan on the map.
     MapIterMut(Box<Ty>, Box<Ty>),
-    /// The iterator of a range: the two endpoints and whether the range is exhausted. The flag is true for the
-    /// inclusive form.
-    RangeIter(Box<Ty>, bool),
     /// The iterator `[T].chunks(n)` returns: the slice view, the chunk size, and the next index. The flag is
     /// `true` for `chunks_exact`, which stops before a short last chunk. It is second-class: it views its source.
     SliceChunks(Box<Ty>, bool),
@@ -369,7 +363,6 @@ impl Ty {
             Ty::MapEntry(..) => true,
             // A chunks or windows iterator views the slice it was made from.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => true,
-            Ty::RangeIter(t, _) => t.is_second_class(),
             Ty::Map(k, v, _) | Ty::MapIntoIter(k, v, _) => k.is_second_class() || v.is_second_class(),
             // A `Shared<T>` owns its heaped value, like a `Heap`.
             Ty::Tuple(ts) => ts.iter().any(Ty::is_second_class),
@@ -416,15 +409,11 @@ impl fmt::Display for Ty {
             Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
             Ty::Any(a) => write!(f, "any {}", a.name),
             Ty::CPtr(t) => write!(f, "CPtr<{t}>"),
-            Ty::Range(t, false) => write!(f, "Range<{t}>"),
-            Ty::Range(t, true) => write!(f, "RangeInclusive<{t}>"),
             Ty::MapIter(k, v) => write!(f, "MapIter<{k}, {v}>"),
             Ty::IterMut(t) => write!(f, "IterMut<{t}>"),
             Ty::MapIterMut(k, v) => write!(f, "MapIterMut<{k}, {v}>"),
             Ty::MapIntoIter(k, v, Alloc::Global) => write!(f, "MapIntoIter<{k}, {v}>"),
             Ty::MapIntoIter(k, v, a) => write!(f, "MapIntoIter<{k}, {v}, {a}>"),
-            Ty::RangeIter(t, false) => write!(f, "RangeIter<{t}>"),
-            Ty::RangeIter(t, true) => write!(f, "RangeIterInclusive<{t}>"),
             Ty::SliceChunks(t, false) => write!(f, "Chunks<{t}>"),
             Ty::SliceChunks(t, true) => write!(f, "ChunksExact<{t}>"),
             Ty::SliceWindows(t) => write!(f, "Windows<{t}>"),
@@ -578,8 +567,6 @@ mod tests {
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "Heap<i32, Arena>"),
             (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),
             (Ty::CPtr(Box::new(i32_.clone())), "CPtr<i32>"),
-            (Ty::Range(Box::new(i32_.clone()), false), "Range<i32>"),
-            (Ty::Range(Box::new(i32_.clone()), true), "RangeInclusive<i32>"),
             (Ty::Tuple(vec![i32_.clone()]), "(i32,)"),
             (Ty::Tuple(vec![i32_.clone(), Ty::Bool]), "(i32, bool)"),
             (Ty::Struct(AdtRef { id: 0, name: "P".into(), second_class: false }), "P"),

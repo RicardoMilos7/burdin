@@ -752,9 +752,10 @@ impl<'p, 'c> Interp<'p, 'c> {
                 Value::Unit
             }
             K::ForRangeValue { var, range, body } => {
-                let ity = key_ty(&range.ty);
+                let (elem, inclusive) =
+                    self.defs().range_parts(&range.ty).map(|(t, i)| (t.clone(), i)).unwrap_or((Ty::Error, false));
+                let ity = key_ty(&elem);
                 let (lo, hi) = range_bounds(&self.eval(range, Mode::Use)?);
-                let inclusive = matches!(range.ty, Ty::Range(_, true));
                 self.int_loop(*var, (lo, hi, inclusive, ity), body, label)?;
                 Value::Unit
             }
@@ -1412,11 +1413,10 @@ fn depth(span: Span) -> Unwind {
     Fault::Budget(format!("compile-time evaluation nested more than {MAX_DEPTH} calls"), span).into()
 }
 
-/// The integer type of a value, or of the elements of a range or range iterator; `None` for any other type.
+/// The integer type of a value; `None` for any other type.
 pub(crate) fn key_ty(ty: &Ty) -> Option<burdin_tir::IntTy> {
     match ty {
         Ty::Int(i) => Some(*i),
-        Ty::Range(inner, _) | Ty::RangeIter(inner, _) => key_ty(inner),
         _ => None,
     }
 }

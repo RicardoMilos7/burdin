@@ -109,16 +109,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // A map compares by its entries, whatever the iteration order (`spec/stdlib.md`, "Map").
             Ty::Map(key, value, alloc) => self.map_eq(l, r, key, value, alloc),
-            Ty::Range(inner, _) => {
-                let st = t.into_struct_type();
-                let a = self.builder.build_struct_gep(st, l, 0, "").map_err(llvm_err)?;
-                let b = self.builder.build_struct_gep(st, r, 0, "").map_err(llvm_err)?;
-                let first = self.eq_at(a, b, inner)?;
-                let a = self.builder.build_struct_gep(st, l, 1, "").map_err(llvm_err)?;
-                let b = self.builder.build_struct_gep(st, r, 1, "").map_err(llvm_err)?;
-                let second = self.eq_at(a, b, inner)?;
-                self.builder.build_and(first, second, "").map_err(llvm_err)
-            }
             Ty::Enum(a) => {
                 let et = t.into_struct_type();
                 let i32_ty = self.cx.i32_type();
@@ -280,16 +270,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let result = self.builder.build_phi(i32_ty, "order").map_err(llvm_err)?;
                 result.add_incoming(&[(&i32_ty.const_zero(), head), (&order, body_end)]);
                 Ok(result.as_basic_value().into_int_value())
-            }
-            Ty::Range(inner, _) => {
-                let st = t.into_struct_type();
-                let mut orders = Vec::new();
-                for i in 0..2u32 {
-                    let a = self.builder.build_struct_gep(st, l, i, "").map_err(llvm_err)?;
-                    let b = self.builder.build_struct_gep(st, r, i, "").map_err(llvm_err)?;
-                    orders.push(self.cmp_at(a, b, inner)?);
-                }
-                self.first_difference(&orders)
             }
             // `None < Some(_)`, and two `Some`s compare their payloads (`spec/stdlib.md`, "Interface coverage").
             // The payload is compared only in the block where both tags say `Some`: reading it on a `None` would
@@ -499,15 +479,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 running.add_incoming(&[(&acc, before), (&mixed, body_end)]);
                 self.builder.position_at_end(end);
                 Ok(running.as_basic_value().into_int_value())
-            }
-            Ty::Range(inner, _) => {
-                let st = t.into_struct_type();
-                let mut acc = acc;
-                for i in 0..2u32 {
-                    let f = self.builder.build_struct_gep(st, ptr, i, "").map_err(llvm_err)?;
-                    acc = self.hash_at(f, inner, acc)?;
-                }
-                Ok(acc)
             }
             // A map hashes each entry from a fixed start and combines the results with `xor`, so two maps with the
             // same entries hash alike whatever their iteration order: `Eq` and `Hash` must agree.

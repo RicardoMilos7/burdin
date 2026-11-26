@@ -84,6 +84,14 @@ impl<'t> Sema<'t> {
                     Some(tir::LangItem::ManuallyDrop)
                 } else if Some(template) == self.globals.lang_array_into_iter {
                     Some(tir::LangItem::ArrayIntoIter)
+                } else if Some(template) == self.globals.lang_range[0] {
+                    Some(tir::LangItem::Range)
+                } else if Some(template) == self.globals.lang_range[1] {
+                    Some(tir::LangItem::RangeInclusive)
+                } else if Some(template) == self.globals.lang_range[2] {
+                    Some(tir::LangItem::RangeIter)
+                } else if Some(template) == self.globals.lang_range[3] {
+                    Some(tir::LangItem::RangeIterInclusive)
                 } else {
                     None
                 },

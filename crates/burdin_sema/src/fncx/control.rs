@@ -293,17 +293,14 @@ impl FnCx<'_> {
             if matches!(ty, Ty::Int(_))
                 && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
             {
-                let range_ty = Ty::Range(Box::new(ty.clone()), *inclusive);
+                let range_ty = self.globals.range_ty(ty.clone(), *inclusive);
                 let value = mk(
                     tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive },
                     range_ty,
                     span,
                 );
-                let iterator = mk(
-                    tir::ExprKind::Method(tir::Method::Iter, vec![value]),
-                    Ty::RangeIter(Box::new(ty.clone()), *inclusive),
-                    span,
-                );
+                let iter = ast::Ident { name: "iter".to_string(), span };
+                let iterator = self.method_call_on(value, &iter, &[], span, None);
                 return self.protocol_for(pattern, iterator, ty, body, label, span);
             }
             self.scopes.push(HashMap::new());
@@ -335,11 +332,10 @@ impl FnCx<'_> {
         // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
         // `Iterable` through `iter()` (spec/iterators.md, IT4).
         let list_elem = self.globals.list_parts(&iterable.ty).map(|(elem, _)| elem);
+        let range_elem = self.globals.range_parts(&iterable.ty);
         let builtin = list_elem.is_some()
-            || matches!(
-                iterable.ty,
-                Ty::Array(..) | Ty::Slice(_) | Ty::Map(..) | Ty::Chars | Ty::Range(..) | Ty::Error | Ty::Never
-            );
+            || range_elem.is_some()
+            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Map(..) | Ty::Chars | Ty::Error | Ty::Never);
         if !builtin {
             // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
             // through `iter()`, not consumed as an iterator value.
@@ -377,12 +373,12 @@ impl FnCx<'_> {
         }
         let (elem, kind) = match &iterable.ty {
             _ if list_elem.is_some() => (list_elem.clone().expect("checked above"), ForKind::List),
+            _ if range_elem.is_some() => (range_elem.clone().expect("checked above").0, ForKind::Range),
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
             Ty::Map(k, v, _) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
             Ty::Chars => (Ty::Char, ForKind::Chars),
-            Ty::Range(t, _) => ((**t).clone(), ForKind::Range),
             other => {
                 self.diags.error(
                     Code::TYPE_MISMATCH,
@@ -399,12 +395,8 @@ impl FnCx<'_> {
                 && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
             {
                 self.scopes.pop();
-                let inclusive = matches!(iterable.ty, Ty::Range(_, true));
-                let iterator = mk(
-                    tir::ExprKind::Method(tir::Method::Iter, vec![iterable]),
-                    Ty::RangeIter(Box::new(elem.clone()), inclusive),
-                    span,
-                );
+                let iter = ast::Ident { name: "iter".to_string(), span };
+                let iterator = self.method_call_on(iterable, &iter, &[], span, None);
                 return self.protocol_for(pattern, iterator, elem, body, label, span);
             }
             // A range value's endpoints are integers, so the loop binding is a plain owned integer like the
@@ -466,8 +458,8 @@ impl FnCx<'_> {
         span: Span,
     ) -> tir::Expr {
         let hint = match expect {
-            Some(Ty::Range(t, _)) => Some((**t).clone()),
-            _ => None,
+            Some(t) => self.globals.range_parts(t).map(|(elem, _)| elem),
+            None => None,
         };
         let (lo, hi) = self.operands(lo, hi, hint.as_ref());
         let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
@@ -476,7 +468,7 @@ impl FnCx<'_> {
             self.diags.error(Code::TYPE_MISMATCH, span, format!("a range's endpoints must be integers, found `{ty}`"));
             return error_expr(span);
         }
-        let ty = if ty == Ty::Error { Ty::Error } else { Ty::Range(Box::new(ty), inclusive) };
+        let ty = if ty == Ty::Error { Ty::Error } else { self.globals.range_ty(ty, inclusive) };
         mk(tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive }, ty, span)
     }
 

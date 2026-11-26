@@ -24,7 +24,7 @@ impl Globals {
             | Ty::Never
             | Ty::Error => true,
             Ty::Tuple(ts) => ts.iter().all(|t| self.materializable_in(t, seen)),
-            Ty::Array(t, _) | Ty::Range(t, _) => self.materializable_in(t, seen),
+            Ty::Array(t, _) => self.materializable_in(t, seen),
             Ty::Struct(a) | Ty::Enum(a) => {
                 let key = (matches!(ty, Ty::Enum(_)), a.id);
                 // A type that reaches itself does so through a `Heap` or a `List`, which is rejected there.
@@ -56,7 +56,6 @@ impl Globals {
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
             | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::Param(_)
@@ -78,7 +77,7 @@ impl Globals {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
             Ty::Tuple(ts) => ts.iter().all(|t| self.plain_in(t, seen)),
-            Ty::Array(t, _) | Ty::Range(t, _) => self.plain_in(t, seen),
+            Ty::Array(t, _) => self.plain_in(t, seen),
             Ty::Struct(a) | Ty::Enum(a) => {
                 let is_enum = matches!(ty, Ty::Enum(_));
                 let key = (is_enum, a.id);

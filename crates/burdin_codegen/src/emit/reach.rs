@@ -206,12 +206,7 @@ impl Walker<'_> {
                     self.note_ty(f);
                 }
             }
-            Ty::Ref { inner: t, .. }
-            | Ty::Slice(t)
-            | Ty::Array(t, _)
-            | Ty::CPtr(t)
-            | Ty::Heap(t, _)
-            | Ty::Range(t, _) => self.note_ty(t),
+            Ty::Ref { inner: t, .. } | Ty::Slice(t) | Ty::Array(t, _) | Ty::CPtr(t) | Ty::Heap(t, _) => self.note_ty(t),
             Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
                 self.note_ty(a);
                 self.note_ty(b);

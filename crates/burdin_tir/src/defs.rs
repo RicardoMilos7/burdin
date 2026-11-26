@@ -77,6 +77,14 @@ pub enum LangItem {
     ManuallyDrop,
     /// `ArrayIntoIter<T, N>`: the fields `data` (a `ManuallyDrop<[T; N]>`) and `pos`, in that order.
     ArrayIntoIter,
+    /// `Range<T>`: the fields `start` and `end`.
+    Range,
+    /// `RangeInclusive<T>`: the fields `start` and `end`.
+    RangeInclusive,
+    /// `RangeIter<T>`: the iterator of a `Range<T>`; the fields `cur`, `end`, and `done`.
+    RangeIter,
+    /// `RangeIterInclusive<T>`: the iterator of a `RangeInclusive<T>`; the fields `cur`, `end`, and `done`.
+    RangeIterInclusive,
 }
 
 #[derive(Debug)]

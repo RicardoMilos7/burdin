@@ -174,10 +174,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         body: &'a tir::Block,
         label: Option<&str>,
     ) -> GenResult<()> {
-        let (elem, inclusive) = match &range.ty {
-            Ty::Range(inner, inclusive) => ((**inner).clone(), *inclusive),
+        let (elem, inclusive) = match self.defs().range_parts(&range.ty) {
+            Some((inner, inclusive)) => (inner.clone(), inclusive),
             // The range already failed to type-check; evaluate it for its side effects and stop.
-            _ => {
+            None => {
                 self.expr_mode(range, Mode::Use)?;
                 return Ok(());
             }

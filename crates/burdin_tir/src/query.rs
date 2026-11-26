@@ -55,6 +55,28 @@ impl TypeDefs<'_> {
         (def.lang == Some(LangItem::ListIntoIter)).then(|| Self::seq_parts(def, def.fields.len() - 1))
     }
 
+    /// The endpoint type and whether the range is inclusive, when `ty` is a `Range` or a `RangeInclusive` instance.
+    pub fn range_parts(&self, ty: &Ty) -> Option<(&Ty, bool)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        match def.lang {
+            Some(LangItem::Range) => Some((&def.fields[0].ty, false)),
+            Some(LangItem::RangeInclusive) => Some((&def.fields[0].ty, true)),
+            _ => None,
+        }
+    }
+
+    /// The same for the iterator of a range (`RangeIter` or `RangeIterInclusive`).
+    pub fn range_iter_parts(&self, ty: &Ty) -> Option<(&Ty, bool)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        match def.lang {
+            Some(LangItem::RangeIter) => Some((&def.fields[0].ty, false)),
+            Some(LangItem::RangeIterInclusive) => Some((&def.fields[0].ty, true)),
+            _ => None,
+        }
+    }
+
     /// The element type of an `ArrayIntoIter` instance, `None` when `ty` is not one.
     pub fn array_into_iter_elem(&self, ty: &Ty) -> Option<&Ty> {
         let Ty::Struct(a) = ty else { return None };
@@ -108,8 +130,6 @@ impl TypeDefs<'_> {
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
             Ty::Slice(_) => true,
-            // A range is two copied endpoints.
-            Ty::Range(inner, _) => self.holds(inner, prop, seen),
             // A raw C pointer is a plain address.
             Ty::CPtr(_) => true,
             // An iterator advances through its state, so it is never copied or cloned. A map entry owns its key
@@ -121,9 +141,6 @@ impl TypeDefs<'_> {
             | Ty::MapIntoIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => false,
-            // A range iterator is two endpoints and a flag, so it can be cloned (`cycle` clones its source), but it
-            // is not `Copy`: a copy would advance on its own and surprise the program.
-            Ty::RangeIter(inner, _) => prop == Property::Clone && self.holds(inner, prop, seen),
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
             Ty::String => prop == Property::Clone,
@@ -198,13 +215,7 @@ impl TypeDefs<'_> {
             | Ty::TryFromError { .. }
             | Ty::CPtr(_)
             | Ty::Chars => false,
-            Ty::Range(..)
-            | Ty::MapIter(..)
-            | Ty::RangeIter(..)
-            | Ty::IterMut(_)
-            | Ty::MapIterMut(..)
-            | Ty::SliceChunks(..)
-            | Ty::SliceWindows(..) => false,
+            Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // An entry owns the key it would insert; dropping it without inserting drops that key.
             Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
             // A closure's capture record is heap-allocated and may own its captures.
@@ -339,14 +350,6 @@ mod tests {
         assert!(!defs.is_clone(&closure));
         assert!(defs.needs_drop(&closure));
         assert!(!defs.has_drop_impl(&closure));
-    }
-
-    #[test]
-    fn a_range_iterator_is_cloned_but_never_copied() {
-        let defs = TypeDefs { structs: &[], enums: &[] };
-        let range = Ty::RangeIter(Box::new(int()), false);
-        assert!(defs.is_clone(&range), "`cycle` clones its source");
-        assert!(!defs.is_copy(&range), "a copy would advance on its own");
     }
 
     #[test]

@@ -94,9 +94,9 @@
     </Expand>
   </Type>
   <Type Name="Range&lt;*&gt;">
-    <DisplayString>{lo}..{hi}</DisplayString>
+    <DisplayString>{start}..{end}</DisplayString>
   </Type>
   <Type Name="RangeInclusive&lt;*&gt;">
-    <DisplayString>{lo}..={hi}</DisplayString>
+    <DisplayString>{start}..={end}</DisplayString>
   </Type>
 </AutoVisualizer>

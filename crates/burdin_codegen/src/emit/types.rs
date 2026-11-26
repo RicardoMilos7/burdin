@@ -65,15 +65,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Slice(_) => self.str_ty.into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
-            // A range is two copied endpoints.
-            Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
             Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
             Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
             // A mutable list or array iterator is the next element's address and the number left, like a slice.
             Ty::IterMut(_) => self.str_ty.into(),
-            // The range iterator keeps both endpoints and whether the range is exhausted.
-            Ty::RangeIter(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone(), Ty::Bool]).into(),
             // The chunks and windows iterators keep the slice view (pointer and length), the chunk or window
             // size, and the next index.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.slice_iter_ty().into(),
