@@ -81,7 +81,7 @@ jobs:
       - name: Check out the commit before the Option/Result move
         uses: actions/checkout@v4
         with:
-          ref: 611a6603
+          ref: 611a66036cb8b30211fa0cf8ce045cc42dd7548a
           path: old
 
       - name: Build the old driver
