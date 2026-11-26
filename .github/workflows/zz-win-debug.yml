@@ -78,6 +78,15 @@ jobs:
       - name: Build the driver
         run: cargo build -p burdin_driver
 
+      - name: Check out the commit before the Option/Result move
+        uses: actions/checkout@v4
+        with:
+          ref: 611a6603
+          path: old
+
+      - name: Build the old driver
+        run: cd old && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/old-target" cargo build -p burdin_driver
+
       - name: Run the failing test
         run: |
           set +e
@@ -116,5 +125,7 @@ jobs:
           EOF2
           for f in a b c; do
             "$GITHUB_WORKSPACE/target/debug/burdin" run $f.bd
-            echo "exit code: $?"
+            echo "NEW exit code: $?"
+            "$GITHUB_WORKSPACE/old-target/debug/burdin" run $f.bd
+            echo "OLD exit code: $?"
           done
