@@ -566,8 +566,8 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `spec/const-eval.md` CE12, `tests/m21_reflect/`.
 
 28. **Generic aliases, impls for specific instances, and built-in interfaces on generic types.** `type Pair<T> =
-    (T, T)` is a template expanded where it is used; an alias is the aliased type, so an `impl` block written
-    through one is E0003 (`spec/type-aliases.md` AL1-AL6). The arguments of an impl block are a pattern: every name
+    (T, T)` is a template expanded where it is used; an alias is the aliased type, so an `impl` block may be written
+    through one (`spec/type-aliases.md` AL1-AL6). The arguments of an impl block are a pattern: every name
     in them that is not a type stands for what it matches (`Stack<i32>`, `Pair<i32, B>`, `Holder<List<T>>`), and
     the impl covers the instances it matches. The later of two overlapping impls of one interface is E0143;
     two methods of one name on one instance are E0007. `Drop` on a generic type covers every instance, so its

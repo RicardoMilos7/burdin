@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #921: an `impl` block may now name a type through a type alias, generic or not (`Stacked<T> { ... }`,
+  `Stacked<T>: Describe { ... }`, `Ints { ... }` for `type Stacked<T> = Stack<T>` and `type Ints = Stack<i32>`).
+  `burdin_sema` expands aliases in the impl header (`impl_head` / `expand_impl_head`) before checking the target type,
+  keeping arity (E0003), bounds (E0141), and cycle (E0009) checks on the alias and applying the target type's impl
+  rules. Updated `spec/type-aliases.md` AL5, `spec/grammar.md`, `spec/impls.md`, `tests/README.md`,
+  `tests/m21_reflect/alias_generic.bd`, `tests/m21_reflect/alias_invalid.bd`, and `crates/burdin_sema/src/impl_tests.rs`.
 - Issue #1020: `std/src/path.bd` reads a path's bytes in place instead of converting the whole text to a `List<char>`
   in every method. Each `Path` method now allocates only the value it returns (`components`: its list, sized once, and
   one `String` per name; `normalize`: its kept-name list and its result; `is_absolute`: nothing), and `join` builds its

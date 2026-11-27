@@ -104,6 +104,62 @@ fn a_generic_alias_checks_arity_and_cycles() {
     assert_eq!(with("type Loop<T> = Loop<T>\nfn f(p: Loop<i32>) {}"), ["E0009"]);
 }
 
+// `spec/type-aliases.md`, AL5: an alias is the type it names, so an impl block written through one is an impl block
+// of the aliased type (issue #921).
+#[test]
+fn an_impl_through_an_alias_is_an_impl_of_the_aliased_type() {
+    let cases = [
+        // A generic alias with a concrete argument: only that instance has the method.
+        "type Stacked<T> = Stack<T>\nStacked<i32> { fn sum(self): i32 { 0 } }\nfn f(s: Stack<i32>): i32 { s.sum() }",
+        // A generic alias with a name: every instance has it, whatever the alias calls its parameter.
+        "type Stacked<U> = Stack<U>\nStacked<T> { fn size(self): i32 { 1 } }\nfn f(s: Stack<bool>): i32 { s.size() }",
+        // An interface implementation.
+        "type Stacked<T> = Stack<T>\nStacked<T>: Describe { fn describe(self): i32 { 1 } }\n\
+         fn f(s: Stack<i32>): i32 { s.describe() }",
+        // An alias with fewer parameters than the type, and one that reorders them.
+        "type Keyed<B> = Pair<i32, B>\nKeyed<B> { fn first(self): i32 { self.a } }\n\
+         fn f(p: Pair<i32, bool>): i32 { p.first() }",
+        "type Flip<A, B> = Pair<B, A>\nFlip<bool, i32> { fn first(self): i32 { self.a } }\n\
+         fn f(p: Pair<i32, bool>): i32 { p.first() }",
+        // Aliases without parameters: of an instance, of an alias, and of a plain struct.
+        "type Ints = Stack<i32>\nInts { fn sum(self): i32 { 0 } }\nfn f(s: Stack<i32>): i32 { s.sum() }",
+        "type Ints = Stack<i32>\ntype More = Ints\nMore { fn sum(self): i32 { 0 } }\nfn f(s: Stack<i32>): i32 { s.sum() }",
+        "struct Point { x: i32 }\ntype Spot = Point\nSpot { fn get(self): i32 { self.x } }\nfn f(p: Point): i32 { p.get() }",
+        // A generic alias of a generic alias.
+        "type A<T> = Stack<T>\ntype B<T> = A<T>\nB<i32> { fn sum(self): i32 { 0 } }\nfn f(s: Stack<i32>): i32 { s.sum() }",
+    ];
+    for source in cases {
+        let found = with(source);
+        assert!(found.is_empty(), "{source}: {found:?}");
+    }
+    // The method is the instance's alone, as when the type is written directly.
+    assert_eq!(
+        with("type Ints = Stack<i32>\nInts { fn sum(self): i32 { 0 } }\nfn f(s: Stack<bool>): i32 { s.sum() }"),
+        ["E0002"]
+    );
+    // A method added through an alias and again directly is a second method of one name.
+    assert_eq!(
+        with(
+            "type Stacked<T> = Stack<T>\nStacked<T> { fn size(self): i32 { 1 } }\nStack<T> { fn size(self): i32 { 2 } }"
+        ),
+        ["E0007"]
+    );
+}
+
+#[test]
+fn an_impl_through_an_alias_checks_the_alias() {
+    // The alias's arity.
+    assert_eq!(with("type Stacked<T> = Stack<T>\nStacked<i32, i32> {}"), ["E0003"]);
+    assert_eq!(with("type Stacked<T> = Stack<T>\nStacked {}"), ["E0003"]);
+    // Its bounds, on a concrete argument.
+    assert_eq!(with("struct Plain {}\ntype Sorted<T: Ord> = Stack<T>\nSorted<Plain> {}"), ["E0141"]);
+    // A cycle, with parameters or without.
+    assert_eq!(with("type Loop<T> = Loop<T>\nLoop<i32> {}"), ["E0009"]);
+    assert_eq!(with("type A = B\ntype B = A\nA {}"), ["E0009"]);
+    // What it names: a tuple has no methods of its own.
+    assert_eq!(with("type Two<T> = (T, T)\nTwo<i32> {}"), ["E0003"]);
+}
+
 #[test]
 fn an_impl_for_specific_arguments_applies_to_those_instances() {
     let found = with(

@@ -9,7 +9,11 @@ use burdin_syntax::ast;
 use burdin_tir::Ty;
 
 /// How many generic aliases may expand inside one another before the expansion is called endless.
-const MAX_EXPANSION_DEPTH: usize = 32;
+pub(crate) const MAX_EXPANSION_DEPTH: usize = 32;
+
+/// What a generic alias's parameters stand for at one use: each parameter with its argument, and each parameter
+/// with its declared bounds, the arguments substituted.
+pub(crate) type AliasEnv = (Vec<(String, Ty)>, Vec<(String, Vec<Bound>)>);
 
 /// One generic alias declaration.
 pub(crate) struct GenericAlias {
@@ -33,6 +37,35 @@ impl Globals {
         module: usize,
         diags: &mut Diagnostics,
     ) -> Ty {
+        let Some((env, param_bounds)) =
+            self.generic_alias_env(index, span, args, self_ty, subst, bounds, module, diags)
+        else {
+            return Ty::Error;
+        };
+        let alias = &self.generic_aliases[index];
+        self.alias_depth.set(self.alias_depth.get() + 1);
+        let ty = self.resolve_type_bounded(&alias.decl.ty, None, &env, &param_bounds, alias.module, diags);
+        self.alias_depth.set(self.alias_depth.get() - 1);
+        ty
+    }
+
+    /// What the parameters of the generic alias `index` stand for at one use, `Pair<i32>`: the written arguments,
+    /// resolved where they are written, and each parameter's declared bounds with the arguments substituted. The
+    /// alias's definition is resolved in its own module with these in scope. The number of arguments (E0003), the
+    /// depth of the expansion (E0009), and the bounds the arguments must meet (E0141) are checked here; `None` after
+    /// an error.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn generic_alias_env(
+        &self,
+        index: usize,
+        span: Span,
+        args: &[ast::Type],
+        self_ty: Option<&Ty>,
+        subst: &[(String, Ty)],
+        bounds: &[(String, Vec<Bound>)],
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<AliasEnv> {
         let alias = &self.generic_aliases[index];
         let decl = alias.decl;
         if args.len() != decl.generics.len() {
@@ -46,11 +79,11 @@ impl Globals {
                     args.len()
                 ),
             );
-            return Ty::Error;
+            return None;
         }
         if self.alias_depth.get() >= MAX_EXPANSION_DEPTH {
             diags.error(Code::CYCLIC_DECLARATION, span, format!("type alias `{}` expands without end", decl.name.name));
-            return Ty::Error;
+            return None;
         }
         // The written arguments, resolved where they are written.
         let mut env: Vec<(String, Ty)> = Vec::new();
@@ -65,7 +98,7 @@ impl Globals {
             env.push((param.name.name.clone(), ty));
         }
         if env.iter().any(|(_, t)| *t == Ty::Error) {
-            return Ty::Error;
+            return None;
         }
         // The bounds on the parameters hold for these arguments, as for a generic type (E0141).
         let own: Vec<(String, Ty)> =
@@ -89,9 +122,6 @@ impl Globals {
             }
             param_bounds.push((param.name.name.clone(), declared.iter().map(|b| self.subst_bound(b, &env)).collect()));
         }
-        self.alias_depth.set(self.alias_depth.get() + 1);
-        let ty = self.resolve_type_bounded(&decl.ty, None, &env, &param_bounds, alias.module, diags);
-        self.alias_depth.set(self.alias_depth.get() - 1);
-        ty
+        Some((env, param_bounds))
     }
 }

@@ -67,47 +67,26 @@ impl<'t> Sema<'t> {
             return;
         }
 
-        // An impl on a generic type, written plainly or through a module: `Stack<T> { ... }`,
-        // `sh.Stack<T>: Describe where T: Describe { ... }`.
-        if let ast::TypeKind::Path(segs) = &imp.ty.kind {
-            let generic = if segs.len() == 1 {
-                match self.globals.type_name(module, &segs[0].name.name) {
-                    Some(TypeName::GenericAdt(g)) => Some((g, &segs[0])),
-                    _ => None,
-                }
-            } else {
-                let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
-                self.globals.resolve_module_path(module, &names).and_then(|target| {
-                    let seg = segs.last().expect("the path has a last segment");
-                    match self.globals.exported_type(target, &seg.name.name) {
-                        Some(TypeName::GenericAdt(g)) => Some((g, seg)),
-                        _ => None,
-                    }
-                })
-            };
-            if let Some((g, seg)) = generic {
-                let type_pkg = self.globals.package_of(self.globals.generic_adts[g].module);
+        // The type the block names, with every alias in its head expanded: an alias is the type it names, so its
+        // methods and implementations are that type's (`spec/type-aliases.md`, AL5).
+        let Some((params, head)) = self.impl_head(imp, module, diags) else { return };
+        let self_ty = match head {
+            // An impl on a generic type, written plainly, through a module, or through an alias: `Stack<T> { ... }`,
+            // `sh.Stack<T>: Describe where T: Describe { ... }`, `Stacked<i32> { ... }`.
+            ImplHead::Generic(head) => {
+                let type_pkg = self.globals.package_of(self.globals.generic_adts[head.g].module);
                 if !self.check_impl_coherence(&kind, type_pkg, imp, module, diags) {
                     return;
                 }
-                self.register_generic_impl(imp, module, g, seg, kind, iface_seg, diags);
+                self.register_generic_impl(imp, module, params, head, kind, iface_seg, diags);
                 return;
             }
-        }
+            ImplHead::Plain(ty) => ty,
+        };
 
         if !imp.where_clause.is_empty() {
             diags.error(Code::UNSUPPORTED, imp.span, "`where` clauses are not implemented in this compiler yet"); // e9000: impl-where-concrete
         }
-        // Aliases are resolved after the impl blocks are registered, so methods cannot be added through one.
-        if let Some(name) = self.impl_target_alias(imp, module) {
-            diags.error(
-                Code::TYPE_MISMATCH,
-                imp.ty.span,
-                format!("`{name}` is a type alias: an impl block names the type itself, not an alias of it"),
-            );
-            return;
-        }
-        let self_ty = self.globals.resolve_type(&imp.ty, None, module, diags);
         let Some(key) = adt_key(&self_ty) else {
             if matches!(kind, ImplKind::Builtin | ImplKind::From | ImplKind::TryFrom) && self_ty != Ty::Error {
                 diags.error(
@@ -402,28 +381,20 @@ impl<'t> Sema<'t> {
     }
 
     /// An impl on a generic type: it becomes a template that is instantiated with every instance its arguments
-    /// match, which are concrete (`Stack<i32>`), names (`Pair<i32, B>`), or both (`Holder<List<T>>`).
+    /// match, which are concrete (`Stack<i32>`), names (`Pair<i32, B>`), or both (`Holder<List<T>>`). `params` are
+    /// the names the impl gives the type's arguments, and `head` is where the type's arguments are written.
     #[allow(clippy::too_many_arguments)]
     fn register_generic_impl(
         &mut self,
         imp: &'t ast::ImplBlock,
         module: usize,
-        g: usize,
-        seg: &ast::PathSegment,
+        params: Vec<String>,
+        head: GenericHead<'t>,
         kind: ImplKind,
         iface_seg: Option<&'t ast::PathSegment>,
         diags: &mut Diagnostics,
     ) {
-        // The names the impl gives the type's arguments: every name in them that is not a type. `Stack<T>` has
-        // one, `Pair<i32, B>` has one, and `Stack<i32>` has none (`spec/impls.md`, IM1).
-        let mut params = Vec::new();
-        let mut repeated = false;
-        for arg in &seg.args {
-            repeated |= !self.collect_impl_params(arg, module, &mut params, diags);
-        }
-        if repeated {
-            return;
-        }
+        let GenericHead { g, seg, subst: head_subst, bounds: head_bounds, module: head_module } = head;
         let adt_bounds = self.globals.generic_adts[g].bounds.clone();
         let defaults = self.globals.generic_adts[g].defaults.clone();
         let missing_defaulted = seg.args.len() <= adt_bounds.len()
@@ -442,13 +413,15 @@ impl<'t> Sema<'t> {
             return;
         }
         let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+        // The type's arguments, resolved where they are written: in the impl's module with its names in scope, or
+        // in an alias's module with the alias's parameters standing for what the impl wrote for them.
         let written: Vec<Ty> = seg
             .args
             .iter()
             .zip(&adt_bounds)
             .map(|(a, bounds)| match Globals::const_param_ty(bounds) {
-                Some(declared) => self.globals.eval_const_arg(a, declared, &subst, module, diags),
-                None => self.globals.resolve_type_in(a, None, &subst, module, diags),
+                Some(declared) => self.globals.eval_const_arg(a, declared, &head_subst, head_module, diags),
+                None => self.globals.resolve_type_bounded(a, None, &head_subst, &head_bounds, head_module, diags),
             })
             .collect();
         if written.contains(&Ty::Error) {
@@ -641,21 +614,99 @@ impl<'t> Sema<'t> {
         out
     }
 
-    /// The type alias an impl block's type is written through, if it is one.
-    fn impl_target_alias(&self, imp: &ast::ImplBlock, module: usize) -> Option<String> {
-        let ast::TypeKind::Path(segs) = &imp.ty.kind else { return None };
-        let last = segs.last()?;
-        let found = if segs.len() == 1 {
-            self.globals.type_name(module, &last.name.name)
-        } else {
-            let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
-            let target = self.globals.resolve_module_path(module, &names)?;
-            self.globals.exported_type(target, &last.name.name)
-        };
-        match found {
-            Some(TypeName::Alias(_) | TypeName::GenericAlias(_)) => Some(last.name.name.clone()),
+    /// The type an impl block names, with every alias in its head expanded (`spec/type-aliases.md`, AL5), and the
+    /// names the impl gives the type's arguments: every name in the written arguments that is not a type.
+    /// `Stack<T>` has one, `Pair<i32, B>` has one, and `Stack<i32>` has none (`spec/impls.md`, IM1); `Stacked<T>`
+    /// for `type Stacked<T> = Stack<T>` has one too. `None` after an error.
+    fn impl_head(
+        &self,
+        imp: &'t ast::ImplBlock,
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<(Vec<String>, ImplHead<'t>)> {
+        let named = match &imp.ty.kind {
+            ast::TypeKind::Path(segs) => self.head_type_name(segs, module).map(|name| (name, &segs[segs.len() - 1])),
             _ => None,
+        };
+        let Some((name, seg)) = named else {
+            return Some((Vec::new(), ImplHead::Plain(self.globals.resolve_type(&imp.ty, None, module, diags))));
+        };
+        if !matches!(name, TypeName::GenericAdt(_) | TypeName::Alias(_) | TypeName::GenericAlias(_)) {
+            return Some((Vec::new(), ImplHead::Plain(self.globals.resolve_type(&imp.ty, None, module, diags))));
         }
+        let mut params = Vec::new();
+        let mut repeated = false;
+        for arg in &seg.args {
+            repeated |= !self.collect_impl_params(arg, module, &mut params, diags);
+        }
+        if repeated {
+            return None;
+        }
+        let subst: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), param_ty(p))).collect();
+        let head = self.expand_impl_head(&imp.ty, subst, Vec::new(), module, diags)?;
+        Some((params, head))
+    }
+
+    /// `ty` with every alias at its head expanded, until it names a generic type or is some other type. An alias is
+    /// a substitution: its definition is read in its own module, with its parameters standing for what was written
+    /// for them, resolved where they were written (`spec/type-aliases.md`, AL2, AL5). `None` after an error; an
+    /// alias that expands into itself is E0009 (AL4).
+    fn expand_impl_head(
+        &self,
+        ty: &'t ast::Type,
+        subst: Vec<(String, Ty)>,
+        bounds: Vec<(String, Vec<Bound>)>,
+        module: usize,
+        diags: &mut Diagnostics,
+    ) -> Option<ImplHead<'t>> {
+        if let ast::TypeKind::Path(segs) = &ty.kind
+            && let Some(name) = self.head_type_name(segs, module)
+        {
+            let seg = &segs[segs.len() - 1];
+            let depth = &self.globals.alias_depth;
+            match name {
+                TypeName::GenericAdt(g) => {
+                    return Some(ImplHead::Generic(GenericHead { g, seg, subst, bounds, module }));
+                }
+                // An alias without parameters written with arguments is reported by the resolution below.
+                TypeName::Alias(j) if seg.args.is_empty() => {
+                    // A cycle of aliases without parameters is E0009 at its declaration (`resolve_alias`).
+                    if depth.get() >= crate::aliases::MAX_EXPANSION_DEPTH {
+                        return None;
+                    }
+                    let src = &self.alias_decls[j];
+                    let (decl, alias_module): (&'t ast::TypeAliasDecl, usize) = (src.decl, src.module);
+                    depth.set(depth.get() + 1);
+                    let head = self.expand_impl_head(&decl.ty, Vec::new(), Vec::new(), alias_module, diags);
+                    depth.set(depth.get() - 1);
+                    return head;
+                }
+                TypeName::GenericAlias(a) => {
+                    let (env, param_bounds) =
+                        self.globals.generic_alias_env(a, ty.span, &seg.args, None, &subst, &bounds, module, diags)?;
+                    let alias = &self.globals.generic_aliases[a];
+                    let (decl, alias_module): (&'t ast::TypeAliasDecl, usize) = (alias.decl, alias.module);
+                    depth.set(depth.get() + 1);
+                    let head = self.expand_impl_head(&decl.ty, env, param_bounds, alias_module, diags);
+                    depth.set(depth.get() - 1);
+                    return head;
+                }
+                _ => {}
+            }
+        }
+        Some(ImplHead::Plain(self.globals.resolve_type_bounded(ty, None, &subst, &bounds, module, diags)))
+    }
+
+    /// What the last segment of a type path names, as seen from `module`: a plain name in its scope, or a name the
+    /// module path before it exports.
+    fn head_type_name(&self, segs: &[ast::PathSegment], module: usize) -> Option<TypeName> {
+        let last = segs.last()?;
+        if segs.len() == 1 {
+            return self.globals.type_name(module, &last.name.name);
+        }
+        let names: Vec<String> = segs[..segs.len() - 1].iter().map(|s| s.name.name.clone()).collect();
+        let target = self.globals.resolve_module_path(module, &names)?;
+        self.globals.exported_type(target, &last.name.name)
     }
 
     /// The names in an impl's type arguments that no type goes by: they stand for whatever the argument is. A name
@@ -962,6 +1013,25 @@ fn builtin_by_hand(span: Span, diags: &mut Diagnostics) {
         span,
         "implementing a built-in interface by hand is not implemented in this compiler yet; list it after the type name (`struct T: Eq { ... }`)",
     );
+}
+
+/// The type an impl block names, once the aliases in its head are expanded (`spec/type-aliases.md`, AL5).
+enum ImplHead<'t> {
+    /// An instance pattern of a generic type.
+    Generic(GenericHead<'t>),
+    /// Any other type, resolved.
+    Plain(Ty),
+}
+
+/// Where the arguments of a generic type in an impl head are written: the segment that carries them, with what
+/// the names in them stand for and the module whose names apply. That is the impl's own module and names, or the
+/// module of the alias the type is reached through, with the alias's parameters (`spec/type-aliases.md`, AL2).
+struct GenericHead<'t> {
+    g: usize,
+    seg: &'t ast::PathSegment,
+    subst: Vec<(String, Ty)>,
+    bounds: Vec<(String, Vec<Bound>)>,
+    module: usize,
 }
 
 /// What an impl block implements.
