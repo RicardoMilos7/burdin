@@ -221,6 +221,9 @@ pub(crate) struct Runtime<'ctx> {
     /// `(ptr)`: takes a live block off the checking allocator's list, for state that lasts as long as the process
     /// (the environment of a scheduler worker thread). Only present with the checking allocator.
     pub untrack: Option<FunctionValue<'ctx>>,
+    /// `() -> u64`: how many blocks the checking allocator has handed out since the program started, for
+    /// `__alloc_count()`. Only present with the checking allocator (`spec/allocators.md`, AL9).
+    pub alloc_count: Option<FunctionValue<'ctx>>,
     /// `(ptr, len: usize, out: *String)`
     pub str_to_string: FunctionValue<'ctx>,
     /// `(v: i64, out: *String)`
@@ -1298,6 +1301,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let lock = self.module.add_global(self.i32(), None, "burdin_rt_live_lock");
             lock.set_initializer(&self.i32().const_zero());
             lock.set_linkage(Linkage::Internal);
+            let count = self.module.add_global(self.i64(), None, "burdin_rt_alloc_count");
+            count.set_initializer(&self.i64().const_zero());
+            count.set_linkage(Linkage::Internal);
         }
         let out_lock = self.module.add_global(self.i32(), None, "burdin_rt_out_lock");
         out_lock.set_initializer(&self.i32().const_zero());
@@ -1314,6 +1320,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.fn_realloc = Some(realloc);
         let leak_check = if self.checking { Some(self.leak_check(&h0)?) } else { None };
         let untrack = if self.checking { Some(self.heap_untrack()?) } else { None };
+        let alloc_count = if self.checking { Some(self.heap_alloc_count()?) } else { None };
         let alloc_string = self.alloc_string(&h0)?;
         let h = h0.with_alloc_string(alloc_string);
         let string_push_str = self.string_push_str(&h)?;
@@ -1380,6 +1387,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             free,
             leak_check,
             untrack,
+            alloc_count,
             str_to_string: self.str_to_string(&h)?,
             i64_to_string: self.int_to_string(&h, true)?,
             i128_to_string,
@@ -3318,6 +3326,11 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             let magic_at = self.offset(p, usize_ty.const_int(32, false))?;
             self.b.build_store(magic_at, i64_ty.const_int(MAGIC, false)).map_err(llvm_err)?;
             self.b.build_store(live, p).map_err(llvm_err)?;
+            // Every block counts, including the fresh block of a reallocation, for `__alloc_count()`.
+            let count = self.module.get_global("burdin_rt_alloc_count").expect("the count exists").as_pointer_value();
+            let n = self.b.build_load(i64_ty, count, "alloc.count").map_err(llvm_err)?.into_int_value();
+            let n = self.b.build_int_add(n, i64_ty.const_int(1, false), "").map_err(llvm_err)?;
+            self.b.build_store(count, n).map_err(llvm_err)?;
             self.unlock_global("burdin_rt_live_lock")?;
             self.offset(p, usize_ty.const_int(HEADER, false))?
         } else {
@@ -3440,6 +3453,19 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
     /// `untrack(ptr)`: unlinks a live block from the list the leak check reads and marks it, so it is freed later as
     /// usual but never reported. Only built for a test build.
+    /// `alloc_count() -> u64`: the number of blocks the checking allocator has handed out, read under the live
+    /// list's lock so a count taken while tasks allocate is a value some allocation left behind.
+    fn heap_alloc_count(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let i64_ty = self.i64();
+        let f = self.function("burdin_rt_alloc_count_get", i64_ty.fn_type(&[], false));
+        let count = self.module.get_global("burdin_rt_alloc_count").expect("the count exists").as_pointer_value();
+        self.lock_global("burdin_rt_live_lock")?;
+        let n = self.b.build_load(i64_ty, count, "alloc.count").map_err(llvm_err)?;
+        self.unlock_global("burdin_rt_live_lock")?;
+        self.b.build_return(Some(&n)).map_err(llvm_err)?;
+        Ok(f)
+    }
+
     fn heap_untrack(&mut self) -> GenResult<FunctionValue<'ctx>> {
         let (usize_ty, ptr_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i64());
         let void = self.cx.void_type();

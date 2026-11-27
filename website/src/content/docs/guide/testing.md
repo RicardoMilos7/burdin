@@ -101,6 +101,27 @@ each test close to the function it checks, so a reader sees the rule and its che
 Doc comments can also hold examples. A code block in a `///` comment is compiled and run as a test, so an example in the
 documentation cannot go out of date.
 
+## Leaks and allocation counts
+
+`burdin test` builds the tests with a checking allocator. A test that passes but leaves memory allocated fails, and the
+report names the line of every allocation that leaked.
+
+The checking allocator also counts the blocks it hands out. `__alloc_count()` returns that count, so a test can check how
+many allocations a piece of code makes:
+
+```burdin
+test "a reserved string grows without allocating" {
+    let mut s = String.with_capacity(16)
+    let before = __alloc_count()
+    s.push_str("hello")
+    s.push_str(", world")
+    assert_eq(__alloc_count() - before, 0)?
+}
+```
+
+The count only grows: a reallocation counts as a new block, and freeing a block does not lower it. Outside `burdin test`
+there is no checking allocator, so `__alloc_count()` is always 0.
+
 ## Testing with tasks
 
 A test that starts tasks should wait for them before it ends, with `join()`, as the [concurrency](/guide/concurrency/)

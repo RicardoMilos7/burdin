@@ -1,0 +1,38 @@
+// `std/src/path.bd` (issue #1020): the methods that read a path's pieces, `join`, and `normalize`. A `str` cannot
+// pass through `black_box` (E0120), so each body builds its `Path` (one allocation, the same before and after a
+// change) and hides the `Path` instead.
+
+const UNIX: str = "/usr/local/lib/burdin/packages/json/src/value.bd"
+const WINDOWS: str = "C:\\Users\\me\\AppData\\Local\\burdin\\cache\\archive.tar.gz"
+
+bench "components unix" {
+    black_box(black_box(Path.unix(UNIX)).components())
+}
+
+bench "components windows" {
+    black_box(black_box(Path.windows(WINDOWS)).components())
+}
+
+bench "file_name" {
+    black_box(black_box(Path.unix(UNIX)).file_name())
+}
+
+bench "extension" {
+    black_box(black_box(Path.windows(WINDOWS)).extension())
+}
+
+bench "parent" {
+    black_box(black_box(Path.unix(UNIX)).parent())
+}
+
+bench "join" {
+    black_box(black_box(Path.unix("/usr/local/lib")).join("burdin/packages"))
+}
+
+bench "join windows rooted" {
+    black_box(black_box(Path.windows(WINDOWS)).join("\\other\\dir"))
+}
+
+bench "normalize" {
+    black_box(black_box(Path.unix("/a/./b/../c//d/e/../../f")).normalize())
+}

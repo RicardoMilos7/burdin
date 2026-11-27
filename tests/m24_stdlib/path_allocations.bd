@@ -1,0 +1,97 @@
+//@ burdin-test passed=6 failed=0
+
+// The `Path` methods read the text's bytes in place (issue #1020): a method allocates only the value it returns, and
+// never a `List<char>` of the whole path. `__alloc_count()` pins the number of blocks (spec/allocators.md, AL9).
+
+test "reading a path allocates nothing" {
+    let p = Path.unix("/usr/local/lib/libfoo.so.1")
+    let w = Path.windows("C:\\Users\\me\\a.txt")
+    let rooted = Path.windows("\\temp")
+    let up = Path.unix("a/..")
+    let root = Path.unix("/")
+    let make = Path.unix("Makefile")
+    let before = __alloc_count()
+    assert(p.is_absolute())?
+    assert(w.is_absolute())?
+    assert(rooted.is_relative())?
+    assert(up.file_name().is_none())?
+    assert(root.parent().is_none())?
+    assert(make.extension().is_none())?
+    assert_eq(__alloc_count() - before, 0)?
+}
+
+test "the name methods allocate only their result" {
+    let p = Path.unix("/usr/local/lib/libfoo.so.1")
+    let w = Path.windows("C:\\Users\\me\\archive.tar.gz")
+    let mut before = __alloc_count()
+    let name = p.file_name().unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let stem = w.file_stem().unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let ext = w.extension().unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let drive = w.drive().unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    assert_eq(name, String.from("libfoo.so.1"))?
+    assert_eq(stem, String.from("archive.tar"))?
+    assert_eq(ext, String.from("gz"))?
+    assert_eq(drive, String.from("C:"))?
+}
+
+test "components allocates the list once and one string per name" {
+    let p = Path.unix("/usr//local/./lib/")
+    let before = __alloc_count()
+    let parts = p.components()
+    assert_eq(__alloc_count() - before, 4)?
+    assert_eq(parts.len(), 3)?
+    assert_eq(parts[2], String.from("lib"))?
+}
+
+test "join allocates once" {
+    let p = Path.unix("/usr/local")
+    let w = Path.windows("C:\\Users")
+    let slash = Path.unix("a/")
+    let mut before = __alloc_count()
+    let a = p.join("lib/burdin")
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let b = p.join("/etc")
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let c = w.join("\\x")
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let d = slash.join("b")
+    assert_eq(__alloc_count() - before, 1)?
+    assert_eq(a.as_str(), "/usr/local/lib/burdin")?
+    assert_eq(b.as_str(), "/etc")?
+    assert_eq(c.as_str(), "C:\\x")?
+    assert_eq(d.as_str(), "a/b")?
+}
+
+test "the edits allocate only their result" {
+    let p = Path.unix("/a/b/notes.txt")
+    let mut before = __alloc_count()
+    let parent = p.parent().unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let renamed = p.with_file_name("todo.md")
+    assert_eq(__alloc_count() - before, 1)?
+    before = __alloc_count()
+    let md = p.with_extension("md")
+    assert_eq(__alloc_count() - before, 1)?
+    assert_eq(parent.as_str(), "/a/b")?
+    assert_eq(renamed.as_str(), "/a/b/todo.md")?
+    assert_eq(md.as_str(), "/a/b/notes.md")?
+}
+
+test "normalize allocates the kept names once and the result once" {
+    let p = Path.unix("a/./b/../c//d/e/../f")
+    let before = __alloc_count()
+    let n = p.normalize()
+    assert_eq(__alloc_count() - before, 2)?
+    assert_eq(n.as_str(), "a/c/d/f")?
+}

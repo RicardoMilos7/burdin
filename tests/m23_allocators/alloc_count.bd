@@ -1,0 +1,36 @@
+//@ burdin-test passed=3 failed=0
+
+// `__alloc_count()` is the checking allocator's count of the blocks it has handed out (spec/allocators.md, AL9): a
+// test reads it before and after an operation to pin how many allocations the operation makes.
+
+test "one block per string" {
+    let before = __alloc_count()
+    let a = String.from("abc")
+    let b = String.from("def")
+    assert_eq(__alloc_count() - before, 2)?
+    assert_eq(a.len() + b.len(), 6)?
+}
+
+test "a reallocation is a fresh block and a free does not lower the count" {
+    let mut s = String.with_capacity(4)
+    let before = __alloc_count()
+    s.push_str("abcd")
+    assert_eq(__alloc_count() - before, 0)?
+    s.push_str("e")
+    assert_eq(__alloc_count() - before, 1)?
+    {
+        let t = String.from("x")
+        assert_eq(t.len(), 1)?
+    }
+    assert_eq(__alloc_count() - before, 2)?
+}
+
+test "a reserved list grows without allocating" {
+    let mut xs = List<i32>.with_capacity(8)
+    let before = __alloc_count()
+    for i in 0..8 {
+        xs.push(i)
+    }
+    assert_eq(__alloc_count() - before, 0)?
+    assert_eq(xs.len(), 8)?
+}

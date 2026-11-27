@@ -330,7 +330,7 @@ fn canonicalize(path: str): Result<String, IoError> {
 /// ```
 fn walk(root: str): Result<List<String>, IoError> {
     let mut out = List<String>.new()
-    match walk_tree(root, "", mut out) {
+    match walk_tree(Path.new(root), "", mut out) {
         Result.Ok(()) => {}
         Result.Err(failure) => return Result.Err(failure),
     }
@@ -363,26 +363,25 @@ fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
     Result.Ok(out)
 }
 
-priv fn walk_tree(root: str, prefix: str, mut out: List<String>): Result<(), IoError> {
-    let dir = if prefix.len() == 0 {
-        root.to_string()
-    } else {
-        Path.new(root).join(prefix).as_str().to_string()
-    }
+// `root` is made once by `walk` and shared by every level, so a directory costs one `join` for its own path and
+// one per entry, and the relative names are built at their final size (issue #1020).
+priv fn walk_tree(root: Path, prefix: str, mut out: List<String>): Result<(), IoError> {
+    let dir = root.join(prefix)
     let names = match read_dir(dir.as_str()) {
         Result.Ok(names) => names,
         Result.Err(failure) => return Result.Err(failure),
     }
-    for name in names {
+    for name in names.into_iter() {
         let rel = if prefix.len() == 0 {
-            name.clone()
+            name
         } else {
-            let mut rel = String.from(prefix)
-            rel.push(Path.new(root).separator())
+            let mut rel = String.with_capacity(prefix.len() + 1 + name.len())
+            rel.push_str(prefix)
+            rel.push(root.separator())
             rel.push_str(name.as_str())
             rel
         }
-        let full = Path.new(root).join(rel.as_str())
+        let full = root.join(rel.as_str())
         let info = match metadata(full.as_str()) {
             Result.Ok(info) => info,
             Result.Err(failure) => return Result.Err(failure),
