@@ -318,7 +318,11 @@ def check_emit() -> None:
                 path = tmp / f"d{flag[2:]}"
                 out, err, code = driver(["build", "generics.bd", "-o", str(path), "--emit", "asm", flag])
                 text = harness.read_text(Path(f"{path}.s")) if Path(f"{path}.s").is_file() else ""
-                body = text.split('"burdin.largest<i32>":')[-1].split(".cfi_endproc")[0] if text else ""
+                body = (
+                    text.split('"burdin.largest<i32>":')[-1].split(".cfi_endproc")[0].split(".seh_endproc")[0]
+                    if text
+                    else ""
+                )
                 if flag == "--intel":
                     check(code == 0 and body and "%" not in body, f"--emit asm --intel prints Intel syntax, got:\n{body[:300]}")
                 else:
