@@ -115,7 +115,7 @@ fn url_case(line: str) {
 
 /// `base | reference`
 fn join_case(line: str) {
-    let parts = line.split(" | ")
+    let parts: List<String> = line.split(" | ").collect()
     match Url.parse(parts[0].as_str()) {
         Result.Ok(base) => match base.join(parts[1].as_str()) {
             Result.Ok(url) => println("  {}", url.to_text()),
@@ -127,7 +127,7 @@ fn join_case(line: str) {
 
 /// One header operation per line, on one `Headers` that lives through the whole file.
 fn headers_case(mut headers: Headers, line: str) {
-    let parts = line.split(" ")
+    let parts: List<String> = line.split(" ").collect()
     let op = parts[0].as_str()
     let rest = match line.find(' ') {
         Option.Some(at) => line[at + 1..line.len()].to_string(),
@@ -151,7 +151,7 @@ fn headers_case(mut headers: Headers, line: str) {
     } else if op == "remove" {
         println("  removed {}", headers.remove(rest.as_str()))
     } else if op == "token" {
-        let two = rest.split(" ")
+        let two: List<String> = rest.split(" ").collect()
         println("  {}", headers.has_token(two[0].as_str(), two[1].as_str()))
     } else if op == "wire" {
         println("  {:?}", headers.to_wire())
@@ -163,8 +163,8 @@ fn headers_case(mut headers: Headers, line: str) {
 /// `METHOD url | Name: value ; Name: value | body`; prints the request head as the client sends it, twice: as is, and
 /// with `Connection: close`.
 fn request_case(line: str) {
-    let parts = line.split(" | ")
-    let first = parts[0].split(" ")
+    let parts: List<String> = line.split(" | ").collect()
+    let first: List<String> = parts[0].split(" ").collect()
     let method = match Method.parse(first[0].as_str()) {
         Result.Ok(m) => m,
         Result.Err(e) => {
@@ -253,7 +253,7 @@ Mem: Read {
 /// `framing | step | bytes`: framing is `chunked`, `until-close`, or `length N`; step is how many bytes a read gives at
 /// most; bytes are the encoded body.
 fn body_case(line: str) {
-    let parts = line.split(" | ")
+    let parts: List<String> = line.split(" | ").collect()
     let spec = parts[0].as_str()
     let framing = if spec == "chunked" {
         Framing.Chunked
