@@ -3,6 +3,6 @@ error: could not check explain/E0122.bd (1 error)
 
 trace for explain/E0122.bd:3:5: error[E0122]: this view borrows from a local or an owned parameter, which does not live past the return
   rule: spec/memory-rules.md RT2
-  note at explain/E0122.bd:2:9: `x` is dropped when the function returns
+  note: spec/memory-rules.md, RT5: return an owned value (`String`, `List<T>`, ...) or borrow from a view parameter
   fails here: explain/E0122.bd:3:5
   fix: return an owned value, or return a view derived from a read-only or `mut` parameter, whose storage belongs to the caller.
