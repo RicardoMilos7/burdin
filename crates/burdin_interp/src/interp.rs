@@ -588,8 +588,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             | K::ForArray { .. }
             | K::ForSlice { .. }
             | K::ForList { .. }
-            | K::ForMap { .. }
-            | K::ForChars { .. } => self.loop_expr(e, None)?,
+            | K::ForMap { .. } => self.loop_expr(e, None)?,
             K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str()))?,
             K::Match(scrutinee, arms) => self.match_expr(scrutinee, arms, mode, span)?,
             K::Break { label, value } => {
@@ -807,16 +806,6 @@ impl<'p, 'c> Interp<'p, 'c> {
                 };
                 let items = pairs.into_iter().map(|(k, v)| Value::Tuple(vec![k, v])).collect();
                 self.items_loop(pat, items, &Ty::Unit, body, span, label)?;
-                Value::Unit
-            }
-            K::ForChars { pat, string, body } => {
-                let v = self.eval(string, Mode::Use)?;
-                let bytes = match v.deref() {
-                    Value::Chars(b, at) => b[at..].to_vec(),
-                    other => other.bytes().to_vec(),
-                };
-                let items = String::from_utf8_lossy(&bytes).chars().map(Value::Char).collect();
-                self.items_loop(pat, items, &Ty::Char, body, span, label)?;
                 Value::Unit
             }
             _ => unreachable!("loop_expr is called with a loop"),

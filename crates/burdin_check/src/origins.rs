@@ -649,7 +649,6 @@ impl<'a> Analyzer<'a> {
                         | tir::Method::MapGetMut
                         | tir::Method::MapGetOrInsert
                         | tir::Method::MapGetOr
-                        | tir::Method::Chars
                         | tir::Method::AsBytes
                         | tir::Method::Iter
                         | tir::Method::IterMut
@@ -680,7 +679,6 @@ impl<'a> Analyzer<'a> {
                     | tir::Method::MapGetMut
                     | tir::Method::MapGetOrInsert
                     | tir::Method::MapGetOr
-                    | tir::Method::Chars
                     | tir::Method::AsBytes
                     // An iterator borrows the collection it walks; the items it yields point into it.
                     | tir::Method::Iter
@@ -759,8 +757,7 @@ impl<'a> Analyzer<'a> {
             K::ForArray { pat, array, body }
             | K::ForSlice { pat, slice: array, body }
             | K::ForList { pat, list: array, body }
-            | K::ForMap { pat, map: array, body }
-            | K::ForChars { pat, string: array, body } => {
+            | K::ForMap { pat, map: array, body } => {
                 self.open_loop();
                 let origin = self.expr(array);
                 let id = self.block_parent.len();

@@ -13,6 +13,7 @@ use fmt.{Debug, Display, Formatter}
 use int.{abs_diff, div_euclid, rem_euclid}
 use ops.{Add, Sub}
 use reactor.{in_task, sleep_async}
+use text.chars
 
 priv const NANOS_PER_SECOND: u64 = 1_000_000_000
 priv const SECONDS_PER_DAY: i64 = 86_400

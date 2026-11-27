@@ -804,7 +804,6 @@ impl Globals {
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)
-            | Ty::Chars
             | Ty::Fn { .. }
             | Ty::MapIter(..)
             | Ty::IterMut(_)

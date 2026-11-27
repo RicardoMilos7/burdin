@@ -267,8 +267,6 @@ pub enum Ty {
     /// `[T]`: a slice view, a pointer and a length.
     Slice(Box<Ty>),
     Array(Box<Ty>, u64),
-    /// The iterator `str.chars()` returns, only usable in a `for` loop.
-    Chars,
     /// `Heap<T>`: a single owned allocation of a value in the C heap.
     Heap(Box<Ty>, Alloc),
     /// `any I`: an owned value boxed behind the interface's vtable (spec/existentials.md, AN1).
@@ -390,7 +388,6 @@ impl fmt::Display for Ty {
             Ty::Slice(t) => write!(f, "[{t}]"),
             Ty::Array(t, n) if *n >= 1 << 62 => write!(f, "[{t}; _]"),
             Ty::Array(t, n) => write!(f, "[{t}; {n}]"),
-            Ty::Chars => f.write_str("Chars"),
             Ty::Heap(t, Alloc::Global) => write!(f, "Heap<{t}>"),
             Ty::Heap(t, a) => write!(f, "Heap<{t}, {a}>"),
             Ty::Any(a) => write!(f, "any {}", a.name),
@@ -538,7 +535,6 @@ mod tests {
             (Ty::Ref { mutable: true, inner: Box::new(i32_.clone()) }, "&mut i32"),
             (Ty::Slice(Box::new(i32_.clone())), "[i32]"),
             (Ty::Array(Box::new(i32_.clone()), 4), "[i32; 4]"),
-            (Ty::Chars, "Chars"),
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Global), "Heap<i32>"),
             (Ty::Heap(Box::new(i32_.clone()), Alloc::Value(Box::new(arena()))), "Heap<i32, Arena>"),
             (Ty::Any(AnyRef { id: 0, name: "Shape".into(), iface: 0, args: Vec::new() }), "any Shape"),

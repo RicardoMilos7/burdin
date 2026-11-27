@@ -247,12 +247,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A projection is resolved before code generation and owns nothing on its own.
             Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
-            // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map; the
-            // chunks and windows iterators only borrow their slice.
+            // nothing. A `MapIter` only borrows its map; the chunks and windows iterators only borrow their slice.
             Ty::Ref { .. }
             | Ty::Slice(_)
             | Ty::CPtr(_)
-            | Ty::Chars
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
@@ -546,7 +544,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(())
             }
             Ty::Enum(a) => self.clone_enum_fields(dst, src, a.id),
-            Ty::Chars => self.copy_bits(dst, src, ty),
             // A closure is not `Clone` (CL10); this is unreachable in a checked program.
             Ty::Fn { .. } => Ok(()),
             Ty::Array(elem, n) => {

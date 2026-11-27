@@ -4,6 +4,7 @@
 
 use fmt.{Debug, Display, Formatter}
 use std.Error
+use text.chars
 use unicode.{len_utf8, to_char}
 
 /// What went wrong while decoding.

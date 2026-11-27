@@ -126,8 +126,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
         K::ForArray { pat, array: src, body }
         | K::ForSlice { pat, slice: src, body }
         | K::ForList { pat, list: src, body }
-        | K::ForMap { pat, map: src, body }
-        | K::ForChars { pat, string: src, body } => {
+        | K::ForMap { pat, map: src, body } => {
             v.expr(src);
             v.pat(pat);
             v.block(body);
@@ -256,8 +255,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
         | K::ForArray { array: src, body, .. }
         | K::ForSlice { slice: src, body, .. }
         | K::ForList { list: src, body, .. }
-        | K::ForMap { map: src, body, .. }
-        | K::ForChars { string: src, body, .. } => {
+        | K::ForMap { map: src, body, .. } => {
             v.expr(src);
             v.block(body);
         }

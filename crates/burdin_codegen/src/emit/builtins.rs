@@ -1615,9 +1615,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_call(self.rt.string_push_char, &[recv.into(), c.into()], "").map_err(llvm_err)?;
             return Ok(None);
         }
-        if m == Method::Chars || m == Method::AsBytes {
-            // The characters and the bytes are both a view of the text's storage (`[u8]` and `str` share the
-            // pointer-and-length layout).
+        if m == Method::AsBytes {
+            // The bytes are a view of the text's storage (`[u8]` and `str` share the pointer-and-length layout).
             let (ptr, len) = self.view_parts(&args[0])?;
             return Ok(Some(self.make_str(ptr, len)?.into()));
         }

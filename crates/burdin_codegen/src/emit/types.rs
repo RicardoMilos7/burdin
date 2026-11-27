@@ -49,7 +49,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Fn { .. } => self.closure_ty.into(),
             // An `any I` box is the data pointer and the vtable pointer.
             Ty::Any(_) => self.any_ty.into(),
-            Ty::Chars => self.str_ty.into(),
             // A list and a map have the same three-word shape as a `String`: pointer, length, capacity. A stored
             // allocator value follows them (`spec/allocators.md`, AL3), and the default one stores nothing.
             Ty::String => self.string_ty.into(),

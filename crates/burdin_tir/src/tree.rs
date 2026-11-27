@@ -350,12 +350,6 @@ pub enum ExprKind {
         map: Box<Expr>,
         body: Block,
     },
-    /// `for pattern in string.chars()`: iterate the characters of a `str`.
-    ForChars {
-        pat: Pat,
-        string: Box<Expr>,
-        body: Block,
-    },
     Match(Box<Expr>, Vec<Arm>),
     /// A loop with a label (`'label: while ...`). The body is one of the loop expressions; `break 'label` and
     /// `continue 'label` inside it name this loop, and an unlabeled `break` or `continue` names the innermost loop.

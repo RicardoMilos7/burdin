@@ -53,7 +53,8 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::ArrayIntoIter` | moved | Done in #1017: `struct ArrayIntoIter<T, const N: usize> { data: ManuallyDrop<[T; N]>, pos }` is an ordinary `std` struct in `std/src/std.bd` with `Drop` and `Iterator<T>` written in Burdin. `ManuallyDrop<T>` is a lang item (`LangItem::ManuallyDrop`): drop glue never drops its value, so the iterator drops only the elements it did not yield. `array.into_iter()` stays a compiler method (an array cannot be an extension receiver) that returns this struct. |
 | `Ty::RangeIter`, `Ty::Range` | moved | Done in #1017: `Range<T>`, `RangeInclusive<T>`, `RangeIter<T>`, and `RangeIterInclusive<T>` are ordinary `std` structs (lang items `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`). A range literal builds the struct; the iterators step with the `__int_step(x, delta)` intrinsic, so they stop after the last value without overflowing; `for` over a range with a plain binding still lowers to a counted loop. |
 | `Ty::MapIntoIter` | moved | `struct MapIntoIter<K, V, A> { ptr, len, cap, pos, alloc }` in `std` (lang item `MapIntoIter`), a plain struct implementing `Iterator<(K, V)>` and `Drop`; `Map.into_iter`, `into_keys`, `into_values`, and `drain` produce it. |
-| `Ty::Chars`, `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A view type parameter (`DequeIter<D, T>`) cannot be named as `Chars`, and a stored `CPtr` would let the iterator outlive its text. |
+| `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A stored `CPtr` would let the iterator outlive its collection. |
+| `Ty::Chars` | removed | `str.chars()` and `String.chars()` return a `List<char>` (an extension method of `std`, `std/src/text.bd`), decided in #1017: a view of characters cannot exist because UTF-8 text holds no array of `char`, and a struct holding a `str` view is not allowed. The list is a copy, so `chars()` costs O(n) and an allocation; `char_count`, `nth_char`, and `char_indices` read characters without it. `for c in s.chars()` walks the list, and `s.chars().iter()` or `.into_iter()` gives the iterator adapters. |
 
 Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
 (`fn List<T>.push(mut self, own x: T)`, `enum Option<T> { Some(T) None }`), each with its `///` documentation. The
@@ -626,13 +627,13 @@ struct String {
     fn find(self, c: char): Option<usize>        // byte offset of the first occurrence
     fn find_str(self, needle: str): Option<usize> // byte offset of the first occurrence
     fn as_str(self): str
-    fn chars(self): Chars             // Unicode scalar values
     fn clone(self): String            // deep copy of the buffer
 }
 ```
 
 `str` has the same read methods (`len`, `starts_with`, `find`, `find_str`, `as_str`, `chars`, `to_string`), without
-`push*`, `from`, or `clone`. `Chars` is only iterable: `for c in s.chars()`.
+`push*`, `from`, or `clone`. `chars()` is an extension method (`text.bd`) on both: `fn str.chars(self): List<char>` copies the
+Unicode scalar values into a list, so `for c in s.chars()` walks a list and `s.chars().iter()` gives the adapters.
 
 Slicing `s[a..b]` and `s[a..=b]` yields a `str` view of the bytes in the range; it works on `str`, `String`, arrays,
 and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, and so does a slice of `str` or `String`
@@ -1737,7 +1738,7 @@ stops after the upper endpoint without computing `upper + 1`, so it does not ove
 `for_each`, `reduce`, `partition`, `min_by`, `max_by`, `min_by_key`, `max_by_key`, `try_fold`, and `try_for_each`), the
 marker `Iterable<T>`, and `DoubleEndedIterator<T>` (`next_back`). The adapters that need a particular kind of source are
 compiler-resolved functions on any iterator: `flatten`, `cloned`, `copied`, `cycle`, and `rev` (`iterators.md`, IT13,
-IT14). The compiler implements both for arrays, slices, `List`, `Map`, `Chars`, and ranges, and adds `sum` and `product`
+IT14). The compiler implements both for arrays, slices, `List`, `Map`, and ranges, and adds `sum` and `product`
 for iterators of integers or floats; `std` also holds the functions behind `min`, `max`, `eq`, and `cmp` between
 iterators, which need a bound on the item type; `std` declares the adapter
 types `MapIter`, `FilterIter`, `TakeIter`, and `SkipIter`. A program implements the interfaces to make its own type

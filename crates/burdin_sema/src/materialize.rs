@@ -46,7 +46,6 @@ impl Globals {
             Ty::Fn { .. }
             | Ty::Ref { .. }
             | Ty::Slice(_)
-            | Ty::Chars
             | Ty::Heap(_, _)
             | Ty::Any(_)
             | Ty::CPtr(_)

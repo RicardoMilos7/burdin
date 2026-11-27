@@ -351,7 +351,7 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         }
         Ty::Float(FloatTy::F32) => (4, 4),
         Ty::Float(FloatTy::F64) => (8, 8),
-        Ty::Str | Ty::Chars | Ty::Slice(_) | Ty::Any(_) => (16, 8),
+        Ty::Str | Ty::Slice(_) | Ty::Any(_) => (16, 8),
         Ty::Fn { .. } | Ty::String => (24, 8),
         // A chunks or windows iterator keeps the slice view and two indices.
         Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
@@ -489,21 +489,6 @@ fn parse_int(s: &[u8], ty: IntTy) -> Option<i128> {
     let n = if neg { -n } else { n };
     let wide = if ty.signed() { wrap(n, IntTy::I64) } else { wrap(n, IntTy::U64) };
     Some(wrap(wide, ty))
-}
-
-/// The character that starts at byte `at`, and its width.
-fn decode(bytes: &[u8], at: usize) -> Option<(char, usize)> {
-    let rest = bytes.get(at..)?;
-    let first = *rest.first()?;
-    let width = match first {
-        0x00..=0x7f => 1,
-        0xc0..=0xdf => 2,
-        0xe0..=0xef => 3,
-        _ => 4,
-    };
-    let end = width.min(rest.len());
-    let c = std::str::from_utf8(&rest[..end]).ok().and_then(|s| s.chars().next()).unwrap_or('\u{fffd}');
-    Some((c, width.max(1)))
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -1292,7 +1277,6 @@ impl<'p> Interp<'p, '_> {
                 let prefix = self.peek(&args[1], |v| v.bytes().to_vec())?;
                 Value::Bool(self.peek(recv, |v| v.bytes().starts_with(&prefix))?)
             }
-            Method::Chars => Value::Chars(self.peek(recv, |v| Rc::from(v.bytes()))?, 0),
             Method::AsStr => Value::Str(self.peek(recv, |v| Rc::from(v.bytes()))?),
             Method::AsBytes => {
                 let bytes = self.peek(recv, |v| v.bytes().to_vec())?;
@@ -1466,7 +1450,7 @@ impl<'p> Interp<'p, '_> {
     fn iter_value(&mut self, recv: &'p Expr, into: bool, span: Span) -> R<Value> {
         let v = self.eval(recv, if into { Mode::Move } else { Mode::Use })?.deref();
         Ok(match (&recv.ty, v) {
-            (Ty::Slice(_) | Ty::Chars, v) => v,
+            (Ty::Slice(_), v) => v,
             (Ty::Array(..) | Ty::Struct(_), Value::Array(xs) | Value::List(xs)) => {
                 if into {
                     Value::Items(VecDeque::from(xs))
@@ -1509,20 +1493,13 @@ impl<'p> Interp<'p, '_> {
                     Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
                 }
             }
-            Value::Chars(bytes, at) => match decode(bytes, *at) {
-                Some((c, w)) => {
-                    *at += w;
-                    Some(Value::Char(c))
-                }
-                None => None,
-            },
             Value::Items(items) => items.pop_front(),
             other => return Err(internal(format!("`next` on {other:?}"), span)),
         };
         Ok(Value::opt(next))
     }
 
-    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    /// `it.next_back()` on a slice (spec/iterators.md, IT14).
     fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
         let item_is_view = matches!(self.defs().option_payload(ty), Some(Ty::Ref { .. }));
         let place = self.eval_place(recv)?;
@@ -1539,21 +1516,6 @@ impl<'p> Interp<'p, '_> {
                     *hi -= 1;
                     let v = xs[*hi].clone();
                     Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
-                }
-            }
-            Value::Chars(bytes, at) => {
-                let mut start = bytes.len();
-                if start <= *at {
-                    None
-                } else {
-                    start -= 1;
-                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
-                        start -= 1;
-                    }
-                    let c = decode(bytes, start).map(|(c, _)| c);
-                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
-                    *bytes = kept;
-                    c.map(Value::Char)
                 }
             }
             other => return Err(internal(format!("`next_back` on {other:?}"), span)),

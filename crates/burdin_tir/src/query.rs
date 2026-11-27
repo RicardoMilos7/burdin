@@ -153,7 +153,6 @@ impl TypeDefs<'_> {
     fn holds(&self, ty: &Ty, prop: Property, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
-            Ty::Chars => true,
             // A shared reference and a view are copied; a mutable reference is not (RF4). Cloning a view
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
@@ -235,8 +234,7 @@ impl TypeDefs<'_> {
             | Ty::Const(_)
             | Ty::Projection { .. }
             | Ty::TryFromError { .. }
-            | Ty::CPtr(_)
-            | Ty::Chars => false,
+            | Ty::CPtr(_) => false,
             Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,

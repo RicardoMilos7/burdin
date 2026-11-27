@@ -18,7 +18,6 @@ impl Globals {
     pub(crate) fn builtin_iterator_item(&self, ty: &Ty, env: &crate::generics::Env) -> Option<Ty> {
         Some(match ty {
             Ty::Slice(elem) => Self::element_item(elem, env, self),
-            Ty::Chars => Ty::Char,
             // `chunks`, `chunks_exact`, and `windows` yield views of the slice they were made from.
             Ty::SliceChunks(elem, _) | Ty::SliceWindows(elem) => Ty::Slice(elem.clone()),
             Ty::MapIter(key, value) => Ty::Tuple(vec![Self::shared_view(key), Self::shared_view(value)]),
@@ -29,11 +28,11 @@ impl Globals {
         })
     }
 
-    /// The item type of one of the compiler-known iterators that can also take items from the back: a slice, a
-    /// range iterator, and `Chars` (`spec/iterators.md`, IT14). The owning and map iterators cannot.
+    /// The item type of one of the compiler-known iterators that can also take items from the back: a slice
+    /// (`spec/iterators.md`, IT14). The owning and map iterators cannot.
     pub(crate) fn builtin_double_ended_item(&self, ty: &Ty, env: &crate::generics::Env) -> Option<Ty> {
         match ty {
-            Ty::Slice(_) | Ty::Chars => self.builtin_iterator_item(ty, env),
+            Ty::Slice(_) => self.builtin_iterator_item(ty, env),
             _ => None,
         }
     }
@@ -49,7 +48,6 @@ impl Globals {
         }
         Some(match ty {
             Ty::Array(elem, _) | Ty::Slice(elem) => Self::element_item(elem, env, self),
-            Ty::Chars => Ty::Char,
             _ => return None,
         })
     }
@@ -220,14 +218,12 @@ mod tests {
                 Ty::Ref { mutable: false, inner: Box::new(i32_()) }
             ])
         );
-        assert_eq!(g.builtin_iterable_item(&Ty::Chars, &[]), Some(Ty::Char));
     }
 
     #[test]
     fn iterators_report_their_item() {
         let g = Globals::default();
         assert_eq!(g.builtin_iterator_item(&Ty::Slice(Box::new(i32_())), &[]), Some(i32_()));
-        assert_eq!(g.builtin_iterator_item(&Ty::Chars, &[]), Some(Ty::Char));
         let map = Ty::MapIter(Box::new(Ty::Str), Box::new(i32_()));
         assert!(g.builtin_iterator_item(&map, &[]).is_some());
     }
@@ -300,10 +296,9 @@ mod tests {
     }
 
     #[test]
-    fn only_slices_and_chars_walk_backwards() {
+    fn only_slices_walk_backwards() {
         let g = Globals::default();
         assert_eq!(g.builtin_double_ended_item(&Ty::Slice(Box::new(i32_())), &[]), Some(i32_()));
-        assert_eq!(g.builtin_double_ended_item(&Ty::Chars, &[]), Some(Ty::Char));
         // The map iterators yield from the front only.
         assert_eq!(g.builtin_double_ended_item(&Ty::MapIter(Box::new(Ty::Str), Box::new(i32_())), &[]), None);
     }

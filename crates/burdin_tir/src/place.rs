@@ -195,10 +195,6 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
             place_mentions(map, out);
             place_mentions_block(body, out);
         }
-        K::ForChars { string, body, .. } => {
-            place_mentions(string, out);
-            place_mentions_block(body, out);
-        }
         K::Match(scrutinee, arms) => {
             place_mentions(scrutinee, out);
             for arm in arms {

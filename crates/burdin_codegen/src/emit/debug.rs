@@ -329,8 +329,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::Const(_)
             | Ty::Projection { .. }
             | Ty::Error
-            | Ty::TryFromError { .. }
-            | Ty::Chars => self.debug_unspecified(&Self::debug_name(ty)),
+            | Ty::TryFromError { .. } => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
             Ty::Char => self.debug_basic("char", 32, DW_ATE_UTF),
@@ -830,7 +829,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             },
             Ty::Str => "str".to_string(),
             Ty::String => "String".to_string(),
-            Ty::Chars => "Chars".to_string(),
             Ty::Ref { inner, mutable: false } => format!("&{}", Self::debug_name(inner)),
             Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),

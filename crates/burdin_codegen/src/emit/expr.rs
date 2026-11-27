@@ -226,8 +226,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | K::ForArray { .. }
             | K::ForSlice { .. }
             | K::ForList { .. }
-            | K::ForMap { .. }
-            | K::ForChars { .. } => {
+            | K::ForMap { .. } => {
                 self.loop_expr(e, None, None)?;
                 None
             }

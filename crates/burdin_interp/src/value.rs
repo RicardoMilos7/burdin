@@ -39,8 +39,6 @@ pub enum Value {
     Closure(usize, Vec<Value>),
     /// `any I`: the vtable index and the boxed value.
     Any(usize, Box<Value>),
-    /// `str.chars()`: the bytes and the next byte offset.
-    Chars(Rc<[u8]>, usize),
     /// The owning iterators of a `List`, an array, or a `Map` (its pairs as tuples), and the borrowing iterator of
     /// a `Map`: the remaining items in order.
     Items(std::collections::VecDeque<Value>),

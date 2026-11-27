@@ -720,16 +720,6 @@ impl<'a> Checker<'a> {
                 self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
             }
-            K::ForChars { pat, string, body } => {
-                self.expr(string, Mode::Use);
-                let entry = self.states.clone();
-                self.open_loop(label);
-                self.scopes.push(Vec::new());
-                self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
             _ => unreachable!("loop_expr is called with a loop"),
         }
     }
@@ -989,8 +979,7 @@ impl<'a> Checker<'a> {
             | K::ForArray { .. }
             | K::ForSlice { .. }
             | K::ForList { .. }
-            | K::ForMap { .. }
-            | K::ForChars { .. } => self.loop_expr(e, None),
+            | K::ForMap { .. } => self.loop_expr(e, None),
             K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str())),
             K::Match(scrutinee, arms) => {
                 self.expr(scrutinee, Mode::Use);

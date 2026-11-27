@@ -299,7 +299,7 @@ Tests: `m24_stdlib/iter_mut_list`, `iter_mut_array`, `iter_mut_map`, `iter_mut_d
 `iter_mut_nested_loops`, `iter_mut_hold_past_loop`, `iter_mut_immutable` (E0113), `iter_mut_map_key_readonly` (E0005).
 
 **IT4-IT12 The protocol.** Stage 1 adds `Iterator<T>` and `Iterable<T>` in `std`, compiler-known `iter`, `into_iter`,
-and `next` for arrays, slices, `List`, `Map`, `Chars`, and ranges, user-defined `for` loops, the lazy adapters, and
+and `next` for arrays, slices, `List`, `Map`, and ranges, user-defined `for` loops, the lazy adapters, and
 the eager `List` methods. The rules are in [`iterators.md`](iterators.md). The protocol preserves IT1-IT3: `for`
 borrows its source and prefers `iter()` when a type is both an `Iterable` and an `Iterator`; `next` needs a mutable
 place (E0113) and `into_iter` moves the collection (E0100); a chain is second-class (SC2/SC3, E0120/E0123); and a

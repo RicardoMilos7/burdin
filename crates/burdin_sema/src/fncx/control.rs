@@ -15,7 +15,6 @@ enum ForKind {
     Slice,
     List,
     Map,
-    Chars,
     /// A `Range<T>` or `RangeInclusive<T>` value, evaluated once.
     Range,
 }
@@ -337,7 +336,7 @@ impl FnCx<'_> {
         let builtin = list_elem.is_some()
             || map_parts.is_some()
             || range_elem.is_some()
-            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Chars | Ty::Error | Ty::Never);
+            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Error | Ty::Never);
         if !builtin {
             // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
             // through `iter()`, not consumed as an iterator value.
@@ -383,7 +382,6 @@ impl FnCx<'_> {
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
-            Ty::Chars => (Ty::Char, ForKind::Chars),
             other => {
                 self.diags.error(
                     Code::TYPE_MISMATCH,
@@ -446,7 +444,6 @@ impl FnCx<'_> {
             ForKind::Slice => tir::ExprKind::ForSlice { pat, slice: array, body },
             ForKind::List => tir::ExprKind::ForList { pat, list: array, body },
             ForKind::Map => tir::ExprKind::ForMap { pat, map: array, body },
-            ForKind::Chars => tir::ExprKind::ForChars { pat, string: array, body },
             ForKind::Range => unreachable!("handled above"),
         };
         Self::with_label(label, mk(kind, Ty::Unit, span))

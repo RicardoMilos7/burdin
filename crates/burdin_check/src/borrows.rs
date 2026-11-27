@@ -232,7 +232,7 @@ impl<'a> Checker<'a> {
                 let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
                 // A chainable view (`xs.iter()`, `xs.as_slice()`) takes its loan where its receiver is a place, and
                 // `mut self` on it must not borrow the view's source exclusively.
-                if !sig.ret.is_second_class() || matches!(sig.ret, Ty::Slice(_) | Ty::Str | Ty::Chars) {
+                if !sig.ret.is_second_class() || matches!(sig.ret, Ty::Slice(_) | Ty::Str) {
                     return Vec::new();
                 }
                 // A result that derives from several arguments (a struct holding views of two sources) borrows
@@ -581,12 +581,6 @@ impl<'a> Checker<'a> {
                 self.add_loan(map, false);
                 self.loop_block(body);
             }
-            K::ForChars { string, body, .. } => {
-                // The loop borrows the collection for as long as it runs, so the body cannot change it.
-                self.access_place(string, Access::Read);
-                self.add_loan(string, false);
-                self.loop_block(body);
-            }
             K::Match(scrutinee, arms) => {
                 let start = self.loans.len();
                 self.expr(scrutinee, Mode::Use);
@@ -914,10 +908,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(map, out);
             locals_used_block(body, out);
         }
-        K::ForChars { string, body, .. } => {
-            locals_used(string, out);
-            locals_used_block(body, out);
-        }
         K::Match(scrutinee, arms) => {
             locals_used(scrutinee, out);
             for arm in arms {
@@ -1051,10 +1041,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         }
         K::ForMap { map, body, .. } => {
             uses_expr(map, stmt, last);
-            uses_block(body, stmt, last);
-        }
-        K::ForChars { string, body, .. } => {
-            uses_expr(string, stmt, last);
             uses_block(body, stmt, last);
         }
         K::Match(scrutinee, arms) => {

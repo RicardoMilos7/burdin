@@ -53,9 +53,6 @@ fn String.find_str(self, needle: str): Option<usize>
 /// A `str` view of the text.
 fn String.as_str(self): str
 
-/// The Unicode scalar values, in order.
-fn String.chars(self): Chars
-
 /// A view of the UTF-8 bytes; copies nothing.
 fn String.as_bytes(self): [u8]
 
@@ -94,9 +91,6 @@ fn str.find_str(self, needle: str): Option<usize>
 
 /// A `str` view of the text.
 fn str.as_str(self): str
-
-/// The Unicode scalar values, in order.
-fn str.chars(self): Chars
 
 /// A view of the UTF-8 bytes; copies nothing.
 fn str.as_bytes(self): [u8]

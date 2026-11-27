@@ -251,8 +251,7 @@ impl Walker<'_> {
             K::ForArray { array, body, .. }
             | K::ForSlice { slice: array, body, .. }
             | K::ForList { list: array, body, .. }
-            | K::ForMap { map: array, body, .. }
-            | K::ForChars { string: array, body, .. } => {
+            | K::ForMap { map: array, body, .. } => {
                 self.expr(array);
                 self.block(body);
             }

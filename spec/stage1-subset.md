@@ -431,7 +431,7 @@ written down.
 | Inferred variants (`.Variant` in patterns and `.Variant { ... }`), and `Option`/`Result` variants only as `Option.Some` or `.Some` (the bare names are E0305) | landed outside the milestones (`tests/target_typing`); not a stage 1 milestone | `target-typing.md`, TT13-TT19 | #1069 |
 | Compiler-known types: the decision of which move into `std` (the table is in `stdlib.md`, "Compiler-known types") | decided; the moves are open | `stdlib.md`, "Compiler-known types" | #1017 |
 | Intrinsic markers for `std` declarations (`std/src/builtins.bd`, body-less `fn`) | landed; the lang-item registry waits for #1079 | `stdlib.md`, "Compiler-known types" | #1073 |
-| Structs that hold views (blocks `Chars` and the borrowing iterators) | not planned: views stay out of struct fields | `stdlib.md`, "Compiler-known types" | #1074 |
+| Structs that hold views (blocks the borrowing iterators) | not planned: views stay out of struct fields | `stdlib.md`, "Compiler-known types" | #1074 |
 | Generic types that carry their arguments (prerequisite of the moves) | open | `stdlib.md`, "Compiler-known types" | #1079 |
 | Move the owning and range iterators into `std` | open | `stdlib.md`, "Compiler-known types" | #1075 |
 | Move `Option` and `Result` into `std` | open | `stdlib.md`, "Compiler-known types" | #1076 |

@@ -557,17 +557,14 @@ pub(crate) fn method(g: &Globals, name: &str, recv: &Ty) -> Option<(Method, Vec<
         ("find_str", Ty::Str | Ty::String) => {
             (Method::FindStr, vec![plain(Ty::Str)], g.option_ty(Ty::Int(IntTy::Usize)))
         }
-        ("chars", Ty::Str | Ty::String) => (Method::Chars, vec![], Ty::Chars),
         ("is_null", Ty::CPtr(_)) => (Method::IsNull, vec![], Ty::Bool),
         // The iteration protocol's entry points (spec/iterators.md). `next` is checked separately because a
         // slice yields its element by value when it is `Copy`.
         ("iter", Ty::Array(elem, _)) => (Method::Iter, vec![], Ty::Slice(elem.clone())),
         ("iter", Ty::Slice(_)) => (Method::Iter, vec![], recv.clone()),
-        ("iter", Ty::Chars) => (Method::Iter, vec![], Ty::Chars),
         // The mutable iterators yield `&mut T` and borrow the collection exclusively (IT15).
         ("iter_mut", Ty::Array(elem, _)) => (Method::IterMut, vec![], Ty::IterMut(elem.clone())),
         ("into_iter", Ty::Array(elem, n)) => (Method::IntoIter, vec![], g.array_into_iter_ty((**elem).clone(), *n)),
-        ("into_iter", Ty::Chars) => (Method::IntoIter, vec![], Ty::Chars),
         _ => return None,
     })
 }

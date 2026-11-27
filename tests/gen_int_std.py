@@ -29,6 +29,7 @@ HEADER = """// The integer functions of every integer type (spec/stdlib.md, "Int
 // are the `<type>_<name>` constants and functions below: the compiler maps `T.name` to `T_name`.
 
 use std.ParseIntError
+use text.chars
 use unicode.to_digit
 """
 

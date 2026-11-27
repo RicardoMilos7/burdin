@@ -550,8 +550,7 @@ impl An<'_> {
             K::ForRangeValue { var, range, body } => self.looped(&[&**range], &[], *var, body),
             K::ForArray { pat, array: iter, body }
             | K::ForSlice { pat, slice: iter, body }
-            | K::ForMap { pat, map: iter, body }
-            | K::ForChars { pat, string: iter, body } => self.looped(&[&**iter], &[pat], None, body),
+            | K::ForMap { pat, map: iter, body } => self.looped(&[&**iter], &[pat], None, body),
             K::ForList { pat, list, body } => {
                 self.check_to_list(list, "iterated right away by this loop");
                 self.looped(&[&**list], &[pat], None, body);

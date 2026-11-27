@@ -216,7 +216,7 @@ impl<'t> Sema<'t> {
     }
 
     /// Creates the template and identity function of an interface default method for a built-in receiver type
-    /// (a slice, `Chars`, a list iterator, ...), which has no impl block to register it.
+    /// (a slice, a list iterator, ...), which has no impl block to register it.
     fn allocate_builtin_template(
         &mut self,
         iface: usize,

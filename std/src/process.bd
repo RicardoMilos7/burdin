@@ -11,6 +11,7 @@ use mem.replace
 use option.take
 use std.{IoError, IoErrorKind}
 use target.{Os, os}
+use text.chars
 use unicode.to_lowercase
 
 /// Ends the process with `code`.

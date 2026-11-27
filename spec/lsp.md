@@ -227,7 +227,7 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   `xs.iter().map(f)` is the spelling). A `List` is not viewed as a slice implicitly: it offers its own methods (its
   `first`, `contains`, and `sort` are built in) and never an extension of `[T]` that needs `as_slice()`
   (`list.binary_search(1)` is E0002, so it is not offered). A range offers `clone`, `cmp`, `iter`, and `into_iter`, a
-  tuple `clone` and `cmp`, and the compiler's own iterators (`Chars`, `RangeIter`, `MapIter`, `IterMut`,
+  tuple `clone` and `cmp`, and the compiler's own iterators (`RangeIter`, `MapIter`, `IterMut`,
   `ListIntoIter`, `ArrayIntoIter`, `MapIntoIter`, `Chunks`, `ChunksExact`, `Windows`) the methods of `Iterator`. Hover,
   definition, and signature help answer the same methods: `xs.len` lands in `builtins.bd`, `xs.first` in `slice.bd`,
   and `xs.swap(` shows `fn swap(mut self, a: usize, b: usize)`. The element of an array literal receiver is read

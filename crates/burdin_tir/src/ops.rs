@@ -651,8 +651,6 @@ pub enum Method {
     MapContainsKey,
     /// `str.find_str(needle): Option<usize>`: the byte index of a substring.
     FindStr,
-    /// `str.chars()`: the characters of a string, for a `for` loop.
-    Chars,
     /// `String.as_str()`: a `str` view of the bytes.
     AsStr,
     /// `str.as_bytes()` and `String.as_bytes()`: the UTF-8 bytes as a `[u8]` view.
@@ -808,7 +806,6 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::Chars
                 | Method::AsBytes
                 | Method::Iter
                 | Method::IterMut
@@ -951,7 +948,6 @@ mod tests {
             Method::ListGet,
             Method::ListGetMut,
             Method::MapGet,
-            Method::Chars,
             Method::IterMut,
         ] {
             assert!(method.result_borrows_receiver(), "{method:?}");

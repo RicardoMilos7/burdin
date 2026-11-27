@@ -3,7 +3,7 @@
 use super::{Codegen, GenResult, Mode, llvm_err, undef};
 use burdin_tir::Ty;
 use inkwell::IntPredicate;
-use inkwell::values::{BasicValueEnum, IntValue, PointerValue, StructValue};
+use inkwell::values::{BasicValueEnum, PointerValue, StructValue};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// `xs.iter()`, `xs.iter_mut()`, and `xs.into_iter()`: builds the iterator value of the receiver's type.
@@ -19,8 +19,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None => self.list_info(&recv_ty).map(|(_, alloc)| alloc),
         };
         match (&recv_ty, into) {
-            // A slice view is its own iterator; `Chars` is a `str` view.
-            (Ty::Slice(_) | Ty::Chars, _) => self.expr_mode(recv, Mode::Use),
+            // A slice view is its own iterator.
+            (Ty::Slice(_), _) => self.expr_mode(recv, Mode::Use),
             (Ty::Array(_, n), false) => {
                 let n = *n;
                 match self.place_ptr(recv)? {
@@ -116,7 +116,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_slice(&args[0], &elem, &item, ty)
             }
-            Ty::Chars => self.next_chars(&args[0], ty),
             Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
                 let (k, v) = ((**k).clone(), (**v).clone());
                 self.next_map(&args[0], &k, &v, &item, ty, false, &burdin_tir::Alloc::Global)
@@ -133,7 +132,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// `it.next_back()` on a slice, `Chars`, or a range iterator (spec/iterators.md, IT14).
+    /// `it.next_back()` on a slice (spec/iterators.md, IT14).
     pub(super) fn iter_next_back(
         &mut self,
         args: &'a [burdin_tir::Expr],
@@ -150,7 +149,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let elem = (**elem).clone();
                 self.next_back_slice(&args[0], &elem, &item, ty)
             }
-            Ty::Chars => self.next_back_chars(&args[0], ty),
             other => Err(format!("`next_back` on `{other}` has no built-in implementation")),
         }
     }
@@ -283,193 +281,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(slot, shortened).map_err(llvm_err)?;
         if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
             let some = self.some_value(item, payload);
-            self.builder.build_store(out, some).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(end);
-        self.load_option(out, ty)
-    }
-
-    /// `Chars.next_back()`: decodes the last character and drops its bytes from the back.
-    fn next_back_chars(&mut self, recv: &'a burdin_tir::Expr, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Some(slot) = self.place_ptr(recv)? else {
-            self.expr_mode(recv, Mode::Use)?;
-            return Ok(None);
-        };
-        let s = self.builder.build_load(self.str_ty, slot, "chars.iter").map_err(llvm_err)?.into_struct_value();
-        let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
-        let len = self.builder.build_extract_value(s, 1, "chars.len").map_err(llvm_err)?.into_int_value();
-        let out = self.option_slot(ty, "char.out")?;
-        let empty =
-            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
-        let none_bb = self.new_block("back.none");
-        let some_bb = self.new_block("back.some");
-        let end = self.new_block("back.end");
-        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
-        self.builder.position_at_end(none_bb);
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            self.builder.build_store(out, self.option_ty(&Ty::Char).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(some_bb);
-        // Walk back over at most three continuation bytes (`10xxxxxx`) to the first byte of the character.
-        let i8_ty = self.cx.i8_type();
-        let one = self.usize_ty.const_int(1, false);
-        let mut start = self.builder.build_int_sub(len, one, "").map_err(llvm_err)?;
-        for _ in 0..3 {
-            // SAFETY (LLVM): `start < len`, because it only ever decreases from `len - 1`.
-            let p = unsafe { self.builder.build_in_bounds_gep(i8_ty, base, &[start], "") }.map_err(llvm_err)?;
-            let b = self.builder.build_load(i8_ty, p, "b").map_err(llvm_err)?.into_int_value();
-            let top = self.builder.build_and(b, i8_ty.const_int(0xC0, false), "").map_err(llvm_err)?;
-            let continuation = self
-                .builder
-                .build_int_compare(IntPredicate::EQ, top, i8_ty.const_int(0x80, false), "")
-                .map_err(llvm_err)?;
-            let not_first = self
-                .builder
-                .build_int_compare(IntPredicate::UGT, start, self.usize_ty.const_zero(), "")
-                .map_err(llvm_err)?;
-            let step = self.builder.build_and(continuation, not_first, "").map_err(llvm_err)?;
-            let before = self.builder.build_int_sub(start, one, "").map_err(llvm_err)?;
-            start = self.builder.build_select(step, before, start, "").map_err(llvm_err)?.into_int_value();
-        }
-        let (cp, _) = self.decode_char_at(base, len, start)?;
-        let shortened = self.make_str(base.into(), start.into())?;
-        self.builder.build_store(slot, shortened).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            let some = self.some_value(&Ty::Char, Some(cp.into()));
-            self.builder.build_store(out, some).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(end);
-        self.load_option(out, ty)
-    }
-
-    /// The scalar value of the character that starts at byte `at`, and the number of bytes it takes.
-    pub(super) fn decode_char_at(
-        &mut self,
-        base: PointerValue<'ctx>,
-        len: IntValue<'ctx>,
-        at: IntValue<'ctx>,
-    ) -> GenResult<(IntValue<'ctx>, IntValue<'ctx>)> {
-        let i32_ty = self.cx.i32_type();
-        // SAFETY (LLVM): `at < len`, checked by the caller.
-        let b0_ptr =
-            unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), base, &[at], "") }.map_err(llvm_err)?;
-        let b0 = self.builder.build_load(self.cx.i8_type(), b0_ptr, "b0").map_err(llvm_err)?.into_int_value();
-        let b0_wide = self.builder.build_int_z_extend(b0, i32_ty, "").map_err(llvm_err)?;
-        let cont = |cg: &mut Self, index: u64| -> GenResult<IntValue<'ctx>> {
-            let off = cg.usize_ty.const_int(index, false);
-            let at_k = cg.builder.build_int_add(at, off, "").map_err(llvm_err)?;
-            let avail = cg.builder.build_int_compare(IntPredicate::ULT, at_k, len, "").map_err(llvm_err)?;
-            let more = cg.new_block("char.more");
-            let done = cg.new_block("char.done");
-            let slot = cg.alloca(i32_ty.into(), "char.byte")?;
-            cg.builder.build_store(slot, i32_ty.const_zero()).map_err(llvm_err)?;
-            cg.builder.build_conditional_branch(avail, more, done).map_err(llvm_err)?;
-            cg.builder.position_at_end(more);
-            // SAFETY (LLVM): `at + index < len`.
-            let p = unsafe { cg.builder.build_in_bounds_gep(cg.cx.i8_type(), base, &[at_k], "") }.map_err(llvm_err)?;
-            let b = cg.builder.build_load(cg.cx.i8_type(), p, "").map_err(llvm_err)?.into_int_value();
-            let wide = cg.builder.build_int_z_extend(b, i32_ty, "").map_err(llvm_err)?;
-            cg.builder.build_store(slot, wide).map_err(llvm_err)?;
-            cg.builder.build_unconditional_branch(done).map_err(llvm_err)?;
-            cg.builder.position_at_end(done);
-            Ok(cg.builder.build_load(i32_ty, slot, "").map_err(llvm_err)?.into_int_value())
-        };
-        let cont1 = cont(self, 1)?;
-        let cont2 = cont(self, 2)?;
-        let cont3 = cont(self, 3)?;
-        let mask = |cg: &mut Self, v: IntValue<'ctx>, m: u64, want: u64| -> GenResult<IntValue<'ctx>> {
-            let a = cg.builder.build_and(v, i32_ty.const_int(m, false), "").map_err(llvm_err)?;
-            cg.builder.build_int_compare(IntPredicate::EQ, a, i32_ty.const_int(want, false), "").map_err(llvm_err)
-        };
-        let is_1 = self
-            .builder
-            .build_int_compare(IntPredicate::ULT, b0_wide, i32_ty.const_int(0x80, false), "")
-            .map_err(llvm_err)?;
-        let is_2 = mask(self, b0_wide, 0xE0, 0xC0)?;
-        let is_3 = mask(self, b0_wide, 0xF0, 0xE0)?;
-        let is_4 = mask(self, b0_wide, 0xF8, 0xF0)?;
-        let low = |cg: &mut Self, v: IntValue<'ctx>, m: u64, shift: u64| -> GenResult<IntValue<'ctx>> {
-            let a = cg.builder.build_and(v, i32_ty.const_int(m, false), "").map_err(llvm_err)?;
-            cg.builder.build_left_shift(a, i32_ty.const_int(shift, false), "").map_err(llvm_err)
-        };
-        let cont_mask =
-            |cg: &mut Self, v: IntValue<'ctx>, shift: u64| -> GenResult<IntValue<'ctx>> { low(cg, v, 0x3F, shift) };
-        let four = low(self, b0_wide, 0x07, 18)?;
-        let three = low(self, b0_wide, 0x0F, 12)?;
-        let two = low(self, b0_wide, 0x1F, 6)?;
-        let m1_12 = cont_mask(self, cont1, 12)?;
-        let m1_6 = cont_mask(self, cont1, 6)?;
-        let m1_0 = cont_mask(self, cont1, 0)?;
-        let m2_6 = cont_mask(self, cont2, 6)?;
-        let m2_0 = cont_mask(self, cont2, 0)?;
-        let m3_0 = cont_mask(self, cont3, 0)?;
-        let cp4 = self.builder.build_or(four, m1_12, "").map_err(llvm_err)?;
-        let cp4 = self.builder.build_or(cp4, m2_6, "").map_err(llvm_err)?;
-        let cp4 = self.builder.build_or(cp4, m3_0, "").map_err(llvm_err)?;
-        let cp3 = self.builder.build_or(three, m1_6, "").map_err(llvm_err)?;
-        let cp3 = self.builder.build_or(cp3, m2_0, "").map_err(llvm_err)?;
-        let cp2 = self.builder.build_or(two, m1_0, "").map_err(llvm_err)?;
-        let cp = self.builder.build_select(is_2, cp2, cp4, "").map_err(llvm_err)?.into_int_value();
-        let cp = self.builder.build_select(is_3, cp3, cp, "").map_err(llvm_err)?.into_int_value();
-        let cp = self.builder.build_select(is_1, b0_wide, cp, "").map_err(llvm_err)?.into_int_value();
-        let cp = self.builder.build_int_truncate(cp, i32_ty, "").map_err(llvm_err)?;
-        let w2 = self
-            .builder
-            .build_select(is_2, self.usize_ty.const_int(2, false), self.usize_ty.const_int(1, false), "")
-            .map_err(llvm_err)?
-            .into_int_value();
-        let w3 = self
-            .builder
-            .build_select(is_3, self.usize_ty.const_int(3, false), w2, "")
-            .map_err(llvm_err)?
-            .into_int_value();
-        let w4 = self
-            .builder
-            .build_select(is_4, self.usize_ty.const_int(4, false), w3, "")
-            .map_err(llvm_err)?
-            .into_int_value();
-        let width = self
-            .builder
-            .build_select(is_1, self.usize_ty.const_int(1, false), w4, "")
-            .map_err(llvm_err)?
-            .into_int_value();
-        Ok((cp, width))
-    }
-
-    /// `Chars.next()`: decodes the first character and advances by its width.
-    fn next_chars(&mut self, recv: &'a burdin_tir::Expr, ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
-        let Some(slot) = self.place_ptr(recv)? else {
-            self.expr_mode(recv, Mode::Use)?;
-            return Ok(None);
-        };
-        let s = self.builder.build_load(self.str_ty, slot, "chars.iter").map_err(llvm_err)?.into_struct_value();
-        let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
-        let len = self.builder.build_extract_value(s, 1, "chars.len").map_err(llvm_err)?.into_int_value();
-        let out = self.option_slot(ty, "char.out")?;
-        let empty =
-            self.builder.build_int_compare(IntPredicate::EQ, len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
-        let none_bb = self.new_block("char.none");
-        let some_bb = self.new_block("char.some");
-        let end = self.new_block("char.end");
-        self.builder.build_conditional_branch(empty, none_bb, some_bb).map_err(llvm_err)?;
-        self.builder.position_at_end(none_bb);
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            self.builder.build_store(out, self.option_ty(&Ty::Char).const_zero()).map_err(llvm_err)?;
-        }
-        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-        self.builder.position_at_end(some_bb);
-        let (cp, width) = self.decode_char_at(base, len, self.usize_ty.const_zero())?;
-        let next_ptr = unsafe { self.builder.build_in_bounds_gep(self.cx.i8_type(), base, &[width], "") }
-            .map_err(llvm_err)?
-            .into();
-        let next_len = self.builder.build_int_sub(len, width, "").map_err(llvm_err)?;
-        let advanced = self.make_str(next_ptr, next_len.into())?;
-        self.builder.build_store(slot, advanced).map_err(llvm_err)?;
-        if let (Some(out), Some(_)) = (out, self.llvm_ty(ty)) {
-            let some = self.some_value(&Ty::Char, Some(cp.into()));
             self.builder.build_store(out, some).map_err(llvm_err)?;
         }
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;

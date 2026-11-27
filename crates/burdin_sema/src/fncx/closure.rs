@@ -740,10 +740,6 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             walk(map, captures, globals, usage, Mode::Use);
             walk_block(body, captures, globals, usage);
         }
-        K::ForChars { string, body, .. } => {
-            walk(string, captures, globals, usage, Mode::Use);
-            walk_block(body, captures, globals, usage);
-        }
         K::Match(scrutinee, arms) => {
             walk(scrutinee, captures, globals, usage, Mode::Use);
             for arm in arms {

@@ -123,9 +123,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::ForMap { pat, map, body } => {
                 self.for_map(pat, map, body, label)?;
             }
-            K::ForChars { pat, string, body } => {
-                self.for_chars(pat, string, body, label)?;
-            }
             _ => unreachable!("loop_expr is called with a loop"),
         }
         Ok(())
@@ -568,47 +565,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(())
     }
 
-    /// `for pattern in string.chars()`: binds each UTF-8 character in order.
-    pub(super) fn for_chars(
-        &mut self,
-        pat: &'a Pat,
-        string: &'a tir::Expr,
-        body: &'a tir::Block,
-        label: Option<&str>,
-    ) -> GenResult<()> {
-        let v = self.expr_mode(string, Mode::Use)?;
-        let s = self.need(v, &Ty::Str).into_struct_value();
-        let base = self.builder.build_extract_value(s, 0, "chars.ptr").map_err(llvm_err)?.into_pointer_value();
-        let len = self.builder.build_extract_value(s, 1, "chars.len").map_err(llvm_err)?.into_int_value();
-        let counter = self.alloca(self.usize_ty.into(), "for.index")?;
-        self.builder.build_store(counter, self.usize_ty.const_zero()).map_err(llvm_err)?;
-        let header = self.new_block("for.cond");
-        let body_bb = self.new_block("for.body");
-        let latch = self.new_block("for.next");
-        let exit = self.new_block("for.end");
-        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-
-        self.builder.position_at_end(header);
-        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
-        let go = self.builder.build_int_compare(IntPredicate::ULT, i, len, "").map_err(llvm_err)?;
-        self.builder.build_conditional_branch(go, body_bb, exit).map_err(llvm_err)?;
-
-        self.builder.position_at_end(body_bb);
-        let (cp, width) = self.decode_char_at(base, len, i)?;
-        let slot = self.alloca(self.cx.i32_type().into(), "for.char")?;
-        self.builder.build_store(slot, cp).map_err(llvm_err)?;
-        self.pat_bind(pat, Some(slot), &Ty::Char, None, &mut Vec::new())?;
-        self.loop_body(body, latch, exit, label, None)?;
-        self.builder.build_unconditional_branch(latch).map_err(llvm_err)?;
-
-        self.builder.position_at_end(latch);
-        let i = self.builder.build_load(self.usize_ty, counter, "i").map_err(llvm_err)?.into_int_value();
-        let next = self.builder.build_int_add(i, width, "").map_err(llvm_err)?;
-        self.builder.build_store(counter, next).map_err(llvm_err)?;
-        self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-        self.builder.position_at_end(exit);
-        Ok(())
-    }
     pub(super) fn for_slice(
         &mut self,
         pat: &'a Pat,

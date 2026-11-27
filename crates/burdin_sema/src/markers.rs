@@ -63,7 +63,6 @@ impl Globals {
             | Ty::Float(_)
             | Ty::Str
             | Ty::String
-            | Ty::Chars
             | Ty::Never
             | Ty::Const(_)
             // A projection is opaque; the concrete binding is checked when it is substituted.
