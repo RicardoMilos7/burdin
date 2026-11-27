@@ -12,13 +12,13 @@
 fn main() {
     println("{:?} {:?}", "añbñ".rfind('ñ'), String.from("añbñ").rfind('ñ'))
     println("{:?} {:?} {:?}", "añbñ".rfind_str("ñ"), "añbñ".rfind_str(""), "añbñ".rfind_str("x"))
-    println("{:?}", "ababab".match_indices("ab"))
-    println("{:?}", "añbñ".find_all("ñ"))
+    println("{:?}", "ababab".match_indices("ab").map(|p| (p.0, String.from(p.1))).to_list())
+    println("{:?}", "añbñ".find_all("ñ").map(|p| (p.0, String.from(p.1))).to_list())
     println(
         "{} {} {}",
         "añbñ".contains_str("ñb"),
         "añbñ".contains_str("zz"),
         String.from("añbñ").contains_str("bñ"),
     )
-    println("{:?}", String.from("añbñ").match_indices("ñ"))
+    println("{:?}", String.from("añbñ").match_indices("ñ").map(|p| (p.0, String.from(p.1))).to_list())
 }

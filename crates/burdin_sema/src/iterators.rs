@@ -92,7 +92,11 @@ impl Globals {
         let from_items =
             |target: &Ty, items: Ty| self.satisfies_with(target, &Bound::User(iface, vec![items]), env, &[]);
         if let Some((elem, alloc)) = self.list_parts(ty) {
-            return Some(alloc.is_global() && elem == *item && !elem.is_second_class());
+            return Some(
+                alloc.is_global()
+                    && !elem.is_second_class()
+                    && (elem == *item || (elem == Ty::String && *item == Ty::Str)),
+            );
         }
         if let Some((key, value, alloc)) = self.map_parts(ty) {
             return Some(

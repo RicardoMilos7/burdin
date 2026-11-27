@@ -1645,8 +1645,18 @@ impl FnCx<'_> {
             // No method the type declares and none the compiler provides: a visible extension method may apply
             // (`spec/extensions.md`, EX3). It is tried last, so a method always wins.
             let list_elem = self.globals.list_parts(&recv.ty).map(|(elem, _)| elem);
-            if let Some(e) = self.extension_call(recv, name, args, span) {
+            let is_string = recv.ty == Ty::String;
+            if let Some(e) = self.extension_call(recv.clone(), name, args, span) {
                 return e;
+            }
+            // A `String` borrows as a `str` for read-only `str` extension methods (`spec/extensions.md`, EX3),
+            // just as an array borrows as a `[T]` slice above. `String`'s own methods and extensions win first.
+            if is_string {
+                let recv_span = recv.span;
+                let view = mk(tir::ExprKind::StringAsStr(Box::new(recv)), Ty::Str, recv_span);
+                if let Some(e) = self.str_extension_call(view, name, args, span) {
+                    return e;
+                }
             }
             // Three methods of a `List` exist only when its element has the interface they need; without it the
             // call is a missing bound, not a missing method.
@@ -1792,6 +1802,28 @@ impl FnCx<'_> {
                 continue;
             }
             return Some(self.extension_call_inner(&ext, recv, name, args, span));
+        }
+        None
+    }
+
+    /// `s.name(args)` on a `String` receiver borrowed as `str`, matching only non-exclusive `str` extensions.
+    fn str_extension_call(
+        &mut self,
+        view: tir::Expr,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Option<tir::Expr> {
+        let candidates = self.globals.modules[self.module].extensions.get(&name.name)?.clone();
+        for id in candidates {
+            let ext = self.globals.extensions[id].clone();
+            if !crate::extensions::extension_applies(self.globals, &ext, &Ty::Str) {
+                continue;
+            }
+            if ext.func.is_some_and(|f| self.globals.sigs[f.0].params.first().is_some_and(|p| p.exclusive)) {
+                continue;
+            }
+            return Some(self.extension_call_inner(&ext, view, name, args, span));
         }
         None
     }

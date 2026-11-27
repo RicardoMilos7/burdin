@@ -33,7 +33,7 @@ A function that only reads text takes a `str`. A `String` is passed to it as is,
 | Get a view for reading | `s.as_str()` |
 | Measure | `s.len()` (in bytes, for UTF-8 text) |
 | Trim, change case | `s.trim()`, `s.to_lowercase()`, `s.to_uppercase()` |
-| Split | `s.split(",")`, `s.split_whitespace()`, `s.lines()` |
+| Split | `s.split(",")`, `s.split_whitespace()`, `s.lines()` (lazy iterators of `str` views; `.collect<List<String>>()` for owned strings) |
 | Look at characters | `s.chars()`, a lazy iterator over the characters (`to_char_list()` for a list) |
 | Test | `s.contains("x")`, `s.starts_with("x")` |
 

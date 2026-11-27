@@ -68,7 +68,7 @@ string literal with braces is interpolated.
 | `len(xs)` | `xs.len()` | Returns a `usize`. |
 | `xs.append(x)` | `xs.push(x)` | |
 | `xs.sort()` | `xs.sort()` | Sorts in place. |
-| `s.split(",")` | `s.split(",")` | Returns owned strings. |
+| `s.split(",")` | `s.split(",")` | Returns a lazy iterator of `str` views; `.collect<List<String>>()` for a list of owned strings. |
 | `"".join(xs)` | build a `String` with `push_str` | |
 | `int("12")` | `i32.parse("12")` | Returns a `Result`. |
 | `class C:` | `struct C { ... }` and `C { fn ... }` | No inheritance. |

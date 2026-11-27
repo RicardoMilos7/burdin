@@ -146,7 +146,7 @@ fn row(op: str, pattern: str, text: str, arg: str): String {
         "replace_all" => enc(re.replace_all(text, arg.as_str()).as_str()),
         "replacen" => {
             // The argument is `limit;template`; the template itself has no `;` in the fixtures.
-            let parts = arg.split_char(';')
+            let parts: List<String> = arg.split_char(';').collect()
             let limit = number(parts[0].as_str())
             enc(re.replacen(text, limit, parts[1].as_str()).as_str())
         }
@@ -175,7 +175,7 @@ fn main() {
         if line.is_empty() || line.starts_with("#") {
             continue
         }
-        let fields = line.split_char('\t')
+        let fields: List<String> = line.split_char('\t').collect()
         if fields.len() < 3 {
             println("malformed row: {}", line)
             continue

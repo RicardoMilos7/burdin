@@ -28,7 +28,7 @@ fn main() {
     let lines = bytes(raw_lines[0..8])
     fs.write("lines.txt", lines[0..lines.len()]).unwrap()
     let text = read_to_string("lines.txt").unwrap()
-    println("{:?}", text.lines())
+    println("{:?}", text.lines().collect<List<String>>())
 
     let raw_text = [195, 169, 99, 111, 108, 101]
     let text = bytes(raw_text[0..6])

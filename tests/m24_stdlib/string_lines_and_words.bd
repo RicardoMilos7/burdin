@@ -9,10 +9,10 @@
 // in front of one, and does not make a last empty line out of a final line break.
 
 fn main() {
-    println("{" a  b\tc ".split_whitespace():?}")
-    println("{"x\r\ny\n\nz\n".lines():?}")
-    println("{"only".lines():?}")
-    println("{"".lines():?}")
+    println("{" a  b\tc ".split_whitespace().collect<List<String>>():?}")
+    println("{"x\r\ny\n\nz\n".lines().collect<List<String>>():?}")
+    println("{"only".lines().collect<List<String>>():?}")
+    println("{"".lines().collect<List<String>>():?}")
     let s = String.from("hé llo")
-    println("{s.split_whitespace():?}")
+    println("{s.split_whitespace().collect<List<String>>():?}")
 }

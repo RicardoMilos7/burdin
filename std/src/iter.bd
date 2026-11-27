@@ -1461,6 +1461,22 @@ priv fn list_from_iter<T, I: Iterator<T>>(own iter: I): List<T> {
     }
 }
 
+/// `List<String>.from_iter(it)` over `str` items: copies each view into an owned `String`.
+priv fn list_string_from_str_iter<I: Iterator<str>>(own iter: I): List<String> {
+    let mut it = iter
+    let mut out = List<String>.new()
+    loop {
+        match it.next() {
+            Option.Some(s) => {
+                out.push(String.from(s))
+            }
+            Option.None => {
+                return out
+            }
+        }
+    }
+}
+
 /// `Map<K, V>.from_iter(it)`: a pair whose key is already there replaces the earlier value, like `insert`.
 priv fn map_from_iter<K: Eq, V, I: Iterator<(K, V)>>(own iter: I): Map<K, V> {
     let mut it = iter

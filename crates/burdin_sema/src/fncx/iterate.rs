@@ -369,6 +369,11 @@ impl FnCx<'_> {
                     return error_expr(span);
                 }
             }
+        } else if std_name == "list_from_iter"
+            && self.globals.list_parts(ty).is_some_and(|(elem, _)| elem == Ty::String)
+            && self.globals.iterator_item(&arg.ty, &self.bounds) == Some(Ty::Str)
+        {
+            "list_string_from_str_iter"
         } else {
             std_name
         };

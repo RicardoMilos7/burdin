@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `Split<str>` and `Lines<str>` hold views and are second-class (SC2): they cannot live in struct fields, and
+// `List<str>` remains forbidden (E0120).
+struct Holder {
+    it: Split<str> //~ E0120
+    lines: Lines<str> //~ E0120
+}
+
+fn main() {
+    let _: List<str> = List<str>.new() //~ E0120
+}
