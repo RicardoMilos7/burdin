@@ -1,0 +1,57 @@
+// `std/src/fs.bd` (issue #1021): `walk` and `walk_glob` over a tree of 2,000 files in 20 directories, and `read` and
+// `copy_file` of a 4 MiB file. The fixtures live under `target/`, which git ignores; the first call of a body builds
+// them, during the warmup, and later calls only check that they are there.
+
+const ROOT: str = "target/stdbench-fs"
+const TREE: str = "target/stdbench-fs/tree"
+const BIG: str = "target/stdbench-fs/big.bin"
+const COPY: str = "target/stdbench-fs/copy.bin"
+
+fn tree(): str {
+    if !exists("target/stdbench-fs/tree/d19/f099.txt") {
+        let mut d = 0
+        while d < 20 {
+            let dir = format("{TREE}/d{d:02}")
+            create_dir_all(dir.as_str()).unwrap()
+            let mut f = 0
+            while f < 100 {
+                write(format("{dir}/f{f:03}.txt").as_str(), "x".as_bytes()).unwrap()
+                f = f + 1
+            }
+            d = d + 1
+        }
+    }
+    TREE
+}
+
+fn big(): str {
+    if !exists(BIG) {
+        create_dir_all(ROOT).unwrap()
+        write(BIG, "0123456789abcdef".repeat(262144).as_bytes()).unwrap()
+    }
+    BIG
+}
+
+bench "walk 2000 files" {
+    black_box(walk(tree()).unwrap())
+}
+
+bench "walk_glob one directory" {
+    black_box(walk_glob(tree(), "d07/*.txt").unwrap())
+}
+
+bench "walk_glob everywhere" {
+    black_box(walk_glob(tree(), "**/f05?.txt").unwrap())
+}
+
+bench "walk_glob no match" {
+    black_box(walk_glob(tree(), "**/*.bd").unwrap())
+}
+
+bench "read 4 MiB" {
+    black_box(read(big()).unwrap())
+}
+
+bench "copy_file 4 MiB" {
+    black_box(copy_file(big(), COPY).unwrap())
+}

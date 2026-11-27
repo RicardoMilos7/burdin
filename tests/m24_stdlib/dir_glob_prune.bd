@@ -1,0 +1,58 @@
+//@ run
+//> one ["sub/b.txt", "sub/deep"]
+//> any parent ["sub/b.txt"]
+//> question ["sub/b.txt", "sub/deep", "sub/deep/c.txt"]
+//> nested ["other/sub/y.txt"]
+//> deep anywhere ["other/sub/y.txt", "sub/b.txt"]
+//> prefix ["ab/c.txt"]
+//> backslash ["sub/deep/c.txt"]
+//> top ["a.txt", "ab", "other", "sub"]
+//> everything 11
+//> none []
+//> trailing []
+//> star dir ["other/sub/y.txt", "other/x.txt"]
+
+// `walk_glob` skips a directory no match can lie under (issue #1021), and the result is the same as filtering a full
+// `walk`: each line checks one shape of pattern against that filter. A `*` stays inside a segment, so `*/b.txt`
+// reads only the top level and its directories; `**` can reach anywhere, so it reads the whole tree.
+
+fn norm(path: str): String {
+    path.replace("\\", "/")
+}
+
+fn show(list: List<String>): String {
+    let mut out = List<String>.new()
+    for item in list {
+        out.push(norm(item.as_str()))
+    }
+    format("{out:?}")
+}
+
+fn glob(pattern: str): String {
+    show(walk_glob("prune", pattern).unwrap())
+}
+
+fn main() {
+    create_dir_all("prune/sub/deep").unwrap()
+    create_dir_all("prune/other/sub").unwrap()
+    create_dir_all("prune/ab").unwrap()
+    write_file("prune/a.txt", "a").unwrap()
+    write_file("prune/sub/b.txt", "b").unwrap()
+    write_file("prune/sub/deep/c.txt", "c").unwrap()
+    write_file("prune/other/x.txt", "x").unwrap()
+    write_file("prune/other/sub/y.txt", "y").unwrap()
+    write_file("prune/ab/c.txt", "c").unwrap()
+    println("one {glob("sub/*")}")
+    println("any parent {glob("*/b.txt")}")
+    println("question {glob("?ub/**")}")
+    println("nested {glob("*/sub/*.txt")}")
+    println("deep anywhere {glob("**/sub/*.txt")}")
+    println("prefix {glob("a*/c.txt")}")
+    println("backslash {glob("sub\\deep\\*")}")
+    println("top {glob("*")}")
+    println("everything {}", walk_glob("prune", "**").unwrap().len())
+    println("none {glob("missing/**")}")
+    println("trailing {glob("sub/")}")
+    println("star dir {glob("o*/**/*.txt")}")
+    remove_dir_all("prune").unwrap()
+}

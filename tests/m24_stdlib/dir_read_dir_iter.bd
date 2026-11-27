@@ -1,0 +1,48 @@
+//@ run
+//> names ["a.txt", "b.txt", "sub"]
+//> same as read_dir true
+//> first only true
+//> empty 0
+//> missing NotFound true
+//> file error true
+//> path method 3
+
+// `read_dir_iter` reads a directory one name at a time (issue #1021): the names are `read_dir`'s, a caller can stop
+// early, and dropping the iterator closes the directory. Opening a missing path or a file is an error at once.
+
+fn main() {
+    create_dir_all("lazy/sub").unwrap()
+    create_dir_all("lazy-empty").unwrap()
+    write_file("lazy/a.txt", "a").unwrap()
+    write_file("lazy/b.txt", "b").unwrap()
+
+    let mut names = List<String>.new()
+    for name in read_dir_iter("lazy").unwrap() {
+        names.push(name.unwrap())
+    }
+    names.sort()
+    println("names {names:?}")
+
+    let mut listed = read_dir("lazy").unwrap()
+    listed.sort()
+    println("same as read_dir {}", listed == names)
+
+    // Stopping after the first name leaves the rest unread; the drop closes the directory.
+    let mut it = read_dir_iter("lazy").unwrap()
+    let first = it.next().unwrap().unwrap()
+    println("first only {}", names.contains(first))
+
+    println("empty {}", read_dir_iter("lazy-empty").unwrap().count())
+
+    match read_dir_iter("lazy/missing") {
+        Result.Err(IoError.Read { path, kind, os_code }) => {
+            println("missing {kind:?} {}", path == String.from("lazy/missing") && os_code.is_some())
+        }
+        _ => println("missing: unexpected"),
+    }
+    println("file error {}", read_dir_iter("lazy/a.txt").is_err())
+    println("path method {}", Path.new("lazy").read_dir_iter().unwrap().count())
+
+    remove_dir_all("lazy").unwrap()
+    remove_dir_all("lazy-empty").unwrap()
+}

@@ -293,6 +293,12 @@ pub(crate) struct Runtime<'ctx> {
     pub file_error: FunctionValue<'ctx>,
     /// `(path, path_len, out: *List<String>) -> i32`: the names in a directory; 0, or the OS error code.
     pub read_dir: FunctionValue<'ctx>,
+    /// `(path, path_len, out: *u64) -> i32`: opens a directory for `dir_next`; 0, or the OS error code.
+    pub dir_open: FunctionValue<'ctx>,
+    /// `(handle: u64, out: *String) -> i32`: the next name into `out`; 0, -1 at the end, or the OS error code.
+    pub dir_next: FunctionValue<'ctx>,
+    /// `(handle: u64)`: closes a directory handle.
+    pub dir_close: FunctionValue<'ctx>,
     /// `(path, path_len) -> i32`: creates one directory; 0, or the OS error code.
     pub create_dir: FunctionValue<'ctx>,
     /// `(path, path_len) -> i32`: removes an empty directory; 0, or the OS error code.
@@ -1421,6 +1427,9 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             file_close: self.file_close(file_error_ptr)?,
             file_error: self.file_error(file_error_ptr)?,
             read_dir: self.read_dir(&h)?,
+            dir_open: self.dir_open()?,
+            dir_next: self.dir_next()?,
+            dir_close: self.dir_close()?,
             create_dir: self.create_dir()?,
             remove_dir: self.remove_dir()?,
             remove_file: self.remove_file()?,
@@ -4963,54 +4972,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let find_first = libc(self.module, "FindFirstFileA", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
         let find_next = libc(self.module, "FindNextFileA", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
         let find_close = libc(self.module, "FindClose", i32_ty.fn_type(&[ptr_ty.into()], false));
-        let len = self.call(strlen, &[path.into()])?.expect("strlen returns a size").into_int_value();
-        // `path` + (`\` unless it already ends in a separator) + `*` + NUL. The empty path reads its own
-        // NUL byte as the "last" one, which never needs a separator.
-        let has_char = self.b.build_int_compare(IntPredicate::UGT, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
-        let last_index = self
-            .b
-            .build_select(
-                has_char,
-                self.b.build_int_sub(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?,
-                usize_ty.const_zero(),
-                "",
-            )
-            .map_err(llvm_err)?
-            .into_int_value();
-        let last_at = self.offset(path, last_index)?;
-        let last = self.b.build_load(self.i8(), last_at, "path.last").map_err(llvm_err)?.into_int_value();
-        let i8_ty = self.i8();
-        let slash = self
-            .b
-            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'/'), false), "")
-            .map_err(llvm_err)?;
-        let backslash = self
-            .b
-            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'\\'), false), "")
-            .map_err(llvm_err)?;
-        let separator = self.b.build_or(slash, backslash, "").map_err(llvm_err)?;
-        let needs_sep =
-            self.b.build_and(has_char, self.b.build_not(separator, "").map_err(llvm_err)?, "").map_err(llvm_err)?;
-        let extra = self
-            .b
-            .build_select(needs_sep, usize_ty.const_int(1, false), usize_ty.const_zero(), "")
-            .map_err(llvm_err)?
-            .into_int_value();
-        let total = self.b.build_int_add(len, extra, "").map_err(llvm_err)?;
-        let total = self.b.build_int_add(total, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
-        let pattern = self.call_rt_alloc(total)?;
-        self.b.build_memcpy(pattern, 1, path, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
-        let sep_at = self.offset(pattern, len)?;
-        let sep_byte = self
-            .b
-            .build_select(needs_sep, i8_ty.const_int(u64::from(b'\\'), false), i8_ty.const_zero(), "")
-            .map_err(llvm_err)?;
-        self.b.build_store(sep_at, sep_byte).map_err(llvm_err)?;
-        let star_at = self.offset(pattern, self.b.build_int_add(len, extra, "").map_err(llvm_err)?)?;
-        self.b.build_store(star_at, i8_ty.const_int(u64::from(b'*'), false)).map_err(llvm_err)?;
-        let nul_at =
-            self.offset(pattern, self.b.build_int_sub(total, usize_ty.const_int(1, false), "").map_err(llvm_err)?)?;
-        self.b.build_store(nul_at, i8_ty.const_zero()).map_err(llvm_err)?;
+        let pattern = self.find_pattern(path)?;
 
         let data = self.b.build_alloca(self.i64().array_type(FIND_DATA_WORDS), "find.data").map_err(llvm_err)?;
         let handle = self
@@ -5081,6 +5043,273 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.call_rt_free(pattern)?;
         self.call(free, &[path.into()])?;
         self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(())
+    }
+
+    /// The `FindFirstFileA` pattern for the NUL-terminated directory `path`: `path` + (`\` unless it already ends
+    /// in a separator) + `*` + NUL, in a runtime block the caller frees.
+    fn find_pattern(&mut self, path: PointerValue<'ctx>) -> GenResult<PointerValue<'ctx>> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let len = self.call(strlen, &[path.into()])?.expect("strlen returns a size").into_int_value();
+        // `path` + (`\` unless it already ends in a separator) + `*` + NUL. The empty path reads its own
+        // NUL byte as the "last" one, which never needs a separator.
+        let has_char = self.b.build_int_compare(IntPredicate::UGT, len, usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let last_index = self
+            .b
+            .build_select(
+                has_char,
+                self.b.build_int_sub(len, usize_ty.const_int(1, false), "").map_err(llvm_err)?,
+                usize_ty.const_zero(),
+                "",
+            )
+            .map_err(llvm_err)?
+            .into_int_value();
+        let last_at = self.offset(path, last_index)?;
+        let last = self.b.build_load(self.i8(), last_at, "path.last").map_err(llvm_err)?.into_int_value();
+        let i8_ty = self.i8();
+        let slash = self
+            .b
+            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'/'), false), "")
+            .map_err(llvm_err)?;
+        let backslash = self
+            .b
+            .build_int_compare(IntPredicate::EQ, last, i8_ty.const_int(u64::from(b'\\'), false), "")
+            .map_err(llvm_err)?;
+        let separator = self.b.build_or(slash, backslash, "").map_err(llvm_err)?;
+        let needs_sep =
+            self.b.build_and(has_char, self.b.build_not(separator, "").map_err(llvm_err)?, "").map_err(llvm_err)?;
+        let extra = self
+            .b
+            .build_select(needs_sep, usize_ty.const_int(1, false), usize_ty.const_zero(), "")
+            .map_err(llvm_err)?
+            .into_int_value();
+        let total = self.b.build_int_add(len, extra, "").map_err(llvm_err)?;
+        let total = self.b.build_int_add(total, usize_ty.const_int(2, false), "").map_err(llvm_err)?;
+        let pattern = self.call_rt_alloc(total)?;
+        self.b.build_memcpy(pattern, 1, path, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
+        let sep_at = self.offset(pattern, len)?;
+        let sep_byte = self
+            .b
+            .build_select(needs_sep, i8_ty.const_int(u64::from(b'\\'), false), i8_ty.const_zero(), "")
+            .map_err(llvm_err)?;
+        self.b.build_store(sep_at, sep_byte).map_err(llvm_err)?;
+        let star_at = self.offset(pattern, self.b.build_int_add(len, extra, "").map_err(llvm_err)?)?;
+        self.b.build_store(star_at, i8_ty.const_int(u64::from(b'*'), false)).map_err(llvm_err)?;
+        let nul_at =
+            self.offset(pattern, self.b.build_int_sub(total, usize_ty.const_int(1, false), "").map_err(llvm_err)?)?;
+        self.b.build_store(nul_at, i8_ty.const_zero()).map_err(llvm_err)?;
+        Ok(pattern)
+    }
+
+    /// `dir_open(path, path_len, out: *u64) -> i32`: opens a directory for `dir_next`; 0, or the OS error code
+    /// (issue #1021). On Unix the handle is the `DIR *`. On Windows it is a `malloc` block of `[HANDLE, pending:
+    /// i64, WIN32_FIND_DATAA]`, where `pending` says the entry `FindFirstFileA` found has not been returned yet.
+    fn dir_open(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let malloc = libc(self.module, "malloc", ptr_ty.fn_type(&[usize_ty.into()], false));
+        let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+        let params = [ptr_ty.into(), usize_ty.into(), ptr_ty.into()];
+        let f = self.function("burdin_rt_dir_open", i32_ty.fn_type(&params, false));
+        let (path, plen, out) = (Self::ptr_param(f, 0), Self::int_param(f, 1), Self::ptr_param(f, 2));
+        let cpath = self.cstring_of(path, plen, malloc)?;
+        let open = self.block(f, "dir_open.open");
+        let fail = self.block(f, "dir_open.fail");
+        if self.windows {
+            let find_first =
+                libc(self.module, "FindFirstFileA", ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            let pattern = self.find_pattern(cpath)?;
+            let size = 16 + u64::from(FIND_DATA_WORDS) * 8;
+            let state = self
+                .call(malloc, &[usize_ty.const_int(size, false).into()])?
+                .expect("malloc returns a pointer")
+                .into_pointer_value();
+            let data = self.offset(state, usize_ty.const_int(16, false))?;
+            let handle = self
+                .call(find_first, &[pattern.into(), data.into()])?
+                .expect("FindFirstFileA returns a handle")
+                .into_pointer_value();
+            let handle_int = self.b.build_ptr_to_int(handle, usize_ty, "find.handle").map_err(llvm_err)?;
+            let invalid = self
+                .b
+                .build_int_compare(IntPredicate::EQ, handle_int, usize_ty.const_all_ones(), "")
+                .map_err(llvm_err)?;
+            // The code is read before the frees, which may change it.
+            let code = self.last_error(false)?;
+            self.call_rt_free(pattern)?;
+            self.call(free, &[cpath.into()])?;
+            self.b.build_conditional_branch(invalid, fail, open).map_err(llvm_err)?;
+            self.b.position_at_end(fail);
+            self.call(free, &[state.into()])?;
+            self.b.build_return(Some(&code)).map_err(llvm_err)?;
+            self.b.position_at_end(open);
+            self.b.build_store(state, handle).map_err(llvm_err)?;
+            let pending = self.offset(state, usize_ty.const_int(8, false))?;
+            self.b.build_store(pending, i64_ty.const_int(1, false)).map_err(llvm_err)?;
+            let id = self.b.build_ptr_to_int(state, i64_ty, "dir.handle").map_err(llvm_err)?;
+            self.b.build_store(out, id).map_err(llvm_err)?;
+        } else {
+            let opendir = libc(self.module, "opendir", ptr_ty.fn_type(&[ptr_ty.into()], false));
+            let dir = self.call(opendir, &[cpath.into()])?.expect("opendir returns a pointer").into_pointer_value();
+            let missing = self.b.build_is_null(dir, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(missing, fail, open).map_err(llvm_err)?;
+            self.b.position_at_end(fail);
+            let code = self.last_error(true)?;
+            self.call(free, &[cpath.into()])?;
+            self.b.build_return(Some(&code)).map_err(llvm_err)?;
+            self.b.position_at_end(open);
+            self.call(free, &[cpath.into()])?;
+            let id = self.b.build_ptr_to_int(dir, i64_ty, "dir.handle").map_err(llvm_err)?;
+            self.b.build_store(out, id).map_err(llvm_err)?;
+        }
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `dir_next(handle: u64, out: *String) -> i32`: replaces `out` with the next name in the listing, skipping `.`
+    /// and `..`; 0 for a name, -1 at the end, or the OS error code. `out`'s buffer is reused and grows only when the
+    /// name does not fit.
+    fn dir_next(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (usize_ty, ptr_ty, i32_ty, i64_ty) = (self.usize_ty, self.ptr_ty, self.i32(), self.i64());
+        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
+        let f = self.function("burdin_rt_dir_next", i32_ty.fn_type(&[i64_ty.into(), ptr_ty.into()], false));
+        let (handle, out) = (Self::int_param(f, 0), Self::ptr_param(f, 1));
+        let end_code = i32_ty.const_all_ones();
+        let entry = self.block(f, "dir_next.entry");
+        let set = self.block(f, "dir_next.set");
+        if self.windows {
+            let find_next = libc(self.module, "FindNextFileA", i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false));
+            let state = self.b.build_int_to_ptr(handle, ptr_ty, "dir.state").map_err(llvm_err)?;
+            let pending_at = self.offset(state, usize_ty.const_int(8, false))?;
+            let data = self.offset(state, usize_ty.const_int(16, false))?;
+            let first = self.block(f, "dir_next.first");
+            let advance = self.block(f, "dir_next.advance");
+            let no_more = self.block(f, "dir_next.no_more");
+            let pending = self.b.build_load(i64_ty, pending_at, "pending").map_err(llvm_err)?.into_int_value();
+            let has_first =
+                self.b.build_int_compare(IntPredicate::NE, pending, i64_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(has_first, first, advance).map_err(llvm_err)?;
+
+            self.b.position_at_end(first);
+            self.b.build_store(pending_at, i64_ty.const_zero()).map_err(llvm_err)?;
+            self.b.build_unconditional_branch(entry).map_err(llvm_err)?;
+
+            self.b.position_at_end(advance);
+            let find = self.b.build_load(ptr_ty, state, "find.handle").map_err(llvm_err)?;
+            let more = self
+                .call(find_next, &[find.into(), data.into()])?
+                .expect("FindNextFileA returns a flag")
+                .into_int_value();
+            let has_more =
+                self.b.build_int_compare(IntPredicate::NE, more, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(has_more, entry, no_more).map_err(llvm_err)?;
+
+            // `ERROR_NO_MORE_FILES` is the normal end of the listing; any other code is a failure.
+            self.b.position_at_end(no_more);
+            let code = self.last_error(false)?;
+            let no_more_files = i32_ty.const_int(u64::from(ERROR_NO_MORE_FILES), false);
+            let last = self.b.build_int_compare(IntPredicate::EQ, code, no_more_files, "").map_err(llvm_err)?;
+            let status = self.b.build_select(last, end_code, code, "dir.status").map_err(llvm_err)?;
+            self.b.build_return(Some(&status)).map_err(llvm_err)?;
+
+            self.b.position_at_end(entry);
+            let name = self.offset(data, usize_ty.const_int(FIND_DATA_FILE_NAME_OFFSET, false))?;
+            let nlen = self.call(strlen, &[name.into()])?.expect("strlen returns a size").into_int_value();
+            let skip = self.is_dot_or_dotdot(name, nlen)?;
+            self.b.build_conditional_branch(skip, advance, set).map_err(llvm_err)?;
+            self.b.position_at_end(set);
+            self.string_set(f, out, name, nlen)?;
+        } else {
+            let readdir = libc(self.module, "readdir", ptr_ty.fn_type(&[ptr_ty.into()], false));
+            let dir = self.b.build_int_to_ptr(handle, ptr_ty, "dir").map_err(llvm_err)?;
+            let scan = self.block(f, "dir_next.scan");
+            let scan_end = self.block(f, "dir_next.scan_end");
+            self.b.build_unconditional_branch(scan).map_err(llvm_err)?;
+
+            // `readdir` returns NULL both at the end of the listing and on an error, and only sets `errno` for the
+            // error; zero it first so the two can be told apart.
+            self.b.position_at_end(scan);
+            let errno = self.errno_ptr()?;
+            self.b.build_store(errno, i32_ty.const_zero()).map_err(llvm_err)?;
+            let ent = self.call(readdir, &[dir.into()])?.expect("readdir returns a pointer").into_pointer_value();
+            let end = self.b.build_is_null(ent, "").map_err(llvm_err)?;
+            self.b.build_conditional_branch(end, scan_end, entry).map_err(llvm_err)?;
+
+            self.b.position_at_end(scan_end);
+            let code = self.b.build_load(i32_ty, errno, "readdir.errno").map_err(llvm_err)?.into_int_value();
+            let bad = self.b.build_int_compare(IntPredicate::NE, code, i32_ty.const_zero(), "").map_err(llvm_err)?;
+            let status = self.b.build_select(bad, code, end_code, "dir.status").map_err(llvm_err)?;
+            self.b.build_return(Some(&status)).map_err(llvm_err)?;
+
+            self.b.position_at_end(entry);
+            let name = self.offset(ent, usize_ty.const_int(self.sys.dirent_name_offset, false))?;
+            let nlen = self.call(strlen, &[name.into()])?.expect("strlen returns a size").into_int_value();
+            let skip = self.is_dot_or_dotdot(name, nlen)?;
+            self.b.build_conditional_branch(skip, scan, set).map_err(llvm_err)?;
+            self.b.position_at_end(set);
+            self.string_set(f, out, name, nlen)?;
+        }
+        self.b.build_return(Some(&i32_ty.const_zero())).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `dir_close(handle: u64)`: `closedir`, or `FindClose` and the state block's `free`.
+    fn dir_close(&mut self) -> GenResult<FunctionValue<'ctx>> {
+        let (ptr_ty, i32_ty, i64_ty) = (self.ptr_ty, self.i32(), self.i64());
+        let f = self.function("burdin_rt_dir_close", self.cx.void_type().fn_type(&[i64_ty.into()], false));
+        let handle = Self::int_param(f, 0);
+        let at = self.b.build_int_to_ptr(handle, ptr_ty, "dir").map_err(llvm_err)?;
+        if self.windows {
+            let find_close = libc(self.module, "FindClose", i32_ty.fn_type(&[ptr_ty.into()], false));
+            let free = libc(self.module, "free", self.cx.void_type().fn_type(&[ptr_ty.into()], false));
+            let find = self.b.build_load(ptr_ty, at, "find.handle").map_err(llvm_err)?;
+            self.call(find_close, &[find.into()])?;
+            self.call(free, &[at.into()])?;
+        } else {
+            let closedir = libc(self.module, "closedir", i32_ty.fn_type(&[ptr_ty.into()], false));
+            self.call(closedir, &[at.into()])?;
+        }
+        self.b.build_return(None).map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// Replaces the contents of the `String` at `out` with the `nlen` bytes at `name`, growing its buffer only when
+    /// they do not fit (to twice the old capacity, at least `nlen`, and at least 16 bytes). The builder is left after
+    /// the copy.
+    fn string_set(
+        &mut self,
+        f: FunctionValue<'ctx>,
+        out: PointerValue<'ctx>,
+        name: PointerValue<'ctx>,
+        nlen: IntValue<'ctx>,
+    ) -> GenResult<()> {
+        let (usize_ty, ptr_ty) = (self.usize_ty, self.ptr_ty);
+        let ptr_field = self.b.build_struct_gep(self.string_ty, out, 0, "string.ptr").map_err(llvm_err)?;
+        let len_field = self.b.build_struct_gep(self.string_ty, out, 1, "string.len").map_err(llvm_err)?;
+        let cap_field = self.b.build_struct_gep(self.string_ty, out, 2, "string.cap").map_err(llvm_err)?;
+        let cap = self.b.build_load(usize_ty, cap_field, "cap").map_err(llvm_err)?.into_int_value();
+        let short = self.b.build_int_compare(IntPredicate::ULT, cap, nlen, "short").map_err(llvm_err)?;
+        let grow = self.block(f, "string_set.grow");
+        let copy = self.block(f, "string_set.copy");
+        self.b.build_conditional_branch(short, grow, copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(grow);
+        let doubled = self.b.build_int_mul(cap, usize_ty.const_int(2, false), "doubled").map_err(llvm_err)?;
+        let small = self.b.build_int_compare(IntPredicate::ULT, doubled, nlen, "").map_err(llvm_err)?;
+        let wide = self.b.build_select(small, nlen, doubled, "cap").map_err(llvm_err)?.into_int_value();
+        let sixteen = usize_ty.const_int(16, false);
+        let tiny = self.b.build_int_compare(IntPredicate::ULT, wide, sixteen, "").map_err(llvm_err)?;
+        let grown = self.b.build_select(tiny, sixteen, wide, "cap").map_err(llvm_err)?.into_int_value();
+        let old = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+        let fresh = self.call_rt_realloc(old, grown)?;
+        self.b.build_store(ptr_field, fresh).map_err(llvm_err)?;
+        self.b.build_store(cap_field, grown).map_err(llvm_err)?;
+        self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
+
+        self.b.position_at_end(copy);
+        let data = self.b.build_load(ptr_ty, ptr_field, "ptr").map_err(llvm_err)?.into_pointer_value();
+        self.b.build_memcpy(data, 1, name, 1, nlen).map_err(llvm_err)?;
+        self.b.build_store(len_field, nlen).map_err(llvm_err)?;
         Ok(())
     }
 

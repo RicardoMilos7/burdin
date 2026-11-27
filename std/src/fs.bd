@@ -7,12 +7,13 @@
 // impure: a constant evaluation that reaches one fails with E0224.
 
 use fmt.{Debug, Formatter}
+use iter.Iterator
 use path.Path
 use reactor.offload
 use rw.{Read, Seek, SeekFrom, Write}
 use sort.sort_by
 use std.{IoError, IoErrorKind}
-use text.to_char_list
+use text.truncate
 
 /// The kind of entry a path names.
 ///
@@ -329,11 +330,7 @@ fn canonicalize(path: str): Result<String, IoError> {
 /// remove_dir_all("burdin-doc-walk").unwrap()
 /// ```
 fn walk(root: str): Result<List<String>, IoError> {
-    let mut out = List<String>.new()
-    match walk_tree(Path.new(root), "", mut out) {
-        Result.Ok(()) => {}
-        Result.Err(failure) => return Result.Err(failure),
-    }
+    let mut out = offload(|| walk_now(root, "", false))?
     out.sort_by(|a, b| a.cmp(*b))
     Result.Ok(out)
 }
@@ -341,7 +338,8 @@ fn walk(root: str): Result<List<String>, IoError> {
 /// The entries under `root` whose relative path matches `pattern`, recursively, sorted as `walk` sorts them.
 /// `*` matches any run of characters inside one path segment, `?` matches one character inside a segment, and
 /// `**` matches across segments; a `**` followed by a separator also matches no segment at all, so `**/*.bd`
-/// finds a file at the top level too. Both `/` and `\` are separators in a pattern.
+/// finds a file at the top level too. Both `/` and `\` are separators in a pattern. A directory whose path no match
+/// can start with is not read, so `src/*.bd` reads only `root` and `src`.
 ///
 /// ```
 /// create_dir_all("burdin-doc-glob/sub").unwrap()
@@ -352,60 +350,137 @@ fn walk(root: str): Result<List<String>, IoError> {
 /// remove_dir_all("burdin-doc-glob").unwrap()
 /// ```
 fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
-    let all = walk(root)?
-    let pat = pattern.to_char_list()
-    let mut out = List<String>.new()
-    for rel in all {
-        if glob_match(pat, 0, rel.to_char_list(), 0) {
-            out.push(rel.clone())
-        }
-    }
+    let mut out = offload(|| walk_now(root, pattern, true))?
+    out.sort_by(|a, b| a.cmp(*b))
     Result.Ok(out)
 }
 
-// `root` is made once by `walk` and shared by every level, so a directory costs one `join` for its own path and
-// one per entry, and the relative names are built at their final size (issue #1020).
-priv fn walk_tree(root: Path, prefix: str, mut out: List<String>): Result<(), IoError> {
-    let dir = root.join(prefix)
-    let names = match read_dir(dir.as_str()) {
-        Result.Ok(names) => names,
-        Result.Err(failure) => return Result.Err(failure),
+// The walk runs as one `offload` and calls the primitives directly, so an entry costs its system calls and no
+// helper-thread round trip. It keeps two buffers for the whole walk: `full`, the path of the current entry, which a
+// level extends by a name and cuts back, and `name`, which `__dir_next` overwrites. The relative path is the tail of
+// `full` after `base`, so an entry allocates only the copy `out` keeps (issue #1021).
+priv fn walk_now(root: str, pattern: str, glob: bool): Result<List<String>, IoError> {
+    let start = Path.new(root)
+    // `join` decides whether a separator goes between the root and a name; joining a one-byte name shows where the
+    // names start. The text before them is `root` itself, or `root` and a separator.
+    let mut full = String.from(start.join("_").as_str())
+    let base = full.len() - 1
+    full.truncate(root.len())
+    let mut name = String.new()
+    let mut out = List<String>.new()
+    walk_level(mut full, base, start.separator(), pattern.as_bytes(), glob, mut name, mut out)?
+    Result.Ok(out)
+}
+
+/// An open directory listing; dropping it closes the handle, on every return.
+priv struct DirHandle {
+    id: u64
+}
+
+DirHandle: Drop {
+    fn drop(mut self) {
+        __dir_close(self.id)
     }
-    for name in names.into_iter() {
-        let rel = if prefix.len() == 0 {
-            name
-        } else {
-            let mut rel = String.with_capacity(prefix.len() + 1 + name.len())
-            rel.push_str(prefix)
-            rel.push(root.separator())
-            rel.push_str(name.as_str())
-            rel
+}
+
+priv fn read_error(path: str, code: i32): IoError {
+    IoError.Read { path: path.to_string(), kind: __io_kind(code), os_code: Option.Some(code) }
+}
+
+/// Lists the directory `full` names and walks into each subdirectory, adding the relative paths to `out` (every one,
+/// or with `glob` those that match `pattern`). `full` comes back as it was.
+priv fn walk_level(
+    mut full: String,
+    base: usize,
+    sep: char,
+    pattern: [u8],
+    glob: bool,
+    mut name: String,
+    mut out: List<String>,
+): Result<(), IoError> {
+    let dir = match __dir_open(full.as_str()) {
+        Result.Ok(id) => DirHandle { id: id },
+        Result.Err(code) => return Result.Err(read_error(full.as_str(), code)),
+    }
+    let dir_end = full.len()
+    if dir_end != base {
+        full.push(sep)
+    }
+    let start = full.len()
+    // The loop takes no view of `full` or `name`: a view used in a loop is live for the whole loop (RF2), which would
+    // forbid the `mut` passes. `walk_entry` takes them.
+    loop {
+        match __dir_next(dir.id, mut name) {
+            Result.Ok(true) => {}
+            Result.Ok(false) => break,
+            Result.Err(code) => {
+                full.truncate(dir_end)
+                return Result.Err(walk_error(full, code))
+            }
         }
-        let full = root.join(rel.as_str())
-        let info = match metadata(full.as_str()) {
-            Result.Ok(info) => info,
-            Result.Err(failure) => return Result.Err(failure),
-        }
-        out.push(rel.clone())
-        if info.is_dir() && !info.is_symlink() {
-            walk_tree(root, rel.as_str(), mut out)?
+        if walk_entry(mut full, start, base, name, pattern, glob, mut out)? {
+            walk_level(mut full, base, sep, pattern, glob, mut name, mut out)?
         }
     }
+    full.truncate(dir_end)
     Result.Ok(())
 }
 
-priv fn glob_sep(c: char): bool {
-    c == '/' || c == '\\'
+/// Puts `name` after the directory's path in `full`, reads its metadata, and adds its relative path to `out` when it
+/// is kept. The result says whether to walk into it: a directory, and with `glob` one a match can lie under.
+priv fn walk_entry(
+    mut full: String,
+    start: usize,
+    base: usize,
+    name: String,
+    pattern: [u8],
+    glob: bool,
+    mut out: List<String>,
+): Result<bool, IoError> {
+    full.truncate(start)
+    full.push_str(name.as_str())
+    let path = full.as_str()
+    let flags = match __metadata(path) {
+        Result.Ok((_, _, _, _, flags)) => flags,
+        Result.Err(code) => return Result.Err(read_error(path, code)),
+    }
+    let rel = path[base..path.len()]
+    if !glob || glob_match(pattern, 0, rel.as_bytes(), 0) {
+        out.push(String.from(rel))
+    }
+    // A symbolic link is listed but never followed: its kind is `Symlink`, not `Dir`.
+    let is_dir = file_kind(flags) == FileKind.Dir
+    Result.Ok(is_dir && (!glob || glob_may_descend(pattern, 0, rel.as_bytes(), 0)))
 }
 
-/// Whether `text[ti..]` matches `pattern[pi..]`, with `*`, `?`, and `**` as `walk_glob` describes.
-priv fn glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize): bool {
+priv fn walk_error(path: String, code: i32): IoError {
+    read_error(path.as_str(), code)
+}
+
+priv const GLOB_STAR: u8 = 42
+priv const GLOB_QUESTION: u8 = 63
+
+priv fn glob_sep(b: u8): bool {
+    b == 47 || b == 92
+}
+
+/// The offset of the character after the one at `i`: the pattern's `*` and `?` step over whole UTF-8 characters, so
+/// every offset the matcher compares at is a character boundary.
+priv fn glob_next(text: [u8], i: usize): usize {
+    let b = text[i]
+    let width: usize = if b >= 240 { 4 } else if b >= 224 { 3 } else if b >= 192 { 2 } else { 1 }
+    if i + width > text.len() { text.len() } else { i + width }
+}
+
+/// Whether `text[ti..]` matches `pattern[pi..]`, with `*`, `?`, and `**` as `walk_glob` describes. Both are bytes:
+/// a literal character matches byte for byte.
+priv fn glob_match(pattern: [u8], pi: usize, text: [u8], ti: usize): bool {
     if pi == pattern.len() {
         return ti == text.len()
     }
     let pc = pattern[pi]
-    if pc == '*' {
-        if pi + 1 < pattern.len() && pattern[pi + 1] == '*' {
+    if pc == GLOB_STAR {
+        if pi + 1 < pattern.len() && pattern[pi + 1] == GLOB_STAR {
             // `**/` matches zero path segments: try the rest of the pattern at the same position.
             if pi + 2 < pattern.len() && glob_sep(pattern[pi + 2]) {
                 if glob_match(pattern, pi + 3, text, ti) {
@@ -420,7 +495,7 @@ priv fn glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize):
                 if k == text.len() {
                     return false
                 }
-                k = k + 1
+                k = glob_next(text, k)
             }
         }
         let mut k = ti
@@ -431,19 +506,122 @@ priv fn glob_match(pattern: List<char>, pi: usize, text: List<char>, ti: usize):
             if k == text.len() || glob_sep(text[k]) {
                 return false
             }
-            k = k + 1
+            k = glob_next(text, k)
         }
     }
     if ti == text.len() {
         return false
     }
-    if pc == '?' {
-        return !glob_sep(text[ti]) && glob_match(pattern, pi + 1, text, ti + 1)
+    if pc == GLOB_QUESTION {
+        return !glob_sep(text[ti]) && glob_match(pattern, pi + 1, text, glob_next(text, ti))
     }
     if glob_sep(pc) {
         return glob_sep(text[ti]) && glob_match(pattern, pi + 1, text, ti + 1)
     }
     pc == text[ti] && glob_match(pattern, pi + 1, text, ti + 1)
+}
+
+/// Whether a path under the directory `text[ti..]` (the directory, a separator, and more) could match
+/// `pattern[pi..]`. A `**` can match anything, so it answers yes; otherwise the directory's path must match a prefix
+/// of the pattern that ends where a separator can follow. `walk_glob` skips a directory this rejects.
+priv fn glob_may_descend(pattern: [u8], pi: usize, text: [u8], ti: usize): bool {
+    if pi == pattern.len() {
+        return false
+    }
+    let pc = pattern[pi]
+    if pc == GLOB_STAR {
+        if pi + 1 < pattern.len() && pattern[pi + 1] == GLOB_STAR {
+            return true
+        }
+        let mut k = ti
+        loop {
+            if glob_may_descend(pattern, pi + 1, text, k) {
+                return true
+            }
+            if k == text.len() || glob_sep(text[k]) {
+                return false
+            }
+            k = glob_next(text, k)
+        }
+    }
+    if ti == text.len() {
+        // The directory's path is used up; the separator that follows it must match next.
+        return glob_sep(pc)
+    }
+    if pc == GLOB_QUESTION {
+        return !glob_sep(text[ti]) && glob_may_descend(pattern, pi + 1, text, glob_next(text, ti))
+    }
+    if glob_sep(pc) {
+        return glob_sep(text[ti]) && glob_may_descend(pattern, pi + 1, text, ti + 1)
+    }
+    pc == text[ti] && glob_may_descend(pattern, pi + 1, text, ti + 1)
+}
+
+/// The entries of one directory, read lazily (`read_dir_iter`). Each item is a name, or the error that ended the
+/// listing; the iterator yields nothing after an error. Dropping it closes the directory.
+///
+/// ```
+/// create_dir("burdin-doc-entries").unwrap()
+/// write("burdin-doc-entries/one.txt", "x".as_bytes()).unwrap()
+/// let mut names = read_dir_iter("burdin-doc-entries").unwrap()
+/// assert_eq(names.next().unwrap().unwrap(), String.from("one.txt"))
+/// assert(names.next().is_none())
+/// remove_dir_all("burdin-doc-entries").unwrap()
+/// ```
+struct ReadDir {
+    priv dir: DirHandle
+    priv path: String
+    priv done: bool
+}
+
+ReadDir: Iterator<Result<String, IoError>> {
+    fn next(mut self): Option<Result<String, IoError>> {
+        if self.done {
+            return Option.None
+        }
+        let id = self.dir.id
+        let mut name = String.new()
+        let name_ptr = unsafe { (&mut name) as CPtr<String> }
+        let step = unsafe {
+            offload(|| unsafe {
+                __dir_next(id, mut *name_ptr)
+            })
+        }
+        match step {
+            Result.Ok(true) => Option.Some(Result.Ok(name)),
+            Result.Ok(false) => {
+                self.done = true
+                Option.None
+            }
+            Result.Err(code) => {
+                self.done = true
+                Option.Some(Result.Err(read_error(self.path.as_str(), code)))
+            }
+        }
+    }
+}
+
+/// The names in the directory `path`, read one at a time as the iterator is advanced, so a caller that stops early
+/// does not read the rest. The names and their order are `read_dir`'s; opening a missing path or a file is an error
+/// here, and a failure later in the listing is an `Err` item.
+///
+/// ```
+/// create_dir("burdin-doc-read-dir-iter").unwrap()
+/// write("burdin-doc-read-dir-iter/a.txt", "x".as_bytes()).unwrap()
+/// write("burdin-doc-read-dir-iter/b.txt", "y".as_bytes()).unwrap()
+/// let mut count = 0
+/// for name in read_dir_iter("burdin-doc-read-dir-iter").unwrap() {
+///     assert(name.unwrap().ends_with(".txt"))
+///     count = count + 1
+/// }
+/// assert_eq(count, 2)
+/// remove_dir_all("burdin-doc-read-dir-iter").unwrap()
+/// ```
+fn read_dir_iter(path: str): Result<ReadDir, IoError> {
+    match offload(|| __dir_open(path)) {
+        Result.Ok(id) => Result.Ok(ReadDir { dir: DirHandle { id: id }, path: path.to_string(), done: false }),
+        Result.Err(code) => Result.Err(read_error(path, code)),
+    }
 }
 
 Path {
@@ -457,6 +635,18 @@ Path {
     /// ```
     fn read_dir(self): Result<List<String>, IoError> {
         read_dir(self.as_str())
+    }
+
+    /// The names in this directory, read lazily (`read_dir_iter`).
+    ///
+    /// ```
+    /// create_dir("burdin-doc-path-iter").unwrap()
+    /// write("burdin-doc-path-iter/one.txt", "x".as_bytes()).unwrap()
+    /// assert_eq(Path.unix("burdin-doc-path-iter").read_dir_iter().unwrap().count(), 1)
+    /// remove_dir_all("burdin-doc-path-iter").unwrap()
+    /// ```
+    fn read_dir_iter(self): Result<ReadDir, IoError> {
+        read_dir_iter(self.as_str())
     }
 
     /// This path's metadata (`metadata`).
@@ -885,7 +1075,8 @@ File: Drop {
     }
 }
 
-/// Reads the whole file at `path` as bytes.
+/// Reads the whole file at `path` as bytes. The buffer is sized from the file's metadata, so a file that does not
+/// change while it is read is read into one allocation, with one byte of room for the read that sees its end.
 ///
 /// ```
 /// write("burdin-doc-read-bytes.txt", "hi".as_bytes()).unwrap()
@@ -895,9 +1086,19 @@ File: Drop {
 /// ```
 fn read(path: str): Result<List<u8>, IoError> {
     let mut file = File.open(path)?
-    let mut bytes = List<u8>.new()
-    file.read_to_end(mut bytes)?
-    Result.Ok(bytes)
+    // The size is only a hint: a file that grew since is read on, growing the buffer like `read_to_end`.
+    let size = match metadata(path) {
+        Result.Ok(info) if info.is_file() => info.size as usize,
+        _ => 0,
+    }
+    let mut bytes = List<u8>.with_capacity(size + 1)
+    loop {
+        let room = bytes.capacity() - bytes.len()
+        let n = file.read(mut bytes, if room > 0 { room } else { 65536 })?
+        if n == 0 {
+            return Result.Ok(bytes)
+        }
+    }
 }
 
 /// Writes `data` to `path`, creating the file when it is missing and replacing its contents when it exists.
@@ -930,7 +1131,8 @@ fn append(path: str, data: [u8]): Result<(), IoError> {
 }
 
 /// Copies every byte of `from` to `to`, creating or replacing `to`, and returns how many bytes it copied. The
-/// destination's permissions are not copied; only the bytes are. It is `copy_file` rather than `copy` because the
+/// destination's permissions are not copied; only the bytes are. The bytes go through one 64 KiB buffer, and the
+/// whole copy runs as one `offload`, so a chunk costs its two system calls and no helper-thread round trip. It is `copy_file` rather than `copy` because the
 /// reader/writer `copy` in `std.rw` already owns the unqualified name in the prelude.
 ///
 /// ```
@@ -942,17 +1144,54 @@ fn append(path: str, data: [u8]): Result<(), IoError> {
 /// remove_file("burdin-doc-copy-to.txt").unwrap()
 /// ```
 fn copy_file(from: str, to: str): Result<u64, IoError> {
-    let mut source = File.open(from)?
-    let mut destination = File.create(to)?
-    let mut chunk = List<u8>.new()
+    let source = File.open(from)?
+    let destination = File.create(to)?
+    let (sfd, dfd) = (source.fd, destination.fd)
+    match offload(|| copy_fds(sfd, dfd)) {
+        Result.Ok(total) => Result.Ok(total),
+        Result.Err(CopyFailure.Read(code)) => Result.Err(IoError.Read {
+            path: from.to_string(),
+            kind: io_error_kind(code),
+            os_code: io_error_code(code),
+        }),
+        Result.Err(CopyFailure.Write(code)) => Result.Err(IoError.Write {
+            path: to.to_string(),
+            kind: io_error_kind(code),
+            os_code: io_error_code(code),
+        }),
+        Result.Err(CopyFailure.WriteZero) => Result.Err(IoError.WriteZero),
+    }
+}
+
+/// Why `copy_fds` stopped: the failing side and the code `__file_error` reported, or a write that took nothing.
+priv enum CopyFailure {
+    Read(i32)
+    Write(i32)
+    WriteZero
+}
+
+/// Copies the rest of the descriptor `from` into `to` through one buffer, calling the primitives directly: it runs
+/// on a helper thread as one `offload` (`copy_file`).
+priv fn copy_fds(from: i32, to: i32): Result<u64, CopyFailure> {
+    let mut chunk = List<u8>.with_capacity(65536)
     let mut total: u64 = 0
     loop {
         chunk.clear()
-        let n = source.read(mut chunk, 65536)?
+        let n = match __file_read(from, mut chunk, 65536) {
+            Result.Ok(n) => n,
+            Result.Err(_) => return Result.Err(CopyFailure.Read(__file_error())),
+        }
         if n == 0 {
             return Result.Ok(total)
         }
-        destination.write_all(chunk[0..chunk.len()])?
+        let mut done: usize = 0
+        while done < n {
+            match __file_write(to, chunk[done..n]) {
+                Result.Ok(0) => return Result.Err(CopyFailure.WriteZero),
+                Result.Ok(k) => done = done + k,
+                Result.Err(_) => return Result.Err(CopyFailure.Write(__file_error())),
+            }
+        }
         total = total + (n as u64)
     }
 }

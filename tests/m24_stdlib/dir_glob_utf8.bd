@@ -1,0 +1,25 @@
+//@ run
+//@ skip-platform: windows
+//> question ["é/ñ.txt"]
+//> star ["é/ñ.txt", "é/ña.txt"]
+//> literal ["é/ña.txt"]
+//> six ["é/ña.txt"]
+
+// `walk_glob` matches the pattern against the path's bytes (issue #1021), but `?` and `*` step over whole UTF-8
+// characters, so `?` matches a two-byte `é` exactly once. Windows is skipped because its runtime lists directories
+// with the ANSI `FindFirstFileA`, which does not return these names as UTF-8.
+
+fn show(list: List<String>): String {
+    format("{list:?}")
+}
+
+fn main() {
+    create_dir_all("utf8/é").unwrap()
+    write_file("utf8/é/ñ.txt", "a").unwrap()
+    write_file("utf8/é/ña.txt", "b").unwrap()
+    println("question {show(walk_glob("utf8", "?/?.txt").unwrap())}")
+    println("star {show(walk_glob("utf8", "*/ñ*").unwrap())}")
+    println("literal {show(walk_glob("utf8", "é/ña.txt").unwrap())}")
+    println("six {show(walk_glob("utf8", "?/??????").unwrap())}")
+    remove_dir_all("utf8").unwrap()
+}

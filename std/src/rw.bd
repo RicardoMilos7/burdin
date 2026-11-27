@@ -319,7 +319,12 @@ Lines<R>: Iterator<Result<String, IoError>> where R: BufRead {
     }
 }
 
-/// Copies every byte `from` has left into `to` and returns how many it copied. It does not flush `to`.
+/// The size of `copy`'s buffer, which `fs.copy_file` uses too (issue #1021): large enough that copying a file costs
+/// few system calls, and allocated once per copy.
+priv const COPY_CHUNK: usize = 65536
+
+/// Copies every byte `from` has left into `to` and returns how many it copied. It does not flush `to`. The bytes go
+/// through one buffer of 64 KiB, allocated once.
 ///
 /// ```
 /// let mut from = Cursor.from_text("copy me")
@@ -328,11 +333,11 @@ Lines<R>: Iterator<Result<String, IoError>> where R: BufRead {
 /// assert_eq(to.get_ref().len(), 7)
 /// ```
 fn copy<R: Read, W: Write>(mut from: R, mut to: W): Result<u64, IoError> {
-    let mut chunk = List<u8>.new()
+    let mut chunk = List<u8>.with_capacity(COPY_CHUNK)
     let mut total: u64 = 0
     loop {
         chunk.clear()
-        let n = from.read(mut chunk, 4096)?
+        let n = from.read(mut chunk, COPY_CHUNK)?
         if n == 0 {
             return Result.Ok(total)
         }

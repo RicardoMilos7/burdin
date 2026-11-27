@@ -113,8 +113,12 @@ A panic in a helper aborts the process, like a panic in a task (TK8).
 
 The wrapped operations are file and directory handling: `fs.read`, `fs.write`, `fs.append`, `File.open`, `File.read`,
 `File.write`, `File.seek`, `File.sync_all`, `File.set_len`, `read_dir`, `create_dir`, `remove_dir`, `remove_file`,
-`rename`, `metadata`, `canonicalize`, and the whole-file `__read_to_string`/`__write_file` primitives. Dropping a
-`File` closes it inline: closing a descriptor does not wait for data.
+`rename`, `metadata`, `canonicalize`, `read_dir_iter` (its open and each step), and the whole-file
+`__read_to_string`/`__write_file` primitives. Dropping a `File` closes it inline: closing a descriptor does not wait
+for data. An operation that makes many system calls runs as one `offload` and calls the primitives directly on the
+helper, so it pays one round trip rather than one per call: `walk` and `walk_glob` (every directory and every
+entry's metadata), and `copy_file`'s read and write loop (issue #1021). Dropping a `ReadDir` closes the directory
+inline too.
 
 Tests: `s2_io/file_in_task` (correctness), `file_fifo_offload` (a blocking `open` on a FIFO parks the task while
 another task writes; with one worker, an inline open would deadlock), `stress_files` (many tasks at once, repeated in
