@@ -157,6 +157,15 @@ pub enum Builtin {
     StdinError,
     /// `__read_dir(path)`: the names of the entries in a directory (`spec/stdlib.md`, issue #411).
     ReadDir,
+    /// `__dir_open(path) -> Result<u64, i32>`: opens a directory for `__dir_next` and returns its handle (issue
+    /// #1021). The handle must be closed with `__dir_close`.
+    DirOpen,
+    /// `__dir_next(handle, mut name) -> Result<bool, i32>`: replaces `name` with the next entry's name, without
+    /// `.` and `..`, and returns `true`, or `false` at the end of the listing. `name`'s buffer is reused, so a walk
+    /// allocates nothing per entry once it is large enough.
+    DirNext,
+    /// `__dir_close(handle)`: closes a handle `__dir_open` returned.
+    DirClose,
     /// `__create_dir(path)`: creates one directory.
     CreateDir,
     /// `__remove_dir(path)`: removes an empty directory.

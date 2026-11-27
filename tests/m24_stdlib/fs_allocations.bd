@@ -1,0 +1,82 @@
+//@ burdin-test passed=3 failed=0
+
+// The file system functions do not allocate per entry or per chunk (issue #1021), pinned with the checking
+// allocator's `__alloc_count()` (spec/allocators.md, AL9). Each test compares the same operation on a small and a
+// large input: what the operation allocates must not depend on the size. `walk_glob` reads each name into one reused
+// buffer and allocates only for a match; `read` sizes its buffer from the metadata; `copy_file` copies through one
+// 64 KiB buffer. Every system call goes through `offload`, whose bookkeeping is counted too, so the copy compares two
+// files that take the same number of chunks.
+
+fn make_tree(root: str, files: usize) {
+    create_dir_all(root).unwrap()
+    let mut i: usize = 0
+    while i < files {
+        // Every name has the same length, and both roots do, so the reused buffers grow the same way on both trees.
+        let name = format("{root}/f{i:04}.txt")
+        write(name.as_str(), "x".as_bytes()).unwrap()
+        i = i + 1
+    }
+}
+
+fn glob_count(root: str, pattern: str): u64 {
+    let before = __alloc_count()
+    let found = walk_glob(root, pattern).unwrap()
+    let made = __alloc_count() - before
+    let _ = found.len()
+    made
+}
+
+test "walk_glob allocates nothing for an entry that does not match" {
+    make_tree("fs-alloc-some", 4)
+    make_tree("fs-alloc-lots", 200)
+    let few = glob_count("fs-alloc-some", "*.bd")
+    let many = glob_count("fs-alloc-lots", "*.bd")
+    assert_eq(few, many)?
+    // One match costs the same on both trees too.
+    let few_one = glob_count("fs-alloc-some", "f0001.txt")
+    let many_one = glob_count("fs-alloc-lots", "f0001.txt")
+    assert_eq(few_one, many_one)?
+    remove_dir_all("fs-alloc-some").unwrap()
+    remove_dir_all("fs-alloc-lots").unwrap()
+}
+
+test "read allocates its buffer once" {
+    let small = "abc".repeat(10)
+    let large = "abcdefgh".repeat(40000)
+    write("fs-alloc-small.bin", small.as_bytes()).unwrap()
+    write("fs-alloc-large.bin", large.as_bytes()).unwrap()
+    let mut before = __alloc_count()
+    let a = read("fs-alloc-small.bin").unwrap()
+    let small_count = __alloc_count() - before
+    before = __alloc_count()
+    let b = read("fs-alloc-large.bin").unwrap()
+    let large_count = __alloc_count() - before
+    assert_eq(small_count, large_count)?
+    assert_eq(a.len(), 30)?
+    assert_eq(b.len(), 320000)?
+    assert_eq(b[319999], 104)?
+    remove_file("fs-alloc-small.bin").unwrap()
+    remove_file("fs-alloc-large.bin").unwrap()
+}
+
+test "copy_file copies through one buffer" {
+    // 70,000 and 130,000 bytes are both two 64 KiB chunks and the read that sees the end.
+    let small = "0123456789".repeat(7000)
+    let large = "0123456789".repeat(13000)
+    write("fs-alloc-copy-small.bin", small.as_bytes()).unwrap()
+    write("fs-alloc-copy-large.bin", large.as_bytes()).unwrap()
+    let mut before = __alloc_count()
+    let n = copy_file("fs-alloc-copy-small.bin", "fs-alloc-copy-small.out").unwrap()
+    let small_count = __alloc_count() - before
+    before = __alloc_count()
+    let m = copy_file("fs-alloc-copy-large.bin", "fs-alloc-copy-large.out").unwrap()
+    let large_count = __alloc_count() - before
+    assert_eq(small_count, large_count)?
+    assert_eq(n, 70000)?
+    assert_eq(m, 130000)?
+    assert_eq(read("fs-alloc-copy-large.out").unwrap(), read("fs-alloc-copy-large.bin").unwrap())?
+    remove_file("fs-alloc-copy-small.bin").unwrap()
+    remove_file("fs-alloc-copy-large.bin").unwrap()
+    remove_file("fs-alloc-copy-small.out").unwrap()
+    remove_file("fs-alloc-copy-large.out").unwrap()
+}

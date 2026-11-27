@@ -35,6 +35,9 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__stdin_next_byte" => Builtin::StdinNextByte,
         "__stdin_error" => Builtin::StdinError,
         "__read_dir" => Builtin::ReadDir,
+        "__dir_open" => Builtin::DirOpen,
+        "__dir_next" => Builtin::DirNext,
+        "__dir_close" => Builtin::DirClose,
         "__create_dir" => Builtin::CreateDir,
         "__remove_dir" => Builtin::RemoveDir,
         "__remove_file" => Builtin::RemoveFile,
@@ -215,6 +218,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::StdinError => Ty::Int(IntTy::I32),
         Builtin::FileError => Ty::Int(IntTy::I32),
         Builtin::ReadDir => globals.result_ty(globals.list_of(Ty::String), os_code()),
+        Builtin::DirOpen => globals.result_ty(Ty::Int(IntTy::U64), os_code()),
+        Builtin::DirNext => globals.result_ty(Ty::Bool, os_code()),
+        Builtin::DirClose => Ty::Unit,
         Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
             globals.result_ty(Ty::Unit, os_code())
         }
@@ -355,6 +361,15 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         Builtin::FileWrite => {
             vec![ParamSig::plain(Ty::Int(IntTy::I32)), ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
         }
+        // The name is the caller's string: the primitive replaces its contents, reusing its buffer.
+        Builtin::DirNext => {
+            let mut name = ParamSig::plain(Ty::String);
+            name.by_ref = true;
+            name.mut_param = true;
+            name.exclusive = true;
+            vec![ParamSig::plain(Ty::Int(IntTy::U64)), name]
+        }
+        Builtin::DirClose => vec![ParamSig::plain(Ty::Int(IntTy::U64))],
         Builtin::FileSeek => vec![
             ParamSig::plain(Ty::Int(IntTy::I32)),
             ParamSig::plain(Ty::Int(IntTy::I64)),
@@ -829,6 +844,34 @@ mod tests {
         }
         assert_eq!(builtin_sig(Builtin::FileError, &globals).ret, error);
         assert!(builtin_sig(Builtin::FileError, &globals).params.is_empty());
+    }
+
+    #[test]
+    fn directory_primitives_take_a_handle_and_reuse_the_caller_name() {
+        let error = Ty::Int(IntTy::I32);
+        for (name, found) in
+            [("__dir_open", Builtin::DirOpen), ("__dir_next", Builtin::DirNext), ("__dir_close", Builtin::DirClose)]
+        {
+            assert_eq!(builtin(name), Some(found));
+        }
+
+        let (open, g) = sig_of(Builtin::DirOpen);
+        assert_eq!(open.params.len(), 1);
+        assert_eq!(open.params[0].ty, Ty::Str);
+        assert_eq!(g.result_parts(&open.ret), Some((Ty::Int(IntTy::U64), error.clone())));
+
+        let (next, g) = sig_of(Builtin::DirNext);
+        assert_eq!(next.params[0].ty, Ty::Int(IntTy::U64));
+        assert_eq!(next.params[1].ty, Ty::String);
+        assert!(next.params[1].by_ref, "the primitive overwrites the caller's string");
+        assert!(next.params[1].mut_param);
+        assert!(next.params[1].exclusive);
+        assert_eq!(g.result_parts(&next.ret), Some((Ty::Bool, error)));
+
+        let (close, _) = sig_of(Builtin::DirClose);
+        assert_eq!(close.params.len(), 1);
+        assert_eq!(close.params[0].ty, Ty::Int(IntTy::U64));
+        assert_eq!(close.ret, Ty::Unit);
     }
 
     #[test]

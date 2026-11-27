@@ -1,6 +1,5 @@
-error[E0224]: running tasks and threads, or network I/O is not allowed at
-    compile time: constant evaluation is pure (spec/const-eval.md, CE6); the
-    interpreter cannot do this, but `:compile` builds the session and runs it
-    natively
+error[E0224]: inspecting a C pointer is not allowed at compile time: constant
+    evaluation is pure (spec/const-eval.md, CE6); the interpreter cannot do
+    this, but `:compile` builds the session and runs it natively
  --> main.bd:6:1
   = note: the input was discarded and the session is unchanged

@@ -1236,6 +1236,65 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(end);
                 return self.finish_result(rt, slot, ty);
             }
+            // The lazy directory primitives (issue #1021): a handle, then one name at a time into the caller's
+            // string. Both payloads are integers, so the scratch `Result` carries the value and the code together.
+            Builtin::DirOpen | Builtin::DirNext => {
+                let i64_ty = self.cx.i64_type();
+                let (status, value) = if b == Builtin::DirOpen {
+                    let (ptr, len) = self.str_parts(&args[0])?;
+                    let out = self.alloca(i64_ty.into(), "dir.handle")?;
+                    self.builder.build_store(out, i64_ty.const_zero()).map_err(llvm_err)?;
+                    let status = self
+                        .builder
+                        .build_call(self.rt.dir_open, &[ptr.into(), len.into(), out.into()], "")
+                        .map_err(llvm_err)?
+                        .try_as_basic_value()
+                        .basic()
+                        .expect("dir_open returns a status")
+                        .into_int_value();
+                    let handle = self.builder.build_load(i64_ty, out, "").map_err(llvm_err)?;
+                    (status, handle)
+                } else {
+                    let handle = self.expr_mode(&args[0], Mode::Use)?;
+                    let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::U64));
+                    let Some(name) = self.place_ptr(&args[1])? else {
+                        return Err("the directory entry name is not a place".into());
+                    };
+                    let status = self
+                        .builder
+                        .build_call(self.rt.dir_next, &[handle.into(), name.into()], "")
+                        .map_err(llvm_err)?
+                        .try_as_basic_value()
+                        .basic()
+                        .expect("dir_next returns a status")
+                        .into_int_value();
+                    let zero = self.cx.i32_type().const_zero();
+                    let found = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
+                    (status, found.into())
+                };
+                // `dir_next` reports -1 at the end of the listing, which is `Ok(false)`.
+                let ok = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLE, status, self.cx.i32_type().const_zero(), "")
+                    .map_err(llvm_err)?;
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a directory primitive returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
+                let rt = self.result_ty(ok_ty, err_ty);
+                let slot = self.alloca(rt.into(), "dir.out")?;
+                let mut scratch =
+                    self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
+                scratch = self.builder.build_insert_value(scratch, value, 1, "").map_err(llvm_err)?.into_struct_value();
+                scratch =
+                    self.builder.build_insert_value(scratch, status, 2, "").map_err(llvm_err)?.into_struct_value();
+                self.builder.build_store(slot, scratch).map_err(llvm_err)?;
+                return self.finish_result(rt, slot, ty);
+            }
+            Builtin::DirClose => {
+                let handle = self.expr_mode(&args[0], Mode::Use)?;
+                let handle = self.need_int(handle, &Ty::Int(burdin_tir::IntTy::U64));
+                self.builder.build_call(self.rt.dir_close, &[handle.into()], "").map_err(llvm_err)?;
+                return Ok(None);
+            }
             Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
                 let (ptr, len) = self.str_parts(&args[0])?;
                 let mut values: Vec<BasicMetadataValueEnum> = vec![ptr.into(), len.into()];

@@ -12,6 +12,18 @@ close-out checklist in `AGENTS.md`).
   keeping arity (E0003), bounds (E0141), and cycle (E0009) checks on the alias and applying the target type's impl
   rules. Updated `spec/type-aliases.md` AL5, `spec/grammar.md`, `spec/impls.md`, `tests/README.md`,
   `tests/m21_reflect/alias_generic.bd`, `tests/m21_reflect/alias_invalid.bd`, and `crates/burdin_sema/src/impl_tests.rs`.
+- Issue #1021: `std/src/fs.bd` walks, reads, and copies without per-entry or per-chunk overhead. Three new runtime
+  primitives (`__dir_open`, `__dir_next`, `__dir_close`) read a directory one name at a time into a reused buffer.
+  `walk` and `walk_glob` run as one `offload` that calls the primitives directly, build every path in one reused
+  buffer, and allocate only the paths they return; `walk_glob` matches bytes instead of a `List<char>` per entry (`?`
+  and `*` still step over whole UTF-8 characters) and does not read a directory no match can lie under. `read` sizes
+  its buffer from the metadata, and `copy_file` asks the system to copy (`copy_file_range` on Linux, `fcopyfile` on
+  macOS) and otherwise copies through one 64 KiB buffer, the size `std.rw`'s `copy` now uses too (it was 4 KiB).
+  `walk` sorts in place with a heapsort instead of `sort_by`'s merge sort. `offload` runs its closure on the calling
+  thread outside a task, which removes a ~100 us pool-and-reactor round trip from every file operation there. New: `read_dir_iter` and `Path.read_dir_iter`, a lazy
+  `ReadDir` iterator. `benches/std/src/fs.bd` measures them: against the old code, `walk` over 2,000 files is 98%
+  faster, `walk_glob` 98% (99.8% for one directory), `read` of 4 MiB 99%, and `copy_file` of 4 MiB 86%. Tests:
+  `m24_stdlib/dir_glob_prune`, `dir_glob_utf8`, `dir_read_dir_iter`, and `fs_allocations`.
 - Issue #1020: `std/src/path.bd` reads a path's bytes in place instead of converting the whole text to a `List<char>`
   in every method. Each `Path` method now allocates only the value it returns (`components`: its list, sized once, and
   one `String` per name; `normalize`: its kept-name list and its result; `is_absolute`: nothing), and `join` builds its

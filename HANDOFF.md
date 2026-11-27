@@ -4,6 +4,19 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`std/src/fs.bd` without per-entry overhead (2026-11-27, issue #1021).** The measured cost was not the copies the
+issue listed but `offload`: every `metadata`, `read_dir`, `File.read`, and `File.write` is a round trip to the helper
+pool of roughly 100 us, so `walk` paid one per entry and `read` one per 4 KiB. The fix runs a multi-call operation as
+one `offload` that calls the primitives directly (`walk_now`, `copy_fds`); new code that loops over system calls should
+do the same rather than call the offloading wrappers in a loop. Outside a task `offload` now runs its closure inline
+(IO3), so the round trip remains only for tasks; `offload_raw` (`blocking` externs) still always uses the pool (IO8).
+The walk reads directories through three new primitives (`__dir_open`/`__dir_next`/`__dir_close`, in
+`burdin_codegen/src/runtime.rs`; the Windows handle is a `malloc` block holding the find handle, a pending flag, and
+the `WIN32_FIND_DATAA`), and `read_dir_iter` exposes them as a lazy `ReadDir`. `read_dir` itself still returns a
+`List<String>`, because the conformance tests and the spec declare it. `copy_file` calls `copy_file_range` (Linux) and
+`fcopyfile` (macOS) through `extern "C"` behind a compile-time `if`, falling back to the buffer loop; Windows keeps the
+loop, since `CopyFileW` takes paths and copies attributes. `walk` keeps one global sort (sorting each directory gives a
+different order: `a.txt` sorts before `a/x`), done in place by `sort_paths`, a heapsort; `sort.bd` itself is #1027.
 **`Path` without a `List<char>` per method (2026-11-27, issue #1020).** Every `Path` operation scans the text's bytes
 by offset (`next_span`, `last_span`, `prefix_len`, and `is_rooted` in `std/src/path.bd`); separators, the drive colon,
 and dots are ASCII, so offsets next to them are character boundaries. The decision on views: the public methods keep

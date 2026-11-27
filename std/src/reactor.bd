@@ -289,11 +289,16 @@ priv fn expire_timers(r: CPtr<Reactor>) {
 
 // ---- the helper pool --------------------------------------------------------------------------------------------
 
-/// Runs `f` on a helper thread and waits for it, parking the calling task (or blocking the calling thread). The
-/// compiler checks that what `f` borrows outlives the call, and nothing else can touch those places while `f` runs,
-/// because the call does not return before the helper is done. This is why `f` needs no `Send` bound: it is not
-/// left running after the call (`spec/io.md`, IO3).
+/// Runs `f` on a helper thread and waits for it, parking the calling task. The compiler checks that what `f` borrows
+/// outlives the call, and nothing else can touch those places while `f` runs, because the call does not return before
+/// the helper is done. This is why `f` needs no `Send` bound: it is not left running after the call (`spec/io.md`,
+/// IO3). Outside a task there is no worker to keep free, and the calling thread would only wait for the helper, so
+/// `f` runs right here: the round trip through the pool and the reactor costs about 100 us (issue #1021).
 priv fn offload<T, F: FnMut(): T>(own f: F): T {
+    if !in_task() {
+        let mut f = f
+        return f()
+    }
     unsafe {
         let r = reactor()
         let slot = __alloc(Option<T>.size(), 8) as CPtr<Option<T>>

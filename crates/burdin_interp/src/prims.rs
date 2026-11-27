@@ -621,7 +621,9 @@ impl<'p> Interp<'p, '_> {
             Builtin::FileSetLen => return Err(impure("resizing a file", span)),
             Builtin::FileClose => return Err(impure("closing a file", span)),
             Builtin::FileError => return Err(impure("reading a file error", span)),
-            Builtin::ReadDir => return Err(impure("reading a directory", span)),
+            Builtin::ReadDir | Builtin::DirOpen | Builtin::DirNext | Builtin::DirClose => {
+                return Err(impure("reading a directory", span));
+            }
             Builtin::CreateDir => return Err(impure("creating a directory", span)),
             Builtin::RemoveDir => return Err(impure("removing a directory", span)),
             Builtin::RemoveFile => return Err(impure("removing a file", span)),

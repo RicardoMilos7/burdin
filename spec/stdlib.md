@@ -237,6 +237,8 @@ struct BufWriter<W: Write> {                         // Write, and Seek when W i
   take in the buffer. **Dropping a `BufWriter` flushes the buffer and ignores a failure**; call `flush` or
   `into_inner` to see one. `into_inner` flushes, returns the writer, and leaves nothing for the drop to write twice.
   A seek flushes first.
+- **`copy`** moves the bytes through one buffer of 64 KiB, allocated once per call, and does not flush `to`
+  (`fs.copy_file` uses the same size; issue #1021).
 - **`BytesMut`** implements `Write`: writing appends to the buffer. The standard-stream handles implement the
   interfaces too (see "Streams"). File handles are issue #702, which will implement `Read`, `Write`, and `Seek`.
 
@@ -1452,6 +1454,8 @@ struct Metadata: Clone, Copy, Eq, Debug {
 Metadata { fn is_file(self): bool    fn is_dir(self): bool    fn is_symlink(self): bool }
 
 fn read_dir(path: str): Result<List<String>, IoError>
+fn read_dir_iter(path: str): Result<ReadDir, IoError>
+struct ReadDir                // Iterator<Result<String, IoError>>; dropping it closes the directory
 fn create_dir(path: str): Result<(), IoError>          fn create_dir_all(path: str): Result<(), IoError>
 fn remove_dir(path: str): Result<(), IoError>          fn remove_dir_all(path: str): Result<(), IoError>
 fn remove_file(path: str): Result<(), IoError>
@@ -1462,14 +1466,15 @@ fn walk(root: str): Result<List<String>, IoError>
 fn walk_glob(root: str, pattern: str): Result<List<String>, IoError>
 
 Path {   // extension methods, the same operations with the receiver as the path
-    fn read_dir(self): Result<List<String>, IoError>        fn metadata(self): Result<Metadata, IoError>
+    fn read_dir(self): Result<List<String>, IoError>        fn read_dir_iter(self): Result<ReadDir, IoError>
+    fn metadata(self): Result<Metadata, IoError>
     fn canonicalize(self): Result<String, IoError>          fn walk(self): Result<List<String>, IoError>
     fn walk_glob(self, pattern: str): Result<List<String>, IoError>
 }
 ```
 
 Every function is impure: a compile-time evaluation that reaches one fails with E0224. A read that only inspects the
-file system (`read_dir`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
+file system (`read_dir`, `read_dir_iter`, `metadata`, `canonicalize`, `walk`, `walk_glob`) reports `IoError.Read`; one that changes it
 (`create_dir`, `create_dir_all`, `remove_dir`, `remove_dir_all`, `remove_file`, `rename`) reports `IoError.Write`.
 Each error carries the portable kind and the OS code (`errors.md`, ERR10-ERR11). `rename` names its destination `to`
 in the error. `remove_dir_all` on a path that is not a directory has kind `NotADirectory` and no OS code, because
@@ -1477,6 +1482,10 @@ in the error. `remove_dir_all` on a path that is not a directory has kind `NotAD
 
 - `read_dir` returns the entry names, not paths, without `.` and `..`, in the order the system returns them; sort the
   list for a deterministic order. A missing path or a file is an error. The names join with `Path.join`.
+- `read_dir_iter` is `read_dir` read lazily (issue #1021): the same names in the same order, one per `next`, so a
+  caller that stops early does not read the rest. Opening a missing path or a file is an error at once; a failure
+  later in the listing is an `Err` item, after which the iterator yields nothing. Dropping the `ReadDir` closes the
+  directory.
 - `create_dir` creates one directory and requires the parent to exist; an existing directory is an error.
   `create_dir_all` creates every missing parent, treats an existing directory as success, and reports a path that
   exists as a file.
@@ -1498,9 +1507,15 @@ in the error. `remove_dir_all` on a path that is not a directory has kind `NotAD
 - `walk_glob` is `walk` filtered by `pattern`, matched against the whole relative path. `*` matches any run of
   characters inside one path segment, `?` matches one character inside a segment, and `**` matches across segments;
   a `**` followed by a separator also matches no segment, so `**/*.bd` finds a top-level file too. Both `/` and `\`
-  are separators in a pattern.
+  are separators in a pattern. A character is a whole UTF-8 character, so `?` matches `é` once. A directory under
+  which no path can match is not read (`src/*.bd` reads only `root` and `src`), so a directory that cannot be read
+  fails the walk only when the pattern can reach into it.
+- The walk reads each directory lazily into one reused name buffer and builds every path in one reused buffer, so it
+  allocates only the paths it returns: nothing for an entry `walk_glob` does not keep (issue #1021). It runs as one
+  `offload` (`io.md`, IO3), and sorts the result in place with a heapsort, which allocates nothing.
 
-Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`.
+Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`, `dir_glob_prune`, `dir_glob_utf8`,
+`dir_read_dir_iter`, `fs_allocations`.
 
 ## Files and file handles (issue #702)
 
@@ -1558,6 +1573,14 @@ fn exists(path: str): bool
   creates or replaces, and `append` creates a missing file. `copy_file` copies the bytes only, not permissions, and
   returns how many it copied. It is not named `copy` because `std.rw` already exports the reader/writer `copy` under
   that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
+- `read` sizes its buffer from the file's metadata, with one byte of room for the read that sees the end, so a file
+  that does not change while it is read takes one allocation; a file that grew is read on, growing the buffer.
+  `copy_file` lets the system copy the bytes where it can (`copy_file_range` on Linux, falling back when the kernel
+  or the file systems refuse; `fcopyfile` with `COPYFILE_DATA` on macOS), and otherwise, and on Windows, copies
+  through one 64 KiB buffer, the size `std.rw`'s `copy` uses too. The whole copy runs as one `offload`. Windows has
+  no descriptor-to-descriptor copy call (`CopyFileW` takes paths and copies the attributes too), so it keeps the
+  buffer. Test:
+  `m24_stdlib/fs_allocations` (issue #1021).
   `exists` is `Path.exists`.
 - Every operation is impure: a compile-time evaluation that reaches one fails with E0224.
 
@@ -2654,7 +2677,7 @@ lists them by rule).
 | Numeric `From`, `into`, and `as` (FR1-FR6) | `m24_stdlib/from_numeric`, `from_as_lossy`, `into_numeric`, `from_lossy`, `from_arity`, `into_no_target`, `into_no_impl`, `into_method_wins`, `from_bound_*` |
 | Interface coverage | `m24_stdlib/interfaces_text`, `interfaces_list`, `interfaces_map`, `interfaces_option_result`, `interfaces_tuples_arrays`, `interfaces_ranges_ordering`, `interfaces_std_containers`, `interfaces_time_path`, `interfaces_iterable`, `interfaces_missing` |
 | Paths | `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists` |
-| Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk` |
+| Directories, metadata, and walking | `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`, `dir_glob_prune`, `dir_glob_utf8`, `dir_read_dir_iter`, `fs_allocations` |
 | Files and file handles | `m24_stdlib/file_handles`, `file_errors`, `file_const` |
 | Time | `m24_stdlib/time_duration`, `time_instant`, `time_duration_underflow`, `time_duration_negative_float`, `time_calendar`, `time_clock`, `time_const`, `time_const_impure` |
 | Random numbers | `m24_stdlib/random_seeded`, `random_properties`, `random_entropy`, `random_below_zero`, `random_range_empty`, `time_const`, `time_const_impure` |
