@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// The text stays borrowed until the iterator's last use (RF5), so it cannot change in between.
+fn main() {
+    let mut s = String.from("abc")
+    let mut it = s.chars()
+    s.push('d') //~ E0111
+    let c = it.next()
+}

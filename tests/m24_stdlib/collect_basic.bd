@@ -35,7 +35,7 @@ fn main() {
     println("{heap.into_sorted_list():?}")
 
     // A string, from `char`, `str`, `String`, and views of `String` items.
-    let from_chars: String = "cba".chars().into_iter().collect()
+    let from_chars: String = "cba".chars().collect()
     println("{from_chars}")
     let mut reversed = List<char>.new()
     for c in "cba".chars() {

@@ -4,6 +4,14 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`chars()` is a lazy iterator (2026-11-27, issue #1083).** `str.chars()` returns `Chars<str>`, an ordinary generic
+`std` struct in `std/src/text.bd` with `Iterator<char>` and `DoubleEndedIterator<char>`; there is still no compiler
+type for it. The three open questions of the issue: the origin check already sees that `Chars { text: self, ... }`
+borrows `self` (E0122, E0111, and E0120 all fire with no checker change); a user function can return `Chars<str>`; and
+the `std` call sites were all `for` loops, so none needed `to_char_list()`. The tests #1017 had rewritten to
+`.chars().into_iter()`/`.iter()` and `chars()[0]` were restored to their earlier iterator forms. `Chars<str>` has no
+`iter()`/`into_iter()`, like the other adapters.
+
 **Standard library helpers without `__` (2026-11-25, issue #1018).** The 385 private helpers of `std/src` have plain
 names and are `priv`; `spec/stdlib.md` ("Names the standard library keeps private") states what `__` still means:
 intrinsics, compiler-generated names, and the public protocol members of `select` (`__select_new`, `__Select`,
