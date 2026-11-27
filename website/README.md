@@ -124,3 +124,10 @@ only, and are listed in `customCss` in `astro.config.mjs`.
 
 After changing the code themes, delete `.astro/` and `node_modules/.astro/` before building: Astro caches rendered
 Markdown, and a stale cache keeps the old colours on the docs pages.
+
+## Error and lint pages
+
+`scripts/build-reference-pages.mjs` splits `docs/error-codes.md` and `docs/lints.md` into one page per code at
+`/errors/<code>` and `/lints/<code>`, the addresses every diagnostic links to (`URL_BASE` in
+`crates/burdin_diag/src/lib.rs`). `dev`, `build`, and `build:pages` run it first; the generated pages in
+`src/content/docs/errors/` and `src/content/docs/lints/` are not committed. Edit the `docs/` files, never the pages.

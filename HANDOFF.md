@@ -15,6 +15,14 @@ wrappers from `std/src/text.bd`. Also optimized `is_char_boundary` (O(1)), `char
 `reverse_chars`, `slice_chars`, `String.pop`/`insert`/`remove`/`retain`/`into_bytes`, `replace`, `repeat`,
 `List<char>.collect_string`, and `List<String>.join`.
 
+**Official packages in the language server (2026-11-27, issue #1087).** The false E0003 on `Result.Err(...)` in
+`packages/csv` and the `packages/http` hang (the server's thread overflowed its 1 GiB stack) came from the installed
+`burdin` 0.1.3 toolchain (commit `665b98a`), which the editor runs as `burdin lsp` through the proxy: 0.1.3 predates
+qualified variants (#1069), so it reads `Result.Err` as the bare generic type. The current server has neither problem
+on Linux or Windows, and `crates/burdin_lsp/tests/official_packages.rs` opens every official package to keep it so
+(the tests fail against 0.1.3). Nothing in the code changed; editors need a release after 0.1.3, or the VS Code
+setting `burdin.path` pointing at a current build, to stop seeing it.
+
 **Readable compiler diagnostics and runtime panics (2026-11-27, issues #1046–#1067, #902, #287).** `burdin_diag::render_human`
 now renders `cargo`/`gleam`-style snippets (`error[E0002]: msg`, `--> file:line:col`, gutter line numbers, `^`/`-` underlines,
 inline primary/secondary labels, multi-line sidebars, multi-file snippets, numbered diff suggestions, Unicode/tab width

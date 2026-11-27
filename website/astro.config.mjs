@@ -79,6 +79,7 @@ export default defineConfig({
 			sidebar: [
 				{
 					label: 'Getting started',
+					collapsed: true,
 					items: [
 						'getting-started/introduction',
 						'getting-started/installation',
@@ -88,6 +89,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Language guide',
+					collapsed: true,
 					items: [
 						'guide/basics',
 						'guide/control-flow',
@@ -109,6 +111,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Coming from another language',
+					collapsed: true,
 					items: [
 						'coming-from/rust',
 						'coming-from/go',
@@ -118,6 +121,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Examples',
+					collapsed: true,
 					items: [
 						'examples',
 						'examples/fizzbuzz',
@@ -133,12 +137,23 @@ export default defineConfig({
 				},
 				{
 					label: 'Reference',
+					collapsed: true,
 					items: [
 						'reference/cli',
 						{ label: 'API reference', link: '/api/' },
 						'reference/standard-library',
 						'reference/language-spec',
 						'reference/status',
+						{
+							label: 'Error codes',
+							collapsed: true,
+							items: [{ autogenerate: { directory: 'errors' } }],
+						},
+						{
+							label: 'Lints',
+							collapsed: true,
+							items: [{ autogenerate: { directory: 'lints' } }],
+						},
 					],
 				},
 			],

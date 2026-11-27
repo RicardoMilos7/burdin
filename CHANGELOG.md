@@ -16,6 +16,12 @@ close-out checklist in `AGENTS.md`).
   `is_char_boundary` (O(1)), `char_count`, `trim_end`, `rfind`, `reverse_chars`, `slice_chars`, `String.pop`,
   `String.insert`, `String.remove`, `String.retain`, `String.into_bytes`, `replace`, `repeat`,
   `List<char>.collect_string`, and `List<String>.join` to reserve capacity and avoid intermediate allocations.
+- Issue #1087: the language server opens every official package without a compiler error and without hanging,
+  checked by `crates/burdin_lsp/tests/official_packages.rs` (it opens each package in `packages/` over JSON-RPC, every
+  module as a document). The reported false E0003 on `Result.Ok(...)`/`Result.Err(...)` in `csv` and the `http`
+  hang (a stack overflow in the server) both came from an installed 0.1.3 toolchain, which predates qualified
+  variants (#1069), running against the current sources; the current server has neither, on Linux and Windows. The
+  tests fail against 0.1.3 for both reasons.
 - Issues #1046–#1067, #902, #287: `cargo`/`gleam`-style compiler diagnostic snippets in `burdin_diag` (primary &
   secondary labels, multi-line/multi-file snippets, numbered diff suggestions, Unicode/tab width wrapping, OSC 8 links),
   exact-duplicate filtering in `Diagnostics::absorb` (#902), LSP `relatedInformation` from `labels`, richer diagnostics

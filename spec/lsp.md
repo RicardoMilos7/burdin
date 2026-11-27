@@ -81,7 +81,10 @@ an unsaved `use json` counts. A database's package set is fixed when it opens, s
 the server reopens that package; a `use` completion offers every official package the compiler has, not only the ones
 already loaded. Tests: `a_dependency_in_another_root_is_navigable_and_not_checked_again`,
 `folders_come_and_go_and_new_files_are_picked_up`, `workspace_symbols_match_fuzzily_across_files`,
-`a_new_official_use_reloads_the_package`, `a_use_offers_every_official_package`.
+`a_new_official_use_reloads_the_package`, `a_use_offers_every_official_package`. Every official package, opened
+where it lives in `packages/` with each of its modules as a document, is analyzed within a minute and publishes no
+compiler error (issue #1087): `csv_has_no_false_e0003_on_result_variants`,
+`http_and_its_official_tls_dependency_are_analyzed_promptly`, `every_official_package_opens_without_a_compiler_error`.
 
 **LS5. Configuration.** The settings live under `burdin` and arrive as `initializationOptions`, in
 `workspace/didChangeConfiguration`, or, when that notification carries no `burdin` settings and the client supports
