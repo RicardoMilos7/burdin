@@ -1,0 +1,11 @@
+//@ run
+//> 0
+
+// Outside `burdin test` there is no checking allocator, so `__alloc_count()` has nothing to count and is 0
+// (spec/allocators.md, AL9).
+
+fn main() {
+    let s = String.from("abc")
+    println("{}", __alloc_count())
+    assert_eq(s.len(), 3)
+}

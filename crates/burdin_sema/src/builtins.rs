@@ -73,6 +73,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__dealloc" => Builtin::RawDealloc,
         "__try_alloc" => Builtin::RawTryAlloc,
         "__try_realloc" => Builtin::RawTryRealloc,
+        "__alloc_count" => Builtin::AllocCount,
         "__view_as_text" => Builtin::ViewAsText,
         _ => {
             return RtOp::ALL
@@ -270,6 +271,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
             Ty::CPtr(Box::new(Ty::Int(IntTy::U8)))
         }
         Builtin::FloatFromBits(ft) => Ty::Float(ft),
+        Builtin::AllocCount => Ty::Int(IntTy::U64),
         Builtin::StringWithCapacity => Ty::String,
         // `String.try_with_capacity(n)` (`spec/allocators.md`, AL11): the error is the standard library's `AllocError`.
         Builtin::StringTryWithCapacity => {
@@ -279,6 +281,7 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     };
     let params = match b {
         Builtin::StringNew
+        | Builtin::AllocCount
         | Builtin::EnvArgs
         | Builtin::EnvList
         | Builtin::Unreachable

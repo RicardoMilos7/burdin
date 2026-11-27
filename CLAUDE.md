@@ -269,6 +269,8 @@ crates/
   burdin_fuzz/              deterministic lexer/parser fuzzing, the `burdin-fuzz-syntax` binary, and the committed
                             corpus the replay test parses (issue #447)
 std/                      the standard library, written in Burdin
+benches/std/              `burdin bench` measurements of the standard library, one module per `std` module (issue #1038):
+                          `burdin bench benches/std --save-baseline <name>`, then `--baseline <name>` after a change
 packages/                 the official packages, each an ordinary Burdin package reached with `use <name>`; they ship
                           with the compiler (spec/packages.md, PKG15-PKG18); `tests/packages/official` has the fixtures
                           the tests use instead

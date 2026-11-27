@@ -6,6 +6,15 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #1020: `std/src/path.bd` reads a path's bytes in place instead of converting the whole text to a `List<char>`
+  in every method. Each `Path` method now allocates only the value it returns (`components`: its list, sized once, and
+  one `String` per name; `normalize`: its kept-name list and its result; `is_absolute`: nothing), and `join` builds its
+  result in one `String.with_capacity`. The public signatures are unchanged: the pieces stay owned, so a result outlives
+  its `Path`. `fs.walk` makes its root `Path` once instead of three times per entry. The test build's checking allocator
+  now counts the blocks it hands out, and `__alloc_count(): u64` reads the count (0 outside `burdin test`;
+  `spec/allocators.md`, AL9); `tests/m23_allocators/alloc_count.bd` and `tests/m24_stdlib/path_allocations.bd` pin the
+  counts. `benches/std` is a new `burdin bench` package for the standard library; against the old code, `file_name` is
+  84% faster, `extension` 84%, `parent` 93%, `join` 79%, `components` 66-69%, and `normalize` 52%.
 - Issue #1019: `str.split`, `rsplit`, `split_char`, `rsplit_char`, `split_whitespace`, `lines`, `match_indices`,
   `find_all`, and `char_indices` in `std/src/text.bd` return lazy iterators (`Split<str>`, `RSplit<str>`,
   `SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`, `Lines<str>`, `MatchIndices<str>`, `CharIndices<str>`)

@@ -224,6 +224,8 @@ crates/                   burdin_diag, burdin_syntax, burdin_tir, burdin_sema,
                           burdin_bench (generated inputs and `cargo bench` targets),
                           burdin_fuzz (lexer/parser fuzzing and the committed corpus)
 std/                      the standard library, written in Burdin
+benches/std/              `burdin bench` measurements of the standard library, one module per `std` module (issue #1038):
+                          `burdin bench benches/std --save-baseline <name>`, then `--baseline <name>` after a change
 editors/                  the VS Code extension and the Neovim and Helix setup for `burdin lsp`
 debuggers/                the pretty-printers: gdb (`gdb/`, embedded in a `-g` binary, `spec/debug.md` DBG6), lldb
                           (`lldb/`, written beside the session, DBG7), and the Windows Natvis file (`windows/`, DBG8)

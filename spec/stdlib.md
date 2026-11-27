@@ -1425,7 +1425,17 @@ resolves symbolic links.
 - `exists` is true when the system can see the path (the C library's `access`, or `_access` on Windows, with no mode bits). It is impure, so a
   compile-time evaluation that reaches it fails with E0224. Directory listing, metadata, and walking are the next section.
 
-Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists`.
+**Cost (issue #1020).** Every operation reads the text's bytes in place: separators, the drive colon, and dots are
+ASCII, so no character is decoded and no `List<char>` is built. A method that returns a value allocates only that
+value: `file_name`, `file_stem`, `extension`, `drive`, `parent`, `join`, `with_file_name`, and `with_extension`
+allocate one block each; `components` allocates its list once, at its final size, plus one `String` per name;
+`normalize` allocates its list of kept names and its result; `is_absolute`, `is_relative`, and `separator` allocate
+nothing. The pieces stay owned (`Option<String>`, `List<String>`, `Path`) rather than views of the path, so a result
+outlives the `Path` it came from. `m24_stdlib/path_allocations` pins these counts with `__alloc_count()`
+(`allocators.md`, AL9), and `benches/std/src/path.bd` measures `components`, `file_name`, `extension`, `parent`,
+`join`, and `normalize`.
+
+Tests: `m24_stdlib/path_unix`, `path_windows`, `path_edit`, `path_display_debug`, `path_exists`, `path_allocations`.
 
 ## Directories, metadata, and walking (issue #411)
 

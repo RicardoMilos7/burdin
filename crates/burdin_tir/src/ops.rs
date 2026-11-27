@@ -90,6 +90,9 @@ pub enum Builtin {
     /// `__try_realloc(ptr, old_size, new_size, align)`: a `Global` reallocation that returns a null pointer when it
     /// fails, and then leaves the old block valid (`spec/allocators.md`, AL11).
     RawTryRealloc,
+    /// `__alloc_count()`: how many blocks the checking allocator of a `burdin test` build has handed out since the
+    /// program started, a reallocation's fresh block included; 0 in any other build (`spec/allocators.md`, AL9).
+    AllocCount,
     /// `CPtr.null()`: a null C pointer, typed by the expected type.
     CPtrNull,
     /// `CStr.to_string(ptr)`: copies a NUL-terminated C string into a `String`.
