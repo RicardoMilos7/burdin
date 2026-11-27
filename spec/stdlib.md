@@ -1512,7 +1512,7 @@ in the error. `remove_dir_all` on a path that is not a directory has kind `NotAD
   fails the walk only when the pattern can reach into it.
 - The walk reads each directory lazily into one reused name buffer and builds every path in one reused buffer, so it
   allocates only the paths it returns: nothing for an entry `walk_glob` does not keep (issue #1021). It runs as one
-  `offload` (`io.md`, IO3).
+  `offload` (`io.md`, IO3), and sorts the result in place with a heapsort, which allocates nothing.
 
 Tests: `m24_stdlib/dir_basic`, `dir_errors`, `dir_canonicalize`, `dir_walk`, `dir_glob_prune`, `dir_glob_utf8`,
 `dir_read_dir_iter`, `fs_allocations`.
@@ -1575,8 +1575,11 @@ fn exists(path: str): bool
   that name, and the prelude has only the unqualified name for one of them; write `fs.copy_file(...)` for a file.
 - `read` sizes its buffer from the file's metadata, with one byte of room for the read that sees the end, so a file
   that does not change while it is read takes one allocation; a file that grew is read on, growing the buffer.
-  `copy_file` copies through one 64 KiB buffer, the size `std.rw`'s `copy` uses too, and runs its whole loop as one
-  `offload`. Neither uses an operating-system copy call (`copy_file_range`, `CopyFileW`) yet. Test:
+  `copy_file` lets the system copy the bytes where it can (`copy_file_range` on Linux, falling back when the kernel
+  or the file systems refuse; `fcopyfile` with `COPYFILE_DATA` on macOS), and otherwise, and on Windows, copies
+  through one 64 KiB buffer, the size `std.rw`'s `copy` uses too. The whole copy runs as one `offload`. Windows has
+  no descriptor-to-descriptor copy call (`CopyFileW` takes paths and copies the attributes too), so it keeps the
+  buffer. Test:
   `m24_stdlib/fs_allocations` (issue #1021).
   `exists` is `Path.exists`.
 - Every operation is impure: a compile-time evaluation that reaches one fails with E0224.

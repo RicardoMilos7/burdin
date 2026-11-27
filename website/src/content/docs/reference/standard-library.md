@@ -70,8 +70,8 @@ See [closures and iterators](/guide/closures-and-iterators/).
 - **Time.** Instants, durations, wall-clock time, and `sleep`.
 - **Random numbers.** `Random.seeded(seed)` for a repeatable sequence, `Random.from_entropy()` for a fresh one, and
   `shuffle` for lists.
-- **Paths, directories, and files.** Path manipulation, directory walking, metadata, and file handles that read and
-  write text and bytes.
+- **Paths, directories, and files.** Path manipulation, directory listing (`read_dir`, or `read_dir_iter` to read
+  names one at a time), walking (`walk`, `walk_glob`), metadata, and file handles that read and write text and bytes.
 - **Environment and processes.** `env.get`, `env.set`, and the working directory, `process.exit`, and child processes.
 
 ## Networking

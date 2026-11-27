@@ -121,6 +121,13 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
   analysis and no lifetime annotations.
 - **Prefer simple and correct over clever.** The compiler will be read and extended for a long time.
+- **Burdin can call C directly.** An `extern "C" { ... }` block declares a C function (libc, a system call wrapper, or
+  an OS API such as `copy_file_range`, `fcopyfile`, or a Win32 function), and `std` calls it inside `unsafe`. Behind a
+  compile-time `if target.os() == Os.Linux` (`spec/const-eval.md`, CE4) only the target's branch is generated, so a
+  symbol that exists on one system is never referenced on the others (`std/src/path.bd`'s `access`/`_access`,
+  `std/src/fs.bd`'s copy calls). Reach for this before adding a compiler primitive (`__name`, which needs `burdin_tir`,
+  `burdin_sema`, `burdin_interp`, and `burdin_codegen` changes): a new primitive is for what C cannot express from
+  Burdin, such as filling a `String` in place or reading a platform struct whose layout differs per target.
 - **The crate layout is not fixed.** The map below is the current shape, not a constraint. When a milestone needs a new
   responsibility with its own boundary (an LSP server, a package resolver, a formatter), add a new crate under
   `crates/` for it and extend the workspace rather than piling code into an existing crate. Keep the one-way dependency

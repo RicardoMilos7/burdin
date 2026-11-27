@@ -11,8 +11,8 @@ use iter.Iterator
 use path.Path
 use reactor.offload
 use rw.{Read, Seek, SeekFrom, Write}
-use sort.sort_by
 use std.{IoError, IoErrorKind}
+use target.{Os, os}
 use text.truncate
 
 /// The kind of entry a path names.
@@ -331,7 +331,7 @@ fn canonicalize(path: str): Result<String, IoError> {
 /// ```
 fn walk(root: str): Result<List<String>, IoError> {
     let mut out = offload(|| walk_now(root, "", false))?
-    out.sort_by(|a, b| a.cmp(*b))
+    sort_paths(mut out)
     Result.Ok(out)
 }
 
@@ -351,7 +351,7 @@ fn walk(root: str): Result<List<String>, IoError> {
 /// ```
 fn walk_glob(root: str, pattern: str): Result<List<String>, IoError> {
     let mut out = offload(|| walk_now(root, pattern, true))?
-    out.sort_by(|a, b| a.cmp(*b))
+    sort_paths(mut out)
     Result.Ok(out)
 }
 
@@ -370,6 +370,44 @@ priv fn walk_now(root: str, pattern: str, glob: bool): Result<List<String>, IoEr
     let mut out = List<String>.new()
     walk_level(mut full, base, start.separator(), pattern.as_bytes(), glob, mut name, mut out)?
     Result.Ok(out)
+}
+
+/// Sorts the paths in place by their bytes, as `String`'s `Ord` compares them: a heapsort, which allocates nothing and
+/// takes O(n log n) comparisons. It is not stable, which does not matter here because a walk's paths are distinct.
+/// One sort over every path keeps `walk`'s order: sorting each directory's names would put `a/x` before `a.txt`.
+priv fn sort_paths(mut xs: List<String>) {
+    let n = xs.len()
+    let mut start = n / 2
+    while start > 0 {
+        start = start - 1
+        sift_down(mut xs, start, n)
+    }
+    let mut end = n
+    while end > 1 {
+        end = end - 1
+        xs.swap(0, end)
+        sift_down(mut xs, 0, end)
+    }
+}
+
+/// Moves `xs[root]` down the max-heap in `xs[0..end]` until both of its children are not greater.
+priv fn sift_down(mut xs: List<String>, start: usize, end: usize) {
+    let mut root = start
+    loop {
+        let mut child = 2 * root + 1
+        if child >= end {
+            return
+        }
+        if child + 1 < end && xs[child] < xs[child + 1] {
+            child = child + 1
+        }
+        if xs[root] < xs[child] {
+            xs.swap(root, child)
+            root = child
+        } else {
+            return
+        }
+    }
 }
 
 /// An open directory listing; dropping it closes the handle, on every return.
@@ -1131,8 +1169,9 @@ fn append(path: str, data: [u8]): Result<(), IoError> {
 }
 
 /// Copies every byte of `from` to `to`, creating or replacing `to`, and returns how many bytes it copied. The
-/// destination's permissions are not copied; only the bytes are. The bytes go through one 64 KiB buffer, and the
-/// whole copy runs as one `offload`, so a chunk costs its two system calls and no helper-thread round trip. It is `copy_file` rather than `copy` because the
+/// destination's permissions are not copied; only the bytes are. The operating system copies the bytes itself where
+/// it can (`copy_file_range` on Linux, `fcopyfile` on macOS); otherwise, and on Windows, they go through one 64 KiB
+/// buffer. The whole copy runs as one `offload`. It is `copy_file` rather than `copy` because the
 /// reader/writer `copy` in `std.rw` already owns the unqualified name in the prelude.
 ///
 /// ```
@@ -1170,11 +1209,60 @@ priv enum CopyFailure {
     WriteZero
 }
 
-/// Copies the rest of the descriptor `from` into `to` through one buffer, calling the primitives directly: it runs
-/// on a helper thread as one `offload` (`copy_file`).
+// The operating system's own copy calls. Each is called only on its system, behind a compile-time `if`, so the others
+// are never referenced.
+extern "C" {
+    /// Linux: copies up to `len` bytes between descriptors in the kernel, advancing both offsets when the offset
+    /// pointers are null. Returns the count, 0 at the end, or -1.
+    priv fn copy_file_range(fd_in: i32, off_in: CPtr<i64>, fd_out: i32, off_out: CPtr<i64>, len: usize, flags: u32): isize
+    /// macOS: copies what `flags` names (`COPYFILE_DATA`: the contents) between descriptors. Returns 0 or -1.
+    priv fn fcopyfile(from: i32, to: i32, state: CPtr<u8>, flags: u32): i32
+}
+
+/// `copyfile.h`'s `COPYFILE_DATA`.
+priv const COPYFILE_DATA: u32 = 8
+
+/// Copies the rest of the descriptor `from` into `to`, calling the primitives directly: it runs as one `offload`
+/// (`copy_file`). The operating system copies when it can (`copy_file_range` on Linux, `fcopyfile` on macOS); when it
+/// cannot (another file system, an old kernel, a special file), or on Windows, the bytes go through one buffer.
 priv fn copy_fds(from: i32, to: i32): Result<u64, CopyFailure> {
+    if os() == Os.Linux {
+        let mut total: u64 = 0
+        loop {
+            let n = unsafe { copy_file_range(from, CPtr.null(), to, CPtr.null(), 1073741824, 0) }
+            if n > 0 {
+                total = total + (n as u64)
+            } else if n == 0 && total > 0 {
+                return Result.Ok(total)
+            } else {
+                // A failure, or 0 before any byte (some files report a size of 0 and are only readable): the buffer
+                // loop goes on from where the kernel stopped, and reports a real error itself.
+                break
+            }
+        }
+        return copy_chunks(from, to, total)
+    } else if os() == Os.MacOs {
+        let status = unsafe { fcopyfile(from, to, CPtr.null(), COPYFILE_DATA) }
+        if status == 0 {
+            // The destination was created empty, so its length is what was copied.
+            match __file_seek(to, 0, 2) {
+                Result.Ok(end) => return Result.Ok(end as u64),
+                Result.Err(_) => return Result.Err(CopyFailure.Write(__file_error())),
+            }
+        }
+        // Start the buffer loop from the beginning of both files.
+        let _ = __file_seek(from, 0, 0)
+        let _ = __file_seek(to, 0, 0)
+        let _ = __file_set_len(to, 0)
+        return copy_chunks(from, to, 0)
+    }
+    copy_chunks(from, to, 0)
+}
+
+/// The portable copy: the rest of `from` into `to` through one 64 KiB buffer, counting from `total`.
+priv fn copy_chunks(from: i32, to: i32, total: u64): Result<u64, CopyFailure> {
+    let mut total = total
     let mut chunk = List<u8>.with_capacity(65536)
-    let mut total: u64 = 0
     loop {
         chunk.clear()
         let n = match __file_read(from, mut chunk, 65536) {

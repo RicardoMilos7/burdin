@@ -17,8 +17,10 @@ close-out checklist in `AGENTS.md`).
   `walk` and `walk_glob` run as one `offload` that calls the primitives directly, build every path in one reused
   buffer, and allocate only the paths they return; `walk_glob` matches bytes instead of a `List<char>` per entry (`?`
   and `*` still step over whole UTF-8 characters) and does not read a directory no match can lie under. `read` sizes
-  its buffer from the metadata, and `copy_file` runs its read/write loop as one `offload` through one 64 KiB buffer,
-  the size `std.rw`'s `copy` now uses too (it was 4 KiB). New: `read_dir_iter` and `Path.read_dir_iter`, a lazy
+  its buffer from the metadata, and `copy_file` asks the system to copy (`copy_file_range` on Linux, `fcopyfile` on
+  macOS) and otherwise copies through one 64 KiB buffer, the size `std.rw`'s `copy` now uses too (it was 4 KiB).
+  `walk` sorts in place with a heapsort instead of `sort_by`'s merge sort. `offload` runs its closure on the calling
+  thread outside a task, which removes a ~100 us pool-and-reactor round trip from every file operation there. New: `read_dir_iter` and `Path.read_dir_iter`, a lazy
   `ReadDir` iterator. `benches/std/src/fs.bd` measures them: against the old code, `walk` over 2,000 files is 98%
   faster, `walk_glob` 98% (99.8% for one directory), `read` of 4 MiB 99%, and `copy_file` of 4 MiB 86%. Tests:
   `m24_stdlib/dir_glob_prune`, `dir_glob_utf8`, `dir_read_dir_iter`, and `fs_allocations`.

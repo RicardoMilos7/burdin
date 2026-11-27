@@ -108,7 +108,9 @@ The closure is relabelled as an owned `FnOnce` with the same unsafe primitive sc
 `spec/tasks.md` TK7), which is what lets a closure that borrows a `List` buffer or a `str` path cross to the helper.
 The compiler checks the loan against the call, not against the helper thread's lifetime, and the two coincide.
 
-Outside a task, `offload` blocks the calling thread; it still uses a helper, so the same code path runs everywhere.
+Outside a task, `offload` runs `f` on the calling thread. There is no worker to keep free there, and the thread would
+only block until the helper finished, while the round trip through the pool and the reactor costs about 100 us (issue
+#1021). The borrows are checked the same way either way.
 A panic in a helper aborts the process, like a panic in a task (TK8).
 
 The wrapped operations are file and directory handling: `fs.read`, `fs.write`, `fs.append`, `File.open`, `File.read`,
@@ -251,7 +253,8 @@ Tests: `s2_io/timer_parks_task`, `timer_sleep_accuracy`, `channel_watchdog`.
   is no way for another task to cancel a pending read.
 * **One reactor, one process.** There is no way to choose a backend, size the pool, or run a second event loop.
 * **The file pool is FIFO and unbounded.** A job for every pending file operation, on the same few threads. A very
-  large file is copied through the caller's buffer as the stages read it; there is no `sendfile`-style zero copy.
+  large file is copied through the caller's buffer as the stages read it. Only `fs.copy_file` asks the system to copy
+  (`copy_file_range` on Linux, `fcopyfile` on macOS); other code has no `sendfile`-style zero copy.
 * **Windows' readiness path is `WSAPoll`**, not overlapped completion per operation (IO2); the completion port is used
   for the helper calls and the wakeup.
 
