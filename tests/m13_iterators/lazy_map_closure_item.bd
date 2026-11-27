@@ -1,11 +1,12 @@
 //@ compile-fail
 
-// The lazy `iter().map` hands its closure the item itself, so `x` is the `i32` and `*x` is an error (E0003). The
-// eager `map` takes a view (eager_map_closure_view).
+// `map` (both directly on a `List` and through `iter()`) hands its closure the item itself, so `x` is `i32` and `*x`
+// is an error (E0003; spec/iterators.md, IT10).
 
 fn main() {
     let mut xs = List<i32>.new()
     xs.push(1)
-    let doubled = xs.iter().map(|x| *x * 2).to_list() //~ E0003
-    println(doubled.len().to_string())
+    let a = xs.map(|x| *x * 2).to_list() //~ E0003
+    let b = xs.iter().map(|x| *x * 2).to_list() //~ E0003
+    println("{} {}", a.len(), b.len())
 }

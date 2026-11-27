@@ -1,9 +1,0 @@
-// Three or more eager `List` methods in one chain build a list at every step (spec/lint.md LN20).
-
-fn main() {
-    let xs: List<i32> = [1, 2, 3, 4].iter().to_list()
-    let three = xs.map(|x| *x + 1).filter(|x| *x > 1).map(|x| *x * 2) //~ L0005
-    let four = xs.map(|x| *x + 1).filter(|x| *x > 2).map(|x| *x * 2).filter(|x| *x < 100) //~ L0005
-    let ended = xs.filter(|x| *x > 0).map(|x| *x * 3).fold(0, |acc, x| acc + *x) //~ L0005
-    println("{} {} {}", three.len(), four.len(), ended)
-}

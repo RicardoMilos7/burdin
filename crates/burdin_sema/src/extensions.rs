@@ -220,28 +220,31 @@ impl<'t> Sema<'t> {
         }
     }
 
-    /// The names the iteration protocol provides for `recv`: `next`, `sum`, the `Iterator` defaults, and the eager
-    /// `List` helpers.
+    /// The names the iteration protocol provides for `recv`: `next`, `sum`, the `Iterator` defaults, and (for any
+    /// `Iterable`, IT10) every lazy adapter and consumer except `next`.
     fn iterator_name(&self, recv: &Ty, name: &str) -> bool {
         let iterator = self.globals.iterator_item(recv, &[]).is_some();
-        if iterator
-            && (name == "next" || name == "sum" || name == "product" || self.globals.iterator_item_fn(name).is_some())
+        let iterable = self.globals.iterable_item(recv, &[]).is_some();
+        if iterator && name == "next" {
+            return true;
+        }
+        if (iterator || iterable)
+            && (name == "sum"
+                || name == "product"
+                || self.globals.iterator_item_fn(name).is_some()
+                || self.globals.iterator_adapter_fn(name).is_some())
         {
             return true;
         }
-        if iterator && self.globals.iterator_adapter_fn(name).is_some() {
-            return true;
-        }
-        if iterator
-            && let Some(iface) = self.globals.iterator_iface
-            && self.globals.interfaces[iface].methods.iter().any(|m| m.name == name)
+        if let Some(iface) = self.globals.iterator_iface
+            && self.globals.interfaces[iface]
+                .methods
+                .iter()
+                .any(|m| m.name == name && (iterator || (iterable && m.has_default)))
         {
             return true;
         }
-        if self.globals.list_parts(recv).is_some() && self.globals.eager_list_fn(name).is_some() {
-            return true;
-        }
-        if self.globals.iterable_item(recv, &[]).is_some()
+        if iterable
             && let Some(iface) = self.globals.iterable_iface
             && self.globals.interfaces[iface].methods.iter().any(|m| m.name == name)
         {

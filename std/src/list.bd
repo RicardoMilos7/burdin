@@ -62,26 +62,6 @@ fn List<T>.retain<F: FnMut(&T): bool>(mut self, own f: F) {
     }
 }
 
-/// The index of the first element `f` accepts.
-///
-/// ```
-/// let mut l = List<i32>.new()
-/// l.push(1)
-/// l.push(2)
-/// assert_eq(l.position(|x| *x == 2), Option.Some(1))
-/// ```
-fn List<T>.position<F: FnMut(&T): bool>(self, own f: F): Option<usize> {
-    let mut f = f
-    let mut i: usize = 0
-    while i < self.len() {
-        if f(&self[i]) {
-            return Option.Some(i)
-        }
-        i = i + 1
-    }
-    Option.None
-}
-
 /// The index of the last element `f` accepts.
 ///
 /// ```

@@ -99,12 +99,11 @@ fn main() {
 A chain can stand on a value that lives long enough. An array literal in the middle of a chain would be dropped before
 the chain runs, so bind the array to a name first, as the `pairs` example does.
 
-## Eager methods on a list
+## Direct chaining on collections
 
-A `List` also has `map`, `filter`, `fold`, `any`, `all`, and `find`. These are eager: each one builds its result at once,
-and the list is not consumed. Their closures receive a reference to each item, so the item is `&i32` and `*x` reads it.
-The lazy methods above are the iterator methods, reached through `iter()`. Use the eager form when you want a list back
-right away, and the lazy form when you chain steps or stop early. `to_list()` turns a lazy chain into an eager list:
+Every adapter and consumer above works directly on any `Iterable` (`List`, slices, arrays, `Map`, ranges, and user
+`Iterable` types), without writing `.iter()`. The call borrows the collection through `iter()` and stays lazy, so a
+chain builds no intermediate lists. Call `to_list()` or `collect()` when you want an eager `List`:
 
 ```burdin
 fn main() {
@@ -113,13 +112,16 @@ fn main() {
     xs.push(2)
     xs.push(3)
     xs.push(4)
-    let doubled = xs.map(|x: &i32|: i32 { *x * 2 })
-    let big = xs.filter(|x: &i32|: bool { *x > 2 })
-    let total = xs.fold(0, |acc: i32, x: &i32|: i32 { acc + *x })
-    let lazy: List<i32> = xs.iter().map(|x: i32|: i32 { x * 10 }).to_list()
-    println("{doubled:?} {big:?} {total} {lazy:?}")
+    let doubled = xs.map(|x: i32|: i32 { x * 2 }).to_list()
+    let big = xs.filter(|x: &i32|: bool { *x > 2 }).to_list()
+    let total = xs.fold(0, |acc: i32, x: i32|: i32 { acc + x })
+    let back = (1..=4).rev().to_list()
+    println("{doubled:?} {big:?} {total} {back:?}")
 }
 ```
+
+Use `.iter()` when you want the iterator cursor itself (to call `next()` by hand), and `.into_iter()` when you want to
+consume the collection and move its items out.
 
 `collect` builds the collection its target names, and a prelude constructor such as `Option.Some` can be passed as the function:
 

@@ -952,12 +952,6 @@ struct List<T, A = Global> {
     fn sort(mut self)                 // ascending; needs < on T
     fn iter(self): [T]                // borrows: `T` if Copy, else `&T`
     fn into_iter(own self): ListIntoIter<T, A>   // consumes the list, carrying the allocator
-    fn map<U, F: FnMut(&T): U>(self, f: F): List<U>
-    fn filter<F: FnMut(&T): bool>(self, f: F): List<T>   // needs Clone on T
-    fn fold<A, F: FnMut(A, &T): A>(self, init: A, f: F): A
-    fn any<F: FnMut(&T): bool>(self, f: F): bool
-    fn all<F: FnMut(&T): bool>(self, f: F): bool
-    fn find<F: FnMut(&T): bool>(self, f: F): Option<T>   // needs Clone on T
 }
 ```
 
@@ -970,16 +964,13 @@ their elements are equal in order: `[1, 2] != [2, 1]` and `[1] != [1, 1]`. Equal
 "Hash"). `List` has no `Ord`. `assert_eq` and `assert_ne` take lists of an `Eq` element type, and `contains` searches
 with the same `==`. Tests: `m24_stdlib/list_equality`, `list_equality_needs_eq`.
 
-The eager iteration helpers `map`, `filter`, `fold`, `any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
-(`iterators.md`, IT10); `.any` is resolved to the `std` function named `list_any` and spelled with the reserved
-word. Every method except `new` and `with_capacity` exists for every allocator argument.
-
-The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
-to the other. If you need the lazy form of `xs.map(f)`, write `xs.iter().map(f)`: the closure then takes the item
-(`T`, or `&T` for a type that is not `Copy`) rather than a view. If you need the eager form of a lazy chain, call
-`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. A prelude constructor is a closure value too: `Option.Some`
-maps the items to `Option`s, as in `xs.iter().map(Option.Some).collect()`, while `Result.Ok` and `Result.Err` need the other type argument
-written in a closure type (`memory-rules.md` CL11). `filter` and `find` need `T: Clone` only on the eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
+`List<T>` is `Iterable`, so every lazy `Iterator` adapter and consumer (`map`, `filter`, `fold`, `any`, `all`, `find`,
+`zip`, `rev`, `sum`, `to_list`, `collect`, ...) can be called directly on a list without `.iter()` (`iterators.md`,
+IT10). The call borrows the list through `iter()` and builds no intermediate list; call `to_list()` or `collect()` when
+an eager `List` is wanted, as in `xs.map(f).to_list()`. A prelude constructor is a closure value too: `Option.Some`
+maps the items to `Option`s, as in `xs.map(Option.Some).collect()`, while `Result.Ok` and `Result.Err` need the other
+type argument written in a closure type (`memory-rules.md` CL11). Every method except `new` and `with_capacity` exists
+for every allocator argument.
 
 The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
 empty list with room for `n` elements, allocating the buffer up front through the default allocator or through the
@@ -1957,7 +1948,6 @@ nothing is cloned unless the name says so, and every element is dropped exactly 
 
 ```
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, f: F)      // keeps the accepted elements, in order
-fn List<T>.position<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.reverse(mut self)
 fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
@@ -1969,8 +1959,8 @@ fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
 ```
 
 `is_empty` is a method the compiler provides, so it exists for a list with any allocator argument, and so are
-`truncate` and `swap`; the extension list above leaves them out. `find` is the eager helper of `iterators.md` IT10
-(it clones the element). `dedup_by_key` removes an element whose key `==` the key of the element before it (issue #930).
+`truncate` and `swap`; the extension list above leaves them out. `position` and `find` come from the `Iterable`
+protocol (`iterators.md`, IT10). `dedup_by_key` removes an element whose key `==` the key of the element before it (issue #930).
 Its key type `K` is a parameter of the method, as `sort_by_key`'s is, so the closure's result fixes it; a key type that
 does not support `==` (a struct that does not derive `Eq`) is E0141.
 

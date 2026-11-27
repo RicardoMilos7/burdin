@@ -81,8 +81,6 @@ lints! {
         "a constant name is not SCREAMING_SNAKE_CASE";
     ElseOnLocalEnum, "else_on_local_enum", "L0004", Warn,
         "an `else` arm hides new variants of an enum declared in the same package";
-    EagerChain, "eager_chain", "L0005", Warn,
-        "a long chain of eager `List` methods builds a list at every step; start it with `.iter()`";
     UnusedImports, "unused_imports", "L0006", Warn,
         "a name imported with `use` is never used";
     UnusedVariables, "unused_variables", "L0007", Warn,
@@ -188,11 +186,14 @@ mod tests {
 
     #[test]
     fn names_and_codes_are_unique_and_round_trip() {
+        let mut prev_num: u32 = 0;
         for (i, lint) in Lint::ALL.iter().enumerate() {
             assert_eq!(*lint as usize, i, "the variants are in code order");
             assert_eq!(Lint::from_name(lint.name()), Some(*lint));
             assert_eq!(Lint::from_code(lint.code()), Some(*lint));
-            assert_eq!(lint.code(), format!("L{:04}", i + 1));
+            let num: u32 = lint.code().strip_prefix('L').expect("code starts with L").parse().expect("numeric code");
+            assert!(num > prev_num, "lint codes are strictly increasing (retired codes stay unused)");
+            prev_num = num;
         }
     }
 

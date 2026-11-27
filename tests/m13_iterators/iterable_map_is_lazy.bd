@@ -1,0 +1,10 @@
+//@ compile-fail
+
+// `xs.map(f)` on a `List` is lazy and returns an iterator adapter, not a `List` (spec/iterators.md, IT10).
+// Calling a `List`-only method like `len()` on it is E0002; call `.to_list()` or `.count()` instead.
+
+fn main() {
+    let xs = List.from([1, 2, 3])
+    let doubled = xs.map(|x| x * 2)
+    println("{}", doubled.len()) //~ E0002
+}
