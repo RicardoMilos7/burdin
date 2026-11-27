@@ -1,7 +1,7 @@
 //@ compile-fail
 
 // A generic alias needs the right number of arguments, its bounds hold for them, and it cannot expand into
-// itself (spec/type-aliases.md, AL3, AL4).
+// itself (spec/type-aliases.md, AL3, AL4). The same holds for an impl block written through an alias (AL5).
 
 type Pair<T> = (T, T)
 type Sorted<T: Ord> = List<T>
@@ -25,8 +25,28 @@ struct Stack<T> {
 
 type Stacked<T> = Stack<T>
 
-Stacked<i32> { //~ E0003
+Stacked<i32, i32> { //~ E0003
     fn size(self): i32 { 0 }
+}
+
+Stacked { //~ E0003
+    fn other(self): i32 { 0 }
+}
+
+Loop<i32> {
+    fn spin(self): i32 { 0 }
+}
+
+type Ahead = Behind //~ E0009
+type Behind = Ahead
+
+Ahead {
+    fn stuck(self): i32 { 0 }
+}
+
+// An alias of a tuple is a tuple, and methods cannot be added to one.
+Pair<i32> { //~ E0003
+    fn sum(self): i32 { self.0 + self.1 }
 }
 
 fn main() {}

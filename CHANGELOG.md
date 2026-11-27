@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #921: an `impl` block may now name a type through a type alias, generic or not (`Stacked<T> { ... }`,
+  `Stacked<T>: Describe { ... }`, `Ints { ... }` for `type Stacked<T> = Stack<T>` and `type Ints = Stack<i32>`).
+  `burdin_sema` expands aliases in the impl header (`impl_head` / `expand_impl_head`) before checking the target type,
+  keeping arity (E0003), bounds (E0141), and cycle (E0009) checks on the alias and applying the target type's impl
+  rules. Updated `spec/type-aliases.md` AL5, `spec/grammar.md`, `spec/impls.md`, `tests/README.md`,
+  `tests/m21_reflect/alias_generic.bd`, `tests/m21_reflect/alias_invalid.bd`, and `crates/burdin_sema/src/impl_tests.rs`.
 - Issue #1019: `str.split`, `rsplit`, `split_char`, `rsplit_char`, `split_whitespace`, `lines`, `match_indices`,
   `find_all`, and `char_indices` in `std/src/text.bd` return lazy iterators (`Split<str>`, `RSplit<str>`,
   `SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`, `Lines<str>`, `MatchIndices<str>`, `CharIndices<str>`)

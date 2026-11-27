@@ -3,9 +3,15 @@
 //> 2
 //> 0 1
 //> 12
+//> 2 1
+//> 6
+//> 7
+//> a stack of 2
+//> a stack of 1
 
 // A type alias can have parameters: `Pair<i32>` is the tuple `(i32, i32)` wherever a type is written, aliases can
-// name aliases, and a const parameter works too (spec/type-aliases.md, AL1-AL5).
+// name aliases, and a const parameter works too. An alias is the type it names, so an impl block written through one,
+// generic or not, adds methods and implementations to the aliased type (spec/type-aliases.md, AL1-AL5).
 
 type Pair<T> = (T, T)
 type Grid<T, const N: usize> = [T; N]
@@ -33,6 +39,75 @@ fn total(g: Grid<i32, 4>): i32 {
     sum
 }
 
+struct Stack<T> {
+    items: List<T>
+}
+
+type Stacked<T> = Stack<T>
+type Ints = Stack<i32>
+type MoreInts = Ints
+
+// An inherent block through a generic alias, with a name for the argument: every `Stack<T>` has these methods.
+Stacked<T> {
+    fn new(): Stack<T> {
+        Stack { items: List<T>.new() }
+    }
+
+    fn push(mut self, value: T) {
+        self.items.push(value)
+    }
+
+    fn size(self): usize {
+        self.items.len()
+    }
+}
+
+interface Describe {
+    fn describe(self): usize
+}
+
+// An interface implementation through a generic alias.
+Stacked<T>: Describe {
+    fn describe(self): usize {
+        self.items.len()
+    }
+}
+
+fn show<T: Describe>(x: T) {
+    println("a stack of {}", x.describe())
+}
+
+// Through an alias without parameters, of an instance: only `Stack<i32>` has `sum`.
+Ints {
+    fn sum(self): i32 {
+        let mut total = 0
+        for i in 0..self.items.len() {
+            total = total + self.items[i]
+        }
+        total
+    }
+}
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+type Spot = Point
+
+// Through an alias of an alias, and through an alias of a plain struct.
+MoreInts {
+    fn doubled(self): i32 {
+        self.sum() * 2
+    }
+}
+
+Spot {
+    fn manhattan(self): i32 {
+        self.x + self.y
+    }
+}
+
 fn main() {
     let p: Pair<i32> = (4, 3)
     let s = swap_pair(p)
@@ -48,4 +123,15 @@ fn main() {
 
     let t: Twice<i32> = ((1, 2), (3, 4))
     println("{}", total([t.0.0, t.0.1, t.1.0, t.1.1]) + 2)
+
+    let mut ints = Stack<i32>.new()
+    ints.push(1)
+    ints.push(2)
+    let mut flags: Stacked<bool> = Stacked<bool>.new()
+    flags.push(true)
+    println("{} {}", ints.size(), flags.size())
+    println("{}", ints.doubled())
+    println("{}", Point { x: 3, y: 4 }.manhattan())
+    show(ints)
+    show(flags)
 }
