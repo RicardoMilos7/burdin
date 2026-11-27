@@ -34,7 +34,7 @@ A function that only reads text takes a `str`. A `String` is passed to it as is,
 | Measure | `s.len()` (in bytes, for UTF-8 text) |
 | Trim, change case | `s.trim()`, `s.to_lowercase()`, `s.to_uppercase()` |
 | Split | `s.split(",")`, `s.split_whitespace()`, `s.lines()` |
-| Look at characters | `s.chars()`, a `List<char>` copy of the characters |
+| Look at characters | `s.chars()`, a lazy iterator over the characters (`to_char_list()` for a list) |
 | Test | `s.contains("x")`, `s.starts_with("x")` |
 
 ```burdin

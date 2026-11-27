@@ -38,8 +38,11 @@ method of their own:
 `ArrayIntoIter`, `MapIntoIter`, `MapIter`, and `RangeIter` are compiler-known iterator types. `ListIntoIter` is an ordinary struct of `std` (`std/src/std.bd`) that implements `Iterator<T>`; the compiler knows it only as a lang item (`spec/stdlib.md`, "Compiler-known types"). The
 owning ones (`ArrayIntoIter`, `ListIntoIter`, `MapIntoIter`) drop the items they have not yielded; `MapIntoIter`
 also clears each entry it moves out, so the map's storage is never dropped twice. `MapIter` and `RangeIter` only
-read their source and have no drop glue. `s.chars()` is not an iterator: it returns a `List<char>` (`stdlib.md`), so `for c in s.chars()` walks that list, and
-`s.chars().iter()` or `.into_iter()` gives the adapters. `List.drain(range)` also yields a `ListIntoIter<T>`: it removes
+read their source and have no drop glue. `s.chars()` is an iterator: it returns a `Chars<str>`, an ordinary `std` struct
+generic over its text (`stdlib.md`, issue #1083) that decodes one character per `next` or `next_back` and allocates
+nothing. It is an iterator only, not `Iterable`, so `for c in s.chars()` enters through the protocol (IT8) and the
+adapters apply to it directly. Like every view it is second-class (SC2/SC3), and the text stays borrowed until the
+iterator's last use. `List.drain(range)` also yields a `ListIntoIter<T>`: it removes
 the range from the list and hands the removed elements over in a buffer with the default allocator
 (`stdlib.md`).
 
@@ -169,8 +172,8 @@ interface DoubleEndedIterator<T> {
 `next_back` takes the last remaining item, or `Option.None`; `next` and `next_back` take from the two ends and meet in the
 middle, and an exhausted iterator keeps returning `Option.None` from both. The compiler implements the interface, with the
 same item type as `next`, for the slice iterator (the `iter()` of an array or a `List`), and the range iterator (an
-inclusive range yields its upper endpoint first and never computes a bound outside its type); `"añ😀".chars().iter().rev()`
-yields `😀`, `ñ`, `a`, through the list's slice iterator. The owning iterators (`ArrayIntoIter`,
+inclusive range yields its upper endpoint first and never computes a bound outside its type); `std` implements it for
+`Chars<str>`, which decodes UTF-8 backwards, so `"añ😀".chars().rev()` yields `😀`, `ñ`, `a`. The owning iterators (`ArrayIntoIter`,
 `ListIntoIter`, `MapIntoIter`) and `MapIter` are not double-ended: `list.into_iter().rev()` is E0141. `std` implements it
 for `DequeIter`, for `RevIter` (its `next_back` is the source's `next`), and for the adapters whose order follows their
 source's: `MapIter`, `FilterIter`, `InspectIter`, `ChainIter`, `ClonedIter`, and `CopiedIter`. The adapters that count

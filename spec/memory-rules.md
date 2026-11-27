@@ -318,9 +318,15 @@ type. Tuples, arrays, `Option`, and `Result` inherit second-class-ness from thei
 **SC3 Propagation.** A generic type instantiated with a second-class type is second-class. The check is applied
 at the forbidden positions above, so `Option<&i32>` is accepted as a local and rejected as a field. The same holds
 for a user generic (`Wrapper<&i32>`), and its own field may hold the view: the instance is what becomes second-class,
-so the field declaration is not itself E0120.
+so the field declaration is not itself E0120. The rule, then, is that a view cannot escape the function that borrowed
+it (RT, RF5), not that a struct can never hold a view: a struct generic over its source holds the view in a field and
+its instance stays second-class. A field whose declared type is a concrete view (`text: str`) is still E0120 (SC2).
+The standard library's `Chars<S>` is
+written this way (`struct Chars<S> { text: S, ... }`, `str.chars(self): Chars<str>`, issue #1083), as are the adapter
+instances over slices (`ZipIter<[i32], i32, [i32], i32>`).
 Tests: `ref_in_struct_field`, `ref_in_enum_variant`, `ref_in_collection`, `str_in_struct_field`, `option_ref_in_struct_field`
-(E0120); `option_of_reference_ok`, `m07_generics/view_instance_in_field` (E0120), `view_instance_local`.
+(E0120); `option_of_reference_ok`, `m07_generics/view_instance_in_field` (E0120), `view_instance_local`;
+`m13_iterators/chars_field` (E0120), `chars_escape` (E0122), `chars_mutate` (E0111), `chars_return`.
 
 ## 9. Drop (DR)
 

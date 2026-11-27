@@ -54,7 +54,7 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::RangeIter`, `Ty::Range` | moved | Done in #1017: `Range<T>`, `RangeInclusive<T>`, `RangeIter<T>`, and `RangeIterInclusive<T>` are ordinary `std` structs (lang items `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`). A range literal builds the struct; the iterators step with the `__int_step(x, delta)` intrinsic, so they stop after the last value without overflowing; `for` over a range with a plain binding still lowers to a counted loop. |
 | `Ty::MapIntoIter` | moved | `struct MapIntoIter<K, V, A> { ptr, len, cap, pos, alloc }` in `std` (lang item `MapIntoIter`), a plain struct implementing `Iterator<(K, V)>` and `Drop`; `Map.into_iter`, `into_keys`, `into_values`, and `drain` produce it. |
 | `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A stored `CPtr` would let the iterator outlive its collection. |
-| `Ty::Chars` | removed | `str.chars()` and `String.chars()` return a `List<char>` (an extension method of `std`, `std/src/text.bd`), decided in #1017: a view of characters cannot exist because UTF-8 text holds no array of `char`, and a struct holding a `str` view is not allowed. The list is a copy, so `chars()` costs O(n) and an allocation; `char_count`, `nth_char`, and `char_indices` read characters without it. `for c in s.chars()` walks the list, and `s.chars().iter()` or `.into_iter()` gives the iterator adapters. |
+| `Ty::Chars` | removed | `str.chars()` and `String.chars()` return a `Chars<str>` (`std/src/text.bd`): an ordinary `std` struct generic over its text, `struct Chars<S> { text: S, front: usize, back: usize }`, with `Iterator<char>` and `DoubleEndedIterator<char>` written in Burdin (issue #1083). #1017 first made `chars()` return a `List<char>` copy, because a struct with a `str` field is E0120; a struct generic over its source may hold the view, and its `Chars<str>` instance is second-class (`memory-rules.md` SC3), so the iterator is lazy and allocates nothing. `to_char_list()` gives the list. |
 
 Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
 (`fn List<T>.push(mut self, own x: T)`, `enum Option<T> { Some(T) None }`), each with its `///` documentation. The
@@ -632,8 +632,14 @@ struct String {
 ```
 
 `str` has the same read methods (`len`, `starts_with`, `find`, `find_str`, `as_str`, `chars`, `to_string`), without
-`push*`, `from`, or `clone`. `chars()` is an extension method (`text.bd`) on both: `fn str.chars(self): List<char>` copies the
-Unicode scalar values into a list, so `for c in s.chars()` walks a list and `s.chars().iter()` gives the adapters.
+`push*`, `from`, or `clone`. `chars()` is an extension method (`text.bd`) on both: `fn str.chars(self): Chars<str>` (and
+`fn String.chars(self): Chars<str>`) returns a lazy iterator over the Unicode scalar values (issue #1083). `Chars<S>` is an
+ordinary `std` struct, `struct Chars<S>: Clone { priv text: S, priv front: usize, priv back: usize }`, with
+`Iterator<char>` and `DoubleEndedIterator<char>` for `Chars<str>`: `next` decodes the UTF-8 at the front, `next_back` steps
+back over continuation bytes and decodes the last character, and nothing is allocated, so `for c in s.chars()`,
+`s.chars().rev()`, `.filter(...)`, and `.count()` cost no list; `.to_list()` or `s.to_char_list()` builds one. A `Chars<str>`
+holds a view of the text, so it is second-class (`memory-rules.md` SC1-SC3): a struct field or enum payload of that type is
+E0120, returning one that reads a local `String` is E0122, and the text stays borrowed until the iterator's last use (E0111).
 
 Slicing `s[a..b]` and `s[a..=b]` yields a `str` view of the bytes in the range; it works on `str`, `String`, arrays,
 and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, and so does a slice of `str` or `String`

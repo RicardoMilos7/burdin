@@ -1,0 +1,23 @@
+//@ run
+//> 3
+//> 2
+//> b
+
+// A user function can return `Chars<str>` when the text comes from a parameter: the iterator borrows the caller's text
+// (RT, SC2), like any view.
+fn letters(s: str): Chars<str> {
+    s.chars()
+}
+
+fn without_spaces(s: str): Chars<str> {
+    letters(s)
+}
+
+fn main() {
+    let owned = String.from("a b c")
+    println("{without_spaces(owned.as_str()).filter(|c| *c != ' ').count()}")
+    let mut it = letters("ñb")
+    it.next()
+    println("{it.clone().count() + 1}")
+    println("{it.next().unwrap()}")
+}

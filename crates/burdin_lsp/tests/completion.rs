@@ -899,8 +899,8 @@ fn ranges_tuples_and_iterators_have_members() {
         // A range clones, compares, and gives its iterator; it is not an iterator (`r.map(...)` is E0002).
         ("r", &["clone", "cmp", "iter", "into_iter"], &["map", "filter", "contains"]),
         ("t", &["clone", "cmp"], &["iter", "map"]),
-        // `chars()` is a `List<char>`: the list methods, and no iterator adapters.
-        ("ch", &["len", "iter", "push", "into_iter"], &["map", "next_back"]),
+        // `chars()` is a `Chars<str>` iterator (issue #1083): the adapters and `next_back`, and no list methods.
+        ("ch", &["next", "next_back", "map", "count"], &["push", "len", "into_iter"]),
         // `[1, 2].iter()` is a slice, an iterator too.
         ("it", &["map", "fold", "first", "len", "contains"], &["iter_mut", "clone"]),
         ("unit", &[], &["clone", "map"]),

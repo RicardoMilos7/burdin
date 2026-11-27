@@ -6,9 +6,9 @@
 //> l
 //> o
 
-// `chars()` returns a `List<char>`; its `into_iter()` is an iterator whose `next()` yields one character at a time.
+// `Chars` is itself an iterator: `next()` decodes one character and advances by its UTF-8 width.
 fn main() {
-    let mut it = "héllo".chars().into_iter()
+    let mut it = "héllo".chars()
     let mut n = 0
     loop {
         match it.next() {
@@ -18,7 +18,7 @@ fn main() {
     }
     println(n.to_string())
 
-    let mut chars = "héllo".chars().into_iter()
+    let mut chars = "héllo".chars()
     loop {
         match chars.next() {
             Option.Some(c) => println(c.to_string()),

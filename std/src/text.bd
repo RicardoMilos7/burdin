@@ -5,7 +5,7 @@
 // match of a valid separator in valid text always starts and ends on a character boundary, and `trim` walks whole
 // characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
 
-use iter.Iterator
+use iter.{DoubleEndedIterator, Iterator}
 use mem
 use unicode.{is_whitespace, len_utf8}
 
@@ -45,37 +45,88 @@ priv fn decode_char(bytes: [u8], at: usize): (char, usize) {
     ((high | low) as char, 4)
 }
 
-/// The characters (Unicode scalar values) of the text, in order, as a list. The list is a copy: a character takes one
-/// to four bytes of UTF-8, so there is no array of characters inside the text to view. Use `char_count`, `nth_char`,
-/// or `char_indices` to read characters without building the list, and `.iter()` for the adapters.
+/// The lazy iterator of `chars()`: the text it reads and the byte range `front..back` not yet yielded. It decodes one
+/// character per `next` or `next_back` and allocates nothing. `S` is the text it reads, so a `Chars<str>` holds a view
+/// and is second-class like any view (`spec/memory-rules.md`, SC2): a local, a parameter, a return value, or a
+/// temporary, never a field of a user struct, and the text stays borrowed until the iterator's last use.
 ///
 /// ```
-/// let chars = "añ".chars()
-/// assert_eq(chars.len(), 2)
-/// assert_eq(chars[1], 'ñ')
-/// for c in "ab".chars() {
-///     assert(c == 'a' || c == 'b')
-/// }
+/// let mut it = "añ".chars()
+/// assert_eq(it.next(), Option.Some('a'))
+/// assert_eq(it.next(), Option.Some('ñ'))
+/// assert_eq(it.next(), Option.None)
 /// ```
-fn str.chars(self): List<char> {
-    let bytes = self.as_bytes()
-    let n = bytes.len()
-    let mut out = List<char>.with_capacity(n)
-    let mut at: usize = 0
-    while at < n {
-        let (c, width) = decode_char(bytes, at)
-        out.push(c)
-        at = at + width
-    }
-    out
+struct Chars<S>: Clone {
+    priv text: S
+    priv front: usize
+    priv back: usize
 }
 
-/// The characters of the string, in order, as a list (see `str.chars`).
+Chars<str>: Iterator<char> {
+    /// The next character from the front, or `None` once the front meets the back.
+    ///
+    /// ```
+    /// let mut it = "😀".chars()
+    /// assert_eq(it.next(), Option.Some('😀'))
+    /// assert_eq(it.next(), Option.None)
+    /// ```
+    fn next(mut self): Option<char> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let (c, width) = decode_char(self.text.as_bytes(), self.front)
+        self.front = self.front + width
+        Option.Some(c)
+    }
+}
+
+Chars<str>: DoubleEndedIterator<char> {
+    /// The next character from the back: it steps back over the continuation bytes (`10xxxxxx`) to the byte that
+    /// starts the last character, and decodes forward from there.
+    ///
+    /// ```
+    /// let mut it = "añ".chars()
+    /// assert_eq(it.next_back(), Option.Some('ñ'))
+    /// assert_eq(it.next_back(), Option.Some('a'))
+    /// assert_eq(it.next_back(), Option.None)
+    /// ```
+    fn next_back(mut self): Option<char> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let bytes = self.text.as_bytes()
+        let mut at = self.back - 1
+        while at > self.front && (bytes[at] & 192) == 128 {
+            at = at - 1
+        }
+        let (c, _) = decode_char(bytes, at)
+        self.back = at
+        Option.Some(c)
+    }
+}
+
+/// The characters (Unicode scalar values) of the text, in order, as a lazy iterator. It decodes one character at a
+/// time and allocates nothing; `to_list()` (or `to_char_list()`) builds a list when one is needed. The iterator
+/// borrows the text (a view, second-class), so the text cannot change while it is live.
 ///
 /// ```
-/// assert_eq(String.from("añ").chars().len(), 2)
+/// let mut count = 0
+/// for c in "añ😀".chars() {
+///     count = count + 1
+/// }
+/// assert_eq(count, 3)
+/// assert_eq("añ".chars().rev().to_list()[0], 'ñ')
 /// ```
-fn String.chars(self): List<char> {
+fn str.chars(self): Chars<str> {
+    Chars { text: self, front: 0, back: self.len() }
+}
+
+/// The characters of the string, in order, as a lazy iterator that borrows the string (see `str.chars`).
+///
+/// ```
+/// assert_eq(String.from("añ").chars().count(), 2)
+/// ```
+fn String.chars(self): Chars<str> {
     self.as_str().chars()
 }
 
@@ -610,7 +661,16 @@ fn str.nth_char(self, n: usize): Option<char> {
 /// assert_eq(chars[0], 'a')
 /// ```
 fn str.to_char_list(self): List<char> {
-    self.chars()
+    let bytes = self.as_bytes()
+    let n = bytes.len()
+    let mut out = List<char>.with_capacity(n)
+    let mut at: usize = 0
+    while at < n {
+        let (c, width) = decode_char(bytes, at)
+        out.push(c)
+        at = at + width
+    }
+    out
 }
 
 /// Each character with the byte offset where it starts.
