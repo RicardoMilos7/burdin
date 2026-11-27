@@ -30,19 +30,20 @@ function clean(body) {
 		.trim();
 }
 
-function generate(source, letter, folder, label) {
+function generate(source, letter, folder, label, indexTitle, indexDescription) {
 	const out = join(root, 'src', 'content', 'docs', folder);
 	rmSync(out, { recursive: true, force: true });
 	mkdirSync(out, { recursive: true });
 	const text = readFileSync(join(docsDir, source), 'utf8').replace(/\r\n/g, '\n');
 	const parts = text.split(/^## (?=[EL]\d{4}: )/m).slice(1);
-	let count = 0;
+	const entries = [];
 	for (const part of parts) {
 		const newline = part.indexOf('\n');
 		const heading = part.slice(0, newline);
 		const match = /^([EL]\d{4}): (.*)$/.exec(heading);
 		if (!match || match[1][0] !== letter) continue;
 		const [, code, title] = match;
+		entries.push({ code, title });
 		const page = [
 			'---',
 			`title: ${JSON.stringify(`${code}: ${title}`)}`,
@@ -56,14 +57,48 @@ function generate(source, letter, folder, label) {
 			'',
 		].join('\n');
 		writeFileSync(join(out, `${code}.md`), page);
-		count += 1;
 	}
-	if (count === 0) {
+	if (entries.length === 0) {
 		console.error(`error: no ${label} sections found in docs/${source}`);
 		process.exit(1);
 	}
-	console.log(`${folder}: ${count} pages`);
+	const rows = entries.map(({ code, title }) => `| [\`${code}\`](/${folder}/${code}/) | ${title} |`);
+	const indexPage = [
+		'---',
+		`title: ${JSON.stringify(indexTitle)}`,
+		`slug: ${folder}`,
+		`description: ${JSON.stringify(indexDescription)}`,
+		'sidebar:',
+		'  label: Overview',
+		'  order: -1',
+		'---',
+		'',
+		indexDescription,
+		'',
+		'| Code | Meaning |',
+		'| --- | --- |',
+		...rows,
+		'',
+		`See the [full ${label.toLowerCase()} reference](${repo}/docs/${source}).`,
+		'',
+	].join('\n');
+	writeFileSync(join(out, 'index.md'), indexPage);
+	console.log(`${folder}: ${entries.length} pages`);
 }
 
-generate('error-codes.md', 'E', 'errors', 'Error');
-generate('lints.md', 'L', 'lints', 'Lint');
+generate(
+	'error-codes.md',
+	'E',
+	'errors',
+	'Error',
+	'Error codes',
+	'Every Burdin compiler diagnostic code, with an example and how to fix it.',
+);
+generate(
+	'lints.md',
+	'L',
+	'lints',
+	'Lint',
+	'Lints',
+	'Every burdin lint check, with an example and how to fix it.',
+);
