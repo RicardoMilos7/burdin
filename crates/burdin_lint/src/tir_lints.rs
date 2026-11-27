@@ -410,7 +410,7 @@ impl An<'_> {
             K::Local(id) => {
                 self.use_local(*id);
             }
-            K::Call(fid, args) => {
+            K::Call(fid, args, _) => {
                 self.call(e, *fid, args, receiver_of_eager);
                 // `List.iter` and `List.into_iter` are methods of `std` now, not compiler methods.
                 let name = &self.program.functions[fid.0].name;
@@ -718,7 +718,7 @@ fn root_of(e: &Expr) -> Option<LocalId> {
 /// The receiver of `x.to_list()` when `e` is one.
 fn to_list_source<'e>(program: &Program, e: &'e Expr) -> Option<&'e Expr> {
     match &e.kind {
-        ExprKind::Call(fid, args) if program.functions[fid.0].name.ends_with(".to_list") => args.first(),
+        ExprKind::Call(fid, args, _) if program.functions[fid.0].name.ends_with(".to_list") => args.first(),
         ExprKind::Method(Method::SliceToList, args) => args.first(),
         _ => None,
     }

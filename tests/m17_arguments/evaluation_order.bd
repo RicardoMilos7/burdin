@@ -1,11 +1,17 @@
 //@ run
+//> third
 //> first
 //> second
-//> third
 //> 6
+//> m_b
+//> m_a
+//> 13
+//> d_c
+//> d_a
+//> 123
 
-// Arguments are evaluated left to right in parameter order, whatever order they are written in; a default
-// is evaluated in the position of the parameter it fills (spec/arguments.md, AG6).
+// Written arguments are evaluated left to right in source order, whatever order the parameters were declared in;
+// omitted defaults are compile-time constants with no side effects (spec/arguments.md, AG6).
 
 fn log(name: str, value: i32): i32 {
     println(name)
@@ -14,6 +20,17 @@ fn log(name: str, value: i32): i32 {
 
 fn combine(a: i32, b: i32, c: i32): i32 { a + b + c }
 
+struct Boxed { base: i32 }
+
+Boxed {
+    fn add_two(self, a: i32, b: i32): i32 { self.base + a + b }
+}
+
+fn digits(a: i32, b: i32 = 2, c: i32 = 0): i32 { a * 100 + b * 10 + c }
+
 fn main() {
     println("{}", combine(c: log("third", 3), a: log("first", 1), b: log("second", 2)))
+    let box = Boxed { base: 10 }
+    println("{}", box.add_two(b: log("m_b", 2), a: log("m_a", 1)))
+    println("{}", digits(c: log("d_c", 3), a: log("d_a", 1)))
 }

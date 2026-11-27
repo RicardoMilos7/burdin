@@ -1,0 +1,11 @@
+//@ compile-fail
+
+// A default argument must have a materializable type (`spec/arguments.md`, AG2; `spec/const-eval.md`, CE3):
+// `List<i32>` cannot be materialized at compile time (E0221). Calling `g()` after the rejected default must
+// not also report a misleading E0004 ("has no default").
+
+fn g(x: List<i32> = List<i32>.new()): usize { x.len() } //~ E0221
+
+fn main() {
+    let _ = g()
+}

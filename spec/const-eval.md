@@ -50,8 +50,9 @@ kind (`spec/const-generics.md`). A `static` is the other global: its initializer
 its value is stored once before `main` runs (`globals.md`, GL1-GL2).
 
 Constants of a struct, enum, tuple, array, `Option`, or `Result` type, and constants that refer to other constants,
-are values like any other. Default arguments (`spec/arguments.md`, AG2) keep their narrower rule: literals, other
-constants, operators, and casts.
+are values like any other. Default arguments (`spec/arguments.md`, AG2) follow these same rules: any pure
+expression of a materializable type, evaluated once at compile time and materialized at every call that omits
+the argument.
 
 ## CE3. Compile-time values
 

@@ -54,7 +54,7 @@ pub fn walk_expr<V: Visit + ?Sized>(v: &mut V, e: &Expr) {
                 v.expr(value);
             }
         }
-        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args, _) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|a| v.expr(a));
         }
         K::Array(es) | K::Tuple(es) => es.iter().for_each(|a| v.expr(a)),
@@ -192,7 +192,7 @@ pub fn walk_expr_mut<V: VisitMut + ?Sized>(v: &mut V, e: &mut Expr) {
                 v.expr(value);
             }
         }
-        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args, _) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter_mut().for_each(|a| v.expr(a));
         }
         K::Array(es) | K::Tuple(es) => es.iter_mut().for_each(|a| v.expr(a)),

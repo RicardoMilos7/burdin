@@ -337,7 +337,7 @@ impl FnCx<'_> {
                     return None;
                 }
                 let ret = sig.ret.clone();
-                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![l, r]), ret, span))
+                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![l, r], Vec::new()), ret, span))
             }
             ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
                 let key = adt_key(&ty)?;
@@ -350,7 +350,7 @@ impl FnCx<'_> {
                     return None;
                 }
                 let ret = sig.ret.clone();
-                Some(mk(tir::ExprKind::Call(f, vec![l, r]), ret, span))
+                Some(mk(tir::ExprKind::Call(f, vec![l, r], Vec::new()), ret, span))
             }
             _ => None,
         }
@@ -365,7 +365,7 @@ impl FnCx<'_> {
                     return None;
                 }
                 let ret = sig.ret.clone();
-                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![e]), ret, span))
+                Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![e], Vec::new()), ret, span))
             }
             ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
                 let key = adt_key(&ty)?;
@@ -378,7 +378,7 @@ impl FnCx<'_> {
                     return None;
                 }
                 let ret = sig.ret.clone();
-                Some(mk(tir::ExprKind::Call(f, vec![e]), ret, span))
+                Some(mk(tir::ExprKind::Call(f, vec![e], Vec::new()), ret, span))
             }
             _ => None,
         }

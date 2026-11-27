@@ -24,13 +24,17 @@ An `extern "C" fn` exported by the program is an ordinary Burdin function to its
 defaults; the C ABI it exports still has every parameter.
 
 **AG2. Checking a default.** A default is checked once, at the declaration, against the parameter's type and in
-the declaration's module scope, exactly as the same expression written in that module would be. The function's
-parameters, `self`, and locals are not in scope, so a default cannot name one (that name is E0002). A default
-must be a **constant expression**: a literal, another constant, an operator on constant expressions, or a cast —
-the subset a `const` initializer accepts today. A call, a struct literal, a block, or any other expression is
-E0213. Because it is a constant expression, a call that omits the argument inserts its value at the call site,
-every time, with no side effects and no captured state. A parameter whose type mentions a type parameter cannot
-have a default (E0213): the value is materialized at a concrete call, and inference does not use defaults.
+the declaration's module scope, exactly as a `const` initializer written in that module would be (`spec/const-eval.md`,
+CE2-CE3, CE6-CE9). The function's parameters, `self`, and locals are not in scope, so a default cannot name one
+(E0002), and it may not name a `static` (E0220). A default may be any pure compile-time expression of a
+**materializable** type (CE3), including calls to pure functions, struct and enum literals, blocks, and loops:
+it is evaluated once at compile time at the declaration (E0222 on panic, E0224 on an impure operation, E0225 on
+budget exhaustion, E0009 on a cycle), and a call that omits the argument inserts its materialized value at the
+call site, every time, with no side effects and no captured state. A parameter whose type is not materializable
+(such as `List<T>`, `Map<K, V>`, `Heap<T>`, `any`, a closure, or a reference) cannot have a default (E0221), and
+a parameter whose type mentions a type parameter cannot have a default (E0213): the value is materialized at a
+concrete call, and inference does not use defaults. When a default declaration is rejected, the parameter is
+still treated as having a default so calls that omit it do not report a misleading E0004.
 
 **AG3. Conventions.** The call-site conventions of a parameter do not change because it has a default.
 `own` parameters may have one: the value is a constant expression, and moving it into the callee is the ordinary
@@ -61,13 +65,13 @@ shared by every implementation, and a default is a property of one concrete func
 interface method with a body) is still an interface signature. An implementation method may declare defaults
 for its own callers, but they are not inherited from the interface and not checked against it.
 
-**AG6. Evaluation order.** Every argument expression is evaluated left to right **in parameter order**, not in
-the order it was written; a default is evaluated in the position of the parameter it fills. Code generation
-already emits a call's arguments in parameter order, so a named argument written out of order runs in its
-parameter's position:
+**AG6. Evaluation order.** Every written argument expression is evaluated left to right **in source order** (the
+order it is written at the call site, after the receiver of a method call), whatever order the parameters were
+declared in. Omitted defaults are compile-time constants evaluated once at the declaration (AG2), so inserting
+them has no observable side effects:
 
 ```burdin
-f(c: log("third"), a: log("first"), b: log("second"))   // prints first, second, third
+f(c: log("third"), a: log("first"), b: log("second"))   // prints third, first, second
 ```
 
 **AG7. Missing and extra arguments.** A parameter without a default is required. A call that omits it is E0004

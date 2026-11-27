@@ -249,7 +249,7 @@ impl FnCx<'_> {
         let new = adt_method(self, &formatter_ty, "new");
         match new {
             Some(new) => {
-                let init = mk(tir::ExprKind::Call(new, Vec::new()), formatter_ty.clone(), span);
+                let init = mk(tir::ExprKind::Call(new, Vec::new(), Vec::new()), formatter_ty.clone(), span);
                 stmts.push(tir::Stmt::Let(Pat::Binding(f, BindMode::Move), init, None));
             }
             None => {
@@ -466,7 +466,7 @@ impl FnCx<'_> {
         match self.globals.std_func(name) {
             Some(f) => {
                 let ret = self.globals.sigs[f.0].ret.clone();
-                mk(tir::ExprKind::Call(f, args), ret, span)
+                mk(tir::ExprKind::Call(f, args, Vec::new()), ret, span)
             }
             None => {
                 self.diags.error(Code::UNKNOWN_NAME, span, format!("the standard library does not declare `{name}`"));
