@@ -186,8 +186,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     None => None,
                 }
             }
-            K::Builtin(b, args) => self.builtin(*b, args, &e.ty, e.span)?,
-            K::Method(m, args) => self.method(*m, args, &e.ty, e.span)?,
+            K::Builtin(b, args) => {
+                let v = self.builtin(*b, args, &e.ty, e.span)?;
+                self.conform_opt(v, &e.ty)?
+            }
+            K::Method(m, args) => {
+                let v = self.method(*m, args, &e.ty, e.span)?;
+                self.conform_opt(v, &e.ty)?
+            }
             K::Closure { closure, captures } => self.closure_value(*closure, captures, e.span)?,
             K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind)?,
             K::BoxAny { value, vtable } => self.box_any(value, *vtable)?,
@@ -196,7 +202,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             K::AnyUpcast { value, from, slot } => self.any_upcast(value, *from, *slot)?,
             K::AnyIs { value, type_id, .. } => self.any_is(value, *type_id)?,
-            K::AnyDowncast { value, target, type_id } => self.any_downcast(value, target, *type_id)?,
+            K::AnyDowncast { value, target, type_id } => self.any_downcast(value, target, *type_id, &e.ty)?,
             K::StringAsStr(inner) => {
                 let (ptr, len) = self.view_parts(inner)?;
                 Some(self.make_str(ptr, len)?.into())
@@ -220,8 +226,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | K::ForArray { .. }
             | K::ForSlice { .. }
             | K::ForList { .. }
-            | K::ForMap { .. }
-            | K::ForChars { .. } => {
+            | K::ForMap { .. } => {
                 self.loop_expr(e, None, None)?;
                 None
             }
@@ -362,53 +367,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.product(&fields, &e.ty)?
             }
             K::Variant(index, fields) => self.variant(*index, fields, &e.ty)?,
-            K::Some(inner) => {
-                let v = self.expr_mode(inner, Mode::Move)?;
-                let Ty::Option(t) = &e.ty else { unreachable!("`Some` builds an Option") };
-                let opt_ty = self.option_ty(t);
-                let yes = self.cx.bool_type().const_int(1, false);
-                let agg = self
-                    .builder
-                    .build_insert_value(opt_ty.const_zero(), yes, 0, "")
-                    .map_err(llvm_err)?
-                    .into_struct_value();
-                match self.llvm_ty(t) {
-                    Some(_) => {
-                        let v = self.need(v, t);
-                        Some(
-                            self.builder
-                                .build_insert_value(agg, v, 1, "")
-                                .map_err(llvm_err)?
-                                .into_struct_value()
-                                .into(),
-                        )
-                    }
-                    None => Some(agg.into()),
-                }
-            }
-            K::None => {
-                let Ty::Option(t) = &e.ty else { unreachable!("`None` is an Option") };
-                Some(self.option_ty(t).const_zero().into())
-            }
-            K::Ok(inner) | K::Err(inner) => {
-                let v = self.expr_mode(inner, Mode::Move)?;
-                let Ty::Result(ok, err) = &e.ty else { unreachable!("a Result constructor builds a Result") };
-                let rt = self.result_ty(ok, err);
-                let is_ok = matches!(e.kind, K::Ok(_));
-                let tag = self.cx.bool_type().const_int(u64::from(is_ok), false);
-                let mut agg = self
-                    .builder
-                    .build_insert_value(undef(rt.into()).into_struct_value(), tag, 0, "")
-                    .map_err(llvm_err)?
-                    .into_struct_value();
-                let payload = if is_ok { ok } else { err };
-                if self.llvm_ty(payload).is_some() {
-                    let v = self.need(v, payload);
-                    let index = if is_ok { 1 } else { 2 };
-                    agg = self.builder.build_insert_value(agg, v, index, "").map_err(llvm_err)?.into_struct_value();
-                }
-                Some(agg.into())
-            }
             K::Index(..) | K::Field(..) | K::Deref(..) | K::PtrDeref(..) | K::DerefRef(..) => {
                 self.expr_place(e, mode)?
             }

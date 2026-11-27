@@ -1,6 +1,7 @@
 //! Control flow: `if`, `for`, `match`, and `if let`.
 
 use super::{FnCx, LoopKind, LoopScope, error_expr, mk};
+use crate::globals::Globals;
 use crate::types::compatible;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -14,7 +15,6 @@ enum ForKind {
     Slice,
     List,
     Map,
-    Chars,
     /// A `Range<T>` or `RangeInclusive<T>` value, evaluated once.
     Range,
 }
@@ -292,17 +292,14 @@ impl FnCx<'_> {
             if matches!(ty, Ty::Int(_))
                 && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
             {
-                let range_ty = Ty::Range(Box::new(ty.clone()), *inclusive);
+                let range_ty = self.globals.range_ty(ty.clone(), *inclusive);
                 let value = mk(
                     tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive: *inclusive },
                     range_ty,
                     span,
                 );
-                let iterator = mk(
-                    tir::ExprKind::Method(tir::Method::Iter, vec![value]),
-                    Ty::RangeIter(Box::new(ty.clone()), *inclusive),
-                    span,
-                );
+                let iter = ast::Ident { name: "iter".to_string(), span };
+                let iterator = self.method_call_on(value, &iter, &[], span, None);
                 return self.protocol_for(pattern, iterator, ty, body, label, span);
             }
             self.scopes.push(HashMap::new());
@@ -333,17 +330,13 @@ impl FnCx<'_> {
         let iterable = self.open_opaque_for_loop(iterable);
         // A user type (or a type parameter) iterates through the protocol: an iterator value directly, an
         // `Iterable` through `iter()` (spec/iterators.md, IT4).
-        let builtin = matches!(
-            iterable.ty,
-            Ty::Array(..)
-                | Ty::Slice(_)
-                | Ty::List(_, _)
-                | Ty::Map(..)
-                | Ty::Chars
-                | Ty::Range(..)
-                | Ty::Error
-                | Ty::Never
-        );
+        let list_elem = self.globals.list_parts(&iterable.ty).map(|(elem, _)| elem);
+        let range_elem = self.globals.range_parts(&iterable.ty);
+        let map_parts = self.globals.map_parts(&iterable.ty);
+        let builtin = list_elem.is_some()
+            || map_parts.is_some()
+            || range_elem.is_some()
+            || matches!(iterable.ty, Ty::Array(..) | Ty::Slice(_) | Ty::Error | Ty::Never);
         if !builtin {
             // `for` borrows its source (IT1), so a type that is both an `Iterable` and an `Iterator` is iterated
             // through `iter()`, not consumed as an iterator value.
@@ -380,13 +373,15 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let (elem, kind) = match &iterable.ty {
+            _ if list_elem.is_some() => (list_elem.clone().expect("checked above"), ForKind::List),
+            _ if map_parts.is_some() => {
+                let (k, v, _) = map_parts.clone().expect("checked above");
+                (Ty::Tuple(vec![k, v]), ForKind::Map)
+            }
+            _ if range_elem.is_some() => (range_elem.clone().expect("checked above").0, ForKind::Range),
             Ty::Array(t, _) => ((**t).clone(), ForKind::Array),
             Ty::Slice(t) => ((**t).clone(), ForKind::Slice),
-            Ty::List(t, _) => ((**t).clone(), ForKind::List),
-            Ty::Map(k, v, _) => (Ty::Tuple(vec![(**k).clone(), (**v).clone()]), ForKind::Map),
             Ty::Error | Ty::Never => (Ty::Error, ForKind::Array),
-            Ty::Chars => (Ty::Char, ForKind::Chars),
-            Ty::Range(t, _) => ((**t).clone(), ForKind::Range),
             other => {
                 self.diags.error(
                     Code::TYPE_MISMATCH,
@@ -403,12 +398,8 @@ impl FnCx<'_> {
                 && !matches!(pattern.kind, ast::PatternKind::Binding { .. } | ast::PatternKind::Wild)
             {
                 self.scopes.pop();
-                let inclusive = matches!(iterable.ty, Ty::Range(_, true));
-                let iterator = mk(
-                    tir::ExprKind::Method(tir::Method::Iter, vec![iterable]),
-                    Ty::RangeIter(Box::new(elem.clone()), inclusive),
-                    span,
-                );
+                let iter = ast::Ident { name: "iter".to_string(), span };
+                let iterator = self.method_call_on(iterable, &iter, &[], span, None);
                 return self.protocol_for(pattern, iterator, elem, body, label, span);
             }
             // A range value's endpoints are integers, so the loop binding is a plain owned integer like the
@@ -453,7 +444,6 @@ impl FnCx<'_> {
             ForKind::Slice => tir::ExprKind::ForSlice { pat, slice: array, body },
             ForKind::List => tir::ExprKind::ForList { pat, list: array, body },
             ForKind::Map => tir::ExprKind::ForMap { pat, map: array, body },
-            ForKind::Chars => tir::ExprKind::ForChars { pat, string: array, body },
             ForKind::Range => unreachable!("handled above"),
         };
         Self::with_label(label, mk(kind, Ty::Unit, span))
@@ -470,8 +460,8 @@ impl FnCx<'_> {
         span: Span,
     ) -> tir::Expr {
         let hint = match expect {
-            Some(Ty::Range(t, _)) => Some((**t).clone()),
-            _ => None,
+            Some(t) => self.globals.range_parts(t).map(|(elem, _)| elem),
+            None => None,
         };
         let (lo, hi) = self.operands(lo, hi, hint.as_ref());
         let ty = if lo.ty == Ty::Never { hi.ty.clone() } else { lo.ty.clone() };
@@ -480,7 +470,7 @@ impl FnCx<'_> {
             self.diags.error(Code::TYPE_MISMATCH, span, format!("a range's endpoints must be integers, found `{ty}`"));
             return error_expr(span);
         }
-        let ty = if ty == Ty::Error { Ty::Error } else { Ty::Range(Box::new(ty), inclusive) };
+        let ty = if ty == Ty::Error { Ty::Error } else { self.globals.range_ty(ty, inclusive) };
         mk(tir::ExprKind::Range { lo: Box::new(lo), hi: Box::new(hi), inclusive }, ty, span)
     }
 
@@ -535,43 +525,44 @@ impl FnCx<'_> {
         let (value, owned_temp) = self.own_scrutinee_temp(value);
         let value_ty = value.ty.clone();
         let ret = self.ret.clone();
+        let ret_is_option = self.globals.option_payload(&ret).is_some();
+        let ret_result_err = self.globals.result_parts(&ret).map(|(_, e)| e);
         match (&ret, &value_ty) {
             (Ty::Error, _) | (_, Ty::Error) => error_expr(span),
-            (Ty::Option(_), Ty::Option(inner)) => {
-                let inner = (**inner).clone();
+            _ if ret_is_option && self.globals.option_payload(&value_ty).is_some() => {
+                let inner = self.globals.option_payload(&value_ty).unwrap();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("ok", inner.clone(), owned);
-                let some = Pat::Some(Box::new(Pat::Binding(id, mode)));
+                let some = Pat::Variant(1, vec![Pat::Binding(id, mode)]);
                 let body = mk(tir::ExprKind::Local(id), inner.clone(), span);
-                let none = mk(tir::ExprKind::None, ret.clone(), span);
+                let none = Globals::mk_none(ret.clone(), span);
                 let early = mk(tir::ExprKind::Return(Some(Box::new(none))), Ty::Never, span);
                 let arms = vec![
                     tir::Arm { pat: some, guard: None, body },
-                    tir::Arm { pat: Pat::None, guard: None, body: early },
+                    tir::Arm { pat: Pat::Variant(0, Vec::new()), guard: None, body: early },
                 ];
                 let matched = mk(tir::ExprKind::Match(Box::new(value), arms), inner, span);
                 self.wrap_scrutinee(matched, owned_temp, span)
             }
-            (Ty::Result(_, ret_err), Ty::Result(ok, err)) => {
-                let ok = (**ok).clone();
-                let err = (**err).clone();
-                let ret_err = (**ret_err).clone();
+            _ if ret_result_err.is_some() && self.globals.result_parts(&value_ty).is_some() => {
+                let (ok, err) = self.globals.result_parts(&value_ty).unwrap();
+                let ret_err = ret_result_err.unwrap();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("ok", ok.clone(), owned);
                 let (eid, emode) = self.payload_local("err", err.clone(), owned);
                 let body = mk(tir::ExprKind::Local(id), ok.clone(), span);
                 let error = mk(tir::ExprKind::Local(eid), err.clone(), span);
                 let converted = self.convert_error(error, &err, &ret_err, span, true);
-                let err_value = mk(tir::ExprKind::Err(Box::new(converted)), ret.clone(), span);
+                let err_value = Globals::mk_result(false, converted, ret.clone(), span);
                 let early = mk(tir::ExprKind::Return(Some(Box::new(err_value))), Ty::Never, span);
                 let arms = vec![
-                    tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(id, mode))), guard: None, body },
-                    tir::Arm { pat: Pat::Err(Box::new(Pat::Binding(eid, emode))), guard: None, body: early },
+                    tir::Arm { pat: Pat::Variant(0, vec![Pat::Binding(id, mode)]), guard: None, body },
+                    tir::Arm { pat: Pat::Variant(1, vec![Pat::Binding(eid, emode)]), guard: None, body: early },
                 ];
                 let matched = mk(tir::ExprKind::Match(Box::new(value), arms), ok, span);
                 self.wrap_scrutinee(matched, owned_temp, span)
             }
-            (Ty::Option(_) | Ty::Result(..), _) => {
+            _ if ret_is_option || ret_result_err.is_some() => {
                 self.diags.error(
                     Code::TYPE_MISMATCH,
                     span,
@@ -646,9 +637,10 @@ impl FnCx<'_> {
 
     /// The `match` an `orelse` lowers to.
     fn orelse_match(&mut self, value: tir::Expr, default: &ast::Expr, span: Span) -> tir::Expr {
-        match value.ty.clone() {
-            Ty::Option(inner) => {
-                let inner = (*inner).clone();
+        let value_ty = value.ty.clone();
+        match value_ty {
+            ref t if self.globals.option_payload(t).is_some() => {
+                let inner = self.globals.option_payload(t).unwrap();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("some", inner.clone(), owned);
                 // `value orelse || ...` is a handler: the closure replaces the empty case (`issue #488`).
@@ -667,14 +659,13 @@ impl FnCx<'_> {
                 };
                 let body = mk(tir::ExprKind::Local(id), inner.clone(), span);
                 let arms = vec![
-                    tir::Arm { pat: Pat::Some(Box::new(Pat::Binding(id, mode))), guard: None, body },
-                    tir::Arm { pat: Pat::None, guard: None, body: other },
+                    tir::Arm { pat: Pat::Variant(1, vec![Pat::Binding(id, mode)]), guard: None, body },
+                    tir::Arm { pat: Pat::Variant(0, Vec::new()), guard: None, body: other },
                 ];
                 mk(tir::ExprKind::Match(Box::new(value), arms), inner, span)
             }
-            Ty::Result(ok, err) => {
-                let ok = (*ok).clone();
-                let err = (*err).clone();
+            ref t if self.globals.result_parts(t).is_some() => {
+                let (ok, err) = self.globals.result_parts(t).unwrap();
                 let owned = self.owns_scrutinee(&value);
                 let (id, mode) = self.payload_local("ok", ok.clone(), owned);
                 // The error is bound so that it is dropped when the arm ends.
@@ -696,8 +687,8 @@ impl FnCx<'_> {
                 };
                 let body = mk(tir::ExprKind::Local(id), ok.clone(), span);
                 let arms = vec![
-                    tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(id, mode))), guard: None, body },
-                    tir::Arm { pat: Pat::Err(Box::new(Pat::Binding(eid, emode))), guard: None, body: other },
+                    tir::Arm { pat: Pat::Variant(0, vec![Pat::Binding(id, mode)]), guard: None, body },
+                    tir::Arm { pat: Pat::Variant(1, vec![Pat::Binding(eid, emode)]), guard: None, body: other },
                 ];
                 mk(tir::ExprKind::Match(Box::new(value), arms), ok, span)
             }

@@ -113,6 +113,11 @@ pub(crate) struct PendingAssoc<'t> {
     pub(crate) subst: Vec<(String, Ty)>,
     pub(crate) bounds: Vec<(String, Vec<Bound>)>,
     pub(crate) module: usize,
+    /// The interface the impl is for and the arguments as written, resolved again with the bindings: an argument
+    /// that names an instance of a generic type resolved to `Error` before the instance existed.
+    pub(crate) iface: Option<(usize, Option<&'t ast::PathSegment>)>,
+    /// The impl's [`crate::session::ImplTemplate`] in `tpl.impls`, whose interface arguments follow.
+    pub(crate) template: Option<usize>,
 }
 
 /// A constant or type alias, with the module whose names it uses.
@@ -170,6 +175,8 @@ pub(crate) struct Sema<'t> {
     pub(crate) traces: bool,
     /// Whether the generic-instance limit was already reported, so the passes after it do not repeat the error.
     pub(crate) instance_limit_reported: bool,
+    /// Set while impl blocks are registered, when one names a generic type whose instance does not exist yet.
+    pub(crate) impl_needs_instance: bool,
     /// Where the paths, lines, and columns of trace frames come from.
     pub(crate) sources: &'t SourceMap,
 }
@@ -254,6 +261,7 @@ impl<'t> Sema<'t> {
             fuzzes: Vec::new(),
             traces,
             instance_limit_reported: false,
+            impl_needs_instance: false,
             sources,
         }
     }
@@ -410,7 +418,8 @@ impl<'t> Sema<'t> {
                         if segs.len() == 1 && segs[0].name.name == "Result")
                 });
                 let ret = &self.globals.sigs[id.0].ret;
-                let returns_ok = *ret == Ty::Unit || (result_main && matches!(ret, Ty::Result(..) | Ty::Error));
+                let returns_ok = *ret == Ty::Unit
+                    || (result_main && (self.globals.result_parts(ret).is_some() || matches!(ret, Ty::Error)));
                 if !f.params.is_empty() || !returns_ok {
                     diags.error(
                         Code::TYPE_MISMATCH,

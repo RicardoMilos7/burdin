@@ -16,30 +16,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.pattern_moved_paths(first, ty, path, out);
                 }
             }
-            Pat::Some(inner) => {
-                if let Ty::Option(inner_ty) = ty {
-                    let inner_ty = (**inner_ty).clone();
-                    path.push(0);
-                    self.pattern_moved_paths(inner, &inner_ty, path, out);
-                    path.pop();
-                }
-            }
-            Pat::Ok(inner) => {
-                if let Ty::Result(ok, _) = ty {
-                    let ok = (**ok).clone();
-                    path.push(0);
-                    self.pattern_moved_paths(inner, &ok, path, out);
-                    path.pop();
-                }
-            }
-            Pat::Err(inner) => {
-                if let Ty::Result(_, err) = ty {
-                    let err = (**err).clone();
-                    path.push(1);
-                    self.pattern_moved_paths(inner, &err, path, out);
-                    path.pop();
-                }
-            }
             Pat::Product(subs) => {
                 let tys = self.field_tys(ty);
                 for (i, sub) in subs.iter().enumerate() {
@@ -172,7 +148,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(acc)
             }
             Pat::Variant(index, subs) => {
-                let Ty::Enum(a) = ty else { unreachable!("checked: a variant pattern on an enum") };
+                let Ty::Enum(a) = ty else { unreachable!("checked: a variant pattern on an enum, found {ty:?}") };
                 let et = self.enum_ty(a.id);
                 let ptr = place.expect("an enum has storage");
                 let tag_ptr = self.builder.build_struct_gep(et, ptr, 0, "").map_err(llvm_err)?;
@@ -200,48 +176,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(self.builder.build_select(tag_ok, acc, no, "").map_err(llvm_err)?.into_int_value())
             }
             Pat::Slice { prefix, rest, suffix } => self.pat_test_slice(prefix, rest.as_deref(), suffix, place, ty),
-            Pat::None | Pat::Some(_) => {
-                let Ty::Option(inner) = ty else { unreachable!("checked: an Option pattern on an Option") };
-                let opt_ty = self.option_ty(inner);
-                let ptr = place.expect("an Option has storage");
-                let tag_ptr = self.builder.build_struct_gep(opt_ty, ptr, 0, "").map_err(llvm_err)?;
-                let tag = self.builder.build_load(bool_ty, tag_ptr, "is_some").map_err(llvm_err)?.into_int_value();
-                match pat {
-                    Pat::None => self.builder.build_not(tag, "").map_err(llvm_err),
-                    Pat::Some(sub) => {
-                        let payload = if self.llvm_ty(inner).is_some() {
-                            Some(self.builder.build_struct_gep(opt_ty, ptr, 1, "").map_err(llvm_err)?)
-                        } else {
-                            None
-                        };
-                        let sub_ok = self.pat_test(sub, payload, inner)?;
-                        // `select`, not `and`: the payload of `None` is uninitialized.
-                        let no = bool_ty.const_int(0, false);
-                        Ok(self.builder.build_select(tag, sub_ok, no, "").map_err(llvm_err)?.into_int_value())
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            Pat::Ok(sub) | Pat::Err(sub) => {
-                let Ty::Result(ok, err) = ty else { unreachable!("checked: a Result pattern on a Result") };
-                let payload_ty = if matches!(pat, Pat::Ok(_)) { ok } else { err };
-                let want_ok = matches!(pat, Pat::Ok(_));
-                let rt = self.result_ty(ok, err);
-                let ptr = place.expect("a Result has storage");
-                let tag_ptr = self.builder.build_struct_gep(rt, ptr, 0, "").map_err(llvm_err)?;
-                let tag = self.builder.build_load(bool_ty, tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
-                let tag_ok = if want_ok { tag } else { self.builder.build_not(tag, "").map_err(llvm_err)? };
-                let payload = if self.llvm_ty(payload_ty).is_some() {
-                    let index = if want_ok { 1 } else { 2 };
-                    Some(self.builder.build_struct_gep(rt, ptr, index, "").map_err(llvm_err)?)
-                } else {
-                    None
-                };
-                let sub_ok = self.pat_test(sub, payload, payload_ty)?;
-                // `select`, not `and`: the other payload is uninitialized.
-                let no = bool_ty.const_int(0, false);
-                Ok(self.builder.build_select(tag_ok, sub_ok, no, "").map_err(llvm_err)?.into_int_value())
-            }
         }
     }
 
@@ -361,35 +295,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Pat::At(id, mode, inner) => {
                 self.bind(*id, *mode, place, ty, base, path)?;
                 self.pat_bind(inner, place, ty, base, path)
-            }
-            Pat::Some(sub) => {
-                let Ty::Option(inner) = ty else { unreachable!() };
-                let payload = match (place, self.llvm_ty(inner)) {
-                    (Some(ptr), Some(_)) => {
-                        Some(self.builder.build_struct_gep(self.option_ty(inner), ptr, 1, "").map_err(llvm_err)?)
-                    }
-                    _ => None,
-                };
-                path.push(0);
-                self.pat_bind(sub, payload, inner, base, path)?;
-                path.pop();
-                Ok(())
-            }
-            Pat::Ok(sub) | Pat::Err(sub) => {
-                let Ty::Result(ok, err) = ty else { unreachable!() };
-                let ok_side = matches!(pat, Pat::Ok(_));
-                let payload_ty = if ok_side { ok } else { err };
-                let index = if ok_side { 1 } else { 2 };
-                let payload = match (place, self.llvm_ty(payload_ty)) {
-                    (Some(ptr), Some(_)) => {
-                        Some(self.builder.build_struct_gep(self.result_ty(ok, err), ptr, index, "").map_err(llvm_err)?)
-                    }
-                    _ => None,
-                };
-                path.push(if ok_side { 0 } else { 1 });
-                self.pat_bind(sub, payload, payload_ty, base, path)?;
-                path.pop();
-                Ok(())
             }
             Pat::Product(subs) => {
                 let (Some(ptr), Some(t)) = (place, self.llvm_ty(ty)) else { return Ok(()) };
@@ -575,15 +480,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 /// The locals a pattern binds, in source order.
 pub(super) fn collect_bindings(pat: &Pat, out: &mut Vec<tir::LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
         Pat::Binding(id, _) => out.push(*id),
         Pat::At(id, _, inner) => {
             out.push(*id);
             collect_bindings(inner, out);
         }
         Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
-        Pat::Some(inner) => collect_bindings(inner, out),
-        Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
         Pat::Slice { prefix, rest, suffix } => {
             for s in prefix.iter().chain(rest.as_deref()).chain(suffix) {
@@ -599,8 +502,6 @@ pub(super) fn pattern_moves(pat: &Pat) -> bool {
         Pat::Binding(_, mode) => *mode == tir::BindMode::Move,
         Pat::At(_, mode, inner) => *mode == tir::BindMode::Move || pattern_moves(inner),
         Pat::Or(alts) => alts.iter().any(pattern_moves),
-        Pat::Some(inner) => pattern_moves(inner),
-        Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         Pat::Slice { prefix, rest, suffix } => prefix.iter().chain(rest.as_deref()).chain(suffix).any(pattern_moves),
         _ => false,

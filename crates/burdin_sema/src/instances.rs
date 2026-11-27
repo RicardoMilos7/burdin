@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 /// The most functions and types a program may have, instances included. It stops a generic that instantiates
 /// itself with ever larger types.
-const MAX_ITEMS: usize = 4000;
+const MAX_ITEMS: usize = 6000;
 
 impl<'t> Sema<'t> {
     /// Makes the struct or enum for a generic type and these arguments, and registers the methods of its impl blocks.
@@ -23,7 +23,15 @@ impl<'t> Sema<'t> {
         };
         let symbolic = args.iter().any(|a| self.globals.ty_has_param(a));
         let identity = args.iter().zip(&params).all(|(a, p)| matches!(a, Ty::Param(n) if **n == **p));
-        let name = Globals::instance_name(&gname, &args);
+        // A list with the default allocator is named `List<i32>`, the way it is written, not `List<i32, Global>`.
+        let is_list = Some(template) == self.globals.lang_list || Some(template) == self.globals.lang_list_into_iter;
+        let is_map = Some(template) == self.globals.lang_map || Some(template) == self.globals.lang_map_into_iter;
+        let shown = match (&args[..], &self.globals.global_alloc_ty) {
+            ([elem, alloc], Some(global)) if is_list && alloc == global => std::slice::from_ref(elem),
+            ([_, _, alloc], Some(global)) if is_map && alloc == global => &args[..2],
+            _ => &args[..],
+        };
+        let name = Globals::instance_name(&gname, shown);
         let name = self.globals.unique_instance_name(name);
         let subst: Vec<(String, Ty)> = params.iter().cloned().zip(args.iter().cloned()).collect();
         // The bounds the instance's type parameters keep, with the instance's arguments substituted: a field may
@@ -42,6 +50,13 @@ impl<'t> Sema<'t> {
                 variants: Vec::new(),
                 derives: tir::Derives::default(),
                 drop_method: None,
+                lang: if Some(template) == self.globals.lang_option {
+                    Some(tir::LangItem::Option)
+                } else if Some(template) == self.globals.lang_result {
+                    Some(tir::LangItem::Result)
+                } else {
+                    None
+                },
             });
             let r = adt_ref(id);
             self.globals.enum_refs.push(r.clone());
@@ -63,6 +78,29 @@ impl<'t> Sema<'t> {
                 repr_c,
                 derives: tir::Derives::default(),
                 drop_method: None,
+                lang: if Some(template) == self.globals.lang_list {
+                    Some(tir::LangItem::List)
+                } else if Some(template) == self.globals.lang_list_into_iter {
+                    Some(tir::LangItem::ListIntoIter)
+                } else if Some(template) == self.globals.lang_map {
+                    Some(tir::LangItem::Map)
+                } else if Some(template) == self.globals.lang_map_into_iter {
+                    Some(tir::LangItem::MapIntoIter)
+                } else if Some(template) == self.globals.lang_manually_drop {
+                    Some(tir::LangItem::ManuallyDrop)
+                } else if Some(template) == self.globals.lang_array_into_iter {
+                    Some(tir::LangItem::ArrayIntoIter)
+                } else if Some(template) == self.globals.lang_range[0] {
+                    Some(tir::LangItem::Range)
+                } else if Some(template) == self.globals.lang_range[1] {
+                    Some(tir::LangItem::RangeInclusive)
+                } else if Some(template) == self.globals.lang_range[2] {
+                    Some(tir::LangItem::RangeIter)
+                } else if Some(template) == self.globals.lang_range[3] {
+                    Some(tir::LangItem::RangeIterInclusive)
+                } else {
+                    None
+                },
             });
             let r = adt_ref(id);
             self.globals.struct_refs.push(r.clone());
@@ -178,7 +216,7 @@ impl<'t> Sema<'t> {
     }
 
     /// Creates the template and identity function of an interface default method for a built-in receiver type
-    /// (a slice, `Chars`, a list iterator, ...), which has no impl block to register it.
+    /// (a slice, a list iterator, ...), which has no impl block to register it.
     fn allocate_builtin_template(
         &mut self,
         iface: usize,

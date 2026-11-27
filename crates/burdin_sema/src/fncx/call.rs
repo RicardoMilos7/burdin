@@ -6,7 +6,7 @@ const EXCLUSIVITY_HELP: &str = "run `burdin check --explain` to trace the path t
 use super::pattern::is_removed_prelude_name;
 use super::{FnCx, PathTy, error_expr, mk};
 use crate::builtins::{builtin, builtin_sig, method};
-use crate::globals::{Callee, Global, adt_key};
+use crate::globals::{Callee, Global, Globals, adt_key};
 use crate::types::check_storable;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
@@ -127,6 +127,12 @@ impl FnCx<'_> {
                     None if id.name == "replace" || id.name == "__replace" => {
                         return self.replace_call(args, span);
                     }
+                    None if id.name == "__read" => return self.raw_read_call(args, span),
+                    None if id.name == "__write" => return self.raw_write_call(args, span),
+                    None if id.name == "__slice_raw" => return self.slice_raw_call(args, span, false),
+                    None if id.name == "__iter_mut_raw" => return self.slice_raw_call(args, span, true),
+                    None if id.name == "__int_step" => return self.int_step_call(args, span),
+                    None if id.name == "__hash_key" => return self.hash_key_call(args, span),
                     None if id.name == "__closure_own" => return self.closure_own_call(args, span),
                     None if id.name == "embed" => return self.embed_call(args, span, expect),
                     None if id.name == "format" && self.lookup("format").is_none() => {
@@ -273,17 +279,14 @@ impl FnCx<'_> {
             self.diags.error(Code::ARG_COUNT, span, format!("`Some` takes 1 argument, but {} were given", args.len()));
             return self.args_then_error(args, span);
         }
-        let inner_expect = match expect {
-            Some(Ty::Option(t)) => Some((**t).clone()),
-            _ => None,
-        };
+        let inner_expect = expect.and_then(|t| self.globals.option_payload(t));
         let v = self.expr(&args[0].expr, inner_expect.as_ref());
         let v = match &inner_expect {
             Some(t) => self.coerce_arg(v, t),
             None => v,
         };
-        let ty = Ty::Option(Box::new(inner_expect.unwrap_or_else(|| v.ty.clone())));
-        mk(tir::ExprKind::Some(Box::new(v)), ty, span)
+        let ty = self.globals.option_ty(inner_expect.unwrap_or_else(|| v.ty.clone()));
+        Globals::mk_some(v, ty, span)
     }
 
     /// `Ok(value)` and `Err(value)` of a `Result<T, E>`. The expected type gives both type arguments, so a
@@ -300,9 +303,9 @@ impl FnCx<'_> {
             return self.args_then_error(args, span);
         }
         let (payload_expect, result_ty) = match expect {
-            Some(Ty::Result(t, e)) => {
-                let payload = if ok { (**t).clone() } else { (**e).clone() };
-                (payload, Ty::Result(t.clone(), e.clone()))
+            Some(t) if self.globals.result_parts(t).is_some() => {
+                let (t_ok, t_err) = self.globals.result_parts(t).unwrap();
+                (if ok { t_ok } else { t_err }, t.clone())
             }
             Some(Ty::Error) => (Ty::Error, Ty::Error),
             _ => {
@@ -318,8 +321,7 @@ impl FnCx<'_> {
         };
         let value = self.expr(&args[0].expr, Some(&payload_expect));
         let value = self.coerce_arg(value, &payload_expect);
-        let kind = if ok { tir::ExprKind::Ok(Box::new(value)) } else { tir::ExprKind::Err(Box::new(value)) };
-        mk(kind, result_ty, span)
+        Globals::mk_result(ok, value, result_ty, span)
     }
 
     /// The test-build `assert`: the argument is the condition and an optional formatted message, and the
@@ -518,7 +520,9 @@ impl FnCx<'_> {
     /// the source error's trace frames are kept (`spec/errors.md`, ERR6).
     fn context_call(&mut self, recv: tir::Expr, args: &[ast::Arg], span: Span) -> tir::Expr {
         self.reject_named_args("context", args);
-        let Ty::Result(ok, err) = recv.ty.clone() else { unreachable!("`context` is intercepted only on a `Result`") };
+        let Some((ok, err)) = self.globals.result_parts(&recv.ty) else {
+            unreachable!("`context` is intercepted only on a `Result`")
+        };
         if args.len() != 1 {
             self.diags.error(
                 Code::ARG_COUNT,
@@ -539,7 +543,7 @@ impl FnCx<'_> {
             );
             return self.args_then_error(args, span);
         };
-        let err_ty = (*err).clone();
+        let err_ty = err.clone();
         if err_ty != error_ty && !self.globals.implements_error(&err_ty, &self.bounds) {
             self.diags.error(
                 Code::ERROR_CONVERSION,
@@ -551,23 +555,20 @@ impl FnCx<'_> {
         // A temporary receiver is moved into a compiler-made local, so its parts move and drop correctly.
         let (value, owned_temp) = self.own_scrutinee_temp(recv);
         let owned = self.owns_scrutinee(&value);
-        let (ok_id, ok_mode) = self.payload_local("ok", (*ok).clone(), owned);
+        let (ok_id, ok_mode) = self.payload_local("ok", ok.clone(), owned);
         let (err_id, err_mode) = self.payload_local("err", err_ty.clone(), owned);
-        let result_ty = Ty::Result(ok.clone(), Box::new(error_ty.clone()));
-        let ok_body = mk(
-            tir::ExprKind::Ok(Box::new(mk(tir::ExprKind::Local(ok_id), (*ok).clone(), span))),
-            result_ty.clone(),
-            span,
-        );
+        let result_ty = self.globals.result_ty(ok.clone(), error_ty.clone());
+        let ok_body =
+            Globals::mk_result(true, mk(tir::ExprKind::Local(ok_id), ok.clone(), span), result_ty.clone(), span);
         let message = self.expr(&args[0].expr, Some(&Ty::Str));
         let message = self.coerce_arg(message, &Ty::Str);
         let source = mk(tir::ExprKind::Local(err_id), err_ty.clone(), span);
         let source = if err_ty == error_ty { source } else { self.coerce_error(source, &error_ty) };
         let call = mk(tir::ExprKind::Call(context, vec![source, message]), error_ty.clone(), span);
-        let err_body = mk(tir::ExprKind::Err(Box::new(call)), result_ty.clone(), span);
+        let err_body = Globals::mk_result(false, call, result_ty.clone(), span);
         let arms = vec![
-            tir::Arm { pat: Pat::Ok(Box::new(Pat::Binding(ok_id, ok_mode))), guard: None, body: ok_body },
-            tir::Arm { pat: Pat::Err(Box::new(Pat::Binding(err_id, err_mode))), guard: None, body: err_body },
+            tir::Arm { pat: Pat::Variant(0, vec![Pat::Binding(ok_id, ok_mode)]), guard: None, body: ok_body },
+            tir::Arm { pat: Pat::Variant(1, vec![Pat::Binding(err_id, err_mode)]), guard: None, body: err_body },
         ];
         let matched = mk(tir::ExprKind::Match(Box::new(value), arms), result_ty, span);
         self.wrap_scrutinee(matched, owned_temp, span)
@@ -746,6 +747,148 @@ impl FnCx<'_> {
         }
         let ty = value.ty.clone();
         mk(tir::ExprKind::Builtin(Builtin::BlackBox, vec![value]), ty, span)
+    }
+
+    /// `__read(p)`: moves the value out of raw memory (`unsafe`). The result is owned by the caller.
+    fn raw_read_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__read", args);
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__read` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        if self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                "`__read` moves a value out of raw memory; it requires an `unsafe` block",
+            );
+        }
+        let p = self.expr(&args[0].expr, None);
+        let Ty::CPtr(inner) = &p.ty else {
+            if p.ty != Ty::Error {
+                self.diags.error(Code::TYPE_MISMATCH, p.span, format!("`__read` needs a `CPtr<T>`, found `{}`", p.ty));
+            }
+            return error_expr(span);
+        };
+        let ty = (**inner).clone();
+        mk(tir::ExprKind::Builtin(Builtin::RawRead, vec![p]), ty, span)
+    }
+
+    /// `__write(p, value)`: moves `value` into raw memory without dropping the old contents (`unsafe`).
+    fn raw_write_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__write", args);
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__write` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        if self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                "`__write` stores into raw memory; it requires an `unsafe` block",
+            );
+        }
+        let p = self.expr(&args[0].expr, None);
+        let Ty::CPtr(inner) = &p.ty else {
+            if p.ty != Ty::Error {
+                self.diags.error(Code::TYPE_MISMATCH, p.span, format!("`__write` needs a `CPtr<T>`, found `{}`", p.ty));
+            }
+            self.expr(&args[1].expr, None);
+            return error_expr(span);
+        };
+        let ty = (**inner).clone();
+        let value = self.expr(&args[1].expr, Some(&ty));
+        let value = self.coerce_arg(value, &ty);
+        mk(tir::ExprKind::Builtin(Builtin::RawWrite, vec![p, value]), Ty::Unit, span)
+    }
+
+    /// `__slice_raw(p, n)`: the `[T]` view of `n` elements at `p` (`unsafe`).
+    fn slice_raw_call(&mut self, args: &[ast::Arg], span: Span, iter_mut: bool) -> tir::Expr {
+        let name = if iter_mut { "__iter_mut_raw" } else { "__slice_raw" };
+        self.reject_named_args(name, args);
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`{name}` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        if self.unsafe_depth == 0 {
+            self.diags.error(
+                Code::UNSAFE_REQUIRED,
+                span,
+                format!("`{name}` makes a view of raw memory; it requires an `unsafe` block"),
+            );
+        }
+        let p = self.expr(&args[0].expr, None);
+        let Ty::CPtr(inner) = &p.ty else {
+            if p.ty != Ty::Error {
+                self.diags.error(Code::TYPE_MISMATCH, p.span, format!("`{name}` needs a `CPtr<T>`, found `{}`", p.ty));
+            }
+            self.expr(&args[1].expr, None);
+            return error_expr(span);
+        };
+        let ty = if iter_mut { Ty::IterMut(inner.clone()) } else { Ty::Slice(inner.clone()) };
+        let usize_ty = Ty::Int(IntTy::Usize);
+        let n = self.expr(&args[1].expr, Some(&usize_ty));
+        let n = self.coerce_arg(n, &usize_ty);
+        let op = if iter_mut { Builtin::IterMutRaw } else { Builtin::SliceRaw };
+        mk(tir::ExprKind::Builtin(op, vec![p, n]), ty, span)
+    }
+
+    /// `__hash_key(&k)`: the structural hash of the value `k` references (`std`'s `Map`).
+    fn hash_key_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__hash_key", args);
+        if args.len() != 1 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__hash_key` takes 1 argument, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let key = self.expr(&args[0].expr, None);
+        if !matches!(key.ty, Ty::Ref { .. } | Ty::Error) {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                key.span,
+                format!("`__hash_key` needs a reference, found `{}`", key.ty),
+            );
+            return error_expr(span);
+        }
+        mk(tir::ExprKind::Builtin(Builtin::HashKey, vec![key]), Ty::Int(IntTy::U64), span)
+    }
+
+    /// `__int_step(x, delta)`: the integer `x` moved by `delta`, wrapping (`std`'s range iterators).
+    fn int_step_call(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
+        self.reject_named_args("__int_step", args);
+        if args.len() != 2 {
+            self.diags.error(
+                Code::ARG_COUNT,
+                span,
+                format!("`__int_step` takes 2 arguments, but {} were given", args.len()),
+            );
+            return self.args_then_error(args, span);
+        }
+        let x = self.expr(&args[0].expr, None);
+        let delta = self.expr(&args[1].expr, Some(&Ty::Int(IntTy::I64)));
+        let delta = self.coerce_arg(delta, &Ty::Int(IntTy::I64));
+        // A generic body is checked once with the parameter itself; each instance is checked with its integer.
+        if !matches!(x.ty, Ty::Int(_) | Ty::Param(_) | Ty::Error) {
+            self.diags.error(Code::TYPE_MISMATCH, x.span, format!("`__int_step` needs an integer, found `{}`", x.ty));
+            return error_expr(span);
+        }
+        let ty = x.ty.clone();
+        mk(tir::ExprKind::Builtin(Builtin::IntStep, vec![x, delta]), ty, span)
     }
 
     /// `replace(mut place, value)`: stores `value` and returns what `place` held.
@@ -1127,7 +1270,6 @@ impl FnCx<'_> {
                     | ("process", "exit")
                     | ("Heap", "new")
                     | ("Heap", "new_in")
-                    | ("Shared", "new")
                     | ("List", "from")
                     | ("Map", "from")
                     | ("CPtr", "null")
@@ -1158,7 +1300,7 @@ impl FnCx<'_> {
                     self.diags.error(Code::ARG_COUNT, span, "`env.args` takes no arguments");
                     return self.args_then_error(args, span);
                 }
-                let ty = Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global);
+                let ty = self.globals.list_of(Ty::String);
                 return mk(tir::ExprKind::Builtin(Builtin::EnvArgs, Vec::new()), ty, span);
             }
             if id.name == "process" && name.name == "exit" {
@@ -1183,9 +1325,6 @@ impl FnCx<'_> {
             }
             if id.name == "Heap" && name.name == "new_in" {
                 return self.heap_new_in(args, span);
-            }
-            if id.name == "Shared" && name.name == "new" {
-                return self.shared_new(args, span);
             }
             if (id.name == "List" || id.name == "Map") && name.name == "from" {
                 return self.untyped_collection_from(&id.name, name, args, expect, span);
@@ -1246,14 +1385,14 @@ impl FnCx<'_> {
     /// range. `None` for any other expression, which `get` treats as an index.
     fn range_argument(&self, e: &ast::Expr) -> Option<Ty> {
         match &e.kind {
-            ast::ExprKind::Range { inclusive, .. } => Some(Ty::Range(Box::new(Ty::Int(IntTy::Usize)), *inclusive)),
+            ast::ExprKind::Range { inclusive, .. } => Some(self.globals.range_ty(Ty::Int(IntTy::Usize), *inclusive)),
             ast::ExprKind::Name { name, args } if args.is_empty() => {
                 let local = self.lookup(&name.name)?;
                 let ty = self.locals[local.0].ty.clone();
                 // A stored range is a slice range only when its endpoints are `usize`; there is no implicit
                 // conversion, so `Range<i32>` is an ordinary type error at the index form.
-                let Ty::Range(end, _) = &ty else { return None };
-                (**end == Ty::Int(IntTy::Usize)).then_some(ty)
+                let (end, _) = self.globals.range_parts(&ty)?;
+                (end == Ty::Int(IntTy::Usize)).then_some(ty)
             }
             _ => None,
         }
@@ -1275,6 +1414,12 @@ impl FnCx<'_> {
         match &e.kind {
             tir::ExprKind::Slice { base, .. } => Some(base),
             tir::ExprKind::Method(tir::Method::AsSlice, args) => args.first(),
+            // `List.as_slice()` is a method of `std`'s `List`.
+            tir::ExprKind::Call(f, args) => {
+                let list = args.first().filter(|a| self.globals.list_parts(&a.ty).is_some())?;
+                let key = adt_key(&list.ty)?;
+                (self.globals.methods.get(&(key, "as_slice".to_string())) == Some(f)).then_some(list)
+            }
             _ => None,
         }
     }
@@ -1339,6 +1484,32 @@ impl FnCx<'_> {
         if self.globals.opaque_of(&recv.ty).is_some() {
             return self.opaque_method_call(recv, explicit, name, args, span, expect);
         }
+        // The map operations that look a key up or store one need a key with `==` (and a hash that agrees with it):
+        // without it the call is a missing bound, not a missing method.
+        if matches!(
+            name.name.as_str(),
+            "insert" | "get" | "get_mut" | "get_or" | "get_or_insert" | "remove" | "remove_entry" | "contains_key"
+        ) && let Some((key, _, _)) = self.globals.map_parts(&recv.ty)
+            && !self.globals.has_key_eq_in(&key, &self.bounds)
+        {
+            self.diags.error(
+                Code::BOUND_NOT_SATISFIED,
+                span,
+                format!(
+                    "cannot use `{key}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
+                ),
+            );
+            return self.args_then_error(args, span);
+        }
+        // `xs.drain(lo..=hi)` on a `List` is the inclusive form, a separate method of `std`'s `List`.
+        if name.name == "drain"
+            && args.len() == 1
+            && matches!(args[0].expr.kind, ast::ExprKind::Range { inclusive: true, .. })
+            && self.globals.list_parts(&recv.ty).is_some()
+        {
+            let inclusive = ast::Ident { name: "drain_inclusive".to_string(), span: name.span };
+            return self.method_call_on_with(recv, &inclusive, explicit, args, span, expect);
+        }
         // `xs.get(range): Option<[T]>`: the checked form of slicing. A range expression or a range-valued
         // local picks it; any other argument is the index form the method table provides (`spec/stdlib.md`,
         // "Slices").
@@ -1350,7 +1521,7 @@ impl FnCx<'_> {
             self.reject_named_args("get", args);
             let arg = self.expr(&args[0].expr, Some(&range_ty));
             let arg = self.expect_ty(arg, &range_ty);
-            let ret = Ty::Option(Box::new(recv.ty.clone()));
+            let ret = self.globals.option_ty(recv.ty.clone());
             return mk(tir::ExprKind::Method(Method::SliceGetRange, vec![recv, arg]), ret, span);
         }
         // `x.to_string()` on a value whose type implements `Display` (spec/format.md).
@@ -1451,17 +1622,17 @@ impl FnCx<'_> {
             return e;
         }
         // `res.context(message)` is compiler-known on `Result` (`spec/errors.md`, ERR6).
-        if name.name == "context" && matches!(recv.ty, Ty::Result(..)) {
+        if name.name == "context" && self.globals.result_parts(&recv.ty).is_some() {
             return self.context_call(recv, args, span);
         }
         let recv_ty = recv.ty.clone();
-        let Some((m, params, ret)) = method(&name.name, &recv.ty) else {
+        let Some((m, params, ret)) = method(self.globals, &name.name, &recv.ty) else {
             // An array has the slice methods through an implicit view of its elements (`spec/stdlib.md`,
             // "Slices"). The view is taken only when a slice method or a slice extension of that name exists, so
             // an unrelated call still reports the array's own type.
             if let Ty::Array(elem, n) = recv.ty.clone() {
                 let view = self.array_slice_view(recv.clone(), &elem, n, span);
-                if method(&name.name, &view.ty).is_some() {
+                if method(self.globals, &name.name, &view.ty).is_some() {
                     return self.method_call_on(view, name, args, span, expect);
                 }
                 if let Some(e) = self.extension_call(view, name, args, span) {
@@ -1470,13 +1641,31 @@ impl FnCx<'_> {
             }
             // No method the type declares and none the compiler provides: a visible extension method may apply
             // (`spec/extensions.md`, EX3). It is tried last, so a method always wins.
+            let list_elem = self.globals.list_parts(&recv.ty).map(|(elem, _)| elem);
             if let Some(e) = self.extension_call(recv, name, args, span) {
                 return e;
+            }
+            // Three methods of a `List` exist only when its element has the interface they need; without it the
+            // call is a missing bound, not a missing method.
+            if let Some(elem) = list_elem {
+                let needs = match name.name.as_str() {
+                    "extend_from_slice" => Some("Clone"),
+                    "contains" => Some("Eq"),
+                    "sort" => Some("Ord"),
+                    _ => None,
+                };
+                if let Some(iface) = needs {
+                    self.diags.error(
+                        Code::BOUND_NOT_SATISFIED,
+                        name.span,
+                        format!("`{elem}` does not implement `{iface}`, which `{}` requires", name.name),
+                    );
+                    return self.args_then_error(args, span);
+                }
             }
             self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{recv_ty}`", name.name));
             return self.args_then_error(args, span);
         };
-        let ret = self.fallible_method_ret(&m, ret);
         if m.mutates_receiver() && !matches!(recv.ty, Ty::Error) {
             // A mutating method writes through its receiver. The receiver is a mutable place, or a slice view
             // over one: `xs[0..2].sort()` and `xs.as_slice().swap(0, 1)` need a mutable `xs`
@@ -1501,15 +1690,6 @@ impl FnCx<'_> {
             }
         }
         match (&m, &recv.ty) {
-            (Method::ListSort, Ty::List(elem, _)) => {
-                if !self.globals.has_ord_in(elem, &self.bounds) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!("cannot sort a `List<{elem}>`: `{elem}` does not support `Ord`"),
-                    );
-                }
-            }
             // The slice operations that clone their elements need `Clone`, and `copy_from_slice` needs `Copy`
             // (`spec/stdlib.md`, "Slices").
             (Method::SliceFill | Method::SliceCloneFromSlice | Method::SliceToList, Ty::Slice(elem))
@@ -1528,44 +1708,6 @@ impl FnCx<'_> {
                     Code::BOUND_NOT_SATISFIED,
                     span,
                     format!("`copy_from_slice` needs `Copy`, but `{elem}` does not implement it"),
-                );
-            }
-            (Method::ListContains, Ty::List(elem, _)) => {
-                if !self.globals.has_eq_in(elem, &self.bounds) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!("cannot search a `List<{elem}>`: `{elem}` does not support `Eq`"),
-                    );
-                }
-            }
-            (Method::ListExtendFromSlice, Ty::List(elem, _)) => {
-                if !self.globals.is_clone(elem) {
-                    self.diags.error(
-                        Code::BOUND_NOT_SATISFIED,
-                        span,
-                        format!("cannot copy a slice of `{elem}` into a list: `{elem}` does not support `Clone`"),
-                    );
-                }
-            }
-            (
-                Method::MapGet
-                | Method::MapGetMut
-                | Method::MapGetOrInsert
-                | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapRemove
-                | Method::MapRemoveEntry
-                | Method::MapContainsKey
-                | Method::MapInsert,
-                Ty::Map(k, _, _),
-            ) if !self.globals.has_key_eq_in(k, &self.bounds) => {
-                self.diags.error(
-                    Code::BOUND_NOT_SATISFIED,
-                    span,
-                    format!(
-                        "cannot use `{k}` as a map key: it needs `Eq`, and a hand-written `Eq` implementation also needs `Hash`"
-                    ),
                 );
             }
             _ => {}
@@ -1612,10 +1754,10 @@ impl FnCx<'_> {
             self.diags.error(Code::ARG_COUNT, span, format!("`drain` takes 1 argument, but {} were given", args.len()));
             return None;
         }
-        let hint = Ty::Range(Box::new(Ty::Int(IntTy::Usize)), false);
+        let hint = self.globals.range_ty(Ty::Int(IntTy::Usize), false);
         let arg = self.expr(&args[0].expr, Some(&hint));
         match &arg.ty {
-            Ty::Range(t, _) if **t == Ty::Int(IntTy::Usize) => {}
+            t if self.globals.range_parts(t).is_some_and(|(e, _)| e == Ty::Int(IntTy::Usize)) => {}
             Ty::Error => return None,
             other => {
                 self.diags.error(
@@ -1898,181 +2040,105 @@ impl FnCx<'_> {
         true
     }
 
-    /// The single allocator argument of `List.new_in` or `Map.new_in`, checked and moved into the container.
-    fn new_in_allocator(&mut self, what: &str, args: &[ast::Arg], span: Span) -> Option<tir::Expr> {
-        self.reject_named_args(what, args);
-        if args.len() != 1 {
-            for a in args {
-                self.expr(&a.expr, None);
-            }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{what}` takes 1 argument, but {} were given", args.len()),
-            );
-            return None;
-        }
-        let value = self.expr(&args[0].expr, None);
-        if value.ty == Ty::Error {
-            return None;
-        }
-        if !self.allocator_value_ok(&value.ty, value.span) {
-            return None;
-        }
-        Some(value)
-    }
-
-    /// `List<T>.new_in(alloc)`: an empty list whose buffer uses the allocator value.
-    pub(super) fn list_new_in(
+    /// The constructors of a `List` that depend on the allocator (`spec/allocators.md`, AL5): `new_in` and its
+    /// siblings take the allocator type from the value even when `List<T>` was written with the default one, and
+    /// `new`, `with_capacity`, and `try_with_capacity` exist for the default allocator only (E0272). `None` leaves
+    /// the call to the ordinary associated-function lookup.
+    fn list_constructor(
         &mut self,
+        ty: &Ty,
         elem: &Ty,
         written: &burdin_tir::Alloc,
+        name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
-    ) -> tir::Expr {
-        let Some(value) = self.new_in_allocator("List.new_in", args, span) else {
-            return error_expr(span);
-        };
-        let alloc = self.globals.alloc_of(value.ty.clone());
-        if let burdin_tir::Alloc::Value(want) = written
-            && let burdin_tir::Alloc::Value(got) = &alloc
-            && want != got
-        {
-            self.diags.error(
-                Code::TYPE_MISMATCH,
-                value.span,
-                format!("this list stores a `{want}` allocator, but the argument is `{got}`"),
-            );
-            return error_expr(span);
-        }
-        let ty = Ty::List(Box::new(elem.clone()), alloc);
-        mk(tir::ExprKind::Builtin(Builtin::ListNewIn, vec![value]), ty, span)
-    }
-
-    /// `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for `n`
-    /// elements. The allocator-free form exists only for the default layout, like `new` (`spec/allocators.md`,
-    /// AL4). The `try_` forms return `Result<List<T>, AllocError>` instead of panicking (AL11).
-    fn list_with_capacity(
-        &mut self,
-        elem: &Ty,
-        written: &burdin_tir::Alloc,
-        with_alloc: bool,
-        fallible: bool,
-        args: &[ast::Arg],
-        span: Span,
-    ) -> tir::Expr {
-        let name = match (with_alloc, fallible) {
-            (false, false) => "List.with_capacity",
-            (true, false) => "List.with_capacity_in",
-            (false, true) => "List.try_with_capacity",
-            (true, true) => "List.try_with_capacity_in",
-        };
-        let in_form = if fallible { "List.try_with_capacity_in(n, alloc)" } else { "List.with_capacity_in(n, alloc)" };
-        self.reject_named_args(name, args);
-        let wanted = if with_alloc { 2 } else { 1 };
-        if args.len() != wanted {
-            for a in args {
-                self.expr(&a.expr, None);
-            }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`{name}` takes {wanted} argument(s), but {} were given", args.len()),
-            );
-            return error_expr(span);
-        }
-        let size = self.expr(&args[0].expr, Some(&Ty::Int(IntTy::Usize)));
-        let size = self.expect_ty(size, &Ty::Int(IntTy::Usize));
-        if !with_alloc {
-            if !written.is_global() {
+    ) -> Option<tir::Expr> {
+        match name.name.as_str() {
+            "new" | "with_capacity" | "try_with_capacity" if !written.is_global() => {
+                let then = match name.name.as_str() {
+                    "new" => "",
+                    "with_capacity" => " and `reserve`",
+                    _ => " and `try_reserve`",
+                };
                 self.diags.error(
                     Code::MISSING_ALLOCATOR,
                     span,
-                    format!(
-                        "a `{}` stores an allocator, so it is made with `{in_form}`",
-                        Ty::List(Box::new(elem.clone()), written.clone())
-                    ),
+                    format!("a `{ty}` stores an allocator, so it is made with `List.new_in(alloc)`{then}"),
                 );
-                return error_expr(span);
+                Some(self.args_then_error(args, span))
             }
-            let list = Ty::List(Box::new(elem.clone()), burdin_tir::Alloc::Global);
-            if fallible {
-                let ty = self.alloc_result_ty(list);
-                return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacity, vec![size]), ty, span);
+            "new_in" | "with_capacity_in" | "try_with_capacity_in" if written.is_global() => {
+                let at = usize::from(name.name != "new_in");
+                if args.len() <= at {
+                    return None;
+                }
+                let value = self.expr(&args[at].expr, None);
+                if value.ty == Ty::Error || !self.allocator_value_ok(&value.ty, value.span) {
+                    return Some(error_expr(span));
+                }
+                let alloc = self.globals.alloc_of(value.ty.clone());
+                if alloc.is_global() {
+                    return None;
+                }
+                let target = self.globals.list_ty(elem.clone(), alloc);
+                if target == Ty::Error {
+                    return Some(error_expr(span));
+                }
+                Some(self.assoc_call(&target, name, &[], args, span, None))
             }
-            return mk(tir::ExprKind::Builtin(Builtin::ListWithCapacity, vec![size]), list, span);
-        }
-        let value = self.expr(&args[1].expr, None);
-        if value.ty == Ty::Error {
-            return error_expr(span);
-        }
-        if !self.allocator_value_ok(&value.ty, value.span) {
-            return error_expr(span);
-        }
-        let alloc = self.globals.alloc_of(value.ty.clone());
-        if let burdin_tir::Alloc::Value(want) = written
-            && let burdin_tir::Alloc::Value(got) = &alloc
-            && want != got
-        {
-            self.diags.error(
-                Code::TYPE_MISMATCH,
-                value.span,
-                format!("this list stores a `{want}` allocator, but the argument is `{got}`"),
-            );
-            return error_expr(span);
-        }
-        let list = Ty::List(Box::new(elem.clone()), alloc);
-        if fallible {
-            let ty = self.alloc_result_ty(list);
-            return mk(tir::ExprKind::Builtin(Builtin::ListTryWithCapacityIn, vec![size, value]), ty, span);
-        }
-        mk(tir::ExprKind::Builtin(Builtin::ListWithCapacityIn, vec![size, value]), list, span)
-    }
-
-    /// `Result<ok, AllocError>`: the type a fallible allocation returns (`spec/allocators.md`, AL11). `AllocError`
-    /// is the standard library's error enum; without it the error is `Ty::Error`, which suppresses later errors.
-    pub(super) fn alloc_result_ty(&self, ok: Ty) -> Ty {
-        Ty::Result(Box::new(ok), Box::new(self.globals.alloc_error_ty.clone().unwrap_or(Ty::Error)))
-    }
-
-    /// The type of a fallible method with the standard library's `AllocError` in place of the placeholder the
-    /// method table gives (`builtins::alloc_result_placeholder`). Every other method keeps its type.
-    fn fallible_method_ret(&self, m: &Method, ret: Ty) -> Ty {
-        match (m, ret) {
-            (
-                Method::ListTryReserve | Method::ListTryReserveExact | Method::MapTryReserve | Method::StringTryReserve,
-                Ty::Result(ok, _),
-            ) => self.alloc_result_ty(*ok),
-            (_, ret) => ret,
+            _ => None,
         }
     }
 
-    /// `Map<K, V>.new_in(alloc)`.
-    pub(super) fn map_new_in(
+    /// The constructors of a `Map` that depend on the allocator (`spec/allocators.md`, AL5): `new_in` takes the
+    /// allocator type from the value even when `Map<K, V>` was written with the default one, and `new`,
+    /// `with_capacity`, and `try_with_capacity` exist for the default allocator only (E0272). `None` leaves the call
+    /// to the ordinary associated-function lookup.
+    #[allow(clippy::too_many_arguments)]
+    fn map_constructor(
         &mut self,
+        ty: &Ty,
         key: &Ty,
-        value_ty: &Ty,
+        value: &Ty,
         written: &burdin_tir::Alloc,
+        name: &ast::Ident,
         args: &[ast::Arg],
         span: Span,
-    ) -> tir::Expr {
-        let Some(value) = self.new_in_allocator("Map.new_in", args, span) else {
-            return error_expr(span);
-        };
-        let alloc = self.globals.alloc_of(value.ty.clone());
-        if let burdin_tir::Alloc::Value(want) = written
-            && let burdin_tir::Alloc::Value(got) = &alloc
-            && want != got
-        {
-            self.diags.error(
-                Code::TYPE_MISMATCH,
-                value.span,
-                format!("this map stores a `{want}` allocator, but the argument is `{got}`"),
-            );
-            return error_expr(span);
+    ) -> Option<tir::Expr> {
+        match name.name.as_str() {
+            "new" | "with_capacity" | "try_with_capacity" if !written.is_global() => {
+                let then = match name.name.as_str() {
+                    "new" => "",
+                    "with_capacity" => " and `reserve`",
+                    _ => " and `try_reserve`",
+                };
+                self.diags.error(
+                    Code::MISSING_ALLOCATOR,
+                    span,
+                    format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)`{then}"),
+                );
+                Some(self.args_then_error(args, span))
+            }
+            "new_in" if written.is_global() => {
+                if args.is_empty() {
+                    return None;
+                }
+                let value_arg = self.expr(&args[0].expr, None);
+                if value_arg.ty == Ty::Error || !self.allocator_value_ok(&value_arg.ty, value_arg.span) {
+                    return Some(error_expr(span));
+                }
+                let alloc = self.globals.alloc_of(value_arg.ty.clone());
+                if alloc.is_global() {
+                    return None;
+                }
+                let target = self.globals.map_ty(key.clone(), value.clone(), alloc);
+                if target == Ty::Error {
+                    return Some(error_expr(span));
+                }
+                Some(self.assoc_call(&target, name, &[], args, span, None))
+            }
+            _ => None,
         }
-        let ty = Ty::Map(Box::new(key.clone()), Box::new(value_ty.clone()), alloc);
-        mk(tir::ExprKind::Builtin(Builtin::MapNewIn, vec![value]), ty, span)
     }
 
     /// `Heap.new_in(alloc, value)`: one heap allocation through the allocator value.
@@ -2100,26 +2166,6 @@ impl FnCx<'_> {
         mk(tir::ExprKind::Builtin(Builtin::HeapNewIn, vec![alloc_value, value]), ty, span)
     }
 
-    /// `Shared.new(value)`: a reference-counted cell holding `value` (`spec/allocators.md`, AL8).
-    pub(super) fn shared_new(&mut self, args: &[ast::Arg], span: Span) -> tir::Expr {
-        self.reject_named_args("Shared.new", args);
-        if args.len() != 1 {
-            for a in args {
-                self.expr(&a.expr, None);
-            }
-            self.diags.error(
-                Code::ARG_COUNT,
-                span,
-                format!("`Shared.new` takes 1 argument, but {} were given", args.len()),
-            );
-            return error_expr(span);
-        }
-        let value = self.expr(&args[0].expr, None);
-        check_storable(&value.ty, value.span, "a `Shared` value", self.diags);
-        let ty = Ty::Shared(Box::new(value.ty.clone()));
-        mk(tir::ExprKind::Builtin(Builtin::SharedNew, vec![value]), ty, span)
-    }
-
     /// `T.try_from(value)` for an integer type `T` and an integer `value` of any type (`spec/stdlib.md`, "Conversions"):
     /// `Ok` of the value converted to `T` when it fits, and `Err(TryFromIntError.OutOfRange)` when it does not. Only
     /// the bounds the source type can actually leave are checked, so a conversion that always fits has no check.
@@ -2144,7 +2190,7 @@ impl FnCx<'_> {
         let Some(out_of_range) = self.globals.enums[err.id].variants.iter().position(|v| v.name == "OutOfRange") else {
             return error_expr(span);
         };
-        let result = Ty::Result(Box::new(Ty::Int(to)), Box::new(err_ty.clone()));
+        let result = self.globals.result_ty(Ty::Int(to), err_ty.clone());
         // The value is evaluated once, into a local the checks and the conversion read.
         let (id, mode) = self.payload_local("value", Ty::Int(from), true);
         let read = || mk(tir::ExprKind::Local(id), Ty::Int(from), span);
@@ -2163,9 +2209,9 @@ impl FnCx<'_> {
             .reduce(|a, b| mk(tir::ExprKind::Binary(tir::BinOp::And, Box::new(a), Box::new(b)), Ty::Bool, span))
             .unwrap_or_else(|| mk(tir::ExprKind::Bool(true), Ty::Bool, span));
         let converted = mk(tir::ExprKind::Cast(Box::new(read())), Ty::Int(to), span);
-        let ok = mk(tir::ExprKind::Ok(Box::new(converted)), result.clone(), span);
+        let ok = Globals::mk_result(true, converted, result.clone(), span);
         let variant = mk(tir::ExprKind::Variant(out_of_range, Vec::new()), err_ty, span);
-        let err = mk(tir::ExprKind::Err(Box::new(variant)), result.clone(), span);
+        let err = Globals::mk_result(false, variant, result.clone(), span);
         let fits = tir::Block { stmts: Vec::new(), tail: Some(Box::new(ok)), close: span };
         let branch = mk(tir::ExprKind::If(Box::new(cond), fits, Some(Box::new(err))), result.clone(), span);
         let bind = tir::Stmt::Let(Pat::Binding(id, mode), value, None);
@@ -2236,17 +2282,27 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         // `Option<T>.Some(x)`, `Result<T, E>.Ok(v)`, and `Result<T, E>.Err(e)`: the type is written, so it is the expected type.
-        match (ty, name.name.as_str()) {
-            (Ty::Option(_), "Some") => return self.some(args, Some(ty), span),
-            (Ty::Result(..), "Ok") => return self.result_ctor(true, args, Some(ty), span),
-            (Ty::Result(..), "Err") => return self.result_ctor(false, args, Some(ty), span),
-            _ => {}
+        if self.globals.option_payload(ty).is_some() && name.name == "Some" {
+            return self.some(args, Some(ty), span);
+        }
+        if self.globals.result_parts(ty).is_some() && (name.name == "Ok" || name.name == "Err") {
+            return self.result_ctor(name.name == "Ok", args, Some(ty), span);
         }
         // Only an associated function of the program with type parameters of its own takes type arguments (TA5).
         if !explicit.is_empty() && !self.user_generic_method(ty, &name.name) {
             return self.reject_type_args(&name.name, explicit, args, span);
         }
+        // `T.size()` and `T.align()` of a type parameter are the layout of whatever it is instantiated with, unless
+        // one of its bounds provides a function of that name.
         if let Ty::Param(_) = ty {
+            if matches!(name.name.as_str(), "size" | "align") && args.is_empty() && !self.param_provides(ty, &name.name)
+            {
+                return mk(
+                    tir::ExprKind::LayoutOf { ty: ty.clone(), alignment: name.name == "align" },
+                    Ty::Int(IntTy::Usize),
+                    span,
+                );
+            }
             return self.param_assoc_call(ty, name, args, span, expect);
         }
         // `String.deserialize(mut d)`, `List<T>.deserialize(mut d)`, and the other built-in types (SER14).
@@ -2285,83 +2341,6 @@ impl FnCx<'_> {
             }
             return self.no_assoc_function(ty, name, format!("`CPtr` has no function `{}`", name.name), args, span);
         }
-        // `List<T>.new()`, `List<T>.new_in(alloc)`, and the same for a map.
-        if let Ty::List(elem, written_alloc) = ty {
-            if name.name == "new" {
-                if !args.is_empty() {
-                    self.diags.error(Code::ARG_COUNT, span, "`List.new` takes no arguments");
-                    return self.args_then_error(args, span);
-                }
-                if !written_alloc.is_global() {
-                    self.diags.error(
-                        Code::MISSING_ALLOCATOR,
-                        span,
-                        format!("a `{ty}` stores an allocator, so it is made with `List.new_in(alloc)`"),
-                    );
-                    return error_expr(span);
-                }
-                return mk(tir::ExprKind::Builtin(Builtin::ListNew, Vec::new()), ty.clone(), span);
-            }
-            if name.name == "new_in" {
-                let elem = (**elem).clone();
-                let written = written_alloc.clone();
-                return self.list_new_in(&elem, &written, args, span);
-            }
-            if name.name == "with_capacity" || name.name == "with_capacity_in" {
-                let elem = (**elem).clone();
-                let written = written_alloc.clone();
-                let with_alloc = name.name == "with_capacity_in";
-                return self.list_with_capacity(&elem, &written, with_alloc, false, args, span);
-            }
-            if name.name == "try_with_capacity" || name.name == "try_with_capacity_in" {
-                let elem = (**elem).clone();
-                let written = written_alloc.clone();
-                let with_alloc = name.name == "try_with_capacity_in";
-                return self.list_with_capacity(&elem, &written, with_alloc, true, args, span);
-            }
-        }
-        if let Ty::Map(key, value, written_alloc) = ty {
-            if name.name == "new" {
-                if !args.is_empty() {
-                    self.diags.error(Code::ARG_COUNT, span, "`Map.new` takes no arguments");
-                    return self.args_then_error(args, span);
-                }
-                if !written_alloc.is_global() {
-                    self.diags.error(
-                        Code::MISSING_ALLOCATOR,
-                        span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)`"),
-                    );
-                    return error_expr(span);
-                }
-                return mk(tir::ExprKind::Builtin(Builtin::MapNew, Vec::new()), ty.clone(), span);
-            }
-            if name.name == "new_in" {
-                let (key, value, written) = ((**key).clone(), (**value).clone(), written_alloc.clone());
-                return self.map_new_in(&key, &value, &written, args, span);
-            }
-            if name.name == "with_capacity" || name.name == "try_with_capacity" {
-                let fallible = name.name == "try_with_capacity";
-                let reserve = if fallible { "try_reserve" } else { "reserve" };
-                if !written_alloc.is_global() {
-                    self.diags.error(
-                        Code::MISSING_ALLOCATOR,
-                        span,
-                        format!("a `{ty}` stores an allocator, so it is made with `Map.new_in(alloc)` and `{reserve}`"),
-                    );
-                    return error_expr(span);
-                }
-                let params = [ParamSig::plain(Ty::Int(IntTy::Usize))];
-                let Some(checked) = self.args(&name.name, &params, args, None, span) else {
-                    return error_expr(span);
-                };
-                if fallible {
-                    let result = self.alloc_result_ty(ty.clone());
-                    return mk(tir::ExprKind::Builtin(Builtin::MapTryWithCapacity, checked), result, span);
-                }
-                return mk(tir::ExprKind::Builtin(Builtin::MapWithCapacity, checked), ty.clone(), span);
-            }
-        }
         // `i32.parse(s)`: the number in the text, or an error.
         if let Ty::Int(i) = ty {
             if name.name == "try_from" {
@@ -2399,7 +2378,7 @@ impl FnCx<'_> {
                     return mk(tir::ExprKind::Call(f, call_args), sig.ret, span);
                 }
                 let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
-                let ret = Ty::Result(Box::new(ty.clone()), Box::new(error));
+                let ret = self.globals.result_ty(ty.clone(), error);
                 return mk(tir::ExprKind::Builtin(Builtin::IntParse(*i), checked), ret, span);
             }
         }
@@ -2483,17 +2462,6 @@ impl FnCx<'_> {
             }
             return self.no_assoc_function(ty, name, format!("`str` has no function `{}`", name.name), args, span);
         }
-        // The C string bridge.
-        if *ty == Ty::CString {
-            if name.name == "from" {
-                let sig = builtin_sig(Builtin::CStringFrom, self.globals);
-                let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
-                    return error_expr(span);
-                };
-                return mk(tir::ExprKind::Builtin(Builtin::CStringFrom, checked), sig.ret, span);
-            }
-            return self.no_assoc_function(ty, name, format!("`CString` has no function `{}`", name.name), args, span);
-        }
         if let Ty::Enum(a) = ty
             && let Some(index) = self.globals.enums[a.id].variants.iter().position(|v| v.name == name.name)
         {
@@ -2513,6 +2481,16 @@ impl FnCx<'_> {
         }
         if (name.name == "from" || name.name == "try_from")
             && let Some(call) = self.conversion_call(ty, &name.name, args, span)
+        {
+            return call;
+        }
+        if let Some((elem, written)) = self.globals.list_parts(ty)
+            && let Some(call) = self.list_constructor(ty, &elem, &written, name, args, span)
+        {
+            return call;
+        }
+        if let Some((key, value, written)) = self.globals.map_parts(ty)
+            && let Some(call) = self.map_constructor(ty, &key, &value, &written, name, args, span)
         {
             return call;
         }

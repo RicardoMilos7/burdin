@@ -209,6 +209,7 @@ impl FnCx<'_> {
                     B::BitAnd | B::BitOr | B::BitXor => matches!(ty, Ty::Int(_) | Ty::Bool),
                     // A struct or enum compares through its derive or its interface implementation, whichever it
                     // has, so the interface is the one that decides a type without a derive (OP3).
+                    B::Eq | B::Ne if self.globals.map_parts(&ty).is_some() => self.globals.has_eq_in(&ty, &self.bounds),
                     B::Eq | B::Ne if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) => {
                         self.globals.has_derived_eq_in(&ty, &self.bounds)
                             || self.globals.eq_from_order(&ty, &self.bounds)
@@ -233,7 +234,13 @@ impl FnCx<'_> {
                     match &ty {
                         // A derive is the type's own comparison; when it does not hold, a field is the reason and
                         // the stage 0 diagnostic (E0003) stays (`spec/derives.md`).
-                        Ty::Struct(_) | Ty::Enum(_) if self.derives_comparison(&ty, op) => {
+                        // A list compares through its element, so a list of a type without the operator has none
+                        // either: the same stage 0 diagnostic as the built-in sequence it replaced.
+                        Ty::Struct(_) | Ty::Enum(_)
+                            if self.globals.list_parts(&ty).is_some()
+                                || self.globals.map_parts(&ty).is_some()
+                                || self.derives_comparison(&ty, op) =>
+                        {
                             self.diags.error(
                                 Code::TYPE_MISMATCH,
                                 span,

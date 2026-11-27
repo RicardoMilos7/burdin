@@ -350,12 +350,6 @@ pub enum ExprKind {
         map: Box<Expr>,
         body: Block,
     },
-    /// `for pattern in string.chars()`: iterate the characters of a `str`.
-    ForChars {
-        pat: Pat,
-        string: Box<Expr>,
-        body: Block,
-    },
     Match(Box<Expr>, Vec<Arm>),
     /// A loop with a label (`'label: while ...`). The body is one of the loop expressions; `break 'label` and
     /// `continue 'label` inside it name this loop, and an unlabeled `break` or `continue` names the innermost loop.
@@ -415,12 +409,6 @@ pub enum ExprKind {
     Struct(Vec<(usize, Expr)>),
     /// A variant of this expression's enum type, with field indices and values in source order.
     Variant(usize, Vec<(usize, Expr)>),
-    Some(Box<Expr>),
-    None,
-    /// `Ok(value)` of a `Result<T, E>`.
-    Ok(Box<Expr>),
-    /// `Err(value)` of a `Result<T, E>`.
-    Err(Box<Expr>),
     /// Field `n` of a struct or tuple.
     Field(Box<Expr>, usize),
     /// The condition of an `if` that is a compile-time condition (`spec/const-eval.md`, CE4): evaluated while
@@ -461,12 +449,6 @@ pub enum Pat {
     /// An inclusive range of integers or characters (as their code points).
     Range(i128, i128),
     Or(Vec<Pat>),
-    Some(Box<Pat>),
-    None,
-    /// `Ok(pattern)` of a `Result`.
-    Ok(Box<Pat>),
-    /// `Err(pattern)` of a `Result`.
-    Err(Box<Pat>),
     /// A tuple or struct: one pattern per field, in declaration order.
     Product(Vec<Pat>),
     /// A variant of an enum: its index and one pattern per field, in declaration order.

@@ -133,6 +133,11 @@ pub(crate) fn check_public_signatures(
         if item.decl.is_priv {
             continue;
         }
+        // An instance of a generic function has the type arguments of its caller, which may be package-private
+        // (`drop` of a `Frame`); the check belongs to the declaration, whose signature names only parameters.
+        if !item.symbolic && !item.subst.is_empty() {
+            continue;
+        }
         // A method or associated function of a package-private type is unreachable from another package: that
         // package cannot name the type, so nothing in its signature can leak. This is what makes an impl on a
         // `priv` type (the standard library's `ContextError: Display`, or a `priv error enum`) legal.
@@ -151,7 +156,8 @@ pub(crate) fn check_public_signatures(
         }
     }
     for (id, s) in globals.structs.iter().enumerate() {
-        if globals.adt_priv.get(&(false, id)).copied().unwrap_or(false) {
+        if globals.adt_priv.get(&(false, id)).copied().unwrap_or(false) || globals.adt_origin.contains_key(&(false, id))
+        {
             continue;
         }
         for f in &s.fields {
@@ -164,7 +170,7 @@ pub(crate) fn check_public_signatures(
         }
     }
     for (id, e) in globals.enums.iter().enumerate() {
-        if globals.adt_priv.get(&(true, id)).copied().unwrap_or(false) {
+        if globals.adt_priv.get(&(true, id)).copied().unwrap_or(false) || globals.adt_origin.contains_key(&(true, id)) {
             continue;
         }
         for v in &e.variants {
@@ -190,7 +196,7 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
         match ty {
             Ty::Struct(a) => out.push((false, a.id)),
             Ty::Enum(a) => out.push((true, a.id)),
-            Ty::Array(t, _) | Ty::Option(t) => contained(t, out),
+            Ty::Array(t, _) => contained(t, out),
             Ty::Tuple(ts) => ts.iter().for_each(|t| contained(t, out)),
             _ => {}
         }

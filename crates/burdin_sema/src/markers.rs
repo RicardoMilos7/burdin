@@ -42,7 +42,14 @@ impl Globals {
     /// Why `ty` is not `Send` (or, with `sync`, not `Sync`), or `None` when it is. The text names the offending part
     /// the way the diagnostic shows it: the field, then what is wrong with its type.
     pub(crate) fn marker_violation(&self, ty: &Ty, sync: bool, env: &Env) -> Option<String> {
-        self.marker_why(ty, sync, env, &mut Vec::new())
+        let entry = (ty.clone(), sync);
+        if self.marker_active.borrow().contains(&entry) {
+            return None;
+        }
+        self.marker_active.borrow_mut().push(entry);
+        let why = self.marker_why(ty, sync, env, &mut Vec::new());
+        self.marker_active.borrow_mut().pop();
+        why
     }
 
     fn marker_why(&self, ty: &Ty, sync: bool, env: &Env, seen: &mut Vec<(Ty, bool)>) -> Option<String> {
@@ -56,8 +63,6 @@ impl Globals {
             | Ty::Float(_)
             | Ty::Str
             | Ty::String
-            | Ty::CString
-            | Ty::Chars
             | Ty::Never
             | Ty::Const(_)
             // A projection is opaque; the concrete binding is checked when it is substituted.
@@ -110,32 +115,20 @@ impl Globals {
                         .or_else(|| self.part_why("the element", t, true, env, seen))
                 }
             }
-            Ty::Array(t, _) | Ty::Option(t) | Ty::Range(t, _) | Ty::RangeIter(t, _) | Ty::ArrayIntoIter(t, _) => {
+            Ty::Array(t, _) => {
                 self.part_why("the element", t, sync, env, seen)
             }
-            Ty::List(t, a) | Ty::Heap(t, a) | Ty::ListIntoIter(t, a) => {
+            Ty::Heap(t, a) => {
                 self.part_why("the element", t, sync, env, seen).or_else(|| self.alloc_why(a, sync, env, seen))
             }
-            Ty::Map(k, v, a) | Ty::MapIntoIter(k, v, a) => self
-                .part_why("the key", k, sync, env, seen)
-                .or_else(|| self.part_why("the value", v, sync, env, seen))
-                .or_else(|| self.alloc_why(a, sync, env, seen)),
-            Ty::Result(t, e) => self
-                .part_why("the `Ok` type", t, sync, env, seen)
-                .or_else(|| self.part_why("the `Err` type", e, sync, env, seen)),
             Ty::Tuple(ts) => ts.iter().find_map(|t| self.part_why("an element", t, sync, env, seen)),
             // These point into another collection, so they behave like the shared or exclusive views they hold.
-            Ty::MapEntry(k, v, _) | Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
+            Ty::MapIter(k, v) | Ty::MapIterMut(k, v) => {
                 self.part_why("the key", k, sync, env, seen).or_else(|| self.part_why("the value", v, sync, env, seen))
             }
             Ty::IterMut(t) | Ty::SliceChunks(t, _) | Ty::SliceWindows(t) => {
                 self.part_why("the element", t, sync, env, seen)
             }
-            // A handle to a cell several handles share: it moves when the value may move and be used from another
-            // task, and it is shared when the value may be both.
-            Ty::Shared(t) => self
-                .part_why("the shared value", t, false, env, seen)
-                .or_else(|| self.part_why("the shared value", t, true, env, seen)),
             Ty::Struct(_) | Ty::Enum(_) => self.adt_why(ty, iface, sync, env, seen),
         }
     }

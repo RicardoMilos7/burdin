@@ -1,12 +1,64 @@
-// Combinators for `Option<T>` and `Result<T, E>` (spec/stdlib.md).
+// The methods of `Option<T>` and `Result<T, E>` (spec/stdlib.md), all written in Burdin.
 //
-// They are extension methods (spec/extensions.md): the prelude makes them visible in every module, and the
-// compiler's own methods (`unwrap`, `expect`, `is_some`, ...) still win. A method that takes `own self` consumes
-// the value; `take` and `replace` take `mut self` and leave the place usable.
+// They are extension methods (spec/extensions.md): the prelude makes them visible in every module. A method that
+// takes `own self` consumes the value; `take` and `replace` take `mut self` and leave the place usable. The
+// panics of `unwrap` and `expect` report the location of the call to `panic` in this file.
 
 use mem
 
 // ---- Option ----
+
+/// Whether `self` is a `Some`.
+///
+/// ```
+/// let a: Option<i32> = Option.Some(1)
+/// assert(a.is_some())
+/// ```
+fn Option<T>.is_some(self): bool {
+    match self {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
+
+/// Whether `self` is a `None`.
+///
+/// ```
+/// let a: Option<i32> = Option.None
+/// assert(a.is_none())
+/// ```
+fn Option<T>.is_none(self): bool {
+    match self {
+        Option.Some(_) => false,
+        Option.None => true,
+    }
+}
+
+/// The value of a `Some`. Panics on a `None`.
+///
+/// ```
+/// let a: Option<i32> = Option.Some(4)
+/// assert_eq(a.unwrap(), 4)
+/// ```
+fn Option<T>.unwrap(own self): T {
+    match self {
+        Option.Some(x) => x,
+        Option.None => panic("called `unwrap` on a `None` value"),
+    }
+}
+
+/// The value of a `Some`. Panics with `message` on a `None`.
+///
+/// ```
+/// let a: Option<i32> = Option.Some(4)
+/// assert_eq(a.expect("a value"), 4)
+/// ```
+fn Option<T>.expect(own self, message: str): T {
+    match self {
+        Option.Some(x) => x,
+        Option.None => panic(message),
+    }
+}
 
 /// Applies `f` to the value of a `Some`; a `None` stays `None`.
 ///
@@ -288,6 +340,58 @@ fn Option<Option<T>>.flatten(own self): Option<T> {
 }
 
 // ---- Result ----
+
+/// Whether `self` is an `Ok`.
+///
+/// ```
+/// let r: Result<i32, String> = Result.Ok(1)
+/// assert(r.is_ok())
+/// ```
+fn Result<T, E>.is_ok(self): bool {
+    match self {
+        Result.Ok(_) => true,
+        Result.Err(_) => false,
+    }
+}
+
+/// Whether `self` is an `Err`.
+///
+/// ```
+/// let r: Result<i32, String> = Result.Err(String.from("no"))
+/// assert(r.is_err())
+/// ```
+fn Result<T, E>.is_err(self): bool {
+    match self {
+        Result.Ok(_) => false,
+        Result.Err(_) => true,
+    }
+}
+
+/// The value of an `Ok`. Panics on an `Err`.
+///
+/// ```
+/// let r: Result<i32, String> = Result.Ok(4)
+/// assert_eq(r.unwrap(), 4)
+/// ```
+fn Result<T, E>.unwrap(own self): T {
+    match self {
+        Result.Ok(x) => x,
+        Result.Err(_) => panic("called `unwrap` on a `Err` value"),
+    }
+}
+
+/// The value of an `Ok`. Panics with `message` on an `Err`.
+///
+/// ```
+/// let r: Result<i32, String> = Result.Ok(4)
+/// assert_eq(r.expect("a value"), 4)
+/// ```
+fn Result<T, E>.expect(own self, message: str): T {
+    match self {
+        Result.Ok(x) => x,
+        Result.Err(_) => panic(message),
+    }
+}
 
 /// Applies `f` to the value of an `Ok`; an `Err` is kept.
 ///

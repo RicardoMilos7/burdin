@@ -112,9 +112,6 @@ impl FnCx<'_> {
 
     /// `Color.Red`: a unit variant of an enum type.
     pub(super) fn unit_variant(&mut self, ty: Ty, name: &ast::Ident, span: Span) -> tir::Expr {
-        if matches!(ty, Ty::Option(_)) && name.name == "None" {
-            return mk(tir::ExprKind::None, ty, span);
-        }
         // `u32.MAX`: an integer type's constants are `std` constants named `<type>_<name>`.
         if let Ty::Int(i) = &ty
             && let Some(Global::Const(c)) = self.globals.std_value(&format!("{}_{}", i.name(), name.name))
@@ -490,6 +487,8 @@ impl FnCx<'_> {
         let mutable = self.write_place;
         let base = self.expr(base, None);
         let base = self.auto_deref(base);
+        // A `List` is indexed and sliced like an array: through its element pointer and length.
+        let list_elem = self.globals.list_parts(&base.ty).map(|(elem, _)| elem);
         if let ast::ExprKind::Range { lo, hi, inclusive } = &index.kind {
             let saved = self.write_place;
             self.write_place = false;
@@ -500,9 +499,10 @@ impl FnCx<'_> {
             let hi = self.expect_ty(hi, &usize_ty);
             self.write_place = saved;
             let ty = match &base.ty {
+                _ if list_elem.is_some() => Ty::Slice(Box::new(list_elem.clone().expect("checked above"))),
                 Ty::Str | Ty::String => Ty::Str,
                 Ty::Slice(_) => base.ty.clone(),
-                Ty::Array(elem, _) | Ty::List(elem, _) => Ty::Slice(elem.clone()),
+                Ty::Array(elem, _) => Ty::Slice(elem.clone()),
                 Ty::Error => Ty::Error,
                 other => {
                     self.diags.error(
@@ -527,7 +527,8 @@ impl FnCx<'_> {
         self.write_place = saved;
         let index = self.expect_ty(index, &Ty::Int(IntTy::Usize));
         let ty = match &base.ty {
-            Ty::Array(elem, _) | Ty::Slice(elem) | Ty::List(elem, _) => (**elem).clone(),
+            _ if list_elem.is_some() => list_elem.clone().expect("checked above"),
+            Ty::Array(elem, _) | Ty::Slice(elem) => (**elem).clone(),
             Ty::Error => return error_expr(span),
             // A user type takes part through `Index`/`IndexMut` (`spec/operators.md`, OP9-OP10).
             _ => return self.overloaded_index(base, index, mutable, span),

@@ -22,7 +22,7 @@ fn tokenize(text: str): List<Token> {
         }
         match i32.parse(word) {
             Result.Ok(n) => tokens.push(Token.Num(n)),
-            Result.Err(_) => tokens.push(Token.Op(word.chars().next().unwrap())),
+            Result.Err(_) => tokens.push(Token.Op(word.chars()[0])),
         }
     }
     tokens

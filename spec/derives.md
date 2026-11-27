@@ -82,8 +82,8 @@ declaration order and are equal when every field is equal. Enums are equal only 
 payload fields. `Option` and `Result` support `==` when their parts do. A fixed-size array `[T; N]` supports `==` when
 `T` does, comparing element by element (milestone 24, issue #484), and a `Map` supports `==` when its keys and values
 do, comparing its entries whatever the iteration order. A `List` supports `==` when its elements do: two lists are
-equal when they have the same length and equal elements in the same order (issue #928). Slices, references, `Heap`,
-and `Chars` do not support `==`. `PriorityHeap` derives `Eq` over its list, and `Deque` implements `==` by hand in the
+equal when they have the same length and equal elements in the same order (issue #928). Slices, references, and `Heap`
+do not support `==`. `PriorityHeap` derives `Eq` over its list, and `Deque` implements `==` by hand in the
 standard library, since two deques with the same elements can split them differently between their ends (`stdlib.md`).
 
 ## `Ord`

@@ -17,7 +17,7 @@ pub fn roots(program: &Program) -> Vec<usize> {
     roots.extend(program.enums.iter().filter_map(|e| e.drop_method).map(|id| id.0));
     roots.extend(program.any_vtables.iter().flat_map(|v| v.entries.iter().map(|id| id.0)));
     for d in program.structs.iter().map(|s| &s.derives).chain(program.enums.iter().map(|e| &e.derives)) {
-        roots.extend([d.eq_method, d.lt_method].into_iter().flatten().map(|id| id.0));
+        roots.extend([d.eq_method, d.lt_method, d.clone_method].into_iter().flatten().map(|id| id.0));
     }
     roots.extend(program.allocator_fns.iter().flat_map(|f| [f.allocate.0, f.reallocate.0, f.deallocate.0]));
     roots.retain(|&i| i < program.functions.len());

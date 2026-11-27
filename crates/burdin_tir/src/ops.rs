@@ -60,8 +60,6 @@ pub enum Builtin {
     StringFrom,
     /// `Heap.new(value)`: allocates and moves `value` into a fresh heap allocation.
     HeapNew,
-    /// `Shared.new(value)`: allocates a reference-counted cell holding `value` (`spec/allocators.md`, AL8).
-    SharedNew,
     /// `List<T>.new_in(alloc)`: an empty list whose buffer uses the allocator value (`spec/allocators.md`, AL5).
     ListNewIn,
     /// `List<T>.with_capacity(n)`: an empty list with room for `n` elements in the default allocator.
@@ -94,8 +92,6 @@ pub enum Builtin {
     RawTryRealloc,
     /// `CPtr.null()`: a null C pointer, typed by the expected type.
     CPtrNull,
-    /// `CString.from(str)`: a new NUL-terminated copy of the bytes in the C heap.
-    CStringFrom,
     /// `CStr.to_string(ptr)`: copies a NUL-terminated C string into a `String`.
     CStrToString,
     /// `List<T>.new()`: an empty list.
@@ -241,6 +237,22 @@ pub enum Builtin {
     Swap,
     /// `mem.replace(place, value)`: stores a value and returns the old one.
     Replace,
+    /// `__read(p)`: moves the value out of the memory `p` points at, leaving the bytes as they were. The caller owns
+    /// the result and must not read the memory again until it is written.
+    RawRead,
+    /// `__write(p, value)`: moves `value` into the memory `p` points at without dropping what was there.
+    RawWrite,
+    /// `__slice_raw(p, n)`: the `[T]` view of the `n` elements at `p`. It borrows from nothing the checker can see;
+    /// `unsafe` is the promise that the memory outlives the view.
+    SliceRaw,
+    /// `__iter_mut_raw(p, n)`: the `IterMut<T>` over the `n` elements at `p` (`unsafe`).
+    IterMutRaw,
+    /// `__int_step(x, delta)`: the integer `x` moved by `delta` (1 or -1), wrapping. `std`'s range iterators step
+    /// with it, since `T` has no arithmetic of its own.
+    IntStep,
+    /// `__hash_key(&k)`: the structural hash of the value `k` references, the fold `Map` stores for its keys
+    /// (`spec/stdlib.md`, "Map": FNV-1a from the offset basis). `std`'s `Map` hashes through it.
+    HashKey,
     /// `target.os()`'s primitive: `"linux"`, `"macos"`, or `"windows"`, the system the program is compiled for.
     TargetOs,
     /// `target.arch()`'s primitive: `"x86_64"` or `"aarch64"`.
@@ -633,35 +645,12 @@ pub enum Method {
     MapTryReserve,
     /// `Map<K, V>.shrink_to_fit()`: shrinks the slot table to the smallest one that holds the entries.
     MapShrinkToFit,
-    /// `Map<K, V>.entry(key): MapEntry<K, V>`: a pending lookup that owns `key` and borrows the map exclusively.
-    /// The probe happens once, here; the entry operations insert into the slot it found.
-    MapEntry,
-    /// `MapEntry<K, V>.or_insert(value): &mut V`: the value stored under the entry's key, inserting `key` and
-    /// `value` first when the key is absent. An existing value is kept and the incoming value is dropped.
-    MapEntryOrInsert,
-    /// `MapEntry<K, V>.or_insert_with(make): &mut V`: like `or_insert`, but the value comes from calling `make`,
-    /// which runs only when the key is absent. The closure is consumed either way.
-    MapEntryOrInsertWith,
     /// `Map<K, V>.remove(key): Option<V>`.
     MapRemove,
     /// `Map<K, V>.contains_key(key): bool`.
     MapContainsKey,
-    /// `Option<T>.unwrap()` and `Result<T, E>.unwrap()`: the payload, panicking on the empty case.
-    Unwrap,
-    /// `Option<T>.expect(message)` and `Result<T, E>.expect(message)`.
-    Expect,
-    /// `Option<T>.is_some()`.
-    IsSome,
-    /// `Option<T>.is_none()`.
-    IsNone,
-    /// `Result<T, E>.is_ok()`.
-    IsOk,
-    /// `Result<T, E>.is_err()`.
-    IsErr,
     /// `str.find_str(needle): Option<usize>`: the byte index of a substring.
     FindStr,
-    /// `str.chars()`: the characters of a string, for a `for` loop.
-    Chars,
     /// `String.as_str()`: a `str` view of the bytes.
     AsStr,
     /// `str.as_bytes()` and `String.as_bytes()`: the UTF-8 bytes as a `[u8]` view.
@@ -685,8 +674,6 @@ pub enum Method {
     StartsWith,
     /// `s.find(c): Option<usize>` on `str` (and `String`); a byte index.
     Find,
-    /// `CString.as_ptr(): CPtr<CChar>`: the address of the NUL-terminated bytes.
-    AsPtr,
     /// `CPtr<T>.is_null(): bool`: whether the raw pointer is null.
     IsNull,
     /// `xs.iter()`: the borrowing iterator of a collection, a range, or `Chars` (IT4).
@@ -706,10 +693,6 @@ pub enum Method {
     Hash,
     /// `x.hash_from(state): u64`: folds `x` into the running hash `state` (`spec/stdlib.md`, HS3).
     HashFrom,
-    /// `shared.get(): &T`: a view of the value a `Shared<T>` owns (`spec/allocators.md`, AL8).
-    SharedGet,
-    /// `shared.strong_count(): usize`: how many owners the `Shared<T>` has.
-    SharedStrongCount,
     /// `List<T>.as_slice(): [T]`: a view of the list's elements (`spec/stdlib.md`, "Slices").
     AsSlice,
     /// `[T].get(i): Option<&T>`: a view of the element at `i`, or `None` when it is out of bounds.
@@ -748,14 +731,8 @@ impl Method {
             Method::MapInsert | Method::MapGetOrInsert | Method::MapGetOr => index == 1 || index == 2,
             // `retain` consumes the closure it is given.
             Method::MapRetain => index == 1,
-            // `entry` takes the key it will insert. The entry operations consume the entry and the value (or the
-            // closure) they are given.
-            Method::MapEntry => index == 1,
-            Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => index == 0 || index == 1,
             // The slice sort consumes its comparator.
             Method::SliceSortBy => index == 1,
-            // Unwrapping consumes the `Option` or `Result`.
-            Method::Unwrap | Method::Expect => index == 0,
             // `into_iter` takes the collection, the array, the map, or the range by value.
             Method::IntoIter => index == 0,
             _ => false,
@@ -797,7 +774,6 @@ impl Method {
                 | Method::MapInsert
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::MapEntry
                 | Method::MapGetMut
                 | Method::MapRemove
                 | Method::MapRemoveEntry
@@ -830,16 +806,11 @@ impl Method {
                 | Method::MapGetMut
                 | Method::MapGetOrInsert
                 | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapEntryOrInsert
-                | Method::MapEntryOrInsertWith
-                | Method::Chars
                 | Method::AsBytes
                 | Method::Iter
                 | Method::IterMut
                 | Method::IterNext
                 | Method::IterNextBack
-                | Method::SharedGet
                 | Method::AsSlice
                 | Method::SliceGet
                 | Method::SliceLast
@@ -888,15 +859,6 @@ mod tests {
         assert!(Method::MapGetOr.owns_argument(2));
         assert!(Method::MapRetain.owns_argument(1));
         assert!(!Method::MapRemoveEntry.owns_argument(1));
-        // `entry` moves its key into the entry; the entry operations consume the entry and their value.
-        assert!(Method::MapEntry.owns_argument(1));
-        assert!(!Method::MapEntry.owns_argument(0));
-        for method in [Method::MapEntryOrInsert, Method::MapEntryOrInsertWith] {
-            assert!(method.owns_argument(0), "{method:?}");
-            assert!(method.owns_argument(1), "{method:?}");
-        }
-        assert!(Method::Unwrap.owns_argument(0));
-        assert!(Method::Expect.owns_argument(0));
         // `append` takes the other list by ownership; the capacity operations take only a count.
         assert!(Method::ListAppend.owns_argument(1));
         assert!(!Method::ListAppend.owns_argument(0));
@@ -954,7 +916,6 @@ mod tests {
             Method::MapInsert,
             Method::MapGetOrInsert,
             Method::MapGetOr,
-            Method::MapEntry,
             Method::MapGetMut,
             Method::MapRemove,
             Method::MapRemoveEntry,
@@ -987,10 +948,6 @@ mod tests {
             Method::ListGet,
             Method::ListGetMut,
             Method::MapGet,
-            Method::MapEntry,
-            Method::MapEntryOrInsert,
-            Method::MapEntryOrInsertWith,
-            Method::Chars,
             Method::IterMut,
         ] {
             assert!(method.result_borrows_receiver(), "{method:?}");

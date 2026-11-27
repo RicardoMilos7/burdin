@@ -329,8 +329,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             | Ty::Const(_)
             | Ty::Projection { .. }
             | Ty::Error
-            | Ty::TryFromError { .. }
-            | Ty::Chars => self.debug_unspecified(&Self::debug_name(ty)),
+            | Ty::TryFromError { .. } => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.debug_unspecified(&Self::debug_name(ty)),
             Ty::Bool => self.debug_basic("bool", 8, DW_ATE_BOOLEAN),
             Ty::Char => self.debug_basic("char", 32, DW_ATE_UTF),
@@ -360,22 +359,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let ptr = self.debug_pointer("Heap<T>.ptr", pointee);
                 self.debug_struct_words(&Self::debug_name(ty), &[("value", ptr)])
             }
-            // `Shared<T>` points at a cell `{ count: usize, value }`: the value first in the printer, the strong
-            // count next to it.
-            Ty::Shared(inner) => {
-                let cell_name = format!("{}.cell", Self::debug_name(ty));
-                let cell = {
-                    let count = self.debug_basic("usize", 64, DW_ATE_UNSIGNED);
-                    let (size, align) = self.debug_sizes(inner);
-                    let members = vec![
-                        ("count".to_string(), count, 8u64, 8u32),
-                        ("value".to_string(), self.debug_type(inner), size, align.max(1)),
-                    ];
-                    self.debug_struct_typed(&cell_name, &members)
-                };
-                let ptr = self.debug_pointer("Shared<T>.cell_ptr", cell);
-                self.debug_struct_words(&Self::debug_name(ty), &[("cell", ptr)])
-            }
             Ty::Str | Ty::Slice(_) => {
                 let name = Self::debug_name(ty);
                 let elem = match ty {
@@ -393,16 +376,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let usize = self.debug_usize();
                 self.debug_struct_words("String", &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
-            Ty::List(inner, burdin_tir::Alloc::Global) => {
-                let elem = self.debug_type(inner);
+            Ty::Struct(_) if matches!(self.list_info(ty), Some((_, burdin_tir::Alloc::Global))) => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                let elem = self.debug_type(&inner);
                 let ptr = self.debug_pointer("elements", elem);
                 let usize = self.debug_usize();
-                self.debug_struct_words(&Self::debug_name(ty), &[("ptr", ptr), ("len", usize), ("cap", usize)])
+                let name = format!("List<{}>", Self::debug_name(&inner));
+                self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
             // A map's buffer holds `(key, value, hash)` slots, and a zero hash marks an empty one. The slot as a
             // named struct is what lets a debugger walk the table (`spec/debug.md`, DBG5).
-            Ty::Map(key, value, burdin_tir::Alloc::Global) => {
-                let name = Self::debug_name(ty);
+            Ty::Struct(_) if matches!(self.map_info(ty), Some((_, _, burdin_tir::Alloc::Global))) => {
+                let (key, value, _) = self.map_info(ty).expect("a map");
+                let (key, value) = (&key, &value);
+                let name = format!("Map<{}, {}>", Self::debug_name(key), Self::debug_name(value));
                 let slot_name = format!("{name}.slot");
                 let slot = {
                     let hash = self.debug_basic("u64", 64, DW_ATE_UNSIGNED);
@@ -420,7 +407,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.debug_struct_words(&name, &[("ptr", ptr), ("len", usize), ("cap", usize)])
             }
             // A container with a stored allocator appends an arbitrary type after the buffer words.
-            Ty::List(..) | Ty::Map(..) => self.debug_unspecified(&Self::debug_name(ty)),
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                self.debug_unspecified(&format!("List<{}>", Self::debug_name(&inner)))
+            }
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, _) = self.map_info(ty).expect("a map");
+                self.debug_unspecified(&format!("Map<{}, {}>", Self::debug_name(&key), Self::debug_name(&value)))
+            }
             Ty::Fn { .. } => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("code", 8), ("env", 8), ("drop", 8)])
@@ -428,11 +422,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Any(_) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("data", 8), ("vtable", 8)])
-            }
-            Ty::CString => {
-                let char_ty = self.debug_basic("u8", 8, DW_ATE_UNSIGNED);
-                let db = self.debug.as_ref().expect("debug info is on");
-                db.builder.create_pointer_type("CString", char_ty, 64, 64, inkwell::AddressSpace::default()).as_type()
             }
             Ty::Array(inner, len) => {
                 let inner = self.debug_type(inner);
@@ -454,48 +443,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .iter()
                     .map(|field| (field.name.clone(), field.ty.clone()))
                     .collect();
-                let name = adt.name.to_string();
+                let name = Self::lang_debug_name(&adt.name);
                 self.debug_product(&name, &members)
             }
             // An enum is `{ tag: i32, payload }`, where the payload is a union with one member per variant, so a
             // debugger and the printers can name the active variant from the tag (`spec/debug.md`, DBG5).
             Ty::Enum(adt) => self.debug_enum(adt),
-            Ty::Range(inner, _) => {
-                let members = vec![("lo".to_string(), (**inner).clone()), ("hi".to_string(), (**inner).clone())];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
-            Ty::RangeIter(inner, _) => {
-                let members = vec![
-                    ("lo".to_string(), (**inner).clone()),
-                    ("hi".to_string(), (**inner).clone()),
-                    ("done".to_string(), Ty::Bool),
-                ];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
             Ty::IterMut(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8)])
             }
-            Ty::ListIntoIter(..) | Ty::MapIter(..) | Ty::MapIterMut(..) | Ty::MapIntoIter(..) => {
+            Ty::MapIter(..) | Ty::MapIterMut(..) => {
                 let name = Self::debug_name(ty);
                 self.debug_words(&name, &[("ptr", 8), ("len", 8), ("cap", 8), ("index", 8)])
-            }
-            Ty::ArrayIntoIter(..) | Ty::MapEntry(..) => self.debug_unspecified(&Self::debug_name(ty)),
-            Ty::Option(inner) => {
-                let members = vec![("is_some".to_string(), Ty::Bool), ("value".to_string(), (**inner).clone())];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
-            }
-            Ty::Result(ok, err) => {
-                let members = vec![
-                    ("is_ok".to_string(), Ty::Bool),
-                    ("ok".to_string(), (**ok).clone()),
-                    ("err".to_string(), (**err).clone()),
-                ];
-                let name = Self::debug_name(ty);
-                self.debug_product(&name, &members)
             }
         }
     }
@@ -515,7 +475,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn debug_enum(&mut self, adt: &burdin_tir::AdtRef) -> DIType<'ctx> {
         let scope = self.debug_unit_scope();
         let file = self.debug_file_current();
-        let name = adt.name.to_string();
+        let name = Self::lang_debug_name(&adt.name);
         let variants: Vec<(String, Vec<(String, Ty)>)> = self.program.enums[adt.id]
             .variants
             .iter()
@@ -834,6 +794,29 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     /// A readable name for a `Ty` that has no source spelling.
+    /// The name of a type of `std` that the language treats as its own (`Option`, `Result`, `Shared`, `CString`, `List`, `Map`, `Range`, and their iterators): a
+    /// debugger shows it by its plain name, as it did when the compiler built the type in.
+    fn lang_debug_name(full: &str) -> String {
+        const LANG: [&str; 12] = [
+            "Option",
+            "Result",
+            "Shared",
+            "CString",
+            "List",
+            "ListIntoIter",
+            "Map",
+            "MapIntoIter",
+            "Range",
+            "RangeInclusive",
+            "RangeIter",
+            "RangeIterInclusive",
+        ];
+        match full.strip_prefix("std.") {
+            Some(rest) if LANG.iter().any(|n| rest.split('<').next() == Some(n)) => rest.to_string(),
+            _ => full.to_string(),
+        }
+    }
+
     fn debug_name(ty: &Ty) -> String {
         match ty {
             Ty::Unit => "()".to_string(),
@@ -846,24 +829,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             },
             Ty::Str => "str".to_string(),
             Ty::String => "String".to_string(),
-            Ty::Chars => "Chars".to_string(),
             Ty::Ref { inner, mutable: false } => format!("&{}", Self::debug_name(inner)),
             Ty::Ref { inner, mutable: true } => format!("&mut {}", Self::debug_name(inner)),
             Ty::Slice(inner) => format!("[{}]", Self::debug_name(inner)),
             Ty::Array(inner, n) => format!("[{}; {}]", Self::debug_name(inner), n),
-            Ty::Option(inner) => format!("Option<{}>", Self::debug_name(inner)),
-            Ty::Result(ok, err) => format!("Result<{}, {}>", Self::debug_name(ok), Self::debug_name(err)),
-            Ty::List(inner, _) => format!("List<{}>", Self::debug_name(inner)),
-            Ty::Map(k, v, _) => format!("Map<{}, {}>", Self::debug_name(k), Self::debug_name(v)),
-            Ty::MapEntry(k, v, _) => {
-                format!("MapEntry<{}, {}>", Self::debug_name(k), Self::debug_name(v))
-            }
             Ty::Heap(inner, _) => format!("Heap<{}>", Self::debug_name(inner)),
-            Ty::Shared(inner) => format!("Shared<{}>", Self::debug_name(inner)),
             Ty::CPtr(inner) => format!("CPtr<{}>", Self::debug_name(inner)),
             Ty::Fn { .. } | Ty::Any(_) => ty.to_string(),
-            Ty::Range(inner, false) => format!("Range<{}>", Self::debug_name(inner)),
-            Ty::Range(inner, true) => format!("RangeInclusive<{}>", Self::debug_name(inner)),
             Ty::Tuple(fields) => {
                 format!("({})", fields.iter().map(Self::debug_name).collect::<Vec<_>>().join(", "))
             }

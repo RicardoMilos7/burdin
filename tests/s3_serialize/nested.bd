@@ -110,7 +110,7 @@ fn main() {
     println("{}", back.rows[0].len())
     println("{}", back.rows[0][1])
     println("{}", back.rows[1][0])
-    println("{}", *back.counts.get("only").unwrap())
+    println("{}", *back.counts.get("only".to_string()).unwrap())
 }
 
 //> Nested { rows: [[1, 2], [3]], counts: { "only": 7 } }

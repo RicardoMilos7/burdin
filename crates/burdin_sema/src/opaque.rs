@@ -60,6 +60,7 @@ pub(crate) fn return_type<'t>(
         repr_c: false,
         derives: tir::Derives::default(),
         drop_method: None,
+        lang: None,
     });
     let r = AdtRef { id, name: Rc::from(name.as_str()), second_class: false };
     globals.struct_refs.push(r.clone());

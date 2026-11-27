@@ -7,6 +7,8 @@
 // stays `ß` when it is made uppercase.
 
 /// Whether `n` is in `low..=high`.
+use text.chars
+
 priv fn in_range(n: u32, low: u32, high: u32): bool {
     n >= low && n <= high
 }

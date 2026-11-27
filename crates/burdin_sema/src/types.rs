@@ -11,7 +11,7 @@ use std::rc::Rc;
 /// allocator a container takes after them may be left out, so it is not listed. `None` for any other name.
 pub(crate) fn builtin_generic_params(name: &str) -> Option<&'static [&'static str]> {
     Some(match name {
-        "Option" | "Result" | "Heap" | "Shared" | "List" | "CPtr" | "Range" | "RangeInclusive" => &["T"],
+        "Option" | "Result" | "Heap" | "List" | "CPtr" | "Range" | "RangeInclusive" => &["T"],
         "Map" => &["K", "V"],
         _ => return None,
     })
@@ -28,6 +28,11 @@ pub(crate) fn generic_args_missing<S: AsRef<str>>(
     diags: &mut Diagnostics,
 ) {
     let join = |names: &[S]| names.iter().map(AsRef::as_ref).collect::<Vec<&str>>().join(", ");
+    // A type of the std root (`Map`, `List`, ...) is written by its plain name, not as `std.Map`.
+    let name = match name.strip_prefix("std.") {
+        Some(rest) if !rest.contains('.') => rest,
+        _ => name,
+    };
     diags.error(
         Code::TYPE_MISMATCH,
         span,
@@ -535,8 +540,8 @@ impl Globals {
         }
         let mut resolved: Vec<Ty> = args
             .iter()
-            .zip(&info.bounds)
-            .map(|(a, param_bounds)| match Globals::const_param_ty(param_bounds) {
+            .enumerate()
+            .map(|(i, a)| match info.bounds.get(i).and_then(|pb| Globals::const_param_ty(pb)) {
                 Some(declared) => self.eval_const_arg(a, declared, subst, module, diags),
                 None => self.resolve_type_bounded(a, self_ty, subst, bounds, module, diags),
             })
@@ -553,7 +558,51 @@ impl Globals {
             resolved.push(ty.clone());
             env.push((info.params[i].clone(), ty));
         }
-        if !self.check_adt_bounds(g, &resolved, span, diags) {
+        // A list holds its elements until it is dropped, so they must own their storage, and its allocator must be
+        // one. These are checked where the type is written, as for the other containers.
+        if Some(g) == self.lang_map || Some(g) == self.lang_map_into_iter {
+            for (i, what) in [(0, "a `Map` key"), (1, "a `Map` value")] {
+                if let (Some(ty), Some(arg)) = (resolved.get(i), args.get(i))
+                    && ty.is_second_class()
+                {
+                    check_storable(ty, arg.span, what, diags);
+                    return Ty::Error;
+                }
+            }
+            if let (Some(alloc), Some(arg)) = (resolved.get(2), args.get(2))
+                && *alloc != Ty::Error
+                && !self.ty_has_param(alloc)
+                && !self.is_allocator(alloc, &[])
+            {
+                diags.error(
+                    Code::NOT_AN_ALLOCATOR,
+                    arg.span,
+                    format!("`{alloc}` does not implement `Allocator`, so it cannot be a container's allocator"),
+                );
+                return Ty::Error;
+            }
+        }
+        if Some(g) == self.lang_list || Some(g) == self.lang_list_into_iter {
+            if let (Some(elem), Some(arg)) = (resolved.first(), args.first())
+                && elem.is_second_class()
+            {
+                check_storable(elem, arg.span, "a `List` element", diags);
+                return Ty::Error;
+            }
+            if let (Some(alloc), Some(arg)) = (resolved.get(1), args.get(1))
+                && *alloc != Ty::Error
+                && !self.ty_has_param(alloc)
+                && !self.is_allocator(alloc, &[])
+            {
+                diags.error(
+                    Code::NOT_AN_ALLOCATOR,
+                    arg.span,
+                    format!("`{alloc}` does not implement `Allocator`, so it cannot be a container's allocator"),
+                );
+                return Ty::Error;
+            }
+        }
+        if !self.check_adt_bounds_upto(g, &resolved, args.len(), span, diags) {
             return Ty::Error;
         }
         // A channel holds the values sent through it until they are received, so they must own their storage. `T`
@@ -623,28 +672,11 @@ impl Globals {
         diags: &mut Diagnostics,
     ) -> Option<Ty> {
         Some(match (name, args.len()) {
-            ("Option", 1) => {
-                Ty::Option(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
-            }
-            ("Result", 2) => Ty::Result(
-                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
-                Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
-            ),
-            // `Result<T>` is the default-error form: `Result<T, AnyError>` (`spec/errors.md`, ERR5).
-            ("Result", 1) => Ty::Result(
-                Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
-                Box::new(self.error_ty.clone().unwrap_or(Ty::Error)),
-            ),
             ("Heap", 1) | ("Heap", 2) => {
                 let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
                 check_storable(&inner, args[0].span, "a `Heap` element", diags);
                 let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
                 Ty::Heap(Box::new(inner), alloc)
-            }
-            ("Shared", 1) => {
-                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                check_storable(&inner, args[0].span, "a `Shared` value", diags);
-                Ty::Shared(Box::new(inner))
             }
             // The iterator `map.iter()` returns, which yields `(&K, &V)`. `std` needs its name to write the
             // iterator of a type built on a map (`Set`); `MapIter` itself is the standard library's adapter.
@@ -652,52 +684,12 @@ impl Globals {
                 Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)),
                 Box::new(self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags)),
             ),
-            // The owning iterator `map.into_iter()` returns, which yields `(K, V)`. `std` names it for the
-            // `into_keys` and `into_values` views of issue #712.
-            ("MapIntoEntries", 2) | ("MapIntoEntries", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::MapIntoIter(Box::new(key), Box::new(value), alloc)
+            // The mutable iterator `list.iter_mut()` returns; `std` names it to write `List.iter_mut`.
+            ("IterMut", 1) => {
+                Ty::IterMut(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
             }
             ("CPtr", 1) => {
                 Ty::CPtr(Box::new(self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags)))
-            }
-            ("Range", 1) | ("RangeInclusive", 1) => {
-                let inner = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                if !matches!(inner, Ty::Int(_) | Ty::Error) {
-                    diags.error(
-                        Code::TYPE_MISMATCH,
-                        args[0].span,
-                        format!("a range's endpoints must be integers, so `{inner}` cannot be a range element"),
-                    );
-                    return Some(Ty::Error);
-                }
-                Ty::Range(Box::new(inner), name == "RangeInclusive")
-            }
-            ("List", 1) | ("List", 2) => {
-                let elem = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                check_storable(&elem, args[0].span, "a `List` element", diags);
-                let alloc = self.container_alloc(args.get(1), subst, bounds, module, diags);
-                Ty::List(Box::new(elem), alloc)
-            }
-            ("Map", 2) | ("Map", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                check_storable(&key, args[0].span, "a `Map` key", diags);
-                check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::Map(Box::new(key), Box::new(value), alloc)
-            }
-            // The type `map.entry(key)` returns (`spec/stdlib.md`, "Map entry operations"). The entry itself is
-            // second-class; its key and value are the map's, so they must be storable.
-            ("MapEntry", 2) | ("MapEntry", 3) => {
-                let key = self.resolve_type_bounded(&args[0], self_ty, subst, bounds, module, diags);
-                let value = self.resolve_type_bounded(&args[1], self_ty, subst, bounds, module, diags);
-                check_storable(&key, args[0].span, "a `Map` key", diags);
-                check_storable(&value, args[1].span, "a `Map` value", diags);
-                let alloc = self.container_alloc(args.get(2), subst, bounds, module, diags);
-                Ty::MapEntry(Box::new(key), Box::new(value), alloc)
             }
             _ => return None,
         })
@@ -763,9 +755,14 @@ impl Globals {
     }
 
     fn hand_written_eq_hashes(&self, ty: &Ty) -> bool {
+        if let Some((t, _)) = self.list_parts(ty) {
+            return self.hand_written_eq_hashes(&t);
+        }
+        if let Some((k, v, _)) = self.map_parts(ty) {
+            return self.hand_written_eq_hashes(&k) && self.hand_written_eq_hashes(&v);
+        }
         match ty {
-            Ty::Option(t) | Ty::Range(t, _) | Ty::Array(t, _) | Ty::List(t, _) => self.hand_written_eq_hashes(t),
-            Ty::Result(a, b) | Ty::Map(a, b, _) => self.hand_written_eq_hashes(a) && self.hand_written_eq_hashes(b),
+            Ty::Array(t, _) => self.hand_written_eq_hashes(t),
             Ty::Tuple(ts) => ts.iter().all(|t| self.hand_written_eq_hashes(t)),
             Ty::Struct(a) => {
                 let s = &self.structs[a.id];
@@ -784,21 +781,22 @@ impl Globals {
     /// Whether `==` and `!=` apply to values of `ty`, with the bounds of the type parameters in scope. A derived
     /// `Eq` on `Wrapper<T>` holds when the fields do, which is what a `T: Eq` bound provides (issue #69).
     pub(crate) fn has_eq_in(&self, ty: &Ty, env: &crate::generics::Env) -> bool {
+        // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
+        if let Some((elem, _)) = self.list_parts(ty) {
+            return self.has_eq_in(&elem, env);
+        }
+        // A map compares by its entries, whatever the iteration order.
+        if let Some((k, v, _)) = self.map_parts(ty) {
+            return self.has_eq_in(&k, env) && self.has_eq_in(&v, env);
+        }
         match ty {
             Ty::Const(_) | Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Error | Ty::Never => true,
             // Text compares by value; `String` and `str` compare byte for byte.
             Ty::Str | Ty::String => true,
             Ty::Param(_) | Ty::Projection { .. } => self.env_provides(ty, &crate::generics::Bound::Eq, env),
-            Ty::Option(t) => self.has_eq_in(t, env),
-            // A map compares by its entries, whatever the iteration order.
-            Ty::Map(k, v, _) => self.has_eq_in(k, env) && self.has_eq_in(v, env),
-            Ty::Range(t, _) => self.has_eq_in(t, env),
-            Ty::Result(t, e) => self.has_eq_in(t, env) && self.has_eq_in(e, env),
             Ty::Tuple(ts) => ts.iter().all(|t| self.has_eq_in(t, env)),
             // A fixed-size array compares element by element.
             Ty::Array(t, _) => self.has_eq_in(t, env),
-            // A list compares by length and then element by element, in order (`spec/stdlib.md`, "List").
-            Ty::List(t, _) => self.has_eq_in(t, env),
             // A derived `Eq` or a hand-written `Eq` implementation: a derive is the type's own implementation of the
             // interface (`spec/derives.md`, issue #918).
             Ty::Struct(_) | Ty::Enum(_) => {
@@ -806,18 +804,10 @@ impl Globals {
             }
             Ty::Heap(_, _)
             | Ty::CPtr(_)
-            | Ty::CString
-            | Ty::MapEntry(..)
-            | Ty::Shared(_)
-            | Ty::Chars
             | Ty::Fn { .. }
-            | Ty::ListIntoIter(..)
-            | Ty::ArrayIntoIter(..)
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::MapIntoIter(..)
-            | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..)
             | Ty::TryFromError { .. }

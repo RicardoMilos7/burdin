@@ -164,6 +164,7 @@ impl<'t> Sema<'t> {
                     repr_c: s.repr_c,
                     derives: tir::Derives::default(),
                     drop_method: None,
+                    lang: None,
                 });
                 self.globals.struct_refs.push(adt(id));
                 self.globals.struct_pkg.push(package);
@@ -179,6 +180,7 @@ impl<'t> Sema<'t> {
                 let id = self.globals.enums.len();
                 self.globals.modules[module].types.insert(name.name.clone(), TypeName::Enum(id));
                 self.globals.enums.push(tir::EnumDef {
+                    lang: None,
                     name: full.clone(),
                     variants: Vec::new(),
                     derives: tir::Derives::default(),
@@ -361,6 +363,9 @@ impl<'t> Sema<'t> {
                 match item {
                     ast::Item::Fn(f) => {
                         let name = &f.name.name;
+                        if !f.has_body {
+                            diags.error(Code::SYNTAX, f.name.span, format!("the function `{name}` has no body"));
+                        }
                         if self.globals.modules[module].values.contains_key(name) || builtin(name).is_some() {
                             diags.error(
                                 Code::DUPLICATE_NAME,
@@ -625,6 +630,9 @@ impl<'t> Sema<'t> {
     /// resolved by [`Sema::register_extensions`] once imports are known.
     fn declare_extension_name(&mut self, module: usize, e: &'t ast::ExtensionDecl, diags: &mut Diagnostics) {
         let name = e.func.name.name.clone();
+        if !e.func.has_body {
+            diags.error(Code::SYNTAX, e.func.name.span, format!("the extension method `{name}` has no body"));
+        }
         let is_priv = e.func.is_priv;
         if let Some(&previous) = self.globals.modules[module].extension_priv.get(&name)
             && previous != is_priv

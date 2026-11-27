@@ -5,7 +5,7 @@
 //! checked in so that a size is the only parameter of a measurement: changing the generator changes every
 //! number, which is why it stays deliberately plain and deterministic.
 //!
-//! The programs need no standard library: they use only built-in types and methods (`List`, `String`,
+//! The programs need no standard library: they use only built-in types and methods (arrays, `String`,
 //! `println`, integer `to_string`), so sema spends its time on the measured program and not on checking `std`
 //! once per iteration.
 
@@ -33,7 +33,7 @@ pub struct Generated {
 }
 
 /// Builds a deterministic, valid Burdin program with `units` independent chunks. Each chunk declares a struct
-/// with methods, an enum with a `match`, a generic function, an arithmetic loop, a `List` loop, and a `String`
+/// with methods, an enum with a `match`, a generic function, an arithmetic loop, an array loop, and a `String`
 /// loop; `main` calls the arithmetic and enum functions so the program has a real entry point.
 pub fn generate(units: usize) -> String {
     let mut src = String::new();
@@ -121,10 +121,10 @@ fn fold{tag}{i}(n: i32): i64 {{
 }}
 
 fn list{tag}{i}(n: i32): i32 {{
-    let mut xs = List<i32>.new()
+    let mut xs = [0; 8]
     let mut k = 0
     while k < n {{
-        xs.push(k)
+        xs[k as usize % 8] = k
         k = k + 1
     }}
     let mut sum = 0

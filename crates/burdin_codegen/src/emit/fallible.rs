@@ -5,7 +5,7 @@
 use super::{Codegen, GenResult, llvm_err};
 use burdin_tir::Ty;
 use inkwell::IntPredicate;
-use inkwell::values::{BasicValueEnum, IntValue};
+use inkwell::values::{BasicValue, BasicValueEnum, IntValue};
 
 /// The status word of a fallible operation that succeeded.
 pub(super) const TRY_OK: u64 = 0;
@@ -25,10 +25,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ok: Option<BasicValueEnum<'ctx>>,
         result: &Ty,
     ) -> GenResult<BasicValueEnum<'ctx>> {
-        let Ty::Result(ok_ty, err_ty) = result else {
+        let Some((ok_ty, err_ty)) = self.result_payload_tys(result) else {
             return Err("a fallible allocation returns a Result".into());
         };
-        let Ty::Enum(err) = &**err_ty else {
+        let Ty::Enum(err) = &err_ty else {
             return Err("`AllocError` is an enum".into());
         };
         let i32_ty = self.cx.i32_type();
@@ -46,18 +46,28 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .map_err(llvm_err)?
             .into_int_value();
         let et = self.enum_ty(err.id);
-        let error =
-            self.builder.build_insert_value(et.const_zero(), variant, 0, "").map_err(llvm_err)?.into_struct_value();
-        let rt = self.result_ty(ok_ty, err_ty);
-        let mut agg =
-            self.builder.build_insert_value(rt.get_undef(), is_ok, 0, "").map_err(llvm_err)?.into_struct_value();
-        if let Some(v) = ok
-            && self.llvm_ty(ok_ty).is_some()
-        {
-            let v = self.need(Some(v), ok_ty);
-            agg = self.builder.build_insert_value(agg, v, 1, "").map_err(llvm_err)?.into_struct_value();
-        }
-        agg = self.builder.build_insert_value(agg, error, 2, "").map_err(llvm_err)?.into_struct_value();
-        Ok(agg.into())
+        let error: BasicValueEnum<'ctx> =
+            self.builder.build_insert_value(et.const_zero(), variant, 0, "").map_err(llvm_err)?.as_basic_value_enum();
+        // The `Ok` and `Err` payloads share storage, so each is built in its own branch.
+        let rt = self.llvm_ty(result).expect("a Result has a type");
+        let slot = self.alloca(rt, "try.result")?;
+        let ok_bb = self.new_block("try.ok");
+        let err_bb = self.new_block("try.err");
+        let end = self.new_block("try.end");
+        self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).map_err(llvm_err)?;
+        self.builder.position_at_end(ok_bb);
+        let ok_payload = match ok {
+            Some(v) if self.llvm_ty(&ok_ty).is_some() => Some(self.need(Some(v), &ok_ty)),
+            _ => None,
+        };
+        let ok_value = self.make_result(result, true, ok_payload)?;
+        self.builder.build_store(slot, ok_value).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(err_bb);
+        let err_value = self.make_result(result, false, Some(error))?;
+        self.builder.build_store(slot, err_value).map_err(llvm_err)?;
+        self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+        self.builder.position_at_end(end);
+        self.builder.build_load(rt, slot, "").map_err(llvm_err)
     }
 }

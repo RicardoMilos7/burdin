@@ -163,119 +163,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         };
         let emit = |cg: &mut Self| -> GenResult<()> {
             match ty {
-                Ty::Struct(_) | Ty::Tuple(_) => {
-                    let t = cg.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
-                    for (i, fty) in cg.field_tys(ty).iter().enumerate() {
-                        let mut child = path.to_vec();
-                        child.push(i);
-                        if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
-                            let p = cg.builder.build_struct_gep(t, addr, i as u32, "").map_err(llvm_err)?;
-                            cg.drop_at_address(id, &child, fty, p)?;
-                        }
-                    }
-                    Ok(())
-                }
-                Ty::Enum(a) => {
-                    let et = cg.enum_ty(a.id);
-                    let tag_ptr = cg.builder.build_struct_gep(et, addr, 0, "tag").map_err(llvm_err)?;
-                    let tag = cg.builder.build_load(cg.cx.i32_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
-                    let end = cg.new_block("enum.drop.end");
-                    let mut cases = Vec::new();
-                    for (vi, v) in cg.program.enums[a.id].variants.iter().enumerate() {
-                        if v.fields.is_empty() {
-                            continue;
-                        }
-                        cases.push((vi, cg.new_block("enum.drop")));
-                    }
-                    let switch_cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
-                        cases.iter().map(|(vi, bb)| (cg.cx.i32_type().const_int(*vi as u64, false), *bb)).collect();
-                    cg.builder.build_switch(tag, end, &switch_cases).map_err(llvm_err)?;
-                    for (vi, case) in cases {
-                        cg.builder.position_at_end(case);
-                        let payload = cg.builder.build_struct_gep(et, addr, 1, "").map_err(llvm_err)?;
-                        let vt = cg.variant_ty(a.id, vi);
-                        for (fi, fty) in cg.variant_tys(a.id, vi).iter().enumerate() {
-                            let mut child = path.to_vec();
-                            child.push(vi);
-                            child.push(fi);
-                            if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some()
-                            {
-                                let p = cg.builder.build_struct_gep(vt, payload, fi as u32, "").map_err(llvm_err)?;
-                                cg.drop_at_address(id, &child, fty, p)?;
-                            }
-                        }
-                        cg.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-                    }
-                    cg.builder.position_at_end(end);
-                    Ok(())
-                }
-                Ty::Option(inner_ty) => {
-                    let ot = cg.option_ty(inner_ty);
-                    let tag_ptr = cg.builder.build_struct_gep(ot, addr, 0, "").map_err(llvm_err)?;
-                    let tag = cg
-                        .builder
-                        .build_load(cg.cx.bool_type(), tag_ptr, "is_some")
-                        .map_err(llvm_err)?
-                        .into_int_value();
-                    cg.if_then(tag, "option.drop", |cg| {
-                        if cg.llvm_ty(inner_ty).is_some() {
-                            let payload = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(0);
-                            cg.drop_at_address(id, &child, inner_ty, payload)?;
-                        }
-                        Ok(())
-                    })
-                }
-                Ty::Result(ok, err) => {
-                    let (ok, err) = ((**ok).clone(), (**err).clone());
-                    let rt = cg.result_ty(&ok, &err);
-                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
-                    let tag =
-                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
-                    cg.if_then(tag, "result.drop.ok", |cg| {
-                        if cg.llvm_ty(&ok).is_some() {
-                            let payload = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(0);
-                            cg.drop_at_address(id, &child, &ok, payload)?;
-                        }
-                        Ok(())
-                    })?;
-                    let tag_ptr = cg.builder.build_struct_gep(rt, addr, 0, "").map_err(llvm_err)?;
-                    let tag =
-                        cg.builder.build_load(cg.cx.bool_type(), tag_ptr, "is_ok").map_err(llvm_err)?.into_int_value();
-                    let is_err = cg.builder.build_not(tag, "").map_err(llvm_err)?;
-                    cg.if_then(is_err, "result.drop.err", |cg| {
-                        if cg.llvm_ty(&err).is_some() {
-                            let payload = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
-                            let mut child = path.to_vec();
-                            child.push(1);
-                            cg.drop_at_address(id, &child, &err, payload)?;
-                        }
-                        Ok(())
-                    })
-                }
-                Ty::Array(elem, n) => {
-                    let n = *n;
-                    let elem = (**elem).clone();
-                    let Some(array_t) = cg.llvm_ty(ty) else { return Ok(()) };
-                    for i in 0..n {
-                        let mut child = path.to_vec();
-                        child.push(i as usize);
-                        if cg.needs_drop(&elem) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
-                            let zero = cg.usize_ty.const_int(0, false);
-                            let index = cg.usize_ty.const_int(i, false);
-                            // SAFETY (LLVM): i < n.
-                            let p = unsafe { cg.builder.build_in_bounds_gep(array_t, addr, &[zero, index], "") }
-                                .map_err(llvm_err)?;
-                            cg.drop_at_address(id, &child, &elem, p)?;
-                        }
-                    }
-                    Ok(())
-                }
-                Ty::List(elem, _) => {
-                    let elem = (**elem).clone();
+                _ if cg.list_info(ty).is_some() => {
+                    let (elem, _) = cg.list_info(ty).expect("checked by the guard");
+                    let elem = (*elem).clone();
                     let ptr_ty = cg.cx.ptr_type(AddressSpace::default());
                     let ptr_field = cg.builder.build_struct_gep(cg.string_ty, addr, 0, "").map_err(llvm_err)?;
                     let len_field = cg.builder.build_struct_gep(cg.string_ty, addr, 1, "").map_err(llvm_err)?;
@@ -335,6 +225,70 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         cg.builder.position_at_end(end);
                     }
                     cg.builder.build_call(cg.rt.free, &[data.into()], "").map_err(llvm_err)?;
+                    Ok(())
+                }
+                Ty::Struct(_) | Ty::Tuple(_) => {
+                    let t = cg.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
+                    for (i, fty) in cg.field_tys(ty).iter().enumerate() {
+                        let mut child = path.to_vec();
+                        child.push(i);
+                        if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
+                            let p = cg.builder.build_struct_gep(t, addr, i as u32, "").map_err(llvm_err)?;
+                            cg.drop_at_address(id, &child, fty, p)?;
+                        }
+                    }
+                    Ok(())
+                }
+                Ty::Enum(a) => {
+                    let et = cg.enum_ty(a.id);
+                    let tag_ptr = cg.builder.build_struct_gep(et, addr, 0, "tag").map_err(llvm_err)?;
+                    let tag = cg.builder.build_load(cg.cx.i32_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
+                    let end = cg.new_block("enum.drop.end");
+                    let mut cases = Vec::new();
+                    for (vi, v) in cg.program.enums[a.id].variants.iter().enumerate() {
+                        if v.fields.is_empty() {
+                            continue;
+                        }
+                        cases.push((vi, cg.new_block("enum.drop")));
+                    }
+                    let switch_cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> =
+                        cases.iter().map(|(vi, bb)| (cg.cx.i32_type().const_int(*vi as u64, false), *bb)).collect();
+                    cg.builder.build_switch(tag, end, &switch_cases).map_err(llvm_err)?;
+                    for (vi, case) in cases {
+                        cg.builder.position_at_end(case);
+                        let payload = cg.builder.build_struct_gep(et, addr, 1, "").map_err(llvm_err)?;
+                        let vt = cg.variant_ty(a.id, vi);
+                        for (fi, fty) in cg.variant_tys(a.id, vi).iter().enumerate() {
+                            let mut child = path.to_vec();
+                            child.push(vi);
+                            child.push(fi);
+                            if cg.needs_drop(fty) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some()
+                            {
+                                let p = cg.builder.build_struct_gep(vt, payload, fi as u32, "").map_err(llvm_err)?;
+                                cg.drop_at_address(id, &child, fty, p)?;
+                            }
+                        }
+                        cg.builder.build_unconditional_branch(end).map_err(llvm_err)?;
+                    }
+                    cg.builder.position_at_end(end);
+                    Ok(())
+                }
+                Ty::Array(elem, n) => {
+                    let n = *n;
+                    let elem = (**elem).clone();
+                    let Some(array_t) = cg.llvm_ty(ty) else { return Ok(()) };
+                    for i in 0..n {
+                        let mut child = path.to_vec();
+                        child.push(i as usize);
+                        if cg.needs_drop(&elem) || cg.has_inner_flag(id, &child) || cg.flag_for(id, &child).is_some() {
+                            let zero = cg.usize_ty.const_int(0, false);
+                            let index = cg.usize_ty.const_int(i, false);
+                            // SAFETY (LLVM): i < n.
+                            let p = unsafe { cg.builder.build_in_bounds_gep(array_t, addr, &[zero, index], "") }
+                                .map_err(llvm_err)?;
+                            cg.drop_at_address(id, &child, &elem, p)?;
+                        }
+                    }
                     Ok(())
                 }
                 Ty::Heap(inner, alloc) => {

@@ -230,7 +230,9 @@ impl<'a> Checker<'a> {
             K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
             K::Call(f, args) => {
                 let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
-                if !sig.ret.is_second_class() {
+                // A chainable view (`xs.iter()`, `xs.as_slice()`) takes its loan where its receiver is a place, and
+                // `mut self` on it must not borrow the view's source exclusively.
+                if !sig.ret.is_second_class() || matches!(sig.ret, Ty::Slice(_) | Ty::Str) {
                     return Vec::new();
                 }
                 // A result that derives from several arguments (a struct holding views of two sources) borrows
@@ -244,20 +246,6 @@ impl<'a> Checker<'a> {
                     }
                 }
                 places
-            }
-            // The entry operations hand out the map's storage from a temporary entry value, so a loan taken on
-            // the entry belongs to the map the entry borrows. Other chainable views take their loan where their
-            // receiver is a place, so they need no origin here (and `mut self` on a view must not borrow the
-            // view's source exclusively).
-            K::Method(
-                tir::Method::MapEntry | tir::Method::MapEntryOrInsert | tir::Method::MapEntryOrInsertWith,
-                args,
-            ) => {
-                let Some(arg) = args.first() else { return Vec::new() };
-                match burdin_tir::place::tir_place(arg) {
-                    Some((root, path, _)) => vec![(root, path)],
-                    None => self.reference_origin(arg),
-                }
             }
             _ => Vec::new(),
         }
@@ -355,7 +343,6 @@ impl<'a> Checker<'a> {
             | K::Bytes(_)
             | K::Const(_)
             | K::Static(_)
-            | K::None
             | K::Continue(_)
             | K::LayoutOf { .. } => {}
             K::Break { value, .. } => {
@@ -425,7 +412,7 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
                 // `with_capacity_in(n, alloc)` stores the allocator value.
                 tir::Builtin::ListWithCapacityIn | tir::Builtin::ListTryWithCapacityIn => {
@@ -449,6 +436,10 @@ impl<'a> Checker<'a> {
                     self.add_exclusive_access(&args[1]);
                     self.access_place(&args[0], Access::BorrowMut);
                     self.access_place(&args[1], Access::BorrowMut);
+                }
+                tir::Builtin::RawWrite => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
                 }
                 tir::Builtin::Replace => {
                     self.add_exclusive_access(&args[0]);
@@ -510,7 +501,6 @@ impl<'a> Checker<'a> {
                         tir::Method::MapGetMut
                             | tir::Method::MapGetOrInsert
                             | tir::Method::MapGetOr
-                            | tir::Method::MapEntry
                             | tir::Method::IterMut
                             | tir::Method::ListGetMut
                             | tir::Method::ListFirstMut
@@ -589,12 +579,6 @@ impl<'a> Checker<'a> {
                 // The loop borrows the collection for as long as it runs, so the body cannot change it.
                 self.access_place(map, Access::Read);
                 self.add_loan(map, false);
-                self.loop_block(body);
-            }
-            K::ForChars { string, body, .. } => {
-                // The loop borrows the collection for as long as it runs, so the body cannot change it.
-                self.access_place(string, Access::Read);
-                self.add_loan(string, false);
                 self.loop_block(body);
             }
             K::Match(scrutinee, arms) => {
@@ -678,7 +662,6 @@ impl<'a> Checker<'a> {
                     self.expr(v, Mode::Move);
                 }
             }
-            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.expr(inner, Mode::Move),
         }
     }
 
@@ -788,7 +771,7 @@ enum Mode {
 /// second-class type (which are copies of a reference).
 fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
         Pat::Binding(id, mode) => {
             if *mode == BindMode::View || locals[id.0].ty.is_second_class() {
                 out.push(*id);
@@ -805,8 +788,6 @@ fn view_bindings(pat: &Pat, locals: &[tir::Local], out: &mut Vec<LocalId>) {
                 view_bindings(first, locals, out);
             }
         }
-        Pat::Some(inner) => view_bindings(inner, locals, out),
-        Pat::Ok(inner) | Pat::Err(inner) => view_bindings(inner, locals, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => {
             for sub in subs {
                 view_bindings(sub, locals, out);
@@ -834,7 +815,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
@@ -860,9 +840,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(hi, out);
         }
         K::StringAsStr(inner)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::BoxAny { value: inner, .. }
@@ -931,10 +908,6 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
             locals_used(map, out);
             locals_used_block(body, out);
         }
-        K::ForChars { string, body, .. } => {
-            locals_used(string, out);
-            locals_used_block(body, out);
-        }
         K::Match(scrutinee, arms) => {
             locals_used(scrutinee, out);
             for arm in arms {
@@ -973,7 +946,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Continue(_)
         | K::LayoutOf { .. }
         | K::Return(None) => {}
@@ -999,9 +971,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
             uses_expr(hi, stmt, last);
         }
         K::StringAsStr(inner)
-        | K::Some(inner)
-        | K::Ok(inner)
-        | K::Err(inner)
         | K::Return(Some(inner))
         | K::ArrayRepeat(inner, _)
         | K::BoxAny { value: inner, .. }
@@ -1072,10 +1041,6 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         }
         K::ForMap { map, body, .. } => {
             uses_expr(map, stmt, last);
-            uses_block(body, stmt, last);
-        }
-        K::ForChars { string, body, .. } => {
-            uses_expr(string, stmt, last);
             uses_block(body, stmt, last);
         }
         K::Match(scrutinee, arms) => {

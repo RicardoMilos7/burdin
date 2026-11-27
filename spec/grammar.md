@@ -132,7 +132,8 @@ MemberName    = IDENT | "any" | "impl" | "error" | "derive" ;
 (* `fn Type.name(self, ...)`: an extension method. The receiver is the type path before the last dot, including
    the type parameters it declares (`List<T>`), or a slice type (`fn [T].first(self)`, `fn [[T]].concat(self)`);
    `<...>` after the method name declares method-level parameters. `spec/extensions.md`, EX1. *)
-ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] Block ;
+ExtensionItem = [ "unsafe" ] "fn" ( TypePath | "[" Type "]" ) "." MemberName [ GenericParams ] "(" [ ParamList ] ")" [ ":" Type ] [ WhereClause ] ( Block | ) ;
+                                                        (* without a Block, the declaration of a compiler-provided method, written for the tools in `std/src/builtins.bd`; in a program it is E0001. A free `fn` may omit its Block the same way. *)
 ParamList     = Param { "," Param } [ "," ] ;
 Param         = SelfParam | [ Convention ] IDENT ":" Type [ "=" Expr ] ;
 SelfParam     = [ Convention ] "self" ;                 (* only as the first parameter, only inside impl/interface *)

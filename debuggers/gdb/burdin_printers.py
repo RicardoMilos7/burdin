@@ -11,7 +11,7 @@
 #
 #   * a `Map` buffer holds `cap` (a power of two) slots of `(key, value, u64 hash)`; a zero hash is an empty slot,
 #     and there are no tombstones;
-#   * a `Shared` cell is `{ count: usize, value }` and the `Shared<T>` value points at it;
+#   * a `Shared` cell is `{ strong: usize, value }` and the `Shared<T>` value points at it;
 #   * an `any I` box is `{ data: ptr, vtable: ptr }`, and the vtable is
 #     `{ i64 type_id, ptr drop, ptr name, usize name_len, ptr method_0, ... }`.
 
@@ -136,40 +136,38 @@ class MapPrinter:
         return "map"
 
 
-class OptionPrinter:
+class _LangEnumPrinter:
+    """`Option` and `Result` are enums of `std` (`{ tag, payload }`), shown as `Some(5)` and `Ok(7)`: the active
+    variant's name and its one field, `0`."""
+
     def __init__(self, val):
         self.val = val
 
+    def _active(self):
+        variants = _variants(self.val)
+        tag = int(self.val["tag"])
+        if tag < 0 or tag >= len(variants):
+            return f"<variant {tag}>", None
+        member = self.val["payload"][variants[tag]]
+        fields = [f.name for f in _strip(member).fields()]
+        return variants[tag], (member[fields[0]] if fields else None)
+
     def to_string(self):
-        if int(self.val["is_some"]):
-            return f"Some({_render(self.val['value'])})"
-        return "None"
+        name, value = self._active()
+        if value is None:
+            return name
+        return f"{name}({_render(value)})"
 
     def children(self):
-        if int(self.val["is_some"]):
-            yield "value", self.val["value"]
+        name, value = self._active()
+        if value is not None:
+            yield "value", value
 
     def display_hint(self):
         return "array"
 
 
-class ResultPrinter:
-    def __init__(self, val):
-        self.val = val
-
-    def to_string(self):
-        if int(self.val["is_ok"]):
-            return f"Ok({_render(self.val['ok'])})"
-        return f"Err({_render(self.val['err'])})"
-
-    def children(self):
-        if int(self.val["is_ok"]):
-            yield "ok", self.val["ok"]
-        else:
-            yield "err", self.val["err"]
-
-    def display_hint(self):
-        return "array"
+OptionPrinter = ResultPrinter = _LangEnumPrinter
 
 
 class EnumPrinter:
@@ -241,13 +239,13 @@ class SharedPrinter:
         cell = self._cell()
         if cell is None:
             return "Shared(null)"
-        return f"Shared({_render(cell['value'])}) (strong {int(cell['count'])})"
+        return f"Shared({_render(cell['value'])}) (strong {int(cell['strong'])})"
 
     def children(self):
         cell = self._cell()
         if cell is None:
             return
-        yield "strong_count", cell["count"]
+        yield "strong_count", cell["strong"]
         yield "value", cell["value"]
 
 
@@ -329,11 +327,12 @@ class RangePrinter:
 
     def to_string(self):
         op = "..=" if self.inclusive else ".."
-        return f"{_render(self.val['lo'])}{op}{_render(self.val['hi'])}"
+        return f"{_render(self.val['start'])}{op}{_render(self.val['end'])}"
 
 
 _ENUM_FIELDS = ["tag", "payload"]
 _CLOSURE_FIELDS = ["code", "env", "drop"]
+_LANG_ENUM = re.compile(r"^(std\.)?(Option|Result)<.*>$")
 _RANGE = re.compile(r"^Range(Inclusive)?<.*>$")
 
 
@@ -356,10 +355,8 @@ def burdin_lookup(val):
             return ListPrinter(val)
         if name.startswith("Map<"):
             return MapPrinter(val)
-        if name.startswith("Option<"):
+        if _LANG_ENUM.match(name) and _strip(val).code == gdb.TYPE_CODE_STRUCT:
             return OptionPrinter(val)
-        if name.startswith("Result<"):
-            return ResultPrinter(val)
         if name.startswith("Heap<"):
             return HeapPrinter(val)
         if name.startswith("Shared<"):

@@ -56,9 +56,12 @@ impl Codegen<'_, '_> {
                 mark(tir::FuncId(i), &mut reachable, &mut pending);
             }
         }
+        // A `List` or its owning iterator is a struct of `std` with a `Drop` of its own, but every element type
+        // makes its own instance, so only the ones a reachable body mentions are rooted (see `Walker::note_ty`).
         let drops = program
             .structs
             .iter()
+            .filter(|s| !is_list_struct(s))
             .filter_map(|s| s.drop_method)
             .chain(program.enums.iter().filter_map(|e| e.drop_method));
         for drop in drops {
@@ -90,9 +93,11 @@ impl Codegen<'_, '_> {
         let mut pending_closures: Vec<usize> = Vec::new();
         loop {
             if let Some(i) = pending.pop() {
-                refs_in(program, &program.functions[i].body, &mut calls, &mut closures, &mut seen);
+                let f = &program.functions[i];
+                refs_in(program, &f.locals, &f.body, &mut calls, &mut closures, &mut seen);
             } else if let Some(c) = pending_closures.pop() {
-                refs_in(program, &program.closures[c].func.body, &mut calls, &mut closures, &mut seen);
+                let f = &program.closures[c].func;
+                refs_in(program, &f.locals, &f.body, &mut calls, &mut closures, &mut seen);
             } else {
                 break;
             }
@@ -110,6 +115,11 @@ impl Codegen<'_, '_> {
     }
 }
 
+/// Whether the struct is a `std.List`, `std.ListIntoIter`, or `std.MapIntoIter` instance.
+fn is_list_struct(s: &tir::StructDef) -> bool {
+    matches!(s.lang, Some(tir::LangItem::List | tir::LangItem::ListIntoIter | tir::LangItem::MapIntoIter))
+}
+
 fn mark(id: tir::FuncId, reachable: &mut [bool], pending: &mut Vec<usize>) {
     if let Some(slot) = reachable.get_mut(id.0)
         && !*slot
@@ -122,12 +132,17 @@ fn mark(id: tir::FuncId, reachable: &mut [bool], pending: &mut Vec<usize>) {
 /// Every function `b` calls and every closure it creates, in any expression it contains.
 fn refs_in(
     program: &tir::Program,
+    locals: &[tir::Local],
     b: &tir::Block,
     calls: &mut Vec<tir::FuncId>,
     closures: &mut Vec<usize>,
     seen: &mut HashSet<(bool, usize)>,
 ) {
     let mut walk = Walker { program, out: calls, closures, seen };
+    // A local is dropped at the end of its scope whether or not an expression of its type appears.
+    for local in locals {
+        walk.note_ty(&local.ty);
+    }
     walk.block(b);
 }
 
@@ -180,23 +195,18 @@ impl Walker<'_> {
                     let s = &self.program.structs[a.id];
                     (&s.derives, s.fields.iter().map(|f| &f.ty).collect())
                 };
-                self.out.extend([derives.eq_method, derives.lt_method].into_iter().flatten());
+                // A list compares, clones, and drops through the compiler's own code; its `Drop` is reached only
+                // where a body mentions the type, since every element type makes an instance of its own.
+                if !is_enum && is_list_struct(&self.program.structs[a.id]) {
+                    self.out.extend(self.program.structs[a.id].drop_method);
+                } else {
+                    self.out.extend([derives.eq_method, derives.lt_method, derives.clone_method].into_iter().flatten());
+                }
                 for f in fields {
                     self.note_ty(f);
                 }
             }
-            Ty::Ref { inner: t, .. }
-            | Ty::Slice(t)
-            | Ty::Array(t, _)
-            | Ty::Option(t)
-            | Ty::List(t, _)
-            | Ty::Heap(t, _)
-            | Ty::Shared(t)
-            | Ty::Range(t, _) => self.note_ty(t),
-            Ty::Result(a, b) | Ty::Map(a, b, _) | Ty::MapEntry(a, b, _) => {
-                self.note_ty(a);
-                self.note_ty(b);
-            }
+            Ty::Ref { inner: t, .. } | Ty::Slice(t) | Ty::Array(t, _) | Ty::CPtr(t) | Ty::Heap(t, _) => self.note_ty(t),
             Ty::Tuple(ts) => {
                 for t in ts {
                     self.note_ty(t);
@@ -241,8 +251,7 @@ impl Walker<'_> {
             K::ForArray { array, body, .. }
             | K::ForSlice { slice: array, body, .. }
             | K::ForList { list: array, body, .. }
-            | K::ForMap { map: array, body, .. }
-            | K::ForChars { string: array, body, .. } => {
+            | K::ForMap { map: array, body, .. } => {
                 self.expr(array);
                 self.block(body);
             }
@@ -278,10 +287,7 @@ impl Walker<'_> {
             | K::Deref(inner)
             | K::PtrDeref(inner)
             | K::DerefRef(inner)
-            | K::Field(inner, _)
-            | K::Some(inner)
-            | K::Ok(inner)
-            | K::Err(inner) => self.expr(inner),
+            | K::Field(inner, _) => self.expr(inner),
             K::Assign(a, b) | K::CompoundAssign(_, a, b) | K::Binary(_, a, b) | K::Index(a, b) => {
                 self.expr(a);
                 self.expr(b);
@@ -314,7 +320,6 @@ impl Walker<'_> {
             | K::Const(_)
             | K::Static(_)
             | K::Continue(_)
-            | K::None
             | K::Return(None)
             | K::LayoutOf { .. } => {}
             K::Break { value, .. } => {

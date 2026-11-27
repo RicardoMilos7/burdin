@@ -373,6 +373,11 @@ impl FnCx<'_> {
     }
 
     /// `T.function(...)` on a type parameter.
+    /// Whether a bound of the parameter provides a function without `self` with this name.
+    pub(super) fn param_provides(&self, ty: &Ty, name: &str) -> bool {
+        self.globals.bound_method(ty, name, &self.bounds).is_some_and(|(sig, _, _)| !sig.has_self)
+    }
+
     pub(super) fn param_assoc_call(
         &mut self,
         ty: &Ty,
@@ -491,7 +496,7 @@ impl FnCx<'_> {
             return Some(error_expr(span));
         }
         let err = Ty::TryFromError { self_ty: Box::new(ty.clone()), source: Box::new(value.ty.clone()) };
-        let ret = Ty::Result(Box::new(ty.clone()), Box::new(err));
+        let ret = self.globals.result_ty(ty.clone(), err);
         Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value]), ret, span))
     }
 
@@ -914,6 +919,33 @@ impl FnCx<'_> {
     /// The value of `Type.default()` for a type that derives `Default`.
     pub(super) fn default_expr(&self, ty: &Ty, span: Span) -> tir::Expr {
         use tir::ExprKind as K;
+        if self.globals.option_payload(ty).is_some() {
+            return crate::globals::Globals::mk_none(ty.clone(), span);
+        }
+        // The default list is empty: a null buffer, no elements, no capacity, and the zero-sized default allocator.
+        if let Some((_, alloc)) = self.globals.list_parts(ty)
+            && alloc.is_global()
+            && let Ty::Struct(a) = ty
+        {
+            let fields = &self.globals.structs[a.id].fields;
+            let null = mk(K::Builtin(Builtin::CPtrNull, Vec::new()), fields[0].ty.clone(), span);
+            let zero = |ty: &Ty| mk(K::Int(0), ty.clone(), span);
+            let alloc_value = mk(K::Struct(Vec::new()), fields[3].ty.clone(), span);
+            let parts = vec![(0, null), (1, zero(&fields[1].ty)), (2, zero(&fields[2].ty)), (3, alloc_value)];
+            return mk(K::Struct(parts), ty.clone(), span);
+        }
+        // The default map is empty too: a null table, no entries, no slots, and the zero-sized default allocator.
+        if let Some((_, _, alloc)) = self.globals.map_parts(ty)
+            && alloc.is_global()
+            && let Ty::Struct(a) = ty
+        {
+            let fields = &self.globals.structs[a.id].fields;
+            let null = mk(K::Builtin(Builtin::CPtrNull, Vec::new()), fields[0].ty.clone(), span);
+            let zero = |ty: &Ty| mk(K::Int(0), ty.clone(), span);
+            let alloc_value = mk(K::Struct(Vec::new()), fields[3].ty.clone(), span);
+            let parts = vec![(0, null), (1, zero(&fields[1].ty)), (2, zero(&fields[2].ty)), (3, alloc_value)];
+            return mk(K::Struct(parts), ty.clone(), span);
+        }
         let kind = match ty {
             Ty::Unit => K::Unit,
             Ty::Bool => K::Bool(false),
@@ -922,9 +954,6 @@ impl FnCx<'_> {
             Ty::Float(_) => K::Float(0.0),
             Ty::Str => K::Str(String::new()),
             Ty::String => K::Builtin(Builtin::StringNew, Vec::new()),
-            Ty::List(_, alloc) if alloc.is_global() => K::Builtin(Builtin::ListNew, Vec::new()),
-            Ty::Map(_, _, alloc) if alloc.is_global() => K::Builtin(Builtin::MapNew, Vec::new()),
-            Ty::Option(_) => K::None,
             Ty::Tuple(ts) => K::Tuple(ts.iter().map(|t| self.default_expr(t, span)).collect()),
             Ty::Struct(a) => K::Struct(
                 self.globals.structs[a.id]
@@ -1484,8 +1513,9 @@ mod tests {
     #[test]
     fn an_open_non_closure_type_is_still_no_hint() {
         // `fn f<U>(x: Option<U>)`: a literal must not adopt the open parameter as its type.
-        let param = Ty::Option(Box::new(param_ty("U")));
-        assert_eq!(generic_hint(&globals(), &param, &names(&["U"]), &[Vec::new()], &[]), None);
+        let mut g = crate::testutil::lang_globals();
+        let param = g.test_option(param_ty("U"));
+        assert_eq!(generic_hint(&g, &param, &names(&["U"]), &[Vec::new()], &[]), None);
     }
 
     #[test]

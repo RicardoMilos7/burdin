@@ -55,7 +55,7 @@ Color {
     }
 
     fn from_hex(text: str): Option<Color> {
-        let digits: List<char> = text.chars().collect()
+        let digits: List<char> = text.chars()
         if digits.len() != 7 || digits[0] != '#' {
             return Option.None
         }

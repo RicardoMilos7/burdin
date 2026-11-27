@@ -234,12 +234,8 @@ pub(crate) struct Runtime<'ctx> {
     pub str_starts_with: FunctionValue<'ctx>,
     /// `(ptr, len: usize, c: i32) -> i64`: the byte index of the first `c`, or -1.
     pub str_find_char: FunctionValue<'ctx>,
-    /// `(ptr, len: usize) -> ptr`: a NUL-terminated copy of the bytes in the C heap.
-    pub cstring_from: FunctionValue<'ctx>,
     /// `(ptr) -> usize`: the length of a NUL-terminated C string (libc `strlen`).
     pub strlen: FunctionValue<'ctx>,
-    /// `(ptr) -> ptr`: a fresh copy of a NUL-terminated C string, for `CString.clone`.
-    pub cstring_clone: FunctionValue<'ctx>,
     /// `(ptr, bytes: usize, site, site_len: usize) -> ptr`: resizes an allocation, panicking when it fails.
     pub realloc: FunctionValue<'ctx>,
     /// `(bytes: usize, site, site_len: usize) -> ptr`: `alloc`, but a null pointer when it fails instead of a panic
@@ -649,7 +645,9 @@ pub(crate) fn define_test_main<'ctx>(
             .basic()
             .expect("a test returns its Result")
             .into_struct_value();
-        let ok = b.build_extract_value(result, 0, "ok").map_err(llvm_err)?.into_int_value();
+        // `Result.Ok` is variant 0 of `std`'s enum: the tag is zero.
+        let tag = b.build_extract_value(result, 0, "tag").map_err(llvm_err)?.into_int_value();
+        let ok = b.build_int_compare(IntPredicate::EQ, tag, i32_ty.const_zero(), "ok").map_err(llvm_err)?;
         // A test that passed is checked for leaked allocations: the checking allocator reports them on standard
         // error and the test fails (`spec/allocators.md`, AL9). A test that already failed keeps its own verdict.
         let pass = cx.append_basic_block(f, &format!("pass.{i}"));
@@ -1310,7 +1308,6 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let h = h0.with_alloc_string(alloc_string);
         let string_push_str = self.string_push_str(&h)?;
         let string_push_char = self.string_push_char(string_push_str)?;
-        let cstring_from = self.cstring_from(&h)?;
         // The arguments `define_main` receives, saved for `env.args()`.
         let argc_ty = self.i32();
         let argc = self.module.add_global(argc_ty, None, "burdin_rt_argc");
@@ -1380,9 +1377,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             char_to_string: self.char_to_string(&h)?,
             str_starts_with: self.str_starts_with()?,
             str_find_char: self.str_find_char()?,
-            cstring_from,
             strlen: libc(self.module, "strlen", self.usize_ty.fn_type(&[self.ptr_ty.into()], false)),
-            cstring_clone: self.cstring_clone(&h, cstring_from)?,
             realloc,
             try_alloc,
             try_realloc,
@@ -3520,64 +3515,6 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
 
         self.b.position_at_end(each_end);
         self.b.build_return(Some(&i32_ty.const_int(1, false))).map_err(llvm_err)?;
-        Ok(f)
-    }
-
-    /// `cstring_from(ptr, len: usize) -> ptr`: copies the bytes into a `malloc`ed buffer with a terminating NUL.
-    fn cstring_from(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
-        let (usize_ty, ptr_ty, i8_ty) = (self.usize_ty, self.ptr_ty, self.i8());
-        let f = self.function("burdin_rt_cstring_from", ptr_ty.fn_type(&[ptr_ty.into(), usize_ty.into()], false));
-        let (src, len) = (Self::ptr_param(f, 0), Self::int_param(f, 1));
-        let one = usize_ty.const_int(1, false);
-        let size = self.b.build_int_add(len, one, "size").map_err(llvm_err)?;
-        // A wrapped size cannot be allocated.
-        let overflow = self.b.build_int_compare(IntPredicate::ULT, size, len, "").map_err(llvm_err)?;
-        let alloc = self.block(f, "alloc");
-        let oom = self.block(f, "oom");
-        let done = self.block(f, "done");
-        self.b.build_conditional_branch(overflow, oom, alloc).map_err(llvm_err)?;
-
-        self.b.position_at_end(oom);
-        self.write_const(
-            h.write_all,
-            2,
-            b"panic: out of memory
-",
-        )?;
-        self.call(h.print_backtrace, &[])?;
-        self.call(h.die, &[])?;
-        self.b.build_unreachable().map_err(llvm_err)?;
-
-        self.b.position_at_end(alloc);
-        let p = self.call_rt_alloc(size)?;
-        let copy = self.block(f, "copy");
-        self.b.build_unconditional_branch(copy).map_err(llvm_err)?;
-
-        self.b.position_at_end(copy);
-        self.b.build_memcpy(p, 1, src, 1, len).map_err(|e| format!("LLVM builder error: {e}"))?;
-        let end = self.offset(p, len)?;
-        self.b.build_store(end, i8_ty.const_zero()).map_err(llvm_err)?;
-        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
-
-        self.b.position_at_end(done);
-        self.b.build_return(Some(&p)).map_err(llvm_err)?;
-        Ok(f)
-    }
-
-    /// `cstring_clone(ptr) -> ptr`: copies a NUL-terminated C string with `strlen` and `cstring_from`.
-    fn cstring_clone(
-        &mut self,
-        h: &Helpers<'ctx>,
-        cstring_from: FunctionValue<'ctx>,
-    ) -> GenResult<FunctionValue<'ctx>> {
-        let (ptr_ty, usize_ty) = (self.ptr_ty, self.usize_ty);
-        let strlen = libc(self.module, "strlen", usize_ty.fn_type(&[ptr_ty.into()], false));
-        let f = self.function("burdin_rt_cstring_clone", ptr_ty.fn_type(&[ptr_ty.into()], false));
-        let src = Self::ptr_param(f, 0);
-        let len = self.call(strlen, &[src.into()])?.expect("strlen returns a size").into_int_value();
-        let _ = h;
-        let copy = self.call(cstring_from, &[src.into(), len.into()])?.expect("cstring_from returns a pointer");
-        self.b.build_return(Some(&copy)).map_err(llvm_err)?;
         Ok(f)
     }
 

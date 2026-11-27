@@ -1,7 +1,7 @@
 //! Questions about types that need the struct and enum definitions: `Copy`, `Clone`, `Drop`.
 
-use crate::defs::{Derives, EnumDef, StructDef};
-use crate::ty::Ty;
+use crate::defs::{Derives, EnumDef, LangItem, StructDef};
+use crate::ty::{Alloc, Ty};
 
 /// The struct and enum definitions of a program, for the questions a [`Ty`] cannot answer alone.
 #[derive(Clone, Copy)]
@@ -21,12 +21,109 @@ impl Property {
     fn derived(self, derives: &Derives) -> bool {
         match self {
             Property::Copy => derives.copy,
-            Property::Clone => derives.clone,
+            Property::Clone => derives.clone || derives.clone_method.is_some(),
         }
     }
 }
 
 impl TypeDefs<'_> {
+    /// The payload type of an `Option` instance, `None` when `ty` is not one.
+    pub fn option_payload(&self, ty: &Ty) -> Option<&Ty> {
+        let Ty::Enum(a) = ty else { return None };
+        let def = &self.enums[a.id];
+        (def.lang == Some(LangItem::Option)).then(|| &def.variants[1].fields[0].ty)
+    }
+
+    /// The `Ok` and `Err` payload types of a `Result` instance, `None` when `ty` is not one.
+    pub fn result_parts(&self, ty: &Ty) -> Option<(&Ty, &Ty)> {
+        let Ty::Enum(a) = ty else { return None };
+        let def = &self.enums[a.id];
+        (def.lang == Some(LangItem::Result)).then(|| (&def.variants[0].fields[0].ty, &def.variants[1].fields[0].ty))
+    }
+
+    /// The element type and allocator of a `List` instance, `None` when `ty` is not one.
+    pub fn list_parts(&self, ty: &Ty) -> Option<(&Ty, Alloc)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        (def.lang == Some(LangItem::List)).then(|| Self::seq_parts(def, def.fields.len() - 1))
+    }
+
+    /// The key type, value type, and allocator of a `Map` instance, `None` when `ty` is not one.
+    pub fn map_parts(&self, ty: &Ty) -> Option<(&Ty, &Ty, Alloc)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        if def.lang != Some(LangItem::Map) {
+            return None;
+        }
+        let Ty::CPtr(entry) = &def.fields[0].ty else { unreachable!("a map's first field is its buffer pointer") };
+        let Ty::Tuple(parts) = &**entry else { unreachable!("a map's buffer holds (key, value, hash) entries") };
+        Some((&parts[0], &parts[1], Alloc::of_field(&def.fields[def.fields.len() - 1].ty)))
+    }
+
+    /// The element type and allocator of a `ListIntoIter` instance, `None` when `ty` is not one.
+    pub fn list_into_iter_parts(&self, ty: &Ty) -> Option<(&Ty, Alloc)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        (def.lang == Some(LangItem::ListIntoIter)).then(|| Self::seq_parts(def, def.fields.len() - 1))
+    }
+
+    /// The key type, value type, and allocator of a `MapIntoIter` instance, `None` when `ty` is not one.
+    pub fn map_into_iter_parts(&self, ty: &Ty) -> Option<(&Ty, &Ty, Alloc)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        if def.lang != Some(LangItem::MapIntoIter) {
+            return None;
+        }
+        let Ty::CPtr(entry) = &def.fields[0].ty else {
+            unreachable!("a map iterator's first field is its buffer pointer")
+        };
+        let Ty::Tuple(parts) = &**entry else {
+            unreachable!("a map iterator's buffer holds (key, value, hash) entries")
+        };
+        Some((&parts[0], &parts[1], Alloc::of_field(&def.fields[def.fields.len() - 1].ty)))
+    }
+
+    /// The endpoint type and whether the range is inclusive, when `ty` is a `Range` or a `RangeInclusive` instance.
+    pub fn range_parts(&self, ty: &Ty) -> Option<(&Ty, bool)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        match def.lang {
+            Some(LangItem::Range) => Some((&def.fields[0].ty, false)),
+            Some(LangItem::RangeInclusive) => Some((&def.fields[0].ty, true)),
+            _ => None,
+        }
+    }
+
+    /// The same for the iterator of a range (`RangeIter` or `RangeIterInclusive`).
+    pub fn range_iter_parts(&self, ty: &Ty) -> Option<(&Ty, bool)> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        match def.lang {
+            Some(LangItem::RangeIter) => Some((&def.fields[0].ty, false)),
+            Some(LangItem::RangeIterInclusive) => Some((&def.fields[0].ty, true)),
+            _ => None,
+        }
+    }
+
+    /// The element type of an `ArrayIntoIter` instance, `None` when `ty` is not one.
+    pub fn array_into_iter_elem(&self, ty: &Ty) -> Option<&Ty> {
+        let Ty::Struct(a) = ty else { return None };
+        let def = &self.structs[a.id];
+        if def.lang != Some(LangItem::ArrayIntoIter) {
+            return None;
+        }
+        let Ty::Struct(inner) = &def.fields[0].ty else { return None };
+        match &self.structs[inner.id].fields[0].ty {
+            Ty::Array(elem, _) => Some(elem),
+            _ => None,
+        }
+    }
+
+    fn seq_parts(def: &StructDef, alloc_field: usize) -> (&Ty, Alloc) {
+        let Ty::CPtr(elem) = &def.fields[0].ty else { unreachable!("a list's first field is its buffer pointer") };
+        (elem, Alloc::of_field(&def.fields[alloc_field].ty))
+    }
+
     /// Whether values of `ty` are copied instead of moved (memory-rules.md, Copy types).
     pub fn is_copy(&self, ty: &Ty) -> bool {
         self.holds(ty, Property::Copy, &mut Vec::new())
@@ -56,59 +153,46 @@ impl TypeDefs<'_> {
     fn holds(&self, ty: &Ty, prop: Property, seen: &mut Vec<(bool, usize)>) -> bool {
         match ty {
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => true,
-            Ty::Chars => true,
             // A shared reference and a view are copied; a mutable reference is not (RF4). Cloning a view
             // yields the same view.
             Ty::Ref { mutable, .. } => prop == Property::Clone || !*mutable,
             Ty::Slice(_) => true,
-            // A range is two copied endpoints.
-            Ty::Range(inner, _) => self.holds(inner, prop, seen),
-            // A raw C pointer is a plain address; a `CString` owns its buffer and has no clone yet.
+            // A raw C pointer is a plain address.
             Ty::CPtr(_) => true,
             // An iterator advances through its state, so it is never copied or cloned. A map entry owns its key
             // and views its map, so it is moved into the operation that consumes it.
-            Ty::ListIntoIter(..)
-            | Ty::ArrayIntoIter(..)
-            | Ty::MapIter(..)
-            | Ty::IterMut(_)
-            | Ty::MapIterMut(..)
-            | Ty::MapEntry(..)
-            | Ty::MapIntoIter(..)
-            | Ty::SliceChunks(..)
-            | Ty::SliceWindows(..) => false,
-            // A range iterator is two endpoints and a flag, so it can be cloned (`cycle` clones its source), but it
-            // is not `Copy`: a copy would advance on its own and surprise the program.
-            Ty::RangeIter(inner, _) => prop == Property::Clone && self.holds(inner, prop, seen),
+            Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // A closure owns its capture record, so it is never copied or cloned (CL10).
             Ty::Fn { .. } => false,
-            Ty::String | Ty::CString => prop == Property::Clone,
+            Ty::String => prop == Property::Clone,
             // A heap clones its allocator value and the pointee; the default allocator stores no value.
             Ty::Heap(_, a) => prop == Property::Clone && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen)),
             // A `Shared<T>` is cloned by sharing (a reference-count increase), whatever `T` is.
-            Ty::Shared(_) => prop == Property::Clone,
             // A list or a map owns its buffer, so it is never `Copy`; it can be deep-cloned when its elements and
             // its allocator value can.
-            Ty::List(t, a) => {
-                prop == Property::Clone
-                    && self.holds(t, prop, seen)
-                    && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen))
-            }
-            Ty::Map(k, v, a) => {
-                prop == Property::Clone
-                    && self.holds(k, prop, seen)
-                    && self.holds(v, prop, seen)
-                    && a.allocator_ty().is_none_or(|a| self.holds(a, prop, seen))
-            }
             // A projection is opaque until the implementation's binding is substituted; it is never copied or
             // cloned on its own (`spec/associated-types.md`, AT3).
             Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => false,
             // An `any` box owns a heap allocation and cannot be copied or cloned (AN1).
             Ty::Any(_) => false,
-            Ty::Result(t, e) => self.holds(t, prop, seen) && self.holds(e, prop, seen),
-            Ty::Array(t, _) | Ty::Option(t) => self.holds(t, prop, seen),
+            Ty::Array(t, _) => self.holds(t, prop, seen),
             Ty::Tuple(ts) => ts.iter().all(|t| self.holds(t, prop, seen)),
             Ty::Struct(a) => {
                 let def = &self.structs[a.id];
+                if let Some((elem, alloc)) = self.list_parts(ty) {
+                    return prop == Property::Clone
+                        && self.holds(elem, prop, seen)
+                        && alloc.allocator_ty().is_none_or(|a| self.holds(a, prop, seen));
+                }
+                if let Some((k, v, alloc)) = self.map_parts(ty) {
+                    return prop == Property::Clone
+                        && self.holds(k, prop, seen)
+                        && self.holds(v, prop, seen)
+                        && alloc.allocator_ty().is_none_or(|a| self.holds(a, prop, seen));
+                }
+                if matches!(def.lang, Some(LangItem::ListIntoIter | LangItem::MapIntoIter)) {
+                    return false;
+                }
                 self.derived_from_fields(false, a.id, prop, &def.derives, seen, || {
                     def.fields.iter().map(|f| &f.ty).collect()
                 })
@@ -150,34 +234,15 @@ impl TypeDefs<'_> {
             | Ty::Const(_)
             | Ty::Projection { .. }
             | Ty::TryFromError { .. }
-            | Ty::CPtr(_)
-            | Ty::Chars => false,
-            Ty::Range(..)
-            | Ty::MapIter(..)
-            | Ty::RangeIter(..)
-            | Ty::IterMut(_)
-            | Ty::MapIterMut(..)
-            | Ty::SliceChunks(..)
-            | Ty::SliceWindows(..) => false,
-            // An entry owns the key it would insert; dropping it without inserting drops that key.
-            Ty::MapEntry(key, _, _) => self.needs_drop_seen(key, seen),
+            | Ty::CPtr(_) => false,
+            Ty::MapIter(..) | Ty::IterMut(_) | Ty::MapIterMut(..) | Ty::SliceChunks(..) | Ty::SliceWindows(..) => false,
             // A closure's capture record is heap-allocated and may own its captures.
             Ty::Fn { .. } => true,
             // A box owns its heap allocation and the value inside it (AN1/AN7).
             Ty::Any(_) => true,
             // An owning iterator frees its buffer (or drops the elements it has not handed out).
-            Ty::String
-            | Ty::Heap(..)
-            | Ty::CString
-            | Ty::List(..)
-            | Ty::Map(..)
-            | Ty::Shared(_)
-            | Ty::ListIntoIter(..)
-            | Ty::MapIntoIter(..) => true,
-            Ty::ArrayIntoIter(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
+            Ty::String | Ty::Heap(..) => true,
             Ty::Array(t, n) => *n > 0 && self.needs_drop_seen(t, seen),
-            Ty::Option(t) => self.needs_drop_seen(t, seen),
-            Ty::Result(t, e) => self.needs_drop_seen(t, seen) || self.needs_drop_seen(e, seen),
             Ty::Tuple(ts) => ts.iter().any(|t| self.needs_drop_seen(t, seen)),
             Ty::Struct(a) => {
                 if seen.contains(&(false, a.id)) {
@@ -185,6 +250,14 @@ impl TypeDefs<'_> {
                 }
                 seen.push((false, a.id));
                 let s = &self.structs[a.id];
+                // Glue never drops the value of a `ManuallyDrop`.
+                if s.lang == Some(LangItem::ManuallyDrop) {
+                    return false;
+                }
+                // A map frees its table and drops its entries.
+                if s.lang == Some(LangItem::Map) {
+                    return true;
+                }
                 s.drop_method.is_some() || s.fields.iter().any(|f| self.needs_drop_seen(&f.ty, seen))
             }
             Ty::Enum(a) => {
@@ -217,11 +290,49 @@ mod tests {
     }
 
     fn struct_def(name: &str, fields: Vec<FieldDef>, derives: Derives, drop_method: Option<FuncId>) -> StructDef {
-        StructDef { name: name.into(), fields, repr_c: false, derives, drop_method }
+        StructDef { name: name.into(), fields, repr_c: false, derives, drop_method, lang: None }
     }
 
     fn derives(copy: bool, clone: bool) -> Derives {
         Derives { copy, clone, ..Derives::default() }
+    }
+
+    /// A `List<elem, alloc>` instance: the lang struct `std` declares, with its `Drop` impl.
+    fn list_def(elem: Ty, alloc: Ty) -> StructDef {
+        let mut def = struct_def(
+            "List",
+            vec![
+                field("ptr", Ty::CPtr(Box::new(elem))),
+                field("len", Ty::Int(IntTy::Usize)),
+                field("cap", Ty::Int(IntTy::Usize)),
+                field("alloc", alloc),
+            ],
+            Derives::default(),
+            Some(FuncId(0)),
+        );
+        def.lang = Some(LangItem::List);
+        def
+    }
+
+    fn map_def(key: Ty, value: Ty, alloc: Ty) -> StructDef {
+        let entry = Ty::Tuple(vec![key, value, Ty::Int(IntTy::U64)]);
+        let mut def = struct_def(
+            "Map",
+            vec![
+                field("ptr", Ty::CPtr(Box::new(entry))),
+                field("len", Ty::Int(IntTy::Usize)),
+                field("cap", Ty::Int(IntTy::Usize)),
+                field("alloc", alloc),
+            ],
+            Derives::default(),
+            None,
+        );
+        def.lang = Some(LangItem::Map);
+        def
+    }
+
+    fn global() -> Ty {
+        Ty::Struct(AdtRef { id: 99, name: "std.alloc.Global".into(), second_class: false })
     }
 
     fn adt(name: &str, id: usize) -> AdtRef {
@@ -238,6 +349,7 @@ mod tests {
             struct_def("Point", vec![field("x", int()), field("y", int())], derives(true, true), None),
             struct_def("Text", vec![field("s", Ty::String)], derives(true, true), None),
             struct_def("Plain", vec![field("x", int())], Derives::default(), None),
+            list_def(int(), global()),
         ];
         let defs = TypeDefs { structs: &structs, enums: &[] };
         assert!(defs.is_copy(&Ty::Struct(adt("Point", 0))));
@@ -250,7 +362,7 @@ mod tests {
         assert!(defs.is_copy(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
         assert!(!defs.is_copy(&Ty::Ref { mutable: true, inner: Box::new(int()) }), "a &mut is not Copy");
         assert!(!defs.is_copy(&Ty::String));
-        assert!(!defs.is_copy(&Ty::List(Box::new(int()), crate::ty::Alloc::Global)));
+        assert!(!defs.is_copy(&Ty::Struct(adt("List", 3))), "a list owns its buffer");
     }
 
     #[test]
@@ -280,36 +392,12 @@ mod tests {
     }
 
     #[test]
-    fn a_range_iterator_is_cloned_but_never_copied() {
-        let defs = TypeDefs { structs: &[], enums: &[] };
-        let range = Ty::RangeIter(Box::new(int()), false);
-        assert!(defs.is_clone(&range), "`cycle` clones its source");
-        assert!(!defs.is_copy(&range), "a copy would advance on its own");
-        let owning = Ty::ListIntoIter(Box::new(int()), Alloc::Global);
-        assert!(!defs.is_clone(&owning), "an owning iterator is neither copied nor cloned");
-    }
-
-    #[test]
-    fn a_map_entry_owns_its_key_and_stays_second_class() {
-        let defs = TypeDefs { structs: &[], enums: &[] };
-        let entry = Ty::MapEntry(Box::new(Ty::String), Box::new(int()), Alloc::Global);
-        assert!(!defs.is_copy(&entry));
-        assert!(!defs.is_clone(&entry));
-        assert!(defs.needs_drop(&entry), "the entry owns its `String` key");
-        assert!(entry.is_second_class(), "an entry views its map");
-        let copy_key = Ty::MapEntry(Box::new(int()), Box::new(Ty::String), Alloc::Global);
-        assert!(!defs.needs_drop(&copy_key), "a `Copy` key needs no drop");
-        assert!(copy_key.is_second_class());
-    }
-
-    #[test]
     fn clone_follows_the_parts() {
-        let defs = TypeDefs { structs: &[], enums: &[] };
+        let structs = [list_def(Ty::String, global())];
+        let defs = TypeDefs { structs: &structs, enums: &[] };
         assert!(defs.is_clone(&Ty::String));
         assert!(defs.is_clone(&Ty::Heap(Box::new(int()), crate::ty::Alloc::Global)));
-        assert!(defs.is_clone(&Ty::List(Box::new(Ty::String), crate::ty::Alloc::Global)));
-        assert!(defs.is_clone(&Ty::List(Box::new(Ty::CString), crate::ty::Alloc::Global)));
-        assert!(defs.is_clone(&Ty::CString));
+        assert!(defs.is_clone(&Ty::Struct(adt("List", 0))));
         assert!(defs.is_clone(&Ty::Ref { mutable: true, inner: Box::new(int()) }));
     }
 
@@ -320,27 +408,20 @@ mod tests {
         let structs = [
             struct_def("Pool", vec![], derives(false, true), None),
             struct_def("Raw", vec![], derives(false, false), None),
+            list_def(int(), Ty::Struct(adt("Pool", 0))),
+            list_def(int(), Ty::Struct(adt("Raw", 1))),
+            map_def(Ty::Str, int(), Ty::Struct(adt("Pool", 0))),
+            map_def(Ty::Str, int(), Ty::Struct(adt("Raw", 1))),
         ];
         let defs = TypeDefs { structs: &structs, enums: &[] };
         let pool = Alloc::Value(Box::new(Ty::Struct(adt("Pool", 0))));
         let raw = Alloc::Value(Box::new(Ty::Struct(adt("Raw", 1))));
-        assert!(defs.is_clone(&Ty::List(Box::new(int()), pool.clone())));
-        assert!(defs.is_clone(&Ty::Map(Box::new(Ty::Str), Box::new(int()), pool.clone())));
+        assert!(defs.is_clone(&Ty::Struct(adt("List", 2))));
+        assert!(defs.is_clone(&Ty::Struct(adt("Map", 4))));
         assert!(defs.is_clone(&Ty::Heap(Box::new(int()), pool)));
-        assert!(!defs.is_clone(&Ty::List(Box::new(int()), raw.clone())));
-        assert!(!defs.is_clone(&Ty::Map(Box::new(Ty::Str), Box::new(int()), raw.clone())));
+        assert!(!defs.is_clone(&Ty::Struct(adt("List", 3))));
+        assert!(!defs.is_clone(&Ty::Struct(adt("Map", 5))));
         assert!(!defs.is_clone(&Ty::Heap(Box::new(int()), raw)), "a heap clones its allocator too");
-    }
-
-    #[test]
-    fn shared_is_clone_for_every_element_but_not_copy() {
-        // Cloning a `Shared<T>` shares the cell without cloning `T` (spec/allocators.md, AL8).
-        let structs = [struct_def("Plain", vec![field("x", int())], Derives::default(), None)];
-        let defs = TypeDefs { structs: &structs, enums: &[] };
-        let shared = Ty::Shared(Box::new(Ty::Struct(adt("Plain", 0))));
-        assert!(defs.is_clone(&shared), "`Plain` is not Clone, but the shared cell is");
-        assert!(!defs.is_copy(&shared));
-        assert!(defs.needs_drop(&shared));
     }
 
     #[test]
@@ -349,6 +430,8 @@ mod tests {
             struct_def("Owns", vec![field("s", Ty::String)], Derives::default(), None),
             struct_def("Empty", vec![field("x", int())], Derives::default(), None),
             struct_def("WithDrop", vec![], Derives::default(), Some(FuncId(3))),
+            list_def(int(), global()),
+            map_def(Ty::Str, int(), global()),
         ];
         let defs = TypeDefs { structs: &structs, enums: &[] };
         assert!(defs.needs_drop(&Ty::String));
@@ -359,11 +442,9 @@ mod tests {
         // An empty array holds no value to drop.
         assert!(!defs.needs_drop(&Ty::Array(Box::new(Ty::String), 0)));
         assert!(defs.needs_drop(&Ty::Array(Box::new(Ty::String), 1)));
-        assert!(defs.needs_drop(&Ty::Option(Box::new(Ty::String))));
         assert!(!defs.needs_drop(&Ty::Ref { mutable: false, inner: Box::new(Ty::String) }));
-        assert!(defs.needs_drop(&Ty::List(Box::new(int()), crate::ty::Alloc::Global)));
-        assert!(defs.needs_drop(&Ty::Map(Box::new(Ty::Str), Box::new(int()), crate::ty::Alloc::Global)));
-        assert!(defs.needs_drop(&Ty::CString));
+        assert!(defs.needs_drop(&Ty::Struct(adt("List", 3))));
+        assert!(defs.needs_drop(&Ty::Struct(adt("Map", 4))));
     }
 
     #[test]
@@ -379,8 +460,7 @@ mod tests {
         // `Node { next: Option<Node> }` is not a legal by-value type, but the questions must still terminate on
         // any cycle a definition could describe.
         let node = Ty::Struct(adt("Node", 0));
-        let structs =
-            [struct_def("Node", vec![field("next", Ty::Option(Box::new(node.clone())))], derives(true, true), None)];
+        let structs = [struct_def("Node", vec![field("next", node.clone())], derives(true, true), None)];
         let defs = TypeDefs { structs: &structs, enums: &[] };
         assert!(!defs.needs_drop(&node));
         assert!(defs.is_copy(&node));
@@ -397,6 +477,7 @@ mod tests {
             ],
             derives: Derives { hash: true, ..Derives::default() },
             drop_method: None,
+            lang: None,
         };
         let defs = TypeDefs { structs: &[], enums: &[with_string] };
         let ty = Ty::Enum(adt("E", 0));

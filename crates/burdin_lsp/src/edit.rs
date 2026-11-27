@@ -1576,7 +1576,6 @@ fn type_members(all: &[(String, Item)], name: &str, out: &mut Completions) {
 /// The iterator types the compiler provides (`spec/iterators.md`, IT5), which `Iterator`'s methods apply to, and the
 /// ones among them that also take items from the back.
 const COMPILER_ITERATORS: &[&str] = &[
-    "Chars",
     "RangeIter",
     "MapIter",
     "MapIterMut",
@@ -1588,7 +1587,7 @@ const COMPILER_ITERATORS: &[&str] = &[
     "ChunksExact",
     "Windows",
 ];
-const DOUBLE_ENDED: &[&str] = &["Chars", "RangeIter", "IterMut", "ListIntoIter", "ArrayIntoIter"];
+const DOUBLE_ENDED: &[&str] = &["RangeIter", "IterMut", "ListIntoIter", "ArrayIntoIter"];
 
 /// The fields and methods of a value of type `ty`: its own, its extension methods, the methods of the
 /// interfaces it implements, and the ones an implementation or a derive provides (`to_string` through `Display`,

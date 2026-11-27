@@ -49,37 +49,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::Fn { .. } => self.closure_ty.into(),
             // An `any I` box is the data pointer and the vtable pointer.
             Ty::Any(_) => self.any_ty.into(),
-            Ty::Chars => self.str_ty.into(),
             // A list and a map have the same three-word shape as a `String`: pointer, length, capacity. A stored
             // allocator value follows them (`spec/allocators.md`, AL3), and the default one stores nothing.
             Ty::String => self.string_ty.into(),
-            Ty::List(_, alloc) | Ty::Map(_, _, alloc) => self.seq_ty(alloc).into(),
-            // A map entry is the map's address, the key it owns, the key's hash, the probe slot, and whether the
-            // key was found.
-            Ty::MapEntry(key, _, _) => self.map_entry_value_ty(key).into(),
-            Ty::Result(ok, err) => self.result_ty(ok, err).into(),
-            // A `CString` is the address of its NUL-terminated buffer; a `CPtr` is a raw address.
-            Ty::CString | Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
-            // A `Shared<T>` value is the address of its reference-counted cell.
-            Ty::Shared(_) => self.cx.ptr_type(AddressSpace::default()).into(),
+            // A `CPtr` is a raw address.
+            Ty::CPtr(_) => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Heap(_, alloc) => self.heap_ty(alloc),
             // A reference is the address of the referent; a slice is a pointer and a length, like a `str`.
             Ty::Ref { .. } => self.cx.ptr_type(AddressSpace::default()).into(),
             Ty::Slice(_) => self.str_ty.into(),
             Ty::Array(elem, n) => self.llvm_ty(elem)?.array_type(*n as u32).into(),
-            Ty::Option(inner) => self.option_ty(inner).into(),
             Ty::Tuple(_) | Ty::Struct(_) => self.product_ty(&self.field_tys(ty)).into(),
-            // A range is two copied endpoints.
-            Ty::Range(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone()]).into(),
             // An iterator over a list or a map keeps the collection's three words and the next index.
-            Ty::ListIntoIter(_, alloc) | Ty::MapIntoIter(_, _, alloc) => self.iter_seq_ty_for(alloc).into(),
             Ty::MapIter(..) | Ty::MapIterMut(..) => self.iter_seq_ty().into(),
             // A mutable list or array iterator is the next element's address and the number left, like a slice.
             Ty::IterMut(_) => self.str_ty.into(),
-            // The array owns its elements inline; the index says which one comes next.
-            Ty::ArrayIntoIter(inner, n) => self.iter_array_ty(inner, *n).into(),
-            // The range iterator keeps both endpoints and whether the range is exhausted.
-            Ty::RangeIter(inner, _) => self.product_ty(&[(**inner).clone(), (**inner).clone(), Ty::Bool]).into(),
             // The chunks and windows iterators keep the slice view (pointer and length), the chunk or window
             // size, and the next index.
             Ty::SliceChunks(..) | Ty::SliceWindows(..) => self.slice_iter_ty().into(),
@@ -90,23 +74,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The type of a member of an aggregate: like `llvm_ty`, but a value-less type is an empty struct.
     pub(super) fn storage_ty(&self, ty: &Ty) -> BasicTypeEnum<'ctx> {
         self.llvm_ty(ty).unwrap_or_else(|| self.cx.struct_type(&[], false).into())
-    }
-
-    /// The layout of a pending map lookup: `{ ptr map, K key, u64 hash, usize slot, bool found }`. The key is owned
-    /// by the entry until `or_insert` stores it or drops it. The value does not store the map's allocator: the entry
-    /// reaches it through the map it points at, which the entry type names.
-    pub(super) fn map_entry_value_ty(&self, key: &Ty) -> StructType<'ctx> {
-        let ptr = self.cx.ptr_type(AddressSpace::default());
-        self.cx.struct_type(
-            &[
-                ptr.into(),
-                self.storage_ty(key),
-                self.cx.i64_type().into(),
-                self.usize_ty.into(),
-                self.cx.bool_type().into(),
-            ],
-            false,
-        )
     }
 
     /// The `{ ptr, len, cap }` layout of a list or map, with its stored allocator value appended.
@@ -190,6 +157,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             align = align.max(self.target_data.get_abi_alignment(&vt));
         }
         if size == 0 {
+            // A variant whose fields all have no value (`Ok(())`) still has a payload slot, so the code that
+            // addresses the payload of a variant need not know that.
+            let has_fields = self.program.enums[enum_id].variants.iter().any(|v| !v.fields.is_empty());
+            if has_fields {
+                return self.cx.struct_type(&[tag, self.cx.i8_type().array_type(0).into()], false);
+            }
             return self.cx.struct_type(&[tag], false);
         }
         let align = align.min(8);
@@ -203,6 +176,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.cx.struct_type(&[tag, unit.array_type(count as u32).into()], false)
     }
 
+    /// The scratch layout a runtime operation fills in for an `Option<inner>`: `{ i1 is_some, T }`. It is not the
+    /// layout of the type (that is `std`'s enum, `enum_ty`): [`Codegen::option_from_scratch`] converts a finished one.
     pub(super) fn option_ty(&self, inner: &Ty) -> StructType<'ctx> {
         match self.llvm_ty(inner) {
             Some(t) => self.cx.struct_type(&[self.cx.bool_type().into(), t], false),
@@ -210,12 +185,49 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// `Result<T, E>`: a tag and both payloads. The inactive payload is undefined and never dropped.
+    /// The scratch layout of a `Result<ok, err>` an operation fills in: `{ i1 is_ok, T, E }`, converted by
+    /// [`Codegen::result_from_scratch`].
     pub(super) fn result_ty(&self, ok: &Ty, err: &Ty) -> StructType<'ctx> {
         self.cx.struct_type(&[self.cx.bool_type().into(), self.storage_ty(ok), self.storage_ty(err)], false)
     }
 
-    fn defs(&self) -> TypeDefs<'a> {
+    /// The payload type of an `Option` instance (`std`'s enum), `None` for any other type.
+    pub(super) fn option_payload_ty(&self, ty: &Ty) -> Option<Ty> {
+        self.defs().option_payload(ty).cloned()
+    }
+
+    /// The `Ok` and `Err` types of a `Result` instance (`std`'s enum), `None` for any other type.
+    pub(super) fn result_payload_tys(&self, ty: &Ty) -> Option<(Ty, Ty)> {
+        self.defs().result_parts(ty).map(|(ok, err)| (ok.clone(), err.clone()))
+    }
+
+    /// The element type and allocator of a `List` (the compiler's list struct in `std`), `None` for any other type.
+    /// The element is boxed so a caller can bind it the way the old `Ty::List` pattern did.
+    pub(super) fn list_info(&self, ty: &Ty) -> Option<(Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().list_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
+    }
+
+    /// The key type, value type, and allocator of a `Map` (the compiler's map struct in `std`), `None` for any
+    /// other type.
+    pub(super) fn map_info(&self, ty: &Ty) -> Option<(Box<Ty>, Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().map_parts(ty).map(|(k, v, a)| (Box::new(k.clone()), Box::new(v.clone()), a))
+    }
+
+    /// The same for a `ListIntoIter`.
+    pub(super) fn list_iter_info(&self, ty: &Ty) -> Option<(Box<Ty>, burdin_tir::Alloc)> {
+        self.defs().list_into_iter_parts(ty).map(|(e, a)| (Box::new(e.clone()), a))
+    }
+
+    /// Whether `ty` is a `List`, a `ListIntoIter`, or an `ArrayIntoIter`: types whose values the compiler also builds
+    /// in a plain layout of its own (the `{ ptr, len, cap }` words of the runtime helpers, or an array and an index).
+    pub(super) fn is_seq_struct(&self, ty: &Ty) -> bool {
+        self.list_info(ty).is_some()
+            || self.map_info(ty).is_some()
+            || self.list_iter_info(ty).is_some()
+            || self.defs().array_into_iter_elem(ty).is_some()
+    }
+
+    pub(super) fn defs(&self) -> TypeDefs<'a> {
         TypeDefs { structs: &self.program.structs, enums: &self.program.enums }
     }
 

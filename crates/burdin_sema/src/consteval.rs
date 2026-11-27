@@ -54,7 +54,7 @@ impl Globals {
     }
 
     /// The type that stands for a folded const expression.
-    fn const_ty(&self, e: ConstExpr) -> Ty {
+    pub(crate) fn const_ty(&self, e: ConstExpr) -> Ty {
         match e {
             ConstExpr::Lit(v) => Ty::Const(v),
             ConstExpr::Param(p) => Ty::Param(p.into()),

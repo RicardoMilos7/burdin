@@ -80,8 +80,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn slice_get(&mut self, args: &'a [tir::Expr], ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let (ptr, len) = self.slice_parts(&args[0])?;
         let index = self.usize_value(&args[1])?;
-        let Ty::Option(inner) = ty else { return Err("`get` returns an `Option`".into()) };
-        let item = inner.as_ref().clone();
+        let Some(inner) = self.option_payload_ty(ty) else { return Err("`get` returns an `Option`".into()) };
+        let inner = &inner;
+        let item = inner.clone();
         let out = self.alloca(self.option_ty(&item).into(), "get.out")?;
         let in_bounds = self.builder.build_int_compare(IntPredicate::ULT, index, len, "").map_err(llvm_err)?;
         let none_bb = self.new_block("get.none");
@@ -93,7 +94,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(some_bb);
         let elem = match &item {
-            Ty::Ref { inner, .. } => inner.as_ref().clone(),
+            Ty::Ref { inner, .. } => (**inner).clone(),
             other => other.clone(),
         };
         let point = self.slice_elem_ptr(ptr, &elem, index, "get.ptr")?;
@@ -101,16 +102,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(out, some).map_err(llvm_err)?;
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);
-        Ok(Some(self.builder.build_load(self.option_ty(&item), out, "").map_err(llvm_err)?))
+        self.finish_option(self.option_ty(&item), out, ty)
     }
 
     /// `xs.last(): Option<&T>`: a view of the last element, or `None` when the slice is empty.
     fn slice_last(&mut self, args: &'a [tir::Expr], ty: &Ty) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let (ptr, len) = self.slice_parts(&args[0])?;
-        let Ty::Option(inner) = ty else { return Err("`last` returns an `Option`".into()) };
-        let item = inner.as_ref().clone();
+        let Some(inner) = self.option_payload_ty(ty) else { return Err("`last` returns an `Option`".into()) };
+        let inner = &inner;
+        let item = inner.clone();
         let elem = match &item {
-            Ty::Ref { inner, .. } => inner.as_ref().clone(),
+            Ty::Ref { inner, .. } => (**inner).clone(),
             other => other.clone(),
         };
         let out = self.alloca(self.option_ty(&item).into(), "last.out")?;
@@ -130,7 +132,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(out, some).map_err(llvm_err)?;
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);
-        Ok(Some(self.builder.build_load(self.option_ty(&item), out, "").map_err(llvm_err)?))
+        self.finish_option(self.option_ty(&item), out, ty)
     }
 
     /// `xs.get(range): Option<[T]>`: checked slicing. An out-of-range or reversed range is `None`, never a panic.
@@ -141,9 +143,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let range = self.need(range, &range_ty).into_struct_value();
         let lo = self.builder.build_extract_value(range, 0, "range.lo").map_err(llvm_err)?.into_int_value();
         let hi = self.builder.build_extract_value(range, 1, "range.hi").map_err(llvm_err)?.into_int_value();
-        let inclusive = matches!(range_ty, Ty::Range(_, true));
-        let Ty::Option(inner) = ty else { return Err("`get` returns an `Option`".into()) };
-        let item = inner.as_ref().clone();
+        let inclusive = self.defs().range_parts(&range_ty).is_some_and(|(_, inclusive)| inclusive);
+        let Some(inner) = self.option_payload_ty(ty) else { return Err("`get` returns an `Option`".into()) };
+        let inner = &inner;
+        let item = inner.clone();
         let out = self.alloca(self.option_ty(&item).into(), "get.range.out")?;
         let hi_ok = if inclusive {
             self.builder.build_int_compare(IntPredicate::ULT, hi, len, "").map_err(llvm_err)?
@@ -181,7 +184,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.builder.build_store(out, value).map_err(llvm_err)?;
         self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
         self.builder.position_at_end(end);
-        Ok(Some(self.builder.build_load(self.option_ty(&item), out, "").map_err(llvm_err)?))
+        self.finish_option(self.option_ty(&item), out, ty)
     }
 
     /// `xs.swap(a, b)`: exchanges two elements by moving their bytes.

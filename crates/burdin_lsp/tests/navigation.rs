@@ -269,11 +269,11 @@ fn definition_resolves_the_callee_of_an_incomplete_call() {
         g.main = (uri.clone(), edited);
         if result.is_null() { "none".to_string() } else { place(g, &result) }
     };
-    // `append` is a method of the standard library's `List`: the built-ins' materialized copy.
+    // `append` is a method of the standard library's `List`, which `std/std.bd` declares.
     let list = "    println";
     for call in ["    a.append()\n    println", "    a.append(\n    println", "    a.append(List<i32>.\n    println"] {
         let got = ask(&mut g, &declared, list, call, "append");
-        assert!(got.starts_with("std/builtins.bd:") && got.ends_with(":append"), "`{call}`: {got}");
+        assert!(got.starts_with("std/std.bd:") && got.ends_with(":append"), "`{call}`: {got}");
     }
     // A function of the file, named with an unclosed list: `sq.grow(` in `main`.
     let grow_line = declared.lines().position(|l| l.contains("fn grow")).unwrap() + 1;

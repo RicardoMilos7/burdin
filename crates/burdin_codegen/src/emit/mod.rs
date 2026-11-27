@@ -23,7 +23,6 @@ mod panics;
 mod pattern;
 mod place;
 mod reach;
-mod results;
 mod scope;
 mod scripts;
 mod slices;

@@ -42,7 +42,7 @@ fn main() {
     // A set and a string, from the explicit argument.
     let set = [1, 2, 3, 2, 1].into_iter().collect<Set<i32>>()
     println("{set.len()} {set.contains(2)} {set.contains(7)}")
-    let text = "a-b".chars().collect<String>()
+    let text = "a-b".chars().into_iter().collect<String>()
     println("{text}")
 
     // The expected type still names the target when no argument is written.
