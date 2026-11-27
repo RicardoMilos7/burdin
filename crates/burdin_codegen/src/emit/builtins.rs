@@ -90,6 +90,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // `__view_as_text(view)`: `[u8]` and `str` are the same pointer-and-length value.
             Builtin::ViewAsText => return self.expr_mode(&args[0], Mode::Use),
+            // `__bytes_into_string(own bytes)`: `List<u8>` (Global) and `String` share `{ ptr, len, cap }` and free.
+            Builtin::BytesIntoString => return self.expr_mode(&args[0], Mode::Move),
             Builtin::CStrToString => {
                 let ptr =
                     self.expr_mode(&args[0], Mode::Use)?.expect("a C string pointer has a value").into_pointer_value();

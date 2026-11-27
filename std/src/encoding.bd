@@ -239,11 +239,10 @@ fn from_utf8(data: [u8]): Result<String, DecodeError> {
 /// The text `bytes` spell, or the first invalid byte's offset. This is `String.from_utf8`
 /// (`spec/stdlib.md`, "String bytes and UTF-8 validation").
 priv fn string_from_utf8(own bytes: List<u8>): Result<String, Utf8Error> {
-    let data = bytes[0..bytes.len()]
-    match utf8_error_at(data) {
+    match utf8_error_at(bytes[0..bytes.len()]) {
         Option.Some(index) => Result.Err(Utf8Error.Invalid { index }),
-        // The bytes were just checked, so the unchecked view cast is sound here.
-        Option.None => Result.Ok(String.from(unsafe { __view_as_text(data) })),
+        // The bytes were just checked, so adopting the buffer as a `String` is sound here.
+        Option.None => Result.Ok(unsafe { __bytes_into_string(bytes) }),
     }
 }
 

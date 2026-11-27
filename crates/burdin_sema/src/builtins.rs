@@ -75,6 +75,7 @@ pub(crate) fn builtin(name: &str) -> Option<Builtin> {
         "__try_realloc" => Builtin::RawTryRealloc,
         "__alloc_count" => Builtin::AllocCount,
         "__view_as_text" => Builtin::ViewAsText,
+        "__bytes_into_string" => Builtin::BytesIntoString,
         _ => {
             return RtOp::ALL
                 .iter()
@@ -199,7 +200,11 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
     let ret = match b {
         Builtin::Panic | Builtin::Unreachable | Builtin::ProcessExit => Ty::Never,
         Builtin::TargetOs | Builtin::TargetArch => Ty::Str,
-        Builtin::StringNew | Builtin::StringFrom | Builtin::CStrToString | Builtin::FloatStr => Ty::String,
+        Builtin::StringNew
+        | Builtin::StringFrom
+        | Builtin::CStrToString
+        | Builtin::FloatStr
+        | Builtin::BytesIntoString => Ty::String,
         Builtin::ViewAsText => Ty::Str,
         Builtin::ReadToString | Builtin::DnsLookup => globals.result_ty(Ty::String, os_code()),
         Builtin::WriteFile => globals.result_ty(Ty::Unit, os_code()),
@@ -324,6 +329,9 @@ pub(crate) fn builtin_sig(b: Builtin, globals: &Globals) -> Signature {
         }
         Builtin::StdoutWriteBytes | Builtin::StderrWriteBytes | Builtin::ViewAsText => {
             vec![ParamSig::plain(Ty::Slice(Box::new(Ty::Int(IntTy::U8))))]
+        }
+        Builtin::BytesIntoString => {
+            vec![ParamSig { own: true, ..ParamSig::plain(globals.list_of(Ty::Int(IntTy::U8))) }]
         }
         // The environment primitives take the raw text; the `std` wrappers add the UTF-8 checks and the error
         // values (`spec/stdlib.md`, "Environment variables and the working directory").
@@ -846,6 +854,13 @@ mod tests {
         assert_eq!(sig.params.len(), 1);
         assert_eq!(sig.params[0].ty, bytes);
         assert_eq!(sig.ret, Ty::Str);
+        assert_eq!(builtin("__bytes_into_string"), Some(Builtin::BytesIntoString));
+        let globals = Globals::default();
+        let sig = builtin_sig(Builtin::BytesIntoString, &globals);
+        assert_eq!(sig.params.len(), 1);
+        assert!(sig.params[0].own);
+        assert_eq!(sig.params[0].ty, globals.list_of(Ty::Int(IntTy::U8)));
+        assert_eq!(sig.ret, Ty::String);
     }
 
     #[test]
