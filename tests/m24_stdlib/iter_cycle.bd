@@ -70,8 +70,7 @@ fn main() {
     for x in (0..2).iter().cycle().take(5) {
         println("r{x}")
     }
-    let pair = "xy".chars()
-    for c in pair.iter().cycle().take(5) {
+    for c in "xy".chars().cycle().take(5) {
         println("{c}")
     }
     for x in (Countdown { from: 2 }).cycle().take(5) {

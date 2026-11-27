@@ -26,8 +26,14 @@ impl FnCx<'_> {
     ) -> Option<tir::Expr> {
         let recv_ty = recv.ty.clone();
         // A method of the receiver type's own table wins over an `Iterator` default of the same name
-        // (`spec/extensions.md`, EX3): `[T].last()` and `[T].to_list()` are the slice's own methods.
+        // (`spec/extensions.md`, EX3): `[T].last()` and `[T].to_list()` are the slice's own methods, and an array
+        // delegates to the same slice methods.
         if crate::builtins::method(self.globals, &name.name, &recv_ty).is_some() {
+            return None;
+        }
+        if let Ty::Array(elem, _) = &recv_ty
+            && crate::builtins::method(self.globals, &name.name, &Ty::Slice(elem.clone())).is_some()
+        {
             return None;
         }
         let builtin_item = self.globals.builtin_iterator_item(&recv_ty, &self.bounds);
@@ -61,17 +67,47 @@ impl FnCx<'_> {
                 span,
             ));
         }
+        // Direct chaining on any `Iterable` (`spec/iterators.md`, IT10): every lazy adapter and consumer of
+        // `Iterator<T>` is available directly on an `Iterable` by calling `iter()` first. An immutable slice `[T]`
+        // (which is both `Iterable` and `Iterator`) also takes a fresh view through `iter()`, so consumers taking
+        // `mut self` (`fold`, `find`, `count`, ...) work on an immutable slice as on a `List` or array.
+        let immutable_slice = matches!(recv_ty, Ty::Slice(_)) && is_place_expr(&recv) && !self.place_mutable(&recv);
+        if (self.globals.iterator_item(&recv_ty, &self.bounds).is_none() || immutable_slice)
+            && self.globals.iterable_item(&recv_ty, &self.bounds).is_some()
+            && self.is_iterable_adapter_or_consumer(&name.name, args)
+        {
+            if let Some(key) = adt_key(&recv_ty)
+                && !self.globals.methods.contains_key(&(key, "iter".to_string()))
+                && crate::builtins::method(self.globals, "iter", &recv_ty).is_none()
+            {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("`{recv_ty}` implements `Iterable` but has no `iter` method"),
+                );
+                return Some(self.args_then_error(args, span));
+            }
+            let recv_span = recv.span;
+            let iter_ident = ast::Ident { name: "iter".to_string(), span: recv_span };
+            let iter_expr = self.method_call_on_with(recv, &iter_ident, &[], &[], recv_span, None);
+            if iter_expr.ty == Ty::Error {
+                return Some(self.args_then_error(args, span));
+            }
+            if self.globals.iterator_item(&iter_expr.ty, &self.bounds).is_none() {
+                self.diags.error(
+                    Code::BOUND_NOT_SATISFIED,
+                    span,
+                    format!("`iter()` returns `{}`, which is not an `Iterator`", iter_expr.ty),
+                );
+                return Some(self.args_then_error(args, span));
+            }
+            return self.iterator_method(iter_expr, name, explicit, args, span, expect);
+        }
         if (name.name == "sum" || name.name == "product")
             && args.is_empty()
             && let Some(item) = self.globals.iterator_item(&recv.ty, &self.bounds)
         {
             return Some(self.iterator_sum(recv, &item, name.name == "product", span));
-        }
-        // The eager `List` methods are generic functions in `std`; the receiver is their first argument.
-        if self.globals.list_parts(&recv_ty).is_some()
-            && let Some(g) = self.globals.eager_list_fn(&name.name)
-        {
-            return Some(self.generic_call_with_receiver(g, recv, &name.name, args, span));
         }
         // `min`, `max`, `eq`, and `cmp` need `T: Ord` (or `Eq`) on the interface's own item type, so they are
         // functions in `std` that take the iterator; the compiler hands them the item type.
@@ -151,9 +187,26 @@ impl FnCx<'_> {
         })
     }
 
-    /// Whether `name` on a value of type `ty` (through references) is the `collect` of an iterator, which takes its
-    /// target as an explicit type argument (`spec/iterators.md`, IT17). The value must be an iterator the compiler
-    /// knows, and no method of its own may have that name, so the call reaches the `Iterator<T>` default.
+    /// Whether `name` is an `Iterator` adapter or consumer that applies directly to an `Iterable` by calling `iter()`
+    /// first (`spec/iterators.md`, IT10). `next` and `next_back` are excluded so an `Iterable` is never a cursor.
+    fn is_iterable_adapter_or_consumer(&self, name: &str, args: &[ast::Arg]) -> bool {
+        if (name == "sum" || name == "product") && args.is_empty() {
+            return true;
+        }
+        if self.globals.iterator_item_fn(name).is_some() {
+            return true;
+        }
+        if args.is_empty() && self.globals.iterator_adapter_fn(name).is_some() {
+            return true;
+        }
+        self.globals
+            .iterator_iface
+            .is_some_and(|iface| self.globals.interfaces[iface].methods.iter().any(|m| m.name == name && m.has_default))
+    }
+
+    /// Whether `name` on a value of type `ty` (through references) is the `collect` of an iterator or iterable, which
+    /// takes its target as an explicit type argument (`spec/iterators.md`, IT10, IT17). No method of its own may have
+    /// that name, so the call reaches the `Iterator<T>` default.
     pub(super) fn iterator_collect(&self, ty: &Ty, name: &str) -> bool {
         if name != "collect" {
             return false;
@@ -169,6 +222,7 @@ impl FnCx<'_> {
             return false;
         }
         self.globals.iterator_item(base, &self.bounds).is_some()
+            || self.globals.iterable_item(base, &self.bounds).is_some()
     }
 
     /// `from_iter` on a built-in collection (`List`, `Map`, `String`, `Option`, `Result`) and `from` on a `List` or a

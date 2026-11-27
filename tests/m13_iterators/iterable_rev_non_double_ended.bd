@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// Direct `.rev()` on an `Iterable` whose `iter()` is not a `DoubleEndedIterator` (like `Map`) is E0141
+// (spec/iterators.md, IT10, IT14).
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    m.insert(1, 10)
+    for p in m.rev() { //~ E0141
+        println("{}", *p.0)
+    }
+}

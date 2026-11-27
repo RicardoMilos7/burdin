@@ -1,0 +1,12 @@
+//@ compile-fail
+
+// `Chars<str>` holds a view of its text, so it is second-class (SC2): a struct or enum cannot store it.
+struct Scanner {
+    it: Chars<str> //~ E0120
+}
+
+enum Source {
+    Text(Chars<str>), //~ E0120
+}
+
+fn main() {}

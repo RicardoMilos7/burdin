@@ -54,7 +54,7 @@ language can express it; the issue named moves it), or **blocked** (it needs the
 | `Ty::RangeIter`, `Ty::Range` | moved | Done in #1017: `Range<T>`, `RangeInclusive<T>`, `RangeIter<T>`, and `RangeIterInclusive<T>` are ordinary `std` structs (lang items `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`). A range literal builds the struct; the iterators step with the `__int_step(x, delta)` intrinsic, so they stop after the last value without overflowing; `for` over a range with a plain binding still lowers to a counted loop. |
 | `Ty::MapIntoIter` | moved | `struct MapIntoIter<K, V, A> { ptr, len, cap, pos, alloc }` in `std` (lang item `MapIntoIter`), a plain struct implementing `Iterator<(K, V)>` and `Drop`; `Map.into_iter`, `into_keys`, `into_values`, and `drain` produce it. |
 | `Ty::MapIter`, `Ty::MapIterMut`, `Ty::IterMut`, `Ty::SliceChunks`, `Ty::SliceWindows` | stays | They hold a view, and a struct field cannot (SC2, E0120); the language keeps that rule (#1074 was closed as not planned). A stored `CPtr` would let the iterator outlive its collection. |
-| `Ty::Chars` | removed | `str.chars()` and `String.chars()` return a `List<char>` (an extension method of `std`, `std/src/text.bd`), decided in #1017: a view of characters cannot exist because UTF-8 text holds no array of `char`, and a struct holding a `str` view is not allowed. The list is a copy, so `chars()` costs O(n) and an allocation; `char_count`, `nth_char`, and `char_indices` read characters without it. `for c in s.chars()` walks the list, and `s.chars().iter()` or `.into_iter()` gives the iterator adapters. |
+| `Ty::Chars` | removed | `str.chars()` and `String.chars()` return a `Chars<str>` (`std/src/text.bd`): an ordinary `std` struct generic over its text, `struct Chars<S> { text: S, front: usize, back: usize }`, with `Iterator<char>` and `DoubleEndedIterator<char>` written in Burdin (issue #1083). #1017 first made `chars()` return a `List<char>` copy, because a struct with a `str` field is E0120; a struct generic over its source may hold the view, and its `Chars<str>` instance is second-class (`memory-rules.md` SC3), so the iterator is lazy and allocates nothing. `to_char_list()` gives the list. |
 
 Every type, function, and method the compiler provides is declared once, without a body, in `std/src/builtins.bd`
 (`fn List<T>.push(mut self, own x: T)`, `enum Option<T> { Some(T) None }`), each with its `///` documentation. The
@@ -632,8 +632,14 @@ struct String {
 ```
 
 `str` has the same read methods (`len`, `starts_with`, `find`, `find_str`, `as_str`, `chars`, `to_string`), without
-`push*`, `from`, or `clone`. `chars()` is an extension method (`text.bd`) on both: `fn str.chars(self): List<char>` copies the
-Unicode scalar values into a list, so `for c in s.chars()` walks a list and `s.chars().iter()` gives the adapters.
+`push*`, `from`, or `clone`. `chars()` is an extension method (`text.bd`) on both: `fn str.chars(self): Chars<str>` (and
+`fn String.chars(self): Chars<str>`) returns a lazy iterator over the Unicode scalar values (issue #1083). `Chars<S>` is an
+ordinary `std` struct, `struct Chars<S>: Clone { priv text: S, priv front: usize, priv back: usize }`, with
+`Iterator<char>` and `DoubleEndedIterator<char>` for `Chars<str>`: `next` decodes the UTF-8 at the front, `next_back` steps
+back over continuation bytes and decodes the last character, and nothing is allocated, so `for c in s.chars()`,
+`s.chars().rev()`, `.filter(...)`, and `.count()` cost no list; `.to_list()` or `s.to_char_list()` builds one. A `Chars<str>`
+holds a view of the text, so it is second-class (`memory-rules.md` SC1-SC3): a struct field or enum payload of that type is
+E0120, returning one that reads a local `String` is E0122, and the text stays borrowed until the iterator's last use (E0111).
 
 Slicing `s[a..b]` and `s[a..=b]` yields a `str` view of the bytes in the range; it works on `str`, `String`, arrays,
 and slices. `a` and `b` are `usize`; a reversed or out-of-range range panics, and so does a slice of `str` or `String`
@@ -952,12 +958,6 @@ struct List<T, A = Global> {
     fn sort(mut self)                 // ascending; needs < on T
     fn iter(self): [T]                // borrows: `T` if Copy, else `&T`
     fn into_iter(own self): ListIntoIter<T, A>   // consumes the list, carrying the allocator
-    fn map<U, F: FnMut(&T): U>(self, f: F): List<U>
-    fn filter<F: FnMut(&T): bool>(self, f: F): List<T>   // needs Clone on T
-    fn fold<A, F: FnMut(A, &T): A>(self, init: A, f: F): A
-    fn any<F: FnMut(&T): bool>(self, f: F): bool
-    fn all<F: FnMut(&T): bool>(self, f: F): bool
-    fn find<F: FnMut(&T): bool>(self, f: F): Option<T>   // needs Clone on T
 }
 ```
 
@@ -970,16 +970,13 @@ their elements are equal in order: `[1, 2] != [2, 1]` and `[1] != [1, 1]`. Equal
 "Hash"). `List` has no `Ord`. `assert_eq` and `assert_ne` take lists of an `Eq` element type, and `contains` searches
 with the same `==`. Tests: `m24_stdlib/list_equality`, `list_equality_needs_eq`.
 
-The eager iteration helpers `map`, `filter`, `fold`, `any`, `all`, and `find` borrow the list, hand the closure a view of each element, and return owned results
-(`iterators.md`, IT10); `.any` is resolved to the `std` function named `list_any` and spelled with the reserved
-word. Every method except `new` and `with_capacity` exists for every allocator argument.
-
-The eager helpers are kept beside the lazy `Iterator` methods of the same names, and each is documented with a pointer
-to the other. If you need the lazy form of `xs.map(f)`, write `xs.iter().map(f)`: the closure then takes the item
-(`T`, or `&T` for a type that is not `Copy`) rather than a view. If you need the eager form of a lazy chain, call
-`to_list()` or `collect()` on it, as in `xs.iter().map(f).to_list()`. A prelude constructor is a closure value too: `Option.Some`
-maps the items to `Option`s, as in `xs.iter().map(Option.Some).collect()`, while `Result.Ok` and `Result.Err` need the other type argument
-written in a closure type (`memory-rules.md` CL11). `filter` and `find` need `T: Clone` only on the eager side; `xs.iter().cloned()` gives the lazy side the same owned items (`iterators.md`, IT10 has the full table).
+`List<T>` is `Iterable`, so every lazy `Iterator` adapter and consumer (`map`, `filter`, `fold`, `any`, `all`, `find`,
+`zip`, `rev`, `sum`, `to_list`, `collect`, ...) can be called directly on a list without `.iter()` (`iterators.md`,
+IT10). The call borrows the list through `iter()` and builds no intermediate list; call `to_list()` or `collect()` when
+an eager `List` is wanted, as in `xs.map(f).to_list()`. A prelude constructor is a closure value too: `Option.Some`
+maps the items to `Option`s, as in `xs.map(Option.Some).collect()`, while `Result.Ok` and `Result.Err` need the other
+type argument written in a closure type (`memory-rules.md` CL11). Every method except `new` and `with_capacity` exists
+for every allocator argument.
 
 The capacity methods (`spec/allocators.md`, AL1-AL4): `with_capacity(n)` and `with_capacity_in(n, alloc)` make an
 empty list with room for `n` elements, allocating the buffer up front through the default allocator or through the
@@ -1957,7 +1954,6 @@ nothing is cloned unless the name says so, and every element is dropped exactly 
 
 ```
 fn List<T>.retain<F: FnMut(&T): bool>(mut self, f: F)      // keeps the accepted elements, in order
-fn List<T>.position<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.rposition<F: FnMut(&T): bool>(self, f: F): Option<usize>
 fn List<T>.reverse(mut self)
 fn List<T>.dedup(mut self) where T: Eq                      // removes consecutive duplicates
@@ -1969,8 +1965,8 @@ fn List<T>.resize(mut self, new_len: usize, own value: T) where T: Clone
 ```
 
 `is_empty` is a method the compiler provides, so it exists for a list with any allocator argument, and so are
-`truncate` and `swap`; the extension list above leaves them out. `find` is the eager helper of `iterators.md` IT10
-(it clones the element). `dedup_by_key` removes an element whose key `==` the key of the element before it (issue #930).
+`truncate` and `swap`; the extension list above leaves them out. `position` and `find` come from the `Iterable`
+protocol (`iterators.md`, IT10). `dedup_by_key` removes an element whose key `==` the key of the element before it (issue #930).
 Its key type `K` is a parameter of the method, as `sort_by_key`'s is, so the closure's result fixes it; a key type that
 does not support `==` (a struct that does not derive `Eq`) is E0141.
 

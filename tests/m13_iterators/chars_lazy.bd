@@ -1,0 +1,39 @@
+//@ run
+//> a
+//> ñ
+//> 😀
+//> 😀
+//> ñ
+//> a
+//> 2
+//> 3
+//> 3 😀
+//> ñ
+//> a 😀 ñ
+//> true
+
+// `chars()` is a lazy iterator (`Chars<str>`, issue #1083): `for` decodes as it goes, `rev()` decodes UTF-8 backwards,
+// and `filter`, `count`, and `to_list` work on it like on any iterator. Only `to_list` allocates.
+fn main() {
+    let text = "añ😀"
+    for c in text.chars() {
+        println("{c}")
+    }
+    for c in text.chars().rev() {
+        println("{c}")
+    }
+    println("{text.chars().filter(|c| *c != 'a').count()}")
+    println("{text.chars().count()}")
+    let list = text.chars().to_list()
+    println("{list.len()} {list[2]}")
+    let mut it = text.chars()
+    it.next()
+    println("{it.next().unwrap()}")
+    // Both ends meet in the middle and each character is yielded once.
+    let mut both = text.chars()
+    let first = both.next().unwrap()
+    let last = both.next_back().unwrap()
+    let middle = both.next().unwrap()
+    println("{first} {last} {middle}")
+    println("{both.next().is_none() && both.next_back().is_none()}")
+}

@@ -26,7 +26,7 @@ fn main() {
     println("{deque:?}")
 
     let mut text = String.from("ab")
-    text.extend_iter("cd".chars().into_iter())
+    text.extend_iter("cd".chars())
     println("{text}")
 
     let mut odds = Deque<i32>.new()

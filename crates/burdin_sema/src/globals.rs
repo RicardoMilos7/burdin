@@ -618,18 +618,6 @@ impl Globals {
         self.std_generic(&format!("iter_{name}"))
     }
 
-    /// The generic function behind an eager `List` method (`xs.map(f)`), looked up in the standard library.
-    pub(crate) fn eager_list_fn(&self, name: &str) -> Option<usize> {
-        if !matches!(name, "map" | "filter" | "fold" | "any" | "all" | "find") {
-            return None;
-        }
-        let name = format!("list_{name}");
-        self.std_modules.iter().find_map(|&module| match self.value(module, &name)? {
-            Global::Generic(g) => Some(g),
-            _ => None,
-        })
-    }
-
     /// The generic function in `std` behind an iterator consumer that needs a bound on the item type (`min`, `max`,
     /// `eq`, `cmp`), which an interface default method cannot state.
     pub(crate) fn iterator_item_fn(&self, name: &str) -> Option<usize> {

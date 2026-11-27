@@ -103,8 +103,7 @@ fn main() {
     println("{((0 as u8)..=(0 as u8)).iter().rev().count()}")
     println("{(0..0).iter().rev().count()}")
     // A string is walked by scalar value, backwards.
-    let word = "añ😀z".chars()
-    for c in word.iter().rev() {
+    for c in "añ😀z".chars().rev() {
         println("{c}")
     }
     // A user iterator and a deque.
@@ -146,7 +145,6 @@ fn main() {
     let xs = [1, 2, 3, 4]
     let mut s = xs.iter()
     println("{s.next_back():?} {s.next():?} {s.next_back():?} {s.next_back():?} {s.next():?}")
-    let ab = "ab".chars()
-    let mut c = ab.iter()
+    let mut c = "ab".chars()
     println("{c.next_back():?} {c.next():?} {c.next_back():?}")
 }

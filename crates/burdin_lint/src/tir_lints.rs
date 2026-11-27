@@ -1,5 +1,5 @@
-//! The lints that need types: `eager_chain`, `redundant_clone`, `large_copy_in_loop`, `unused_mut`,
-//! `loop_invariant_alloc`, `needless_to_list`, and `borrow_could_own` (`spec/lint.md`, LN20-LN26).
+//! The lints that need types: `redundant_clone`, `large_copy_in_loop`, `unused_mut`,
+//! `loop_invariant_alloc`, `needless_to_list`, and `borrow_could_own` (`spec/lint.md`, LN21-LN26).
 //!
 //! They read the typed tree, one function at a time. A walk numbers every read of a local in evaluation order, so
 //! "this is the last use" is a comparison of numbers, and it notes the numbers a loop spans, so a local that is read
@@ -22,9 +22,6 @@ use std::collections::{HashMap, HashSet};
 
 /// A `Copy` value at least this many bytes wide counts as large (`large_copy_in_loop`).
 const LARGE_COPY_BYTES: u64 = 64;
-
-/// A chain of at least this many eager `List` calls reports (`eager_chain`).
-const EAGER_CHAIN_MIN: usize = 3;
 
 type Key = (FileId, u32, u32);
 
@@ -569,28 +566,11 @@ impl An<'_> {
         }
     }
 
-    fn call(&mut self, e: &Expr, fid: FuncId, args: &[Expr], receiver_of_eager: bool) {
+    fn call(&mut self, _e: &Expr, fid: FuncId, args: &[Expr], _receiver_of_eager: bool) {
         let callee = &self.program.functions[fid.0];
         let sig = &self.program.signatures[fid.0];
-        // `eager_chain`: report once, from the outermost call of a chain.
-        let eager = eager_name(&callee.name).is_some();
-        if eager && !receiver_of_eager {
-            let len = chain_len(self.program, e);
-            if len >= EAGER_CHAIN_MIN && self.cx.in_package(e.span) {
-                self.plain.push(
-                    Finding::new(
-                        Lint::EagerChain,
-                        e.span,
-                        format!("a chain of {len} eager list methods builds a new list at every step"),
-                    )
-                    .note("start the chain with `.iter()` so it runs lazily without the intermediate lists")
-                    .note("the closures of the lazy form take the items themselves, where the eager `List` methods pass views"),
-                );
-            }
-        }
-        for (i, a) in args.iter().enumerate() {
-            // Only the first argument of an eager call is the chain's list.
-            self.expr(a, eager && i == 0);
+        for a in args {
+            self.expr(a, false);
         }
         for (i, a) in args.iter().enumerate() {
             let Some(p) = sig.params.get(i) else { continue };
@@ -732,28 +712,6 @@ fn root_of(e: &Expr) -> Option<LocalId> {
         | K::Ref { place: b, .. } => root_of(b),
         K::Slice { base, .. } => root_of(base),
         _ => None,
-    }
-}
-
-/// `std.iter.list_map<...>` is the eager `map`; the name of the method is what follows `list_` in the standard library.
-fn eager_name(name: &str) -> Option<&str> {
-    // The name is `std.iter.list_map<i32, ...>`: drop the type arguments, then the module path.
-    let path = name.split('<').next().unwrap_or(name);
-    if !path.starts_with("std.") {
-        return None;
-    }
-    let last = path.rsplit('.').next().unwrap_or(path);
-    let method = last.strip_prefix("list_")?;
-    ["map", "filter", "fold", "any", "all", "find"].into_iter().find(|m| *m == method)
-}
-
-/// How many eager calls are chained: a call whose list argument is itself an eager call.
-fn chain_len(program: &Program, e: &Expr) -> usize {
-    match &e.kind {
-        ExprKind::Call(fid, args) if eager_name(&program.functions[fid.0].name).is_some() => {
-            1 + args.first().map_or(0, |a| chain_len(program, a))
-        }
-        _ => 0,
     }
 }
 

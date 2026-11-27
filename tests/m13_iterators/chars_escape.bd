@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// The iterator borrows its text: returning one that reads a local `String` would outlive the string.
+fn letters(): Chars<str> {
+    let s = String.from("abc")
+    s.chars() //~ E0122
+}
+
+fn main() {}

@@ -37,7 +37,8 @@ what each area is for, and the type to start with.
 ## Collections
 
 - **`List<T>`** and **slices** `[T]`. Growable lists, sorting with a comparator, and read-only or mutable views. A list
-  compares with `==` when its elements do, and has eager `map`, `filter`, `fold`, `any`, `all`, and `find` methods.
+  compares with `==` when its elements do, and is `Iterable`, so lazy adapters (`map`, `filter`, `fold`, `rev`, ...)
+  chain directly on it without `.iter()`.
 - **`Map<K, V>`** and **`Set<T>`**. Hash-based collections with entry operations and views. A map has no order.
 - **`Deque<T>`** and **`PriorityHeap<T>`**. A double-ended queue and a priority queue.
 - **`Once<T>`** and **`Lazy<T, F>`**. Values computed once, on first use.
