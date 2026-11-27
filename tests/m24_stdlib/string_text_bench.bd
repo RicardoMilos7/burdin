@@ -1,0 +1,47 @@
+//@ burdin-bench measured=5 failed=0
+
+// Benchmarks the text helpers optimized in issue #1019 (`split`, `lines`, `rsplit`, `find_all`, and `replace`) on
+// multi-kilobyte inputs (`spec/bench.md`).
+fn main() {}
+
+bench "split large csv" {
+    let input = black_box("alpha,beta,gamma,delta,epsilon,zeta,eta,theta,".repeat(64))
+    let mut total: usize = 0
+    for piece in input.split(",") {
+        total = total + piece.len()
+    }
+    black_box(total)
+}
+
+bench "rsplit large csv" {
+    let input = black_box("alpha,beta,gamma,delta,epsilon,zeta,eta,theta,".repeat(64))
+    let mut total: usize = 0
+    for piece in input.rsplit(",") {
+        total = total + piece.len()
+    }
+    black_box(total)
+}
+
+bench "lines large text" {
+    let input = black_box("the quick brown fox jumps over the lazy dog\r\nsecond line here\n".repeat(64))
+    let mut total: usize = 0
+    for line in input.lines() {
+        total = total + line.len()
+    }
+    black_box(total)
+}
+
+bench "find_all large text" {
+    let input = black_box("the quick brown fox jumps over the lazy dog; ".repeat(64))
+    let mut count: usize = 0
+    for (at, hit) in input.find_all("fox") {
+        count = count + at + hit.len()
+    }
+    black_box(count)
+}
+
+bench "replace large text" {
+    let input = black_box("the quick brown fox jumps over the lazy dog; ".repeat(64))
+    let out = input.replace("fox", "wolf")
+    black_box(out)
+}

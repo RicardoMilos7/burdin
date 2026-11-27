@@ -1,9 +1,13 @@
 // Text helpers for `str` and `String` (spec/stdlib.md).
 //
 // They are extension methods (spec/extensions.md), so the prelude makes them visible everywhere and the compiler's own
-// methods (`len`, `find`, `starts_with`, ...) win. Offsets are byte offsets, and every function keeps UTF-8 intact: a
-// match of a valid separator in valid text always starts and ends on a character boundary, and `trim` walks whole
-// characters. The pieces a function returns are `String`s, because a `List` cannot hold views.
+// methods (`len`, `find`, `starts_with`, ...) win. Read-only `str` extensions apply directly to `String` receivers
+// through the `String`-to-`str` borrow fallback (EX3), so `String` needs no duplicate wrappers.
+//
+// Offsets are byte offsets, and every function keeps UTF-8 intact: a match of a valid separator in valid text always
+// starts and ends on a character boundary, and `trim` and `split_whitespace` walk whole characters. The split, lines,
+// match, and character-index helpers return lazy iterators that yield `str` views (or `(usize, str)` / `(usize, char)`)
+// with no per-piece allocation.
 
 use iter.{DoubleEndedIterator, Iterator}
 use mem
@@ -17,6 +21,18 @@ priv fn matches_at(text: str, at: usize, needle: str): bool {
     let pat = needle.as_bytes()
     let mut k: usize = 0
     while k < pat.len() {
+        if hay[at + k] != pat[k] {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+/// Whether `pat[0..pat_len]` matches `hay` at byte offset `at`.
+priv fn matches_bytes(hay: [u8], at: usize, pat: [u8], pat_len: usize): bool {
+    let mut k: usize = 0
+    while k < pat_len {
         if hay[at + k] != pat[k] {
             return false
         }
@@ -44,6 +60,171 @@ priv fn decode_char(bytes: [u8], at: usize): (char, usize) {
     let low = (((bytes[at + 2] as u32) & 63) << 6) | ((bytes[at + 3] as u32) & 63)
     ((high | low) as char, 4)
 }
+
+/// Encodes `c` into a 4-byte UTF-8 buffer on the stack and returns `(bytes, len)`.
+priv fn encode_char_utf8(c: char): ([u8; 4], usize) {
+    let code = c as u32
+    if code < 128 {
+        return ([code as u8, 0, 0, 0], 1)
+    }
+    if code < 2048 {
+        return ([(192 | (code >> 6)) as u8, (128 | (code & 63)) as u8, 0, 0], 2)
+    }
+    if code < 65536 {
+        return (
+            [
+                (224 | (code >> 12)) as u8,
+                (128 | ((code >> 6) & 63)) as u8,
+                (128 | (code & 63)) as u8,
+                0,
+            ],
+            3,
+        )
+    }
+    (
+        [
+            (240 | (code >> 18)) as u8,
+            (128 | ((code >> 12) & 63)) as u8,
+            (128 | ((code >> 6) & 63)) as u8,
+            (128 | (code & 63)) as u8,
+        ],
+        4,
+    )
+}
+
+/// The byte offset of the first occurrence of `needle` (non-empty) in `text` at or after `from`, or `text.len()` when
+/// there is none. Uses a linear byte scan with O(1) extra space and O(n * m) worst-case time.
+priv fn index_of(text: str, needle: str, from: usize): usize {
+    let hay = text.as_bytes()
+    let pat = needle.as_bytes()
+    let hlen = hay.len()
+    let n = pat.len()
+    if n == 0 {
+        return from
+    }
+    if n > hlen || from > hlen - n {
+        return hlen
+    }
+    let b0 = pat[0]
+    let limit = hlen - n
+    if n == 1 {
+        let mut i = from
+        while i <= limit {
+            if hay[i] == b0 {
+                return i
+            }
+            i = i + 1
+        }
+        return hlen
+    }
+    let mut i = from
+    while i <= limit {
+        if hay[i] == b0 && matches_at(text, i, needle) {
+            return i
+        }
+        i = i + 1
+    }
+    hlen
+}
+
+/// The byte offset of the last occurrence of `needle` (non-empty) in `text[0..end]`, or `None`.
+priv fn rindex_of(text: str, needle: str, end: usize): Option<usize> {
+    let n = needle.len()
+    if n > end {
+        return Option.None
+    }
+    let hay = text.as_bytes()
+    let pat = needle.as_bytes()
+    let b0 = pat[0]
+    let mut i = end - n
+    if n == 1 {
+        loop {
+            if hay[i] == b0 {
+                return Option.Some(i)
+            }
+            if i == 0 {
+                return Option.None
+            }
+            i = i - 1
+        }
+    }
+    loop {
+        if hay[i] == b0 && matches_at(text, i, needle) {
+            return Option.Some(i)
+        }
+        if i == 0 {
+            return Option.None
+        }
+        i = i - 1
+    }
+}
+
+/// The byte offset of the first occurrence of `pat[0..pat_len]` (non-empty) in `hay[from..end]`, or `end` when none.
+priv fn index_of_bytes(hay: [u8], pat: [u8], pat_len: usize, from: usize, end: usize): usize {
+    if pat_len > end || from > end - pat_len {
+        return end
+    }
+    let b0 = pat[0]
+    let limit = end - pat_len
+    if pat_len == 1 {
+        let mut i = from
+        while i <= limit {
+            if hay[i] == b0 {
+                return i
+            }
+            i = i + 1
+        }
+        return end
+    }
+    let mut i = from
+    while i <= limit {
+        if hay[i] == b0 && matches_bytes(hay, i, pat, pat_len) {
+            return i
+        }
+        i = i + 1
+    }
+    end
+}
+
+/// The byte offset of the last occurrence of `pat[0..pat_len]` (non-empty) in `hay[from..end]`, or `None`.
+priv fn rindex_of_bytes(hay: [u8], pat: [u8], pat_len: usize, from: usize, end: usize): Option<usize> {
+    if end < from || end - from < pat_len {
+        return Option.None
+    }
+    let b0 = pat[0]
+    let mut i = end - pat_len
+    if pat_len == 1 {
+        loop {
+            if hay[i] == b0 {
+                return Option.Some(i)
+            }
+            if i == from {
+                return Option.None
+            }
+            i = i - 1
+        }
+    }
+    loop {
+        if hay[i] == b0 && matches_bytes(hay, i, pat, pat_len) {
+            return Option.Some(i)
+        }
+        if i == from {
+            return Option.None
+        }
+        i = i - 1
+    }
+}
+
+/// The text of `a` followed by the text of `b`, in a new string: the built-in `String + str` (`spec/operators.md`,
+/// OP14). Both operands are borrowed.
+priv fn concat(a: str, b: str): String {
+    let mut out = String.with_capacity(a.len() + b.len())
+    out.push_str(a)
+    out.push_str(b)
+    out
+}
+
+// ---- Lazy text iterators ----
 
 /// The lazy iterator of `chars()`: the text it reads and the byte range `front..back` not yet yielded. It decodes one
 /// character per `next` or `next_back` and allocates nothing. `S` is the text it reads, so a `Chars<str>` holds a view
@@ -105,6 +286,481 @@ Chars<str>: DoubleEndedIterator<char> {
     }
 }
 
+/// The lazy iterator of `char_indices()`: yields `(byte_offset, char)` pairs from the front or back without allocating.
+///
+/// ```
+/// let mut it = "añ".char_indices()
+/// assert_eq(it.next(), Option.Some((0, 'a')))
+/// assert_eq(it.next(), Option.Some((1, 'ñ')))
+/// assert_eq(it.next(), Option.None)
+/// ```
+struct CharIndices<S>: Clone {
+    priv text: S
+    priv front: usize
+    priv back: usize
+}
+
+CharIndices<str>: Iterator<(usize, char)> {
+    /// The next `(byte_offset, char)` pair from the front.
+    ///
+    /// ```
+    /// let mut it = "éx".char_indices()
+    /// assert_eq(it.next(), Option.Some((0, 'é')))
+    /// assert_eq(it.next(), Option.Some((2, 'x')))
+    /// ```
+    fn next(mut self): Option<(usize, char)> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let at = self.front
+        let (c, width) = decode_char(self.text.as_bytes(), at)
+        self.front = at + width
+        Option.Some((at, c))
+    }
+}
+
+CharIndices<str>: DoubleEndedIterator<(usize, char)> {
+    /// The next `(byte_offset, char)` pair from the back.
+    ///
+    /// ```
+    /// let mut it = "éx".char_indices()
+    /// assert_eq(it.next_back(), Option.Some((2, 'x')))
+    /// assert_eq(it.next_back(), Option.Some((0, 'é')))
+    /// ```
+    fn next_back(mut self): Option<(usize, char)> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let bytes = self.text.as_bytes()
+        let mut at = self.back - 1
+        while at > self.front && (bytes[at] & 192) == 128 {
+            at = at - 1
+        }
+        let (c, _) = decode_char(bytes, at)
+        self.back = at
+        Option.Some((at, c))
+    }
+}
+
+/// The lazy iterator of `split(sep)`: yields `str` views of the pieces between occurrences of `sep`, in order, with no
+/// allocation. It borrows both the text and the separator (second-class, `spec/memory-rules.md`, SC2/RT3a).
+///
+/// ```
+/// let mut it = "a::b".split("::")
+/// assert_eq(it.next().unwrap(), "a")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert(it.next().is_none())
+/// ```
+struct Split<S>: Clone {
+    priv text: S
+    priv sep: S
+    priv pos: usize
+    priv done: bool
+}
+
+Split<str>: Iterator<str> {
+    /// The next piece before `sep`, or the remaining tail on the last step.
+    ///
+    /// ```
+    /// let mut it = "a,b".split(",")
+    /// assert_eq(it.next().unwrap(), "a")
+    /// assert_eq(it.next().unwrap(), "b")
+    /// ```
+    fn next(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        let at = index_of(self.text, self.sep, self.pos)
+        if at >= self.text.len() {
+            self.done = true
+            return Option.Some(self.text[self.pos..self.text.len()])
+        }
+        let piece = self.text[self.pos..at]
+        self.pos = at + self.sep.len()
+        Option.Some(piece)
+    }
+}
+
+/// The lazy iterator of `rsplit(sep)`: scans backward from the end and yields `str` views, last piece first, with no
+/// allocation.
+///
+/// ```
+/// let mut it = "a::b::c".rsplit("::")
+/// assert_eq(it.next().unwrap(), "c")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert_eq(it.next().unwrap(), "a")
+/// assert(it.next().is_none())
+/// ```
+struct RSplit<S>: Clone {
+    priv text: S
+    priv sep: S
+    priv end: usize
+    priv done: bool
+}
+
+RSplit<str>: Iterator<str> {
+    /// The next piece from the back, scanning backward for `sep`.
+    ///
+    /// ```
+    /// let mut it = "a,b".rsplit(",")
+    /// assert_eq(it.next().unwrap(), "b")
+    /// assert_eq(it.next().unwrap(), "a")
+    /// ```
+    fn next(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        match rindex_of(self.text, self.sep, self.end) {
+            Option.Some(at) => {
+                let piece = self.text[at + self.sep.len()..self.end]
+                self.end = at
+                Option.Some(piece)
+            }
+            Option.None => {
+                self.done = true
+                Option.Some(self.text[0..self.end])
+            }
+        }
+    }
+}
+
+/// The lazy iterator of `split_char(c)`: yields `str` views between occurrences of `c`, from the front or back, with
+/// no allocation.
+///
+/// ```
+/// let mut it = "a,b".split_char(',')
+/// assert_eq(it.next().unwrap(), "a")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert(it.next().is_none())
+/// ```
+struct SplitChar<S>: Clone {
+    priv text: S
+    priv sep: [u8; 4]
+    priv sep_len: usize
+    priv front: usize
+    priv back: usize
+    priv done: bool
+}
+
+SplitChar<str>: Iterator<str> {
+    /// The next piece from the front.
+    ///
+    /// ```
+    /// let mut it = "añb".split_char('ñ')
+    /// assert_eq(it.next().unwrap(), "a")
+    /// assert_eq(it.next().unwrap(), "b")
+    /// ```
+    fn next(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        let at = index_of_bytes(self.text.as_bytes(), self.sep[0..4], self.sep_len, self.front, self.back)
+        if at >= self.back {
+            self.done = true
+            return Option.Some(self.text[self.front..self.back])
+        }
+        let piece = self.text[self.front..at]
+        self.front = at + self.sep_len
+        Option.Some(piece)
+    }
+}
+
+SplitChar<str>: DoubleEndedIterator<str> {
+    /// The next piece from the back.
+    ///
+    /// ```
+    /// let mut it = "a,b,c".split_char(',')
+    /// assert_eq(it.next_back().unwrap(), "c")
+    /// assert_eq(it.next().unwrap(), "a")
+    /// ```
+    fn next_back(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        match rindex_of_bytes(self.text.as_bytes(), self.sep[0..4], self.sep_len, self.front, self.back) {
+            Option.Some(at) => {
+                let piece = self.text[at + self.sep_len..self.back]
+                self.back = at
+                Option.Some(piece)
+            }
+            Option.None => {
+                self.done = true
+                Option.Some(self.text[self.front..self.back])
+            }
+        }
+    }
+}
+
+/// The lazy iterator of `rsplit_char(c)`: scans backward from the end and yields `str` views between occurrences of
+/// `c`, last piece first, with no allocation.
+///
+/// ```
+/// let mut it = "a,b,c".rsplit_char(',')
+/// assert_eq(it.next().unwrap(), "c")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert_eq(it.next().unwrap(), "a")
+/// ```
+struct RSplitChar<S>: Clone {
+    priv text: S
+    priv sep: [u8; 4]
+    priv sep_len: usize
+    priv front: usize
+    priv back: usize
+    priv done: bool
+}
+
+RSplitChar<str>: Iterator<str> {
+    /// The next piece from the back.
+    ///
+    /// ```
+    /// let mut it = "añb".rsplit_char('ñ')
+    /// assert_eq(it.next().unwrap(), "b")
+    /// assert_eq(it.next().unwrap(), "a")
+    /// ```
+    fn next(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        match rindex_of_bytes(self.text.as_bytes(), self.sep[0..4], self.sep_len, self.front, self.back) {
+            Option.Some(at) => {
+                let piece = self.text[at + self.sep_len..self.back]
+                self.back = at
+                Option.Some(piece)
+            }
+            Option.None => {
+                self.done = true
+                Option.Some(self.text[self.front..self.back])
+            }
+        }
+    }
+}
+
+RSplitChar<str>: DoubleEndedIterator<str> {
+    /// The next piece from the front.
+    ///
+    /// ```
+    /// let mut it = "a,b,c".rsplit_char(',')
+    /// assert_eq(it.next_back().unwrap(), "a")
+    /// ```
+    fn next_back(mut self): Option<str> {
+        if self.done {
+            return Option.None
+        }
+        let at = index_of_bytes(self.text.as_bytes(), self.sep[0..4], self.sep_len, self.front, self.back)
+        if at >= self.back {
+            self.done = true
+            return Option.Some(self.text[self.front..self.back])
+        }
+        let piece = self.text[self.front..at]
+        self.front = at + self.sep_len
+        Option.Some(piece)
+    }
+}
+
+/// The lazy iterator of `split_whitespace()`: yields `str` views of each non-white-space run, from the front or back,
+/// with no allocation.
+///
+/// ```
+/// let mut it = " a  b ".split_whitespace()
+/// assert_eq(it.next().unwrap(), "a")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert(it.next().is_none())
+/// ```
+struct SplitWhitespace<S>: Clone {
+    priv text: S
+    priv front: usize
+    priv back: usize
+}
+
+SplitWhitespace<str>: Iterator<str> {
+    /// The next non-white-space word from the front.
+    ///
+    /// ```
+    /// let mut it = "  hi\tthere ".split_whitespace()
+    /// assert_eq(it.next().unwrap(), "hi")
+    /// assert_eq(it.next().unwrap(), "there")
+    /// ```
+    fn next(mut self): Option<str> {
+        let bytes = self.text.as_bytes()
+        while self.front < self.back {
+            let (c, width) = decode_char(bytes, self.front)
+            if !c.is_whitespace() {
+                break
+            }
+            self.front = self.front + width
+        }
+        if self.front >= self.back {
+            return Option.None
+        }
+        let start = self.front
+        while self.front < self.back {
+            let (c, width) = decode_char(bytes, self.front)
+            if c.is_whitespace() {
+                break
+            }
+            self.front = self.front + width
+        }
+        Option.Some(self.text[start..self.front])
+    }
+}
+
+SplitWhitespace<str>: DoubleEndedIterator<str> {
+    /// The next non-white-space word from the back.
+    ///
+    /// ```
+    /// let mut it = "  hi\tthere ".split_whitespace()
+    /// assert_eq(it.next_back().unwrap(), "there")
+    /// assert_eq(it.next_back().unwrap(), "hi")
+    /// ```
+    fn next_back(mut self): Option<str> {
+        let bytes = self.text.as_bytes()
+        while self.front < self.back {
+            let mut at = self.back - 1
+            while at > self.front && (bytes[at] & 192) == 128 {
+                at = at - 1
+            }
+            let (c, _) = decode_char(bytes, at)
+            if !c.is_whitespace() {
+                break
+            }
+            self.back = at
+        }
+        if self.front >= self.back {
+            return Option.None
+        }
+        let end = self.back
+        while self.front < self.back {
+            let mut at = self.back - 1
+            while at > self.front && (bytes[at] & 192) == 128 {
+                at = at - 1
+            }
+            let (c, _) = decode_char(bytes, at)
+            if c.is_whitespace() {
+                break
+            }
+            self.back = at
+        }
+        Option.Some(self.text[self.back..end])
+    }
+}
+
+/// The lazy iterator of `lines()`: yields `str` views split at `\n`, stripping a preceding `\r` and ignoring a final
+/// trailing newline, from the front or back, with no allocation.
+///
+/// ```
+/// let mut it = "a\r\nb\n".lines()
+/// assert_eq(it.next().unwrap(), "a")
+/// assert_eq(it.next().unwrap(), "b")
+/// assert(it.next().is_none())
+/// ```
+struct Lines<S>: Clone {
+    priv text: S
+    priv front: usize
+    priv back: usize
+}
+
+Lines<str>: Iterator<str> {
+    /// The next line from the front.
+    ///
+    /// ```
+    /// let mut it = "x\ny".lines()
+    /// assert_eq(it.next().unwrap(), "x")
+    /// assert_eq(it.next().unwrap(), "y")
+    /// ```
+    fn next(mut self): Option<str> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let bytes = self.text.as_bytes()
+        let start = self.front
+        let mut i = start
+        while i < self.back {
+            if bytes[i] == 10 {
+                let mut end = i
+                if end > start && bytes[end - 1] == 13 {
+                    end = end - 1
+                }
+                self.front = i + 1
+                return Option.Some(self.text[start..end])
+            }
+            i = i + 1
+        }
+        self.front = self.back
+        Option.Some(self.text[start..self.back])
+    }
+}
+
+Lines<str>: DoubleEndedIterator<str> {
+    /// The next line from the back.
+    ///
+    /// ```
+    /// let mut it = "a\nb\n".lines()
+    /// assert_eq(it.next_back().unwrap(), "b")
+    /// assert_eq(it.next_back().unwrap(), "a")
+    /// ```
+    fn next_back(mut self): Option<str> {
+        if self.front >= self.back {
+            return Option.None
+        }
+        let bytes = self.text.as_bytes()
+        let mut end = self.back
+        if bytes[end - 1] == 10 {
+            end = end - 1
+            if end > self.front && bytes[end - 1] == 13 {
+                end = end - 1
+            }
+        }
+        let mut i = end
+        while i > self.front {
+            i = i - 1
+            if bytes[i] == 10 {
+                let start = i + 1
+                self.back = i + 1
+                return Option.Some(self.text[start..end])
+            }
+        }
+        let start = self.front
+        self.back = self.front
+        Option.Some(self.text[start..end])
+    }
+}
+
+/// The lazy iterator of `match_indices(needle)` and `find_all(needle)`: yields `(byte_offset, matched_str)` pairs for
+/// every non-overlapping occurrence of `needle`, with no allocation.
+///
+/// ```
+/// let mut it = "abcabc".match_indices("bc")
+/// assert_eq(it.next().unwrap().0, 1)
+/// assert_eq(it.next().unwrap().0, 4)
+/// assert(it.next().is_none())
+/// ```
+struct MatchIndices<S>: Clone {
+    priv text: S
+    priv needle: S
+    priv pos: usize
+}
+
+MatchIndices<str>: Iterator<(usize, str)> {
+    /// The next `(byte_offset, matched_str)` pair.
+    ///
+    /// ```
+    /// let mut it = "abab".find_all("ab")
+    /// assert_eq(it.next().unwrap().1, "ab")
+    /// ```
+    fn next(mut self): Option<(usize, str)> {
+        let at = index_of(self.text, self.needle, self.pos)
+        if at >= self.text.len() {
+            return Option.None
+        }
+        let end = at + self.needle.len()
+        self.pos = end
+        Option.Some((at, self.text[at..end]))
+    }
+}
+
+// ---- str ----
+// Every read-only `str` extension also applies directly to `String` receivers (`spec/extensions.md`, EX3).
+
 /// The characters (Unicode scalar values) of the text, in order, as a lazy iterator. It decodes one character at a
 /// time and allocates nothing; `to_list()` (or `to_char_list()`) builds a list when one is needed. The iterator
 /// borrows the text (a view, second-class), so the text cannot change while it is live.
@@ -120,83 +776,6 @@ Chars<str>: DoubleEndedIterator<char> {
 fn str.chars(self): Chars<str> {
     Chars { text: self, front: 0, back: self.len() }
 }
-
-/// The characters of the string, in order, as a lazy iterator that borrows the string (see `str.chars`).
-///
-/// ```
-/// assert_eq(String.from("añ").chars().count(), 2)
-/// ```
-fn String.chars(self): Chars<str> {
-    self.as_str().chars()
-}
-
-/// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
-priv fn index_of(text: str, needle: str, from: usize): usize {
-    let n = needle.len()
-    let mut i = from
-    while i + n <= text.len() {
-        if matches_at(text, i, needle) {
-            return i
-        }
-        i = i + 1
-    }
-    text.len()
-}
-
-/// A copy of `text[from..to]`.
-priv fn copy_text(text: str, from: usize, to: usize): String {
-    String.from(text[from..to])
-}
-
-/// The text of `a` followed by the text of `b`, in a new string: the built-in `String + str` (`spec/operators.md`,
-/// OP14). Both operands are borrowed.
-priv fn concat(a: str, b: str): String {
-    let mut out = String.with_capacity(a.len() + b.len())
-    out.push_str(a)
-    out.push_str(b)
-    out
-}
-
-/// The pieces of `text` between occurrences of `sep`, in order.
-priv fn split_text(text: str, sep: str): List<String> {
-    if sep.len() == 0 {
-        panic("split: the separator is empty")
-    }
-    let mut out = List<String>.new()
-    let mut start: usize = 0
-    loop {
-        let at = index_of(text, sep, start)
-        if at >= text.len() {
-            break
-        }
-        out.push(copy_text(text, start, at))
-        start = at + sep.len()
-    }
-    out.push(copy_text(text, start, text.len()))
-    out
-}
-
-/// A string holding the one character `c`.
-priv fn one(c: char): String {
-    let mut s = String.new()
-    s.push(c)
-    s
-}
-
-/// The strings of `parts` in the opposite order.
-priv fn reverse_strings(own parts: List<String>): List<String> {
-    let mut parts = parts
-    let mut out = List<String>.new()
-    loop {
-        match parts.pop() {
-            Option.Some(x) => out.push(x),
-            Option.None => break,
-        }
-    }
-    out
-}
-
-// ---- str ----
 
 /// Whether the text has no bytes.
 ///
@@ -232,22 +811,7 @@ fn str.ends_with(self, suffix: str): bool {
 /// assert_eq("  hi  ".trim(), "hi")
 /// ```
 fn str.trim(self): str {
-    let mut start: usize = 0
-    let mut end: usize = 0
-    let mut at: usize = 0
-    let mut seen = false
-    for c in self.chars() {
-        let next = at + c.len_utf8()
-        if !c.is_whitespace() {
-            if !seen {
-                start = at
-                seen = true
-            }
-            end = next
-        }
-        at = next
-    }
-    self[start..end]
+    self.trim_start().trim_end()
 }
 
 /// The text without leading white space.
@@ -272,104 +836,87 @@ fn str.trim_start(self): str {
 /// assert_eq("hi  ".trim_end(), "hi")
 /// ```
 fn str.trim_end(self): str {
-    let mut end: usize = 0
-    let mut at: usize = 0
-    for c in self.chars() {
-        at = at + c.len_utf8()
-        if !c.is_whitespace() {
-            end = at
-        }
-    }
-    self[0..end]
-}
-
-/// The pieces between occurrences of `sep`, in order: `"a,b,,c".split(",")` is `["a", "b", "", "c"]`. An empty `sep`
-/// panics.
-///
-/// ```
-/// assert_eq("a::b".split("::")[1], String.from("b"))
-/// ```
-fn str.split(self, sep: str): List<String> {
-    split_text(self, sep)
-}
-
-/// The pieces between occurrences of the character `c`, in order.
-///
-/// ```
-/// assert_eq("a,b".split_char(',').len(), 2)
-/// ```
-fn str.split_char(self, c: char): List<String> {
-    split_text(self, one(c).as_str())
-}
-
-/// The pieces between occurrences of `sep`, last piece first.
-///
-/// ```
-/// assert_eq("a::b::c".rsplit("::")[0], String.from("c"))
-/// ```
-fn str.rsplit(self, sep: str): List<String> {
-    reverse_strings(split_text(self, sep))
-}
-
-/// The pieces between occurrences of the character `c`, last piece first.
-///
-/// ```
-/// assert_eq("a,b,c".rsplit_char(',')[0], String.from("c"))
-/// ```
-fn str.rsplit_char(self, c: char): List<String> {
-    reverse_strings(split_text(self, one(c).as_str()))
-}
-
-/// The runs of non-white-space characters, in order.
-///
-/// ```
-/// assert_eq(" a  b ".split_whitespace().len(), 2)
-/// ```
-fn str.split_whitespace(self): List<String> {
-    let mut out = List<String>.new()
-    let mut word = String.new()
-    for c in self.chars() {
-        if c.is_whitespace() {
-            if word.len() > 0 {
-                out.push(word)
-                word = String.new()
-            }
-        } else {
-            word.push(c)
-        }
-    }
-    if word.len() > 0 {
-        out.push(word)
-    }
-    out
-}
-
-/// The lines of the text, split at a line feed, with a carriage return before it removed. A final line break does not
-/// start a new line.
-///
-/// ```
-/// assert_eq("a\nb".lines().len(), 2)
-/// ```
-fn str.lines(self): List<String> {
-    let mut out = List<String>.new()
     let bytes = self.as_bytes()
-    let mut start: usize = 0
-    let mut i: usize = 0
-    while i < bytes.len() {
-        if bytes[i] == 10 {
-            let mut end = i
-            if end > start && bytes[end - 1] == 13 {
-                end = end - 1
-            }
-            out.push(copy_text(self, start, end))
-            start = i + 1
+    let mut end = bytes.len()
+    while end > 0 {
+        let mut at = end - 1
+        while at > 0 && (bytes[at] & 192) == 128 {
+            at = at - 1
         }
-        i = i + 1
+        let (c, _) = decode_char(bytes, at)
+        if !c.is_whitespace() {
+            return self[0..end]
+        }
+        end = at
     }
-    if start < self.len() {
-        out.push(copy_text(self, start, self.len()))
+    self[0..0]
+}
+
+/// The pieces between occurrences of `sep`, in order, as a lazy iterator of `str` views:
+/// `"a,b,,c".split(",")` yields `"a"`, `"b"`, `""`, `"c"`. An empty `sep` panics.
+///
+/// ```
+/// let parts: List<String> = "a::b".split("::").collect()
+/// assert_eq(parts[1], String.from("b"))
+/// ```
+fn str.split(self, sep: str): Split<str> {
+    if sep.len() == 0 {
+        panic("split: the separator is empty")
     }
-    out
+    Split { text: self, sep: sep, pos: 0, done: false }
+}
+
+/// The pieces between occurrences of the character `c`, in order, as a lazy double-ended iterator of `str` views.
+///
+/// ```
+/// assert_eq("a,b".split_char(',').count(), 2)
+/// ```
+fn str.split_char(self, c: char): SplitChar<str> {
+    let (sep, sep_len) = encode_char_utf8(c)
+    SplitChar { text: self, sep: sep, sep_len: sep_len, front: 0, back: self.len(), done: false }
+}
+
+/// The pieces between occurrences of `sep`, last piece first, as a lazy iterator of `str` views. Scans backward
+/// without allocating. An empty `sep` panics.
+///
+/// ```
+/// assert_eq("a::b::c".rsplit("::").next().unwrap(), "c")
+/// ```
+fn str.rsplit(self, sep: str): RSplit<str> {
+    if sep.len() == 0 {
+        panic("split: the separator is empty")
+    }
+    RSplit { text: self, sep: sep, end: self.len(), done: false }
+}
+
+/// The pieces between occurrences of the character `c`, last piece first, as a lazy double-ended iterator of `str`
+/// views.
+///
+/// ```
+/// assert_eq("a,b,c".rsplit_char(',').next().unwrap(), "c")
+/// ```
+fn str.rsplit_char(self, c: char): RSplitChar<str> {
+    let (sep, sep_len) = encode_char_utf8(c)
+    RSplitChar { text: self, sep: sep, sep_len: sep_len, front: 0, back: self.len(), done: false }
+}
+
+/// The runs of non-white-space characters, in order, as a lazy double-ended iterator of `str` views.
+///
+/// ```
+/// assert_eq(" a  b ".split_whitespace().count(), 2)
+/// ```
+fn str.split_whitespace(self): SplitWhitespace<str> {
+    SplitWhitespace { text: self, front: 0, back: self.len() }
+}
+
+/// The lines of the text, split at a line feed, with a carriage return before it removed, as a lazy double-ended
+/// iterator of `str` views. A final line break does not start a new line.
+///
+/// ```
+/// assert_eq("a\nb".lines().count(), 2)
+/// ```
+fn str.lines(self): Lines<str> {
+    Lines { text: self, front: 0, back: self.len() }
 }
 
 /// A copy with every occurrence of `from` replaced by `to`. An empty `from` panics.
@@ -381,8 +928,14 @@ fn str.replace(self, from: str, to: str): String {
     if from.len() == 0 {
         panic("replace: the pattern is empty")
     }
-    let mut out = String.new()
-    let mut start: usize = 0
+    let first = index_of(self, from, 0)
+    if first >= self.len() {
+        return String.from(self)
+    }
+    let mut out = String.with_capacity(self.len())
+    out.push_str(self[0..first])
+    out.push_str(to)
+    let mut start = first + from.len()
     loop {
         let at = index_of(self, from, start)
         if at >= self.len() {
@@ -427,169 +980,16 @@ fn str.strip_suffix(self, suffix: str): Option<str> {
 /// assert_eq("ab".repeat(2), String.from("abab"))
 /// ```
 fn str.repeat(self, count: usize): String {
-    let mut out = String.new()
+    if count == 0 || self.len() == 0 {
+        return String.new()
+    }
+    let mut out = String.with_capacity(self.len() * count)
     let mut i: usize = 0
     while i < count {
         out.push_str(self)
         i = i + 1
     }
     out
-}
-
-// ---- String ----
-
-/// Whether the string has no bytes.
-///
-/// ```
-/// assert(String.new().is_empty())
-/// assert(!String.from("x").is_empty())
-/// ```
-fn String.is_empty(self): bool {
-    self.len() == 0
-}
-
-/// Whether `needle` occurs in the string.
-///
-/// ```
-/// assert(String.from("hello").contains("ell"))
-/// ```
-fn String.contains(self, needle: str): bool {
-    self.as_str().contains(needle)
-}
-
-/// Whether the string ends with `suffix`.
-///
-/// ```
-/// assert(String.from("file.bd").ends_with(".bd"))
-/// ```
-fn String.ends_with(self, suffix: str): bool {
-    self.as_str().ends_with(suffix)
-}
-
-/// The string without leading and trailing white space.
-///
-/// ```
-/// assert_eq(String.from("  hi  ").trim(), "hi")
-/// ```
-fn String.trim(self): str {
-    self.as_str().trim()
-}
-
-/// The string without leading white space.
-///
-/// ```
-/// assert_eq(String.from("  hi").trim_start(), "hi")
-/// ```
-fn String.trim_start(self): str {
-    self.as_str().trim_start()
-}
-
-/// The string without trailing white space.
-///
-/// ```
-/// assert_eq(String.from("hi  ").trim_end(), "hi")
-/// ```
-fn String.trim_end(self): str {
-    self.as_str().trim_end()
-}
-
-/// The pieces between occurrences of `sep`, in order.
-///
-/// ```
-/// let parts = String.from("a::b").split("::")
-/// assert_eq(parts[1], String.from("b"))
-/// ```
-fn String.split(self, sep: str): List<String> {
-    split_text(self.as_str(), sep)
-}
-
-/// The pieces between occurrences of the character `c`, in order.
-///
-/// ```
-/// assert_eq(String.from("a,b").split_char(',').len(), 2)
-/// ```
-fn String.split_char(self, c: char): List<String> {
-    split_text(self.as_str(), one(c).as_str())
-}
-
-/// The pieces between occurrences of `sep`, last piece first.
-///
-/// ```
-/// let parts = String.from("a::b::c").rsplit("::")
-/// assert_eq(parts[0], String.from("c"))
-/// ```
-fn String.rsplit(self, sep: str): List<String> {
-    reverse_strings(split_text(self.as_str(), sep))
-}
-
-/// The pieces between occurrences of the character `c`, last piece first.
-///
-/// ```
-/// let parts = String.from("a,b,c").rsplit_char(',')
-/// assert_eq(parts[0], String.from("c"))
-/// ```
-fn String.rsplit_char(self, c: char): List<String> {
-    reverse_strings(split_text(self.as_str(), one(c).as_str()))
-}
-
-/// The runs of non-white-space characters, in order.
-///
-/// ```
-/// let words = String.from(" a  b ").split_whitespace()
-/// assert_eq(words.len(), 2)
-/// assert_eq(words[0], String.from("a"))
-/// ```
-fn String.split_whitespace(self): List<String> {
-    self.as_str().split_whitespace()
-}
-
-/// The lines of the string.
-///
-/// ```
-/// let lines = String.from("a\nb").lines()
-/// assert_eq(lines.len(), 2)
-/// assert_eq(lines[1], String.from("b"))
-/// ```
-fn String.lines(self): List<String> {
-    self.as_str().lines()
-}
-
-/// A copy with every occurrence of `from` replaced by `to`.
-///
-/// ```
-/// assert_eq(String.from("a-b-c").replace("-", "+"), String.from("a+b+c"))
-/// ```
-fn String.replace(self, from: str, to: str): String {
-    self.as_str().replace(from, to)
-}
-
-/// The string after `prefix`, or `None`; a view of the string.
-///
-/// ```
-/// assert(String.from("file.bd").strip_prefix("file").unwrap() == ".bd")
-/// assert(String.from("file.bd").strip_prefix("x").is_none())
-/// ```
-fn String.strip_prefix(self, prefix: str): Option<str> {
-    self.as_str().strip_prefix(prefix)
-}
-
-/// The string before `suffix`, or `None`; a view of the string.
-///
-/// ```
-/// assert(String.from("file.bd").strip_suffix(".bd").unwrap() == "file")
-/// assert(String.from("file.bd").strip_suffix(".rs").is_none())
-/// ```
-fn String.strip_suffix(self, suffix: str): Option<str> {
-    self.as_str().strip_suffix(suffix)
-}
-
-/// The string `count` times in a row.
-///
-/// ```
-/// assert_eq(String.from("ab").repeat(3), String.from("ababab"))
-/// ```
-fn String.repeat(self, count: usize): String {
-    self.as_str().repeat(count)
 }
 
 // ---- Characters of a text ----
@@ -606,11 +1006,12 @@ fn String.repeat(self, count: usize): String {
 fn str.char_count(self): usize {
     let bytes = self.as_bytes()
     let mut n: usize = 0
-    let mut at: usize = 0
-    while at < bytes.len() {
-        let (_, width) = decode_char(bytes, at)
-        n = n + 1
-        at = at + width
+    let mut i: usize = 0
+    while i < bytes.len() {
+        if (bytes[i] & 192) != 128 {
+            n = n + 1
+        }
+        i = i + 1
     }
     n
 }
@@ -623,15 +1024,13 @@ fn str.char_count(self): usize {
 /// ```
 fn str.is_char_boundary(self, i: usize): bool {
     let bytes = self.as_bytes()
-    let mut at: usize = 0
-    while at < bytes.len() {
-        if at == i {
-            return true
-        }
-        let (_, width) = decode_char(bytes, at)
-        at = at + width
+    if i == 0 || i == bytes.len() {
+        return true
     }
-    at == i
+    if i > bytes.len() {
+        return false
+    }
+    (bytes[i] & 192) != 128
 }
 
 /// The `n`th character (counting from 0), or `None` when the text is shorter.
@@ -673,23 +1072,15 @@ fn str.to_char_list(self): List<char> {
     out
 }
 
-/// Each character with the byte offset where it starts.
+/// Each character with the byte offset where it starts, as a lazy double-ended iterator.
 ///
 /// ```
-/// let pairs = "ab".char_indices()
+/// let pairs = "ab".char_indices().to_list()
 /// assert_eq(pairs[1].0, 1)
 /// assert_eq(pairs[1].1, 'b')
 /// ```
-fn str.char_indices(self): List<(usize, char)> {
-    let bytes = self.as_bytes()
-    let mut out = List<(usize, char)>.new()
-    let mut at: usize = 0
-    while at < bytes.len() {
-        let (c, width) = decode_char(bytes, at)
-        out.push((at, c))
-        at = at + width
-    }
-    out
+fn str.char_indices(self): CharIndices<str> {
+    CharIndices { text: self, front: 0, back: self.len() }
 }
 
 /// A copy with the characters in the opposite order.
@@ -698,13 +1089,9 @@ fn str.char_indices(self): List<(usize, char)> {
 /// assert_eq("abc".reverse_chars(), String.from("cba"))
 /// ```
 fn str.reverse_chars(self): String {
-    let mut chars = self.to_char_list()
-    let mut out = String.new()
-    loop {
-        match chars.pop() {
-            Option.Some(c) => out.push(c),
-            Option.None => break,
-        }
+    let mut out = String.with_capacity(self.len())
+    for c in self.chars().rev() {
+        out.push(c)
     }
     out
 }
@@ -716,18 +1103,30 @@ fn str.reverse_chars(self): String {
 /// assert_eq("hello".slice_chars(1, 3), String.from("el"))
 /// ```
 fn str.slice_chars(self, start: usize, end: usize): String {
-    let mut out = String.new()
+    if start >= end {
+        return String.new()
+    }
+    let bytes = self.as_bytes()
     let mut i: usize = 0
-    for c in self.chars() {
-        if i >= end {
+    let mut at: usize = 0
+    let mut start_byte = bytes.len()
+    let mut end_byte = bytes.len()
+    while at < bytes.len() {
+        if i == start {
+            start_byte = at
+        }
+        if i == end {
+            end_byte = at
             break
         }
-        if i >= start {
-            out.push(c)
-        }
+        let (_, width) = decode_char(bytes, at)
+        at = at + width
         i = i + 1
     }
-    out
+    if start_byte >= end_byte {
+        return String.new()
+    }
+    String.from(self[start_byte..end_byte])
 }
 
 /// The characters of the list as a string.
@@ -739,83 +1138,16 @@ fn str.slice_chars(self, start: usize, end: usize): String {
 /// assert_eq(chars.collect_string(), String.from("hi"))
 /// ```
 fn List<char>.collect_string(self): String {
-    let mut out = String.new()
+    let mut cap: usize = 0
+    for c in self {
+        cap = cap + c.len_utf8()
+    }
+    let mut out = String.with_capacity(cap)
     for c in self {
         out.push(c)
     }
     out
 }
-
-/// The number of characters in the string.
-///
-/// ```
-/// assert_eq(String.from("héllo").char_count(), 5)
-/// ```
-fn String.char_count(self): usize {
-    self.as_str().char_count()
-}
-
-/// Whether byte offset `i` is the start of a character or the end of the string.
-///
-/// ```
-/// assert(String.from("abc").is_char_boundary(1))
-/// assert(!String.from("é").is_char_boundary(1))
-/// ```
-fn String.is_char_boundary(self, i: usize): bool {
-    self.as_str().is_char_boundary(i)
-}
-
-/// The `n`th character, or `None`.
-///
-/// ```
-/// assert_eq(String.from("abc").nth_char(1), Option.Some('b'))
-/// assert(String.from("abc").nth_char(5).is_none())
-/// ```
-fn String.nth_char(self, n: usize): Option<char> {
-    self.as_str().nth_char(n)
-}
-
-/// The characters as a list.
-///
-/// ```
-/// let chars = String.from("ab").to_char_list()
-/// assert_eq(chars[0], 'a')
-/// assert_eq(chars.len(), 2)
-/// ```
-fn String.to_char_list(self): List<char> {
-    self.as_str().to_char_list()
-}
-
-/// Each character with the byte offset where it starts.
-///
-/// ```
-/// let pairs = String.from("ab").char_indices()
-/// assert_eq(pairs[1].0, 1)
-/// assert_eq(pairs[1].1, 'b')
-/// ```
-fn String.char_indices(self): List<(usize, char)> {
-    self.as_str().char_indices()
-}
-
-/// A copy with the characters in the opposite order.
-///
-/// ```
-/// assert_eq(String.from("abc").reverse_chars(), String.from("cba"))
-/// ```
-fn String.reverse_chars(self): String {
-    self.as_str().reverse_chars()
-}
-
-/// The characters from index `start` up to `end`.
-///
-/// ```
-/// assert_eq(String.from("hello").slice_chars(1, 3), String.from("el"))
-/// ```
-fn String.slice_chars(self, start: usize, end: usize): String {
-    self.as_str().slice_chars(start, end)
-}
-
-// ---- join ----
 
 // ---- Capacity and editing (issue #714) ----
 //
@@ -854,13 +1186,17 @@ fn String.truncate(mut self, len: usize) {
 /// assert_eq(s, String.from("a"))
 /// ```
 fn String.pop(mut self): Option<char> {
-    let pairs = self.char_indices()
-    if pairs.len() == 0 {
+    if self.len() == 0 {
         return Option.None
     }
-    let last = pairs[pairs.len() - 1]
-    self.truncate(last.0)
-    Option.Some(last.1)
+    let bytes = self.as_bytes()
+    let mut at = bytes.len() - 1
+    while at > 0 && (bytes[at] & 192) == 128 {
+        at = at - 1
+    }
+    let (c, _) = decode_char(bytes, at)
+    self.truncate(at)
+    Option.Some(c)
 }
 
 /// Inserts the character `c` at byte index `at`, which must be a character boundary. A later byte moves right by
@@ -872,7 +1208,9 @@ fn String.pop(mut self): Option<char> {
 /// assert_eq(s, String.from("abc"))
 /// ```
 fn String.insert(mut self, at: usize, c: char) {
-    self.insert_str(at, one(c).as_str())
+    let (buf, len) = encode_char_utf8(c)
+    let text = unsafe { __view_as_text(buf[0..len]) }
+    self.insert_str(at, text)
 }
 
 /// Removes and returns the character that starts at byte index `at`.
@@ -883,14 +1221,12 @@ fn String.insert(mut self, at: usize, c: char) {
 /// assert_eq(s, String.from("ac"))
 /// ```
 fn String.remove(mut self, at: usize): char {
-    for pair in self.char_indices() {
-        let (offset, c) = pair
-        if offset == at {
-            self.replace_range(at, at + c.len_utf8(), "")
-            return c
-        }
+    if at >= self.len() || !self.is_char_boundary(at) {
+        panic("remove: the index is out of bounds or not a character boundary")
     }
-    panic("remove: the index is out of bounds or not a character boundary")
+    let (c, width) = decode_char(self.as_bytes(), at)
+    self.replace_range(at, at + width, "")
+    c
 }
 
 /// Keeps the characters `f` accepts, in order, and drops the others.
@@ -902,7 +1238,7 @@ fn String.remove(mut self, at: usize): char {
 /// ```
 fn String.retain<F: FnMut(char): bool>(mut self, own f: F) {
     let mut f = f
-    let mut kept = String.new()
+    let mut kept = String.with_capacity(self.len())
     for c in self.chars() {
         if f(c) {
             kept.push(c)
@@ -956,7 +1292,14 @@ fn String.split_off(mut self, at: usize): String {
 /// assert_eq(parts.join(", "), String.from("a, b"))
 /// ```
 fn List<String>.join(self, sep: str): String {
-    let mut out = String.new()
+    if self.len() == 0 {
+        return String.new()
+    }
+    let mut cap: usize = sep.len() * (self.len() - 1)
+    for part in self {
+        cap = cap + part.len()
+    }
+    let mut out = String.with_capacity(cap)
     let mut first = true
     for part in self {
         if !first {
@@ -979,17 +1322,6 @@ fn str.bytes(self): [u8] {
     self.as_bytes()
 }
 
-/// The UTF-8 bytes of the string.
-///
-/// ```
-/// let s = String.from("AB")
-/// assert_eq(s.bytes().len(), 2)
-/// assert_eq(s.bytes()[1], 66)
-/// ```
-fn String.bytes(self): [u8] {
-    self.as_bytes()
-}
-
 /// The bytes as an owned list; the string is consumed.
 ///
 /// ```
@@ -998,10 +1330,8 @@ fn String.bytes(self): [u8] {
 /// assert_eq(bytes.len(), 2)
 /// ```
 fn String.into_bytes(own self): List<u8> {
-    let mut out = List<u8>.new()
-    for byte in self.as_bytes() {
-        out.push(byte)
-    }
+    let mut out = List<u8>.with_capacity(self.len())
+    out.extend_from_slice(self.as_bytes())
     out
 }
 
@@ -1014,39 +1344,14 @@ fn str.contains_str(self, needle: str): bool {
     self.contains(needle)
 }
 
-/// Whether `needle` occurs in the string.
-///
-/// ```
-/// assert(String.from("hello").contains_str("ell"))
-/// ```
-fn String.contains_str(self, needle: str): bool {
-    self.contains(needle)
-}
-
 /// The byte offset of the last occurrence of `c`, or `None`.
 ///
 /// ```
 /// assert_eq("abcabc".rfind('b'), Option.Some(4))
 /// ```
 fn str.rfind(self, c: char): Option<usize> {
-    let mut at: usize = 0
-    let mut found: Option<usize> = Option.None
-    for current in self.chars() {
-        if current == c {
-            found = Option.Some(at)
-        }
-        at = at + current.len_utf8()
-    }
-    found
-}
-
-/// The byte offset of the last occurrence of `c` in the string, or `None`.
-///
-/// ```
-/// assert_eq(String.from("abcabc").rfind('b'), Option.Some(4))
-/// ```
-fn String.rfind(self, c: char): Option<usize> {
-    self.as_str().rfind(c)
+    let (pat, pat_len) = encode_char_utf8(c)
+    rindex_of_bytes(self.as_bytes(), pat[0..4], pat_len, 0, self.len())
 }
 
 /// The byte offset of the last occurrence of `needle`, or `None`. The empty needle matches at the end.
@@ -1055,88 +1360,34 @@ fn String.rfind(self, c: char): Option<usize> {
 /// assert_eq("abcabc".rfind_str("bc"), Option.Some(4))
 /// ```
 fn str.rfind_str(self, needle: str): Option<usize> {
-    let n = needle.len()
-    if n == 0 {
+    if needle.len() == 0 {
         return Option.Some(self.len())
     }
-    if n > self.len() {
-        return Option.None
-    }
-    let mut i = self.len() - n
-    loop {
-        if matches_at(self, i, needle) {
-            return Option.Some(i)
-        }
-        if i == 0 {
-            return Option.None
-        }
-        i = i - 1
-    }
+    rindex_of(self, needle, self.len())
 }
 
-/// The byte offset of the last occurrence of `needle` in the string, or `None`.
+/// Every non-overlapping occurrence of `needle`, in order, as a lazy iterator of `(byte_offset, matched_str)` pairs.
+/// An empty needle panics (as `split` and `replace` do), because every position would match.
 ///
 /// ```
-/// assert_eq(String.from("abcabc").rfind_str("bc"), Option.Some(4))
+/// assert_eq("abcabc".match_indices("bc").count(), 2)
 /// ```
-fn String.rfind_str(self, needle: str): Option<usize> {
-    self.as_str().rfind_str(needle)
-}
-
-/// Every non-overlapping occurrence of `needle`, in order: its byte offset and the matched text. An empty needle
-/// panics (as `split` and `replace` do), because every position would match.
-///
-/// ```
-/// assert_eq("abcabc".match_indices("bc").len(), 2)
-/// ```
-fn str.match_indices(self, needle: str): List<(usize, String)> {
+fn str.match_indices(self, needle: str): MatchIndices<str> {
     if needle.len() == 0 {
         panic("match_indices: the pattern is empty")
     }
-    let mut out = List<(usize, String)>.new()
-    let mut start: usize = 0
-    loop {
-        let at = index_of(self, needle, start)
-        if at >= self.len() {
-            break
-        }
-        out.push((at, String.from(self[at..at + needle.len()])))
-        start = at + needle.len()
-    }
-    out
+    MatchIndices { text: self, needle: needle, pos: 0 }
 }
 
-/// Every non-overlapping occurrence of `needle` in the string.
+/// The same as `match_indices`: every occurrence, with its byte offset, as a lazy iterator.
 ///
 /// ```
-/// let s = String.from("abcabc")
-/// assert_eq(s.match_indices("bc").len(), 2)
+/// let mut hits = "abcabc".find_all("bc")
+/// assert_eq(hits.next().unwrap().0, 1)
+/// assert_eq(hits.next().unwrap().0, 4)
 /// ```
-fn String.match_indices(self, needle: str): List<(usize, String)> {
-    self.as_str().match_indices(needle)
-}
-
-/// The same as `match_indices`: every occurrence, with its byte offset.
-///
-/// ```
-/// let hits = "abcabc".find_all("bc")
-/// assert_eq(hits.len(), 2)
-/// assert_eq(hits[1].0, 4)
-/// ```
-fn str.find_all(self, needle: str): List<(usize, String)> {
+fn str.find_all(self, needle: str): MatchIndices<str> {
     self.match_indices(needle)
-}
-
-/// Every occurrence of `needle` in the string.
-///
-/// ```
-/// let s = String.from("abcabc")
-/// let hits = s.find_all("bc")
-/// assert_eq(hits.len(), 2)
-/// assert_eq(hits[1].0, 4)
-/// ```
-fn String.find_all(self, needle: str): List<(usize, String)> {
-    self.as_str().find_all(needle)
 }
 
 /// The bytes `from..to` as a view, or `None` when the range is reversed, past the end, or either end splits a
@@ -1154,17 +1405,6 @@ fn str.get(self, from: usize, to: usize): Option<str> {
         return Option.None
     }
     Option.Some(self[from..to])
-}
-
-/// The bytes `from..to` of the string as a view, or `None` when the range is invalid or splits a character.
-///
-/// ```
-/// let s = String.from("hello")
-/// assert(s.get(1, 3).unwrap() == "el")
-/// assert(s.get(1, 9).is_none())
-/// ```
-fn String.get(self, from: usize, to: usize): Option<str> {
-    self.as_str().get(from, to)
 }
 
 /// Appends every `char` `iter` yields: `text.extend_iter(other.chars())`.

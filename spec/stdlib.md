@@ -662,12 +662,12 @@ fn String.from_utf8(own bytes: List<u8>): Result<String, Utf8Error>   // associa
 fn str.from_utf8(bytes: [u8]): Result<str, Utf8Error>                  // associated function; a view
 fn String.from_utf8_lossy(bytes: [u8]): String                         // associated function
 
-fn contains_str(self, needle: str): bool      // the same as contains
-fn rfind(self, c: char): Option<usize>         // byte offset of the last occurrence
-fn rfind_str(self, needle: str): Option<usize> // "" matches at the end
-fn match_indices(self, needle: str): List<(usize, String)>  // each occurrence's offset and text; "" panics
-fn find_all(self, needle: str): List<(usize, String)>       // the same as match_indices
-fn get(self, from: usize, to: usize): Option<str>           // the checked, boundary-aware slice
+fn contains_str(self, needle: str): bool           // the same as contains
+fn rfind(self, c: char): Option<usize>              // byte offset of the last occurrence
+fn rfind_str(self, needle: str): Option<usize>      // "" matches at the end
+fn match_indices(self, needle: str): MatchIndices<str> // lazy iterator of `(usize, str)`; "" panics
+fn find_all(self, needle: str): MatchIndices<str>      // the same as match_indices
+fn get(self, from: usize, to: usize): Option<str>      // the checked, boundary-aware slice
 ```
 
 `as_bytes` is a `[u8]` view of the string's storage, so it copies nothing and keeps the string borrowed; `bytes`
@@ -765,7 +765,7 @@ fn str.is_ascii(self): bool
 fn str.is_char_boundary(self, i: usize): bool         // the start of a character, or the end of the text
 fn str.nth_char(self, n: usize): Option<char>
 fn str.to_char_list(self): List<char>
-fn str.char_indices(self): List<(usize, char)>        // each character with its byte offset
+fn str.char_indices(self): CharIndices<str>           // lazy double-ended iterator of `(usize, char)`
 fn str.reverse_chars(self): String
 fn str.slice_chars(self, start: usize, end: usize): String   // by character index; an index past the end stops there
 fn List<char>.collect_string(self): String
@@ -774,26 +774,41 @@ fn List<char>.collect_string(self): String
 Tests: `m24_stdlib/text_characters` (a text with one-, two-, and three-byte characters), and the non-ASCII cases of
 `string_*` and `char_*`.
 
-### Text helpers (issue #415)
+### Text helpers (issues #415, #1019)
 
-`std.text` (and the case conversion in `std.unicode`) declare extension methods on `str` and `String`
-(`extensions.md`), so the prelude makes them visible everywhere and the compiler's own methods (`len`, `find`,
-`starts_with`, `chars`, ...) win. Offsets are byte offsets. A match of a valid separator in valid text always starts
-and ends on a character boundary, and `trim` and the case conversions walk whole characters, so the functions keep
-UTF-8 intact. The pieces they return are `String`s because a `List` cannot hold views; `trim*` return a `str` view
-of the receiver.
+`std.text` (and the case conversion in `std.unicode`) declare extension methods on `str` (`extensions.md`), so the
+prelude makes them visible everywhere and the compiler's own methods (`len`, `find`, `starts_with`, `chars`, ...) win.
+Read-only `str` extensions also apply directly to `String` receivers through the `String`-to-`str` borrow fallback
+(EX3), so `std.text` needs no duplicate `String` wrappers. Offsets are byte offsets. A match of a valid separator in
+valid text always starts and ends on a character boundary, and `trim` and the case conversions walk whole characters,
+so the functions keep UTF-8 intact.
+
+The split, lines, match, and character-index helpers return lazy iterators (`Split<str>`, `RSplit<str>`,
+`SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`, `Lines<str>`, `MatchIndices<str>`, `CharIndices<str>`)
+that yield `str` views (or `(usize, str)` / `(usize, char)`) without allocating per piece. Each iterator struct is
+generic over its source (`Split<S>`, etc.) and second-class when instantiated with `str` (`memory-rules.md`, SC2/SC3),
+keeping its source text (and separator) borrowed until its last use (RF5, RT3a). `SplitChar`, `RSplitChar`,
+`SplitWhitespace`, `Lines`, and `CharIndices` also implement `DoubleEndedIterator`. Use `.collect<List<String>>()` (or
+`let parts: List<String> = s.split(",").collect()`) to materialize owned `String` pieces; `List<str>` remains
+forbidden by SC2.
+
+Substring search (`contains`, `split`, `rsplit`, `replace`, `rfind_str`, `match_indices`, `find_all`) uses a linear
+byte scan with O(1) extra space and O(n * m) worst-case time (O(n) for single-byte patterns); `rsplit` and
+`rsplit_char` scan backward from the end without building an intermediate list. `trim*` return a `str` view of the
+receiver (`trim_end` scans backward). `replace`, `repeat`, `reverse_chars`, `slice_chars`, `List<char>.collect_string`,
+`List<String>.join`, `String.retain`, and `String.into_bytes` reserve their output capacity up front.
 
 ```
 fn str.is_empty(self): bool
 fn str.contains(self, needle: str): bool                // "" is contained everywhere
 fn str.ends_with(self, suffix: str): bool
 fn str.trim(self): str                                  // also trim_start, trim_end; Unicode white space
-fn str.split(self, sep: str): List<String>              // keeps empty pieces; an empty `sep` panics
-fn str.split_char(self, c: char): List<String>
-fn str.rsplit(self, sep: str): List<String>             // the same pieces, last first
-fn str.rsplit_char(self, c: char): List<String>
-fn str.split_whitespace(self): List<String>             // runs of non-white-space characters
-fn str.lines(self): List<String>                        // at line feeds; a carriage return before one is removed
+fn str.split(self, sep: str): Split<str>                // keeps empty pieces; an empty `sep` panics
+fn str.split_char(self, c: char): SplitChar<str>        // double-ended
+fn str.rsplit(self, sep: str): RSplit<str>              // backward scan, last piece first; empty `sep` panics
+fn str.rsplit_char(self, c: char): RSplitChar<str>      // double-ended, backward scan
+fn str.split_whitespace(self): SplitWhitespace<str>     // double-ended; runs of non-white-space characters
+fn str.lines(self): Lines<str>                          // double-ended; at `\n`, stripping preceding `\r`
 fn str.replace(self, from: str, to: str): String        // an empty `from` panics
 fn str.strip_prefix(self, prefix: str): Option<str>     // a view of the receiver
 fn str.strip_suffix(self, suffix: str): Option<str>
@@ -806,12 +821,12 @@ fn str.eq_ignore_ascii_case(self, other: str): bool
 fn List<String>.join(self, sep: str): String
 ```
 
-`String` has the same methods with the same behavior. When two standard modules extend different receivers under one
-name (`Option.replace`, `str.replace`), the prelude keeps all of them; a module's own declaration or `use` of that
-name still hides the prelude's.
+When two standard modules extend different receivers under one name (`Option.replace`, `str.replace`), the prelude
+keeps all of them; a module's own declaration or `use` of that name still hides the prelude's.
 
 Tests: `m24_stdlib/string_split`, `string_trim`, `string_lines_and_words`, `string_replace_join`,
-`string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern`.
+`string_search_and_affixes`, `string_case`, `string_empty_separator`, `string_empty_pattern`,
+`string_split_alloc`, `string_split_borrow` (E0111), `string_split_escape` (E0122), `string_split_field` (E0120).
 
 ## Encodings (issue #414)
 

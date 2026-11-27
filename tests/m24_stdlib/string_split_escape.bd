@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `Split<str>` borrows its text: returning an iterator over a local `String` is E0122 (RT2).
+fn parts(): Split<str> {
+    let s = String.from("a,b")
+    s.split(",") //~ E0122
+}
+
+fn main() {}

@@ -1,0 +1,9 @@
+//@ compile-fail
+
+// `Split<str>` borrows its text until its last use (RF5), so mutating the `String` while the iterator is live is E0111.
+fn main() {
+    let mut s = String.from("a,b,c")
+    let mut it = s.split(",")
+    s.push('d') //~ E0111
+    let _ = it.next()
+}

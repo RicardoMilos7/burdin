@@ -6,7 +6,7 @@ version = 1
 name = "http"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:286374d6b736ed183f387d29f969fe7ce6f14386e0729790196da7ec29e13dc0"
+checksum = "sha256:2faa66fb23f20245ac3025a57731a591d40c089c51bc6140b35a73a7006ee0f2"
 dependencies = ["tls"]
 
 [[package]]

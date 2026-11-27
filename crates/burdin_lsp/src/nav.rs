@@ -520,7 +520,7 @@ impl Owners {
     pub fn owns(&self, owner: Option<&str>) -> bool {
         let Some(owner) = owner else { return false };
         match self {
-            Owners::Named(name) => owner == name,
+            Owners::Named(name) => owner == name || (name == "String" && owner == "str"),
             Owners::Sequence { array, .. } if owner == "[T; N]" => *array,
             Owners::Sequence { element, .. } => {
                 sequence_element(owner).is_some_and(|(pattern, array)| !array && element_fits(&pattern, element))

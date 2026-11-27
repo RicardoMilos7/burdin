@@ -345,7 +345,9 @@ impl FnCx<'_> {
         for (m, ids) in &self.globals.modules[self.module].extensions {
             if ids.iter().any(|&id| {
                 let ext = &self.globals.extensions[id];
-                ext.params.is_empty() && crate::types::compatible(recv_ty, &ext.recv)
+                ext.params.is_empty()
+                    && (crate::types::compatible(recv_ty, &ext.recv)
+                        || (*recv_ty == burdin_tir::Ty::String && ext.recv == burdin_tir::Ty::Str))
             }) && !available.iter().any(|a| a == m)
             {
                 available.push(m.clone());

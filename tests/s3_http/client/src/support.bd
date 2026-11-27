@@ -299,8 +299,7 @@ fn read_request(mut conn: net.TcpStream, mut pending: List<u8>): Option<String> 
 
 /// The request line of a recorded request (`#1\nGET / HTTP/1.1...`): without the `#N` line.
 fn request_line(recorded: str): String {
-    let lines = recorded.split("\r\n")
-    let first = lines[0].as_str()
+    let first = recorded.split("\r\n").next().unwrap()
     match first.find('\n') {
         Option.Some(at) => first[at + 1..first.len()].to_string(),
         Option.None => first.to_string(),
@@ -309,10 +308,7 @@ fn request_line(recorded: str): String {
 
 /// The value of the header `name` in a recorded request, or `-` when it is absent.
 fn header_of(recorded: str, name: str): String {
-    let lines = recorded.split("\r\n")
-    let mut i: usize = 1
-    while i < lines.len() {
-        let line = lines[i].as_str()
+    for line in recorded.split("\r\n").skip(1) {
         match line.find(':') {
             Option.Some(colon) => {
                 if line[0..colon].eq_ignore_ascii_case(name) {
@@ -321,7 +317,6 @@ fn header_of(recorded: str, name: str): String {
             }
             Option.None => {}
         }
-        i = i + 1
     }
     "-".to_string()
 }

@@ -383,7 +383,7 @@ Only `collect` takes an explicit target. The other `Iterator<T>` defaults and th
 
 | Target | Items | Rule |
 | --- | --- | --- |
-| `List<T>` | `T` | in order; `T` must be an owned type, so a chain of views is not a target (E0141) |
+| `List<T>` | `T` (or `str` when `T` is `String`) | in order; `T` must be an owned type, so a chain of views is not a target (E0141), except `List<String>` collects `str` views by copying each into a `String` (issue #1019) |
 | `Map<K, V>` | `(K, V)` | `K: Eq`, and neither type a view; a later pair replaces the value of an earlier one with the same key, like `insert`, and the replaced value is dropped |
 | `String` | `char`, `str`, `String`, or `&String` | the pieces are appended in order |
 | `Set<T>`, `Deque<T>`, `PriorityHeap<T>` | `T` | by their `std` impl blocks; a set keeps one of each element, a heap orders by `Ord` |
