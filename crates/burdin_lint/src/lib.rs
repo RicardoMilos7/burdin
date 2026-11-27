@@ -147,7 +147,6 @@ pub fn run(input: &Input) -> Diagnostics {
         dead_code::check(&cx, &mut findings);
     }
     if on(&[
-        Lint::EagerChain,
         Lint::RedundantClone,
         Lint::LargeCopyInLoop,
         Lint::UnusedMut,

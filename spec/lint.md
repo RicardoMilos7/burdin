@@ -65,7 +65,7 @@ Tests: `check_lint.py` (summary line, json output, usage errors, `a missing file
 the next item, statement, or `match` arm: a finding anywhere inside that source range is not reported. A comment that
 follows code on a line suppresses the findings that start on that line. A suppressed finding is not reported and is not
 fixed (LN31). Suppression applies on top of the levels: a lint at `allow` does not run at all.
-Tests: `config/suppress_forms.bd`, `naming/allow_comments.bd`, `else_enum/negatives.bd`, `eager_chain/short_and_lazy.bd`,
+Tests: `config/suppress_forms.bd`, `naming/allow_comments.bd`, `else_enum/negatives.bd`,
 `unused/dead_code.bd`, the `suppress.rs` unit tests, the `docs/lints.md` suppression example.
 
 **LN7. File-wide suppression.** `// lint: allow-file(<lint>, ...)` anywhere in a file suppresses the named lints for the
@@ -146,10 +146,9 @@ methods) are unused; `main`, names with a leading underscore, and public items a
 lint never reports an item that is used and may miss one that shares a name with something used.
 Tests: `unused/dead_code.bd`.
 
-**LN20. `eager_chain` (L0005).** Three or more of the eager `List` methods `map`, `filter`, `fold`, `any`, `all`, and
-`find`, each applied to the result of the one before, are reported once, at the whole chain. The suggestion is to start
-with `.iter()`. No fix: the closure parameters of the lazy forms are items, not views, so the closures may need to change.
-Tests: `eager_chain/long_chains.bd`, `eager_chain/short_and_lazy.bd`.
+**LN20. `eager_chain` (L0005, removed).** Removed in issue #1082 when `Iterable` adapters became lazy directly on
+collections (no eager `List` methods remain; `needless_to_list` L0016 catches unnecessary intermediate `to_list()`
+calls).
 
 **LN21. `redundant_clone` (L0011).** `x.clone()` where `x` is a local of a type that is `Clone` and not `Copy`, the clone is
 the last use of `x`, no loop brings the clone around again, and the type has no user `Drop` (dropping the original would

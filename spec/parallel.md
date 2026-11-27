@@ -43,8 +43,8 @@ Differences from the first cut in the issue, each forced by the language as it i
 
 The interfaces are `ParallelIterator<T>` (every pipeline), `ParallelValues<T>` (PR3), and `IndexedParallelIterator<T>`
 (PR5). Their `__`-prefixed methods are the protocol between a source and a consumer, not part of the surface. Names do
-not collide with the eager `List` methods (`iterators.md`, IT10): `map` and `filter` here are methods of the pipeline
-interfaces, which only a pipeline value has.
+not collide with the sequential `Iterable` adapters (`iterators.md`, IT10): `map` and `filter` here are methods of the
+pipeline interfaces, which only a pipeline value has.
 
 Tests: `s3_parallel/ordered_basic`, `sources_adapters`.
 

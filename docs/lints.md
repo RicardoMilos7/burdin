@@ -181,26 +181,6 @@ fn main() {
 ```
 <!-- /lint-example -->
 
-## L0005: eager_chain
-
-Three or more eager `List` methods (`map`, `filter`, `fold`, `any`, `all`, `find`) are chained, so every step builds a
-new list that the next step reads once and throws away.
-
-**How to fix:** start the chain with `.iter()` and finish it with `.to_list()` (or a `fold`, `count`, `sum`), so the
-steps run lazily over the items without the intermediate lists. The closures of the lazy form take the items
-themselves, where the eager methods pass views, so the closure bodies may need a small change. The lint has no
-automatic fix for that reason.
-
-<!-- lint-example: L0005 -->
-```burdin
-fn main() {
-    let xs: List<i32> = [1, 2, 3].iter().to_list()
-    let ys = xs.map(|x| *x + 1).filter(|x| *x > 1).map(|x| *x * 2) //~ L0005
-    println("{}", ys.len())
-}
-```
-<!-- /lint-example -->
-
 ## L0006: unused_imports
 
 A name brought in with `use` is never mentioned in the file.

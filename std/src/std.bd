@@ -3,7 +3,7 @@ use alloc.{Allocator, Global}
 use env.get
 use fmt.{Debug, Display, Formatter}
 use fs.append
-use iter.{DoubleEndedIterator, Iterator}
+use iter.{DoubleEndedIterator, Iterable, Iterator}
 use marker.{Send, Sync}
 use mem.drop
 use reactor.offload_raw
@@ -1835,7 +1835,7 @@ Map<K, V, A> {
 Map<K, V, A> where K: Eq, A: Allocator {
     /// The slot holding `key` (and `true`), or the empty slot where it belongs (and `false`). The table must have
     /// slots.
-    priv fn find(self, key: K, hash: u64): (bool, usize) {
+    priv fn find_slot(self, key: K, hash: u64): (bool, usize) {
         let mask = self.cap - 1
         let mut i = (hash as usize) & mask
         loop {
@@ -1865,7 +1865,7 @@ Map<K, V, A> where K: Eq, A: Allocator {
     priv fn put(mut self, own key: K, own value: V, replace: bool): usize {
         self.make_room()
         let hash = map_hash(&key)
-        let (found, at) = self.find(key, hash)
+        let (found, at) = self.find_slot(key, hash)
         unsafe {
             if found {
                 if replace {
@@ -1930,7 +1930,7 @@ Map<K, V, A> where K: Eq, A: Allocator {
     fn get(self, key: K): Option<&V> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
-        let (found, at) = self.find(key, hash)
+        let (found, at) = self.find_slot(key, hash)
         if found { Option.Some(unsafe { &(*(self.ptr + at)).1 }) } else { Option.None }
     }
 
@@ -1948,7 +1948,7 @@ Map<K, V, A> where K: Eq, A: Allocator {
     fn get_mut(mut self, key: K): Option<&mut V> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
-        let (found, at) = self.find(key, hash)
+        let (found, at) = self.find_slot(key, hash)
         if found { Option.Some(unsafe { &mut (*(self.ptr + at)).1 }) } else { Option.None }
     }
 
@@ -1963,7 +1963,7 @@ Map<K, V, A> where K: Eq, A: Allocator {
     fn contains_key(self, key: K): bool {
         if self.cap == 0 { return false }
         let hash = map_hash(&key)
-        let (found, _) = self.find(key, hash)
+        let (found, _) = self.find_slot(key, hash)
         found
     }
 
@@ -1978,7 +1978,7 @@ Map<K, V, A> where K: Eq, A: Allocator {
     fn remove_entry(mut self, key: K): Option<(K, V)> {
         if self.cap == 0 { return Option.None }
         let hash = map_hash(&key)
-        let (found, at) = self.find(key, hash)
+        let (found, at) = self.find_slot(key, hash)
         if !found { return Option.None }
         let (k, v, _) = unsafe { __read(self.ptr + at) }
         self.shift_delete(at)
@@ -2150,6 +2150,10 @@ RangeInclusive<T> {
         RangeIterInclusive { cur: self.start, end: self.end, done: false }
     }
 }
+
+Range<T>: Iterable<T> where T: Ord {}
+
+RangeInclusive<T>: Iterable<T> where T: Ord {}
 
 RangeIter<T>: Iterator<T> where T: Ord {
     fn next(mut self): Option<T> {
