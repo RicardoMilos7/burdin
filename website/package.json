@@ -5,13 +5,14 @@
   "private": true,
   "description": "The Burdin language website: documentation, guides, and examples, built with Astro and Starlight.",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "dev": "node scripts/build-reference-pages.mjs && astro dev",
+    "build": "node scripts/build-reference-pages.mjs && astro build",
     "preview": "astro preview",
     "check:examples": "node scripts/check-examples.mjs",
+    "reference-pages": "node scripts/build-reference-pages.mjs",
     "api-docs": "node scripts/build-api-docs.mjs",
     "astro": "astro",
-    "build:pages": "astro build && node scripts/apply-base.mjs",
+    "build:pages": "node scripts/build-reference-pages.mjs && astro build && node scripts/apply-base.mjs",
     "check:links": "node scripts/check-links.mjs"
   },
   "dependencies": {
