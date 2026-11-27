@@ -3,6 +3,7 @@
 //! `.name(args)` as `T.name(args)`, `.name` as `T.name`, and `.{ fields }` as `T { fields }`.
 
 use super::{FnCx, error_expr, mk};
+use crate::globals::Globals;
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, Ty};
@@ -63,7 +64,6 @@ impl FnCx<'_> {
         match (&ty, name.name.as_str()) {
             (Ty::Heap(..), "new") => return self.heap_new(args, expect, span),
             (Ty::Heap(..), "new_in") => return self.heap_new_in(args, span),
-            (Ty::Shared(_), "new") => return self.shared_new(args, span),
             _ => {}
         }
         self.assoc_call(&ty, name, &[], args, span, expect)
@@ -73,23 +73,23 @@ impl FnCx<'_> {
     pub(super) fn target_value(&mut self, name: &ast::Ident, span: Span, expect: Option<&Ty>) -> tir::Expr {
         let form = format!(".{}", name.name);
         let Some(ty) = self.target_ty(expect, &form, span) else { return error_expr(span) };
-        match (&ty, name.name.as_str()) {
-            (Ty::Option(_), "None") => mk(tir::ExprKind::None, ty.clone(), span),
-            (Ty::Option(_), "Some") | (Ty::Result(..), "Ok" | "Err") => {
-                self.diags.error(
-                    Code::TYPE_MISMATCH,
-                    name.span,
-                    format!("`{}` takes a value; write `{form}(value)`", name.name),
-                );
-                error_expr(span)
-            }
-            _ => {
-                let value = self.unit_variant(ty.clone(), name, span);
-                // A name the expected type does not have keeps that type, so the editor can complete the name at the
-                // dot (`spec/lsp.md`, LS12). The error is already reported; no other check reads this node's kind.
-                if matches!(value.ty, Ty::Error) { mk(tir::ExprKind::Unit, ty.clone(), span) } else { value }
-            }
+        if self.globals.option_payload(&ty).is_some() && name.name == "None" {
+            return Globals::mk_none(ty.clone(), span);
         }
+        if (self.globals.option_payload(&ty).is_some() && name.name == "Some")
+            || (self.globals.result_parts(&ty).is_some() && matches!(name.name.as_str(), "Ok" | "Err"))
+        {
+            self.diags.error(
+                Code::TYPE_MISMATCH,
+                name.span,
+                format!("`{}` takes a value; write `{form}(value)`", name.name),
+            );
+            return error_expr(span);
+        }
+        let value = self.unit_variant(ty.clone(), name, span);
+        // A name the expected type does not have keeps that type, so the editor can complete the name at the
+        // dot (`spec/lsp.md`, LS12). The error is already reported; no other check reads this node's kind.
+        if matches!(value.ty, Ty::Error) { mk(tir::ExprKind::Unit, ty.clone(), span) } else { value }
     }
 
     /// `.Variant { field: value, ... }`: the struct-like variant of the expected enum, checked like

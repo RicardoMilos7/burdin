@@ -741,7 +741,7 @@ priv fn accepts<T, F: FnMut(&T): bool>(mut f: F, x: T): bool {
 }
 
 /// An iterator that can also take items from its back. `rev` walks such an iterator backwards. The built-in
-/// slice, range, and `Chars` iterators implement it in the compiler (spec/iterators.md, IT14).
+/// slice and range iterators implement it (spec/iterators.md, IT14).
 ///
 /// ```
 /// let xs = [1, 2, 3]

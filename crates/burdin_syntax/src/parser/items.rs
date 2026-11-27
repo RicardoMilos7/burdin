@@ -528,6 +528,7 @@ impl Parser<'_> {
             ret: Some(ret),
             where_clause: Vec::new(),
             body: Block { stmts, span: body_span },
+            has_body: true,
             span,
         };
         // `crate::error_item::wrap_test_failures` splits the function above into the body
@@ -544,6 +545,7 @@ impl Parser<'_> {
             ret: None,
             where_clause: Vec::new(),
             body: Block { stmts: Vec::new(), span: body_span },
+            has_body: true,
             span,
         };
         Ok(TestDecl { name, name_span, attrs, func, body_func, span })
@@ -622,6 +624,7 @@ impl Parser<'_> {
             ret: None,
             where_clause: Vec::new(),
             body: Block { stmts, span: body_span },
+            has_body: true,
             span,
         };
         Ok(BenchDecl { name, name_span, func, span })
@@ -716,7 +719,7 @@ impl Parser<'_> {
             self.expect(&TokenKind::Dot)?;
             let name = self.ident("a method name")?;
             let generics = if self.at(&TokenKind::Lt) { self.generic_params()? } else { Vec::new() };
-            let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, false)?;
+            let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, true)?;
             return Ok(ExtensionDecl { recv, func });
         }
         let mut segments: Vec<PathSegment> = Vec::new();
@@ -744,12 +747,12 @@ impl Parser<'_> {
             recv_start.to(last.name.span)
         };
         let recv = Type { kind: TypeKind::Path(segments), span: recv_span };
-        let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, false)?;
+        let (func, _) = self.fn_rest(is_priv, is_unsafe, false, start, name, generics, true)?;
         Ok(ExtensionDecl { recv, func })
     }
 
     pub(super) fn fn_decl(&mut self, is_priv: bool, start: Span) -> PResult<FnDecl> {
-        Ok(self.fn_decl_opt(is_priv, start, false, false, false)?.0)
+        Ok(self.fn_decl_opt(is_priv, start, true, false, false)?.0)
     }
 
     /// A method of an `impl` block or a `derive` body: a function whose name may be a member name (issue #933).
@@ -821,6 +824,7 @@ impl Parser<'_> {
                     ret,
                     where_clause,
                     body,
+                    has_body: false,
                     span,
                 },
                 false,
@@ -841,6 +845,7 @@ impl Parser<'_> {
                 ret,
                 where_clause,
                 body,
+                has_body: true,
                 span,
             },
             true,

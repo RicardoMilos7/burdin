@@ -906,10 +906,6 @@ impl<'a> Expander<'a> {
                 1 => format!("({},)", self.value_in(&items[0], typed)?),
                 _ => format!("({})", self.list(items, typed)?),
             },
-            T::Some(x) => format!("Option.Some({})", self.value_in(x, typed)?),
-            T::None => "Option.None".to_string(),
-            T::Ok(x) => format!("Result.Ok({})", self.value_in(x, typed)?),
-            T::Err(x) => format!("Result.Err({})", self.value_in(x, typed)?),
             // A constant's name may not be in scope where the text goes, so its value is written instead.
             T::Const(id) => self.value_in(&p.consts.get(id.0)?.value, typed)?,
             T::ConstCond(inner) => self.value_in(inner, typed)?,
@@ -927,7 +923,8 @@ impl<'a> Expander<'a> {
                 let Ty::Enum(adt) = &e.ty else { return None };
                 let def = p.enums.get(adt.id)?;
                 let variant = def.variants.get(*index)?;
-                let name = def.name.rsplit('.').next()?;
+                // The type arguments are left to inference (`Option.Some(7)`), as for any generic enum.
+                let name = def.name.split('<').next()?.rsplit('.').next()?;
                 match variant.shape {
                     burdin_tir::VariantShape::Unit => format!("{name}.{}", variant.name),
                     burdin_tir::VariantShape::Tuple => {
@@ -1105,8 +1102,7 @@ fn pat_locals(p: &burdin_tir::Pat, out: &mut Vec<burdin_tir::LocalId>) {
                 pat_locals(p, out);
             }
         }
-        P::Some(p) | P::Ok(p) | P::Err(p) => pat_locals(p, out),
-        P::Wild | P::Bool(_) | P::Int(_) | P::Char(_) | P::Str(_) | P::Range(..) | P::None => {}
+        P::Wild | P::Bool(_) | P::Int(_) | P::Char(_) | P::Str(_) | P::Range(..) => {}
     }
 }
 

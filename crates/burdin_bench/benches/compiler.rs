@@ -307,7 +307,7 @@ fn package_files(size: &str) -> usize {
     }
 }
 
-/// The most chunks each module of a query package holds. The checker stops at 4000 functions, types, and
+/// The most chunks each module of a query package holds. The checker stops at 6000 functions, types, and
 /// generic instances (`burdin_sema::instances`, MAX_ITEMS), and the standard library spends part of that budget,
 /// so the query packages stay below the limit while still being large enough that rechecking them all would show.
 const QUERY_CHUNKS: usize = 32;

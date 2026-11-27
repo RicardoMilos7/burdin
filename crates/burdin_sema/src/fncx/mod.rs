@@ -484,7 +484,11 @@ impl<'a> FnCx<'a> {
     /// Whether `Option` or `Result` written alone means the built-in enum: nothing in scope and no type of the
     /// program has that name.
     pub(super) fn is_prelude_type(&self, name: &str) -> bool {
-        self.is_prelude(name) && self.globals.type_name(self.module, name).is_none()
+        self.is_prelude(name)
+            && matches!(
+                (self.globals.type_name(self.module, name), self.globals.lang_type_name(name)),
+                (Some(a), Some(b)) if a == b
+            )
     }
 
     /// `Option` or `Result` as the head of a path expression, as in `Option.Some(x)` or `Result.Ok(v)`.
@@ -558,7 +562,8 @@ impl<'a> FnCx<'a> {
             tir::ExprKind::PtrDeref(_) => true,
             // Elements of an array or a list place are mutable with it; elements of a slice view are read-only.
             tir::ExprKind::Index(base, _) => {
-                matches!(base.ty, Ty::Array(..) | Ty::List(_, _)) && self.place_mutable(base)
+                (matches!(base.ty, Ty::Array(..)) || self.globals.list_parts(&base.ty).is_some())
+                    && self.place_mutable(base)
             }
             _ => false,
         }
@@ -666,24 +671,24 @@ impl<'a> FnCx<'a> {
                     d.help("convert to `String` with `.to_string()`");
                 }
             }
-            (Ty::Option(inner), _) if compatible(found, inner) => {
+            (Ty::Enum(adt), _) if adt.name.starts_with("Option<") => {
                 if let Some(s) = snippet.filter(|s| !s.is_empty() && !s.contains('\n')) {
                     d.suggest_with(span, "wrap in `Option.Some(...)`", format!("Option.Some({s})"), MaybeIncorrect);
                 } else {
                     d.help("wrap the value in `Option.Some(...)`");
                 }
             }
-            (Ty::Result(ok, _), _) if compatible(found, ok) => {
+            (Ty::Enum(adt), _) if adt.name.starts_with("Result<") => {
                 if let Some(s) = snippet.filter(|s| !s.is_empty() && !s.contains('\n')) {
                     d.suggest_with(span, "wrap in `Result.Ok(...)`", format!("Result.Ok({s})"), MaybeIncorrect);
                 } else {
                     d.help("wrap the value in `Result.Ok(...)`");
                 }
             }
-            (_, Ty::Option(inner)) if compatible(inner, expected) => {
+            (_, Ty::Enum(adt)) if adt.name.starts_with("Option<") => {
                 d.help("unwrap the `Option` with `.unwrap()`, `.expect(...)`, or `match`");
             }
-            (_, Ty::Result(ok, _)) if compatible(ok, expected) => {
+            (_, Ty::Enum(adt)) if adt.name.starts_with("Result<") => {
                 d.help("propagate the error with `?` or unwrap with `.unwrap()` or `match`");
             }
             (Ty::Int(_) | Ty::Float(_), Ty::Int(_) | Ty::Float(_)) => {
@@ -730,7 +735,7 @@ impl<'a> FnCx<'a> {
     }
 
     /// Whether `found` is a type parameter whose closure bound provides `want`: `F: FnOnce(): V` passed where a
-    /// built-in method takes the closure type `FnOnce(): V` (`MapEntry::or_insert_with`). Each concrete instance
+    /// built-in method takes the closure type `FnOnce(): V`. Each concrete instance
     /// checks its body again with `F` substituted, so a closure the bound does not allow is still rejected there.
     fn param_meets_fn(&self, found: &Ty, want: &Ty) -> bool {
         let Ty::Param(_) = found else { return false };

@@ -12,7 +12,37 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FloatValue, Functi
 use inkwell::{FloatPredicate, IntPredicate};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
+    /// Converts what a built-in built in the scratch `Option`/`Result` layout into the value of its type `ty`.
+    fn finish_scratch(
+        &mut self,
+        value: Option<BasicValueEnum<'ctx>>,
+        ty: &Ty,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let Some(BasicValueEnum::StructValue(v)) = value else { return Ok(value) };
+        if let Some(inner) = self.option_payload_ty(ty) {
+            if v.get_type() == self.option_ty(&inner) {
+                return Ok(Some(self.option_from_scratch(v.into(), ty)?));
+            }
+        } else if let Some((ok, err)) = self.result_payload_tys(ty)
+            && v.get_type() == self.result_ty(&ok, &err)
+        {
+            return Ok(Some(self.result_from_scratch(v.into(), ty)?));
+        }
+        Ok(value)
+    }
+
     pub(super) fn builtin(
+        &mut self,
+        b: Builtin,
+        args: &'a [tir::Expr],
+        ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let value = self.builtin_inner(b, args, ty, span)?;
+        self.finish_scratch(value, ty)
+    }
+
+    fn builtin_inner(
         &mut self,
         b: Builtin,
         args: &'a [tir::Expr],
@@ -60,17 +90,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             // `__view_as_text(view)`: `[u8]` and `str` are the same pointer-and-length value.
             Builtin::ViewAsText => return self.expr_mode(&args[0], Mode::Use),
-            Builtin::CStringFrom => {
-                let s = self.expr_mode(&args[0], Mode::Use)?;
-                let s = self.need(s, &Ty::Str).into_struct_value();
-                let ptr = self.builder.build_extract_value(s, 0, "ptr").map_err(llvm_err)?;
-                let len = self.builder.build_extract_value(s, 1, "len").map_err(llvm_err)?;
-                let call = self
-                    .builder
-                    .build_call(self.rt.cstring_from, &[ptr.into(), len.into()], "cstring")
-                    .map_err(llvm_err)?;
-                return Ok(call.try_as_basic_value().basic());
-            }
             Builtin::CStrToString => {
                 let ptr =
                     self.expr_mode(&args[0], Mode::Use)?.expect("a C string pointer has a value").into_pointer_value();
@@ -170,50 +189,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(ptr_field, ptr).map_err(llvm_err)?;
                 return Ok(Some(self.builder.build_load(heap_ty, slot, "").map_err(llvm_err)?));
             }
-            // `List<T>.with_capacity(n)` and `List<T>.with_capacity_in(n, alloc)`: an empty list with room for
-            // `n` elements. A stored allocator value is placed in the list's own field before the buffer is
-            // allocated through it.
-            Builtin::ListWithCapacity | Builtin::ListWithCapacityIn => {
-                let n = self.expr_mode(&args[0], Mode::Use)?;
-                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::List(elem, alloc) = ty else { return Err("`with_capacity` on a non-list type".into()) };
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                if b == Builtin::ListWithCapacityIn {
-                    let alloc_value = self.expr_mode(&args[1], Mode::Move)?;
-                    if !alloc.is_global() {
-                        let seq_ty = self.seq_ty(&alloc);
-                        let slot = self.alloca(seq_ty.into(), "list.capacity")?;
-                        let alloc_field =
-                            self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
-                        let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                        self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
-                        let value = self.list_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
-                        self.builder.build_store(slot, value).map_err(llvm_err)?;
-                        return Ok(Some(self.builder.build_load(seq_ty, slot, "").map_err(llvm_err)?));
-                    }
-                }
-                let value = self.list_with_capacity(n, &elem, &alloc, None, span)?;
-                return Ok(Some(value.into()));
-            }
-            Builtin::ListNew | Builtin::MapNew => {
-                return Ok(Some(self.string_ty.const_zero().into()));
-            }
-            // `Map<K, V>.with_capacity(n)`: an empty map whose table holds `n` entries without growing.
-            Builtin::MapWithCapacity => {
-                let capacity = self.expr_mode(&args[0], Mode::Use)?;
-                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::Map(key, value, _) = ty else { return Ok(None) };
-                let (key, value) = ((**key).clone(), (**value).clone());
-                let cap = self.map_capacity_for(capacity, span)?;
-                let map_ty = self.llvm_ty(ty).expect("a map has a type");
-                let slot = self.alloca(map_ty, "map.with_capacity")?;
-                self.builder.build_store(slot, map_ty.const_zero()).map_err(llvm_err)?;
-                let mut seq = self.seq_load_at(slot, &burdin_tir::Alloc::Global)?;
-                self.map_rehash_to(&mut seq, &key, &value, cap, span)?;
-                self.seq_store(&seq)?;
-                return Ok(Some(self.builder.build_load(map_ty, slot, "").map_err(llvm_err)?));
-            }
-
             // `String.with_capacity(n)`: an empty string with a buffer of `n` bytes.
             Builtin::StringWithCapacity => {
                 let capacity = self.expr_mode(&args[0], Mode::Use)?;
@@ -237,46 +212,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(done).map_err(llvm_err)?;
                 self.builder.position_at_end(done);
                 return Ok(Some(self.builder.build_load(string_t, slot, "").map_err(llvm_err)?));
-            }
-            // `List<T>.try_with_capacity(n)` and `try_with_capacity_in(n, alloc)`: `with_capacity` that returns
-            // `Err(AllocError)` instead of panicking (`spec/allocators.md`, AL11).
-            Builtin::ListTryWithCapacity | Builtin::ListTryWithCapacityIn => {
-                let n = self.expr_mode(&args[0], Mode::Use)?;
-                let n = self.need_int(n, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::Result(list_ty, _) = ty else { return Err("`try_with_capacity` returns a Result".into()) };
-                let Ty::List(elem, alloc) = &**list_ty else {
-                    return Err("`try_with_capacity` on a non-list type".into());
-                };
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                let alloc_value =
-                    if b == Builtin::ListTryWithCapacityIn { self.expr_mode(&args[1], Mode::Move)? } else { None };
-                if b == Builtin::ListTryWithCapacityIn && !alloc.is_global() {
-                    let seq_ty = self.seq_ty(&alloc);
-                    let slot = self.alloca(seq_ty.into(), "list.try.capacity")?;
-                    let alloc_field = self.builder.build_struct_gep(seq_ty, slot, 3, "list.alloc").map_err(llvm_err)?;
-                    let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                    self.builder.build_store(alloc_field, alloc_value).map_err(llvm_err)?;
-                    let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, Some(alloc_field), span)?;
-                    return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
-                }
-                let (status, list) = self.list_try_with_capacity(n, &elem, &alloc, None, span)?;
-                return Ok(Some(self.try_result(status, Some(list.into()), ty)?));
-            }
-            // `Map<K, V>.try_with_capacity(n)`: the empty map that `try_reserve(n)` makes.
-            Builtin::MapTryWithCapacity => {
-                let capacity = self.expr_mode(&args[0], Mode::Use)?;
-                let capacity = self.need_int(capacity, &Ty::Int(burdin_tir::IntTy::Usize));
-                let Ty::Result(map_ty, _) = ty else { return Err("`try_with_capacity` returns a Result".into()) };
-                let Ty::Map(key, value, _) = &**map_ty else {
-                    return Err("`Map.try_with_capacity` on a non-map type".into());
-                };
-                let (key, value) = ((**key).clone(), (**value).clone());
-                let map_t = self.llvm_ty(map_ty).expect("a map has a type");
-                let slot = self.alloca(map_t, "map.try.with_capacity")?;
-                self.builder.build_store(slot, map_t.const_zero()).map_err(llvm_err)?;
-                let status = self.map_try_reserve_at(slot, &burdin_tir::Alloc::Global, &key, &value, capacity, span)?;
-                let map = self.builder.build_load(map_t, slot, "").map_err(llvm_err)?;
-                return Ok(Some(self.try_result(status, Some(map), ty)?));
             }
             // `String.try_with_capacity(n)`: `with_capacity` that reports a failed allocation.
             Builtin::StringTryWithCapacity => {
@@ -314,24 +249,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let st = self.builder.build_load(i32_ty, status, "").map_err(llvm_err)?.into_int_value();
                 let value = self.builder.build_load(string_t, slot, "").map_err(llvm_err)?;
                 return Ok(Some(self.try_result(st, Some(value), ty)?));
-            }
-            // `List<T>.new_in(alloc)` and `Map<K, V>.new_in(alloc)`: the empty container with the allocator value.
-            Builtin::ListNewIn | Builtin::MapNewIn => {
-                let alloc_ty = args[0].ty.clone();
-                let alloc_value = self.expr_mode(&args[0], Mode::Move)?;
-                let global = self.is_global_allocator(&alloc_ty);
-                let alloc =
-                    if global { burdin_tir::Alloc::Global } else { burdin_tir::Alloc::Value(Box::new(alloc_ty)) };
-                let seq_ty = self.seq_ty(&alloc);
-                let agg = seq_ty.const_zero();
-                if global {
-                    let _ = alloc_value;
-                    return Ok(Some(agg.into()));
-                }
-                let alloc_value = self.need(alloc_value, alloc.allocator_ty().expect("stored allocator"));
-                let agg =
-                    self.builder.build_insert_value(agg, alloc_value, 3, "").map_err(llvm_err)?.into_struct_value();
-                return Ok(Some(agg.into()));
             }
             // The `Global` allocator's primitives. The site is the call's span, which points into the allocator's
             // implementation, so a leak of a container's buffer names the code that allocated it.
@@ -378,22 +295,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.global_dealloc(p)?;
                 return Ok(None);
             }
-            // `Shared.new(value)`: a cell `{ count: usize, value }`.
-            Builtin::SharedNew => {
-                let value = self.expr_mode(&args[0], Mode::Move)?;
-                let inner = args[0].ty.clone();
-                let inner_size = self.llvm_ty(&inner).map(|t| self.target_data.get_abi_size(&t)).unwrap_or(0);
-                let size = self.usize_ty.const_int(8 + inner_size.max(1), false);
-                let p = self.global_alloc(size, Some(span))?;
-                self.builder.build_store(p, self.usize_ty.const_int(1, false)).map_err(llvm_err)?;
-                if self.llvm_ty(&inner).is_some() {
-                    let eight = self.usize_ty.const_int(8, false);
-                    let value_at = self.offset_ptr(p, eight)?;
-                    let v = self.need(value, &inner);
-                    self.builder.build_store(value_at, v).map_err(llvm_err)?;
-                }
-                return Ok(Some(p.into()));
-            }
             Builtin::Swap => {
                 let ty = args[0].ty.clone();
                 let (Some(a), Some(b)) = (self.place_ptr(&args[0])?, self.place_ptr(&args[1])?) else {
@@ -404,6 +305,51 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let vb = self.builder.build_load(t, b, "swap.b").map_err(llvm_err)?;
                     self.builder.build_store(a, vb).map_err(llvm_err)?;
                     self.builder.build_store(b, va).map_err(llvm_err)?;
+                }
+                return Ok(None);
+            }
+            Builtin::RawRead => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let Some(t) = self.llvm_ty(ty) else { return Ok(None) };
+                return Ok(Some(self.builder.build_load(t, p, "raw.read").map_err(llvm_err)?));
+            }
+            Builtin::HashKey => {
+                let Ty::Ref { inner, .. } = &args[0].ty else {
+                    return Err("internal error: `__hash_key` lost its reference".into());
+                };
+                let inner = (**inner).clone();
+                let r = self.expr_mode(&args[0], Mode::Use)?;
+                let acc = self.cx.i64_type().const_int(0xcbf2_9ce4_8422_2325, false);
+                let hash = if self.llvm_ty(&inner).is_some() {
+                    let p = self.need(r, &args[0].ty).into_pointer_value();
+                    self.hash_at(p, &inner, acc)?
+                } else {
+                    acc
+                };
+                return Ok(Some(hash.into()));
+            }
+            Builtin::IntStep => {
+                let x = self.expr_mode(&args[0], Mode::Use)?;
+                let x = self.need_int(x, &args[0].ty);
+                let d = self.expr_mode(&args[1], Mode::Use)?;
+                let d = self.need_int(d, &args[1].ty);
+                let d = self.builder.build_int_s_extend_or_bit_cast(d, x.get_type(), "").map_err(llvm_err)?;
+                return Ok(Some(self.builder.build_int_add(x, d, "step").map_err(llvm_err)?.into()));
+            }
+            Builtin::SliceRaw | Builtin::IterMutRaw => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let n = self.usize_value(&args[1])?;
+                return Ok(Some(self.make_str(p.into(), n.into())?.into()));
+            }
+            Builtin::RawWrite => {
+                let p = self.expr_mode(&args[0], Mode::Use)?;
+                let p = self.need(p, &args[0].ty).into_pointer_value();
+                let value = self.expr_mode(&args[1], Mode::Move)?;
+                if self.llvm_ty(&args[1].ty).is_some() {
+                    let value = self.need(value, &args[1].ty);
+                    self.builder.build_store(p, value).map_err(llvm_err)?;
                 }
                 return Ok(None);
             }
@@ -437,7 +383,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map_err(llvm_err)?;
                 let ok = self.builder.build_not(failed, "").map_err(llvm_err)?;
                 let code = self.builder.build_load(self.cx.i32_type(), err_slot, "run.code").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("run returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("run returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -490,7 +437,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     call.try_as_basic_value().basic().expect("process_spawn returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("process_spawn returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("process_spawn returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "spawn.result")?;
                 let good = self.new_block("spawn.ok");
@@ -529,7 +477,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::ProcessWait => {
                 let pid = self.expr_mode(&args[0], Mode::Use)?;
@@ -560,7 +508,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let status = call.try_as_basic_value().basic().expect("a pipe read returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a pipe read returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "pipe.result")?;
                 let good = self.new_block("pipe.ok");
@@ -582,7 +531,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::PipeReadLine => {
                 let handle = self.expr_mode(&args[0], Mode::Use)?;
@@ -597,7 +546,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .basic()
                     .expect("a pipe read returns a status")
                     .into_int_value();
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a pipe read returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "pipe.result")?;
                 let i32_ty = self.cx.i32_type();
@@ -611,7 +561,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_conditional_branch(failed, bad, good).map_err(llvm_err)?;
                 self.builder.position_at_end(good);
                 let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
-                let Ty::Option(inner) = &**ok_ty else { unreachable!("a pipe read returns Option<String>") };
+                let inner = self.option_payload_ty(ok_ty).expect("a pipe read returns Option<String>");
+                let inner = &inner;
                 let eof = self
                     .builder
                     .build_int_compare(IntPredicate::EQ, status, i32_ty.const_int(1, false), "")
@@ -625,6 +576,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_struct_value();
                 let option =
                     self.builder.build_insert_value(option, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                let option = self.option_from_scratch(option.into(), ok_ty)?;
                 let mut value = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
@@ -638,7 +590,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::PipeReadBoth => {
                 let first = self.expr_mode(&args[0], Mode::Use)?;
@@ -672,7 +624,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_int_value();
                 let zero_i32 = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero_i32, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a pipe read returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a pipe read returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "both.result")?;
                 let good = self.new_block("both.ok");
@@ -702,7 +655,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, rt.const_zero()).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::PipeWrite => {
                 let handle = self.expr_mode(&args[0], Mode::Use)?;
@@ -729,13 +682,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let f = if int_ty.signed() { self.rt.parse_i64 } else { self.rt.parse_u64 };
                 let call = self.builder.build_call(f, &[ptr.into(), len.into(), out.into()], "").map_err(llvm_err)?;
                 let mut ok = call.try_as_basic_value().basic().expect("parse returns a flag").into_int_value();
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("parse returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("parse returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let raw = self.builder.build_load(self.cx.i64_type(), out, "").map_err(llvm_err)?.into_int_value();
                 // The runtime parses into 64 bits; a number that does not fit the narrower type is an error, not a
                 // truncated value.
                 let mut narrowed = None;
-                if let Ty::Int(i) = &**ok_ty
+                if let Ty::Int(i) = ok_ty
                     && i.bits() != 64
                 {
                     let small = self.builder.build_int_truncate(raw, self.int_ty(*i), "").map_err(llvm_err)?;
@@ -772,7 +726,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "read.ok")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_to_string returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("read_to_string returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "read.out")?;
                 let good = self.new_block("read.ok");
@@ -800,7 +755,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             // `__dns_lookup(host) -> Result<String, i32>`: one `a.b.c.d` per line, or the resolver's code. The
             // standard library runs it on the helper pool, so the call is the same shape as `read_to_string`.
@@ -819,7 +774,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "dns.ok")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("dns_lookup returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("dns_lookup returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "dns.out")?;
                 let good = self.new_block("dns.good");
@@ -847,7 +803,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::WriteFile => {
                 let path = self.expr_mode(&args[0], Mode::Use)?;
@@ -867,7 +823,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::EQ, code, self.cx.i32_type().const_zero(), "write.ok")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("write_file returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("write_file returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -898,7 +855,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::SGE, fd, i32_ty.const_zero(), "opened")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_open returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("file_open returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -925,7 +883,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "read")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_read returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("file_read returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -951,7 +910,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::SGE, n, self.usize_ty.const_zero(), "written")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_write returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("file_write returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -977,7 +937,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::SGE, position, self.cx.i64_type().const_zero(), "position")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("file_seek returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("file_seek returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -1020,7 +981,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_zero(), "ok")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a file operation returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a file operation returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -1112,7 +1074,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .basic()
                     .expect("read_line returns a status")
                     .into_int_value();
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_line returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("read_line returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "stdin.out")?;
                 let i32_ty = self.cx.i32_type();
@@ -1127,7 +1090,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(good);
                 let text = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
                 // The runtime's 1 is the end of input with nothing read; a line of zero bytes is still a line.
-                let Ty::Option(inner) = &**ok_ty else { unreachable!("read_line returns Option<String>") };
+                let inner = self.option_payload_ty(ok_ty).expect("read_line returns Option<String>");
+                let inner = &inner;
                 let eof = self
                     .builder
                     .build_int_compare(IntPredicate::EQ, status, i32_ty.const_int(1, false), "eof")
@@ -1141,6 +1105,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_struct_value();
                 let option =
                     self.builder.build_insert_value(option, text, 1, "").map_err(llvm_err)?.into_struct_value();
+                let option = self.option_from_scratch(option.into(), ok_ty)?;
                 let mut value = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
@@ -1161,7 +1126,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::StdinReadToString => {
                 let out = self.alloca(self.string_ty.into(), "stdin.text")?;
@@ -1179,7 +1144,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .builder
                     .build_int_compare(IntPredicate::EQ, status, self.cx.i32_type().const_zero(), "ok")
                     .map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_to_string returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("read_to_string returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "stdin.out")?;
                 let good = self.new_block("stdin.ok");
@@ -1208,7 +1174,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             // The directory and metadata primitives (`spec/stdlib.md`, issue #411). Each reports the operating
             // system's error code, with zero for success; the `std` wrappers build the `IoError`.
@@ -1222,7 +1188,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let status = call.try_as_basic_value().basic().expect("read_dir returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("read_dir returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("read_dir returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "dir.out")?;
                 let good = self.new_block("dir.ok");
@@ -1231,6 +1198,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_conditional_branch(ok, good, bad).map_err(llvm_err)?;
                 self.builder.position_at_end(good);
                 let list = self.builder.build_load(self.string_ty, out, "").map_err(llvm_err)?;
+                let list = self.conform(list, ok_ty)?;
                 let mut value = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_int(1, false), 0, "")
@@ -1241,7 +1209,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(bad);
                 // The runtime leaves an empty list behind, so dropping it is safe and frees nothing.
-                self.drop_value(out, &Ty::List(Box::new(Ty::String), burdin_tir::Alloc::Global))?;
+                self.drop_value(out, ok_ty)?;
                 let mut failure = self
                     .builder
                     .build_insert_value(rt.const_zero(), self.cx.bool_type().const_zero(), 0, "")
@@ -1252,7 +1220,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::CreateDir | Builtin::RemoveDir | Builtin::RemoveFile | Builtin::RenamePath => {
                 let (ptr, len) = self.str_parts(&args[0])?;
@@ -1273,7 +1241,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     call.try_as_basic_value().basic().expect("a path change returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("a path change returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("a path change returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let mut value =
                     self.builder.build_insert_value(rt.const_zero(), ok, 0, "").map_err(llvm_err)?.into_struct_value();
@@ -1290,7 +1259,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let status = call.try_as_basic_value().basic().expect("metadata returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("metadata returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("metadata returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "meta.out")?;
                 let good = self.new_block("meta.ok");
@@ -1328,7 +1298,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::Canonicalize => {
                 let (ptr, len) = self.str_parts(&args[0])?;
@@ -1340,7 +1310,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let status = call.try_as_basic_value().basic().expect("canonicalize returns a status").into_int_value();
                 let zero = self.cx.i32_type().const_zero();
                 let ok = self.builder.build_int_compare(IntPredicate::EQ, status, zero, "").map_err(llvm_err)?;
-                let Ty::Result(ok_ty, err_ty) = ty else { unreachable!("canonicalize returns a Result") };
+                let (ok_ty, err_ty) = self.result_payload_tys(ty).expect("canonicalize returns a Result");
+                let (ok_ty, err_ty) = (&ok_ty, &err_ty);
                 let rt = self.result_ty(ok_ty, err_ty);
                 let slot = self.alloca(rt.into(), "canon.out")?;
                 let good = self.new_block("canon.ok");
@@ -1369,7 +1340,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(slot, failure).map_err(llvm_err)?;
                 self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
                 self.builder.position_at_end(end);
-                return Ok(Some(self.builder.build_load(rt, slot, "").map_err(llvm_err)?));
+                return self.finish_result(rt, slot, ty);
             }
             Builtin::Clock => {
                 let kind = self.expr_mode(&args[0], Mode::Use)?;
@@ -1415,7 +1386,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_int_compare(IntPredicate::NE, found, self.cx.i32_type().const_zero(), "")
                     .map_err(llvm_err)?;
                 let list = self.builder.build_load(self.string_ty, out, "env.bytes").map_err(llvm_err)?;
-                let inner = Ty::List(Box::new(Ty::Int(burdin_tir::IntTy::U8)), burdin_tir::Alloc::Global);
+                let Some(inner) = self.option_payload_ty(ty) else {
+                    return Err("`env` bytes return an `Option`".into());
+                };
+                let list = self.conform(list, &inner)?;
                 let opt_ty = self.option_ty(&inner);
                 let agg = self
                     .builder
@@ -1424,7 +1398,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .into_struct_value();
                 let agg =
                     self.builder.build_insert_value(agg, list, 1, "env.value").map_err(llvm_err)?.into_struct_value();
-                return Ok(Some(agg.into()));
+                return Ok(Some(self.option_from_scratch(agg.into(), ty)?));
             }
             Builtin::EnvSet | Builtin::EnvSetBytes => {
                 let name = self.expr_mode(&args[0], Mode::Use)?;
@@ -1562,6 +1536,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         ty: &Ty,
         span: Span,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
+        let value = self.method_inner(m, args, ty, span)?;
+        self.finish_scratch(value, ty)
+    }
+
+    fn method_inner(
+        &mut self,
+        m: Method,
+        args: &'a [tir::Expr],
+        ty: &Ty,
+        span: Span,
+    ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         if let Method::Float(op) = m {
             return self.float_method(op, args);
         }
@@ -1574,35 +1559,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         if m == Method::IterNextBack {
             return self.iter_next_back(args, ty);
-        }
-        if m == Method::AsPtr {
-            // A `CString` receiver that is not a place is a temporary of the statement: keep it in a slot so its
-            // buffer is freed at the end of the statement, like `view_parts` does for a temporary `String`.
-            let recv_ty = args[0].ty.clone();
-            let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-            let storage = match self.direct_place_ptr(&args[0])? {
-                Some(ptr) => ptr,
-                None => {
-                    let v = self.expr_mode(&args[0], Mode::Use)?;
-                    let slot = self.alloca(ptr_ty.into(), "cstring")?;
-                    let v = self.need(v, &recv_ty);
-                    self.builder.build_store(slot, v).map_err(llvm_err)?;
-                    self.add_temp_slot(slot, &recv_ty);
-                    slot
-                }
-            };
-            let p = self.builder.build_load(ptr_ty, storage, "cstring.ptr").map_err(llvm_err)?;
-            return Ok(Some(p));
-        }
-        if m == Method::SharedGet {
-            let p = self.shared_pointer(&args[0])?;
-            let eight = self.usize_ty.const_int(8, false);
-            return Ok(Some(self.offset_ptr(p, eight)?.into()));
-        }
-        if m == Method::SharedStrongCount {
-            let p = self.shared_pointer(&args[0])?;
-            let count = self.shared_count_load(p)?;
-            return Ok(Some(count));
         }
         if m == Method::Clone {
             let recv_ty = args[0].ty.clone();
@@ -1659,9 +1615,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.builder.build_call(self.rt.string_push_char, &[recv.into(), c.into()], "").map_err(llvm_err)?;
             return Ok(None);
         }
-        if m == Method::Chars || m == Method::AsBytes {
-            // The characters and the bytes are both a view of the text's storage (`[u8]` and `str` share the
-            // pointer-and-length layout).
+        if m == Method::AsBytes {
+            // The bytes are a view of the text's storage (`[u8]` and `str` share the pointer-and-length layout).
             let (ptr, len) = self.view_parts(&args[0])?;
             return Ok(Some(self.make_str(ptr, len)?.into()));
         }
@@ -1679,7 +1634,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let i64_ty = self.cx.i64_type();
             let found =
                 self.builder.build_int_compare(IntPredicate::SGE, idx, i64_ty.const_zero(), "").map_err(llvm_err)?;
-            let Ty::Option(inner) = ty else { unreachable!("`find_str` returns an `Option`") };
+            let Some(inner) = self.option_payload_ty(ty) else { unreachable!("`find_str` returns an `Option`") };
+            let inner = &inner;
             let opt_ty = self.option_ty(inner);
             let payload = self.builder.build_int_truncate(idx, self.usize_ty, "").map_err(llvm_err)?;
             let agg = self
@@ -1688,7 +1644,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 .map_err(llvm_err)?
                 .into_struct_value();
             let agg = self.builder.build_insert_value(agg, payload, 1, "").map_err(llvm_err)?.into_struct_value();
-            return Ok(Some(agg.into()));
+            return Ok(Some(self.option_from_scratch(agg.into(), ty)?));
         }
         if matches!(
             m,
@@ -1706,57 +1662,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 | Method::SliceWindows
         ) {
             return self.slice_method(m, args, ty, span);
-        }
-        if matches!(
-            m,
-            Method::Push
-                | Method::ListPop
-                | Method::ListLast
-                | Method::ListFirst
-                | Method::ListFirstMut
-                | Method::ListLastMut
-                | Method::ListGet
-                | Method::ListGetMut
-                | Method::ListCapacity
-                | Method::ListIsEmpty
-                | Method::ListReserve
-                | Method::ListReserveExact
-                | Method::ListTryReserve
-                | Method::ListTryReserveExact
-                | Method::ListShrinkToFit
-                | Method::ListSwap
-                | Method::ListSwapRemove
-                | Method::ListTruncate
-                | Method::ListSplitOff
-                | Method::ListAppend
-                | Method::ListDrain
-                | Method::ListExtendFromSlice
-                | Method::ListInsert
-                | Method::ListRemove
-                | Method::ListContains
-                | Method::ListSort
-                | Method::Clear
-                | Method::MapInsert
-                | Method::MapGetOrInsert
-                | Method::MapGetOr
-                | Method::MapEntry
-                | Method::MapEntryOrInsert
-                | Method::MapEntryOrInsertWith
-                | Method::MapGet
-                | Method::MapGetMut
-                | Method::MapRemove
-                | Method::MapRemoveEntry
-                | Method::MapRetain
-                | Method::MapReserve
-                | Method::MapTryReserve
-                | Method::MapShrinkToFit
-                | Method::MapContainsKey
-        ) {
-            return self.collection_method(m, args, ty, span);
-        }
-        if matches!(m, Method::Unwrap | Method::Expect | Method::IsSome | Method::IsNone | Method::IsOk | Method::IsErr)
-        {
-            return self.result_method(m, args, ty, span);
         }
         if matches!(
             m,
@@ -1796,7 +1701,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }
-                Ty::List(_, _) | Ty::Map(..) => {
+                _ if self.list_info(&recv_ty).is_some() => {
                     let (_, len) = self.view_parts(&args[0])?;
                     len
                 }
@@ -1828,7 +1733,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let i64_ty = self.cx.i64_type();
             let found =
                 self.builder.build_int_compare(IntPredicate::SGE, idx, i64_ty.const_zero(), "").map_err(llvm_err)?;
-            let Ty::Option(inner) = ty else { unreachable!("`find` returns an `Option`") };
+            let Some(inner) = self.option_payload_ty(ty) else { unreachable!("`find` returns an `Option`") };
+            let inner = &inner;
             let opt_ty = self.option_ty(inner);
             let payload = self.builder.build_int_truncate(idx, self.usize_ty, "").map_err(llvm_err)?;
             let agg = self
@@ -1837,7 +1743,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 .map_err(llvm_err)?
                 .into_struct_value();
             let agg = self.builder.build_insert_value(agg, payload, 1, "").map_err(llvm_err)?.into_struct_value();
-            return Ok(Some(agg.into()));
+            return Ok(Some(self.option_from_scratch(agg.into(), ty)?));
         }
         let recv_ty = &args[0].ty;
         let mut values = Vec::new();
@@ -1855,14 +1761,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             (Method::CheckedAdd | Method::CheckedSub | Method::CheckedMul, Ty::Int(i)) => {
                 let op = wrapping_op(m);
                 let (r, overflow) = self.with_overflow(op, recv.into_int_value(), values[1].into_int_value(), *i)?;
-                let Ty::Option(inner) = ty else { unreachable!("checked_* returns an Option") };
+                let Some(inner) = self.option_payload_ty(ty) else { unreachable!("checked_* returns an Option") };
+                let inner = &inner;
                 let opt_ty = self.option_ty(inner);
                 let is_some = self.builder.build_not(overflow, "").map_err(llvm_err)?;
                 let agg = self
                     .builder
                     .build_insert_value(undef(opt_ty.into()).into_struct_value(), is_some, 0, "")
                     .map_err(llvm_err)?;
-                self.builder.build_insert_value(agg, r, 1, "").map_err(llvm_err)?.into_struct_value().into()
+                let agg = self.builder.build_insert_value(agg, r, 1, "").map_err(llvm_err)?.into_struct_value();
+                self.option_from_scratch(agg.into(), ty)?
             }
             (Method::Min | Method::Max, Ty::Int(i)) => {
                 let (x, y) = (recv.into_int_value(), values[1].into_int_value());

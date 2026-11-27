@@ -7,7 +7,7 @@
 
 use super::{Codegen, GenResult, Mode, llvm_err};
 use burdin_tir::{self as tir, AtomicOp, AtomicWidth};
-use inkwell::values::{BasicValue, BasicValueEnum, IntValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum};
 use inkwell::{AtomicOrdering, AtomicRMWBinOp};
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
@@ -71,41 +71,5 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(Some(old.into()))
             }
         }
-    }
-
-    /// Adds one to the count of a `Shared<T>` cell at `count_at`, relaxed: a new handle is made from an existing one,
-    /// so nothing has to be ordered by the increment.
-    pub(super) fn shared_count_inc(&mut self, count_at: PointerValue<'ctx>) -> GenResult<()> {
-        let one = self.usize_ty.const_int(1, false);
-        self.builder
-            .build_atomicrmw(AtomicRMWBinOp::Add, count_at, one, AtomicOrdering::Monotonic)
-            .map_err(llvm_err)?;
-        Ok(())
-    }
-
-    /// Takes one from the count at `count_at` with release order and returns whether this handle was the last. The
-    /// caller then frees the cell after [`Self::shared_acquire`].
-    pub(super) fn shared_count_dec(&mut self, count_at: PointerValue<'ctx>) -> GenResult<IntValue<'ctx>> {
-        let one = self.usize_ty.const_int(1, false);
-        let old = self
-            .builder
-            .build_atomicrmw(AtomicRMWBinOp::Sub, count_at, one, AtomicOrdering::Release)
-            .map_err(llvm_err)?;
-        self.builder.build_int_compare(inkwell::IntPredicate::EQ, old, one, "shared.last").map_err(llvm_err)
-    }
-
-    /// The fence that makes everything the other handles did to the value visible before the last handle drops it.
-    pub(super) fn shared_acquire(&mut self) -> GenResult<()> {
-        self.builder.build_fence(AtomicOrdering::Acquire, false, "").map_err(llvm_err)?;
-        Ok(())
-    }
-
-    /// The count at `count_at`, read atomically.
-    pub(super) fn shared_count_load(&mut self, count_at: PointerValue<'ctx>) -> GenResult<BasicValueEnum<'ctx>> {
-        let load = self.builder.build_load(self.usize_ty, count_at, "shared.count").map_err(llvm_err)?;
-        let inst = load.as_instruction_value().expect("a load is an instruction");
-        inst.set_atomic_ordering(AtomicOrdering::Acquire).map_err(|e| e.to_string())?;
-        inst.set_alignment(8).map_err(|e| e.to_string())?;
-        Ok(load)
     }
 }

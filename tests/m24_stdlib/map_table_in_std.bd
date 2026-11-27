@@ -1,0 +1,53 @@
+//@ run
+//> 1000 500 true
+//> 500 true
+//> 250 true
+//> 0 true
+
+// `Map` is a struct of `std` whose table is written in Burdin: a thousand keys force several growths, removing the
+// even ones exercises the backward shift across probe clusters, and `retain`, `shrink_to_fit`, and `clear` leave a
+// table that still answers lookups.
+
+fn main() {
+    let mut m = Map<i32, i32>.new()
+    let mut i = 0
+    while i < 1000 {
+        m.insert(i, i * 2)
+        i = i + 1
+    }
+    let mut evens = 0
+    i = 0
+    while i < 1000 {
+        if i % 2 == 0 {
+            m.remove(i)
+            evens = evens + 1
+        }
+        i = i + 1
+    }
+    let mut intact = true
+    i = 0
+    while i < 1000 {
+        let present = m.contains_key(i)
+        if present != (i % 2 == 1) { intact = false }
+        i = i + 1
+    }
+    println("{} {} {}", 1000, evens, intact)
+
+    println("{} {}", m.len(), m.get(2).is_none())
+    m.retain(|k, v| *k % 4 == 1)
+    m.shrink_to_fit()
+    let mut ok = true
+    i = 0
+    while i < 1000 {
+        if i % 4 == 1 {
+            match m.get(i) {
+                Option.Some(v) => { if *v != i * 2 { ok = false } },
+                Option.None => ok = false,
+            }
+        }
+        i = i + 1
+    }
+    println("{} {}", m.len(), ok)
+    m.clear()
+    println("{} {}", m.len(), m.get(1).is_none())
+}

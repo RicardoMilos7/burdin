@@ -441,7 +441,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `spec/grammar.md` section 4, `spec/memory-rules.md` CL1-CL11, `tests/m12_closures/`.
 
 18. **Iteration.** `std` declares `interface Iterator<T> { fn next(mut self): Option<T> }` and the marker
-    `interface Iterable<T> { }`. The compiler knows the protocol for arrays, slices, `List`, `Map`, `Chars`, and
+    `interface Iterable<T> { }`. The compiler knows the protocol for arrays, slices, `List`, `Map`, and
     ranges: `iter()` borrows and yields `T` when it is `Copy` and `&T` otherwise (a map yields `(&K, &V)`), while
     `into_iter()` consumes and yields owned items (a map yields `(K, V)`). `for` over a user type uses `iter()` when
     the type is `Iterable<T>` and the iterator value directly when it is an `Iterator<T>`; a type that is both is

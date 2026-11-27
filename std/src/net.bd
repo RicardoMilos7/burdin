@@ -11,6 +11,7 @@ use fmt.{Debug, Display, Formatter}
 use reactor.{offload, wait_io}
 use rw.{Read, Write}
 use std.{IoError, IoErrorKind}
+use text.chars
 use time.Duration
 
 /// The event mask the reactor wants: the socket is readable.

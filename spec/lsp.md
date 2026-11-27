@@ -146,9 +146,10 @@ suggestion the compiler gives. A name of the
 standard library opens a copy of its source materialized under the temporary directory. The standard library is part of
 every package's database (embedded, read-only, and memoized like a dependency: an edit never checks it again). The
 compiler's built-ins have no Burdin source (`println`, `format`, `panic`, the built-in types, and their compiler-provided
-methods such as `String.new`, `str.len`, `i32.to_string`, `List.push`); the server writes their declarations, with a
-doc comment each, into one generated file, `builtins.bd`, beside the materialized standard library (`builtins.rs`),
-and a definition lands there. The same declarations answer hover, signature help, and completion; the file is never
+methods such as `String.new`, `str.len`, `i32.to_string`, `List.push`); their declarations, with a doc comment each,
+are written once, without bodies, in `std/src/builtins.bd` (the compiler never loads it; `spec/stdlib.md`, "Compiler-known
+types"). The server parses that file like a standard-library module and materializes it as `builtins.bd` beside the
+others (`builtins.rs` holds no table), and a definition lands there. The same declarations answer hover, signature help, and completion; the file is never
 compiled, and its names cannot be renamed. A keyword, literal, or comment
 has no definition (`null`). When the latest analysis has no program (the file does not parse), the last analysis that
 had one answers, with positions mapped through the edit.
@@ -226,7 +227,7 @@ Tests: `hover_shows_signatures_types_and_docs`, `hover_shows_the_callee_of_an_in
   `xs.iter().map(f)` is the spelling). A `List` is not viewed as a slice implicitly: it offers its own methods (its
   `first`, `contains`, and `sort` are built in) and never an extension of `[T]` that needs `as_slice()`
   (`list.binary_search(1)` is E0002, so it is not offered). A range offers `clone`, `cmp`, `iter`, and `into_iter`, a
-  tuple `clone` and `cmp`, and the compiler's own iterators (`Chars`, `RangeIter`, `MapIter`, `IterMut`,
+  tuple `clone` and `cmp`, and the compiler's own iterators (`RangeIter`, `MapIter`, `IterMut`,
   `ListIntoIter`, `ArrayIntoIter`, `MapIntoIter`, `Chunks`, `ChunksExact`, `Windows`) the methods of `Iterator`. Hover,
   definition, and signature help answer the same methods: `xs.len` lands in `builtins.bd`, `xs.first` in `slice.bd`,
   and `xs.swap(` shows `fn swap(mut self, a: usize, b: usize)`. The element of an array literal receiver is read

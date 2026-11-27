@@ -111,8 +111,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // The element type of a slice or a `List` decides the stride; `str` and `String` are bytes. Slicing a
         // slice of `i32` by three elements must move three elements, not three bytes.
         let elem_ty = match &base.ty {
-            Ty::Slice(elem) | Ty::List(elem, _) => self.llvm_ty(elem),
-            _ => None,
+            Ty::Slice(elem) => self.llvm_ty(elem),
+            other => self.list_info(other).and_then(|(elem, _)| self.llvm_ty(&elem)),
         };
         let elem_ty = elem_ty.unwrap_or_else(|| self.cx.i8_type().into());
         // SAFETY (LLVM): lo <= hi <= the base length.

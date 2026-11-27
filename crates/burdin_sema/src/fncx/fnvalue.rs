@@ -5,7 +5,7 @@
 
 use super::{FnCx, error_expr, mk};
 use crate::builtins::builtin_sig;
-use crate::globals::adt_key;
+use crate::globals::{Globals, adt_key};
 use burdin_diag::{Code, Span};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, Builtin, FnSig, FuncId, LocalKind, Ty};
@@ -81,7 +81,7 @@ impl FnCx<'_> {
     ) -> tir::Expr {
         match (owner, name.name.as_str()) {
             ("Option", "None") => match expect {
-                Some(t @ Ty::Option(_)) => mk(tir::ExprKind::None, t.clone(), span),
+                Some(t) if self.globals.option_payload(t).is_some() => Globals::mk_none(t.clone(), span),
                 Some(Ty::Error) => error_expr(span),
                 _ => {
                     self.diags.error(
@@ -134,9 +134,9 @@ impl FnCx<'_> {
             return self.constructor_untyped(ctor, span);
         }
         let result = match ctor {
-            Ctor::Some => Ty::Option(Box::new(payload.clone())),
+            Ctor::Some => self.globals.option_ty(payload.clone()),
             Ctor::Ok | Ctor::Err => {
-                let Ty::Result(t, e) = &ret else {
+                let Some((t, e)) = self.globals.result_parts(&ret) else {
                     if self.is_open(&ret) {
                         return self.constructor_untyped(ctor, span);
                     }
@@ -148,29 +148,28 @@ impl FnCx<'_> {
                     return error_expr(span);
                 };
                 // `Ok` fixes `T` from the payload and takes `E` from the result; `Err` the reverse.
-                let other = if ctor == Ctor::Ok { e } else { t };
-                if other.as_ref() == &Ty::Error {
+                let other = if ctor == Ctor::Ok { &e } else { &t };
+                if *other == Ty::Error {
                     return error_expr(span);
                 }
                 if self.is_open(other) {
                     return self.constructor_untyped(ctor, span);
                 }
                 if ctor == Ctor::Ok {
-                    Ty::Result(Box::new(payload.clone()), e.clone())
+                    self.globals.result_ty(payload.clone(), e.clone())
                 } else {
-                    Ty::Result(t.clone(), Box::new(payload.clone()))
+                    self.globals.result_ty(t.clone(), payload.clone())
                 }
             }
         };
         let fn_sig = FnSig { params: vec![payload], ret: Box::new(result.clone()) };
         self.value_closure(fn_sig, &[false], span, |args| {
             let arg = args.into_iter().next().expect("a constructor takes one argument");
-            let kind = match ctor {
-                Ctor::Some => tir::ExprKind::Some(Box::new(arg)),
-                Ctor::Ok => tir::ExprKind::Ok(Box::new(arg)),
-                Ctor::Err => tir::ExprKind::Err(Box::new(arg)),
-            };
-            mk(kind, result, span)
+            match ctor {
+                Ctor::Some => Globals::mk_some(arg, result, span),
+                Ctor::Ok => Globals::mk_result(true, arg, result, span),
+                Ctor::Err => Globals::mk_result(false, arg, result, span),
+            }
         })
     }
 

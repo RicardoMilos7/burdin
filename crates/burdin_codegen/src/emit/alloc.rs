@@ -205,25 +205,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// Allocates `size` bytes like [`Codegen::alloc_in`], but a null pointer means the allocator had no block to give
-    /// and the caller decides what that means (`spec/allocators.md`, AL11).
-    pub(super) fn try_alloc_in(
-        &mut self,
-        alloc: &Alloc,
-        addr: Option<PointerValue<'ctx>>,
-        size: IntValue<'ctx>,
-        align: u64,
-        span: Option<Span>,
-    ) -> GenResult<PointerValue<'ctx>> {
-        match alloc {
-            Alloc::Global => self.global_try_alloc(size, span),
-            Alloc::Value(ty) => {
-                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
-                self.stored_alloc(ty, addr, size, align)
-            }
-        }
-    }
-
     /// Panics with the out-of-memory message unless `p` is a block. An allocator that returns null has refused the
     /// request, and an infallible container operation cannot go on without the block.
     fn check_allocated(&mut self, p: PointerValue<'ctx>, span: Option<Span>) -> GenResult<()> {
@@ -275,28 +256,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
     }
 
-    /// Resizes a buffer like [`Codegen::realloc_in`], but a null pointer means the allocator refused and the old
-    /// buffer is still valid (`spec/allocators.md`, AL11).
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn try_realloc_in(
-        &mut self,
-        alloc: &Alloc,
-        addr: Option<PointerValue<'ctx>>,
-        ptr: PointerValue<'ctx>,
-        old_size: IntValue<'ctx>,
-        new_size: IntValue<'ctx>,
-        align: u64,
-        span: Option<Span>,
-    ) -> GenResult<PointerValue<'ctx>> {
-        match alloc {
-            Alloc::Global => self.global_try_realloc(ptr, new_size, span),
-            Alloc::Value(ty) => {
-                let addr = addr.ok_or_else(|| "a stored allocator has no address".to_string())?;
-                self.stored_realloc(ty, addr, ptr, old_size, new_size, align)
-            }
-        }
-    }
-
     /// Frees a buffer with the allocator that made it.
     pub(super) fn dealloc_in(
         &mut self,
@@ -313,22 +272,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.stored_dealloc(ty, addr, ptr, size, align)
             }
         }
-    }
-
-    /// The cell pointer of a `Shared<T>` receiver, read from its place or spilled to a temporary.
-    pub(super) fn shared_pointer(&mut self, recv: &'a burdin_tir::Expr) -> GenResult<PointerValue<'ctx>> {
-        let ptr_ty = self.cx.ptr_type(inkwell::AddressSpace::default());
-        let storage = match self.direct_place_ptr(recv)? {
-            Some(p) => p,
-            None => {
-                let v = self.expr_mode(recv, super::Mode::Use)?;
-                let slot = self.alloca(ptr_ty.into(), "shared")?;
-                let v = self.need(v, &recv.ty);
-                self.builder.build_store(slot, v).map_err(llvm_err)?;
-                slot
-            }
-        };
-        Ok(self.builder.build_load(ptr_ty, storage, "shared.ptr").map_err(llvm_err)?.into_pointer_value())
     }
 
     /// `ptr + offset` bytes.

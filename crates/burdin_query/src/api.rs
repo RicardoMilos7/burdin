@@ -765,7 +765,6 @@ fn pattern_ids(pat: &Pat, out: &mut Vec<usize>) {
             out.push(id.0);
             pattern_ids(inner, out);
         }
-        Pat::Some(inner) | Pat::Ok(inner) | Pat::Err(inner) => pattern_ids(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| pattern_ids(s, out)),
         Pat::Slice { prefix, rest, suffix } => {
             for s in prefix.iter().chain(rest.as_deref()).chain(suffix) {
@@ -773,7 +772,7 @@ fn pattern_ids(pat: &Pat, out: &mut Vec<usize>) {
             }
         }
         Pat::Or(alts) => alts.iter().for_each(|a| pattern_ids(a, out)),
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
     }
 }
 

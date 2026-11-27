@@ -1,12 +1,9 @@
-// The rest of `Map<K, V>` (spec/stdlib.md, "Map": the entry operations of issue #482, the views and construction of
-// issue #712).
+// The rest of `Map<K, V>` (spec/stdlib.md, "Map": the views and construction of issue #712).
 //
-//     let count = counts.entry(word).or_insert(0)
-//     *count = *count + 1
 //     for key in counts.keys() { ... }
 //
 // The compiler provides the operations that reach the table itself (`insert`, `get`, `get_mut`, `get_or_insert`,
-// `entry`, `remove`, `remove_entry`, `retain`, `reserve`, `shrink_to_fit`, and the iterators); the views, the
+// `remove`, `remove_entry`, `retain`, `reserve`, `shrink_to_fit`, and the iterators); the views, the
 // constructors, and the helpers built on them are written here.
 
 use alloc.Allocator
@@ -155,7 +152,7 @@ fn Map<K, V, A>.values(self): MapValues<MapEntries<K, V>, K, V> {
 /// }
 /// assert_eq(total, 7)
 /// ```
-fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> {
+fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoIter<K, V, A>, K, V> {
     MapIntoKeys { inner: self.into_iter() }
 }
 
@@ -170,7 +167,7 @@ fn Map<K, V, A>.into_keys(own self): MapIntoKeys<MapIntoEntries<K, V, A>, K, V> 
 /// }
 /// assert_eq(total, 20)
 /// ```
-fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoEntries<K, V, A>, K, V> {
+fn Map<K, V, A>.into_values(own self): MapIntoValues<MapIntoIter<K, V, A>, K, V> {
     MapIntoValues { inner: self.into_iter() }
 }
 
@@ -197,7 +194,7 @@ fn Map<K, V, A>.is_empty(self): bool {
 /// assert_eq(total, 3)
 /// assert(m.is_empty())
 /// ```
-fn Map<K, V>.drain(mut self): MapIntoEntries<K, V> {
+fn Map<K, V>.drain(mut self): MapIntoIter<K, V> {
     mem.replace(mut self, Map<K, V>.new()).into_iter()
 }
 
@@ -213,8 +210,8 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
     self.extend_iter(items)
 }
 
-/// The value for `key`, storing the result of `make` first when there is none. The entry probes the key once and
-/// `make` runs only when the key is absent, so it may be expensive. The returned reference keeps the map
+/// The value for `key`, storing the result of `make` first when there is none. `make` runs only when the key is
+/// absent, so it may be expensive. The returned reference keeps the map
 /// exclusively borrowed until its last use.
 ///
 /// ```
@@ -227,7 +224,14 @@ fn Map<K, V>.extend<I: Iterator<(K, V)>>(mut self, own items: I) where K: Eq {
 /// }
 /// ```
 fn Map<K, V>.get_or_insert_with<F: FnOnce(): V>(mut self, own key: K, own make: F): &mut V where K: Eq {
-    self.entry(key).or_insert_with(make)
+    if self.contains_key(key) {
+        match self.get_mut(key) {
+            Option.Some(value) => return value,
+            Option.None => panic("`contains_key` found a key that `get_mut` cannot"),
+        }
+    }
+    let value = make()
+    self.get_or_insert(key, value)
 }
 
 /// Runs `change` on the value for `key` and returns `true`, or returns `false` without calling it when the key is

@@ -378,16 +378,9 @@ enum BuiltinEntry {
 fn ty_mentions_self(ty: &Ty) -> bool {
     match ty {
         Ty::Param(name) => &**name == "Self",
-        Ty::Ref { inner, .. }
-        | Ty::Slice(inner)
-        | Ty::Array(inner, _)
-        | Ty::Option(inner)
-        | Ty::Result(inner, _)
-        | Ty::List(inner, _)
-        | Ty::Heap(inner, _)
-        | Ty::CPtr(inner)
-        | Ty::Range(inner, _) => ty_mentions_self(inner),
-        Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => ty_mentions_self(k) || ty_mentions_self(v),
+        Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array(inner, _) | Ty::Heap(inner, _) | Ty::CPtr(inner) => {
+            ty_mentions_self(inner)
+        }
         Ty::Any(a) => a.args.iter().any(ty_mentions_self),
         Ty::Projection { self_ty, args, .. } => ty_mentions_self(self_ty) || args.iter().any(ty_mentions_self),
         Ty::TryFromError { self_ty, source } => ty_mentions_self(self_ty) || ty_mentions_self(source),

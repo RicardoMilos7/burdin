@@ -83,7 +83,7 @@ impl Fmt<'_> {
                 let block = self.impl_block()?;
                 concat(vec![kw, space(), block])
             }
-            TokenKind::Fn | TokenKind::Unsafe => self.fn_decl(false, false)?,
+            TokenKind::Fn | TokenKind::Unsafe => self.fn_decl(true, false)?,
             TokenKind::Struct => self.struct_decl()?,
             TokenKind::Enum => self.enum_decl(false)?,
             TokenKind::Error => self.enum_decl(true)?,

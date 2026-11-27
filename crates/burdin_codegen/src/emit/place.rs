@@ -30,7 +30,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let Some(ptr) = self.place_ptr(place)? else { return Ok(()) };
         let Some(_t) = self.llvm_ty(&place.ty) else { return Ok(()) };
         let root = self.place_path(place);
-        let crossing = !is_tracked_place(place);
+        let crossing = !is_tracked_place(&self.defs(), place);
         if self.needs_drop(&place.ty) {
             match (&root, crossing) {
                 (_, true) | (None, false) => self.drop_value(ptr, &place.ty)?,
@@ -157,8 +157,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         None => Ok(None),
                     }
                 }
-                Ty::List(elem, _) => {
-                    let elem = (**elem).clone();
+                _ if self.list_info(&base.ty).is_some() => {
+                    let (elem, _) = self.list_info(&base.ty).expect("checked by the guard");
+                    let elem = (*elem).clone();
                     let base_ptr = self.place_ptr(base)?;
                     let i = self.expr_mode(index, Mode::Use)?;
                     let i = self.need_int(i, &Ty::Int(IntTy::Usize));
@@ -289,16 +290,16 @@ pub(super) fn is_place(e: &tir::Expr) -> bool {
 
 /// A place whose path the drop flags follow: a local, its fields, constant array and `List` indices, and the
 /// fields of a `Heap` pointee.
-pub(super) fn is_tracked_place(e: &tir::Expr) -> bool {
+pub(super) fn is_tracked_place(defs: &burdin_tir::TypeDefs, e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) => is_tracked_place(base),
+        tir::ExprKind::Field(base, _) => is_tracked_place(defs, base),
         tir::ExprKind::Index(base, index) => {
-            is_tracked_place(base)
-                && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+            is_tracked_place(defs, base)
+                && (matches!(base.ty, Ty::Array(..)) || defs.list_parts(&base.ty).is_some())
                 && constant_index(index).is_some()
         }
-        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)),
+        tir::ExprKind::Deref(base) => is_tracked_place(defs, base) && matches!(base.ty, Ty::Heap(_, _)),
         _ => false,
     }
 }

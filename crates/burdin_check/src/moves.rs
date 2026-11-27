@@ -17,7 +17,7 @@
 
 use crate::Env;
 use burdin_diag::{Code, Diagnostic, Diagnostics, Span};
-use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty};
+use burdin_tir::{self as tir, BindMode, LocalId, LocalKind, Pat, Ty, TypeDefs};
 use std::collections::HashMap;
 
 /// The one-line pointer every memory diagnostic carries to its step-by-step explanation (`spec/check.md`, CK11;
@@ -295,8 +295,12 @@ impl<'a> Checker<'a> {
     /// Whether `ty`'s `Clone` is the compiler's derived member (`spec/derives.md`).
     fn derived_clone(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Struct(a) => self.env.defs.structs.get(a.id).is_some_and(|d| d.derives.clone),
-            Ty::Enum(a) => self.env.defs.enums.get(a.id).is_some_and(|d| d.derives.clone),
+            Ty::Struct(a) => {
+                self.env.defs.structs.get(a.id).is_some_and(|d| d.derives.clone || d.derives.clone_method.is_some())
+            }
+            Ty::Enum(a) => {
+                self.env.defs.enums.get(a.id).is_some_and(|d| d.derives.clone || d.derives.clone_method.is_some())
+            }
             _ => false,
         }
     }
@@ -316,15 +320,15 @@ impl<'a> Checker<'a> {
             tir::ExprKind::Local(id) => Some((*id, Vec::new())),
             tir::ExprKind::Field(base, i) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base) {
+                if is_tracked_place(&self.env.defs, base) {
                     path.push(*i);
                 }
                 Some((root, path))
             }
             tir::ExprKind::Index(base, index) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base)
-                    && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
+                if is_tracked_place(&self.env.defs, base)
+                    && is_indexed_place(&self.env.defs, &base.ty)
                     && let Some(index) = constant_index(index)
                 {
                     path.push(index);
@@ -333,7 +337,7 @@ impl<'a> Checker<'a> {
             }
             tir::ExprKind::Deref(base) => {
                 let (root, mut path) = self.place_of(base)?;
-                if is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)) {
+                if is_tracked_place(&self.env.defs, base) && matches!(base.ty, Ty::Heap(_, _)) {
                     path.push(tir::MOVED_DEREF);
                 }
                 Some((root, path))
@@ -472,6 +476,13 @@ impl<'a> Checker<'a> {
         if path.is_empty() {
             return;
         }
+        if let Some((elem, _)) = self.env.defs.list_parts(ty) {
+            // A constant `List` index selects one element.
+            let elem = elem.clone();
+            let (_, rest) = path.split_first().expect("path is not empty");
+            self.check_partial_move(&elem, rest, span);
+            return;
+        }
         if self.env.defs.has_drop_impl(ty) {
             self.error(Code::PARTIAL_MOVE_FROM_DROP, span, "cannot move a field out of a type that implements `Drop`")
                 .help(TRACE_HELP);
@@ -491,8 +502,8 @@ impl<'a> Checker<'a> {
                     self.check_partial_move(&t, rest, span);
                 }
             }
-            // A constant array or `List` index selects one element.
-            Ty::Array(elem, _) | Ty::List(elem, _) => {
+            // A constant array index selects one element.
+            Ty::Array(elem, _) => {
                 let elem = (**elem).clone();
                 self.check_partial_move(&elem, rest, span);
             }
@@ -504,16 +515,6 @@ impl<'a> Checker<'a> {
             }
             // `[0]` is the payload of an `Option`; `[variant, field]` selects an enum field. The variant selector
             // itself is not a value, but the field's type can still implement `Drop`.
-            Ty::Option(inner) => {
-                if *first == 0 {
-                    let inner = (**inner).clone();
-                    self.check_partial_move(&inner, rest, span);
-                }
-            }
-            Ty::Result(ok, err) => {
-                let payload = if *first == 0 { (**ok).clone() } else { (**err).clone() };
-                self.check_partial_move(&payload, rest, span);
-            }
             Ty::Enum(a) => {
                 let Some((field, rest)) = rest.split_first() else { return };
                 if let Some(f) = self.env.defs.enums[a.id].variants.get(*first).and_then(|v| v.fields.get(*field)) {
@@ -537,30 +538,6 @@ impl<'a> Checker<'a> {
             Pat::Or(alts) => {
                 if let Some(first) = alts.first() {
                     self.check_pattern_drop_moves(first, root_ty, ty, path, span);
-                }
-            }
-            Pat::Some(inner) => {
-                if let Ty::Option(inner_ty) = ty {
-                    let inner_ty = (**inner_ty).clone();
-                    path.push(0);
-                    self.check_pattern_drop_moves(inner, root_ty, &inner_ty, path, span);
-                    path.pop();
-                }
-            }
-            Pat::Ok(inner) => {
-                if let Ty::Result(ok, _) = ty {
-                    let ok = (**ok).clone();
-                    path.push(0);
-                    self.check_pattern_drop_moves(inner, root_ty, &ok, path, span);
-                    path.pop();
-                }
-            }
-            Pat::Err(inner) => {
-                if let Ty::Result(_, err) = ty {
-                    let err = (**err).clone();
-                    path.push(1);
-                    self.check_pattern_drop_moves(inner, root_ty, &err, path, span);
-                    path.pop();
                 }
             }
             Pat::Slice { prefix, rest, suffix } => {
@@ -731,10 +708,7 @@ impl<'a> Checker<'a> {
                 let entry = self.states.clone();
                 self.open_loop(label);
                 self.scopes.push(Vec::new());
-                let elem = match &list.ty {
-                    Ty::List(elem, _) => (**elem).clone(),
-                    _ => Ty::Error,
-                };
+                let elem = self.env.defs.list_parts(&list.ty).map_or(Ty::Error, |(elem, _)| elem.clone());
                 self.bind_pattern(pat, &elem, &mut Vec::new(), None, list.span);
                 let body_falls = self.block(body, Mode::Use);
                 self.end_scope(body.close, body_falls);
@@ -745,21 +719,11 @@ impl<'a> Checker<'a> {
                 let entry = self.states.clone();
                 self.open_loop(label);
                 self.scopes.push(Vec::new());
-                let pair = match &map.ty {
-                    Ty::Map(k, v, _) => Ty::Tuple(vec![(**k).clone(), (**v).clone()]),
-                    _ => Ty::Error,
+                let pair = match self.env.defs.map_parts(&map.ty) {
+                    Some((k, v, _)) => Ty::Tuple(vec![k.clone(), v.clone()]),
+                    None => Ty::Error,
                 };
                 self.bind_pattern(pat, &pair, &mut Vec::new(), None, map.span);
-                let body_falls = self.block(body, Mode::Use);
-                self.end_scope(body.close, body_falls);
-                self.finish_loop(entry, body_falls);
-            }
-            K::ForChars { pat, string, body } => {
-                self.expr(string, Mode::Use);
-                let entry = self.states.clone();
-                self.open_loop(label);
-                self.scopes.push(Vec::new());
-                self.bind_pattern(pat, &Ty::Char, &mut Vec::new(), None, string.span);
                 let body_falls = self.block(body, Mode::Use);
                 self.end_scope(body.close, body_falls);
                 self.finish_loop(entry, body_falls);
@@ -771,15 +735,7 @@ impl<'a> Checker<'a> {
     fn expr(&mut self, e: &tir::Expr, mode: Mode) {
         use tir::ExprKind as K;
         match &e.kind {
-            K::Unit
-            | K::Bool(_)
-            | K::Int(_)
-            | K::Float(_)
-            | K::Char(_)
-            | K::Str(_)
-            | K::Bytes(_)
-            | K::None
-            | K::Const(_) => {}
+            K::Unit | K::Bool(_) | K::Int(_) | K::Float(_) | K::Char(_) | K::Str(_) | K::Bytes(_) | K::Const(_) => {}
             K::LayoutOf { .. } => {}
             K::Local(id) => self.use_local(*id, &[], e.span, mode),
             // A static is storage the whole program shares, so a non-Copy value cannot leave it (spec/globals.md, GL3).
@@ -837,7 +793,7 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Builtin(b, args) => match b {
-                tir::Builtin::HeapNew | tir::Builtin::SharedNew => self.expr(&args[0], Mode::Move),
+                tir::Builtin::HeapNew => self.expr(&args[0], Mode::Move),
                 // The barrier takes the value and hands it back (`spec/bench.md`, BN9).
                 tir::Builtin::BlackBox => self.expr(&args[0], Mode::Move),
                 tir::Builtin::ListNewIn | tir::Builtin::MapNewIn => self.expr(&args[0], Mode::Move),
@@ -858,6 +814,10 @@ impl<'a> Checker<'a> {
                     }
                 }
                 tir::Builtin::Replace => {
+                    self.expr(&args[0], Mode::Use);
+                    self.expr(&args[1], Mode::Move);
+                }
+                tir::Builtin::RawWrite => {
                     self.expr(&args[0], Mode::Use);
                     self.expr(&args[1], Mode::Move);
                 }
@@ -1027,8 +987,7 @@ impl<'a> Checker<'a> {
             | K::ForArray { .. }
             | K::ForSlice { .. }
             | K::ForList { .. }
-            | K::ForMap { .. }
-            | K::ForChars { .. } => self.loop_expr(e, None),
+            | K::ForMap { .. } => self.loop_expr(e, None),
             K::Labeled(label, inner) => self.loop_expr(inner, Some(label.as_str())),
             K::Match(scrutinee, arms) => {
                 self.expr(scrutinee, Mode::Use);
@@ -1036,7 +995,7 @@ impl<'a> Checker<'a> {
                 let root = self.place_of(scrutinee);
                 // A pattern can move parts of a tracked place: fields, constant array or `List` indices, and the
                 // fields of a `Heap` pointee. A runtime index or a slice element is not tracked.
-                let crossing = root.is_some() && !is_tracked_place(scrutinee);
+                let crossing = root.is_some() && !is_tracked_place(&self.env.defs, scrutinee);
                 let mut reported = false;
                 let mut result: Option<Vec<LocalState>> = None;
                 for arm in arms {
@@ -1125,7 +1084,7 @@ impl<'a> Checker<'a> {
                 self.with_dest(dest, Mode::Move, value);
                 if let Some((root, path)) = self.place_of(place) {
                     self.place_subexpr(place);
-                    if is_tracked_place(place) {
+                    if is_tracked_place(&self.env.defs, place) {
                         // Assigning to a field uses the values above it, but not its sibling fields (MV5).
                         self.read_ancestors(root, &path, place.span);
                         // The old value is dropped before the new one is stored (DR4).
@@ -1172,7 +1131,6 @@ impl<'a> Checker<'a> {
                     self.with_dest(None, Mode::Move, v);
                 }
             }
-            K::Some(inner) | K::Ok(inner) | K::Err(inner) => self.with_dest(None, Mode::Move, inner),
         }
     }
 
@@ -1195,7 +1153,7 @@ impl<'a> Checker<'a> {
         let ty = e.ty.clone();
         if mode == Mode::Move && !self.is_copy(&ty) {
             // A move is tracked through fields, constant array and `List` indices, and `Heap` pointee fields.
-            if !is_tracked_place(e) {
+            if !is_tracked_place(&self.env.defs, e) {
                 if is_view_place(e) {
                     self.error(Code::MOVE_FROM_BORROW, e.span, "cannot move out of borrowed content").help(TRACE_HELP);
                 } else {
@@ -1347,7 +1305,11 @@ impl<'a> Checker<'a> {
                     // A destructuring `let` of a tracked place takes its parts the way `match` does (MV8): the place
                     // is read, and only the non-Copy parts the pattern binds move out of it. The rest stays in the
                     // place (`spec/rest-patterns.md`, RP2; `spec/struct-update.md`, SU4).
-                    let root = if destructures(pat) && is_tracked_place(init) { self.place_of(init) } else { None };
+                    let root = if destructures(pat) && is_tracked_place(&self.env.defs, init) {
+                        self.place_of(init)
+                    } else {
+                        None
+                    };
                     match &root {
                         Some(_) => self.expr(init, Mode::Use),
                         None => {
@@ -1424,7 +1386,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) {
         match pat {
-            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+            Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
             Pat::Binding(id, mode) => {
                 self.init_binding(*id, *mode, path, root, span);
             }
@@ -1436,24 +1398,6 @@ impl<'a> Checker<'a> {
                 if let Some(first) = alts.first() {
                     self.bind_pattern(first, ty, path, root, span);
                 }
-            }
-            Pat::Some(inner) => {
-                let Ty::Option(inner_ty) = ty else { return };
-                path.push(0);
-                self.bind_pattern(inner, inner_ty, path, root, span);
-                path.pop();
-            }
-            Pat::Ok(inner) => {
-                let Ty::Result(ok, _) = ty else { return };
-                path.push(0);
-                self.bind_pattern(inner, ok, path, root, span);
-                path.pop();
-            }
-            Pat::Err(inner) => {
-                let Ty::Result(_, err) = ty else { return };
-                path.push(1);
-                self.bind_pattern(inner, err, path, root, span);
-                path.pop();
             }
             Pat::Slice { prefix, rest, suffix } => {
                 self.bind_slice(prefix, rest.as_deref(), suffix, ty, path, root, span);
@@ -1611,18 +1555,21 @@ impl<'a> Checker<'a> {
     }
 }
 
+/// An array or a `List`: a constant index into one selects an element of the tracked path.
+fn is_indexed_place(defs: &TypeDefs, ty: &Ty) -> bool {
+    matches!(ty, Ty::Array(..)) || defs.list_parts(ty).is_some()
+}
+
 /// A place the analysis can follow as a path in the local's type: a local, its fields, constant array and
 /// `List` indices, and the fields of a `Heap` pointee.
-fn is_tracked_place(e: &tir::Expr) -> bool {
+fn is_tracked_place(defs: &TypeDefs, e: &tir::Expr) -> bool {
     match &e.kind {
         tir::ExprKind::Local(_) => true,
-        tir::ExprKind::Field(base, _) => is_tracked_place(base),
+        tir::ExprKind::Field(base, _) => is_tracked_place(defs, base),
         tir::ExprKind::Index(base, index) => {
-            is_tracked_place(base)
-                && matches!(base.ty, Ty::Array(..) | Ty::List(_, _))
-                && constant_index(index).is_some()
+            is_tracked_place(defs, base) && is_indexed_place(defs, &base.ty) && constant_index(index).is_some()
         }
-        tir::ExprKind::Deref(base) => is_tracked_place(base) && matches!(base.ty, Ty::Heap(_, _)),
+        tir::ExprKind::Deref(base) => is_tracked_place(defs, base) && matches!(base.ty, Ty::Heap(_, _)),
         _ => false,
     }
 }
@@ -1667,8 +1614,6 @@ fn pattern_moves(pat: &Pat) -> bool {
         Pat::At(_, BindMode::Move, _) => true,
         Pat::At(_, _, inner) => pattern_moves(inner),
         Pat::Or(alts) => alts.iter().any(pattern_moves),
-        Pat::Some(inner) => pattern_moves(inner),
-        Pat::Ok(inner) | Pat::Err(inner) => pattern_moves(inner),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().any(pattern_moves),
         Pat::Slice { prefix, rest, suffix } => prefix.iter().chain(rest.as_deref()).chain(suffix).any(pattern_moves),
         _ => false,
@@ -1687,15 +1632,13 @@ fn single_binding(pat: &Pat, locals: &[tir::Local]) -> Option<String> {
 
 fn collect_bindings(pat: &Pat, out: &mut Vec<LocalId>) {
     match pat {
-        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) | Pat::None => {}
+        Pat::Wild | Pat::Bool(_) | Pat::Int(_) | Pat::Char(_) | Pat::Str(_) | Pat::Range(..) => {}
         Pat::Binding(id, _) => out.push(*id),
         Pat::At(id, _, inner) => {
             out.push(*id);
             collect_bindings(inner, out);
         }
         Pat::Or(alts) => alts.iter().for_each(|a| collect_bindings(a, out)),
-        Pat::Some(inner) => collect_bindings(inner, out),
-        Pat::Ok(inner) | Pat::Err(inner) => collect_bindings(inner, out),
         Pat::Product(subs) | Pat::Variant(_, subs) => subs.iter().for_each(|s| collect_bindings(s, out)),
         Pat::Slice { prefix, rest, suffix } => {
             for s in prefix.iter().chain(rest.as_deref()).chain(suffix) {

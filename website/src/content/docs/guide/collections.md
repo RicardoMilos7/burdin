@@ -73,12 +73,12 @@ fn main() {
     let mut ages = Map<String, i32>.new()
     ages.insert(String.from("ana"), 31)
     ages.insert(String.from("ben"), 27)
-    match ages.get("ana") {
+    match ages.get(String.from("ana")) {
         Option.Some(age) => println("ana is {*age}"),
         Option.None => println("no ana"),
     }
-    println("has ben: {ages.contains_key("ben")}")
-    ages.remove("ben")
+    println("has ben: {ages.contains_key(String.from("ben"))}")
+    ages.remove(String.from("ben"))
     println("{ages.len()} entry left")
 }
 ```

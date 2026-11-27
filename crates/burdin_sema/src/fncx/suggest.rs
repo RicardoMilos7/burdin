@@ -95,7 +95,8 @@ impl FnCx<'_> {
             tir::ExprKind::DerefRef(base) => matches!(base.ty, Ty::Ref { mutable: true, .. }),
             tir::ExprKind::PtrDeref(_) => true,
             tir::ExprKind::Index(base, _) => {
-                matches!(base.ty, Ty::Array(..) | Ty::List(_, _)) && self.mutable_with_root(base)
+                (matches!(base.ty, Ty::Array(..)) || self.globals.list_parts(&base.ty).is_some())
+                    && self.mutable_with_root(base)
             }
             _ => false,
         }
@@ -354,21 +355,24 @@ impl FnCx<'_> {
         let refs: Vec<&str> = available.iter().map(String::as_str).collect();
         let candidates = closest_names(name, refs.iter().copied());
         let slice_hint = match recv_ty {
-            burdin_tir::Ty::List(elem, _) => {
-                let slice_ty = burdin_tir::Ty::Slice(elem.clone());
-                let on_slice = crate::builtins::method(name, &slice_ty).is_some()
-                    || self.globals.modules[self.module].extensions.get(name).is_some_and(|ids| {
-                        ids.iter().any(|&id| {
-                            let ext = &self.globals.extensions[id];
-                            ext.params.is_empty() && crate::types::compatible(&slice_ty, &ext.recv)
-                        })
-                    });
-                on_slice.then(|| format!("`List` is not a slice; call `.as_slice().{name}(...)` to use slice methods"))
-            }
-            burdin_tir::Ty::Slice(elem) => {
-                let list_ty = burdin_tir::Ty::List(elem.clone(), burdin_tir::Alloc::Global);
-                crate::builtins::method(name, &list_ty)
-                    .map(|_| format!("slices have fixed length; `{name}` is a method on `List`"))
+            burdin_tir::Ty::Struct(adt) if adt.name.as_ref() == "List" || adt.name.starts_with("List<") => {
+                let slice_methods = [
+                    "len",
+                    "get",
+                    "last",
+                    "to_list",
+                    "swap",
+                    "fill",
+                    "copy_from_slice",
+                    "clone_from_slice",
+                    "chunks",
+                    "chunks_exact",
+                    "windows",
+                    "iter",
+                ];
+                slice_methods
+                    .contains(&name)
+                    .then(|| format!("`List` is not a slice; call `.as_slice().{name}(...)` to use slice methods"))
             }
             _ => None,
         };

@@ -1,0 +1,32 @@
+//@ run
+//> got 1
+//> 60
+//> drop 1
+//> drop 2
+//> drop 3
+
+// An array's owning iterator (`ArrayIntoIter`, a struct of `std` over a `ManuallyDrop<[T; N]>`) hands each element
+// out once and drops, when it goes out of scope, only the elements it did not hand out. The element it handed out
+// is the caller's, and drops with the caller's other locals (issue #1017).
+
+struct Noisy {
+    id: i32
+}
+
+Noisy: Drop {
+    fn drop(mut self) {
+        println("drop {}", self.id)
+    }
+}
+
+fn main() {
+    let a = [Noisy { id: 1 }, Noisy { id: 2 }, Noisy { id: 3 }]
+    let mut it = a.into_iter()
+    let first = it.next().unwrap()
+    println("got {}", first.id)
+    let mut total = 0
+    for x in [10, 20, 30].into_iter() {
+        total = total + x
+    }
+    println("{}", total)
+}

@@ -96,7 +96,7 @@ fn main() {
                 Option.None => println("backup=none"),
             }
             println("weights={}", config.weights.len())
-            match config.weights.get("a") {
+            match config.weights.get("a".to_string()) {
                 Option.Some(weight) => println("a={weight}"),
                 Option.None => println("a=none"),
             }

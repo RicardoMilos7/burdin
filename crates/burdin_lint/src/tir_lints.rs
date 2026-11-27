@@ -329,7 +329,6 @@ impl An<'_> {
                 self.bind(inner);
             }
             Pat::Or(ps) | Pat::Product(ps) | Pat::Variant(_, ps) => ps.iter().for_each(|p| self.bind(p)),
-            Pat::Some(p) | Pat::Ok(p) | Pat::Err(p) => self.bind(p),
             Pat::Slice { prefix, rest, suffix } => {
                 for p in prefix.iter().chain(rest.as_deref()).chain(suffix) {
                     self.bind(p);
@@ -403,7 +402,6 @@ impl An<'_> {
             | K::Bytes(_)
             | K::Const(_)
             | K::Static(_)
-            | K::None
             | K::Continue(_)
             | K::Return(None)
             | K::LayoutOf { .. } => {}
@@ -417,6 +415,14 @@ impl An<'_> {
             }
             K::Call(fid, args) => {
                 self.call(e, *fid, args, receiver_of_eager);
+                // `List.iter` and `List.into_iter` are methods of `std` now, not compiler methods.
+                let name = &self.program.functions[fid.0].name;
+                if name.starts_with("std.List<")
+                    && (name.ends_with(".iter") || name.ends_with(".into_iter"))
+                    && let Some(recv) = args.first()
+                {
+                    self.check_to_list(recv, "iterated right away");
+                }
             }
             K::ExternCall(_, args) => self.each(args),
             K::Builtin(_, args) => {
@@ -484,9 +490,6 @@ impl An<'_> {
             | K::PtrDeref(inner)
             | K::DerefRef(inner)
             | K::Field(inner, _)
-            | K::Some(inner)
-            | K::Ok(inner)
-            | K::Err(inner)
             | K::Return(Some(inner))
             | K::ArrayRepeat(inner, _)
             | K::ConstCond(inner) => self.expr(inner, false),
@@ -547,8 +550,7 @@ impl An<'_> {
             K::ForRangeValue { var, range, body } => self.looped(&[&**range], &[], *var, body),
             K::ForArray { pat, array: iter, body }
             | K::ForSlice { pat, slice: iter, body }
-            | K::ForMap { pat, map: iter, body }
-            | K::ForChars { pat, string: iter, body } => self.looped(&[&**iter], &[pat], None, body),
+            | K::ForMap { pat, map: iter, body } => self.looped(&[&**iter], &[pat], None, body),
             K::ForList { pat, list, body } => {
                 self.check_to_list(list, "iterated right away by this loop");
                 self.looped(&[&**list], &[pat], None, body);
@@ -652,7 +654,10 @@ impl An<'_> {
         if local.mutable || local.name.starts_with('_') || !self.cx.in_package(init.span) {
             return;
         }
-        if !matches!(init.ty, Ty::String | Ty::List(..) | Ty::Map(..) | Ty::Heap(..) | Ty::CString) {
+        if !(matches!(init.ty, Ty::String | Ty::Heap(..))
+            || self.defs.list_parts(&init.ty).is_some()
+            || self.defs.map_parts(&init.ty).is_some())
+        {
             return;
         }
         let mut allocates = false;
@@ -681,11 +686,10 @@ fn invariant(e: &Expr, allocates: &mut bool) -> bool {
         | K::Str(_)
         | K::Bytes(_)
         | K::Const(_)
-        | K::Static(_)
-        | K::None => true,
+        | K::Static(_) => true,
         K::Array(es) | K::Tuple(es) => es.iter().all(|x| invariant(x, allocates)),
         K::Struct(fs) | K::Variant(_, fs) => fs.iter().all(|(_, x)| invariant(x, allocates)),
-        K::Some(x) | K::Ok(x) | K::Err(x) | K::Cast(x) | K::Unary(_, x) | K::StringAsStr(x) => invariant(x, allocates),
+        K::Cast(x) | K::Unary(_, x) | K::StringAsStr(x) => invariant(x, allocates),
         K::Binary(_, a, b) => invariant(a, allocates) && invariant(b, allocates),
         K::Method(Method::ToString, args) => {
             *allocates = true;
@@ -699,8 +703,7 @@ fn invariant(e: &Expr, allocates: &mut bool) -> bool {
                 | Builtin::ListWithCapacity
                 | Builtin::MapWithCapacity
                 | Builtin::ListTryWithCapacity
-                | Builtin::MapTryWithCapacity
-                | Builtin::CStringFrom => Some(true),
+                | Builtin::MapTryWithCapacity => Some(true),
                 _ => None,
             };
             match kind {
@@ -774,6 +777,13 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
     }
     let d = depth + 1;
     match ty {
+        Ty::Struct(_) if defs.list_parts(ty).is_some() => {
+            has_user_drop(defs.list_parts(ty).expect("a list").0, defs, d)
+        }
+        Ty::Struct(_) if defs.map_parts(ty).is_some() => {
+            let (k, v, _) = defs.map_parts(ty).expect("a map");
+            has_user_drop(k, defs, d) || has_user_drop(v, defs, d)
+        }
         Ty::Struct(a) => {
             let s = &defs.structs[a.id];
             s.drop_method.is_some() || s.fields.iter().any(|f| has_user_drop(&f.ty, defs, d))
@@ -782,8 +792,7 @@ fn has_user_drop(ty: &Ty, defs: &TypeDefs, depth: u32) -> bool {
             let e = &defs.enums[a.id];
             e.drop_method.is_some() || e.variants.iter().any(|v| v.fields.iter().any(|f| has_user_drop(&f.ty, defs, d)))
         }
-        Ty::Option(t) | Ty::List(t, _) | Ty::Heap(t, _) | Ty::Shared(t) | Ty::Array(t, _) => has_user_drop(t, defs, d),
-        Ty::Result(a, b) | Ty::Map(a, b, _) => has_user_drop(a, defs, d) || has_user_drop(b, defs, d),
+        Ty::Heap(t, _) | Ty::Array(t, _) => has_user_drop(t, defs, d),
         Ty::Tuple(ts) => ts.iter().any(|t| has_user_drop(t, defs, d)),
         Ty::Any(_) | Ty::Fn { .. } => true,
         _ => false,
@@ -822,15 +831,6 @@ fn size_of(ty: &Ty, defs: &TypeDefs, depth: u32) -> (u64, u64) {
             (s.saturating_mul(*n), a)
         }
         Ty::Tuple(ts) => record(&mut ts.iter()),
-        Ty::Option(t) => {
-            let (s, a) = size_of(t, defs, d);
-            ((s + a).next_multiple_of(a), a)
-        }
-        Ty::Result(t, e) => {
-            let ((s1, a1), (s2, a2)) = (size_of(t, defs, d), size_of(e, defs, d));
-            let a = a1.max(a2).max(1);
-            ((s1.max(s2) + a).next_multiple_of(a), a)
-        }
         Ty::Struct(a) => record(&mut defs.structs[a.id].fields.iter().map(|f| &f.ty)),
         Ty::Enum(a) => {
             let e = &defs.enums[a.id];
@@ -841,10 +841,6 @@ fn size_of(ty: &Ty, defs: &TypeDefs, depth: u32) -> (u64, u64) {
                 align = align.max(a);
             }
             ((size + align).next_multiple_of(align), align)
-        }
-        Ty::Range(t, _) => {
-            let (s, a) = size_of(t, defs, d);
-            ((2 * s).next_multiple_of(a), a)
         }
         _ => (8, 8),
     }

@@ -25,6 +25,60 @@ priv fn matches_at(text: str, at: usize, needle: str): bool {
     true
 }
 
+/// The character that starts at byte `at` of `bytes` (valid UTF-8, with `at` on a character boundary) and the number
+/// of bytes it takes.
+priv fn decode_char(bytes: [u8], at: usize): (char, usize) {
+    let b0 = bytes[at] as u32
+    if b0 < 128 {
+        return (b0 as char, 1)
+    }
+    if b0 < 224 {
+        let c = ((b0 & 31) << 6) | ((bytes[at + 1] as u32) & 63)
+        return (c as char, 2)
+    }
+    if b0 < 240 {
+        let c = ((b0 & 15) << 12) | (((bytes[at + 1] as u32) & 63) << 6) | ((bytes[at + 2] as u32) & 63)
+        return (c as char, 3)
+    }
+    let high = ((b0 & 7) << 18) | (((bytes[at + 1] as u32) & 63) << 12)
+    let low = (((bytes[at + 2] as u32) & 63) << 6) | ((bytes[at + 3] as u32) & 63)
+    ((high | low) as char, 4)
+}
+
+/// The characters (Unicode scalar values) of the text, in order, as a list. The list is a copy: a character takes one
+/// to four bytes of UTF-8, so there is no array of characters inside the text to view. Use `char_count`, `nth_char`,
+/// or `char_indices` to read characters without building the list, and `.iter()` for the adapters.
+///
+/// ```
+/// let chars = "añ".chars()
+/// assert_eq(chars.len(), 2)
+/// assert_eq(chars[1], 'ñ')
+/// for c in "ab".chars() {
+///     assert(c == 'a' || c == 'b')
+/// }
+/// ```
+fn str.chars(self): List<char> {
+    let bytes = self.as_bytes()
+    let n = bytes.len()
+    let mut out = List<char>.with_capacity(n)
+    let mut at: usize = 0
+    while at < n {
+        let (c, width) = decode_char(bytes, at)
+        out.push(c)
+        at = at + width
+    }
+    out
+}
+
+/// The characters of the string, in order, as a list (see `str.chars`).
+///
+/// ```
+/// assert_eq(String.from("añ").chars().len(), 2)
+/// ```
+fn String.chars(self): List<char> {
+    self.as_str().chars()
+}
+
 /// The byte offset of the first occurrence of `needle` in `text` at or after `from`, or `text.len()` when there is none.
 priv fn index_of(text: str, needle: str, from: usize): usize {
     let n = needle.len()
@@ -499,9 +553,13 @@ fn String.repeat(self, count: usize): String {
 /// assert_eq("héllo".char_count(), 5)
 /// ```
 fn str.char_count(self): usize {
+    let bytes = self.as_bytes()
     let mut n: usize = 0
-    for c in self.chars() {
+    let mut at: usize = 0
+    while at < bytes.len() {
+        let (_, width) = decode_char(bytes, at)
         n = n + 1
+        at = at + width
     }
     n
 }
@@ -513,12 +571,14 @@ fn str.char_count(self): usize {
 /// assert(!"é".is_char_boundary(1))
 /// ```
 fn str.is_char_boundary(self, i: usize): bool {
+    let bytes = self.as_bytes()
     let mut at: usize = 0
-    for c in self.chars() {
+    while at < bytes.len() {
         if at == i {
             return true
         }
-        at = at + c.len_utf8()
+        let (_, width) = decode_char(bytes, at)
+        at = at + width
     }
     at == i
 }
@@ -529,12 +589,16 @@ fn str.is_char_boundary(self, i: usize): bool {
 /// assert_eq("abc".nth_char(1), Option.Some('b'))
 /// ```
 fn str.nth_char(self, n: usize): Option<char> {
+    let bytes = self.as_bytes()
     let mut i: usize = 0
-    for c in self.chars() {
+    let mut at: usize = 0
+    while at < bytes.len() {
+        let (c, width) = decode_char(bytes, at)
         if i == n {
             return Option.Some(c)
         }
         i = i + 1
+        at = at + width
     }
     Option.None
 }
@@ -546,11 +610,7 @@ fn str.nth_char(self, n: usize): Option<char> {
 /// assert_eq(chars[0], 'a')
 /// ```
 fn str.to_char_list(self): List<char> {
-    let mut out = List<char>.new()
-    for c in self.chars() {
-        out.push(c)
-    }
-    out
+    self.chars()
 }
 
 /// Each character with the byte offset where it starts.
@@ -561,11 +621,13 @@ fn str.to_char_list(self): List<char> {
 /// assert_eq(pairs[1].1, 'b')
 /// ```
 fn str.char_indices(self): List<(usize, char)> {
+    let bytes = self.as_bytes()
     let mut out = List<(usize, char)>.new()
     let mut at: usize = 0
-    for c in self.chars() {
+    while at < bytes.len() {
+        let (c, width) = decode_char(bytes, at)
         out.push((at, c))
-        at = at + c.len_utf8()
+        at = at + width
     }
     out
 }

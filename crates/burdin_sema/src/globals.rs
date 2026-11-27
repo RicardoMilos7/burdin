@@ -28,7 +28,7 @@ pub(crate) enum Global {
     Extern(usize),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeName {
     Struct(usize),
     Enum(usize),
@@ -174,6 +174,10 @@ pub(crate) struct OpIfaces {
     pub(crate) index_mut: usize,
 }
 
+/// The written form of a `Fn(...)` bound: the index into `Globals::fn_bounds`, the type, its substitution, and its
+/// module.
+pub(crate) type FnBoundSrc = (usize, burdin_syntax::ast::Type, Vec<(String, Ty)>, usize);
+
 #[derive(Default)]
 pub(crate) struct Globals {
     /// How many instances of each spelled name were made. Two instances can spell alike and still differ (a borrowing
@@ -239,6 +243,9 @@ pub(crate) struct Globals {
     pub(crate) try_from_impls: Vec<FromImpl>,
     /// The signatures of `Fn(...)` bounds, by the index a [`crate::generics::Bound::Fn`] carries.
     pub(crate) fn_bounds: RefCell<Vec<tir::FnSig>>,
+    /// The written form of each `Fn(...)` bound whose signature holds `Error` for an instance not allocated yet:
+    /// the index into `fn_bounds`, the type, its substitution, and its module.
+    pub(crate) fn_bound_srcs: RefCell<Vec<FnBoundSrc>>,
     /// The type aliases that have parameters (`crate::aliases`) and how deeply their expansions nest right now.
     pub(crate) generic_aliases: Vec<crate::aliases::GenericAlias>,
     pub(crate) alias_depth: std::cell::Cell<usize>,
@@ -290,6 +297,19 @@ pub(crate) struct Globals {
     /// ERR4).
     pub(crate) error_iface: Option<usize>,
     pub(crate) error_ty: Option<Ty>,
+    /// The templates of `std`'s `Option` and `Result` enums, which the language itself knows (`tir::LangItem`).
+    pub(crate) lang_option: Option<usize>,
+    /// `std`'s `List` and its owning iterator: templates the compiler knows by name (issue #1017).
+    pub(crate) lang_list: Option<usize>,
+    pub(crate) lang_list_into_iter: Option<usize>,
+    pub(crate) lang_map: Option<usize>,
+    pub(crate) lang_map_into_iter: Option<usize>,
+    /// `std`'s `ManuallyDrop`: a wrapper whose value is never dropped by glue.
+    pub(crate) lang_manually_drop: Option<usize>,
+    pub(crate) lang_array_into_iter: Option<usize>,
+    /// `std`'s ranges and their iterators, by `Range`, `RangeInclusive`, `RangeIter`, `RangeIterInclusive`.
+    pub(crate) lang_range: [Option<usize>; 4],
+    pub(crate) lang_result: Option<usize>,
     /// The standard library's dynamic-error constructors (`spec/errors.md`, ERR4 and ERR7).
     pub(crate) error_plain: Option<FuncId>,
     pub(crate) error_at: Option<FuncId>,
@@ -331,6 +351,9 @@ pub(crate) struct Globals {
     /// The concrete allocator types a container in the program stores (`spec/allocators.md`, AL4), collected as
     /// types are resolved; `finish` turns them into `Program::allocator_fns`.
     pub(crate) allocator_requests: RefCell<Vec<Ty>>,
+    /// The types whose `Send`/`Sync` is being decided right now. A recursive type reached again through an impl
+    /// block's `where` clause (`List<Value>: Send where Value: Send`) is assumed to hold, as in the field walk.
+    pub(crate) marker_active: RefCell<Vec<(Ty, bool)>>,
     /// Set while a body is checked when it reads a file from disk (`embed`): the body's result depends on a file
     /// the body cache cannot see change, so it is not cached (`crate::cache`).
     pub(crate) impure: std::cell::Cell<bool>,
@@ -443,7 +466,27 @@ impl Globals {
 
     /// The type name `name` as seen from `module`, after imports.
     pub(crate) fn type_name(&self, module: usize, name: &str) -> Option<TypeName> {
-        self.modules[module].types.get(name).copied()
+        self.modules[module].types.get(name).copied().or_else(|| self.lang_type_name(name))
+    }
+
+    /// `Option` and `Result` mean `std`'s enums wherever nothing else is declared or imported under the name, which
+    /// includes the signatures that are resolved before the prelude is installed.
+    pub(crate) fn lang_type_name(&self, name: &str) -> Option<TypeName> {
+        match name {
+            "Option" => self.lang_option.map(TypeName::GenericAdt),
+            "Result" => self.lang_result.map(TypeName::GenericAdt),
+            "List" => self.lang_list.map(TypeName::GenericAdt),
+            "ListIntoIter" => self.lang_list_into_iter.map(TypeName::GenericAdt),
+            "Map" => self.lang_map.map(TypeName::GenericAdt),
+            "MapIntoIter" => self.lang_map_into_iter.map(TypeName::GenericAdt),
+            "ManuallyDrop" => self.lang_manually_drop.map(TypeName::GenericAdt),
+            "ArrayIntoIter" => self.lang_array_into_iter.map(TypeName::GenericAdt),
+            "Range" => self.lang_range[0].map(TypeName::GenericAdt),
+            "RangeInclusive" => self.lang_range[1].map(TypeName::GenericAdt),
+            "RangeIter" => self.lang_range[2].map(TypeName::GenericAdt),
+            "RangeIterInclusive" => self.lang_range[3].map(TypeName::GenericAdt),
+            _ => None,
+        }
     }
 
     /// The interface name `name` as seen from `module`, after imports.
@@ -607,26 +650,21 @@ impl Globals {
                 if self.adt_priv.get(&(false, a.id)).copied().unwrap_or(false) {
                     Some(a.name.to_string())
                 } else {
-                    None
+                    // An instance of a generic type mentions its arguments too (`Option<Hidden>`).
+                    self.origin_of(ty).and_then(|(_, args)| args.iter().find_map(|t| self.private_adt(t)))
                 }
             }
             Ty::Enum(a) => {
                 if self.adt_priv.get(&(true, a.id)).copied().unwrap_or(false) {
                     Some(a.name.to_string())
                 } else {
-                    None
+                    // An instance of a generic type mentions its arguments too (`Option<Hidden>`).
+                    self.origin_of(ty).and_then(|(_, args)| args.iter().find_map(|t| self.private_adt(t)))
                 }
             }
-            Ty::Ref { inner, .. }
-            | Ty::Slice(inner)
-            | Ty::Array(inner, _)
-            | Ty::Option(inner)
-            | Ty::Heap(inner, _)
-            | Ty::CPtr(inner)
-            | Ty::Range(inner, _)
-            | Ty::List(inner, _) => self.private_adt(inner),
-            Ty::Result(t, e) => self.private_adt(t).or_else(|| self.private_adt(e)),
-            Ty::Map(k, v, _) | Ty::MapEntry(k, v, _) => self.private_adt(k).or_else(|| self.private_adt(v)),
+            Ty::Ref { inner, .. } | Ty::Slice(inner) | Ty::Array(inner, _) | Ty::Heap(inner, _) | Ty::CPtr(inner) => {
+                self.private_adt(inner)
+            }
             Ty::Fn { sig, .. } => {
                 sig.params.iter().find_map(|t| self.private_adt(t)).or_else(|| self.private_adt(&sig.ret))
             }

@@ -246,7 +246,7 @@ fn check_function_with(
     diags: &mut Diagnostics,
     infer: bool,
 ) -> (tir::Function, Vec<Ty>) {
-    if !item.check_body {
+    if !item.check_body || !item.decl.has_body {
         return (stub(item), Vec::new());
     }
     let f = item.decl;

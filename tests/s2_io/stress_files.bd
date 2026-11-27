@@ -23,6 +23,10 @@ fn work(index: usize) {
     options.truncate(true)
     let mut again = options.open(name.as_str()).unwrap()
     again.write_all(data[0..data.len()]).unwrap()
+    // Windows refuses to remove a file that is still open, so close the three handles first.
+    drop(again)
+    drop(read)
+    drop(file)
     fs.remove_file(name.as_str()).unwrap()
 }
 

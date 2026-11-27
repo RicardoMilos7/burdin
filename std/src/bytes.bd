@@ -8,6 +8,8 @@
 use encoding.{DecodeError, from_utf8, hex_encode, to_utf8}
 use fmt.{Debug, Formatter}
 use ops.{Index, IndexMut}
+use std.Shared
+use text.chars
 
 /// A growable, owned buffer of bytes.
 ///

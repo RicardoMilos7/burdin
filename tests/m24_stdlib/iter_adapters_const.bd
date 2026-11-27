@@ -23,14 +23,16 @@ fn reversed(): i32 {
 
 fn reversed_text(): i32 {
     let mut n = 0
-    for c in "añb".chars().rev() {
+    let letters = "añb".chars()
+    for c in letters.iter().rev() {
         if c == 'ñ' {
             n = n * 10 + 2
         } else {
             n = n * 10 + 1
         }
     }
-    let mut it = "xyz".chars()
+    let tail = "xyz".chars()
+    let mut it = tail.iter()
     match it.next_back() {
         Option.Some(c) => n = n * 100 + (c as i32 - 'a' as i32),
         Option.None => {}

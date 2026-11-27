@@ -576,7 +576,6 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
         | K::Bytes(_)
         | K::Const(_)
         | K::Static(_)
-        | K::None
         | K::Continue(_)
         | K::LayoutOf { .. } => {}
         K::Break { value, .. } => {
@@ -651,6 +650,10 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             tir::Builtin::HeapNew | tir::Builtin::BlackBox => walk(&args[0], captures, globals, usage, Mode::Move),
             // `with_capacity_in(n, alloc)` moves the allocator value into the list it makes.
             tir::Builtin::ListWithCapacityIn | tir::Builtin::ListTryWithCapacityIn => {
+                walk(&args[0], captures, globals, usage, Mode::Use);
+                walk(&args[1], captures, globals, usage, Mode::Move);
+            }
+            tir::Builtin::RawWrite => {
                 walk(&args[0], captures, globals, usage, Mode::Use);
                 walk(&args[1], captures, globals, usage, Mode::Move);
             }
@@ -737,10 +740,6 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
             walk(map, captures, globals, usage, Mode::Use);
             walk_block(body, captures, globals, usage);
         }
-        K::ForChars { string, body, .. } => {
-            walk(string, captures, globals, usage, Mode::Use);
-            walk_block(body, captures, globals, usage);
-        }
         K::Match(scrutinee, arms) => {
             walk(scrutinee, captures, globals, usage, Mode::Use);
             for arm in arms {
@@ -782,7 +781,6 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
                 walk(x, captures, globals, usage, Mode::Move);
             }
         }
-        K::Some(inner) | K::Ok(inner) | K::Err(inner) => walk(inner, captures, globals, usage, Mode::Move),
     }
 }
 

@@ -11,6 +11,7 @@
 use alloc.Allocator
 use fmt.{Display, Formatter}
 use std.Error
+use text.chars
 
 /// The format side of writing: a writer implements this interface. Each method borrows the writer exclusively for
 /// the call, so a struct or sequence is written with a `begin` call, one call per value, and an `end` call.

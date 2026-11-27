@@ -2,11 +2,12 @@
 //! (equality, ordering, hashing, layout) that compiled code answers with generated glue. Each one follows the code
 //! generator's behavior so a constant's value is the value the compiled program would compute (CE1).
 
-use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, key_ty, range_bounds, to_key};
+use crate::interp::{Fault, Interp, Mode, Output, R, Unwind, impure, range_bounds};
 use crate::value::Value;
 use burdin_diag::Span;
 use burdin_tir::{
-    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, UnOp,
+    self as tir, Alloc, BinOp, Builtin, Expr, ExprKind as K, FloatOp, FloatTy, IntTy, Method, Program, Ty, TypeDefs,
+    UnOp,
 };
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -173,15 +174,6 @@ pub(crate) fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::Map(x), Value::Map(y)) => {
             x.len() == y.len() && x.iter().all(|(k, v)| y.iter().any(|(k2, v2)| value_eq(k, k2) && value_eq(v, v2)))
         }
-        (Value::Opt(x), Value::Opt(y)) => match (x, y) {
-            (None, None) => true,
-            (Some(p), Some(q)) => value_eq(p, q),
-            _ => false,
-        },
-        (Value::Res(x), Value::Res(y)) => match (x, y) {
-            (Ok(p), Ok(q)) | (Err(p), Err(q)) => value_eq(p, q),
-            _ => false,
-        },
         (Value::Heap(x), Value::Heap(y)) => value_eq(x, y),
         (Value::Int(_) | Value::Bool(_) | Value::Char(_), Value::Int(_) | Value::Bool(_) | Value::Char(_)) => {
             a.int() == b.int()
@@ -192,6 +184,16 @@ pub(crate) fn value_eq(a: &Value, b: &Value) -> bool {
 
 /// Structural ordering, typed: the derived `Ord`, and `str` byte order. The type says how to read each value,
 /// because a `u128` bit pattern above `i128::MAX` is not in order as a signed number (`spec/int128.md`, I128-1).
+/// The element type of a `List` (the compiler's list struct in `std`), `None` for any other type.
+pub(crate) fn list_elem(p: &Program, ty: &Ty) -> Option<Ty> {
+    TypeDefs { structs: &p.structs, enums: &p.enums }.list_parts(ty).map(|(t, _)| t.clone())
+}
+
+/// The key and value types of a `Map` (the compiler's map struct in `std`), `None` for any other type.
+pub(crate) fn map_parts(p: &Program, ty: &Ty) -> Option<(Ty, Ty)> {
+    TypeDefs { structs: &p.structs, enums: &p.enums }.map_parts(ty).map(|(k, v, _)| (k.clone(), v.clone()))
+}
+
 pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering {
     let (a, b) = (shallow(a), shallow(b));
     match (a, b) {
@@ -214,31 +216,14 @@ pub(crate) fn value_cmp(p: &Program, a: &Value, b: &Value, ty: &Ty) -> Ordering 
         }
         (Value::Array(_) | Value::List(_) | Value::Slice(..), Value::Array(_) | Value::List(_) | Value::Slice(..)) => {
             let elem = match ty {
-                Ty::Array(t, _) | Ty::List(t, _) => Some(&**t),
-                _ => None,
+                Ty::Array(t, _) => Some((**t).clone()),
+                _ => list_elem(p, ty),
             };
             match elem {
-                Some(t) => seq_cmp(p, a.elems(), b.elems(), std::iter::repeat(t)),
+                Some(t) => seq_cmp(p, a.elems(), b.elems(), std::iter::repeat(&t)),
                 None => Ordering::Equal,
             }
         }
-        (Value::Opt(x), Value::Opt(y)) => match (x, y) {
-            (None, None) => Ordering::Equal,
-            (None, Some(_)) => Ordering::Less,
-            (Some(_), None) => Ordering::Greater,
-            (Some(x), Some(y)) => match ty {
-                Ty::Option(inner) => value_cmp(p, x, y, inner),
-                _ => Ordering::Equal,
-            },
-        },
-        // `Ok(_) < Err(_)`: the variant order of `Result`.
-        (Value::Res(x), Value::Res(y)) => match (x, y, ty) {
-            (Ok(x), Ok(y), Ty::Result(ok, _)) => value_cmp(p, x, y, ok),
-            (Err(x), Err(y), Ty::Result(_, err)) => value_cmp(p, x, y, err),
-            (Ok(_), Err(_), _) => Ordering::Less,
-            (Err(_), Ok(_), _) => Ordering::Greater,
-            _ => Ordering::Equal,
-        },
         _ => Ordering::Equal,
     }
 }
@@ -297,22 +282,28 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
             Value::Tuple(fs) => fs.iter().zip(ts).fold(acc, |h, (f, t)| hash(p, f, t, h)),
             _ => acc,
         },
+        Ty::Struct(_) if list_elem(p, ty).is_some() => {
+            let t = list_elem(p, ty).expect("a list");
+            let with_len = mix(acc, v.elems().len() as u64);
+            v.elems().iter().fold(with_len, |h, x| hash(p, x, &t, h))
+        }
+        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
+        Ty::Struct(_) if map_parts(p, ty).is_some() => {
+            let (k, vty) = map_parts(p, ty).expect("a map");
+            match v {
+                Value::Map(entries) => {
+                    let mut h = mix(acc, entries.len() as u64);
+                    for (key, value) in entries {
+                        let entry = hash(p, value, &vty, hash(p, key, &k, FNV_OFFSET));
+                        h ^= entry;
+                    }
+                    h
+                }
+                _ => acc,
+            }
+        }
         Ty::Struct(a) => match v {
             Value::Tuple(fs) => fs.iter().zip(&p.structs[a.id].fields).fold(acc, |h, (f, d)| hash(p, f, &d.ty, h)),
-            _ => acc,
-        },
-        Ty::Range(inner, _) => {
-            let (lo, hi) = range_bounds(v);
-            let h = hash(p, &Value::Int(lo), inner, acc);
-            hash(p, &Value::Int(hi), inner, h)
-        }
-        Ty::Option(inner) => match v {
-            Value::Opt(Some(x)) => hash(p, x, inner, mix(acc, 1)),
-            _ => mix(acc, 0),
-        },
-        Ty::Result(ok, err) => match v {
-            Value::Res(Ok(x)) => hash(p, x, ok, mix(acc, 1)),
-            Value::Res(Err(x)) => hash(p, x, err, mix(acc, 0)),
             _ => acc,
         },
         Ty::Enum(a) => match v {
@@ -324,22 +315,6 @@ pub(crate) fn hash(p: &Program, v: &Value, ty: &Ty, acc: u64) -> u64 {
         },
         Ty::Array(t, _) => v.elems().iter().fold(acc, |h, x| hash(p, x, t, h)),
         // A list hashes its length and then its elements in order, exactly as `hash_at` does.
-        Ty::List(t, _) => {
-            let with_len = mix(acc, v.elems().len() as u64);
-            v.elems().iter().fold(with_len, |h, x| hash(p, x, t, h))
-        }
-        // A map hashes each entry from the offset basis and XORs the results, so entry order does not matter.
-        Ty::Map(k, vty, _) => match v {
-            Value::Map(entries) => {
-                let mut h = mix(acc, entries.len() as u64);
-                for (key, value) in entries {
-                    let entry = hash(p, value, vty, hash(p, key, k, FNV_OFFSET));
-                    h ^= entry;
-                }
-                h
-            }
-            _ => acc,
-        },
         _ => acc,
     }
 }
@@ -376,34 +351,21 @@ fn storage(p: &Program, ty: &Ty) -> Option<(u64, u64)> {
         }
         Ty::Float(FloatTy::F32) => (4, 4),
         Ty::Float(FloatTy::F64) => (8, 8),
-        Ty::Str | Ty::Chars | Ty::Slice(_) | Ty::Any(_) => (16, 8),
+        Ty::Str | Ty::Slice(_) | Ty::Any(_) => (16, 8),
         Ty::Fn { .. } | Ty::String => (24, 8),
         // A chunks or windows iterator keeps the slice view and two indices.
         Ty::SliceChunks(..) | Ty::SliceWindows(..) => (32, 8),
         // A container with a stored allocator carries its value after its buffer words (`spec/allocators.md`).
-        Ty::List(_, a) => container(p, (24, 8), a),
-        Ty::Map(_, _, a) => container(p, (24, 8), a),
         Ty::Heap(_, a) => container(p, (8, 8), a),
-        Ty::CString | Ty::CPtr(_) | Ty::Ref { .. } | Ty::Shared(_) => (8, 8),
+        Ty::CPtr(_) | Ty::Ref { .. } => (8, 8),
         Ty::Array(elem, n) => {
             let (size, align) = storage(p, elem)?;
             (size * n, align)
         }
-        Ty::Option(inner) => match storage(p, inner) {
-            Some(l) => product(&[(1, 1), l]),
-            None => (1, 1),
-        },
-        Ty::Result(ok, err) => product(&[(1, 1), member(p, ok), member(p, err)]),
         Ty::Tuple(ts) => product(&ts.iter().map(|t| member(p, t)).collect::<Vec<_>>()),
         Ty::Struct(a) => product(&p.structs[a.id].fields.iter().map(|f| member(p, &f.ty)).collect::<Vec<_>>()),
-        Ty::Range(inner, _) => product(&[member(p, inner), member(p, inner)]),
-        Ty::RangeIter(inner, _) => product(&[member(p, inner), member(p, inner), (1, 1)]),
-        Ty::ListIntoIter(_, a) | Ty::MapIntoIter(_, _, a) => container(p, (32, 8), a),
         Ty::MapIter(..) | Ty::MapIterMut(..) => (32, 8),
         Ty::IterMut(_) => (16, 8),
-        // A pending map lookup: the map's address, the key, the key's hash, the probe slot, and the found flag.
-        Ty::MapEntry(key, _, _) => product(&[(8, 8), member(p, key), (8, 8), (8, 8), (1, 1)]),
-        Ty::ArrayIntoIter(inner, n) => product(&[member(p, &Ty::Array(inner.clone(), *n)), (8, 8)]),
         Ty::Enum(a) => {
             let mut size = 0;
             let mut align = 1;
@@ -451,18 +413,15 @@ pub(crate) fn zero_value(p: &Program, ty: &Ty) -> Value {
         Ty::Float(_) => Value::Float(0.0),
         Ty::Str => Value::str(""),
         Ty::String => Value::String(Vec::new()),
-        Ty::List(_, _) => Value::List(Vec::new()),
-        Ty::Map(..) => Value::Map(Vec::new()),
         Ty::Tuple(ts) => Value::Tuple(ts.iter().map(|t| zero_value(p, t)).collect()),
+        Ty::Struct(_) if list_elem(p, ty).is_some() => Value::List(Vec::new()),
+        Ty::Struct(_) if map_parts(p, ty).is_some() => Value::Map(Vec::new()),
         Ty::Struct(a) => Value::Tuple(p.structs[a.id].fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
         Ty::Enum(a) => match p.enums[a.id].variants.first() {
             Some(v) => Value::Variant(0, v.fields.iter().map(|f| zero_value(p, &f.ty)).collect()),
             None => Value::Unit,
         },
         Ty::Array(t, n) => Value::Array(vec![zero_value(p, t); *n as usize]),
-        Ty::Option(_) => Value::Opt(None),
-        Ty::Result(_, e) => Value::Res(Err(Box::new(zero_value(p, e)))),
-        Ty::Range(..) => Value::Tuple(vec![Value::Int(0), Value::Int(0)]),
         _ => Value::Unit,
     }
 }
@@ -530,21 +489,6 @@ fn parse_int(s: &[u8], ty: IntTy) -> Option<i128> {
     let n = if neg { -n } else { n };
     let wide = if ty.signed() { wrap(n, IntTy::I64) } else { wrap(n, IntTy::U64) };
     Some(wrap(wide, ty))
-}
-
-/// The character that starts at byte `at`, and its width.
-fn decode(bytes: &[u8], at: usize) -> Option<(char, usize)> {
-    let rest = bytes.get(at..)?;
-    let first = *rest.first()?;
-    let width = match first {
-        0x00..=0x7f => 1,
-        0xc0..=0xdf => 2,
-        0xe0..=0xef => 3,
-        _ => 4,
-    };
-    let end = width.min(rest.len());
-    let c = std::str::from_utf8(&rest[..end]).ok().and_then(|s| s.chars().next()).unwrap_or('\u{fffd}');
-    Some((c, width.max(1)))
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -720,7 +664,6 @@ impl<'p> Interp<'p, '_> {
                 self.charge(1, span)?;
                 Value::Int(0)
             }
-            Builtin::CStringFrom => return Err(impure("allocating a C string", span)),
             Builtin::CStrToString => return Err(impure("reading a C string", span)),
             Builtin::Panic => {
                 let msg = self.peek(&args[0], |v| String::from_utf8_lossy(v.bytes()).into_owned())?;
@@ -808,7 +751,6 @@ impl<'p> Interp<'p, '_> {
                 let bytes = self.peek(&args[0], |v| v.elems().iter().map(|b| b.int() as u8).collect::<Vec<u8>>())?;
                 Value::Str(Rc::from(bytes))
             }
-            Builtin::SharedNew => Value::Heap(Box::new(self.eval(&args[0], Mode::Move)?)),
             // `burdin test --interpret` models the C heap, so the raw allocation builtins run there; every other
             // compile-time evaluation keeps its containers abstract and has no allocator
             // (`spec/allocators.md`, AL10; `spec/test-runner.md`, IN1).
@@ -870,26 +812,26 @@ impl<'p> Interp<'p, '_> {
             // (`spec/allocators.md`, AL11).
             Builtin::ListTryWithCapacity => {
                 let _ = self.eval(&args[0], Mode::Use)?;
-                Value::Res(Ok(Box::new(Value::List(Vec::new()))))
+                Value::ok(Value::List(Vec::new()))
             }
             Builtin::MapTryWithCapacity => {
                 let _ = self.eval(&args[0], Mode::Use)?;
-                Value::Res(Ok(Box::new(Value::Map(Vec::new()))))
+                Value::ok(Value::Map(Vec::new()))
             }
             Builtin::StringTryWithCapacity => {
                 let _ = self.eval(&args[0], Mode::Use)?;
-                Value::Res(Ok(Box::new(Value::String(Vec::new()))))
+                Value::ok(Value::String(Vec::new()))
             }
             Builtin::IntParse(int_ty) => {
                 let parsed = self.peek(&args[0], |v| parse_int(v.bytes(), int_ty))?;
                 match parsed {
-                    Some(n) => Value::Res(Ok(Box::new(Value::Int(n)))),
+                    Some(n) => Value::ok(Value::Int(n)),
                     None => {
-                        let err = match ty {
-                            Ty::Result(_, e) => zero_value(self.p, e),
-                            _ => Value::Unit,
+                        let err = match self.defs().result_parts(ty) {
+                            Some((_, e)) => zero_value(self.p, e),
+                            None => Value::Unit,
                         };
-                        Value::Res(Err(Box::new(err)))
+                        Value::err(err)
                     }
                 }
             }
@@ -900,6 +842,22 @@ impl<'p> Interp<'p, '_> {
                 let vb = std::mem::replace(self.place_mut(&b, span)?, va);
                 *self.place_mut(&a, span)? = vb;
                 Value::Unit
+            }
+            Builtin::RawRead | Builtin::RawWrite | Builtin::SliceRaw | Builtin::IterMutRaw => {
+                return Err(impure("reading or writing raw memory", span));
+            }
+            Builtin::HashKey => {
+                return Err(impure("hashing a key through `__hash_key`", span));
+            }
+            Builtin::IntStep => {
+                let (Value::Int(x), Value::Int(d)) = (self.eval(&args[0], Mode::Use)?, self.eval(&args[1], Mode::Use)?)
+                else {
+                    return Err(impure("stepping a value that is not an integer", span));
+                };
+                let Ty::Int(ity) = &args[0].ty else {
+                    return Err(impure("stepping a value that is not an integer", span));
+                };
+                Value::Int(wrap(x.wrapping_add(d), *ity))
             }
             Builtin::Replace => {
                 let place = self.eval_place(&args[0])?;
@@ -912,7 +870,6 @@ impl<'p> Interp<'p, '_> {
     pub(crate) fn method(&mut self, m: Method, args: &'p [Expr], ty: &Ty, span: Span) -> R<Value> {
         let recv = &args[0];
         Ok(match m {
-            Method::AsPtr => return Err(impure("taking the address of a C string", span)),
             Method::IsNull => {
                 if !self.raw_memory {
                     return Err(impure("inspecting a C pointer", span));
@@ -949,8 +906,8 @@ impl<'p> Interp<'p, '_> {
                 let x = self.eval(recv, Mode::Use)?.int();
                 let y = self.eval(&args[1], Mode::Use)?.int();
                 match checked_int(m, x, y, i) {
-                    Some(r) => Value::Opt(Some(Box::new(Value::Int(r)))),
-                    None => Value::Opt(None),
+                    Some(r) => Value::some(Value::Int(r)),
+                    None => Value::none(),
                 }
             }
             Method::Min | Method::Max => {
@@ -1004,7 +961,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::StringTryReserve => {
                 let _ = self.eval(&args[1], Mode::Use)?;
-                Value::Res(Ok(Box::new(Value::Unit)))
+                Value::ok(Value::Unit)
             }
             Method::StringShrinkToFit => Value::Unit,
             Method::StringInsertStr => {
@@ -1052,20 +1009,20 @@ impl<'p> Interp<'p, '_> {
             }
             Method::ListPop => {
                 let place = self.eval_place(recv)?;
-                Value::Opt(list_mut(self.place_mut(&place, span)?, span)?.pop().map(Box::new))
+                Value::opt(list_mut(self.place_mut(&place, span)?, span)?.pop())
             }
             Method::ListLast => {
                 let last = self.peek(recv, |v| v.elems().last().cloned())?;
-                Value::Opt(last.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+                Value::opt(last.map(|v| Value::Borrow(Box::new(v))))
             }
             Method::ListFirst => {
                 let first = self.peek(recv, |v| v.elems().first().cloned())?;
-                Value::Opt(first.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+                Value::opt(first.map(|v| Value::Borrow(Box::new(v))))
             }
             Method::ListGet => {
                 let index = self.eval(&args[1], Mode::Use)?.int();
                 let found = self.peek(recv, |v| usize::try_from(index).ok().and_then(|i| v.elems().get(i).cloned()))?;
-                Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+                Value::opt(found.map(|v| Value::Borrow(Box::new(v))))
             }
             Method::ListGetMut | Method::ListFirstMut | Method::ListLastMut => {
                 return Err(impure("a mutable view of a list element", span));
@@ -1079,7 +1036,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::ListTryReserve | Method::ListTryReserveExact => {
                 let _ = self.eval(&args[1], Mode::Use)?.int();
-                Value::Res(Ok(Box::new(Value::Unit)))
+                Value::ok(Value::Unit)
             }
             Method::ListShrinkToFit => Value::Unit,
             Method::ListSwap => {
@@ -1110,10 +1067,7 @@ impl<'p> Interp<'p, '_> {
             }
             Method::ListTruncate => {
                 let index = self.eval(&args[1], Mode::Use)?.int();
-                let elem = match &recv.ty {
-                    Ty::List(t, _) => (**t).clone(),
-                    _ => Ty::Unit,
-                };
+                let elem = list_elem(self.p, &recv.ty).unwrap_or(Ty::Unit);
                 let place = self.eval_place(recv)?;
                 let removed = {
                     let list = list_mut(self.place_mut(&place, span)?, span)?;
@@ -1155,7 +1109,7 @@ impl<'p> Interp<'p, '_> {
                 let place = self.eval_place(recv)?;
                 let range = self.eval(&args[1], Mode::Use)?;
                 let (lo, hi) = range_bounds(&range);
-                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let inclusive = self.defs().range_parts(&args[1].ty).is_some_and(|(_, i)| i);
                 let len = self.peek(recv, |v| v.elems().len())?;
                 let lo = usize::try_from(lo).unwrap_or(usize::MAX);
                 let hi = usize::try_from(hi).unwrap_or(usize::MAX);
@@ -1217,9 +1171,8 @@ impl<'p> Interp<'p, '_> {
             Method::ListSort => {
                 let place = self.eval_place(recv)?;
                 let p = self.p;
-                let elem = match &recv.ty {
-                    Ty::List(t, _) => (**t).clone(),
-                    other => return Err(internal(format!("sorting `{other}`"), span)),
+                let Some(elem) = list_elem(p, &recv.ty) else {
+                    return Err(internal(format!("sorting `{}`", recv.ty), span));
                 };
                 let list = list_mut(self.place_mut(&place, span)?, span)?;
                 list.sort_by(|x, y| value_cmp(p, x, y, &elem));
@@ -1243,10 +1196,8 @@ impl<'p> Interp<'p, '_> {
                 let k = self.eval(&args[1], Mode::Move)?;
                 let v = self.eval(&args[2], Mode::Move)?;
                 self.charge(1, span)?;
-                let (kt, vt) = match &recv.ty {
-                    Ty::Map(k, v, _) => ((**k).clone(), (**v).clone()),
-                    _ => (Ty::Unit, Ty::Unit),
-                };
+                let (kt, vt) = map_parts(self.p, &recv.ty).unwrap_or((Ty::Unit, Ty::Unit));
+                let _ = &kt;
                 let map = map_mut(self.place_mut(&place, span)?, span)?;
                 match map.iter_mut().find(|(key, _)| value_eq(key, &k)) {
                     Some((_, slot)) => {
@@ -1264,7 +1215,7 @@ impl<'p> Interp<'p, '_> {
                     Value::Map(pairs) => pairs.iter().find(|(key, _)| value_eq(key, &k)).map(|(_, v)| v.clone()),
                     _ => None,
                 })?;
-                Value::Opt(found.map(|v| Box::new(Value::Borrow(Box::new(v)))))
+                Value::opt(found.map(|v| Value::Borrow(Box::new(v))))
             }
             Method::MapGetMut | Method::MapGetOrInsert | Method::MapGetOr => {
                 return Err(impure("a mutable view of a map value", span));
@@ -1276,10 +1227,7 @@ impl<'p> Interp<'p, '_> {
             Method::MapReserve | Method::MapShrinkToFit => Value::Unit,
             Method::MapTryReserve => {
                 let _ = self.eval(&args[1], Mode::Use)?.int();
-                Value::Res(Ok(Box::new(Value::Unit)))
-            }
-            Method::MapEntry | Method::MapEntryOrInsert | Method::MapEntryOrInsertWith => {
-                return Err(impure("an entry into a map value", span));
+                Value::ok(Value::Unit)
             }
             Method::MapContainsKey => {
                 let k = self.eval(&args[1], Mode::Use)?;
@@ -1295,13 +1243,12 @@ impl<'p> Interp<'p, '_> {
                 match map.iter().position(|(key, _)| value_eq(key, &k)) {
                     Some(i) => {
                         let (key, v) = map.remove(i);
-                        if let Ty::Map(kt, _, _) = &recv.ty {
-                            let kt = (**kt).clone();
+                        if let Some((kt, _)) = map_parts(self.p, &recv.ty) {
                             self.drop_value(key, &kt, span)?;
                         }
-                        Value::Opt(Some(Box::new(v)))
+                        Value::some(v)
                     }
-                    None => Value::Opt(None),
+                    None => Value::none(),
                 }
             }
             Method::MapRemoveEntry => {
@@ -1311,48 +1258,25 @@ impl<'p> Interp<'p, '_> {
                 match map.iter().position(|(key, _)| value_eq(key, &k)) {
                     Some(i) => {
                         let (key, v) = map.remove(i);
-                        Value::Opt(Some(Box::new(Value::Tuple(vec![key, v]))))
+                        Value::some(Value::Tuple(vec![key, v]))
                     }
-                    None => Value::Opt(None),
+                    None => Value::none(),
                 }
-            }
-            Method::Unwrap | Method::Expect => {
-                let v = self.eval(recv, Mode::Move)?.deref();
-                let message = if m == Method::Expect {
-                    Some(self.peek(&args[1], |v| String::from_utf8_lossy(v.bytes()).into_owned())?)
-                } else {
-                    None
-                };
-                match v {
-                    Value::Opt(Some(x)) | Value::Res(Ok(x)) => *x,
-                    Value::Opt(None) => {
-                        return Err(panic(message.unwrap_or_else(|| "called `unwrap` on a `None` value".into()), span));
-                    }
-                    Value::Res(Err(_)) => {
-                        return Err(panic(message.unwrap_or_else(|| "called `unwrap` on a `Err` value".into()), span));
-                    }
-                    other => return Err(internal(format!("`unwrap` on {other:?}"), span)),
-                }
-            }
-            Method::IsSome | Method::IsNone | Method::IsOk | Method::IsErr => {
-                let yes = self.peek(recv, |v| matches!(v, Value::Opt(Some(_)) | Value::Res(Ok(_))))?;
-                Value::Bool(if matches!(m, Method::IsSome | Method::IsOk) { yes } else { !yes })
             }
             Method::FindStr => {
                 let needle = self.peek(&args[1], |v| v.bytes().to_vec())?;
                 let found = self.peek(recv, |v| find_bytes(v.bytes(), &needle))?;
-                Value::Opt(found.map(|i| Box::new(Value::Int(i as i128))))
+                Value::opt(found.map(|i| Value::Int(i as i128)))
             }
             Method::Find => {
                 let c = self.eval(&args[1], Mode::Use)?.char();
                 let found = self.peek(recv, |v| find_bytes(v.bytes(), &utf8(c)))?;
-                Value::Opt(found.map(|i| Box::new(Value::Int(i as i128))))
+                Value::opt(found.map(|i| Value::Int(i as i128)))
             }
             Method::StartsWith => {
                 let prefix = self.peek(&args[1], |v| v.bytes().to_vec())?;
                 Value::Bool(self.peek(recv, |v| v.bytes().starts_with(&prefix))?)
             }
-            Method::Chars => Value::Chars(self.peek(recv, |v| Rc::from(v.bytes()))?, 0),
             Method::AsStr => Value::Str(self.peek(recv, |v| Rc::from(v.bytes()))?),
             Method::AsBytes => {
                 let bytes = self.peek(recv, |v| v.bytes().to_vec())?;
@@ -1384,14 +1308,6 @@ impl<'p> Interp<'p, '_> {
             Method::Iter | Method::IntoIter => self.iter_value(recv, m == Method::IntoIter, span)?,
             Method::IterNext => self.iter_next(recv, ty, span)?,
             Method::IterNextBack => self.iter_next_back(recv, ty, span)?,
-            Method::SharedGet => {
-                let inner = self.peek(recv, |v| match v {
-                    Value::Heap(b) => (**b).clone(),
-                    other => other.clone(),
-                })?;
-                Value::Borrow(Box::new(inner))
-            }
-            Method::SharedStrongCount => Value::Int(1),
             // Slices are read-only at compile time: the interpreter represents a view as a copy, so writing
             // through one could not reach the storage it views (`spec/stdlib.md`, "Slices").
             Method::AsSlice => {
@@ -1410,9 +1326,9 @@ impl<'p> Interp<'p, '_> {
                 match &v {
                     Value::Slice(xs, lo, hi) => {
                         if i < hi - lo {
-                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[lo + i].clone())))))
+                            Value::some(Value::Borrow(Box::new(xs[lo + i].clone())))
                         } else {
-                            Value::Opt(None)
+                            Value::none()
                         }
                     }
                     other => return Err(internal(format!("`get` on {other:?}"), span)),
@@ -1423,9 +1339,9 @@ impl<'p> Interp<'p, '_> {
                 match &v {
                     Value::Slice(xs, lo, hi) => {
                         if *lo < *hi {
-                            Value::Opt(Some(Box::new(Value::Borrow(Box::new(xs[*hi - 1].clone())))))
+                            Value::some(Value::Borrow(Box::new(xs[*hi - 1].clone())))
                         } else {
-                            Value::Opt(None)
+                            Value::none()
                         }
                     }
                     other => return Err(internal(format!("`last` on {other:?}"), span)),
@@ -1442,7 +1358,7 @@ impl<'p> Interp<'p, '_> {
                 let v = self.eval(recv, Mode::Use)?.deref();
                 let range = self.eval(&args[1], Mode::Use)?.deref();
                 let (lo, hi) = range_bounds(&range);
-                let inclusive = matches!(args[1].ty, Ty::Range(_, true));
+                let inclusive = self.defs().range_parts(&args[1].ty).is_some_and(|(_, i)| i);
                 match &v {
                     Value::Slice(xs, base, end) => {
                         let len = (end - base) as i128;
@@ -1456,9 +1372,9 @@ impl<'p> Interp<'p, '_> {
                             Some(hi) if lo >= 0 && lo <= hi => {
                                 let lo = lo as usize;
                                 let hi = hi as usize;
-                                Value::Opt(Some(Box::new(Value::Slice(xs.clone(), base + lo, base + hi))))
+                                Value::some(Value::Slice(xs.clone(), base + lo, base + hi))
                             }
-                            _ => Value::Opt(None),
+                            _ => Value::none(),
                         }
                     }
                     other => return Err(internal(format!("`get` on {other:?}"), span)),
@@ -1534,8 +1450,8 @@ impl<'p> Interp<'p, '_> {
     fn iter_value(&mut self, recv: &'p Expr, into: bool, span: Span) -> R<Value> {
         let v = self.eval(recv, if into { Mode::Move } else { Mode::Use })?.deref();
         Ok(match (&recv.ty, v) {
-            (Ty::Slice(_) | Ty::Chars, v) => v,
-            (Ty::Array(..) | Ty::List(_, _), Value::Array(xs) | Value::List(xs)) => {
+            (Ty::Slice(_), v) => v,
+            (Ty::Array(..) | Ty::Struct(_), Value::Array(xs) | Value::List(xs)) => {
                 if into {
                     Value::Items(VecDeque::from(xs))
                 } else {
@@ -1543,7 +1459,7 @@ impl<'p> Interp<'p, '_> {
                     Value::Slice(Rc::new(xs), 0, n)
                 }
             }
-            (Ty::Map(..), Value::Map(pairs)) => Value::Items(
+            (t, Value::Map(pairs)) if map_parts(self.p, t).is_some() => Value::Items(
                 pairs
                     .into_iter()
                     .map(|(k, v)| {
@@ -1555,18 +1471,12 @@ impl<'p> Interp<'p, '_> {
                     })
                     .collect(),
             ),
-            (Ty::Range(inner, _), v) => {
-                let ity = key_ty(inner);
-                let (lo, hi) = range_bounds(&v);
-                Value::RangeIter(to_key(ity, lo), to_key(ity, hi), false)
-            }
             (ty, v) => return Err(internal(format!("an iterator over `{ty}` from {v:?}"), span)),
         })
     }
 
     fn iter_next(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
-        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
-        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let item_is_view = matches!(self.defs().option_payload(ty), Some(Ty::Ref { .. }));
         let place = self.eval_place(recv)?;
         let it = self.place_mut(&place, span)?;
         let it = match it {
@@ -1583,36 +1493,15 @@ impl<'p> Interp<'p, '_> {
                     Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
                 }
             }
-            Value::Chars(bytes, at) => match decode(bytes, *at) {
-                Some((c, w)) => {
-                    *at += w;
-                    Some(Value::Char(c))
-                }
-                None => None,
-            },
             Value::Items(items) => items.pop_front(),
-            Value::RangeIter(next, hi, done) => {
-                if *done || (inclusive && *next > *hi) || (!inclusive && *next >= *hi) {
-                    None
-                } else {
-                    let v = *next;
-                    if inclusive && v == *hi {
-                        *done = true;
-                    } else {
-                        *next += 1;
-                    }
-                    Some(Value::Int(to_key(key_ty(&recv.ty), v)))
-                }
-            }
             other => return Err(internal(format!("`next` on {other:?}"), span)),
         };
-        Ok(Value::Opt(next.map(Box::new)))
+        Ok(Value::opt(next))
     }
 
-    /// `it.next_back()` on a slice, a range iterator, or `Chars` (spec/iterators.md, IT14).
+    /// `it.next_back()` on a slice (spec/iterators.md, IT14).
     fn iter_next_back(&mut self, recv: &'p Expr, ty: &Ty, span: Span) -> R<Value> {
-        let item_is_view = matches!(ty, Ty::Option(t) if matches!(**t, Ty::Ref { .. }));
-        let inclusive = matches!(recv.ty, Ty::RangeIter(_, true));
+        let item_is_view = matches!(self.defs().option_payload(ty), Some(Ty::Ref { .. }));
         let place = self.eval_place(recv)?;
         let it = self.place_mut(&place, span)?;
         let it = match it {
@@ -1629,41 +1518,9 @@ impl<'p> Interp<'p, '_> {
                     Some(if item_is_view { Value::Borrow(Box::new(v)) } else { v })
                 }
             }
-            Value::Chars(bytes, at) => {
-                let mut start = bytes.len();
-                if start <= *at {
-                    None
-                } else {
-                    start -= 1;
-                    while start > *at && (bytes[start] & 0xc0) == 0x80 {
-                        start -= 1;
-                    }
-                    let c = decode(bytes, start).map(|(c, _)| c);
-                    let kept: Rc<[u8]> = Rc::from(&bytes[..start]);
-                    *bytes = kept;
-                    c.map(Value::Char)
-                }
-            }
-            Value::RangeIter(lo, hi, done) => {
-                let ity = key_ty(&recv.ty);
-                if *done || (inclusive && *lo > *hi) || (!inclusive && *lo >= *hi) {
-                    None
-                } else if inclusive {
-                    let v = *hi;
-                    if *lo == *hi {
-                        *done = true;
-                    } else {
-                        *hi -= 1;
-                    }
-                    Some(Value::Int(to_key(ity, v)))
-                } else {
-                    *hi -= 1;
-                    Some(Value::Int(to_key(ity, *hi)))
-                }
-            }
             other => return Err(internal(format!("`next_back` on {other:?}"), span)),
         };
-        Ok(Value::Opt(next.map(Box::new)))
+        Ok(Value::opt(next))
     }
 
     pub(crate) fn binary(&mut self, op: BinOp, l: &'p Expr, r: &'p Expr, span: Span) -> R<Value> {

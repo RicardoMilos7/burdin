@@ -4,7 +4,6 @@ use super::{Codegen, GenResult, Glue, SavedContext, llvm_err};
 use burdin_tir::Ty;
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
-use inkwell::types::BasicType;
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -77,23 +76,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 format!("({})", parts.join(","))
             }
             Ty::Array(inner, n) => format!("[{},{}]", self.structural_key_in(inner, seen), n),
-            Ty::Option(inner) => format!("Option<{}>", self.structural_key_in(inner, seen)),
-            Ty::Result(ok, err) => {
-                format!("Result<{},{}>", self.structural_key_in(ok, seen), self.structural_key_in(err, seen))
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (inner, _) = self.list_info(ty).expect("a list");
+                format!("List<{}>", self.structural_key_in(&inner, seen))
             }
-            Ty::List(inner, _) => format!("List<{}>", self.structural_key_in(inner, seen)),
-            Ty::Map(k, v, _) => {
-                format!("Map<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
+            Ty::Struct(_) if self.list_iter_info(ty).is_some() => {
+                let (inner, _) = self.list_iter_info(ty).expect("a list iterator");
+                format!("ListIntoIter<{}>", self.structural_key_in(&inner, seen))
+            }
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (k, v, _) = self.map_info(ty).expect("a map");
+                format!("Map<{},{}>", self.structural_key_in(&k, seen), self.structural_key_in(&v, seen))
             }
             Ty::Heap(inner, _) => format!("Heap<{}>", self.structural_key_in(inner, seen)),
-            Ty::Range(inner, inclusive) => {
-                format!("Range<{},{inclusive}>", self.structural_key_in(inner, seen))
-            }
-            Ty::RangeIter(inner, inclusive) => {
-                format!("RangeIter<{},{inclusive}>", self.structural_key_in(inner, seen))
-            }
-            Ty::ListIntoIter(inner, _) => format!("ListIntoIter<{}>", self.structural_key_in(inner, seen)),
-            Ty::ArrayIntoIter(inner, n) => format!("ArrayIntoIter<{},{}>", self.structural_key_in(inner, seen), n),
             Ty::MapIter(k, v) => {
                 format!("MapIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
@@ -101,15 +96,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Ty::MapIterMut(k, v) => {
                 format!("MapIterMut<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
             }
-            Ty::MapIntoIter(k, v, _) => {
-                format!("MapIntoIter<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
-            }
-            Ty::MapEntry(k, v, _) => {
-                format!("MapEntry<{},{}>", self.structural_key_in(k, seen), self.structural_key_in(v, seen))
-            }
             Ty::Ref { mutable, inner } => {
                 format!("&{}{}", if *mutable { "mut " } else { "" }, self.structural_key_in(inner, seen))
             }
+            // A type with a hand-written `clone` is told apart by name: its glue is that call, not its fields.
+            Ty::Struct(a) if self.program.structs[a.id].derives.clone_method.is_some() => format!("clone.{}", a.name),
+            Ty::Enum(a) if self.program.enums[a.id].derives.clone_method.is_some() => format!("clone.{}", a.name),
             Ty::Struct(a) => {
                 let mut parts = Vec::new();
                 for field in &self.program.structs[a.id].fields {
@@ -237,83 +229,34 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     pub(super) fn drop_value(&mut self, addr: PointerValue<'ctx>, ty: &Ty) -> GenResult<()> {
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
         match ty {
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, alloc) = self.map_info(ty).expect("a map");
+                let (key, value, alloc) = (&key, &value, &alloc);
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.drop_map(addr, &key, &value, &alloc)
+            }
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                self.drop_sequence(addr, &elem, &alloc, "list")
+            }
+            Ty::Struct(_) if self.list_iter_info(ty).is_some() => {
+                let (elem, alloc) = self.list_iter_info(ty).expect("a list iterator");
+                self.drop_list_into_iter(addr, &elem, &alloc)
+            }
             Ty::Unit | Ty::Bool | Ty::Char | Ty::Int(_) | Ty::Float(_) | Ty::Str | Ty::Never | Ty::Error => Ok(()),
-            // The endpoints of a range are integers, so a range owns nothing.
-            Ty::Range(..) => Ok(()),
             // A projection is resolved before code generation and owns nothing on its own.
             Ty::Param(_) | Ty::Const(_) | Ty::Projection { .. } | Ty::TryFromError { .. } => Ok(()),
             // A reference, a slice, or a raw pointer is a view of someone else's storage: dropping it does
-            // nothing. The `Chars` iterator is a view of a `str` too, and a `MapIter` only borrows its map; the
-            // chunks and windows iterators only borrow their slice.
+            // nothing. A `MapIter` only borrows its map; the chunks and windows iterators only borrow their slice.
             Ty::Ref { .. }
             | Ty::Slice(_)
             | Ty::CPtr(_)
-            | Ty::Chars
             | Ty::MapIter(..)
             | Ty::IterMut(_)
             | Ty::MapIterMut(..)
-            | Ty::RangeIter(..)
             | Ty::SliceChunks(..)
             | Ty::SliceWindows(..) => Ok(()),
-            Ty::ListIntoIter(elem, alloc) => {
-                let elem = (**elem).clone();
-                self.drop_list_into_iter(addr, &elem, alloc)
-            }
-            Ty::MapIntoIter(key, value, alloc) => {
-                let (key, value) = ((**key).clone(), (**value).clone());
-                self.drop_map_into_iter(addr, &key, &value, alloc)
-            }
-            Ty::ArrayIntoIter(elem, n) => {
-                let (elem, n) = ((**elem).clone(), *n);
-                if n == 0 || !self.needs_drop(&elem) || self.llvm_ty(&elem).is_none() {
-                    return Ok(());
-                }
-                let index_field = self
-                    .builder
-                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 1, "iter.index")
-                    .map_err(llvm_err)?;
-                let start = self.builder.build_load(self.usize_ty, index_field, "").map_err(llvm_err)?.into_int_value();
-                let slots = self
-                    .builder
-                    .build_struct_gep(self.iter_array_ty(&elem, n), addr, 0, "iter.array")
-                    .map_err(llvm_err)?;
-                let elem_t = self.llvm_ty(&elem).expect("checked above");
-                let array_t = elem_t.array_type(n as u32);
-                let index = self.alloca(self.usize_ty.into(), "array.iter.drop.i")?;
-                self.builder.build_store(index, start).map_err(llvm_err)?;
-                let header = self.new_block("array.iter.drop.cond");
-                let body = self.new_block("array.iter.drop.body");
-                let exit = self.new_block("array.iter.drop.end");
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(header);
-                let i = self.builder.build_load(self.usize_ty, index, "").map_err(llvm_err)?.into_int_value();
-                let go = self
-                    .builder
-                    .build_int_compare(IntPredicate::ULT, i, self.usize_ty.const_int(n, false), "")
-                    .map_err(llvm_err)?;
-                self.builder.build_conditional_branch(go, body, exit).map_err(llvm_err)?;
-                self.builder.position_at_end(body);
-                let zero = self.usize_ty.const_zero();
-                // SAFETY (LLVM): index <= i < n.
-                let p =
-                    unsafe { self.builder.build_in_bounds_gep(array_t, slots, &[zero, i], "") }.map_err(llvm_err)?;
-                self.drop_value(p, &elem)?;
-                let next = self.builder.build_int_add(i, self.usize_ty.const_int(1, false), "").map_err(llvm_err)?;
-                self.builder.build_store(index, next).map_err(llvm_err)?;
-                self.builder.build_unconditional_branch(header).map_err(llvm_err)?;
-                self.builder.position_at_end(exit);
-                Ok(())
-            }
-            // A map entry owns the key it would insert; an entry dropped without inserting drops that key.
-            Ty::MapEntry(key, _, _) => {
-                let key = (**key).clone();
-                if !self.needs_drop(&key) || self.llvm_ty(&key).is_none() {
-                    return Ok(());
-                }
-                let entry_ty = self.map_entry_value_ty(&key);
-                let key_field = self.builder.build_struct_gep(entry_ty, addr, 1, "entry.key").map_err(llvm_err)?;
-                self.drop_value(key_field, &key)
-            }
+
             // A closure owns its capture record; its destructor drops the moved-in captures and frees it.
             Ty::Fn { .. } => {
                 let v =
@@ -338,11 +281,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let drop_ty = self.cx.void_type().fn_type(&[ptr_ty.into()], false);
                 self.builder.build_indirect_call(drop_ty, drop, &[data.into()], "").map_err(llvm_err)?;
                 self.builder.build_call(self.rt.free, &[data.into()], "").map_err(llvm_err)?;
-                Ok(())
-            }
-            Ty::CString => {
-                let p = self.builder.build_load(ptr_ty, addr, "cstring").map_err(llvm_err)?.into_pointer_value();
-                self.builder.build_call(self.rt.free, &[p.into()], "").map_err(llvm_err)?;
                 Ok(())
             }
             Ty::String => {
@@ -382,29 +320,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 })?;
                 self.drop_stored_allocator(&alloc, alloc_addr)
             }
-            // A `Shared<T>` owns one reference to its cell: the last owner drops the value and frees the cell.
-            Ty::Shared(inner) => {
-                let inner = (**inner).clone();
-                let p = self.builder.build_load(ptr_ty, addr, "shared").map_err(llvm_err)?.into_pointer_value();
-                let is_null = self.builder.build_is_null(p, "").map_err(llvm_err)?;
-                let alive = self.builder.build_not(is_null, "").map_err(llvm_err)?;
-                let (inner2, p2) = (inner.clone(), p);
-                self.if_then(alive, "shared.drop", move |cg| {
-                    let count_at = cg.offset_ptr(p2, cg.usize_ty.const_zero())?;
-                    // The count is atomic: another task or thread may hold a handle (`spec/shared.md`, SH1).
-                    let last = cg.shared_count_dec(count_at)?;
-                    cg.if_then(last, "shared.last", move |cg| {
-                        cg.shared_acquire()?;
-                        if cg.needs_drop(&inner2) {
-                            let eight = cg.usize_ty.const_int(8, false);
-                            let value = cg.offset_ptr(p2, eight)?;
-                            let glue = cg.drop_glue(&inner2);
-                            cg.builder.build_call(glue, &[value.into()], "").map_err(llvm_err)?;
-                        }
-                        cg.global_dealloc(p2)
-                    })
-                })
-            }
             Ty::Struct(a) => {
                 if let Some(m) = self.program.structs[a.id].drop_method {
                     self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
@@ -437,50 +352,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_call(self.functions[m.0], &[addr.into()], "").map_err(llvm_err)?;
                 }
                 self.drop_enum_fields(addr, id)
-            }
-            Ty::Option(inner) => {
-                let inner = (**inner).clone();
-                let ot = self.option_ty(&inner);
-                let tag_ptr = self.builder.build_struct_gep(ot, addr, 0, "is_some").map_err(llvm_err)?;
-                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
-                self.if_then(tag, "option.drop", move |cg| {
-                    if cg.llvm_ty(&inner).is_some() && cg.needs_drop(&inner) {
-                        let p = cg.builder.build_struct_gep(ot, addr, 1, "").map_err(llvm_err)?;
-                        cg.drop_value(p, &inner)?;
-                    }
-                    Ok(())
-                })
-            }
-            Ty::Result(ok, err) => {
-                let (ok, err) = ((**ok).clone(), (**err).clone());
-                let rt = self.result_ty(&ok, &err);
-                let tag_ptr = self.builder.build_struct_gep(rt, addr, 0, "is_ok").map_err(llvm_err)?;
-                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
-                self.if_then(tag, "result.drop.ok", move |cg| {
-                    if cg.needs_drop(&ok) {
-                        let p = cg.builder.build_struct_gep(rt, addr, 1, "").map_err(llvm_err)?;
-                        cg.drop_value(p, &ok)?;
-                    }
-                    Ok(())
-                })?;
-                let tag_ptr = self.builder.build_struct_gep(rt, addr, 0, "is_ok").map_err(llvm_err)?;
-                let tag = self.builder.build_load(self.cx.bool_type(), tag_ptr, "").map_err(llvm_err)?.into_int_value();
-                let is_err = self.builder.build_not(tag, "").map_err(llvm_err)?;
-                self.if_then(is_err, "result.drop.err", move |cg| {
-                    if cg.needs_drop(&err) {
-                        let p = cg.builder.build_struct_gep(rt, addr, 2, "").map_err(llvm_err)?;
-                        cg.drop_value(p, &err)?;
-                    }
-                    Ok(())
-                })
-            }
-            Ty::List(elem, alloc) => {
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                self.drop_sequence(addr, &elem, &alloc, "list")
-            }
-            Ty::Map(key, value, alloc) => {
-                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
-                self.drop_map(addr, &key, &value, &alloc)
             }
             Ty::Array(elem, n) => {
                 let n = *n;
@@ -609,18 +480,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return self.copy_bits(dst, src, ty);
         }
         let ptr_ty = self.cx.ptr_type(AddressSpace::default());
+        let by_hand = match ty {
+            Ty::Struct(a) => self.program.structs[a.id].derives.clone_method,
+            Ty::Enum(a) => self.program.enums[a.id].derives.clone_method,
+            _ => None,
+        };
+        if let Some(method) = by_hand {
+            let call = self.builder.build_call(self.functions[method.0], &[src.into()], "clone").map_err(llvm_err)?;
+            let copy = call.try_as_basic_value().basic().expect("a clone method returns the value");
+            self.builder.build_store(dst, copy).map_err(llvm_err)?;
+            return Ok(());
+        }
         match ty {
-            // A range iterator is plain integers and a flag.
-            Ty::RangeIter(..) => self.copy_bits(dst, src, ty),
             Ty::String => {
                 self.builder.build_call(self.rt.string_clone, &[dst.into(), src.into()], "").map_err(llvm_err)?;
-                Ok(())
-            }
-            Ty::CString => {
-                let p = self.builder.build_load(ptr_ty, src, "cstring").map_err(llvm_err)?.into_pointer_value();
-                let call = self.builder.build_call(self.rt.cstring_clone, &[p.into()], "").map_err(llvm_err)?;
-                let copy = call.try_as_basic_value().basic().expect("`cstring_clone` returns a pointer");
-                self.builder.build_store(dst, copy).map_err(llvm_err)?;
                 Ok(())
             }
             Ty::Heap(inner, alloc) => {
@@ -648,13 +521,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.build_store(dst_ptr, newp).map_err(llvm_err)?;
                 Ok(())
             }
-            // Cloning a `Shared<T>` shares the cell: the reference count goes up and the pointer is copied.
-            Ty::Shared(_) => {
-                let p = self.builder.build_load(ptr_ty, src, "shared").map_err(llvm_err)?.into_pointer_value();
-                let count_at = self.offset_ptr(p, self.usize_ty.const_zero())?;
-                self.shared_count_inc(count_at)?;
-                self.builder.build_store(dst, p).map_err(llvm_err)?;
-                Ok(())
+            Ty::Struct(_) if self.map_info(ty).is_some() => {
+                let (key, value, alloc) = self.map_info(ty).expect("a map");
+                let (key, value, alloc) = (&key, &value, &alloc);
+                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
+                self.clone_map(dst, src, &key, &value, &alloc)
+            }
+            Ty::Struct(_) if self.list_info(ty).is_some() => {
+                let (elem, alloc) = self.list_info(ty).expect("a list");
+                self.clone_sequence(dst, src, &elem, &alloc)
             }
             Ty::Struct(_) | Ty::Tuple(_) => {
                 let st = self.llvm_ty(ty).expect("an aggregate has a type").into_struct_type();
@@ -669,78 +544,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(())
             }
             Ty::Enum(a) => self.clone_enum_fields(dst, src, a.id),
-            Ty::Option(inner) => {
-                let inner = (**inner).clone();
-                let ot = self.option_ty(&inner);
-                let src_tag = self.builder.build_struct_gep(ot, src, 0, "").map_err(llvm_err)?;
-                let dst_tag = self.builder.build_struct_gep(ot, dst, 0, "").map_err(llvm_err)?;
-                let tag = self
-                    .builder
-                    .build_load(self.cx.bool_type(), src_tag, "is_some")
-                    .map_err(llvm_err)?
-                    .into_int_value();
-                self.builder.build_store(dst_tag, tag).map_err(llvm_err)?;
-                if self.llvm_ty(&inner).is_some() {
-                    self.if_then(tag, "option.clone", move |cg| {
-                        let s = cg.builder.build_struct_gep(ot, src, 1, "").map_err(llvm_err)?;
-                        let d = cg.builder.build_struct_gep(ot, dst, 1, "").map_err(llvm_err)?;
-                        cg.clone_value(d, s, &inner)
-                    })?;
-                }
-                Ok(())
-            }
-            Ty::Result(ok, err) => {
-                let (ok, err) = ((**ok).clone(), (**err).clone());
-                let rt = self.result_ty(&ok, &err);
-                let src_tag_ptr = self.builder.build_struct_gep(rt, src, 0, "").map_err(llvm_err)?;
-                let dst_tag_ptr = self.builder.build_struct_gep(rt, dst, 0, "").map_err(llvm_err)?;
-                let tag = self
-                    .builder
-                    .build_load(self.cx.bool_type(), src_tag_ptr, "is_ok")
-                    .map_err(llvm_err)?
-                    .into_int_value();
-                self.builder.build_store(dst_tag_ptr, tag).map_err(llvm_err)?;
-                if self.llvm_ty(&ok).is_some() && self.llvm_ty(&err).is_some() {
-                    let ok_bb = self.new_block("result.clone.ok");
-                    let err_bb = self.new_block("result.clone.err");
-                    let end = self.new_block("result.clone.end");
-                    self.builder.build_conditional_branch(tag, ok_bb, err_bb).map_err(llvm_err)?;
-                    self.builder.position_at_end(ok_bb);
-                    let s = self.builder.build_struct_gep(rt, src, 1, "").map_err(llvm_err)?;
-                    let d = self.builder.build_struct_gep(rt, dst, 1, "").map_err(llvm_err)?;
-                    self.clone_value(d, s, &ok)?;
-                    self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-                    self.builder.position_at_end(err_bb);
-                    let s = self.builder.build_struct_gep(rt, src, 2, "").map_err(llvm_err)?;
-                    let d = self.builder.build_struct_gep(rt, dst, 2, "").map_err(llvm_err)?;
-                    self.clone_value(d, s, &err)?;
-                    self.builder.build_unconditional_branch(end).map_err(llvm_err)?;
-                    self.builder.position_at_end(end);
-                } else if self.llvm_ty(&ok).is_some() {
-                    self.if_then(tag, "result.clone.ok", move |cg| {
-                        let s = cg.builder.build_struct_gep(rt, src, 1, "").map_err(llvm_err)?;
-                        let d = cg.builder.build_struct_gep(rt, dst, 1, "").map_err(llvm_err)?;
-                        cg.clone_value(d, s, &ok)
-                    })?;
-                } else if self.llvm_ty(&err).is_some() {
-                    let is_err = self.builder.build_not(tag, "").map_err(llvm_err)?;
-                    self.if_then(is_err, "result.clone.err", move |cg| {
-                        let s = cg.builder.build_struct_gep(rt, src, 2, "").map_err(llvm_err)?;
-                        let d = cg.builder.build_struct_gep(rt, dst, 2, "").map_err(llvm_err)?;
-                        cg.clone_value(d, s, &err)
-                    })?;
-                }
-                Ok(())
-            }
-            Ty::List(elem, alloc) => {
-                let (elem, alloc) = ((**elem).clone(), alloc.clone());
-                self.clone_sequence(dst, src, &elem, &alloc)
-            }
-            Ty::Map(key, value, alloc) => {
-                let (key, value, alloc) = ((**key).clone(), (**value).clone(), alloc.clone());
-                self.clone_map(dst, src, &key, &value, &alloc)
-            }
-            Ty::Chars => self.copy_bits(dst, src, ty),
             // A closure is not `Clone` (CL10); this is unreachable in a checked program.
             Ty::Fn { .. } => Ok(()),
             Ty::Array(elem, n) => {
