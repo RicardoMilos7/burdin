@@ -1,8 +1,24 @@
-main.bd:4:1: error[E0003]: expected `()`, found `String`
-main.bd:4:1: error[E0100]: use of moved value `s`
-  = note: main.bd:2:5: `s` is declared here
-  = note: main.bd:3:9: value moved here
+error[E0003]: expected `()`, found `String`
+ --> main.bd:4:1
+  |
+4 | s
+  | ^ found `String`
+  |
+
+error[E0100]: use of moved value `s`
+ --> main.bd:4:1
+  |
+2 | let s = String.from("hello")
+  |     - `s` is declared here
+3 | let t = s
+  |         - value moved here
+4 | s
+  | ^ value used here after move
+  |
+  = note: spec/memory-rules.md, MV1: moving a non-Copy value transfers ownership
   = help: run `burdin check --explain` to trace the path to this error
-  = help: clone `s` where it is moved, so this use has its own value
-          - let t = s
-          + let t = s.clone()
+help: clone `s` where it is moved, so this use has its own value
+  |
+3 - let t = s
+3 + let t = s.clone()
+  |

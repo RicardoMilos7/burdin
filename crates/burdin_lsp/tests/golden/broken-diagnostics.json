@@ -16,7 +16,25 @@
     "message": "this implementation of `main.Named` is missing the method `id`",
     "codeDescription": {
       "href": "https://ricardomilos7.github.io/burdin/errors/E0140"
-    }
+    },
+    "relatedInformation": [
+      {
+        "location": {
+          "uri": "ROOT/src/main.bd",
+          "range": {
+            "start": {
+              "line": 9,
+              "character": 0
+            },
+            "end": {
+              "line": 13,
+              "character": 1
+            }
+          }
+        },
+        "message": "missing `id`"
+      }
+    ]
   },
   {
     "range": {
@@ -35,7 +53,41 @@
     "message": "cannot assign to `count`: it is not mutable",
     "codeDescription": {
       "href": "https://ricardomilos7.github.io/burdin/errors/E0005"
-    }
+    },
+    "relatedInformation": [
+      {
+        "location": {
+          "uri": "ROOT/src/main.bd",
+          "range": {
+            "start": {
+              "line": 21,
+              "character": 4
+            },
+            "end": {
+              "line": 21,
+              "character": 9
+            }
+          }
+        },
+        "message": "cannot assign to immutable place"
+      },
+      {
+        "location": {
+          "uri": "ROOT/src/main.bd",
+          "range": {
+            "start": {
+              "line": 20,
+              "character": 8
+            },
+            "end": {
+              "line": 20,
+              "character": 13
+            }
+          }
+        },
+        "message": "`count` is declared here without `mut`"
+      }
+    ]
   },
   {
     "range": {
@@ -54,7 +106,25 @@
     "message": "expected `i32`, found `str`",
     "codeDescription": {
       "href": "https://ricardomilos7.github.io/burdin/errors/E0003"
-    }
+    },
+    "relatedInformation": [
+      {
+        "location": {
+          "uri": "ROOT/src/main.bd",
+          "range": {
+            "start": {
+              "line": 22,
+              "character": 20
+            },
+            "end": {
+              "line": 22,
+              "character": 26
+            }
+          }
+        },
+        "message": "found `str`"
+      }
+    ]
   },
   {
     "range": {

@@ -3,6 +3,6 @@ error: could not check explain/E0111.bd (1 error)
 
 trace for explain/E0111.bd:13:5: error[E0111]: this access conflicts with a borrow that is still live
   rule: spec/memory-rules.md RF3
-  note at explain/E0111.bd:12:22: the borrow is created here
+  note: spec/memory-rules.md, RF2: a value cannot be accessed while exclusively borrowed, or mutated while borrowed
   fails here: explain/E0111.bd:13:5
   fix: finish using the reference before changing the place, for example by moving the last read of `r` above the assignment, or by copying the value out instead of holding a view.

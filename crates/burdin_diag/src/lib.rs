@@ -6,10 +6,10 @@
 //!
 //! Four formats are rendered from the same data (issues #434, #642, #643):
 //!
-//! - `human`: the default. It colors the location, the severity, and the code when asked to, and wraps long
-//!   messages to a fixed width. Its first line is always
-//!   `path:LINE:COL: error[E0000]: message`, which the conformance runner reads. When color is on and the
-//!   terminal supports hyperlinks, the code links to its entry in the error reference (issue #644).
+//! - `human`: the default. It renders cargo/gleam-style snippets (`error[E0000]: message`, `  --> path:LINE:COL`,
+//!   source lines with a line-number gutter, `^`/`-` underlines, labels, and numbered diff suggestions), colors
+//!   when asked to, and wraps long messages and source lines to a fixed width. When color is on and the terminal
+//!   supports hyperlinks, the code links to its entry in the error reference (issue #644).
 //! - `short`: exactly one plain line per diagnostic, with no notes, suggestions, or color. This is the
 //!   machine-readable format the test scripts parse.
 //! - `json`: one version 1 JSON object per diagnostic on one line (`json.rs`), with spans, labels, notes, help,
@@ -81,12 +81,21 @@ impl SourceFile {
         (position.line, position.column)
     }
 
+    /// The byte range `[start, end)` (without trailing `\r\n`) of a 1-based line.
+    pub fn line_byte_range(&self, line: u32) -> (usize, usize) {
+        let index = (line as usize).saturating_sub(1);
+        let Some(&start) = self.line_starts.get(index) else { return (self.text.len(), self.text.len()) };
+        let mut end = self.line_starts.get(index + 1).map_or(self.text.len(), |&next| next as usize);
+        while end > start as usize && matches!(self.text.as_bytes()[end - 1], b'\n' | b'\r') {
+            end -= 1;
+        }
+        (start as usize, end)
+    }
+
     /// The text of a 1-based line, without its line break. An empty string past the last line.
     pub fn line_text(&self, line: u32) -> &str {
-        let index = (line as usize).saturating_sub(1);
-        let Some(&start) = self.line_starts.get(index) else { return "" };
-        let end = self.line_starts.get(index + 1).map_or(self.text.len(), |&next| next as usize);
-        self.text[start as usize..end].trim_end_matches(['\n', '\r'])
+        let (start, end) = self.line_byte_range(line);
+        &self.text[start..end]
     }
 
     /// How many lines the file has.
@@ -504,8 +513,8 @@ pub struct Note {
     pub message: String,
 }
 
-/// Text attached to a span of the diagnostic's own source. A label is for a machine consumer that marks the span
-/// in an editor; the human format has no source snippets, so it does not print labels.
+/// Text attached to a span of the diagnostic's own source. The human format renders it under the underlined
+/// source line, and machine formats expose it to editors.
 #[derive(Clone, Debug)]
 pub struct Label {
     pub span: Span,
@@ -706,12 +715,12 @@ impl Diagnostics {
         self.list.last_mut().expect("a diagnostic was just pushed")
     }
 
-    /// Moves every diagnostic of `other` into this list, skipping one that has the same code and span as a
-    /// diagnostic already here. A generic body is checked once against its bounds and once per instantiation, so
-    /// the same mistake can be found more than once.
+    /// Moves every diagnostic of `other` into this list, skipping exact duplicates (same code, span, and message).
+    /// A generic body is checked once against its bounds and once per instantiation, so the same mistake can be
+    /// found more than once, while distinct errors sharing a span (such as macro or expansion errors) are all kept.
     pub fn absorb(&mut self, other: Diagnostics) {
         for d in other.list {
-            if !self.list.iter().any(|e| e.code == d.code && e.span == d.span) {
+            if !self.list.iter().any(|e| e.code == d.code && e.span == d.span && e.message == d.message) {
                 self.list.push(d);
             }
         }
@@ -781,9 +790,14 @@ impl Diagnostics {
         if options.format == DiagnosticFormat::Sarif {
             text = sarif::log(&sorted[..shown], sources, &options.tool, total - shown);
         } else {
-            for d in &sorted[..shown] {
+            for (i, d) in sorted[..shown].iter().enumerate() {
                 match options.format {
-                    DiagnosticFormat::Human => render_human(&mut text, d, sources, options),
+                    DiagnosticFormat::Human => {
+                        if i > 0 {
+                            text.push('\n');
+                        }
+                        render_human(&mut text, d, sources, options);
+                    }
                     DiagnosticFormat::Short => render_short(&mut text, d, sources),
                     DiagnosticFormat::Json => {
                         json::diagnostic(d, sources, rendered_text(d, sources)).write(&mut text);
@@ -867,15 +881,153 @@ pub struct Rendered {
 // The ANSI styles. They are applied only in the human format and only when color is enabled, and they never
 // change the visible text.
 const RESET: &str = "\x1b[0m";
-const LOCATION: &str = "\x1b[36m";
-const SEVERITY: &str = "\x1b[1;31m";
-const CODE: &str = "\x1b[33m";
+const SEVERITY_ERROR: &str = "\x1b[1;31m";
+const SEVERITY_WARNING: &str = "\x1b[1;33m";
+const GUTTER: &str = "\x1b[1;34m";
+const SECONDARY: &str = "\x1b[1;34m";
 const NOTE: &str = "\x1b[1;36m";
 const HELP: &str = "\x1b[1;32m";
+const DIFF_DEL: &str = "\x1b[1;31m";
+const DIFF_ADD: &str = "\x1b[1;32m";
 // An OSC 8 hyperlink is `ESC ] 8 ; ; URL ST text ESC ] 8 ; ; ST`; `ST` is `ESC \`.
 const OSC8_OPEN: &str = "\x1b]8;;";
 const OSC8_END: &str = "\x1b\\";
 const OSC8_CLOSE: &str = "\x1b]8;;\x1b\\";
+const TAB_WIDTH: usize = 4;
+
+fn severity_style(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => SEVERITY_ERROR,
+        Severity::Warning => SEVERITY_WARNING,
+    }
+}
+
+fn char_display_width(ch: char) -> usize {
+    if ch == '\t' {
+        return TAB_WIDTH;
+    }
+    let c = ch as u32;
+    if ch.is_control()
+        || matches!(
+            c,
+            0x0300..=0x036F
+                | 0x1AB0..=0x1AFF
+                | 0x1DC0..=0x1DFF
+                | 0x200B..=0x200F
+                | 0x202A..=0x202E
+                | 0x2060..=0x206F
+                | 0x20D0..=0x20FF
+                | 0xFE00..=0xFE0F
+                | 0xFE20..=0xFE2F
+                | 0xFEFF
+                | 0xE0100..=0xE01EF
+        )
+    {
+        return 0;
+    }
+    if matches!(
+        c,
+        0x1100..=0x115F
+            | 0x231A..=0x231B
+            | 0x2329..=0x232A
+            | 0x23E9..=0x23EC
+            | 0x23F0
+            | 0x23F3
+            | 0x25FD..=0x25FE
+            | 0x2614..=0x2615
+            | 0x2648..=0x2653
+            | 0x267F
+            | 0x2693
+            | 0x26A1
+            | 0x26AA..=0x26AB
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26CE
+            | 0x26D4
+            | 0x26EA
+            | 0x26F2..=0x26F3
+            | 0x26F5
+            | 0x26FA
+            | 0x26FD
+            | 0x2705
+            | 0x270A..=0x270B
+            | 0x2728
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2795..=0x2797
+            | 0x27B0
+            | 0x27BF
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+            | 0x2E80..=0x303E
+            | 0x3040..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF01..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F000..=0x1FAFF
+            | 0x20000..=0x3FFFD
+    ) {
+        return 2;
+    }
+    1
+}
+
+fn display_width(text: &str) -> usize {
+    text.chars().map(char_display_width).sum()
+}
+
+fn expand_tabs(raw: &str) -> String {
+    if !raw.contains('\t') {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len() + 8);
+    for ch in raw.chars() {
+        if ch == '\t' {
+            out.push_str("    ");
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Expands `\t` to spaces and maps each byte offset in `raw` to its 0-based visual display column.
+fn expand_line_columns(raw: &str) -> (String, Vec<(usize, usize)>) {
+    let mut expanded = String::with_capacity(raw.len() + 8);
+    let mut map = Vec::with_capacity(raw.len() + 1);
+    let mut col = 0usize;
+    for (byte_idx, ch) in raw.char_indices() {
+        map.push((byte_idx, col));
+        if ch == '\t' {
+            expanded.push_str("    ");
+            col += TAB_WIDTH;
+        } else {
+            expanded.push(ch);
+            col += char_display_width(ch);
+        }
+    }
+    map.push((raw.len(), col));
+    (expanded, map)
+}
+
+fn byte_to_vis_col(map: &[(usize, usize)], byte_in_line: usize) -> usize {
+    match map.binary_search_by_key(&byte_in_line, |&(b, _)| b) {
+        Ok(i) => map[i].1,
+        Err(i) => {
+            if i == 0 {
+                0
+            } else {
+                map[i - 1].1
+            }
+        }
+    }
+}
 
 fn render_short(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
     let file = sources.get(d.span.file);
@@ -883,63 +1035,701 @@ fn render_short(out: &mut String, d: &Diagnostic, sources: &SourceMap) {
     let _ = writeln!(out, "{}:{}:{}: {}[{}]: {}", file.path, line, column, d.severity.as_str(), d.code.0, d.message);
 }
 
+#[derive(Clone)]
+struct SnippetAnn {
+    file: FileId,
+    start_line: u32,
+    start_vis: usize,
+    end_line: u32,
+    end_vis: usize,
+    is_primary: bool,
+    message: String,
+}
+
+#[derive(Clone)]
+struct SingleLineLabel {
+    start: usize,
+    end: usize,
+    is_primary: bool,
+    message: String,
+}
+
+#[derive(Clone)]
+struct MultiLineLabel {
+    start_line: u32,
+    end_line: u32,
+    end_vis: usize,
+    is_primary: bool,
+    message: String,
+}
+
+type ExpandedLine = (String, Vec<(usize, usize)>, usize);
+type LineCache = std::collections::HashMap<(FileId, u32), ExpandedLine>;
+type DiffLine = (char, u32, String);
+type SuggestionDiffs<'a> = Vec<(&'a Suggestion, Vec<DiffLine>)>;
+
+fn build_snippet_ann(
+    span: Span,
+    is_primary: bool,
+    message: String,
+    sources: &SourceMap,
+    line_cache: &mut LineCache,
+) -> SnippetAnn {
+    let file = sources.get(span.file);
+    let mut hi = (span.hi as usize).min(file.text.len());
+    let lo = (span.lo as usize).min(hi);
+    let start_pos = file.position(lo as u32);
+    if hi > lo && file.text.as_bytes().get(hi - 1) == Some(&b'\n') {
+        let end_pos = file.position(hi as u32);
+        if end_pos.line > start_pos.line && end_pos.column == 1 {
+            hi -= 1;
+            if hi > lo && file.text.as_bytes().get(hi - 1) == Some(&b'\r') {
+                hi -= 1;
+            }
+        }
+    }
+    let end_pos = file.position(hi as u32);
+    let mut vis_for = |line: u32, byte_abs: usize| -> usize {
+        let (line_start, line_end) = file.line_byte_range(line);
+        let rel = byte_abs.saturating_sub(line_start).min(line_end.saturating_sub(line_start));
+        let entry = line_cache.entry((span.file, line)).or_insert_with(|| {
+            let raw = file.line_text(line);
+            let (exp, map) = expand_line_columns(raw);
+            let w = map.last().map_or(0, |&(_, c)| c);
+            (exp, map, w)
+        });
+        byte_to_vis_col(&entry.1, rel)
+    };
+    let start_vis = vis_for(start_pos.line, lo);
+    let end_vis = vis_for(end_pos.line, hi);
+    SnippetAnn {
+        file: span.file,
+        start_line: start_pos.line,
+        start_vis,
+        end_line: end_pos.line,
+        end_vis,
+        is_primary,
+        message,
+    }
+}
+
 fn render_human(out: &mut String, d: &Diagnostic, sources: &SourceMap, options: &RenderOptions) {
-    let file = sources.get(d.span.file);
-    let (line, column) = file.line_col(d.span.lo);
-    let location = format!("{}:{}:{}", file.path, line, column);
+    let sev_style = severity_style(d.severity);
     let severity = d.severity.as_str();
     let code = d.code.0;
-    let plain_prefix = format!("{location}: {severity}[{code}]: ");
+    let plain_prefix = format!("{severity}[{code}]: ");
     let prefix = if options.color {
         // The link wraps the code and nothing else, so the visible text is the same with or without it.
-        let code = match d.code.url().filter(|_| options.hyperlinks) {
-            Some(url) => format!("{OSC8_OPEN}{url}{OSC8_END}{CODE}{code}{RESET}{OSC8_CLOSE}"),
-            None => format!("{CODE}{code}{RESET}"),
+        let linked_code = match d.code.url().filter(|_| options.hyperlinks) {
+            Some(url) => format!("{OSC8_OPEN}{url}{OSC8_END}{sev_style}{code}{RESET}{OSC8_CLOSE}"),
+            None => format!("{sev_style}{code}{RESET}"),
         };
-        format!("{LOCATION}{location}{RESET}: {SEVERITY}{severity}{RESET}[{code}]: ")
+        format!("{sev_style}{severity}{RESET}[{linked_code}]: ")
     } else {
         plain_prefix.clone()
     };
-    push_wrapped(out, &prefix, plain_prefix.chars().count(), &d.message, options.width, HEADER_INDENT);
+    push_wrapped(out, &prefix, display_width(&plain_prefix), &d.message, options.width, HEADER_INDENT);
 
+    let mut line_cache: LineCache = LineCache::new();
+    let mut anns: Vec<SnippetAnn> = Vec::new();
+    let mut primary_labels = d.labels.iter().filter(|l| l.span == d.span);
+    let primary_msg = primary_labels.next().map(|l| l.message.clone()).unwrap_or_default();
+    anns.push(build_snippet_ann(d.span, true, primary_msg, sources, &mut line_cache));
+    for extra in primary_labels {
+        anns.push(build_snippet_ann(extra.span, true, extra.message.clone(), sources, &mut line_cache));
+    }
+    for label in d.labels.iter().filter(|l| l.span != d.span) {
+        anns.push(build_snippet_ann(label.span, false, label.message.clone(), sources, &mut line_cache));
+    }
     for note in &d.notes {
-        let mut plain = String::from("  = note: ");
-        let mut prefix = if options.color { format!("  = {NOTE}note{RESET}: ") } else { plain.clone() };
         if let Some(span) = note.span {
-            let file = sources.get(span.file);
-            let (line, column) = file.line_col(span.lo);
-            let location = format!("{}:{}:{}: ", file.path, line, column);
-            plain.push_str(&location);
+            anns.push(build_snippet_ann(span, span == d.span, note.message.clone(), sources, &mut line_cache));
+        }
+    }
+
+    let suggestion_diffs: SuggestionDiffs<'_> =
+        d.suggestions.iter().map(|s| (s, edit::inline_diff_numbered(sources, &s.edits))).collect();
+
+    let max_ann_line = anns.iter().map(|a| a.end_line).max().unwrap_or(1);
+    let max_diff_line =
+        suggestion_diffs.iter().flat_map(|(_, lines)| lines.iter().map(|&(_, l, _)| l)).max().unwrap_or(1);
+    let gutter_width = max_ann_line.max(max_diff_line).to_string().len().max(1);
+    let pad = " ".repeat(gutter_width);
+
+    // Group annotations by file, primary file first.
+    let mut file_order: Vec<FileId> = vec![d.span.file];
+    for ann in &anns {
+        if !file_order.contains(&ann.file) {
+            file_order.push(ann.file);
+        }
+    }
+
+    for (file_idx, &file_id) in file_order.iter().enumerate() {
+        let file = sources.get(file_id);
+        let anchor_span = if file_idx == 0 {
+            d.span
+        } else {
+            anns.iter().find(|a| a.file == file_id).map_or(d.span, |a| {
+                // Anchor on the earliest span in that file.
+                let mut best = None;
+                for l in &d.labels {
+                    if l.span.file == file_id {
+                        best = Some(best.map_or(l.span, |b: Span| if l.span.lo < b.lo { l.span } else { b }));
+                    }
+                }
+                for n in &d.notes {
+                    if let Some(s) = n.span
+                        && s.file == file_id
+                    {
+                        best = Some(best.map_or(s, |b: Span| if s.lo < b.lo { s } else { b }));
+                    }
+                }
+                let _ = a;
+                best.unwrap_or(d.span)
+            })
+        };
+        let (anchor_line, anchor_col) = file.line_col(anchor_span.lo);
+        if options.color {
+            let _ = writeln!(out, "{pad}{GUTTER}-->{RESET} {}:{}:{}", file.path, anchor_line, anchor_col);
+        } else {
+            let _ = writeln!(out, "{pad}--> {}:{}:{}", file.path, anchor_line, anchor_col);
+        }
+
+        if file.text.is_empty() || (anchor_span.lo as usize) > file.text.len() {
+            continue;
+        }
+
+        let file_anns: Vec<&SnippetAnn> = anns.iter().filter(|a| a.file == file_id).collect();
+        render_file_snippet(out, file_id, &file_anns, &line_cache, gutter_width, sev_style, options);
+    }
+
+    // Spanless notes and plain help lines.
+    for note in d.notes.iter().filter(|n| n.span.is_none()) {
+        let plain = format!("{pad} = note: ");
+        let pfx = if options.color { format!("{pad} {GUTTER}={RESET} {NOTE}note{RESET}: ") } else { plain.clone() };
+        let indent = format!("{pad}         ");
+        push_wrapped(out, &pfx, display_width(&plain), &note.message, options.width, &indent);
+    }
+    for msg in &d.help {
+        let plain = format!("{pad} = help: ");
+        let pfx = if options.color { format!("{pad} {GUTTER}={RESET} {HELP}help{RESET}: ") } else { plain.clone() };
+        let indent = format!("{pad}         ");
+        push_wrapped(out, &pfx, display_width(&plain), msg, options.width, &indent);
+    }
+
+    // Suggestions: numbered inline diff when edits apply, otherwise a plain `= help:` line.
+    for (suggestion, diff) in &suggestion_diffs {
+        if diff.is_empty() {
+            let plain = format!("{pad} = help: ");
+            let pfx = if options.color { format!("{pad} {GUTTER}={RESET} {HELP}help{RESET}: ") } else { plain.clone() };
+            let indent = format!("{pad}         ");
+            push_wrapped(out, &pfx, display_width(&plain), &suggestion.message, options.width, &indent);
+            continue;
+        }
+        let plain_help = String::from("help: ");
+        let help_pfx = if options.color { format!("{HELP}help{RESET}: ") } else { plain_help.clone() };
+        push_wrapped(out, &help_pfx, plain_help.len(), &suggestion.message, options.width, "      ");
+        write_gutter_bar(out, &pad, "", options.color);
+        for (sign, line_no, text) in diff {
+            let expanded = expand_tabs(text);
+            let num = format!("{line_no:>gutter_width$}");
+            let body = expanded.trim_end();
             if options.color {
-                let _ = write!(prefix, "{LOCATION}{location}{RESET}");
+                let sign_style = if *sign == '-' { DIFF_DEL } else { DIFF_ADD };
+                if body.is_empty() {
+                    let _ = writeln!(out, "{GUTTER}{num}{RESET} {sign_style}{sign}{RESET}");
+                } else {
+                    let _ = writeln!(out, "{GUTTER}{num}{RESET} {sign_style}{sign} {body}{RESET}");
+                }
+            } else if body.is_empty() {
+                let _ = writeln!(out, "{num} {sign}");
             } else {
-                prefix.push_str(&location);
+                let _ = writeln!(out, "{num} {sign} {body}");
             }
         }
-        push_wrapped(out, &prefix, plain.chars().count(), &note.message, options.width, DETAIL_INDENT);
+        write_gutter_bar(out, &pad, "", options.color);
     }
-    let plain = String::from("  = help: ");
-    let prefix = if options.color { format!("  = {HELP}help{RESET}: ") } else { plain.clone() };
-    for message in &d.help {
-        push_wrapped(out, &prefix, plain.chars().count(), message, options.width, DETAIL_INDENT);
+
+    for child in &d.children {
+        out.push('\n');
+        render_human(out, child, sources, options);
     }
-    for suggestion in &d.suggestions {
-        push_wrapped(out, &prefix, plain.chars().count(), &suggestion.message, options.width, DETAIL_INDENT);
-        // The inline diff: the lines the edits touch, before (`-`) and after (`+`). Source lines are never wrapped.
-        for (sign, line) in edit::inline_diff(sources, &suggestion.edits) {
-            let styled = match (options.color, sign) {
-                (true, '-') => format!("{DETAIL_INDENT}{SEVERITY}-{RESET} {line}"),
-                (true, _) => format!("{DETAIL_INDENT}{HELP}+{RESET} {line}"),
-                (false, _) => format!("{DETAIL_INDENT}{sign} {line}"),
-            };
-            let _ = writeln!(out, "{}", styled.trim_end());
+}
+
+fn write_gutter_bar(out: &mut String, pad: &str, sidebar: &str, color: bool) {
+    if color {
+        if sidebar.is_empty() {
+            let _ = writeln!(out, "{pad} {GUTTER}|{RESET}");
+        } else {
+            let _ = writeln!(out, "{pad} {GUTTER}| {sidebar}{RESET}");
+        }
+    } else if sidebar.is_empty() {
+        let _ = writeln!(out, "{pad} |");
+    } else {
+        let _ = writeln!(out, "{pad} | {}", sidebar.trim_end());
+    }
+}
+
+fn render_file_snippet(
+    out: &mut String,
+    file_id: FileId,
+    anns: &[&SnippetAnn],
+    line_cache: &LineCache,
+    gutter_width: usize,
+    sev_style: &str,
+    options: &RenderOptions,
+) {
+    let pad = " ".repeat(gutter_width);
+    let mut singles: std::collections::BTreeMap<u32, Vec<SingleLineLabel>> = std::collections::BTreeMap::new();
+    let mut multis: Vec<MultiLineLabel> = Vec::new();
+    let mut lines_set: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+
+    for ann in anns {
+        if ann.start_line == ann.end_line {
+            let start = ann.start_vis;
+            let len = ann.end_vis.saturating_sub(start).max(1);
+            singles.entry(ann.start_line).or_default().push(SingleLineLabel {
+                start,
+                end: start + len,
+                is_primary: ann.is_primary,
+                message: ann.message.clone(),
+            });
+            lines_set.insert(ann.start_line);
+        } else {
+            multis.push(MultiLineLabel {
+                start_line: ann.start_line,
+                end_line: ann.end_line,
+                end_vis: ann.end_vis,
+                is_primary: ann.is_primary,
+                message: ann.message.clone(),
+            });
+            lines_set.insert(ann.start_line);
+            lines_set.insert(ann.end_line);
         }
     }
-    for child in &d.children {
-        let file = sources.get(child.span.file);
-        let (line, column) = file.line_col(child.span.lo);
-        let plain = format!("  = {}[{}]: {}:{}:{}: ", child.severity.as_str(), child.code.0, file.path, line, column);
-        push_wrapped(out, &plain, plain.chars().count(), &child.message, options.width, DETAIL_INDENT);
+
+    let has_multiline = !multis.is_empty();
+    write_gutter_bar(out, &pad, "", options.color);
+
+    let mut prev_line: Option<u32> = None;
+    for line in lines_set {
+        if let Some(prev) = prev_line
+            && line > prev + 1
+        {
+            if options.color {
+                let _ = writeln!(out, "{GUTTER}...{RESET}");
+            } else {
+                let _ = writeln!(out, "...");
+            }
+        }
+        prev_line = Some(line);
+
+        let sidebar_char = if !has_multiline {
+            None
+        } else if multis.iter().any(|m| m.start_line == line) {
+            Some('/')
+        } else if multis.iter().any(|m| line > m.start_line && line <= m.end_line) {
+            Some('|')
+        } else {
+            Some(' ')
+        };
+        let cont_sidebar = if !has_multiline {
+            None
+        } else if multis.iter().any(|m| line >= m.start_line && line < m.end_line)
+            || multis.iter().any(|m| m.end_line == line)
+        {
+            Some('|')
+        } else {
+            Some(' ')
+        };
+
+        let (expanded, _, line_vis_width) = line_cache
+            .get(&(file_id, line))
+            .map(|(e, m, w)| (e.as_str(), m, *w))
+            .unwrap_or_else(|| unreachable!("line was cached by build_snippet_ann"));
+        let line_singles = singles.get(&line).map(Vec::as_slice).unwrap_or(&[]);
+        let max_label_col = line_singles.iter().map(|l| l.end).max().unwrap_or(0);
+        let total_vis_width = line_vis_width.max(max_label_col);
+
+        let extra_sidebar = if has_multiline { 2 } else { 0 };
+        let prefix_width = gutter_width + 3 + extra_sidebar;
+        let chunks = split_expanded_into_chunks(expanded, total_vis_width, options.width, prefix_width);
+
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let num_text = if chunk_idx == 0 { format!("{line:>gutter_width$}") } else { pad.clone() };
+            let sb = if chunk_idx == 0 { sidebar_char } else { cont_sidebar };
+            let sb_str = sb.map(|c| format!("{c} ")).unwrap_or_default();
+            if options.color {
+                let sb_colored = if sb_str.is_empty() { String::new() } else { format!("{GUTTER}{sb_str}{RESET}") };
+                if chunk.text.is_empty() && sb_str.trim().is_empty() {
+                    let _ = writeln!(out, "{GUTTER}{num_text} |{RESET}");
+                } else {
+                    let _ = writeln!(out, "{GUTTER}{num_text} |{RESET} {sb_colored}{}", chunk.text);
+                }
+            } else if chunk.text.is_empty() && sb_str.trim().is_empty() {
+                let _ = writeln!(out, "{num_text} |");
+            } else {
+                let _ = writeln!(out, "{num_text} | {sb_str}{}", chunk.text);
+            }
+
+            let underline_sb = if has_multiline {
+                if multis.iter().any(|m| m.start_line <= line && line < m.end_line)
+                    || (multis.iter().any(|m| m.end_line == line) && !line_singles.is_empty())
+                {
+                    "| "
+                } else {
+                    "  "
+                }
+            } else {
+                ""
+            };
+            render_single_labels_for_chunk(
+                out,
+                line_singles,
+                chunk.col_start,
+                chunk.col_end,
+                chunk_idx + 1 == chunks.len(),
+                &pad,
+                underline_sb,
+                prefix_width,
+                sev_style,
+                options,
+            );
+        }
+
+        // Render multi-line span underlines ending on `line`.
+        for m in multis.iter().filter(|m| m.end_line == line) {
+            let last_chunk = chunks.last().expect("at least one chunk");
+            let rel_end = m.end_vis.saturating_sub(last_chunk.col_start);
+            let marker = if m.is_primary { '^' } else { '-' };
+            let style = if m.is_primary { sev_style } else { SECONDARY };
+            let underscores = "_".repeat(rel_end);
+            let underline_part = format!("|{underscores}{marker}");
+            let msg = m.message.as_str();
+            if msg.is_empty() {
+                if options.color {
+                    let _ = writeln!(out, "{pad} {GUTTER}|{RESET} {style}{underline_part}{RESET}");
+                } else {
+                    let _ = writeln!(out, "{pad} | {underline_part}");
+                }
+            } else {
+                let raw_pfx = format!("{pad} | {underline_part} ");
+                let styled_pfx = if options.color {
+                    format!("{pad} {GUTTER}|{RESET} {style}{underline_part}{RESET} ")
+                } else {
+                    raw_pfx.clone()
+                };
+                let msg_text = if options.color { format!("{style}{msg}{RESET}") } else { msg.to_string() };
+                // Wrap long label messages if needed while preserving the gutter prefix.
+                let cont_indent = format!("{pad} | {sb}", sb = " ".repeat(underline_part.len() + 1));
+                let _ = msg_text;
+                push_styled_wrapped(
+                    out,
+                    &styled_pfx,
+                    raw_pfx.len(),
+                    msg,
+                    if options.color { style } else { "" },
+                    options.width,
+                    &cont_indent,
+                    &pad,
+                    "",
+                    options.color,
+                );
+            }
+        }
+    }
+
+    write_gutter_bar(out, &pad, "", options.color);
+}
+
+struct LineChunk {
+    text: String,
+    col_start: usize,
+    col_end: usize,
+}
+
+/// Splits an expanded source line into visual chunks of at most `avail` display columns when `width > 0`.
+fn split_expanded_into_chunks(
+    expanded: &str,
+    total_vis_width: usize,
+    width: usize,
+    prefix_width: usize,
+) -> Vec<LineChunk> {
+    if width == 0 {
+        return vec![LineChunk { text: expanded.to_string(), col_start: 0, col_end: total_vis_width }];
+    }
+    let avail = width.saturating_sub(prefix_width).max(1);
+    if total_vis_width <= avail {
+        return vec![LineChunk { text: expanded.to_string(), col_start: 0, col_end: total_vis_width }];
+    }
+    let mut chunks = Vec::new();
+    let mut cur_text = String::new();
+    let mut chunk_start_col = 0usize;
+    let mut cur_col = 0usize;
+    for ch in expanded.chars() {
+        let w = char_display_width(ch);
+        if cur_col - chunk_start_col + w > avail && !cur_text.is_empty() {
+            chunks.push(LineChunk {
+                text: std::mem::take(&mut cur_text),
+                col_start: chunk_start_col,
+                col_end: cur_col,
+            });
+            chunk_start_col = cur_col;
+        }
+        cur_text.push(ch);
+        cur_col += w;
+    }
+    if !cur_text.is_empty() || cur_col < total_vis_width {
+        // Handle any trailing EOL caret columns past the text itself.
+        let end_col = cur_col.max(total_vis_width);
+        if end_col - chunk_start_col <= avail {
+            chunks.push(LineChunk { text: cur_text, col_start: chunk_start_col, col_end: end_col });
+        } else {
+            if !cur_text.is_empty() {
+                chunks.push(LineChunk { text: cur_text, col_start: chunk_start_col, col_end: cur_col });
+                chunk_start_col = cur_col;
+            }
+            chunks.push(LineChunk { text: String::new(), col_start: chunk_start_col, col_end: end_col });
+        }
+    }
+    if chunks.is_empty() {
+        chunks.push(LineChunk { text: String::new(), col_start: 0, col_end: 0 });
+    }
+    chunks
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_single_labels_for_chunk(
+    out: &mut String,
+    labels: &[SingleLineLabel],
+    col_start: usize,
+    col_end: usize,
+    is_last_chunk: bool,
+    pad: &str,
+    sidebar: &str,
+    prefix_width: usize,
+    sev_style: &str,
+    options: &RenderOptions,
+) {
+    // Keep only labels whose underline overlaps this chunk (or reaches EOL in the last chunk).
+    let mut active: Vec<&SingleLineLabel> = labels
+        .iter()
+        .filter(|l| {
+            l.start < col_end && l.end > col_start || (is_last_chunk && l.start == col_end && l.start >= col_start)
+        })
+        .collect();
+    if active.is_empty() {
+        return;
+    }
+    active.sort_by_key(|l| (l.start, !l.is_primary, l.end));
+
+    // Partition into non-overlapping tracks on this chunk.
+    let mut tracks: Vec<Vec<&SingleLineLabel>> = Vec::new();
+    for label in active {
+        let placed = tracks.iter_mut().find(|track| track.iter().all(|other| label.start >= other.end));
+        if let Some(track) = placed {
+            track.push(label);
+        } else {
+            tracks.push(vec![label]);
+        }
+    }
+
+    for track in tracks {
+        let row_end =
+            track
+                .iter()
+                .map(|l| {
+                    if is_last_chunk && l.start == col_end && l.start >= col_start { l.end } else { l.end.min(col_end) }
+                })
+                .max()
+                .unwrap_or(col_start);
+        let rel_len = row_end.saturating_sub(col_start);
+        let mut cells: Vec<(char, bool)> = vec![(' ', false); rel_len];
+        for l in &track {
+            let s = l.start.saturating_sub(col_start);
+            let e = l.end.saturating_sub(col_start).min(rel_len);
+            let ch = if l.is_primary { '^' } else { '-' };
+            for cell in cells.iter_mut().take(e).skip(s) {
+                *cell = (ch, l.is_primary);
+            }
+        }
+
+        // Only attach label messages on the chunk where the label actually ends.
+        let ending_labels: Vec<&&SingleLineLabel> =
+            track.iter().filter(|l| !l.message.is_empty() && (l.end <= col_end || is_last_chunk)).collect();
+        let inline_label = track.last().filter(|l| !l.message.is_empty() && (l.end <= col_end || is_last_chunk));
+        let deferred: Vec<&&SingleLineLabel> =
+            ending_labels.iter().copied().filter(|l| inline_label.is_none_or(|inl| !std::ptr::eq(**l, *inl))).collect();
+
+        let (plain_u, styled_u) = format_underline_cells(&cells, sev_style, options.color);
+        if let Some(inl) = inline_label {
+            let style = if inl.is_primary { sev_style } else { SECONDARY };
+            let raw_pfx = format!("{pad} | {sidebar}{plain_u} ");
+            let styled_pfx = if options.color {
+                let sb = if sidebar.is_empty() { String::new() } else { format!("{GUTTER}{sidebar}{RESET}") };
+                format!("{pad} {GUTTER}|{RESET} {sb}{styled_u} ")
+            } else {
+                raw_pfx.clone()
+            };
+            let cont_spaces = " ".repeat(plain_u.len() + 1);
+            let cont_indent = format!("{pad} | {sidebar}{cont_spaces}");
+            push_styled_wrapped(
+                out,
+                &styled_pfx,
+                prefix_width + plain_u.len() + 1,
+                &inl.message,
+                if options.color { style } else { "" },
+                options.width,
+                &cont_indent,
+                pad,
+                sidebar,
+                options.color,
+            );
+        } else if options.color {
+            let sb = if sidebar.is_empty() { String::new() } else { format!("{GUTTER}{sidebar}{RESET}") };
+            let _ = writeln!(out, "{pad} {GUTTER}|{RESET} {sb}{styled_u}");
+        } else {
+            let _ = writeln!(out, "{pad} | {sidebar}{plain_u}");
+        }
+
+        // Drop down vertical bars and messages from right to left for earlier labels on this track.
+        for idx in (0..deferred.len()).rev() {
+            let target = deferred[idx];
+            let bar_cols: Vec<(usize, bool)> =
+                deferred[..=idx].iter().map(|l| (l.start.saturating_sub(col_start), l.is_primary)).collect();
+            write_connector_line(out, pad, sidebar, &bar_cols, sev_style, options.color);
+
+            let target_col = target.start.saturating_sub(col_start);
+            let mut prefix_cells: Vec<(char, bool)> = vec![(' ', false); target_col];
+            for &(col, prim) in &bar_cols[..idx] {
+                if col < target_col {
+                    prefix_cells[col] = ('|', prim);
+                }
+            }
+            let (plain_pre, styled_pre) = format_underline_cells(&prefix_cells, sev_style, options.color);
+            let style = if target.is_primary { sev_style } else { SECONDARY };
+            let raw_len = prefix_width + target_col;
+            let styled_pfx = if options.color {
+                let sb = if sidebar.is_empty() { String::new() } else { format!("{GUTTER}{sidebar}{RESET}") };
+                format!("{pad} {GUTTER}|{RESET} {sb}{styled_pre}")
+            } else {
+                format!("{pad} | {sidebar}{plain_pre}")
+            };
+            let cont_indent = format!("{pad} | {sidebar}{plain_pre}");
+            push_styled_wrapped(
+                out,
+                &styled_pfx,
+                raw_len,
+                &target.message,
+                if options.color { style } else { "" },
+                options.width,
+                &cont_indent,
+                pad,
+                sidebar,
+                options.color,
+            );
+        }
+    }
+}
+
+fn format_underline_cells(cells: &[(char, bool)], sev_style: &str, color: bool) -> (String, String) {
+    let plain: String = cells.iter().map(|&(c, _)| c).collect();
+    if !color {
+        return (plain.clone(), plain);
+    }
+    let mut styled = String::new();
+    let mut active_style: Option<&str> = None;
+    for &(ch, is_primary) in cells {
+        let want = if ch == ' ' {
+            None
+        } else if is_primary {
+            Some(sev_style)
+        } else {
+            Some(SECONDARY)
+        };
+        if want != active_style {
+            if active_style.is_some() {
+                styled.push_str(RESET);
+            }
+            if let Some(s) = want {
+                styled.push_str(s);
+            }
+            active_style = want;
+        }
+        styled.push(ch);
+    }
+    if active_style.is_some() {
+        styled.push_str(RESET);
+    }
+    (plain, styled)
+}
+
+fn write_connector_line(
+    out: &mut String,
+    pad: &str,
+    sidebar: &str,
+    bars: &[(usize, bool)],
+    sev_style: &str,
+    color: bool,
+) {
+    let max_col = bars.iter().map(|&(c, _)| c).max().unwrap_or(0);
+    let mut cells = vec![(' ', false); max_col + 1];
+    for &(col, prim) in bars {
+        cells[col] = ('|', prim);
+    }
+    let (plain, styled) = format_underline_cells(&cells, sev_style, color);
+    if color {
+        let sb = if sidebar.is_empty() { String::new() } else { format!("{GUTTER}{sidebar}{RESET}") };
+        let _ = writeln!(out, "{pad} {GUTTER}|{RESET} {sb}{styled}");
+    } else {
+        let _ = writeln!(out, "{pad} | {sidebar}{plain}");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_styled_wrapped(
+    out: &mut String,
+    prefix: &str,
+    prefix_width: usize,
+    text: &str,
+    style: &str,
+    width: usize,
+    cont_indent: &str,
+    pad: &str,
+    sidebar: &str,
+    color: bool,
+) {
+    let wrap_text_styled = |line: &str| {
+        if style.is_empty() { line.to_string() } else { format!("{style}{line}{RESET}") }
+    };
+    let styled_cont = if color {
+        let after_bar = cont_indent.strip_prefix(&format!("{pad} | ")).unwrap_or(cont_indent);
+        let after_sb = after_bar.strip_prefix(sidebar).unwrap_or(after_bar);
+        let sb = if sidebar.is_empty() { String::new() } else { format!("{GUTTER}{sidebar}{RESET}") };
+        format!("{pad} {GUTTER}|{RESET} {sb}{after_sb}")
+    } else {
+        cont_indent.to_string()
+    };
+    if width == 0 {
+        let _ = writeln!(out, "{prefix}{}", wrap_text_styled(text));
+        return;
+    }
+    let indent_width = display_width(cont_indent);
+    let rest = width.saturating_sub(indent_width).max(1);
+    if prefix_width + 1 >= width {
+        let _ = writeln!(out, "{}", prefix.trim_end());
+        for line in wrap_text(text, rest, rest) {
+            let _ = writeln!(out, "{styled_cont}{}", wrap_text_styled(&line));
+        }
+        return;
+    }
+    let first = width - prefix_width;
+    for (i, line) in wrap_text(text, first, rest).iter().enumerate() {
+        if i == 0 {
+            let _ = writeln!(out, "{prefix}{}", wrap_text_styled(line));
+        } else {
+            let _ = writeln!(out, "{styled_cont}{}", wrap_text_styled(line));
+        }
     }
 }
 
@@ -953,7 +1743,6 @@ fn rendered_text(d: &Diagnostic, sources: &SourceMap) -> String {
 }
 
 const HEADER_INDENT: &str = "    ";
-const DETAIL_INDENT: &str = "          ";
 
 /// Writes `text` after `prefix`, wrapping it so that no line is wider than `width` characters. `prefix_width` is
 /// the visible width of `prefix` (without the ANSI styles), and `indent` starts every continuation line.
@@ -966,7 +1755,7 @@ fn push_wrapped(out: &mut String, prefix: &str, prefix_width: usize, text: &str,
         let _ = writeln!(out, "{prefix}{text}");
         return;
     }
-    let indent_width = indent.chars().count();
+    let indent_width = display_width(indent);
     let rest = width.saturating_sub(indent_width).max(1);
     if prefix_width + 1 >= width {
         // The prefix alone uses the line; put the message underneath rather than splitting it a character at a
@@ -987,29 +1776,44 @@ fn push_wrapped(out: &mut String, prefix: &str, prefix_width: usize, text: &str,
     }
 }
 
-/// Breaks `text` into lines of at most `first` characters for the first line and `rest` for the others. Words are
-/// kept whole when they fit; a word longer than its line is split at a character boundary.
+/// Breaks `text` into lines of at most `first` display columns for the first line and `rest` for the others. Words
+/// are kept whole when they fit; a word longer than its line is split at a character boundary.
 fn wrap_text(text: &str, first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
+    let mut cur_width = 0usize;
     let mut limit = first.max(1);
     for word in text.split_whitespace() {
         let mut remaining: Vec<char> = word.chars().collect();
         loop {
             let space = usize::from(!current.is_empty());
-            if current.chars().count() + space + remaining.len() <= limit {
+            let word_width: usize = remaining.iter().copied().map(char_display_width).sum();
+            if cur_width + space + word_width <= limit {
                 if space == 1 {
                     current.push(' ');
+                    cur_width += 1;
                 }
                 current.extend(remaining.iter());
+                cur_width += word_width;
                 break;
             }
             if !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
+                cur_width = 0;
                 limit = rest.max(1);
                 continue;
             }
-            let take = limit.min(remaining.len());
+            let mut take = 0usize;
+            let mut acc = 0usize;
+            while take < remaining.len() {
+                let w = char_display_width(remaining[take]);
+                if take > 0 && acc + w > limit {
+                    break;
+                }
+                acc += w;
+                take += 1;
+            }
+            let take = take.max(1);
             lines.push(remaining.drain(..take).collect());
             limit = rest.max(1);
             if remaining.is_empty() {
@@ -1129,16 +1933,20 @@ mod tests {
     }
 
     #[test]
-    fn absorb_skips_duplicates_but_keeps_other_codes() {
+    fn absorb_skips_exact_duplicates_but_keeps_different_messages() {
         let span = Span::new(FileId(0), 0, 1);
         let mut d = Diagnostics::default();
         d.error(Code::SYNTAX, span, "first");
         let mut other = Diagnostics::default();
-        other.error(Code::SYNTAX, span, "duplicate");
+        other.error(Code::SYNTAX, span, "first");
+        other.error(Code::SYNTAX, span, "second message");
         other.error(Code::TYPE_MISMATCH, span, "different code");
         d.absorb(other);
-        assert_eq!(d.len(), 2);
-        assert_eq!(d.iter().map(|x| x.message.as_str()).collect::<Vec<_>>(), ["first", "different code"]);
+        assert_eq!(d.len(), 3);
+        assert_eq!(
+            d.iter().map(|x| x.message.as_str()).collect::<Vec<_>>(),
+            ["first", "second message", "different code"]
+        );
     }
 
     #[test]
@@ -1162,50 +1970,160 @@ mod tests {
         let mut sources = SourceMap::default();
         let file = sources.add("a.bd".into(), "mut x\n".into());
         let mut d = Diagnostics::default();
-        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 0, 3), "pass the argument as `mut ...`")
-            .note(Span::new(file, 0, 1), "declared here")
-            .suggest(Span::new(file, 0, 0), "add `mut` before this argument", "mut ");
+        d.error(Code::MISSING_MUT_MARKER, Span::new(file, 4, 5), "pass the argument as `mut ...`")
+            .label(Span::new(file, 4, 5), "needs `mut`")
+            .note(Span::new(file, 0, 3), "declared here")
+            .suggest(Span::new(file, 4, 4), "add `mut` before this argument", "mut ");
         let rendered = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() });
         assert_eq!(
             rendered.text,
-            "a.bd:1:1: error[E0114]: pass the argument as `mut ...`\n\
-             \x20 = note: a.bd:1:1: declared here\n\
-             \x20 = help: add `mut` before this argument\n\
-             \x20         - mut x\n\
-             \x20         + mut mut x\n"
+            "error[E0114]: pass the argument as `mut ...`\n\
+             \x20--> a.bd:1:5\n\
+             \x20 |\n\
+             1 | mut x\n\
+             \x20 | --- ^ needs `mut`\n\
+             \x20 | |\n\
+             \x20 | declared here\n\
+             \x20 |\n\
+             help: add `mut` before this argument\n\
+             \x20 |\n\
+             1 - mut x\n\
+             1 + mut mut x\n\
+             \x20 |\n"
         );
     }
 
     #[test]
-    fn human_colorizes_location_severity_and_code_without_changing_the_text() {
+    fn human_colorizes_errors_warnings_gutter_and_suggestions_without_changing_the_text() {
         let mut sources = SourceMap::default();
-        let file = sources.add("a.bd".into(), "x\n".into());
+        let file = sources.add("a.bd".into(), "let a = b\n".into());
         let mut d = Diagnostics::default();
-        d.error(Code::TYPE_MISMATCH, Span::new(file, 0, 1), "expected `i32`, found `str`");
+        d.error(Code::TYPE_MISMATCH, Span::new(file, 8, 9), "expected `i32`, found `str`")
+            .label(Span::new(file, 8, 9), "found here")
+            .label(Span::new(file, 4, 5), "declared here")
+            .suggest(Span::new(file, 8, 9), "use `0`", "0");
         let plain = d.render_with(&sources, &RenderOptions { color: false, width: 0, ..RenderOptions::default() });
         let colored = d.render_with(&sources, &RenderOptions { color: true, width: 0, ..RenderOptions::default() });
-        assert!(colored.text.contains("\x1b[36ma.bd:1:1\x1b[0m"), "{}", colored.text);
-        assert!(colored.text.contains("\x1b[1;31merror\x1b[0m"), "{}", colored.text);
-        assert!(colored.text.contains("\x1b[33mE0003\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;31merror\x1b[0m[\x1b[1;31mE0003\x1b[0m]"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;34m-->\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;34m-\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;31m^\x1b[0m"), "{}", colored.text);
+        assert!(colored.text.contains("\x1b[1;32mhelp\x1b[0m"), "{}", colored.text);
         assert_eq!(strip_ansi(&colored.text), plain.text);
+
+        let mut w = Diagnostics::default();
+        w.warning(Code("L0007"), Span::new(file, 4, 5), "unused");
+        let w_plain = w.render_with(&sources, &RenderOptions { color: false, width: 0, ..RenderOptions::default() });
+        let w_colored = w.render_with(&sources, &RenderOptions { color: true, width: 0, ..RenderOptions::default() });
+        assert!(w_colored.text.contains("\x1b[1;33mwarning\x1b[0m[\x1b[1;33mL0007\x1b[0m]"), "{}", w_colored.text);
+        assert_eq!(strip_ansi(&w_colored.text), w_plain.text);
     }
 
     #[test]
-    fn human_wraps_long_messages_to_the_width() {
+    fn human_wraps_long_messages_and_source_lines_keeping_underline_aligned() {
         let mut sources = SourceMap::default();
-        let file = sources.add("a.bd".into(), "x\n".into());
+        let file =
+            sources.add("a.bd".into(), "    this_identifier_is_far_too_long_to_fit_on_one_terminal_line(1)\n".into());
         let mut d = Diagnostics::default();
-        d.error(Code::UNKNOWN_NAME, Span::new(file, 0, 1), "unknown name `a_very_long_identifier_that_does_not_fit`");
+        d.error(
+            Code::UNKNOWN_NAME,
+            Span::new(file, 4, 63),
+            "unknown name `this_identifier_is_far_too_long_to_fit_on_one_terminal_line`",
+        )
+        .label(Span::new(file, 4, 63), "not found in this scope");
         let rendered = d.render_with(&sources, &RenderOptions { width: 40, ..RenderOptions::default() });
         let lines: Vec<&str> = rendered.text.lines().collect();
-        assert!(lines.len() > 1, "{}", rendered.text);
+        assert!(lines.len() > 4, "{}", rendered.text);
         for line in &lines {
-            assert!(line.chars().count() <= 40, "line is too long: {line:?}");
+            assert!(display_width(line) <= 40, "line is too wide: {line:?}");
         }
         assert!(lines[1].starts_with(HEADER_INDENT), "{:?}", rendered.text);
-        // Wrapping never inserts a character: the message is the lines with the break and indentation removed.
+        assert!(rendered.text.contains("^^^"), "{}", rendered.text);
         let joined = rendered.text.lines().map(str::trim_start).collect::<Vec<_>>().join("");
-        assert!(joined.contains("`a_very_long_identifier_that_does_not_fit`"), "{joined}");
+        assert!(joined.contains("`this_identifier_is_far_too_long_to_fit_on_one_terminal_line`"), "{joined}");
+    }
+
+    #[test]
+    fn human_renders_multiline_span_with_sidebar_and_ellipsis() {
+        let mut sources = SourceMap::default();
+        let text = "fn f() {\n    let x = foo(\n        1,\n        2,\n        3)\n}\n";
+        let file = sources.add("m.bd".into(), text.into());
+        let lo = text.find("foo(").unwrap() as u32;
+        let hi = (text.find("3)").unwrap() + 2) as u32;
+        let mut d = Diagnostics::default();
+        d.error(Code::TYPE_MISMATCH, Span::new(file, lo, hi), "mismatched call")
+            .label(Span::new(file, lo, hi), "this call returns `str`");
+        let rendered = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() });
+        assert_eq!(
+            rendered.text,
+            "error[E0003]: mismatched call\n\
+             \x20--> m.bd:2:13\n\
+             \x20 |\n\
+             2 | /     let x = foo(\n\
+             ...\n\
+             5 | |         3)\n\
+             \x20 | |__________^ this call returns `str`\n\
+             \x20 |\n"
+        );
+    }
+
+    #[test]
+    fn human_renders_labels_in_two_files_and_line_insertion_suggestion() {
+        let mut sources = SourceMap::default();
+        let main = sources.add("src/main.bd".into(), "fn main() {\n    let h = http.Client.new()\n}\n".into());
+        let other = sources.add("src/other.bd".into(), "pub struct Client {}\n".into());
+        let mut d = Diagnostics::default();
+        d.error(Code::UNKNOWN_NAME, Span::new(main, 24, 28), "unknown name `http`")
+            .label(Span::new(main, 24, 28), "not found in this scope")
+            .label(Span::new(other, 11, 17), "`Client` is defined here")
+            .suggest_safe(Span::new(main, 0, 0), "import it", "use http\n");
+        let rendered = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() });
+        assert_eq!(
+            rendered.text,
+            "error[E0002]: unknown name `http`\n\
+             \x20--> src/main.bd:2:13\n\
+             \x20 |\n\
+             2 |     let h = http.Client.new()\n\
+             \x20 |             ^^^^ not found in this scope\n\
+             \x20 |\n\
+             \x20--> src/other.bd:1:12\n\
+             \x20 |\n\
+             1 | pub struct Client {}\n\
+             \x20 |            ------ `Client` is defined here\n\
+             \x20 |\n\
+             help: import it\n\
+             \x20 |\n\
+             1 + use http\n\
+             \x20 |\n"
+        );
+    }
+
+    #[test]
+    fn human_handles_tabs_and_wide_characters() {
+        let mut sources = SourceMap::default();
+        let text = "\tlet 中 = 😀 + oops\n";
+        let file = sources.add("w.bd".into(), text.into());
+        let emoji_lo = text.find('😀').unwrap() as u32;
+        let emoji_hi = emoji_lo + '😀'.len_utf8() as u32;
+        let oops_lo = text.find("oops").unwrap() as u32;
+        let oops_hi = oops_lo + 4;
+        let mut d = Diagnostics::default();
+        d.error(Code::UNKNOWN_NAME, Span::new(file, oops_lo, oops_hi), "unknown name `oops`")
+            .label(Span::new(file, oops_lo, oops_hi), "not found")
+            .label(Span::new(file, emoji_lo, emoji_hi), "emoji here");
+        let rendered = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() });
+        // `\t` -> 4 spaces, `let ` -> 4, `中` -> 2, ` = ` -> 3 => col 13 (`😀`, width 2), ` + ` -> 3 => col 18 (`oops`, width 4).
+        assert_eq!(
+            rendered.text,
+            "error[E0002]: unknown name `oops`\n\
+             \x20--> w.bd:1:14\n\
+             \x20 |\n\
+             1 |     let 中 = 😀 + oops\n\
+             \x20 |              --   ^^^^ not found\n\
+             \x20 |              |\n\
+             \x20 |              emoji here\n\
+             \x20 |\n"
+        );
     }
 
     #[test]
@@ -1242,7 +2160,7 @@ mod tests {
             ",\"help\":[],\"related\":[{\"span\":{\"file\":\"a.bd\"",
             ",\"children\":[],\"suggestions\":[{\"message\":\"add `mut` before this argument\",\"applicability\":\"manual\",",
             "\"edits\":[{\"span\":{\"file\":\"a.bd\",\"line\":1,\"column\":5,",
-            "\"replacement\":\"mut \"}]}],\"rendered\":\"a.bd:1:5: error[E0114]: pass the argument as `mut ...`\\n",
+            "\"replacement\":\"mut \"}]}],\"rendered\":\"error[E0114]: pass the argument as `mut ...`\\n",
         ];
         let mut from = 0;
         for key in keys {
@@ -1294,10 +2212,23 @@ mod tests {
         let human = d.render_with(&sources, &RenderOptions { width: 0, ..RenderOptions::default() }).text;
         assert_eq!(
             human,
-            "a.bd:1:9: error[E0003]: mismatch\n\
-             \x20 = note: a.bd:1:1: see this\n\
-             \x20 = help: convert it\n\
-             \x20 = warning[E0002]: a.bd:1:5: also unused\n"
+            "error[E0003]: mismatch\n\
+             \x20--> a.bd:1:9\n\
+             \x20 |\n\
+             1 | let a = b\n\
+             \x20 | --- -   ^ found here\n\
+             \x20 | |   |\n\
+             \x20 | |   declared here\n\
+             \x20 | |\n\
+             \x20 | see this\n\
+             \x20 |\n\
+             \x20 = help: convert it\n\n\
+             warning[E0002]: also unused\n\
+             \x20--> a.bd:1:5\n\
+             \x20 |\n\
+             1 | let a = b\n\
+             \x20 |     ^\n\
+             \x20 |\n"
         );
     }
 
@@ -1373,7 +2304,7 @@ mod tests {
             .text;
         assert!(
             text.contains(
-                "\"rendered\":\"a.bd:1:1: error[E0002]: unknown name `a_very_long_identifier_that_does_not_fit`\\n\""
+                "\"rendered\":\"error[E0002]: unknown name `a_very_long_identifier_that_does_not_fit`\\n --> a.bd:1:1\\n  |\\n1 | x\\n  | ^\\n  |\\n\""
             ),
             "{text}"
         );
@@ -1398,7 +2329,7 @@ mod tests {
             d.render_with(&sources, &RenderOptions { color, hyperlinks, width: 0, ..RenderOptions::default() }).text
         };
         let link =
-            "\x1b]8;;https://ricardomilos7.github.io/burdin/errors/E0003\x1b\\\x1b[33mE0003\x1b[0m\x1b]8;;\x1b\\";
+            "\x1b]8;;https://ricardomilos7.github.io/burdin/errors/E0003\x1b\\\x1b[1;31mE0003\x1b[0m\x1b]8;;\x1b\\";
         assert!(render(true, true).contains(&format!("[{link}]")), "{}", render(true, true));
         assert!(!render(true, false).contains("\x1b]8"));
         // Without color there is no styling at all, links included.

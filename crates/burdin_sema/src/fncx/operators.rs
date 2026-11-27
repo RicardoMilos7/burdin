@@ -19,7 +19,8 @@ impl FnCx<'_> {
         self.write_place = saved;
         let rhs = self.expr(rhs, Some(&place.ty));
         let rhs = self.coerce_arg(rhs, &place.ty);
-        let rhs = self.expect_ty(rhs, &place.ty);
+        let origin_msg = format!("expected `{}` because of this variable's type", place.ty);
+        let rhs = self.expect_ty_from(rhs, &place.ty, Some((place.span, origin_msg.as_str())));
         self.check_assign_target(&place, lhs.span, "=");
         mk(tir::ExprKind::Assign(Box::new(place), Box::new(rhs)), Ty::Unit, span)
     }
@@ -100,8 +101,13 @@ impl FnCx<'_> {
                 .or_else(|| self.static_root(place).map(|id| self.globals.const_names[id.0].clone()));
             let whose = name.unwrap_or_else(|| "this place".to_string());
             let fix = self.mut_binding_fix(place);
+            let decl = self.root_decl_span(place);
             let d =
                 self.diags.error(Code::IMMUTABLE, lhs_span, format!("cannot assign to `{whose}`: it is not mutable"));
+            d.label(lhs_span, "cannot assign to immutable place");
+            if let Some((decl_span, decl_msg)) = decl {
+                d.label(decl_span, decl_msg);
+            }
             Self::attach_mut_fix(fix, d);
         }
     }
@@ -197,11 +203,14 @@ impl FnCx<'_> {
             {
                 let ty = if l.ty == Ty::Never { r.ty.clone() } else { l.ty.clone() };
                 if !compatible(&r.ty, &ty) {
-                    self.diags.error(
+                    let (lty, rty) = (l.ty.clone(), r.ty.clone());
+                    let d = self.diags.error(
                         Code::TYPE_MISMATCH,
                         r.span,
-                        format!("`{op_name}` needs operands of the same type, found `{}` and `{}`", l.ty, r.ty),
+                        format!("`{op_name}` needs operands of the same type, found `{lty}` and `{rty}`"),
                     );
+                    d.label(r.span, format!("found `{rty}`"));
+                    d.label(l.span, format!("expected `{lty}` because of left operand"));
                     return error_expr(span);
                 }
                 let ok = match op {

@@ -6,7 +6,7 @@ version = 1
 name = "math"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:09f3ac0739605bbe89e84c2cb1a7946811220abfad642a3731c76d6a1cbc4389"
+checksum = "sha256:841aa9414f61c4aaaf5fbb2b130e08ef2d9fe7fe1a082d8490740abb370a0a5a"
 dependencies = []
 
 [[package]]

@@ -428,10 +428,13 @@ impl FnCx<'_> {
         // `for` borrows the collection, so its elements are read-only views.
         let pat = self.pattern(pattern, &elem, false);
         if !self.exhaustive(&elem, &[&pat]) {
-            self.diags.error(
-                Code::NON_EXHAUSTIVE,
+            self.report_non_exhaustive(
+                &elem,
+                &[&pat],
                 pattern.span,
                 format!("this pattern does not match every value of `{elem}`"),
+                0,
+                false,
             );
         }
         self.loops.push(LoopScope::for_body(label));
@@ -507,11 +510,15 @@ impl FnCx<'_> {
             checked.push(tir::Arm { pat, guard, body });
         }
         let unguarded: Vec<&Pat> = checked.iter().filter(|a| a.guard.is_none()).map(|a| &a.pat).collect();
+        let guarded = checked.len() - unguarded.len();
         if !self.exhaustive(&scrutinee.ty, &unguarded) {
-            self.diags.error(
-                Code::NON_EXHAUSTIVE,
+            self.report_non_exhaustive(
+                &scrutinee.ty,
+                &unguarded,
                 span,
                 format!("this `match` does not cover every value of `{}`", scrutinee.ty),
+                guarded,
+                true,
             );
         }
         let matched = mk(tir::ExprKind::Match(Box::new(scrutinee), checked), ty, span);
@@ -571,11 +578,16 @@ impl FnCx<'_> {
                 error_expr(span)
             }
             _ => {
-                self.diags.error(
+                let d = self.diags.error(
                     Code::QUESTION_OUTSIDE,
                     span,
                     format!("`?` is only allowed in a function that returns `Option` or `Result`, but this one returns `{ret}`"),
                 );
+                d.label(span, "cannot use `?` here");
+                if let Some(rs) = self.ret_span {
+                    d.label(rs, format!("function returns `{ret}` here"));
+                }
+                d.help("change the return type to `Result<..., E>` or `Option<...>`, or handle it with `match` or `.unwrap()`");
                 error_expr(span)
             }
         }
@@ -616,7 +628,7 @@ impl FnCx<'_> {
         if self.globals.is_error_ty(to) && self.globals.implements_error(from, &self.bounds) {
             return self.coerce_error(value, to);
         }
-        self.diags.error(
+        let d = self.diags.error(
             Code::ERROR_CONVERSION,
             span,
             format!(
@@ -624,6 +636,11 @@ impl FnCx<'_> {
                  or make `{from}` an error type"
             ),
         );
+        d.label(span, format!("cannot convert `{from}` into `{to}`"));
+        if let Some(rs) = self.ret_span {
+            d.label(rs, format!("expected error type `{to}` due to return type"));
+        }
+        d.help("or convert the error explicitly with `.map_err(...)`");
         error_expr(span)
     }
 

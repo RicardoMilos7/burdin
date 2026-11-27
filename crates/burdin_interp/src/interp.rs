@@ -88,6 +88,9 @@ struct Frame<'p> {
     temps: Vec<(Value, Ty)>,
     /// The locals bound in the open scopes, in binding order, for drops at scope end.
     scope: Vec<usize>,
+    /// Function name and call-site span for compile-time fault stack traces.
+    name: &'p str,
+    call_span: Span,
 }
 
 /// A constant's evaluation state (CE2).
@@ -124,6 +127,7 @@ pub(crate) struct Interp<'p, 'c> {
     /// Keep `debug_assert*` (`spec/profiles.md`).
     pub(crate) debug_assertions: bool,
     pub(crate) out: Output,
+    pub(crate) fault_trace: Vec<(String, Span)>,
     drop_cache: HashMap<Ty, bool>,
     /// The C heap the run models: `burdin test --interpret` (`spec/test-runner.md`, IN1). Elsewhere the allocation
     /// builtins stay impure, because constant evaluation is pure (CE6).
@@ -285,6 +289,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             overflow_checks,
             debug_assertions,
             out,
+            fault_trace: Vec::new(),
             drop_cache: HashMap::new(),
             mem: Memory::default(),
             raw_memory: false,
@@ -323,7 +328,14 @@ impl<'p, 'c> Interp<'p, 'c> {
     pub(crate) fn eval_root(&mut self, locals: &'p [Local], e: &'p Expr) -> Result<Value, Fault> {
         let span = e.span;
         let slots: Vec<Slot> = locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
-        self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: Vec::new() });
+        self.frames.push(Frame {
+            slots,
+            locals,
+            temps: Vec::new(),
+            scope: Vec::new(),
+            name: "",
+            call_span: Span::new(span.file, 0, 0),
+        });
         let result = match self.eval(e, Mode::Move) {
             Ok(v) => self.end_temps(0, span).map(|_| v),
             Err(u) => Err(u),
@@ -734,7 +746,14 @@ impl<'p, 'c> Interp<'p, 'c> {
         if self.frames.len() > MAX_DEPTH {
             return Err(depth(span));
         }
-        self.frames.push(Frame { slots, locals: &c.locals, temps: Vec::new(), scope: Vec::new() });
+        self.frames.push(Frame {
+            slots,
+            locals: &c.locals,
+            temps: Vec::new(),
+            scope: Vec::new(),
+            name: "",
+            call_span: Span::new(span.file, 0, 0),
+        });
         let result = self.eval(&c.value, Mode::Move);
         let result = match result {
             Ok(v) => self.end_temps(0, span).map(|_| v),
@@ -1114,7 +1133,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                 SharedOp::Drop => Value::Unit,
             });
         }
-        let (v, mut slots) = self.run(func.locals.as_slice(), &func.body, slots, span)?;
+        let (v, mut slots) = self.run(&func.name, func.locals.as_slice(), &func.body, slots, span)?;
         // An argument passed by address that was a temporary belongs to the caller's statement (DR5).
         for id in borrowed_temps {
             if let Slot::Val(v) = std::mem::replace(&mut slots[id], Slot::Val(Value::Moved)) {
@@ -1127,7 +1146,14 @@ impl<'p, 'c> Interp<'p, 'c> {
 
     /// Runs a body in a new frame; returns its value and the final slots. Owned parameters still holding a value
     /// are dropped when it returns (DR3).
-    fn run(&mut self, locals: &'p [Local], body: &'p Block, slots: Vec<Slot>, span: Span) -> R<(Value, Vec<Slot>)> {
+    fn run(
+        &mut self,
+        name: &'p str,
+        locals: &'p [Local],
+        body: &'p Block,
+        slots: Vec<Slot>,
+        span: Span,
+    ) -> R<(Value, Vec<Slot>)> {
         if self.frames.len() > MAX_DEPTH {
             return Err(depth(span));
         }
@@ -1135,7 +1161,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         let owned: Vec<usize> = (0..locals.len())
             .filter(|&i| locals[i].kind == LocalKind::OwnParam && matches!(slots[i], Slot::Val(ref v) if !v.is_moved()))
             .collect();
-        self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: owned });
+        self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: owned, name, call_span: span });
         let r = match self.block(body, Mode::Move) {
             Ok(v) | Err(Unwind::Return(v)) => Ok(v),
             Err(Unwind::Break(..)) | Err(Unwind::Continue(_)) => {
@@ -1148,6 +1174,9 @@ impl<'p, 'c> Interp<'p, 'c> {
             Err(u) => Err(u),
         };
         let frame = self.frames.pop().expect("pushed above");
+        if matches!(r, Err(Unwind::Fault(_))) && frame.call_span.lo < frame.call_span.hi {
+            self.fault_trace.push((frame.name.to_string(), frame.call_span));
+        }
         r.map(|v| (v, frame.slots))
     }
 
@@ -1171,7 +1200,14 @@ impl<'p, 'c> Interp<'p, 'c> {
         for (id, v) in env {
             slots[id.0] = Slot::Val(v.clone());
         }
-        self.frames.push(Frame { slots, locals, temps: Vec::new(), scope: Vec::new() });
+        self.frames.push(Frame {
+            slots,
+            locals,
+            temps: Vec::new(),
+            scope: Vec::new(),
+            name: "",
+            call_span: Span::new(span.file, 0, 0),
+        });
         let items = body.stmts.len() + usize::from(body.tail.is_some());
         let mut result = Ok(());
         for s in body.stmts.iter().skip(from.min(body.stmts.len())) {
@@ -1239,7 +1275,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         for (param, arg) in params.into_iter().zip(args) {
             slots[param] = Slot::Val(self.eval(arg, Mode::Move)?);
         }
-        let (v, _) = self.run(func.locals.as_slice(), &func.body, slots, span)?;
+        let (v, _) = self.run(&func.name, func.locals.as_slice(), &func.body, slots, span)?;
         Ok(v)
     }
 
@@ -1367,7 +1403,7 @@ impl<'p, 'c> Interp<'p, 'c> {
         let mut slots: Vec<Slot> = func.locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
         let this = func.params[0].0;
         slots[this] = Slot::Val(v);
-        let (_, mut slots) = self.run(func.locals.as_slice(), &func.body, slots, span)?;
+        let (_, mut slots) = self.run(&func.name, func.locals.as_slice(), &func.body, slots, span)?;
         Ok(match std::mem::replace(&mut slots[this], Slot::Val(Value::Moved)) {
             Slot::Val(v) => v,
             Slot::Alias(_) => Value::Moved,

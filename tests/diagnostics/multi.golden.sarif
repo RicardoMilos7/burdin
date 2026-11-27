@@ -50,6 +50,26 @@
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
+                  "startLine": 18,
+                  "startColumn": 13,
+                  "endLine": 18,
+                  "endColumn": 14,
+                  "byteOffset": 198,
+                  "byteLength": 1
+                }
+              },
+              "id": 0,
+              "message": {
+                "text": "value used here after move"
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
                   "startLine": 16,
                   "startColumn": 9,
                   "endLine": 16,
@@ -58,7 +78,7 @@
                   "byteLength": 1
                 }
               },
-              "id": 0,
+              "id": 1,
               "message": {
                 "text": "`t` is declared here"
               }
@@ -78,13 +98,16 @@
                   "byteLength": 1
                 }
               },
-              "id": 1,
+              "id": 2,
               "message": {
                 "text": "value moved here"
               }
             }
           ],
           "properties": {
+            "notes": [
+              "spec/memory-rules.md, MV1: moving a non-Copy value transfers ownership"
+            ],
             "help": [
               "run `burdin check --explain` to trace the path to this error"
             ]
@@ -171,6 +194,28 @@
                   "byteOffset": 262,
                   "byteLength": 9
                 }
+              }
+            }
+          ],
+          "relatedLocations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "multi.bd",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 21,
+                  "startColumn": 18,
+                  "endLine": 21,
+                  "endColumn": 23,
+                  "byteOffset": 262,
+                  "byteLength": 9
+                }
+              },
+              "id": 0,
+              "message": {
+                "text": "found `str`"
               }
             }
           ]

@@ -29,6 +29,7 @@ pub fn parse_file(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> Fi
         pos: 0,
         diags,
         nl_stack: Vec::new(),
+        open_delims: Vec::new(),
         truncated: lexed.truncated,
         test_count: 0,
         bench_count: 0,
@@ -51,6 +52,7 @@ pub fn parse_block(file: FileId, lexed: LexResult, diags: &mut Diagnostics) -> O
         pos: 0,
         diags,
         nl_stack: Vec::new(),
+        open_delims: Vec::new(),
         truncated: false,
         test_count: 0,
         bench_count: 0,
@@ -70,6 +72,8 @@ pub(super) struct Parser<'a> {
     diags: &'a mut Diagnostics,
     /// Whether line breaks are significant, one entry per open bracket (spec/grammar.md, section 2).
     nl_stack: Vec<bool>,
+    /// Open delimiter stack for pairing unclosed-delimiter diagnostics.
+    open_delims: Vec<(TokenKind, Span)>,
     truncated: bool,
     /// How many `test` items this file has parsed, for their generated function names.
     test_count: usize,
@@ -195,13 +199,38 @@ impl Parser<'_> {
     fn open(&mut self, kind: &TokenKind, newlines_matter: bool) -> PResult<Token> {
         let t = self.expect(kind)?;
         self.nl_stack.push(newlines_matter);
+        self.open_delims.push((kind.clone(), t.span));
         Ok(t)
     }
 
     fn close(&mut self, kind: &TokenKind) -> PResult<Token> {
-        let t = self.expect(kind)?;
+        if self.at(kind) {
+            self.nl_stack.pop();
+            self.open_delims.pop();
+            return Ok(self.bump());
+        }
+        let opener = self.open_delims.last().cloned();
         self.nl_stack.pop();
-        Ok(t)
+        self.open_delims.pop();
+        if !(self.truncated && self.at_eof()) {
+            let span = self.span();
+            let found = self.kind().describe();
+            let prev = self.prev_span();
+            let insert = Span::new(prev.file, prev.hi, prev.hi);
+            let closer = kind.text();
+            let d = self.diags.error(Code::SYNTAX, span, format!("expected `{closer}`, found {found}"));
+            d.label(span, format!("expected `{closer}`"));
+            if let Some((_, open_span)) = opener {
+                d.label(open_span, "unclosed delimiter opened here");
+            }
+            d.suggest_with(
+                insert,
+                format!("insert missing `{closer}`"),
+                closer,
+                burdin_diag::Applicability::MaybeIncorrect,
+            );
+        }
+        Err(Reported)
     }
 
     /// Consumes a `>` that closes generic arguments, splitting `>>`, `>=`, and `>>=`.

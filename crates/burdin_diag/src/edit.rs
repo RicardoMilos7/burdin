@@ -66,11 +66,18 @@ pub fn apply_groups(text: &str, groups: &[Vec<TextEdit>]) -> GroupsApplied {
 /// left out, so an inserted line shows as one `+`. The lines are trimmed of the indentation they share. Empty when
 /// the edits are in more than one file or cannot apply.
 pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
+    inline_diff_numbered(sources, edits).into_iter().map(|(sign, _, line)| (sign, line)).collect()
+}
+
+/// Like [`inline_diff`], returning `(sign, line_number, line)` where `line_number` is 1-based so the human
+/// diagnostic renderer can align the diff with its line-number gutter.
+pub fn inline_diff_numbered(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, u32, String)> {
     let Some(first) = edits.first() else { return Vec::new() };
     if edits.iter().any(|e| e.span.file != first.span.file) || first.span.file.0 as usize >= sources.len() {
         return Vec::new();
     }
-    let text = &sources.get(first.span.file).text;
+    let source = sources.get(first.span.file);
+    let text = &source.text;
     let lo = edits.iter().map(|e| e.span.lo as usize).min().unwrap_or(0);
     let hi = edits.iter().map(|e| e.span.hi as usize).max().unwrap_or(0);
     if hi > text.len() || !text.is_char_boundary(lo) || !text.is_char_boundary(hi) {
@@ -85,17 +92,20 @@ pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
     if !conflicts.is_empty() {
         return Vec::new();
     }
+    let mut base_line = source.line_col(start as u32).0;
     let mut a: Vec<&str> = old.split('\n').map(|l| l.trim_end_matches('\r')).collect();
     let mut b: Vec<&str> = new.split('\n').map(|l| l.trim_end_matches('\r')).collect();
     while a.len() > 1 && b.len() > 1 && a[0] == b[0] {
         a.remove(0);
         b.remove(0);
+        base_line += 1;
     }
     while a.len() > 1 && b.len() > 1 && a.last() == b.last() {
         a.pop();
         b.pop();
     }
     // An insertion of whole lines leaves one equal line on one side; drop it so only the new lines show.
+    let mut plus_base = base_line;
     if a.len() == 1 && b.len() > 1 {
         if b.last() == Some(&a[0]) {
             b.pop();
@@ -103,6 +113,7 @@ pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
         } else if b.first() == Some(&a[0]) {
             b.remove(0);
             a.clear();
+            plus_base = base_line + 1;
         }
     }
     let indent = a
@@ -113,8 +124,9 @@ pub fn inline_diff(sources: &SourceMap, edits: &[Edit]) -> Vec<(char, String)> {
         .min()
         .unwrap_or(0);
     let cut = |l: &str| l.get(indent..).unwrap_or(l.trim_start()).to_string();
-    let mut out: Vec<(char, String)> = a.iter().map(|l| ('-', cut(l))).collect();
-    out.extend(b.iter().map(|l| ('+', cut(l))));
+    let mut out: Vec<(char, u32, String)> =
+        a.iter().enumerate().map(|(i, l)| ('-', base_line + i as u32, cut(l))).collect();
+    out.extend(b.iter().enumerate().map(|(i, l)| ('+', plus_base + i as u32, cut(l))));
     out
 }
 

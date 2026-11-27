@@ -146,7 +146,7 @@ impl<'t> Sema<'t> {
                             && warned_aliases.insert((id, method.clone()))
                             && self.receiver_has_method(&ext.recv, method)
                         {
-                            diags.warning(
+                            let d = diags.warning(
                                 Code::EXTENSION_SHADOWED,
                                 ext.span,
                                 format!(
@@ -154,6 +154,12 @@ impl<'t> Sema<'t> {
                                     ext.recv
                                 ),
                             );
+                            d.label(ext.span, "extension method shadowed here");
+                            if let Some(key) = adt_key(&ext.recv)
+                                && let Some(&mspan) = self.globals.method_spans.get(&(key, method.clone()))
+                            {
+                                d.label(mspan, format!("method `{method}` on `{}` declared here", ext.recv));
+                            }
                         }
                         continue;
                     }
@@ -175,7 +181,7 @@ impl<'t> Sema<'t> {
                         continue;
                     }
                     if self.receiver_has_method(&ext.recv, &ext.name) {
-                        diags.warning(
+                        let d = diags.warning(
                             Code::EXTENSION_SHADOWED,
                             ext.span,
                             format!(
@@ -183,6 +189,12 @@ impl<'t> Sema<'t> {
                                 ext.name, ext.recv
                             ),
                         );
+                        d.label(ext.span, "extension method shadowed here");
+                        if let Some(key) = adt_key(&ext.recv)
+                            && let Some(&mspan) = self.globals.method_spans.get(&(key, ext.name.clone()))
+                        {
+                            d.label(mspan, format!("method `{}` on `{}` declared here", ext.name, ext.recv));
+                        }
                     }
                 }
             }

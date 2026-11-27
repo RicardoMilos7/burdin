@@ -96,14 +96,18 @@ impl FnCx<'_> {
                             self.returned.push(v.ty.clone());
                         }
                         let v = self.coerce_arg(v, &ret);
-                        Some(Box::new(self.expect_ty(v, &ret)))
+                        let origin_msg = format!("expected `{ret}` because of return type");
+                        let origin = self.ret_span.map(|s| (s, origin_msg.as_str()));
+                        Some(Box::new(self.expect_ty_from(v, &ret, origin)))
                     }
                     None => {
                         if self.infer_returns {
                             self.returned.push(Ty::Unit);
                         }
                         if !compatible(&Ty::Unit, &ret) {
-                            self.mismatch(span, &ret, &Ty::Unit);
+                            let origin_msg = format!("expected `{ret}` because of return type");
+                            let origin = self.ret_span.map(|s| (s, origin_msg.as_str()));
+                            self.mismatch_with(span, &ret, &Ty::Unit, origin);
                         }
                         None
                     }

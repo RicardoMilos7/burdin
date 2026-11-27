@@ -61,7 +61,7 @@ UPDATE_GOLDEN = bool(os.environ.get("BURDIN_UPDATE_GOLDEN"))
 # The stable root of the hosted reference (issue #644); `tests/check_error_docs.py` pins it too.
 URL_BASE = "https://ricardomilos7.github.io/burdin"
 
-DIAGNOSTIC = re.compile(rb":[0-9]+:[0-9]+: error\[E[0-9]{4}\]")
+DIAGNOSTIC = re.compile(rb"^(?:error|warning)\[[EL][0-9]{4}\]:")
 SHORT_LINE = re.compile(r"^[^:]+:[0-9]+:[0-9]+: error\[E[0-9]{4}\]: ")
 with harness.temporary_dir("burdin-diagnostics-") as work:
     harness.write_text(
@@ -215,8 +215,8 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
 
     drive("build", "long_message.bd", "--width", "0")
     check()
-    if len(diagnostic_line_list()) != 1:
-        add_problem("--width 0: the message was wrapped")
+    if "this_identifier_is_far_too_long_to_fit_on_one_terminal_line" not in diagnostic_line_list()[0]:
+        add_problem(f"--width 0: the header message was wrapped: {diagnostic_line_list()[0]!r}")
 
     drive("build", "long_message.bd", env={**os.environ, "COLUMNS": "60"})
     check()
@@ -229,7 +229,7 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     expect_status("--diagnostic-format=short", 1)
     expect_no_color("short format ignores color")
     check()
-    if sum(1 for line in stderr_lines() if DIAGNOSTIC.search(line.encode())) != 1:
+    if sum(1 for line in stderr_lines() if SHORT_LINE.match(line)) != 1:
         add_problem("short format: not one diagnostic line")
     check()
     if "= help:" in stderr:
@@ -265,7 +265,7 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     expect_contains("json suggestion", '"replacement":"mut "', stderr)
 
     drive("build", "suggestion.bd", "--no-color")
-    expect_contains("human suggestion", "= help: add `mut` before this argument", stderr)
+    expect_contains("human suggestion", "help: add `mut` before this argument", stderr)
 
     drive("build", "note.bd", "--diagnostic-format=json")
     expect_status("json note", 1)
@@ -276,7 +276,7 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     expect_contains("json note", '"message":"`t` is declared here"', stderr)
 
     drive("build", "note.bd", "--no-color")
-    expect_contains("human note", "= note: note.bd:", stderr)
+    expect_contains("human note", "--> note.bd:", stderr)
     expect_contains("human note", "value moved here", stderr)
 
     # --- Error limit and ordering (issue #436) -----------------------------------
@@ -392,10 +392,12 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     def check_diagnostic_invariants(description: str, obj) -> None:
         """What the schema cannot say: the numbers agree with each other and with the human text."""
         check()
-        prefix = f"{obj['span']['file']}:{obj['span']['line']}:{obj['span']['column']}: "
-        prefix += f"{obj['severity']}[{obj['code']}]: "
-        if not obj["rendered"].startswith(prefix):
-            add_problem(f"{description}: rendered text of {obj['code']} does not start with {prefix!r}")
+        prefix = f"{obj['severity']}[{obj['code']}]: "
+        location = f"--> {obj['span']['file']}:{obj['span']['line']}:{obj['span']['column']}"
+        if not obj["rendered"].startswith(prefix) or location not in obj["rendered"]:
+            add_problem(
+                f"{description}: rendered text of {obj['code']} does not start with {prefix!r} and contain {location!r}"
+            )
         for where, span in locations_of(obj):
             check()
             if span["byte_end"] < span["byte_start"] or (span["end_line"], span["end_column"]) < (
@@ -746,6 +748,21 @@ with harness.temporary_dir("burdin-diagnostics-") as work:
     check()
     if "http" in stderr:
         add_problem("short format: contains a URL")
+
+    # --- Human snippet golden test (issues #287, #1046) ---------------------------------
+    human_golden = harness.TESTS / "diagnostics" / "human.golden.txt"
+    human_res = harness.run([burdin, "check", "tests/diagnostics/multi.bd", "--no-color", "--width", "80"], cwd=harness.ROOT, merge=False)
+    human_actual = harness.text(harness.normalize(human_res.stderr)).replace("\\", "/")
+    check()
+    if os.environ.get("BURDIN_UPDATE_GOLDEN") == "1":
+        harness.write_text(human_golden, human_actual)
+    elif not human_golden.is_file():
+        add_problem(f"missing {human_golden}")
+    else:
+        human_expected = harness.read_text(human_golden)
+        if human_actual != human_expected:
+            diff = "\n".join(difflib.unified_diff(human_expected.splitlines(), human_actual.splitlines(), fromfile="expected", tofile="actual", lineterm=""))
+            add_problem(f"human.golden.txt differs:\n{diff}")
 
 print(f"Checked {checks} diagnostics behaviors from {work}")
 if harness.report_problems(problems):

@@ -41,7 +41,7 @@ The Burdin entries print `at <file>:<line> in <Burdin path>` — the function's 
 exact and known at compile time. The line a frame *stopped at* is the debugger's job (`burdin debug`, `burdin
 dap`); printing it at run time would need a link-time DWARF line-table reader the runtime does not have, and the
 table's function granularity is what the spec promises. Frames outside the table (libc, the operating system)
-print as raw addresses. Without `-g` the lookup is a stub that answers `null` and the backtrace prints exactly
+prints as raw addresses with a `note: rebuild with -g for a symbolized backtrace` hint. Without `-g` the lookup is a stub that answers `null` and the backtrace prints exactly
 what it printed before (issue #423): `backtrace_symbols_fd` on Unix and addresses on Windows — the conformance
 tests `m02_basics/panic_backtrace.bd` and `panic_backtrace_names.bd` pin that path. The panic site's own
 `path:LINE:COL:` prefix is unchanged.

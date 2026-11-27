@@ -46,17 +46,29 @@ pub fn code_actions(server: &mut Server, params: &Json) -> Reply {
     if wanted("quickfix") {
         for d in diags.iter().filter(|d| overlaps(d)) {
             let diagnostic = crate::diagnostics::to_json(server, d, &index, &paths);
+            let lsp_fixes = fixes_for(server, i, &path, &text, d);
+            let mut emitted_edits: Vec<Vec<burdin_diag::edit::TextEdit>> = Vec::new();
+            let mut emitted_titles: Vec<&str> = Vec::new();
             for s in &d.suggestions {
+                if lsp_fixes.iter().any(|(title, _)| title == &s.message) {
+                    continue;
+                }
+                let edits = burdin_diag::edit::text_edits(&s.edits, s.span().file);
+                emitted_edits.push(edits.clone());
+                emitted_titles.push(s.message.as_str());
                 actions.push(
                     Json::obj()
                         .with("title", s.message.as_str())
                         .with("kind", "quickfix")
                         .with("diagnostics", Json::Arr(vec![diagnostic.clone()]))
                         .with("isPreferred", s.is_machine_applicable())
-                        .with("edit", edit_of(burdin_diag::edit::text_edits(&s.edits, s.span().file))),
+                        .with("edit", edit_of(edits)),
                 );
             }
-            for (title, edits) in fixes_for(server, i, &path, &text, d) {
+            for (title, edits) in lsp_fixes {
+                if emitted_edits.contains(&edits) || emitted_titles.iter().any(|t| *t == title) {
+                    continue;
+                }
                 actions.push(
                     Json::obj()
                         .with("title", title)

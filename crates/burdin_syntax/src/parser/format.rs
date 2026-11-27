@@ -34,6 +34,7 @@ impl Parser<'_> {
                     pos: 0,
                     diags: &mut *self.diags,
                     nl_stack: vec![false],
+                    open_delims: Vec::new(),
                     truncated: false,
                     test_count: 0,
                     bench_count: 0,

@@ -8,7 +8,7 @@ code-scanning services. The behavior is specified in [`spec/diagnostics.md`](../
 
 | Format | For | Output |
 | --- | --- | --- |
-| `human` (default) | people | colored when asked, wrapped, with notes and help lines; the first line is always `path:LINE:COL: error[E0000]: message` |
+| `human` (default) | people | colored when asked, wrapped, with source lines, `^`/`-` underlines, labels, notes, and numbered diff suggestions (`error[E0000]: message`, then `--> path:LINE:COL`) |
 | `short` | the test scripts | exactly one plain line per diagnostic; no notes, no link, no color |
 | `json` | editors, scripts | one version 1 JSON object per line, then a summary object (`check-summary` for `burdin check`) |
 | `sarif` | CI, code scanning | one SARIF 2.1.0 log for the whole run |

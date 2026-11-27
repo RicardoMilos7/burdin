@@ -5,5 +5,6 @@ trace for explain/E0100.bd:10:13: error[E0100]: use of moved value `t`
   rule: spec/memory-rules.md MV2
   created `t` at explain/E0100.bd:8:9
   moved `t` at explain/E0100.bd:9:10
+  note: spec/memory-rules.md, MV1: moving a non-Copy value transfers ownership
   fails here: explain/E0100.bd:10:13
   fix: do not use the value after moving it. Pass it by reference (a read-only or `mut` parameter) if the callee only needs to look at it, clone it first, or reorder the statements so the move is the last use.

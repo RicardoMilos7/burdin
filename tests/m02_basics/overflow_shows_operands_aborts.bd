@@ -1,0 +1,10 @@
+//@ run-abort
+//@ debug-only
+//@ stderr: attempt to add with overflow: 2147483647, 1
+fn add_one(x: i32): i32 {
+    x + 1
+}
+
+fn main() {
+    let _ = add_one(2147483647)
+}

@@ -36,11 +36,12 @@ pub(crate) fn check_defaults(
                         Code::INVALID_DEFAULT,
                         name.span,
                         format!(
-                            "parameter `{}` has no default but follows one; the parameters with defaults must come last",
+                            "parameter `{}` has no default but follows one; the parameters with defaults must come last (spec/arguments.md, AG2)",
                             name.name
                         ),
                     )
-                    .note(note, "this parameter has a default");
+                    .label(name.span, "required parameter after a parameter with a default")
+                    .label(note, "first parameter with a default here");
             }
             (Some(_), None) => first_default = Some(p),
             _ => {}
@@ -57,28 +58,31 @@ pub(crate) fn check_defaults(
             continue;
         }
         if p.convention == ast::Convention::Mut {
-            diags.error(
+            let d = diags.error(
                 Code::INVALID_DEFAULT,
                 default.span,
-                "a `mut` parameter cannot have a default value: the callee writes to the caller's place, and a default has no place",
+                "a `mut` parameter cannot have a default value: the callee writes to the caller's place, and a default has no place (spec/arguments.md, AG2)",
             );
+            d.label(p.span, "declared `mut` here");
             continue;
         }
         if globals.ty_has_param(&ps.ty) {
-            diags.error(
+            let d = diags.error(
                 Code::INVALID_DEFAULT,
                 default.span,
-                "a default value cannot depend on a type parameter; give the parameter a concrete type",
+                "a default value cannot depend on a type parameter; give the parameter a concrete type (spec/arguments.md, AG2)",
             );
+            d.label(p.span, "parameter type uses a type parameter");
             continue;
         }
         let Some(value) = check_one(globals, item, default, &ps.ty, sources, traces, diags) else { continue };
         if !is_const_expr(&value) {
-            diags.error(
+            let d = diags.error(
                 Code::INVALID_DEFAULT,
                 default.span,
-                "a default value must be a constant expression: literals, other constants, operators, and casts",
+                "a default value must be a constant expression: literals, other constants, operators, and casts (spec/arguments.md, AG2)",
             );
+            d.label(default.span, "not a constant expression");
             continue;
         }
         ps.default = Some(value);
@@ -266,6 +270,7 @@ fn check_function_with(
         f.name.name.clone(),
         traces,
     );
+    cx.ret_span = f.ret.as_ref().map(|r| r.span);
     cx.infer_returns = infer;
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
@@ -289,7 +294,9 @@ fn check_function_with(
         };
         // The same closure-aware codes as an annotated position: returning a borrowing closure is E0171, not a
         // bare type mismatch.
-        cx.report_mismatch(span, &ret, &body_ty);
+        let origin_msg = format!("expected `{ret}` because of return type");
+        let origin = cx.ret_span.map(|s| (s, origin_msg.as_str()));
+        cx.report_mismatch_with(span, &ret, &body_ty, origin);
     }
     let mut candidates = std::mem::take(&mut cx.returned);
     if body_ty != Ty::Never {

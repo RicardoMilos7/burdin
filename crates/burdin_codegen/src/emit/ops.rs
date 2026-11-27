@@ -265,7 +265,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             _ => "multiply",
         };
         let ok = self.builder.build_not(overflow, "").map_err(llvm_err)?;
-        self.check(ok, &format!("attempt to {verb} with overflow"), span)?;
+        self.check_overflow(ok, verb, x, Some(y), i.signed(), span)?;
         Ok(v)
     }
 
@@ -334,7 +334,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             } else {
                 let ok = self.builder.build_not(overflow, "").map_err(llvm_err)?;
                 let what = if op == BinOp::Div { "divide" } else { "calculate the remainder" };
-                self.check(ok, &format!("attempt to {what} with overflow"), span)?;
+                self.check_overflow(ok, what, x, Some(y), i.signed(), span)?;
             }
         }
         if t.get_bit_width() == 128 {
@@ -371,7 +371,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let limit = y.get_type().const_int(u64::from(i.bits()), false);
         // Unsigned comparison: a negative amount is huge and fails too.
         let ok = self.builder.build_int_compare(IntPredicate::ULT, y, limit, "").map_err(llvm_err)?;
-        self.check(ok, "attempt to shift with overflow", span)?;
+        self.check_overflow(ok, "shift", x, Some(y), i.signed(), span)?;
         let amount = self.builder.build_int_cast_sign_flag(y, x.get_type(), false, "").map_err(llvm_err)?;
         match op {
             BinOp::Shl => self.builder.build_left_shift(x, amount, ""),
@@ -387,7 +387,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         let (r, overflow) = self.with_overflow(BinOp::Sub, zero, v, i)?;
         let ok = self.builder.build_not(overflow, "").map_err(llvm_err)?;
-        self.check(ok, "attempt to negate with overflow", span)?;
+        self.check_overflow(ok, "negate", v, None, i.signed(), span)?;
         Ok(r)
     }
 

@@ -141,7 +141,8 @@ def check_example(directory: Path, code: str, target: str, mode: str, warning: b
         return
 
     if mode == "export":
-        command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.h")]
+        command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.h"), "--no-color",
+                   "--diagnostic-format=short"]
         # `--out` takes a value, so the JSON run repeats the whole command rather than replacing its last argument.
         json_command = [burdin, "bindgen", "--export", target, "--out", str(directory / "exports.json.h"),
                         "--diagnostic-format=json"]

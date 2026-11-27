@@ -248,7 +248,33 @@ impl Sema<'_> {
         let derive = self.globals.exported_derive(target, &item.name);
         if value.is_none() && type_name.is_none() && iface.is_none() && extensions.is_none() && derive.is_none() {
             let module_name = self.globals.module_display(target);
-            diags.error(Code::UNKNOWN_NAME, item.span, format!("module `{module_name}` has no item `{}`", item.name));
+            let exported = info
+                .values
+                .keys()
+                .filter(|k| self.globals.exported_value(target, k).is_some())
+                .chain(info.types.keys().filter(|k| self.globals.exported_type(target, k).is_some()))
+                .chain(info.ifaces.keys().filter(|k| self.globals.exported_iface(target, k).is_some()))
+                .chain(info.extensions.keys().filter(|k| self.globals.exported_extension(target, k).is_some()))
+                .chain(info.derives.keys().filter(|k| self.globals.exported_derive(target, k).is_some()))
+                .map(String::as_str);
+            let candidates = crate::fncx::suggest::closest_names(&item.name, exported);
+            let d = diags.error(
+                Code::UNKNOWN_NAME,
+                item.span,
+                format!("module `{module_name}` has no item `{}`", item.name),
+            );
+            d.label(item.span, format!("not exported by `{module_name}`"));
+            if let [only] = candidates.as_slice() {
+                d.suggest_with(
+                    item.span,
+                    format!("did you mean `{only}`?"),
+                    only,
+                    burdin_diag::Applicability::MaybeIncorrect,
+                );
+            } else if !candidates.is_empty() {
+                let list: Vec<String> = candidates.iter().map(|n| format!("`{n}`")).collect();
+                d.help(format!("similarly named items in `{module_name}`: {}", list.join(", ")));
+            }
             return;
         }
         // `priv` is package-private: another package may not name the item at all.

@@ -66,14 +66,19 @@ impl Parser<'_> {
     /// One element of a tuple or tuple-variant pattern: a pattern, or the rest `..` (`spec/rest-patterns.md`, RP3). A
     /// second `..` in the same list is reported and kept as a rest, so the rest of the pattern still parses; the type
     /// checker uses the first one.
-    fn elem_pattern(&mut self, rest_seen: &mut bool) -> PResult<Pattern> {
+    fn elem_pattern(&mut self, rest_seen: &mut Option<Span>) -> PResult<Pattern> {
         if !self.at(&TokenKind::DotDot) {
             return self.pattern();
         }
         let mut span = self.span();
         self.bump();
-        if std::mem::replace(rest_seen, true) {
-            self.diags.error(Code::REST_REPEATED, span, "a pattern may have only one `..`");
+        if let Some(first) = *rest_seen {
+            let d = self.diags.error(Code::REST_REPEATED, span, "a pattern may have only one `..`");
+            d.label(span, "second `..` here");
+            d.label(first, "first `..` here");
+            d.help("remove the extra `..`");
+        } else {
+            *rest_seen = Some(span);
         }
         // `..name` binds the rest of an array or slice pattern (spec/array-patterns.md, AP6); the name is checked there.
         let name = if matches!(self.kind(), TokenKind::Ident(_)) {
@@ -118,7 +123,7 @@ impl Parser<'_> {
                 if self.at(&TokenKind::LParen) {
                     self.open(&TokenKind::LParen, false)?;
                     let mut elems = Vec::new();
-                    let mut rest_seen = false;
+                    let mut rest_seen: Option<Span> = None;
                     while !self.at(&TokenKind::RParen) {
                         elems.push(self.elem_pattern(&mut rest_seen)?);
                         if !self.eat(&TokenKind::Comma) {
@@ -138,19 +143,23 @@ impl Parser<'_> {
                         if self.at(&TokenKind::DotDot) {
                             let span = self.span();
                             self.bump();
-                            if rest.is_some() {
-                                self.diags.error(Code::REST_REPEATED, span, "a pattern may have only one `..`");
+                            if let Some(first) = rest {
+                                let d = self.diags.error(Code::REST_REPEATED, span, "a pattern may have only one `..`");
+                                d.label(span, "second `..` here");
+                                d.label(first, "first `..` here");
                             } else {
                                 rest = Some(span);
                             }
                         } else {
                             let name = self.ident("a field name")?;
-                            if rest.is_some() {
-                                self.diags.error(
+                            if let Some(first) = rest {
+                                let d = self.diags.error(
                                     Code::REST_POSITION,
                                     name.span,
                                     "`..` must come after every field of a struct pattern",
                                 );
+                                d.label(name.span, "field after `..`");
+                                d.label(first, "`..` appears here");
                             }
                             let pattern = if self.eat(&TokenKind::Colon) { Some(self.pattern()?) } else { None };
                             fields.push(FieldPat { name, pattern });
@@ -174,7 +183,7 @@ impl Parser<'_> {
                 self.open(&TokenKind::LParen, false)?;
                 let mut elems = Vec::new();
                 let mut trailing_comma = false;
-                let mut rest_seen = false;
+                let mut rest_seen: Option<Span> = None;
                 while !self.at(&TokenKind::RParen) {
                     elems.push(self.elem_pattern(&mut rest_seen)?);
                     trailing_comma = self.eat(&TokenKind::Comma);
@@ -193,7 +202,7 @@ impl Parser<'_> {
             TokenKind::LBracket => {
                 self.open(&TokenKind::LBracket, false)?;
                 let mut elems = Vec::new();
-                let mut rest_seen = false;
+                let mut rest_seen: Option<Span> = None;
                 while !self.at(&TokenKind::RBracket) {
                     elems.push(self.elem_pattern(&mut rest_seen)?);
                     if !self.eat(&TokenKind::Comma) {

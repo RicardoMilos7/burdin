@@ -4,6 +4,15 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Readable compiler diagnostics and runtime panics (2026-11-27, issues #1046–#1067, #902, #287).** `burdin_diag::render_human`
+now renders `cargo`/`gleam`-style snippets (`error[E0002]: msg`, `--> file:line:col`, gutter line numbers, `^`/`-` underlines,
+inline primary/secondary labels, multi-line sidebars, multi-file snippets, numbered diff suggestions, Unicode/tab width
+wrapping, and OSC 8 links); `Diagnostics::absorb` deduplicates by `(code, span, message)` (#902); LSP maps `labels`
+into `relatedInformation` and deduplicates quickfixes against compiler `Suggestion`s. Compiler diagnostics across `burdin_syntax`,
+`burdin_sema`, `burdin_check`, `burdin_interp`, and `burdin_driver` add labels, origin spans, rule IDs, candidates, and
+safe/unsafe suggestions (#1047–#1065). Runtime panics (#1066) include overflow operand values, `Result.unwrap`/`expect`
+error payloads for `str`/`String`/integers, debug-build source snippets, and a `-g` hint on unsymbolized backtraces.
+`tests/diagnostics/human.golden.txt` and `tests/check_diagnostics.py` cover the human snippet golden output (#287).
 **`chars()` is a lazy iterator (2026-11-27, issue #1083).** `str.chars()` returns `Chars<str>`, an ordinary generic
 `std` struct in `std/src/text.bd` with `Iterator<char>` and `DoubleEndedIterator<char>`; there is still no compiler
 type for it. The three open questions of the issue: the origin check already sees that `Chars { text: self, ... }`

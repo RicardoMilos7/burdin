@@ -23,7 +23,7 @@ mod pattern;
 mod reflect;
 mod serial;
 mod stmt;
-mod suggest;
+pub(crate) mod suggest;
 mod target;
 
 pub(crate) use item::{check_const, check_defaults, check_function, infer_return};
@@ -93,6 +93,8 @@ struct FnCx<'a> {
     locals: Vec<tir::Local>,
     scopes: Vec<HashMap<String, LocalId>>,
     ret: Ty,
+    /// Span of the function's return type annotation, when written.
+    pub(super) ret_span: Option<Span>,
     /// The enclosing loops, innermost last (see `LoopScope`).
     loops: Vec<LoopScope>,
     /// What `Self` means: the type of the enclosing method block.
@@ -178,6 +180,7 @@ impl<'a> FnCx<'a> {
             locals: Vec::new(),
             scopes: vec![HashMap::new()],
             ret,
+            ret_span: None,
             loops: Vec::new(),
             self_ty,
             self_local: None,
@@ -223,6 +226,57 @@ impl<'a> FnCx<'a> {
 
     pub(super) fn exhaustive(&self, ty: &Ty, pats: &[&Pat]) -> bool {
         crate::exhaust::exhaustive(ty, pats, &self.globals.defs())
+    }
+
+    /// Reports E0006 with missing patterns and optional guard / missing-arm placeholder notes.
+    pub(super) fn report_non_exhaustive(
+        &mut self,
+        ty: &Ty,
+        pats: &[&Pat],
+        span: Span,
+        msg: String,
+        guarded: usize,
+        offer_arms: bool,
+    ) {
+        let missing = crate::exhaust::missing_patterns(ty, pats, &self.globals.defs());
+        let insert_arm = if offer_arms && !missing.is_empty() {
+            let text = &self.sources.get(span.file).text;
+            let hi = span.hi as usize;
+            (hi > 0 && hi <= text.len() && text.as_bytes()[hi - 1] == b'}').then(|| {
+                let line_start = text[..hi - 1].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let indent: String = text[line_start..hi - 1].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+                let arm_indent = format!("{indent}    ");
+                let arms: String = missing.iter().take(8).map(|p| format!("{arm_indent}{p} => todo(),\n")).collect();
+                let at = Span::new(span.file, (hi - 1) as u32, (hi - 1) as u32);
+                (at, arms)
+            })
+        } else {
+            None
+        };
+        let d = self.diags.error(Code::NON_EXHAUSTIVE, span, msg);
+        if !missing.is_empty() {
+            let shown: Vec<String> = missing.iter().take(4).map(|p| format!("`{p}`")).collect();
+            let extra = if missing.len() > 4 { format!(" (and {} more)", missing.len() - 4) } else { String::new() };
+            d.label(span, format!("pattern(s) {} not covered{extra}", shown.join(", ")));
+        } else {
+            d.label(span, format!("scrutinee has type `{ty}`"));
+        }
+        if guarded > 0 {
+            d.note_without_span(format!(
+                "{guarded} arm(s) have an `if` guard, so they are not counted toward exhaustiveness"
+            ));
+        }
+        if let Some((at, arms)) = insert_arm {
+            d.suggest_with(at, "add the missing match arms", arms, burdin_diag::Applicability::HasPlaceholders);
+        }
+    }
+
+    /// Returns `(decl_span, label)` for an immutable root local of `place`, when it has a source span.
+    pub(super) fn root_decl_span(&self, place: &tir::Expr) -> Option<(Span, String)> {
+        let root = burdin_tir::place::place_root(place)?;
+        let local = &self.locals[root.0];
+        (local.span.lo < local.span.hi && !local.mutable)
+            .then(|| (local.span, format!("`{}` is declared here without `mut`", local.name)))
     }
 
     /// If `e` names a type (and no value hides it), that type: the left side of `Point.new` or `Shape.Circle`.
@@ -564,17 +618,118 @@ impl<'a> FnCx<'a> {
     }
 
     pub(super) fn mismatch(&mut self, span: Span, expected: &Ty, found: &Ty) {
-        self.diags.error(Code::TYPE_MISMATCH, span, format!("expected `{expected}`, found `{found}`"));
+        self.mismatch_with(span, expected, found, None);
+    }
+
+    pub(super) fn mismatch_with(&mut self, span: Span, expected: &Ty, found: &Ty, origin: Option<(Span, &str)>) {
+        let snippet = self.span_snippet(span);
+        let d = self.diags.error(Code::TYPE_MISMATCH, span, format!("expected `{expected}`, found `{found}`"));
+        d.label(span, format!("found `{found}`"));
+        if let Some((origin_span, origin_msg)) = origin
+            && origin_span != span
+        {
+            d.label(origin_span, origin_msg.to_string());
+        }
+        Self::attach_type_conversion_hints(span, snippet.as_deref(), expected, found, d);
+    }
+
+    fn span_snippet(&self, span: Span) -> Option<String> {
+        let text = &self.sources.get(span.file).text;
+        let (lo, hi) = (span.lo as usize, span.hi as usize);
+        (lo <= hi && hi <= text.len()).then(|| text[lo..hi].to_string())
+    }
+
+    fn attach_type_conversion_hints(
+        span: Span,
+        snippet: Option<&str>,
+        expected: &Ty,
+        found: &Ty,
+        d: &mut burdin_diag::Diagnostic,
+    ) {
+        use burdin_diag::Applicability::MaybeIncorrect;
+        let end = Span::new(span.file, span.hi, span.hi);
+        let simple = snippet.is_some_and(|s| !s.is_empty() && !s.contains('\n') && !s.contains(' '));
+        match (expected, found) {
+            (Ty::Str, Ty::String) => {
+                if simple {
+                    d.suggest_with(end, "borrow as `str` with `.as_str()`", ".as_str()", MaybeIncorrect);
+                } else {
+                    d.help("borrow the `String` as `str` with `.as_str()`");
+                }
+            }
+            (Ty::String, Ty::Str) => {
+                if let Some(s) = snippet.filter(|s| !s.is_empty() && !s.contains('\n')) {
+                    d.suggest_with(span, "convert to `String`", format!("String.from({s})"), MaybeIncorrect);
+                } else {
+                    d.help("convert to `String` with `String.from(...)` or `.to_string()`");
+                }
+            }
+            (Ty::String, Ty::Int(_) | Ty::Float(_) | Ty::Bool | Ty::Char) => {
+                if simple {
+                    d.suggest_with(end, "convert with `.to_string()`", ".to_string()", MaybeIncorrect);
+                } else {
+                    d.help("convert to `String` with `.to_string()`");
+                }
+            }
+            (Ty::Enum(adt), _) if adt.name.starts_with("Option<") => {
+                if let Some(s) = snippet.filter(|s| !s.is_empty() && !s.contains('\n')) {
+                    d.suggest_with(span, "wrap in `Option.Some(...)`", format!("Option.Some({s})"), MaybeIncorrect);
+                } else {
+                    d.help("wrap the value in `Option.Some(...)`");
+                }
+            }
+            (Ty::Enum(adt), _) if adt.name.starts_with("Result<") => {
+                if let Some(s) = snippet.filter(|s| !s.is_empty() && !s.contains('\n')) {
+                    d.suggest_with(span, "wrap in `Result.Ok(...)`", format!("Result.Ok({s})"), MaybeIncorrect);
+                } else {
+                    d.help("wrap the value in `Result.Ok(...)`");
+                }
+            }
+            (_, Ty::Enum(adt)) if adt.name.starts_with("Option<") => {
+                d.help("unwrap the `Option` with `.unwrap()`, `.expect(...)`, or `match`");
+            }
+            (_, Ty::Enum(adt)) if adt.name.starts_with("Result<") => {
+                d.help("propagate the error with `?` or unwrap with `.unwrap()` or `match`");
+            }
+            (Ty::Int(_) | Ty::Float(_), Ty::Int(_) | Ty::Float(_)) => {
+                if simple {
+                    d.suggest_with(
+                        end,
+                        format!("cast with `as {expected}`"),
+                        format!(" as {expected}"),
+                        MaybeIncorrect,
+                    );
+                } else {
+                    d.help(format!("convert with `as {expected}`"));
+                }
+            }
+            (Ty::Ref { mutable: false, inner }, _) if compatible(found, inner) => {
+                if simple {
+                    let start = Span::new(span.file, span.lo, span.lo);
+                    d.suggest_with(start, "borrow with `&`", "&", MaybeIncorrect);
+                } else {
+                    d.help("borrow the value with `&`");
+                }
+            }
+            (_, Ty::Ref { inner, .. }) if compatible(inner, expected) => {
+                d.help("dereference with `*` or copy with `.clone()`");
+            }
+            _ => {}
+        }
     }
 
     /// Reports E0003 unless `e` has type `want` (or a type that converts to nothing at run time, like `!`).
     fn expect_ty(&mut self, e: tir::Expr, want: &Ty) -> tir::Expr {
+        self.expect_ty_from(e, want, None)
+    }
+
+    pub(super) fn expect_ty_from(&mut self, e: tir::Expr, want: &Ty, origin: Option<(Span, &str)>) -> tir::Expr {
         if !compatible(&e.ty, want)
             && !self.param_meets_fn(&e.ty, want)
             && !self.globals.opaque_unresolved(want)
             && !self.globals.opaque_unresolved(&e.ty)
         {
-            self.report_mismatch(e.span, want, &e.ty);
+            self.report_mismatch_with(e.span, want, &e.ty, origin);
         }
         e
     }
@@ -593,7 +748,7 @@ impl<'a> FnCx<'a> {
     /// The type-mismatch diagnostic for `found` where `expected` is required. A closure mismatch gets the code
     /// that explains it: a borrowing closure where an owned one is required is E0171, and a closure whose body
     /// needs a lower capability than the expected type gives is E0141.
-    pub(super) fn report_mismatch(&mut self, span: Span, want: &Ty, found: &Ty) {
+    pub(super) fn report_mismatch_with(&mut self, span: Span, want: &Ty, found: &Ty, origin: Option<(Span, &str)>) {
         if let (Ty::Fn { sig: asig, kind: ak, borrowed: true, .. }, Ty::Fn { sig: esig, kind: ek, borrowed: false, .. }) =
             (found, want)
             && asig == esig
@@ -617,7 +772,7 @@ impl<'a> FnCx<'a> {
             );
             return;
         }
-        self.mismatch(span, want, found);
+        self.mismatch_with(span, want, found, origin);
     }
 
     /// Boxes `e` when it is used where `any I` is expected (AN3). Boxing produces an owned value, so unlike the
