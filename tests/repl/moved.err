@@ -2,7 +2,7 @@ error[E0003]: expected `()`, found `String`
  --> main.bd:4:1
   |
 4 | s
-  | ^
+  | ^ found `String`
   |
 
 error[E0100]: use of moved value `s`
@@ -13,8 +13,9 @@ error[E0100]: use of moved value `s`
 3 | let t = s
   |         - value moved here
 4 | s
-  | ^
+  | ^ value used here after move
   |
+  = note: spec/memory-rules.md, MV1: moving a non-Copy value transfers ownership
   = help: run `burdin check --explain` to trace the path to this error
 help: clone `s` where it is moved, so this use has its own value
   |
